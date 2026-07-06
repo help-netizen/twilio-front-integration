@@ -38,7 +38,10 @@
  *   s16 TC-CM-I13  **P0** silent branches byte-for-byte (D3 / orphan merge /
  *                  ingestion) + TC-CM-I15 Pulse list on the UNCHANGED query
  *   sab TC-CM-ISAB **P0** sabotage ×2: wrong-expectation MUST FAIL; амендмент #5
- *                  feature-stash (git stash service+route → s1/s5/s8 MUST FAIL)
+ *                  feature-neutralize (byte-level, NO git — the feature is in
+ *                  HEAD: temp-sabotage the merge service in place, detection→[]
+ *                  + sentinel silenced → s1/s5/s8 MUST FAIL → restore original
+ *                  bytes, sha256-verified)
  *   explain TC-CM-I18 (dev FORM probe) — plan shape with SET enable_seqscan=off
  *                  (амендмент #7: a dev Seq Scan is not an auto-fail; the FULL
  *                  volumetric I18 gate runs on a prod-copy restore, deploy-gated)
@@ -67,7 +70,7 @@ process.env.FEATURE_ZENBOOKER_SYNC = 'false';
 
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync, execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const db = require(path.join(ROOT, 'backend/src/db/connection'));
@@ -194,14 +197,61 @@ async function mkCall(companyId, { timelineId = null, contactId = null, fromNumb
     return r.rows[0].id;
 }
 
+// customer_digits differs BY SCHEMA (portability probe, cached once):
+//   - dev twilio_calls: GENERATED ALWAYS (derived from customer_e164) — explicit
+//     INSERT is rejected, so the column must be omitted;
+//   - prod schema: a PLAIN text column filled by app code at ingest
+//     (backend/src/db/conversationsQueries.js: customer_e164.replace(/\D/g,''))
+//     — omitting it leaves NULL and the Pulse SMS digit-lateral never matches.
+let smsDigitsGeneratedCache = null;
+async function smsCustomerDigitsIsGenerated() {
+    if (smsDigitsGeneratedCache === null) {
+        const r = await db.query(
+            `SELECT is_generated FROM information_schema.columns
+              WHERE table_name = 'sms_conversations' AND column_name = 'customer_digits'`
+        );
+        smsDigitsGeneratedCache = (r.rows[0] && r.rows[0].is_generated === 'ALWAYS');
+    }
+    return smsDigitsGeneratedCache;
+}
+
+// Schema portability probe #2 (cached once): the GLOBAL (cross-company!)
+// partial unique index `uq_contacts_email` exists on the dev twilio_calls
+// schema (v3 pre-multitenant base), but NOT on the prod schema (prod has only
+// uq_contacts_zenbooker_customer_id). I08 leg 5 branches on this.
+let uqContactsEmailCache = null;
+async function hasGlobalUqContactsEmail() {
+    if (uqContactsEmailCache === null) {
+        const r = await db.query(
+            `SELECT indexname AS name FROM pg_indexes
+              WHERE tablename = 'contacts' AND indexname = 'uq_contacts_email'
+             UNION
+             SELECT conname AS name FROM pg_constraint WHERE conname = 'uq_contacts_email'`
+        );
+        uqContactsEmailCache = r.rows.length > 0;
+    }
+    return uqContactsEmailCache;
+}
+
 async function mkSmsConversation(companyId, { phone, lastAt = null, preview = 'CM1 sms msg' } = {}) {
-    // customer_digits is a GENERATED column (derived from customer_e164).
+    if (await smsCustomerDigitsIsGenerated()) {
+        // GENERATED column: Postgres computes customer_digits itself.
+        const r = await db.query(
+            `INSERT INTO sms_conversations (company_id, customer_e164, friendly_name,
+                                            last_message_at, last_message_direction, last_message_preview, source)
+             VALUES ($1, $2, 'CM1 sms', COALESCE($3, now()), 'inbound', $4, 'twilio')
+             RETURNING id`,
+            [companyId, phone, lastAt, preview]
+        );
+        return r.rows[0].id;
+    }
+    // Plain column: mirror the ingest code (conversationsQueries.js) exactly.
     const r = await db.query(
-        `INSERT INTO sms_conversations (company_id, customer_e164, friendly_name,
+        `INSERT INTO sms_conversations (company_id, customer_e164, customer_digits, friendly_name,
                                         last_message_at, last_message_direction, last_message_preview, source)
-         VALUES ($1, $2, 'CM1 sms', COALESCE($3, now()), 'inbound', $4, 'twilio')
+         VALUES ($1, $2, $3, 'CM1 sms', COALESCE($4, now()), 'inbound', $5, 'twilio')
          RETURNING id`,
-        [companyId, phone, lastAt, preview]
+        [companyId, phone, phone ? String(phone).replace(/\D/g, '') : null, lastAt, preview]
     );
     return r.rows[0].id;
 }
@@ -1096,13 +1146,14 @@ CASE('TC-CM-I08', 's11', 'P0 SECURITY cross-tenant: detection-invisible, forged 
 
     // Leg 1 — detection: A-PATCH adds BOTH values → 200, NO 409 (B invisible).
     // NOTE (pre-existing platform limitation, flagged to the owner — NOT a CM1
-    // regression): `uq_contacts_email` is a GLOBAL (cross-company!) partial
-    // unique index from the pre-multitenant v3 base schema, never dropped by
-    // any migration — so the SAME address can exist in two companies only via
-    // contact_emails rows, never as both contacts' SCALAR email. The realistic
-    // shared-address shape is therefore: saved on the A side as a NON-primary
-    // row (own primary keeps the scalar). Leg 1b below documents the scalar
-    // collision path (500, safe rollback, no B leak).
+    // regression): on the DEV twilio_calls schema `uq_contacts_email` is a
+    // GLOBAL (cross-company!) partial unique index from the pre-multitenant v3
+    // base — there the SAME address can exist in two companies only via
+    // contact_emails rows, never as both contacts' SCALAR email. The PROD
+    // schema has no such index (scalar coexistence is fine). The realistic
+    // shared-address shape portable to BOTH is therefore: saved on the A side
+    // as a NON-primary row (own primary keeps the scalar). Leg 5 below probes
+    // the schema and documents the scalar collision path per mode.
     const t = await mkContact(COMPANY_A, { name: 'S11 T', phone: nextPhone(), email: 'town11@cm1.test' });
     await mkContactEmail(t, 'town11@cm1.test', true);
     const r1 = await patchContact(t, {
@@ -1151,23 +1202,38 @@ CASE('TC-CM-I08', 's11', 'P0 SECURITY cross-tenant: detection-invisible, forged 
     await merge.transferEmail(t, bc, sharedAddr, COMPANY_A);  // foreign owner → 0 rows
     eq(await snapshotB(), bBefore, 'leg 4: transfers against a B owner touched 0 rows');
 
-    // Leg 5 — the SCALAR collision path: writing an address that is a
-    // COMPANY-B contact's scalar as this A-contact's scalar/primary hits the
-    // pre-existing GLOBAL `uq_contacts_email` (v3 base schema, cross-company —
-    // flagged to the owner, NOT a CM1 regression; sharedAddr itself gained an
-    // A-side owner in leg 1, so a fresh B-only scalar is used). Master shows
-    // the same 500 today; the tx must roll back fully and leak nothing of B.
+    // Leg 5 — the SCALAR collision path, SCHEMA-BRANCHED (portability probe):
+    // writing an address that is a COMPANY-B contact's scalar as this
+    // A-contact's scalar. On the DEV twilio_calls schema the pre-existing
+    // GLOBAL `uq_contacts_email` (v3 base, cross-company — flagged to the
+    // owner, NOT a CM1 regression) trips → 500 with a full rollback. On the
+    // PROD schema that index does NOT exist → the save is a clean 200 and BOTH
+    // companies hold the address independently. Either way, detection never
+    // sees B and nothing of B may leak or change. (sharedAddr itself gained an
+    // A-side owner in leg 1, so a fresh B-only scalar is used.)
     const bScalarAddr = 'bscalar11@cm1.test';
-    await mkContact(COMPANY_B, { name: 'S11 BScalar', phone: nextPhone(), email: bScalarAddr });
+    const bScalar = await mkContact(COMPANY_B, { name: 'S11 BScalar', phone: nextPhone(), email: bScalarAddr });
     const bBefore2 = await snapshotB();
     const t1b = await mkContact(COMPANY_A, { name: 'S11 T1b', phone: nextPhone() });
     const r1b = await patchContact(t1b, { email: bScalarAddr });
-    eq(r1b.status, 500, 'leg 5: global uq_contacts_email collision surfaces as 500 (pre-existing, documented)');
-    check(!JSON.stringify(r1b.body).includes('S11 BC') && !JSON.stringify(r1b.body).includes(String(bc)),
-        'leg 5: error body leaks nothing of B');
-    eq((await contactRow(t1b)).email, null, 'leg 5: rollback — scalar not written');
-    eq(await scalar(`SELECT count(*)::int FROM contact_emails WHERE contact_id = $1`, [t1b]), 0, 'leg 5: rollback — no row leaked');
-    eq(await snapshotB(), bBefore2, 'leg 5: company B untouched by the failed save');
+    const r1bBody = JSON.stringify(r1b.body);
+    check(!r1bBody.includes('S11 BC') && !r1bBody.includes(String(bc))
+        && !r1bBody.includes('S11 BScalar') && !r1bBody.includes(String(bScalar)),
+        'leg 5: response body leaks nothing of B');
+    if (await hasGlobalUqContactsEmail()) {
+        console.log('    [s11 leg 5] uq_contacts_email PRESENT (dev-schema mode: expect 500 + full rollback)');
+        eq(r1b.status, 500, 'leg 5 (dev mode): global uq_contacts_email collision surfaces as 500 (pre-existing, documented)');
+        eq((await contactRow(t1b)).email, null, 'leg 5 (dev mode): rollback — scalar not written');
+        eq(await scalar(`SELECT count(*)::int FROM contact_emails WHERE contact_id = $1`, [t1b]), 0, 'leg 5 (dev mode): rollback — no row leaked');
+    } else {
+        console.log('    [s11 leg 5] uq_contacts_email ABSENT (prod-schema mode: expect 200; both companies hold the address independently)');
+        eq(r1b.status, 200, 'leg 5 (prod mode): no global index → clean 200, B owner invisible to detection');
+        eq((await contactRow(t1b)).email, bScalarAddr, 'leg 5 (prod mode): scalar written on the A contact');
+        eq(await scalar(`SELECT count(*)::int FROM contact_emails WHERE contact_id = $1 AND email_normalized = $2`, [t1b, bScalarAddr]), 1,
+            'leg 5 (prod mode): A-side contact_emails row created (Decision-E enrich)');
+        eq((await contactRow(bScalar)).email, bScalarAddr, 'leg 5 (prod mode): B keeps its scalar address independently');
+    }
+    eq(await snapshotB(), bBefore2, 'leg 5: company B untouched by the A-side save');
 });
 
 // ---------------------------------------------------------------------------
@@ -1539,24 +1605,40 @@ CASE('TC-CM-ISAB-1', 'sab', 'sabotage (wrong-expectation): a deliberately-wrong 
 });
 
 // ---------------------------------------------------------------------------
-CASE('TC-CM-ISAB-2', 'sab', 'sabotage (амендмент #5, feature-stash): git stash service+route → s1/s5/s8 MUST FAIL → pop → green', async () => {
+CASE('TC-CM-ISAB-2', 'sab', 'sabotage (амендмент #5, feature-neutralize): byte-neutralize the merge service → s1/s5/s8 MUST FAIL → restore bytes → green', async () => {
+    // The feature is COMMITTED to HEAD now, so the old `git stash push`
+    // mechanism has nothing to stash (empty diff → children stay green →
+    // vacuous sabotage). Instead: byte-level neutralization, NO git — read the
+    // service into memory, write a temporarily sabotaged version in place
+    // (detection returns [] AND the Decision-B sentinel is silenced), run the
+    // s1/s5/s8 children (fresh processes require the file from disk), then
+    // restore the original bytes in a finally and sha-verify the restore. The
+    // parent's own require-cache instance keeps the original code throughout.
     if (process.env.CM1_CHILD) {
-        record('TC-CM-ISAB-2', 'SKIP', 'child process — feature-stash runs only in the parent');
+        record('TC-CM-ISAB-2', 'SKIP', 'child process — feature-neutralize runs only in the parent');
         return;
     }
-    const FEATURE_FILES = [
-        'backend/src/services/contactEmailMergeService.js',
-        'backend/src/routes/contacts.js',
-        // part of the backend feature diff since the CM1-T5 harness fixes
-        // (enrichEmail persists the contact_emails row for a scalar-held address):
-        'backend/src/services/contactDedupeService.js',
-    ];
-    const git = (cmd) => execSync(`git ${cmd}`, { cwd: ROOT, encoding: 'utf8' });
+    const fs = require('fs');
+    const SERVICE = path.join(ROOT, 'backend/src/services/contactEmailMergeService.js');
+    const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+    const original = fs.readFileSync(SERVICE);
+    const originalSha = sha256(original);
 
-    // The feature must be present as a working-tree diff for a stash to remove it.
-    const status = git(`status --porcelain -- ${FEATURE_FILES.join(' ')}`).trim();
-    check(status.split('\n').filter(Boolean).length === FEATURE_FILES.length,
-        `feature-stash needs both feature files modified vs HEAD; git status shows: ${JSON.stringify(status)}`);
+    const src = original.toString('utf8');
+    // Seam 1: detectAttributeConflicts reports "no conflicts" (round-1 409 gone).
+    const anchor1 = 'async function detectAttributeConflicts(targetContactId, added = {}, companyId, client = db) {';
+    // Seam 2: the in-tx Decision-B sentinel in resolveAddedEmail never throws
+    // (the fresh-409 backstop gone too — pre-feature silent world).
+    const anchor2 = 'throw new ContactConflictError(owner.id, [\n' +
+        '        { kind: \'email\', value: normalized, normalized },\n' +
+        '    ]);';
+    check(src.includes(anchor1), 'sab-2: detection anchor present in the service source');
+    check(src.includes(anchor2), 'sab-2: sentinel anchor present in the service source');
+    const sabotaged = src
+        .replace(anchor1, anchor1 + '\n    return []; // CM1-ISAB-2 TEMPORARY SABOTAGE — must never survive the run')
+        .replace(anchor2, 'return; // CM1-ISAB-2 TEMPORARY SABOTAGE — sentinel silenced');
+    check(sabotaged !== src && sha256(Buffer.from(sabotaged, 'utf8')) !== originalSha,
+        'sab-2: sabotage actually changed the bytes');
 
     const runChild = (section) => spawnSync(process.execPath, [__filename, `--section=${section}`], {
         cwd: ROOT,
@@ -1565,22 +1647,26 @@ CASE('TC-CM-ISAB-2', 'sab', 'sabotage (амендмент #5, feature-stash): gi
         timeout: 180000,
     });
 
-    console.log('    [sab-2] stashing the feature diff (service + route)…');
-    git(`stash push -m "CM1-ISAB feature-stash" -- ${FEATURE_FILES.join(' ')}`);
-    const stashedFails = {};
+    console.log('    [sab-2] writing the byte-neutralized service (detection→[] + sentinel silenced; no git)…');
+    const sabotagedExits = {};
     try {
+        fs.writeFileSync(SERVICE, sabotaged);
         for (const s of ['s1', 's5', 's8']) {
             const r = runChild(s);
-            stashedFails[s] = r.status;
-            console.log(`    [sab-2] stashed run --section=${s} → exit ${r.status}`);
+            sabotagedExits[s] = r.status;
+            console.log(`    [sab-2] sabotaged run --section=${s} → exit ${r.status}`);
         }
     } finally {
-        git('stash pop');
-        console.log('    [sab-2] feature diff restored (git stash pop)');
+        fs.writeFileSync(SERVICE, original);
+        const restoredSha = sha256(fs.readFileSync(SERVICE));
+        if (restoredSha !== originalSha) {
+            throw new Error(`sab-2 CRITICAL: restore mismatch — sha ${restoredSha} != original ${originalSha}`);
+        }
+        console.log('    [sab-2] original bytes restored (sha256 verified)');
     }
     for (const s of ['s1', 's5', 's8']) {
-        check(stashedFails[s] === 1,
-            `--section=${s} with the feature STASHED must exit 1 (recorded FAILs); got exit ${stashedFails[s]}. ` +
+        check(sabotagedExits[s] === 1,
+            `--section=${s} with the service NEUTRALIZED must exit 1 (recorded FAILs); got exit ${sabotagedExits[s]}. ` +
             'A harness that stays green against the pre-feature world makes every PASS vacuous → release blocked.');
     }
 
