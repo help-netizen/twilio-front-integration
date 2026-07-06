@@ -61,7 +61,7 @@ export function TaskCard({ task, tz, canAct, onComplete, onReopen, onSnooze, onE
                         className="inline-flex items-center gap-1 truncate"
                         style={{ fontSize: 12.5, color: overdue ? '#b42318' : 'var(--blanc-ink-2)' }}
                     >
-                        {overdue && <AlarmClock className="size-3.5 shrink-0" />}
+                        {!done && task.due_at && <AlarmClock className="size-3.5 shrink-0" />}
                         {done ? 'Done' : (overdue ? 'Overdue · ' : '') + formatDeadline(task.due_at, tz)}
                     </span>
                 </div>

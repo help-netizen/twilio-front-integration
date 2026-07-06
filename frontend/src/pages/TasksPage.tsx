@@ -132,7 +132,7 @@ export function TasksPage() {
         const label = compact ? formatTimeInTZ(new Date(t.due_at), tz) : formatDateTimeInTZ(new Date(t.due_at), tz);
         return (
             <span className="inline-flex items-center gap-1 shrink-0" style={{ fontSize: 12, color: overdue ? '#b42318' : 'var(--blanc-ink-2)' }}>
-                {overdue && <AlarmClock className="size-3.5" />}{label}
+                <AlarmClock className="size-3.5" />{label}
             </span>
         );
     };
