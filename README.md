@@ -32,6 +32,10 @@ and an email-triage agent that turns important letters into dispatcher tasks.
 - **Marketplace** — per-company apps with install/provision lifecycle
   (google-email, telephony-twilio, stripe-payments, vapi-ai, smart-slot-engine,
   mail-secretary).
+- **Field-tech iOS app** — native technician app in a separate repo
+  (`albusto-mobile`): offline-first schedule/jobs, statuses, notes/photos,
+  estimates & invoices with Price Book, tasks, search (backend contract:
+  `/api/sync`, `/api/devices`).
 
 ## Stack
 

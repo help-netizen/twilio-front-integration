@@ -3630,3 +3630,139 @@ This feature closes that gap for the timeline bubble by stripping the quoted-his
 - Конфликт-диалог в фоновых путях (lead-создание, Mail Secretary, VAPI, ingestion) и в mobile-app.
 - Undo/история мерджей, восстановление удалённого дубля; M2M-таблица телефонов (OQ-2 альтернатива).
 - Изменение unread-модели, ZB push при мердже, unified-list запроса.
+
+## MOBILE-TECH-APP-002: Tech-workflow parity for the native iOS technician app (Finance-on-job / Tasks / Search)
+
+**Status:** Requirements · **Priority:** P1 · **Date:** 2026-07-06 · **Owner:** Mobile / Field-tech
+**Type:** feature — **mobile app only** (`albusto-mobile`, RN/Expo, separate repo — v1 M00–M11 complete on its `master` @ `59b8860`). Brings the app to parity with what a field technician (role `provider`) already does in the mobile web CRM: (A) estimates & invoices **on the job card** (view/create/edit/send, Price Book line-item picker), (B) a **Tasks** tab (own tasks: view/complete/create), (C) **search** (instant local over the jobs cache + server-side jobs & contacts). **All required backend routes and provider permissions already exist in prod** — this feature is expected to need **NO backend code change and NO migration** (next free = 156, none anticipated; the Architect confirms). Parent/continuity: `docs/specs/MOBILE-TECH-APP-001-SPEC.md` + `albusto-mobile/STATUS.md` ("What's NEXT" item 2, scope chosen with the owner 2026-07-03).
+
+**Binding owner decisions (interview done — these OVERRIDE any conflicting assumption):**
+- **D1 — Offline policy for ALL new areas = ONLINE-ONLY.** Finance, Tasks, and server search fetch over the network when opened; with no connectivity they render a polite "needs connection" placeholder. The existing jobs SQLite cache, `GET /api/sync/jobs` delta contract, and SyncEngine are **untouched** — estimates/invoices/tasks never enter the cache or the sync delta. (Consistent with the v1 locked decision "offline = READ-ONLY, no offline write queue".)
+- **D2 — Finance lives ONLY in JobDetail.** An "Estimates & Invoices" section on the job card lists the documents linked to that job, with create/edit/send. **NO** company-wide document list tabs/screens in the app.
+- **D3 — Line-item editor = Price Book picker + freeform, parity with the web editor.** Category → Group → Item navigation; picking a **Group** bulk-adds its member items as lines (PRICEBOOK-001 semantics, `GET /api/price-book/groups/:id/expand`); freeform lines remain available. Picker is **read-only** (provider has `price_book.view` only — mig 141).
+- **D4 — Search = two tiers.** (a) **Instant local** search over the SQLite jobs cache (client name / address / service / city) on the Schedule tab — works offline; (b) **server** search: jobs via `GET /api/jobs?search=` (provider-scoped server-side; finds jobs outside the 30-day cache window) and contacts via `GET /api/contacts?search=` (name/phone → call). Server tier is online-only.
+- **D5 — Payments / collecting money = OUT OF SCOPE.** Tap-to-Pay is v1.5 (M12), a locked owner decision. No record-payment, no card capture, no payment UI in this feature.
+- **D6 — Tasks = a third tab.** The server scopes the list itself: a provider (has `tasks.view` + `tasks.create`, **no** `tasks.manage`) is auto-scoped to **own** tasks via `scopeOwnerId` in `GET /api/tasks`. The provider can: see own open tasks, complete them, and create a task. The client never filters for security.
+
+### Duplication check (result)
+
+**Not a duplicate — this is the planned "phase 2" of MOBILE-TECH-APP-001** (the parity scope pre-agreed with the owner in `albusto-mobile/STATUS.md`). It is a **mobile client** over features already shipped in the web CRM by: **JOBS-UX-RBAC-001** (mig 138 — provider full self-serve finance perms), **PRICEBOOK-001/002** (catalog + routes + `price_book.view` for provider, mig 141), **TASKS-001** + **AR-TASK-UNIFY-001** (tasks model, routes, `scopeOwnerId` scoping, mig 136/139), **INVOICE-EDIT-ITEMS-001** (`PUT /api/invoices/:id` transactional item replace), **SEND-DOC-001** (send estimate/invoice by email(PDF+link)/SMS + public pages). None of those change; the app consumes them. The prod audit (orchestrator, 2026-07-05) confirmed the mobile API contract is unbroken: `sync.js`/`devices.js`/`jobs.js`/`keycloakAuth.js` unchanged since the Phase-0 deploy; migrations 152–155 are mail-agent only.
+
+### 1. Problem
+
+The v1 app (M00–M11) covers the read path + status/notes/photos, but a field technician still has to open the mobile *web* CRM for three everyday actions: writing an estimate/invoice on site (the app only shows a read-only `invoice_total` line), seeing and closing the tasks assigned to them, and finding a job or customer that isn't on today's agenda (no search at all; the cache only holds a 30-day window). That breaks the "one app in the field" promise and keeps the web tab alive.
+
+### 2. Goals / Non-goals
+
+**Goals**
+- A provider can **create, edit, and send an estimate or invoice from the job card**, including Price-Book-driven line items — full parity with the provider's web capability.
+- A provider can **see their own open tasks, complete them, and create a task** from a dedicated Tasks tab (and create in-context from a job).
+- A provider can **find any job** (instant local + server-wide) and **find a contact by name/phone to call** — including entities outside the 30-day cache window.
+- Zero backend change; zero migration; zero disturbance to the v1 offline sync core.
+
+**Non-goals (out of scope)**
+- Payments of any kind (Tap-to-Pay = v1.5/M12; `record-payment` and `payments.collect_offline` flows excluded).
+- Company-wide estimate/invoice list screens; editing the Price Book from the app (`price_book.manage` not granted to provider).
+- Offline caching / offline queueing of finance, tasks, or server-search results; any change to the SQLite schema or `GET /api/sync/jobs`.
+- Full CRM surfaces (Pulse / Contacts CRUD / Leads / Telephony / Settings) — out of the tech workflow (STATUS.md scope).
+- Task management of OTHER users' tasks (no `tasks.manage`); task delete UI.
+- Android; anything requiring a new backend permission or route.
+
+### 3. User stories (actor = field technician, role `provider`)
+
+1. **Estimate on site.** Finishing a diagnostic visit, the tech opens the job card → "Estimates & Invoices" → creates an estimate, adds "Refrigerator compressor" items from the Price Book picker (one Group tap adds the whole set of lines), adjusts a price, adds a freeform "expedited part" line, saves, and sends it to the customer — before leaving the driveway.
+2. **Invoice after completion.** After completing the job, the tech converts/creates an invoice on the same card, checks the items, and sends it (email/SMS). Payment collection is not offered (out of scope).
+3. **My tasks.** In the morning the tech opens the Tasks tab and sees only THEIR open tasks ("pick up the part at the supplier", "call Mrs. Chen before arrival"), sorted by due date with overdue on top; each shows its parent entity; completing one is one tap.
+4. **Task in context.** On a job card the tech creates a task "order drain pump, model DW80" attached to that job; it later shows up on the Tasks tab and (for the office) in the web CRM.
+5. **Find an old job.** A customer calls about a visit from two months ago (outside the cache window). The tech types the name into search: local cache results appear instantly; a "server" section then returns the old job; opening it fetches the job detail online.
+6. **Find a number to call.** The tech remembers only the customer's street; contact search by name/street fragment surfaces the contact and a Call action (`tel:`, native dialer — MOBILE-NO-SOFTPHONE-001).
+7. **Offline politeness.** In a basement with no signal, the Finance section, Tasks tab, and server search each show a friendly "This needs a connection" state (no spinners forever, no crashes); the Schedule/JobDetail cached read path keeps working as in v1.
+
+### 4. Functional requirements
+
+#### 4.1 Finance on the job card (FR-FIN)
+
+- **FR-FIN-1 — "Estimates & Invoices" section in JobDetail (online-only).** On opening a job card with connectivity, fetch the job's documents via `GET /api/estimates?job_id={id}` and `GET /api/invoices?job_id={id}` (both filters verified in `backend/src/routes/estimates.js:35` / `invoices.js:35`). Render as one section: document number, type, status, total (invoices additionally balance due). Empty → a "Create estimate / Create invoice" affordance only (no "—" rows). Offline → "needs connection" placeholder. The existing cached `invoice_total` line is superseded by this section.
+- **FR-FIN-2 — Document detail view.** Tapping a document opens it (`GET /api/estimates/:id` / `GET /api/invoices/:id`): status, dates, line items (name/qty/price/amount), totals; invoices also amount paid / balance due (read-only — payments data via existing response shape; `payments.view` is granted).
+- **FR-FIN-3 — Create from the job.** "Create estimate" → `POST /api/estimates` with `job_id`; "Create invoice" → `POST /api/invoices` with `job_id` (perm gates `estimates.create` / `invoices.create` — provider has them, mig 138). The new document opens in the editor (FR-FIN-5).
+- **FR-FIN-4 — Edit.** Editing saves via `PUT /api/estimates/:id` / `PUT /api/invoices/:id` with the full items array, matching the web contract. **Invoice item semantics are the INVOICE-EDIT-ITEMS-001 contract:** `items` array present ⇒ transactional replace; `[]` ⇒ clear; `undefined` ⇒ leave untouched — the app MUST always send the explicit array when items were edited.
+- **FR-FIN-5 — Line-item editor: Price Book picker + freeform (parity with web).** Reads: `GET /api/price-book/categories`, `/groups?category_id=`, `/items` (search/filter), and `GET /api/price-book/groups/:id/expand` for **Group → bulk line add** (all gated `price_book.view` — provider has it, mig 141). Picking an Item adds one line (name/price prefilled, qty editable); picking a Group adds all its member items as lines. A freeform line (name, qty, unit price) is always available. No Price Book mutation from the app.
+- **FR-FIN-6 — Send.** "Send" on a document calls `POST /api/estimates/:id/send` / `POST /api/invoices/:id/send` (perm `estimates.send` / `invoices.send` — provider has them), with the channel options the web offers (SEND-DOC-001: email with PDF+public link / SMS). The Architect pins the exact request payload and which channel choices surface on mobile.
+- **FR-FIN-7 — No payment actions.** No record-payment, no Tap-to-Pay, no payment links initiated as a payment-collection flow (D5). The invoice's balance/status is display-only.
+
+#### 4.2 Tasks tab (FR-TSK)
+
+- **FR-TSK-1 — Third tab "Tasks" (online-only).** List = `GET /api/tasks` (`backend/src/routes/tasks.js`; filters available: `status|parent_type|overdue|due_from|due_to|limit|offset`). The server auto-scopes a non-`tasks.manage` user to their OWN tasks via `scopeOwnerId` — the app sends **no** owner filter and never widens/narrows scope client-side. Default view: open tasks, overdue surfaced first, grouped/sorted by due date; pagination via `limit/offset`.
+- **FR-TSK-2 — Complete.** One-tap complete = `PATCH /api/tasks/:id` (status → completed). Optimistic UI is allowed but must reconcile with the server response; failure (offline/4xx) reverts with a message.
+- **FR-TSK-3 — Create.** `POST /api/tasks` (perm `tasks.create` — provider has it): from the Tasks tab and in-context from JobDetail (parent = the current job: `job_id`). Minimum fields: title (required), due date (optional), parent (required when created from a job; from the tab the Architect pins the parent-selection UX — proposed default: created-from-tab tasks require picking one of the tech's jobs, since the app has no lead/contact/document pickers).
+- **FR-TSK-4 — Parent context on a task.** Each task row shows its parent type + label (parents possible: job/lead/contact/estimate/invoice — mig 136). Tapping a task whose parent is a **job** opens JobDetail (from cache when present, else online `GET /api/jobs/:id`). Non-job parents render as **info-only** (no navigation) in this feature — see OQ-M2-1.
+- **FR-TSK-5 — Tab badge (nice-to-have).** Open-task count via `GET /api/tasks/count` on the tab icon; refreshed on tab focus/foreground. Failure to load the count is silent (no badge).
+- **FR-TSK-6 — No offline persistence.** Tasks are not stored in SQLite and not added to the sync delta; offline → tab placeholder (D1).
+
+#### 4.3 Search (FR-SRCH)
+
+- **FR-SRCH-1 — Instant local search (works offline).** A search entry on the Schedule tab filters the SQLite jobs cache as-you-type across customer name, address, city, service name. Results are cached jobs → open JobDetail as today. No network required.
+- **FR-SRCH-2 — Server jobs search (online-only).** The same query (debounced) also hits `GET /api/jobs?search=` (`backend/src/routes/jobs.js:156`; provider-scoped server-side via `getProviderScope` — returns only the tech's assigned jobs, including ones **outside** the 30-day cache window). Server results render in a separate "More results" section, deduped against local hits; opening one fetches `GET /api/jobs/:id` online (it is NOT inserted into the sync cache — D1).
+- **FR-SRCH-3 — Contacts search → call (online-only).** Contact lookup via `GET /api/contacts?search=` (`backend/src/routes/contacts.js:84`; provider-scoped server-side) by name/phone fragment; a result shows name + phone(s) with a **Call** action (`tel:` native dialer — softphone stays desktop-only). No contact editing/creation.
+- **FR-SRCH-4 — Offline behavior.** With no connectivity the local tier still works; the server sections show the "needs connection" state instead of results (never an error toast storm).
+
+### 5. Non-functional requirements
+
+- **Online-only semantics (D1):** every new network surface distinguishes three states — loading, loaded, needs-connection — using the app's existing connectivity/`ApiError` handling; no infinite spinners; a Retry affordance on the placeholder. Writes (save/send/complete/create) are blocked with a clear message when offline (v1 rule: every write needs network).
+- **Security = server-side scoping only:** the app relies on the backend gates (`getProviderScope` on jobs/contacts, `scopeOwnerId` on tasks, permission middleware on finance/price-book routes) and MUST NOT implement any client-side "verified/role" logic; a 403 renders as a polite unavailable-state. No new permissions are introduced or assumed.
+- **API conventions:** all calls go through the existing client (`getJson/postJson/postForm/del` + `ApiError` mapping backend `{code,message}`); Bearer token refresh behavior unchanged (M01/M03).
+- **Performance:** local search results render < 100 ms on a 300-job cache; server search debounce ≥ 300 ms; JobDetail finance fetch does not block the cached (instant) part of the card — the section loads independently.
+- **Quality gates:** app `jest` suite extended (currently 44/44 — keep green + cover: finance list/editor payload building incl. the `items` array semantics, Price Book group-expand → lines mapping, tasks list/complete/create flows, search merge/dedup logic, offline placeholders) and `tsc --noEmit` clean; `expo prebuild` still applies cleanly.
+- **UI:** follows the app's existing v1 design language (STATUS.md/M04-M05 screens); product name in UI = **Albusto** only.
+
+### 6. Acceptance criteria
+
+- **AC-1:** On a job with linked documents, JobDetail shows the Estimates & Invoices section with correct numbers/statuses/totals from `?job_id=` fetches; on a job with none, only the create affordances appear; offline shows the needs-connection placeholder while the rest of the cached card renders normally.
+- **AC-2:** A provider creates an estimate on a job, adds lines via Price Book (single Item AND whole Group bulk-add) plus one freeform line, saves, reopens — items persist exactly; the same document is visible/identical in the web CRM.
+- **AC-3:** Editing an invoice's items from the app transactionally replaces them (INVOICE-EDIT-ITEMS-001): edited list ⇒ replaced; emptied list ⇒ cleared; opening-and-saving without touching items ⇒ items untouched (no `items` key sent or `undefined`).
+- **AC-4:** Send works from the app for both document types via the existing send routes, and the sent artifacts (email PDF+link / SMS) match what the web send produces for the same document.
+- **AC-5:** No payment-collection UI exists anywhere in the app (code search + screen audit); invoice balance is display-only.
+- **AC-6:** The Tasks tab of a provider WITHOUT `tasks.manage` shows only that user's tasks (verified against a seeded second user's tasks being absent) — with the app sending no owner filter; complete and create round-trip to the server and appear in the web CRM.
+- **AC-7:** A task created from JobDetail carries `job_id` = that job; tapping a job-parent task opens that job; non-job-parent tasks render info-only without crashing.
+- **AC-8:** Local search filters the cache instantly (and works in airplane mode); server search returns an assigned job older than the 30-day window that local search cannot find; opening it renders JobDetail online and does NOT alter the SQLite cache contents or the sync cursor.
+- **AC-9:** Contacts search by partial name and by phone fragment returns provider-visible contacts with a working `tel:` Call action; another company's / unassigned contacts never appear (server-scoping regression check).
+- **AC-10:** The v1 core is regression-free: `GET /api/sync/jobs` delta application, schedule rendering, status FSM, notes/photos — existing jest suites stay green and no SQLite schema migration occurs in the app.
+- **AC-11:** Zero backend diffs and zero new DB migrations ship with this feature (backend repo untouched; if the Architect finds a genuine backend gap, it returns to Product as a scope change, not a silent addition).
+
+### 7. Constraints & dependencies
+
+**Backend routes reused AS-IS (verified in code 2026-07-05/06 — ground truth, do not re-derive):**
+- `backend/src/routes/estimates.js` — `GET /` (supports `job_id`, `search`, `include_archived`), `POST /`, `GET /:id`, `PUT /:id`, `POST /:id/send`, item subroutes; gates `estimates.view/create/send`.
+- `backend/src/routes/invoices.js` — `GET /` (supports `job_id`, `estimate_id`), `POST /`, `GET /:id`, `PUT /:id` (transactional items replace, `Array.isArray` guard), `POST /:id/send`; gates `invoices.view/create/send`. (`/:id/record-payment` gated `payments.collect_offline` — NOT used, D5.)
+- `backend/src/routes/price-book.js` — `GET /categories`, `GET /groups`, `GET /groups/:id/expand`, `GET /items` (`price_book.view`); writes `price_book.manage` (not used).
+- `backend/src/routes/tasks.js` — `GET /` (auto `scopeOwnerId` for non-manage), `GET /count`, `GET /entity/:parentType/:parentId`, `POST /` (`tasks.create`), `PATCH /:id`; parents job/lead/contact/estimate/invoice (mig 136).
+- `backend/src/routes/jobs.js` — `GET /?search=` + `GET /:id`, provider-scoped via `getProviderScope`.
+- `backend/src/routes/contacts.js` — `GET /?search=`, provider-scoped via `getProviderScope`.
+- **Provider permission baseline (already in prod):** mig 050 (`jobs.view`, `jobs.done_pending_approval`, `schedule.view`, `phone_calls.use`, …) + mig 138 (`estimates.view/create/send`, `invoices.view/create/send`, `payments.view`) + mig 141 (`price_book.view`) + TASKS-001 (`tasks.view`, `tasks.create`).
+
+**Mobile-side constraints:** RN/Expo app in the separate `albusto-mobile` repo (no git remote — local + Mac-mini build rig, see STATUS.md); existing API client + `ApiError` conventions; existing tab navigator grows Schedule | Tasks | Settings; iOS only; testing = jest + tsc (no e2e harness — the human post-login smoke from STATUS.md "NEXT #1" extends to these flows).
+
+**Integrations affected:** **none directly.** Zenbooker/Twilio/Front/Gmail are untouched — sending documents rides the existing backend send pipeline (SEND-DOC-001), and calls use the native dialer. Zenbooker remains master for payments (not touched — no payment surface, D5).
+
+**Protected parts (must not break):**
+- **The v1 offline sync core:** `GET /api/sync/jobs` contract (`backend/src/routes/sync.js:88` — and per D1 it will NOT grow estimates/invoices/tasks), the app's SyncEngine/applyDelta, the SQLite `jobs` cache schema, the `(updated_at,id)` cursor semantics.
+- **Backend mobile contract:** `sync.js`, `devices.js`, `jobs.js` status routes, `keycloakAuth.js` — unchanged (prod audit baseline).
+- **Server scoping/permission gates:** `getProviderScope`, `scopeOwnerId` behavior, all `requirePermission` gates listed above — consumed, never modified or worked around.
+- **Web CRM finance/tasks editors** and the PRICEBOOK/SEND-DOC/INVOICE-EDIT-ITEMS behavior — the app is a new consumer only.
+- **v1 app flows:** M01 auth/Keychain, M02 cache isolation (owner marker), M07 status FSM, M08 notes/photos, M11 push.
+- Locked decisions: no payments (v1.5), desktop-only softphone, offline READ-ONLY.
+
+**Verification note (house lesson — LIST-PAGINATION-001 / created_by-FK):** before any release, exercise the finance create→edit→send and tasks list/complete paths against a **real backend with a prod-DB copy** under a REAL provider account (jest mocks the DB and hides RBAC/FK truths); confirm the tasks list of a non-manage provider excludes others' tasks on real rows. Prod deploy — none required for backend; the app build/TestFlight step remains owner-gated per standing rules.
+
+### 8. Open questions
+
+- **OQ-M2-1 — Non-job task parents (lead/contact/estimate/invoice): navigation target?** Proposed default (binding until overridden): render parent type + label **info-only**, no navigation (the app has no screens for those entities). Alternative = deep-link to the mobile web CRM. → Architect/owner.
+- **OQ-M2-2 — Send channels on mobile:** expose both email and SMS send options as the web does, or a simplified single "Send" using the web defaults? Architect pins the payload of `POST /:id/send` and the mobile UX. Proposed: parity (both), matching SEND-DOC-001.
+- **OQ-M2-3 — Task creation from the Tasks tab (no parent context):** proposed = require picking one of the tech's own jobs as parent (only picker the app can build cheaply). Confirm, or allow contact-parent via contacts search. → Architect.
+- **OQ-M2-4 — Archived estimates on the job card:** default = exclude (`include_archived` omitted), matching the web card. Confirm. → Architect.
+
+### 9. Involved modules (summary)
+
+- **New (all in `albusto-mobile`):** JobDetail "Estimates & Invoices" section + document detail screen + document editor (items + Price Book picker) + send sheet; Tasks tab (list/complete/create) + in-job task create; search UI on Schedule (local filter + server sections) + contact result row with Call; shared "needs connection" placeholder component; API modules for estimates/invoices/price-book/tasks/jobs-search/contacts-search over the existing client.
+- **Modified (app):** tab navigator (third tab), JobDetail (section replaces the `invoice_total` line), Schedule header (search entry).
+- **Backend:** **no changes** (routes/permissions consumed as-is; migration count stays at 155).

@@ -6716,3 +6716,270 @@ wave 3 (verify):         T5 (scripts/verify-contact-merge-001.js: s1…s16 + sab
 **Тестовые файлы → задачи:** `tests/contactMergeConflicts.test.js` (сервисный слой) → T1 · `tests/contactsPatchMergeConflict.test.js` (route-слой) → T3 · обновление `tests/contactEmailMerge.test.js` → T1, обновление `tests/contactsPatchEmails.test.js` → T3 (TC-R-1: silent D2a/D2b ожидания → сентинел/409; удаление кейсов = FAIL) · `scripts/verify-contact-merge-001.js` → T5. Тесты пишет Tester-агент в цикле каждой задачи.
 
 **Параллелизм-резюме:** две параллельные волны по 2 задачи ({T1∥T2}, затем {T3∥T4}), затем одиночный verify (T5). **Верификационная задача — T5** (real-DB + sabotage амендмент #5 + EXPLAIN perf-gate; prod-copy — deploy-gated). **Миграций НЕТ** (max=155, 156 не используется). **8 P0-гейтов** (I01/I02/I05/I08/I09/I13/I14/ISAB) + **I18 perf-gate** — красный на любом блокирует релиз. Back-compat: PATCH без конфликтов = byte-for-byte сегодняшний save; `updateContact` 2-арговые вызовы не ломаются; silent-ветки (D3, owner==target, orphan phones, ingestion) — нетронуты. Frontend DoD везде: `npm run build` (tsc -b). Деплой в прод — только с явного «да» владельца (standing rule).
+
+## MOBILE-TECH-APP-002 — план
+
+**Дата:** 2026-07-06 · **Feature:** tech-workflow parity для нативного iOS field-tech app (Finance-on-job / Tasks / Search)
+
+**Источники (source of truth):** spec `Docs/specs/MOBILE-TECH-APP-002-SPEC.md` (§0 G1–G11 code-verified corrections — авторитетны над requirements/architecture); architecture `Docs/architecture.md → ## MOBILE-TECH-APP-002` (§1 pinned backend contract, §2 route map, §3 module map); test-cases `Docs/test-cases/MOBILE-TECH-APP-002.md` (69 кейсов: 25 P0; suites co-located `src/**/*.test.ts`).
+
+**Сквозные инварианты (для КАЖДОЙ задачи):**
+- **Target repo = `/Users/rgareev91/contact_center/albusto-mobile`** (RN/Expo, master @ 59b8860). Все пути ниже — относительно него. **Main-repo (twilio-front-integration): ZERO изменений кроме `Docs/*`. Backend: zero diffs, миграции стоят на 155 (AC-11, TC-SEC-5).**
+- **Файлы, которые трогать нельзя (все задачи):** `src/db/schema.ts` (SCHEMA_VERSION остаётся 1) и все write-пути `src/db/` (читать `getJobById`/`listAllJobs` МОЖНО, новых write-callers НЕЛЬЗЯ — TC-SEC-4); `src/sync/` engine/provider + `(updated_at,id)` cursor; `src/auth/**` (M01); `src/push/**` (M11); `src/lib/jobStatus.ts` (M07); `src/components/NoteComposer.tsx` (M08). Новые данные (estimates/invoices/tasks/search) НИКОГДА не пишутся в SQLite (D1, AC-8).
+- **Никаких client-side scope-фильтров:** ни `assignee_id`, ни `owner_user_id`, ни `status` в query strings (TC-SEC-1, TC-API-3); scoping 100% server-side. Никакого `include_archived`, никаких price-book writes, никакого `includePaymentLink`/`record-payment`/payment-UI (TC-SEC-2/3, AC-5).
+- **Error mapping — по HTTP status + `ApiError.code`, НИКОГДА по тексту message** (G6: сервер может отдать русскую строку). Копирайт алертов — строго §7 spec.
+- **Money/ids:** pg numeric/int8 приходят JSON-строками → вся арифметика через коерсеры `lib/documents.ts`; сравнение id — только `String(id)` (§2.5).
+- Тесты пишутся ВМЕСТЕ с кодом задачи (co-located `*.test.ts`, jest-expo). Никакого render-harness НЕТ — UI-поведение проверяется MANUAL (suite G) на этапе Tester/владельца; jest покрывает pure-логику и api-seams.
+- Jest в worktree: `npx jest --testPathIgnorePatterns "/node_modules/"` (JOBS-UX-RBAC-001 gotcha). Сборка/TestFlight — owner-gated; деплой только с явного «да».
+
+---
+
+### MT2-01: `client.ts` — расширение парсинга error-envelope (G1, фундамент)
+
+**Цель:** научить `ApiError`-парсер вложенному конверту `{ok:false, error:{code,message}}` (estimates/invoices/tasks) без регрессии трёх легаси-конвертов. Это блокер всего finance/tasks error-мэппинга.
+
+**Файлы, которые можно менять:**
+- `src/api/client.ts` — правка ТОЛЬКО error-extraction (§2.4 rule: `code = parsed.code ?? (typeof parsed.error === 'object' ? parsed.error?.code : undefined)`; `message = parsed.message ?? (typeof parsed.error === 'string' ? parsed.error : parsed.error?.message) ?? rawBody`; пустое тело → `HTTP {status}`). Токен-flow/`getJson`/`postJson` сигнатуры не трогать; добавить `putJson`/`patchJson`, если их нет (нужны MT2-05/06).
+- `src/api/client.test.ts` (**создать**) — suite `api/client` (§8.4): моки `global.fetch`.
+
+**Spec §refs:** §2.4, §0 G1, E3. **TC refs:** TC-CLI-1…6.
+
+**Ожидаемый результат:** TC-CLI-1 (nested `ARCHIVED`) **обязан падать на master @ 59b8860 до правки и зеленеть после** (implementer фиксирует это в отчёте: прогнать тест на stash'нутом client.ts). TC-CLI-2/3/4 — легаси-конверты byte-unchanged; TC-CLI-5/6 — raw-fallback/`{error:{}}` без throw-in-throw. Существующие 44 теста зелёные.
+
+**Зависимости:** нет (foundation). **Волна 1** (∥ MT2-02/03/04).
+
+**Статус:** done — commit albusto-mobile 303a17d (wave 1, Reviewer APPROVED, sabotage-verified)
+
+---
+
+### MT2-02: `useOnlineQuery` + `NeedsConnection` — единый online-read канон
+
+**Цель:** один хук для всех новых сетевых чтений (4 состояния: loading/data/offline/error+forbidden, refetch-on-focus, offline short-circuit) + общий placeholder с Retry.
+
+**Файлы, которые можно менять:**
+- `src/hooks/useOnlineQuery.ts` (**создать**) — контракт `{data, loading, offline, forbidden, error, reload}` (architecture §3, binding); `useFocusEffect`-refetch; pre-check `useSync().offline`; non-`ApiError` throw → offline (та же классификация, что в SyncEngine); 403 → `forbidden=true`. **Классификатор состояний экспортируется как pure-функция** (render-harness'а нет — TC-API-6 тестирует её headless).
+- `src/hooks/useOnlineQuery.test.ts` (**создать**) — TC-API-6: 500→error; 403→error+forbidden; TypeError→offline; 404→error со status; `sync.offline===true` → offline без вызова fetch.
+- `src/components/NeedsConnection.tsx` (**создать**) — "Needs connection" / "Connect to the internet and try again." + Retry (spinner in-flight), body переопределяем; стиль = v1 empty-state (`job/[id].tsx` "Job not available"), токены Blanc.
+
+**Spec §refs:** §2.1, §2.2, E1. **TC refs:** TC-API-6 (jest); TC-UI-3 (manual, позже).
+
+**Ожидаемый результат:** хук+компонент готовы к употреблению всеми экранами волн 3–4; loading всегда резолвится в data|offline|error; jest зелёный.
+
+**Зависимости:** нет (использует существующий `ApiError` из client.ts — сигнатура не меняется в MT2-01). **Волна 1**.
+
+**Статус:** done — commit albusto-mobile 303a17d (wave 1, Reviewer APPROVED)
+
+---
+
+### MT2-03: pure-libs финансов — `lib/documents.ts` + `lib/priceBook.ts`
+
+**Цель:** вся логика документов headless и jest-доказана ДО UI: draft-модель с `itemsTouched` (стержень AC-3), payload builder (touched→array / emptied→`[]` / untouched→**ключ отсутствует**), totals preview (обе формулы), money-коерсеры, зеро-лайн Save-гейты; прайсбук: expand→lines string-коерсия, item→line, client-side фильтр групп по `category_id` (G9).
+
+**Файлы, которые можно менять:**
+- `src/lib/documents.ts` (**создать**) — `toNumber`/`formatMoney` (`$1,234.50`); draft seed из GET/empty; line CRUD (name required, qty>0, price≥0 — зеркало `normalizeItem`, server-400 недостижимы); `itemsTouched` (любой add/remove/edit/reorder → true, включая net-no-op; скалярные правки tax/discount — НИКОГДА); `buildPayload` (item shape §3.4.5 `{name, description?, quantity, unit_price, unit?, taxable?, sort_order?, price_book_item_id?}`); totals: estimate `discount pct(cap 100)|fixed(cap subtotal)`, `tax = round((taxable_subtotal − discount)⁺ × rate/100, 2)`; invoice `tax = round(subtotal × rate/100, 2)` + flat `discount_amount`; `round(x,2)` без float-артефактов; `canSave`-матрица (estimate create 0 lines → block; edit 0 lines + `hasSummary` → allow; invoice edit-clear → allow).
+- `src/lib/documents.test.ts` (**создать**) — suite `lib/documents` (§8.4): TC-DOC-1 (ассертить ОТСУТСТВИЕ ключа `items`, не `toBeUndefined`), TC-DOC-2…10.
+- `src/lib/priceBook.ts` (**создать**) — `expandRowsToLines` (quantity/unit_price строки→числа, порядок сохранён, malformed→qty 1/price 0, никогда NaN); `itemToLine` (qty 1, `price_book_item_id` carried); `filterGroupsByCategory` (сравнение `String(id)`).
+- `src/lib/priceBook.test.ts` (**создать**) — suite `lib/priceBook`: TC-PB-1…4.
+
+**Spec §refs:** §2.5, §3.4, §3.5.3, §0 G4/G5/G8/G9/G11, E8/E10; architecture risk 1–3. **TC refs:** TC-DOC-1…10 (P0: 1–5), TC-PB-1…4 (P0: PB-1).
+
+**Ожидаемый результат:** обе suites зелёные; AC-3-семантика доказана на уровне lib (touched/emptied/untouched ⇒ array/`[]`/absent); `NaN` недостижим в draft line/totals.
+
+**Зависимости:** нет (pure). **Волна 1**.
+
+**Статус:** done — commit albusto-mobile 303a17d (wave 1, Reviewer APPROVED, sabotage-verified)
+
+---
+
+### MT2-04: pure-libs задач и поиска — `lib/tasks.ts` + `lib/search.ts`
+
+**Цель:** headless-логика Tasks (группировка, optimistic-reducer, parent-модель) и Search (локальный предикат, dedup, latest-wins).
+
+**Файлы, которые можно менять:**
+- `src/lib/tasks.ts` (**создать**) — группировка server-ordered списка (G3: partition, не re-sort): Overdue (open, `due_at < now` строго) → Upcoming asc → No due date; due-line лейблы ("Due today"/"Due Jul 8"/"Overdue — Jul 2"); reducer `completeStart/completeSuccess/completeFailure` (флип на месте, per-row `inFlight`-lock от double-tap, success → replace серверной task verbatim, failure → deep-equal revert); pagination merge с dedup по `String(id)`; `parentModel` — таблица §4.4: `job`→navigable, `lead/contact/estimate/invoice`→info-only с type-префиксом ("Lead · Chen"), `timeline`→"Conversation" (G2), unknown/undefined→info-only, **no throw для ЛЮБОГО входа** (AC-7).
+- `src/lib/tasks.test.ts` (**создать**) — suite `lib/tasks` (§8.4): TC-TSK-1…7.
+- `src/lib/search.ts` (**создать**) — синхронный case-insensitive substring-предикат по `customer_name/address/city/service_name` (null-поля не роняют); eligibility helper (`trim().length ≥ 2` для server-tier; whitespace-only = blank); dedup server-результатов против локальных по `String(id)` (local wins); latest-request-wins token guard (`issueToken`/`isCurrent`).
+- `src/lib/search.test.ts` (**создать**) — suite `lib/search` (§8.4): TC-SRCH-1…5 (SRCH-3: строгий `===` на raw 42 vs '42' обязан провалить тест).
+
+**Spec §refs:** §4.1–4.4, §5.1–5.2, §0 G2/G3, E14/E16/E18/E19. **TC refs:** TC-TSK-1…7, TC-SRCH-1…5.
+
+**Ожидаемый результат:** обе suites зелёные; parent-модель не бросает ни на одном из 8 входов TC-TSK-6; предикат — синхронный (возвращает массив, не Promise).
+
+**Зависимости:** нет (pure). **Волна 1**.
+
+**Статус:** done — commit albusto-mobile 303a17d (wave 1, Reviewer APPROVED)
+
+---
+
+### MT2-05: api-модули финансов — `documentsApi.ts` + `priceBookApi.ts`
+
+**Цель:** тонкие kind-параметризованные обёртки над `client.ts` (§6 rows 1–13), ничего не добавляющие и не срезающие в payload'ах.
+
+**Файлы, которые можно менять:**
+- `src/api/documentsApi.ts` (**создать**) — `listForJob(kind, jobId)` (`?job_id=`, БЕЗ `include_archived`), `getDoc`, `createDoc` (POST: estimate `{job_id, items, tax_rate?, discount_type?, discount_value?}` / invoice `{job_id, items, tax_rate?, discount_amount?}` — только `job_id` как контекст), `updateDoc` (PUT: payload из lib **verbatim** — items-key presence проходит насквозь), `sendDoc` (`{channel:'email'|'sms', recipient, message?}` — канонический `'sms'`, никогда `'text'` (G7); `includePaymentLink` НИКОГДА). Wire-типы Estimate/Invoice co-located (числа-строки G11 отражены в типах).
+- `src/api/documentsApi.test.ts` (**создать**) — `jest.mock('@/api/client')` (конвенция engine.test.ts): TC-API-1 (payloads из РЕАЛЬНОГО `lib/documents` builder'а — seam-тест: untouched → body без ключа `items`; emptied → `items: []`; path `/api/invoices/{id}`), TC-API-2 (send body exactly `{channel:'sms', recipient, message}`).
+- `src/api/priceBookApi.ts` (**создать**) — ТОЛЬКО 4 GET: `listCategories`, `listGroups(search?)` (БЕЗ `category_id` — G9), `expandGroup(id)`, `listItems({search?, category_id?, limit=50, offset?})`. Никаких POST/PUT/DELETE-функций в модуле (S-FIN-27).
+- `src/api/priceBookApi.test.ts` (**создать**) — TC-API-7 (pricebook-половина): только GET-пути, unwrap конвертов.
+
+**Spec §refs:** §6 rows 1–13, §3.6.4, §0 G7/G9. **TC refs:** TC-API-1 (P0), TC-API-2, TC-API-7; static-компаньоны TC-SEC-2/3.
+
+**Ожидаемый результат:** оба test-файла зелёные; grep по `src/api/` не находит `include_archived`/`includePaymentLink`/`'text'`-канала; api-слой не ре-добавляет и не срезает `items`-ключ.
+
+**Зависимости:** MT2-01 (envelope/`putJson`), MT2-03 (TC-API-1 использует реальный builder). **Волна 2** (∥ MT2-06 — разные файлы).
+
+**Статус:** done — commit albusto-mobile (wave 2, Reviewer APPROVED, sabotage-verified; + discount_type wire bugfix in lib/documents)
+
+---
+
+### MT2-06: api-модули задач и поиска — `tasksApi.ts` + `searchApi.ts` + `useTaskCount`
+
+**Цель:** обёртки tasks/search (§6 rows 14–20) + fail-silent хук бейджа.
+
+**Файлы, которые можно менять:**
+- `src/api/tasksApi.ts` (**создать**) — `listTasks({limit=100, offset?})` — query string несёт ТОЛЬКО `limit`/`offset` (ни `status`, ни owner/assignee/parent_type — G3/D6/AC-6); `countTasks()` → на ЛЮБОЙ ошибке резолвится sentinel'ом (null) БЕЗ throw (E17); `createTask({parent_type:'job', parent_id, description, due_at?})` — ровно 4 ключа, никогда `owner_user_id`/`title`; `patchTask(id, {status:'done'})` — значение `'done'`, никогда `'completed'`. Wire-тип Task (6 значений `parent_type` + unknown).
+- `src/api/tasksApi.test.ts` (**создать**) — TC-API-3 (P0: full-path ассерты `/api/tasks?limit=100` и `…&offset=100`, отсутствие substrings `status|owner|assignee|parent_type`), TC-API-4, TC-API-7 (count-половина: success 3 / reject → sentinel без throw).
+- `src/api/searchApi.ts` (**создать**) — `searchJobs(q)` → `/api/jobs?search=&limit=20` (unwrap `results`, SyncJob-shaped — G10); `searchContacts(q)` → `/api/contacts?search=&limit=20`; `getJobOnline(id)` → `/api/jobs/:id` (404 `ApiError` пробрасывается, не глотается). URL-encoding запроса; никаких других параметров.
+- `src/api/searchApi.test.ts` (**создать**) — TC-API-5 (пути, encoding `mrs%20chen`, unwrap, 404-propagate).
+- `src/hooks/useTaskCount.ts` (**создать**) — poll `countTasks()` на tab-focus / AppState→active / после complete+create (экспорт `refresh`); offline → вызов СКИПАЕТСЯ; все ошибки silent (бейдж просто отсутствует).
+
+**Spec §refs:** §4.5, §5.2–5.3, §6 rows 14–20, §0 G3/G10, §2.6. **TC refs:** TC-API-3 (P0), TC-API-4/5/7; static-компаньон TC-SEC-1.
+
+**Ожидаемый результат:** оба test-файла зелёные; это client-половина AC-6 (сервер-половина = TC-UI-14 manual).
+
+**Зависимости:** MT2-01. **Волна 2** (∥ MT2-05).
+
+**Статус:** done — commit albusto-mobile (wave 2, Reviewer APPROVED, sabotage-verified)
+
+---
+
+### MT2-07: Finance UI (read/send) — `JobFinanceSection` + `doc/[kind]/[id]` + `SendDocumentSheet`
+
+**Цель:** секция "ESTIMATES & INVOICES" на job-карте, экран документа, send-шторка.
+
+**Файлы, которые можно менять:**
+- `src/components/JobFinanceSection.tsx` (**создать**) — ДВА независимых `useOnlineQuery` (`listForJob('estimate'|'invoice', jobId)`), не блокируют кэшированный рендер карты (AC-1); ряды: number + status pill + total (+ "Balance $X" у инвойсов при `balance_due>0`), estimates раньше invoices; empty → только "+ Estimate"/"+ Invoice" (аффордансы есть и при наличии рядов, снизу); offline → ОДИН `NeedsConnection` на секцию, create-аффордансы dimmed; один список упал → partial render + "Couldn't load invoices. Retry" (S-FIN-4); 403 → "Not available for your account" без Retry; `total > rows.length` → пассивный "…and N more in the office CRM"; row tap → `doc/[kind]/[id]`; create tap → `doc/editor?kind=…&jobId=…`; prop `onGone`/abandon при job-gone (S-FIN-7).
+- `src/app/doc/[kind]/[id].tsx` (**создать**) — detail через `useOnlineQuery`: number-как-title, status, существующие даты, items (name, qty × unit price, amount), totals block (server-числа, `formatMoney`), invoice: Amount paid / Balance due **display-only** (никаких pay-кнопок — AC-5); Edit → editor; Send → SendDocumentSheet; focus-refetch; 404 → alert "This document is no longer available" → back (S-FIN-9); archived estimate → read-only, Edit/Send скрыты, "Archived — read-only." (S-FIN-10); zero-item: "No items yet", у estimate Send disabled + "Add at least one item to send." (G6), у invoice Send активен; offline → full-screen `NeedsConnection`.
+- `src/components/SendDocumentSheet.tsx` (**создать**) — Modal: канал Email/Text; recipient prefill из `contact_email`/`contact_phone` (G11), редактируемый, keyboard per channel, пустой prefill → hint "No email on file"/"No phone on file"; optional message; Send → `sendDoc` по канону §2.3 (offline pre-check "You're offline / Reconnect to send.", spinner+disable); маппинг ПО status/code: 409 `MAILBOX_NOT_CONNECTED`/422 `NO_PROXY`/402 `WALLET_BLOCKED` → "ask the office"-копирайт §7 + шторка ЗАКРЫВАЕТСЯ; 422 `NO_PHONE`/400 → шторка ОСТАЁТСЯ; success → toast "Sent", detail refetch.
+
+**Файлы, которые трогать нельзя (сверх общего списка):** `src/app/job/[id].tsx` — монтаж секции только в MT2-11.
+
+**Spec §refs:** §3.1, §3.2, §3.6, §3.7, §7, S-FIN-1…12/28…30, E5/E7/E13. **TC refs:** TC-UI-1…6, TC-UI-12/13 (MANUAL — билдится здесь, проверяется Tester'ом/владельцем); TC-SEC-3.
+
+**Ожидаемый результат:** `tsc --noEmit` чист; jest зелёный (новых jest-тестов нет — render-harness отсутствует, логика уже покрыта MT2-03/05); все копирайты — дословно §7; никакой RU-строки сервера в UI.
+
+**Зависимости:** MT2-02, MT2-03, MT2-05. **Волна 3** (∥ MT2-08/09/10 — непересекающиеся файлы).
+
+**Статус:** done — commit albusto-mobile 90d1229 (wave 3, Reviewer APPROVED, sabotage-verified, 5 in-review fixes)
+
+---
+
+### MT2-08: Finance UI (create/edit) — `doc/editor` + `PriceBookPicker`
+
+**Цель:** editor-first создание (G4) и редактирование обоих kind'ов + прайсбук-пикер.
+
+**Файлы, которые можно менять:**
+- `src/app/doc/editor.tsx` (**создать**) — params `{kind, id?, jobId?}`; draft из `lib/documents` (seed: GET по id / empty для create — НИКАКОГО POST до Save, G4); line CRUD inline + swipe-to-delete + "Add custom item" (qty 1, price 0); "Add from price book" (dimmed offline) → PriceBookPicker; totals-футер "Preview" live из lib; create-Save → `createDoc` → 201 → `router.replace('doc/[kind]/[newId]')` (Back → JobDetail, не мёртвый editor); edit-Save → `updateDoc` (payload из lib: items-ключ только если touched — AC-3) → back to detail; `canSave`-гейт + caption "Add at least one item."; invoice edit-clear → confirm "Remove all items from this invoice?"; sent-estimate hint "Saving returns this estimate to draft." (только estimates — G8); dismiss с несохранённым → "Discard this estimate?/invoice?"; 409 `ARCHIVED` → копирайт §7 → back; 404 → pop к JobDetail; 400 → "Couldn't save — {server message | Please try again.}"; offline → канон §2.3, draft живёт в state (S-FIN-16/21).
+- `src/components/PriceBookPicker.tsx` (**создать**) — full-screen Modal: level 1 Categories (`listCategories`) + search-поле; level 2 Groups (client-фильтр `filterGroupsByCategory` — G9; ряд группы показывает `item_count`+`total`) + Items (`listItems({category_id})`); Item tap → `itemToLine` → draft line, пикер открыт (multi-add), "Done" закрывает; Group tap → `expandGroup` → `expandRowsToLines` bulk-append; search → `listItems({search})` debounce 300ms, результаты заменяют browse; пустой каталог → "No price book yet. Add a custom item instead." + кнопка в freeform; mid-browse offline → `NeedsConnection` в теле уровня; 403 → "Not available for your account", freeform-линии живы.
+
+**Spec §refs:** §3.3, §3.4, §3.5, §0 G4/G8/G9, S-FIN-13…27, E8/E9/E11/E12. **TC refs:** TC-UI-7 (P0), TC-UI-8 (P0), TC-UI-9/10/11/22/23 (MANUAL); jest-половина уже в MT2-03/05.
+
+**Ожидаемый результат:** `tsc` чист; jest зелёный; wire-поведение AC-3 (untouched → PUT без `items`) достижимо end-to-end из UI (проверяется TC-UI-8 с прокси).
+
+**Зависимости:** MT2-02, MT2-03, MT2-05. **Волна 3**.
+
+**Статус:** done — commit albusto-mobile 90d1229 (wave 3, Reviewer APPROVED)
+
+---
+
+### MT2-09: Tasks UI — `(tabs)/tasks` + `TaskRow` + `TaskComposer`
+
+**Цель:** таб задач (список/complete/create) + композер, реюзаемый job-картой.
+
+**Файлы, которые можно менять:**
+- `src/app/(tabs)/tasks.tsx` (**создать**) — `GET` через `tasksApi.listTasks({limit:100})` (БЕЗ status/owner — AC-6) + `useOnlineQuery`; секции из `lib/tasks` (Overdue → Upcoming → No due date, SectionList); pull-to-refresh + focus-refetch; ровно `limit` рядов → "Load more" (offset += limit, dedup-merge из lib); empty → "No open tasks." + "Tasks assigned to you show up here."; offline → full-tab `NeedsConnection` без toast-шторма; 403 → "Not available for your account"; "+" → TaskComposer с parent-picker'ом; после complete/create → refetch + `useTaskCount.refresh`.
+- `src/components/TaskRow.tsx` (**создать**) — checkbox (`accessibilityRole="checkbox"` + checked, hit ≥44pt) → optimistic complete через reducer + `patchTask` (`'done'`); in-flight lock (S-TSK-9); failure → revert + алерты §7 (404 "This task is gone…"+refetch / 403 "You can't change this task" / offline "…Reconnect to complete tasks."); description + due-line ("Overdue — Jul 2" warning-цветом) + parent chip из `parentModel`: `job` → tap navigate `job/[id]`, остальные/unknown — info-only без press-аффорданса (G2, AC-7).
+- `src/components/TaskComposer.tsx` (**создать**) — Modal: description (required, multiline) + optional due date (native picker → ISO); режим "pinned parent" (с job-карты: контекст-строка "For {customer_name}", parent не редактируется) и режим "picker" (с таба: собственные джобы из SQLite-кэша `listAllJobs()` — ТОЛЬКО чтение, most-recent `start_date` first, поиск по имени; parent обязателен); Save disabled пока нет description (+parent) — server 400 недостижим; `createTask` БЕЗ `owner_user_id`; 404 → "That job is no longer available / Pick another job." + refresh пикера; dismiss с текстом → "Discard this task?"; success → toast "Task added".
+
+**Файлы, которые трогать нельзя (сверх общего):** `src/app/(tabs)/_layout.tsx` (таб-регистрация и бейдж — MT2-11), `src/app/job/[id].tsx` (кнопка "Add task" — MT2-11).
+
+**Spec §refs:** §4.1–4.4, §7, S-TSK-1…14, E14/E15/E16. **TC refs:** TC-UI-14 (P0), TC-UI-15/16 (MANUAL); jest-половина в MT2-04/06.
+
+**Ожидаемый результат:** `tsc` чист; jest зелёный; таб функционален как route (иконка/бейдж финализируются в MT2-11).
+
+**Зависимости:** MT2-02, MT2-04, MT2-06. **Волна 3**.
+
+**Статус:** done — commit albusto-mobile 90d1229 (wave 3, Reviewer APPROVED; pre-flip partition honored)
+
+---
+
+### MT2-10: Search UI — `search.tsx` (модальный экран, 3 tier'а)
+
+**Цель:** экран поиска: мгновенный локальный tier + серверные jobs/contacts.
+
+**Файлы, которые можно менять:**
+- `src/app/search.tsx` (**создать**) — autofocus-поле + Cancel; tier 1: in-memory `listAllJobs()` (load на mount + при смене `lastSyncedAt`; ЧТЕНИЕ кэша, ни одной записи), синхронный фильтр `lib/search` на каждый keystroke → секция "On your schedule" (`JobCard` ряды → `job/[id]`); blank/whitespace → hint "Search your jobs, past visits, and customers."; tier 2+3: debounce ≥300ms + `isEligible(q)` (≥2 chars) → параллельно `searchJobs`+`searchContacts`, latest-wins token guard; "More results" — dedup по `String(id)` против локальных (local wins), server-ряды = тот же `JobCard` (SyncJob-shaped, G10); "Contacts" — full_name + phone(s), Call-кнопка → `tel:{phone_e164}` (нативный dialer — MOBILE-NO-SOFTPHONE-001), phoneless → name+email, non-interactive; server-tier fail (5xx/network) → компактный ряд "Couldn't search the server. Retry" (локальная секция живёт, без алертов); offline → обе server-секции = ОДИН ряд "Server search needs a connection.".
+
+**Spec §refs:** §5.1–5.4, §8.1, S-SRCH-1…8, E18/E19. **TC refs:** TC-UI-17 (P0), TC-UI-18 (P0, cache-purity byte-compare), TC-UI-19 (MANUAL); jest-половина в MT2-04/06.
+
+**Ожидаемый результат:** `tsc` чист; экран работает как обычный push до регистрации `presentation:'modal'` (MT2-11); ноль импортов write-функций `src/db` (TC-SEC-4).
+
+**Зависимости:** MT2-02, MT2-04, MT2-06. **Волна 3**.
+
+**Статус:** done — commit albusto-mobile 90d1229 (wave 3, Reviewer APPROVED)
+
+---
+
+### MT2-11: интеграция shared-файлов — таб-бар, JobDetail, Schedule-header, root-роуты (ОДНА задача — файлы общие)
+
+**Цель:** свести все новые поверхности в 4 существующих файла. Эти файлы правит ТОЛЬКО эта задача (конфликт-безопасность волны 3).
+
+**Файлы, которые можно менять:**
+- `src/app/(tabs)/_layout.tsx` — третий `Tabs.Screen name="tasks"` между Schedule и Settings (SF Symbols: calendar / checklist / gearshape); `tabBarBadge` из `useTaskCount` (скрыт при 0/null; все фейлы silent — E17).
+- `src/app/job/[id].tsx` — (a) УДАЛИТЬ read-only `Field label="Invoice"` и поставить `<JobFinanceSection/>` (FR-FIN-1 supersedes); (b) аффорданс "Add task" → TaskComposer с pinned parent (S-TSK-10); (c) **cache-miss online fallback §5.5**: `getJobById(cache)` null → `getJobOnline(id)` → тот же detail-UI из component state (НИКОГДА не пишется в SQLite — D1/AC-8; status actions + notes работают, после write — re-fetch `GET /api/jobs/:id` вместо `syncNow`-reload); online-404 → существующий "Job not available" (S-SRCH-10); offline+miss → "Job not available" c hint §2.2; v1 cached-путь byte-неизменен.
+- `src/app/(tabs)/index.tsx` — search-аффорданс в header'е Schedule (pressable field-look) → `router.push('/search')`. Agenda-логика не трогается.
+- `src/app/_layout.tsx` — регистрация `search` с `presentation:'modal'` + titles для `doc/*` экранов.
+
+**Spec §refs:** §3.1, §4.5, §5.5, architecture §3 "Changed", S-TSK-10/14, S-SRCH-9/10. **TC refs:** TC-UI-1 (старая Invoice-строка GONE), TC-UI-14 (create из JobDetail), TC-UI-17/18 (вход в поиск, online fallback), TC-UI-16 (бейдж), TC-UI-20 (v1 regression); TC-SEC-4 (fallback без SQLite-writes).
+
+**Ожидаемый результат:** полный happy-path кликабелен end-to-end (Schedule→job→finance→doc→editor→send; Tasks tab; поиск); `tsc` чист; все 44+новые jest зелёные; v1-потоки (sync/FSM/notes/push) не задеты.
+
+**Зависимости:** MT2-07, MT2-08, MT2-09, MT2-10 (все поверхности волны 3). **Волна 4** (одна задача, без параллели).
+
+**Статус:** done — commit albusto-mobile cfdb6d9 (wave 4, Reviewer APPROVED; +pinnedJob memo fix)
+
+---
+
+### MT2-12: верификация — jest + tsc + prebuild + static-греп-гейты
+
+**Цель:** прогнать релизные гейты и зафиксировать STATIC-ACs; код НЕ менять (фиксы — назад в соответствующую задачу).
+
+**Файлы, которые можно менять:** нет (read-only прогон; допустима правка ТОЛЬКО тестов при флаки-обвязке, с обоснованием).
+
+**Шаги/гейты (все в `albusto-mobile`):**
+1. `npx jest --testPathIgnorePatterns "/node_modules/"` — 44 старых + новые suites `client`/`documents`/`priceBook`/`tasks`/`search` + api-тесты, все зелёные (TC-REL-1).
+2. `npx tsc --noEmit` — чисто.
+3. `npx expo prebuild --no-install` — применяется на чистом дереве (TC-REL-1).
+4. TC-SEC-1: `grep -rn "assignee_id\|owner_user_id" src/` → ноль хитов в request-building путях (`owner_user_id` допустим только как read-поле в типах Task).
+5. TC-SEC-2: `grep -rn "include_archived\|price-book/import\|price-book/export" src/` → ноль; `priceBookApi.ts` экспортирует только 4 GET.
+6. TC-SEC-3: `grep -rn "record-payment\|stripe-terminal\|includePaymentLink\|collect_offline" src/` → ноль сверх dormant v1.5-seed (запинить его файл в отчёте).
+7. TC-SEC-4: список write-callers `src/db/*` IDENTICAL master @ 59b8860 (diff import-sites); `SCHEMA_VERSION === 1`; ноль импортов db-write из `searchApi.ts`/`job/[id].tsx` online-ветки/всех новых модулей.
+8. TC-SEC-5: `git -C <backend repo> status --porcelain` пуст на merge; максимальная миграция = 155.
+9. Отчёт: подтверждение must-fail-then-pass TC-CLI-1 (из отчёта MT2-01) + список MANUAL-кейсов suite G, передаваемых владельцу (§8.5: real provider account + prod-DB copy; TC-UI-7/8/12/14/17/18/20 — release-gating).
+
+**Spec §refs:** §8.4, §8.5, §2.6. **TC refs:** TC-REL-1, TC-SEC-1…5 (все P0/P1).
+
+**Зависимости:** MT2-01…11 (всё). **Волна 5**.
+
+**Статус:** done — верификация исполнена оркестратором (amendment 3): jest 21/209, tsc clean, prebuild clean ×2 (MT2-11 + Reviewer), static-гейты TC-SEC-1/2/3/4 PASS, SCHEMA_VERSION=1, AC-11 zero-backend-diff PASS
+
+---
+
+### MOBILE-TECH-APP-002 — порядок выполнения и параллелизм
+
+- **Волна 1 (parallel ×4, foundation):** MT2-01 (client envelope), MT2-02 (useOnlineQuery+NeedsConnection), MT2-03 (lib/documents+priceBook), MT2-04 (lib/tasks+search) — попарно непересекающиеся файлы, ноль зависимостей.
+- **Волна 2 (parallel ×2):** MT2-05 (documentsApi+priceBookApi; после MT2-01+MT2-03), MT2-06 (tasksApi+searchApi+useTaskCount; после MT2-01).
+- **Волна 3 (parallel ×4, все новые файлы, ноль пересечений):** MT2-07 (finance read/send UI), MT2-08 (editor+picker), MT2-09 (tasks UI), MT2-10 (search screen). Shared-файлы (`_layout`×2, `job/[id]`, `(tabs)/index`) в этой волне ЗАПРЕЩЕНЫ — они целиком в MT2-11.
+- **Волна 4 (одиночная):** MT2-11 — интеграция 4 shared-файлов (единственная задача, правящая существующие экраны).
+- **Волна 5:** MT2-12 — гейты.
+
+**Критический путь:** MT2-01 → MT2-05 → MT2-07/08 → MT2-11 → MT2-12 (5 волн). **Стержень фичи** — AC-3-цепочка lib→api→wire: MT2-03 (TC-DOC-1..4) → MT2-05 (TC-API-1) → MT2-08 (UI) → TC-UI-8 (manual on-wire). **Backend/main-repo — ноль диффов** (AC-11); прод-выкладка приложения (build/TestFlight) и MANUAL-пасс §8.5 — owner-gated, вне этого плана.

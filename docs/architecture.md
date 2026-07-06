@@ -4258,3 +4258,115 @@ Against a prod-DB copy: (1) full merge with a call+SMS+email+lead+task-bearing d
 - **FR-8 shape:** PulseContactPanel is NOT converted to `emails[]`; the equivalent server-side scalar handling was chosen (route-level protection covers every client, per FR-8's own rationale).
 - **OQ-3 = yes**, with the note that a promoted number loses its `secondary_phone_name` label (no primary-label column exists).
 - Multiple owners for one number (legacy dirty data): detection picks the most recently updated owner (mirrors `findEmailContact`/`findOrCreateTimeline` heuristics); the next Save would surface the next owner.
+
+## MOBILE-TECH-APP-002: tech-workflow parity for the native iOS field-tech app (Finance-on-job / Tasks / Search)
+
+**Status:** Architecture · **Date:** 2026-07-06 · **Scope:** `albusto-mobile` repo ONLY (RN/Expo, master @ 59b8860). **ZERO backend diffs, zero migrations (max stays 155)** — AC-11 confirmed: every route/permission this feature consumes exists in prod and was re-verified in code below. The main-repo side of this fragment is documentation only.
+
+### 1. Backend contract audit (code-verified 2026-07-06 — pin these, do not re-derive)
+
+All routes mounted `authenticate + requireCompanyAccess`; company scope + provider scope are 100% server-side (`req.companyFilter`, `getProviderScope`, `scopeOwnerId`). The app sends **no** scope/role filters, ever.
+
+| Call | Request | Response envelope | Notes / gates |
+|---|---|---|---|
+| `GET /api/estimates?job_id={id}` | — | `{ok:true, data:{rows:Estimate[], total}}` | `estimates.view`. Archived excluded by default (**OQ-M2-4 → omit `include_archived`**, binding). Rows join `contact_name`, `job_number`, latest `invoice_id/number`. |
+| `GET /api/invoices?job_id={id}` | — | `{ok:true, data:{rows:Invoice[], total}}` | `invoices.view`. Rows carry `amount_paid`, `balance_due`. |
+| `GET /api/estimates/:id` / `GET /api/invoices/:id` | — | `{ok:true, data:{...doc, items:[]}}` | Detail joins `contact_email`, `contact_phone` (→ prefill Send recipient), `service_address`. |
+| `POST /api/estimates` | `{job_id, items?, summary?, discount_type?, discount_value?, tax_rate?}` | 201 `{ok,data:doc+items}` | `estimates.create`. `resolveContext(job_id)` auto-fills contact/lead + estimate_number — the app sends **only `job_id`** as context. Requires ≥1 item or summary. |
+| `POST /api/invoices` | `{job_id, items?, tax_rate?, discount_amount?}` | 201 `{ok,data:doc+items}` | `invoices.create`. contact auto-resolved from `job_id`; `due_date` + `invoice_number` auto-generated. |
+| `PUT /api/estimates/:id` | scalars + `items?` | `{ok,data:doc+items}` | `items` array ⇒ transactional replace; `undefined` ⇒ leave. Editing a non-draft **resets status→draft** (+ revision snapshot). Archived ⇒ **409 `ARCHIVED`**. |
+| `PUT /api/invoices/:id` | scalars + `items?` | `{ok,data:doc+items}` | **INVOICE-EDIT-ITEMS-001:** `Array.isArray(items)` ⇒ replace; `[]` ⇒ clear; key omitted ⇒ untouched. Scalars allowlisted. |
+| `POST /api/estimates/:id/send` | `{channel:'email'\|'sms', recipient, message?}` | `{ok,data:doc}` | `estimates.send`. Requires items. Errors: **409 `MAILBOX_NOT_CONNECTED`**, **422 `NO_PROXY`/`NO_PHONE`**, **402 `WALLET_BLOCKED`**, 400 `VALIDATION`. Flips status→sent only after dispatch. |
+| `POST /api/invoices/:id/send` | `{channel, recipient, message?, includePaymentLink?}` | `{ok,data:doc}` | `invoices.send`. Same error set. **Mobile always omits `includePaymentLink` payment framing — D5** (the public link is part of the email body regardless; no payment UI in-app). |
+| `GET /api/price-book/categories` | — | `{categories:[]}` | `price_book.view` (provider HAS it, mig 141). ⚠ price-book errors are `{error, message}` — NOT the `{ok:false}` envelope (client.ts already parses both). |
+| `GET /api/price-book/groups?search=` | — | `{groups:[{…, category_id, category_name, item_count, total}]}` | ⚠ **NO `category_id` query param exists** (route takes only `search`/`includeArchived`) — the requirements' `?category_id=` is corrected here: **filter client-side** on the returned `category_id` field. |
+| `GET /api/price-book/groups/:id/expand` | — | `{items:[{name, description, quantity:string, unit, unit_price:string, taxable}]}` | Bulk group→lines. ⚠ `quantity`/`unit_price` are **strings** — coerce in the lib. |
+| `GET /api/price-book/items?search=&category_id=&limit=&offset=` | — | `{items:[]}` | Item picker (server-side search + category filter DO exist here). |
+| `GET /api/tasks?status=&limit=&offset=` | — | `{ok,data:{tasks:Task[]}}` | `tasks.view`. Non-`tasks.manage` ⇒ server forces `scopeOwnerId` = own. Task row: `{id, description, status:'open'\|'done', due_at, parent_type, parent_id, parent_label, owner_user_id, author_user_id, …}` — ⚠ text field is **`description`** (server aliases `title`), completion value is **`'done'`** (requirements' "completed" corrected). |
+| `GET /api/tasks/count` | — | `{ok,data:{count}}` | Open-count, same own-scope. Badge source. |
+| `POST /api/tasks` | `{parent_type:'job', parent_id, description, due_at?}` | 201 `{ok,data:{task}}` | `tasks.create`. Parent must exist (404). Owner defaults to the author (=the tech) server-side — the app never sends `owner_user_id`. |
+| `PATCH /api/tasks/:id` | `{status:'done'}` (or `description`/`due_at`) | `{ok,data:{task}}` | Ownership enforced server-side (403 `ACCESS_DENIED` on others' tasks). |
+| `GET /api/jobs?search=&limit=` | — | `{ok,data:{results:Job[], total, offset, limit, has_more}}` | `jobs.view`, provider-scoped (`assigned_provider_user_ids @>`). `results[]` is `rowToJob` — **the same shape as `SyncJob`** (+ `tags`, `amount_paid`, `balance_due`) → `JobCard` renders it as-is. |
+| `GET /api/jobs/:id` | — | `{ok,data:job}` \| 404 | Online fallback for cache-miss opens (server-search hits outside the 30-day window). |
+| `GET /api/contacts?search=&limit=` | — | `{ok,data:{results:Contact[], pagination:{offset,limit,returned,has_more}}, meta}` | `contacts.view`, provider-scoped (contacts linked to assigned jobs only). Search hits `full_name/phone_e164/secondary_phone/email` ILIKE. Row: `{id, full_name, phone_e164, secondary_phone, email, …}`. |
+
+**Totals math (for the live preview lib; the SERVER stays the source of truth — the saved doc always re-renders from the response):** line `amount = quantity × unit_price`; estimate: `subtotal=Σamount`, `discount = pct(capped 100)|fixed(capped subtotal)`, `tax = round((taxable_subtotal − discount)⁺ × tax_rate/100, 2)`; invoice: `tax = round(subtotal × tax_rate/100, 2)`, flat `discount_amount`. ⚠ pg `numeric/int8` arrive as **JSON strings** (`total`, `balance_due`, ids) — the app already knows this (types/sync.ts); the money helpers coerce everywhere.
+
+Item payload (both docs): `{name (required), description?, quantity>0, unit_price≥0, unit?, taxable?, sort_order?, price_book_item_id?}` — matches `normalizeItem`/`replaceInvoiceItems` exactly.
+
+### 2. Screen / route map (expo-router)
+
+```
+src/app/
+  (tabs)/_layout.tsx      Schedule | Tasks (NEW) | Settings   (SF Symbols: calendar / checklist / gearshape)
+  (tabs)/index.tsx        Schedule — unchanged agenda + a search affordance in the header → push /search
+  (tabs)/tasks.tsx        NEW Tasks tab (own open tasks, overdue-first; complete; + create)
+  (tabs)/settings.tsx     unchanged
+  job/[id].tsx            CHANGED: finance section + "Add task" + online fallback when not in cache
+  doc/[kind]/[id].tsx     NEW document detail (kind ∈ estimate|invoice) — read view, Edit + Send actions
+  doc/editor.tsx          NEW create/edit editor — params {kind, id?, jobId?} (no id ⇒ create for jobId)
+  search.tsx              NEW search screen (presentation:'modal' in root _layout), autofocused field
+```
+
+**Modal-vs-push:** screens are pushes (app precedent: `job/[id]`); `search` is the one route-modal (transient, autofocus). **Price Book picker and Send sheet are NOT routes** — they are full-screen/bottom RN `Modal` components inside the editor/detail screens, because they must hand structured results (picked lines; channel+recipient) back to live screen state, and serializing draft lines through route params is the failure mode we avoid. TaskComposer likewise is a Modal component reused by the Tasks tab (with a parent picker) and JobDetail (parent pinned to the job).
+
+**Navigation flows:** JobDetail → finance section row → `doc/[kind]/[id]` → Edit → `doc/editor` (save → back to detail, focus-refetch) · JobDetail → Create estimate/invoice → `doc/editor?kind=…&jobId=…` (201 → `router.replace` to `doc/[kind]/[newId]`) · Tasks tab row (job parent) → `job/[id]` · Schedule header → `search` → local/server job row → `job/[id]`; contact row → `tel:` (native dialer — MOBILE-NO-SOFTPHONE-001; no contact screen).
+
+### 3. Module map
+
+**New — api (thin, over the existing `client.ts` `getJson/postJson`; wire types co-located, mirroring §1):**
+- `src/api/documentsApi.ts` — kind-parameterized estimates+invoices: `listForJob(kind, jobId)`, `getDoc`, `createDoc`, `updateDoc`, `sendDoc`. One module because the two contracts are symmetric and the editor is shared.
+- `src/api/priceBookApi.ts` — `listCategories`, `listGroups`, `expandGroup`, `listItems` (reads only; `price_book.manage` never used).
+- `src/api/tasksApi.ts` — `listTasks`, `countTasks`, `createTask`, `patchTask`.
+- `src/api/searchApi.ts` — `searchJobs(q)`, `getJobOnline(id)`, `searchContacts(q)`.
+
+**New — lib (PURE, jest-covered — the quality gate's named suites live here):**
+- `src/lib/documents.ts` — draft-document model: line CRUD on a draft, dirty-tracking of items (**`itemsTouched` flag → payload builder omits the `items` key when untouched — AC-3's exact semantics**), payload normalization to §1's item shape, totals preview (both formulas §1), money coerce/format for pg-string numerics.
+- `src/lib/priceBook.ts` — expand-rows → draft lines (string→number coercion), item→line mapping, client-side group filter by `category_id`.
+- `src/lib/tasks.ts` — sort/group (overdue bucket first, then by `due_at`, undated last), optimistic-complete/revert reducer, parent row model (`job` ⇒ navigable, else info-only — binding default).
+- `src/lib/search.ts` — local cache predicate (case-insensitive match over `customer_name/address/city/service_name` of in-memory `SyncJob`s), server/local **dedup by job id**, latest-request-wins guard helper.
+
+**New — hooks/components (presentational; Blanc.* tokens only):**
+- `src/hooks/useOnlineQuery.ts` — the one online-only data hook: `{data, loading, offline, forbidden, error, reload}`; refetch on focus (`useFocusEffect`) + classifies non-`ApiError` throws as offline (same classification the SyncEngine uses); consults `useSync().offline` to short-circuit.
+- `src/components/NeedsConnection.tsx` — shared placeholder (message + Retry), the D1 three-state canon.
+- `src/components/JobFinanceSection.tsx` — "Estimates & Invoices" on JobDetail: both lists via `?job_id=`, create affordances when empty, independent of the cached card render (NFR).
+- `src/components/PriceBookPicker.tsx` — full-screen Modal: Categories → Groups (client-filtered) / Items (server search); Item tap ⇒ one line, Group tap ⇒ `expandGroup` bulk lines; read-only.
+- `src/components/SendDocumentSheet.tsx` — channel Email/Text (web parity — SEND-DOC-001 both channels, binding), recipient prefilled from `contact_email`/`contact_phone`, optional message; maps 409/422/402 to plain-English alerts.
+- `src/components/TaskComposer.tsx` — Modal: description + optional due date; parent = current job (from JobDetail) or an **own-jobs picker fed from the SQLite cache (`listAllJobs()`, date-desc)** — binding default for tab-created tasks; no lead/contact pickers.
+- `src/components/TaskRow.tsx` — checkbox-complete + description + due/overdue + parent label chip.
+
+**Changed:**
+- `src/app/(tabs)/_layout.tsx` — third `Tabs.Screen name="tasks"` (+ `tabBarBadge` from a small `useTaskCount` poll: on tab focus + AppState active, silent on failure — FR-TSK-5).
+- `src/app/job/[id].tsx` — (a) replace the `Field label="Invoice"` line with `<JobFinanceSection/>` (FR-FIN-1 supersedes it); (b) "Add task" affordance (TaskComposer, parent pinned); (c) **cache-miss fallback:** `getJobById(cache)` null → `getJobOnline(id)` render-online, **never written to SQLite** (D1 — the sync cursor/cache stays byte-untouched).
+- `src/app/(tabs)/index.tsx` — header search affordance (pressable field-look) → `router.push('/search')`.
+- `src/app/_layout.tsx` — register `search` with `presentation:'modal'` + titles for the `doc/*` screens.
+
+### 4. Data flow (online-only, D1)
+
+- **Reads:** every new surface = `useOnlineQuery` → loading spinner → data | `NeedsConnection` (network-classified error or `sync.offline`) | polite 403 state ("Not available for your account") — no infinite spinners, Retry always present. Refresh-on-focus everywhere (matches JobDetail's existing focus-reload pattern). JobDetail's cached (instant) part renders first; the finance section streams in.
+- **Writes** (save/send/complete/create): follow the `JobStatusActions` canon — pre-check `useSync().offline` ⇒ dim + "You're offline" alert; in-flight = per-button spinner; `ApiError` mapped to plain-English alerts (404 stale-parent, 403 permission, 409/422/402 as §1); non-ApiError ⇒ offline alert. No queueing.
+- **Tasks optimistic complete (FR-TSK-2):** `lib/tasks.ts` reducer flips the row → `PATCH {status:'done'}` → reconcile with the returned task; failure reverts the row + alert.
+- **Search:** keystroke ⇒ synchronous local filter (in-memory over `listAllJobs()` — ~300 rows ≪100ms budget; **no new SQL/index — SQLite stays untouched**); ≥300ms debounce ⇒ `searchJobs` + `searchContacts` in parallel, latest-wins, server jobs deduped against local ids, rendered in "More results" / "Contacts" sections; offline ⇒ local tier keeps working, server sections show one compact needs-connection row (FR-SRCH-4).
+- **Editor draft:** local state seeded from GET (or empty for create); Save builds the payload via `lib/documents.ts` (items key **only if touched**); response replaces the draft/navigates; detail re-fetches on focus. Editing a sent estimate shows a one-line hint "Saving returns this estimate to draft" (server behavior, §1).
+
+### 5. Explicitly NOT changed
+
+`src/db/schema.ts` (SCHEMA_VERSION stays 1) + all of `src/db/` write paths · `src/sync/` engine/provider and the `(updated_at,id)` cursor · `GET /api/sync/jobs` payload (estimates/invoices/tasks never enter it) · **backend repo: zero diffs, migrations stay at 155** · payments (no record-payment/Tap-to-Pay/payment UI — D5) · auth (M01), push (M11), status FSM (M07), notes/photos (M08) · web CRM editors/routes (consumed as-is).
+
+### 6. Risks / trade-offs
+
+1. **Invoice `items` omission is the AC-3 hinge** — a lazy "always send items" editor would silently pass AC-3's replace case and fail the untouched case. Mitigation: dirty-flag lives in the pure lib with dedicated jest cases (touched/emptied/untouched ⇒ array/`[]`/key-absent).
+2. **Money-as-string:** doc `total/balance_due/quantity/unit_price` and expand-rows arrive as strings; all arithmetic goes through the lib coercers (existing house rule from types/sync.ts). Client totals are a *preview*; displayed totals after save always come from the server response (rounding authority).
+3. **`/price-book/groups` has no `category_id` param** (requirements assumed one) — client-side filter; group counts are small so this is cheap. If the catalog grows, a backend param is a follow-up, not this feature (AC-11).
+4. **Task API vocabulary drift:** `description` (not title), `'done'` (not "completed") — pinned in §1; SpecWriter must use these.
+5. **Server-search job opens on a cache-miss:** JobDetail gains an online branch; risk = accidental cache write. Mitigation: the online job is kept in component state only; `db/jobsRepo` gains no new write callers (greppable AC).
+6. **Editor status side-effect:** PUT on a sent/approved estimate resets to draft (server design) — surfaced in UI copy, not suppressed.
+7. **Send prerequisites are tenant-level** (Gmail mailbox connected, company SMS number, wallet) — mobile can hit 409/422/402 that the tech can't fix; the alerts say "ask the office" rather than leaking internals.
+8. **Two response envelopes** (`{ok,data}` vs price-book `{error,message}`) — `client.ts` already normalizes both into `ApiError{code?,message}`; no client change needed, just noted so nobody "fixes" it.
+
+### 7. Open items resolved by this architecture (were OQ-M2-1…4)
+
+- **OQ-M2-1:** non-job parents = info-only rows (`lib/tasks.ts` parent model), no deep-links — CLOSED (binding default).
+- **OQ-M2-2:** send = both channels, `{channel, recipient, message?}`; invoice `includePaymentLink` unused — CLOSED (web parity).
+- **OQ-M2-3:** tab-created tasks require an own-job parent picked from the local cache — CLOSED.
+- **OQ-M2-4:** archived estimates excluded (`include_archived` omitted) — CLOSED.

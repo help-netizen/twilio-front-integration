@@ -62,6 +62,19 @@ EMAIL-HTML-RENDER-001 включил HTML-рендер входящих писе
 - **Проверка (T5):** jest 87/87; `scripts/verify-mail-mute-001.js` **12/12 на реальном Postgres** — link-skip + no-auto-create (s1), **email-only drop-out + restore (P0)**, **channel-split ranking: звонок/SMS бампят, muted-email нет (P0)**, **cross-tenant isolation (P0)**, multi-email EXISTS-suppression, retained-but-hidden mid-thread, redelivery-идемпотентность, negative-control (feature off = строка present), sabotage-контроль, **EXPLAIN perf-parity ~0.3s на prod-copy (P0)**. Reviewer (агент 08) — **APPROVED**.
 - **Хвост:** прод-деплой (owner-gated) — **ещё НЕ задеплоено**. T6 (опциональный P3 микро-копирайт в UI правил) намеренно не делался — фича полностью функциональна без него.
 
+## 2026-07-06 — MOBILE-TECH-APP-002: tech-workflow parity мобильного приложения (финансы на джобе + Tasks + поиск) — orchestrate-пайплайн
+
+Мобильное приложение техника (albusto-mobile, v1 M00–M11) догнало прод-веб по воркфлоу техника. Полный прогон /orchestrate (агенты 01–08, auto-run, 5 волн, 12 задач MT2-01..12, все Reviewer-APPROVED с sabotage-контролем). **Ноль изменений бэкенда** (AC-11: миграции остались на 155; контракт-аудит подтвердил — прод-изменения 149–155 мобильный API-контракт НЕ ломали; scheduleService.rescheduleItem расширялся контракто-сохранно).
+
+- **Финансы на джобе (online-only):** секция Estimates & Invoices в JobDetail (`JobFinanceSection`), просмотр документа (`doc/[kind]/[id]`), editor-first создание/редактирование (`doc/editor` — POST только на первый Save, G4), Price Book picker (Category→Group→Item, группа = bulk-add, client-side фильтр групп — G9) + freeform-строки, отправка email/SMS (`SendDocumentSheet`, маппинг 409/422/402 → «ask the office» строго по status/code — G6, русская серверная строка не всплывает). Платёжных действий НЕТ (Tap-to-Pay = v1.5).
+- **AC-3 стержень:** dirty-flag builder в `lib/documents` — untouched → PUT без ключа `items`, touched → полный массив, emptied → `[]` (семантика INVOICE-EDIT-ITEMS-001), payload проходит verbatim насквозь UI→lib→api (reference-identity тесты).
+- **Tasks:** третий таб (бейдж `useTaskCount`, fail-silent), серверный scoping (приложение не шлёт owner-фильтров — TC-API-3 негативные ассерты), optimistic complete с revert и pre-flip partition (строка не прыгает между группами), композер с pinned-job из JobDetail или пикером своих джоб из SQLite-кэша (read-only).
+- **Поиск:** модальный экран — ярус 1 мгновенный локальный по кэшу джобов, ярус 2 серверный `GET /api/jobs?search=` (дедуп String(id), latest-wins, debounce 400ms), ярус 3 контакты → tel:. JobDetail получил §5.5 online-fallback: cache-miss → `GET /api/jobs/:id` в state, БЕЗ записи в SQLite (TC-SEC-4: write-callers идентичны v1).
+- **Фундамент:** `client.ts` теперь парсит вложенный error-envelope `{ok:false,error:{code,message}}` (G1, test-first: TC-CLI-1 падал на старом коде); `useOnlineQuery` (4-state, focus-refetch, latest-wins) + `NeedsConnection`; чистые либы documents/priceBook/tasks/search.
+- **Пойманы пайплайном:** Tester W2 — реальный контракт-баг `discount_type:'pct'` vs бэкендовский `'fixed'|'percentage'` (400 на сохранении %-скидки; починен на wire-границе); Reviewer W4 — draft-wipe race (нестабилизированный pinnedJob стирал набранный текст задачи при каждом sync; useMemo-фикс).
+- **Гейты:** jest 21 suites / 209 tests, tsc clean, expo prebuild clean ×2, static-греп TC-SEC-1/2/3/4 PASS, SCHEMA_VERSION=1. Артефакты: requirements/architecture/tasks + Docs/specs/MOBILE-TECH-APP-002-SPEC.md + Docs/test-cases/MOBILE-TECH-APP-002.md. Коммиты albusto-mobile: 303a17d → a9edebf → 90d1229 → cfdb6d9 (master, не задеплоено; TestFlight/manual suite G — owner-gated).
+
+---
 
 ## 2026-07-04 — AGENT-SKILLS-001: agent-agnostic skill-слой CRM + existing-customer voice-скилы (P1–P3) + service-MCP (orchestrate-пайплайн)
 
