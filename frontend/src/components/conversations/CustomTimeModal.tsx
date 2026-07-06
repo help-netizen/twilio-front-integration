@@ -12,6 +12,7 @@ import type { TeamMember } from '../../services/zenbookerApi';
 import { useAuth } from '../../auth/AuthProvider';
 import { dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ } from '../../utils/companyTime';
 import { serverDate, serverNow } from '../../utils/serverClock';
+import { makePinSvg } from '../../utils/mapPins';
 import { fetchSlotRecommendations, type SlotRecommendation } from '../../services/slotRecommendationsApi';
 import './CustomTimeModal.css';
 
@@ -427,16 +428,6 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
         markersRef.current = [];
     }, []);
 
-    // Create colored SVG marker icon
-    const makePinSvg = useCallback((num: number, color: string) => {
-        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40">
-                <path d="M14 0C6.27 0 0 6.27 0 14c0 10.5 14 26 14 26s14-15.5 14-26C28 6.27 21.73 0 14 0z" fill="${color}" stroke="#fff" stroke-width="1.5"/>
-                <text x="14" y="19" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="Arial">${num}</text>
-            </svg>
-        `);
-    }, []);
-
     // Place markers
     useEffect(() => {
         if (!mapInstanceRef.current) return;
@@ -513,7 +504,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
                 mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
             }
         })();
-    }, [jobs, techGroups, resolvedNewJobCoords, clearMarkers, geocodeAddress, makePinSvg]);
+    }, [jobs, techGroups, resolvedNewJobCoords, clearMarkers, geocodeAddress]);
 
     return (
         <div className="ctm-map">

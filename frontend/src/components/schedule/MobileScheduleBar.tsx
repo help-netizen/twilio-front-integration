@@ -16,7 +16,7 @@
  */
 
 import React, { useState } from 'react';
-import { Settings2, Sparkles, Plus, X, RotateCcw } from 'lucide-react';
+import { Settings2, Sparkles, Plus, X, RotateCcw, Map, List } from 'lucide-react';
 import { format } from 'date-fns';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import type { ScheduleFilters } from '../../services/scheduleApi';
@@ -38,6 +38,10 @@ interface MobileScheduleBarProps {
     onNavigateDate: (direction: 'prev' | 'next' | 'today') => void;
     onSelectDate: (date: Date) => void;
     onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
+    // SCHEDULE-MOBILE-MAP-001: list⇄map toggle for the mobile day view. One
+    // button (left of the gear) whose icon + label swap by `mapOpen`.
+    mapOpen: boolean;
+    onToggleMap: () => void;
     // Dispatch-only (omitted for field techs without schedule.dispatch).
     onNewJob?: () => void;
     onToggleAIAssistant?: () => void;
@@ -75,7 +79,7 @@ const SheetAction: React.FC<{ onClick: () => void; icon: React.ReactNode; label:
 
 export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
     currentDate, timezone, filters, providers, allTags,
-    onNavigateDate, onSelectDate, onFiltersChange, onNewJob, onToggleAIAssistant, onOpenSettings,
+    onNavigateDate, onSelectDate, onFiltersChange, mapOpen, onToggleMap, onNewJob, onToggleAIAssistant, onOpenSettings,
 }) => {
     const [sheetOpen, setSheetOpen] = useState(false);
     const activeFilterCount = getActiveFilterCount(filters);
@@ -114,6 +118,18 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                     </div>
                 </button>
 
+                <div className="flex items-center gap-2 shrink-0">
+                {/* List⇄map toggle — one button, icon+label swap by mapOpen (left of gear) */}
+                <button
+                    type="button"
+                    onClick={onToggleMap}
+                    aria-label={mapOpen ? 'Show list' : 'Show map'}
+                    className="w-[44px] h-[44px] flex items-center justify-center shrink-0 transition-opacity hover:opacity-70"
+                    style={controlBtn}
+                >
+                    {mapOpen ? <List className="size-5" /> : <Map className="size-5" />}
+                </button>
+
                 <button
                     type="button"
                     onClick={() => setSheetOpen(true)}
@@ -131,6 +147,7 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                         </span>
                     )}
                 </button>
+                </div>
             </div>
 
             {/* ── Week strip: tap a day, swipe to page weeks ── */}

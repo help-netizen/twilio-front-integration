@@ -7045,3 +7045,120 @@ wave 2:  T3 (real-DB verify G3 → owner-consented prod data apply)
 ```
 
 **Dependency graph:** T1 → T2 → T3, no fan-out (deliberate: T2's fixture is T1's transform output, T3 gates on both). Migrations: NONE. Deploys: NONE — the "release" is the T3 prod row update. Reuse without modification: `callFlowRuntime.js` (queue/vapi renderers, `advance`, dial-status maps), `handleDialAction` TwiML-response path, `ensureFlowForGroup` (its empty-graph-only regeneration is the verified durability guarantee), the flow editor (ELK auto-layout — new node needs no coordinates), Sara's existing SIP resolution (`vapi_tenant_resources` → env). Protected: `answerOnBridge="true"`, `vapi.completed`-ends-call interception, after-hours branch, autonomous-mode forcing, other tenants' flows.
+
+
+## SCHEDULE-MOBILE-MAP-001: Map view for the mobile Schedule day (frontend-only)
+
+Spec: `docs/specs/SCHEDULE-MOBILE-MAP-001.md` · Test cases: `docs/test-cases/SCHEDULE-MOBILE-MAP-001.md`.
+**NO backend, NO migration, NO desktop change.** Verify = `npm run build` (tsc -b, strict
+`noUnusedLocals`) + mobile preview (repo has NO Jest harness for pure UI). Freeze list (any change =
+task failure): `backend/**`, `frontend/src/hooks/useScheduleData.ts`, desktop schedule views
+(`CalendarControls.tsx`, `WeekView/MonthView/TimelineView/TimelineWeekView/ListView`),
+`CustomTimeModal.tsx` behavior (only the `makePinSvg` import swap is allowed).
+
+**Shared-file note:** T1 and T2 both touch `CustomTimeModal.tsx` and the new
+`utils/mapPins.ts` / `ScheduleJobsMap.tsx` — sequence them (T1 extracts & keeps the picker green;
+T2 builds the mobile map/toggle on top). Do NOT parallelize T1 and T2.
+
+### SCHEDULE-MOBILE-MAP-001-T1: extract shared pin SVG (+ keep CustomTimeModal green) (P0)
+
+**Goal:** lift the pin renderer out of the live slot picker into a shared util so both maps use one
+definition, with zero behavior change to the picker.
+
+**Files:**
+- create `frontend/src/utils/mapPins.ts` — `export function makePinSvg(num: number, color: string): string`
+  = the EXACT SVG data-URI currently in `CustomTimeModal.JobMap.makePinSvg` (28×40 teardrop, white
+  stroke, centered number). Pure, no React.
+- edit `frontend/src/components/conversations/CustomTimeModal.tsx` — import `makePinSvg` from
+  `../../utils/mapPins`; delete the local `useCallback` version and its dep-array reference; keep the
+  green new-job pin, `TECH_COLORS`, geocode-on-miss, InfoWindow, legend all as-is.
+
+**Guardrails:** output bytes identical (pins render the same); no signature change at call sites
+except the import source; strict build (remove the now-unused `useCallback` import if it becomes
+unused). Do NOT switch the modal to `getProviderColor` — its `TECH_COLORS` stays.
+
+**Verify:** `cd frontend && npm run build` → 0. Preview the slot picker on DESKTOP (New Job → pick
+time / reschedule): numbered colored pins + green ★ + geocode-on-miss + InfoWindow + legend all
+unchanged (TC-MAP-001, TC-MAP-002).
+
+**Deps:** none (wave 0).
+
+**Статус:** _done_ — created `frontend/src/utils/mapPins.ts` (`export function makePinSvg(num, color): string`, pure, byte-identical output — 785-char data-URI verified equal to the old inline version); `CustomTimeModal.tsx` now imports it and the local `useCallback` def is deleted (call site + green ★ pin + `TECH_COLORS` + geocode-on-miss + InfoWindow + legend unchanged; `makePinSvg` removed from the `useEffect` dep array). `cd frontend && npm run build` → 0 (tsc -b clean, no unused locals).
+
+### SCHEDULE-MOBILE-MAP-001-T2: ScheduleJobsMap + mobile list⇄map toggle (P0)
+
+**Goal:** the mobile map of the listed jobs + the single swap-icon toggle next to the gear.
+
+**Files:**
+- create `frontend/src/components/schedule/ScheduleJobsMap.tsx` — props `{ jobs: ScheduleItem[];
+  companyTz: string }`. `await loadGoogleMaps()` then build `new google.maps.Map` (same options as
+  the picker: mapType/streetView/fullscreen off, POI+transit hidden). Plottable =
+  `jobs.filter(j => j.geocoding_status==='success' && j.lat!=null && j.lng!=null)`. Group by
+  `assigned_techs[0]?.id` (else "Unassigned"), sort each by `start_at`, number 1..N. Markers:
+  `makePinSvg(num, getProviderColor(techId).accent)` (Unassigned=neutral gray), 28×40, anchor(14,40),
+  `InfoWindow` (tech #num colored, `formatTimeInTZ(start_at, companyTz)`, title/customer, address).
+  Per-tech `Polyline` through stops in order (straight, tech color, ~0.7 opacity, weight 3) only when
+  ≥2 stops. `bounds.extend`+`fitBounds`+max-zoom≈14 clamp on first idle; else default center/zoom +
+  empty-state message. "N job(s) without a location" note for `jobs.length − plottable.length`. Small
+  per-tech legend. `useEffect` keyed on `jobs`+`companyTz` re-places; cleanup markers/polylines/
+  listeners/InfoWindow on unmount/re-place. Loader reject → inline "Map unavailable".
+- edit `frontend/src/components/schedule/MobileScheduleBar.tsx` — add props `mapOpen: boolean`,
+  `onToggleMap: () => void`; render ONE 44×44 button left of the gear: `Map` icon when `!mapOpen`
+  (aria "Show map"), `List` icon when `mapOpen` (aria "Show list"), `onClick={onToggleMap}`, same
+  `controlBtn` style. Import `Map`, `List` from `lucide-react`.
+- edit `frontend/src/pages/SchedulePage.tsx` — `const [mobileMapOpen,setMobileMapOpen]=useState(false)`;
+  in `renderCalendarView()` `case 'day'` return `<ScheduleJobsMap jobs={schedule.scheduledItems}
+  companyTz={schedule.settings.timezone}/>` when `isMobile && mobileMapOpen`, else existing `<DayView…/>`;
+  pass `mapOpen={mobileMapOpen}` + `onToggleMap={()=>setMobileMapOpen(v=>!v)}` to `MobileScheduleBar`;
+  `useEffect(()=>{ if(!isMobile) setMobileMapOpen(false); },[isMobile])`.
+
+**Guardrails:** map reads props only (no fetch/query/SSE, no `updateJobCoords`, no client geocoding —
+un-geocoded jobs are simply excluded). ONE button, icon swaps (not two). `scheduledItems` is the
+single source (matches the list exactly). Desktop path unchanged; `DayView` untouched. Strict build
+(no unused locals). Use `--blanc-*`/`--sched-*` tokens for chrome; the map itself is a plain Google
+Map. Reuse `loadGoogleMaps`, `getProviderColor`, `formatTimeInTZ`, `makePinSvg` — add no second
+loader/color scheme.
+
+**Verify:** `cd frontend && npm run build` → 0. Then mobile preview: TC-MAP-003 (toggle swaps
+icon+view), 004 (pins numbered+per-tech colored == listed geocoded jobs), 005 (no-geo excluded+
+counted), 006 (provider change re-plots), 007 (day change re-plots), 008 (pin InfoWindow), 009
+(per-tech straight connectors), 010 (empty→message), 011 (back-to-list cleanup, no console errors).
+
+**Deps:** **after T1** (imports `makePinSvg`; shares `CustomTimeModal`/new files). Wave 1.
+
+**Статус:** _done_ — created `frontend/src/components/schedule/ScheduleJobsMap.tsx` (presentational, props `{ jobs: ScheduleItem[]; companyTz: string }`): `await loadGoogleMaps()` → inline "Map unavailable" on reject; plottable = `geocoding_status==='success' && lat!=null && lng!=null`; groups by `assigned_techs[0]?.id` (else `__unassigned__` → neutral gray `#94a3b8`), sorts each group by `start_at` asc, numbers 1..N; pin color = `getProviderColor(id || name).accent` (matches tile left-border — mirrors `ScheduleItemCard`'s `id||name` key); markers via `makePinSvg(num, color)` 28×40 anchor(14,40); one shared `InfoWindow` on click (tech #num colored + `formatTimeInTZ(start_at, companyTz)` + `title`/`subtitle` + `address_summary`, HTML-escaped); straight `Polyline` per tech (color, opacity .7, weight 3) when ≥2 stops — no Directions; `fitBounds` + max-zoom 14 clamp on first idle; empty → default center/zoom + "No mapped jobs for this day"; "N job(s) without a location" note for `jobs.length − plotted.length`; per-tech legend (plotted techs only); re-place effect keyed on `status`+`groups`+`plotted`+`companyTz`; full cleanup (markers/polylines/listeners/InfoWindow) on unmount + before each re-place. `MobileScheduleBar.tsx`: added props `mapOpen`/`onToggleMap` + ONE 44×44 button left of the gear (lucide `Map` when `!mapOpen` aria "Show map" / `List` when `mapOpen` aria "Show list", same `controlBtn` style). `SchedulePage.tsx`: `const [mobileMapOpen,setMobileMapOpen]=useState(false)`; `case 'day'` returns `<ScheduleJobsMap jobs={schedule.scheduledItems} companyTz={schedule.settings.timezone}/>` only when `isMobile && mobileMapOpen`, else `<DayView…/>`; passes `mapOpen`/`onToggleMap` to the bar; `useEffect(()=>{ if(!isMobile) setMobileMapOpen(false); },[isMobile])`. DayView + desktop path untouched; no fetch/query/SSE/geocode. `cd frontend && npm run build` → 0 (tsc -b strict + vite, no unused locals).
+
+### SCHEDULE-MOBILE-MAP-001-T3: build + preview verification (P0 gate)
+
+**Goal:** prove build + the manual matrix on real viewports; capture screenshots.
+
+**Steps:** `cd frontend && npm run build` (0, no unused). `preview_start` → `preview_resize` mobile →
+`/schedule`: run the manual checklist in `docs/test-cases/SCHEDULE-MOBILE-MAP-001.md` (list⇄map,
+pins/colors/numbers, no-geo note, connectors, InfoWindow, provider+day reactivity, back-to-list).
+`preview_resize` desktop → confirm NO toggle/map and desktop views intact (TC-MAP-012); open the
+slot picker → its map unchanged (TC-MAP-002). Optional: unset `VITE_GOOGLE_MAPS_API_KEY` → graceful
+message (TC-MAP-013). Screenshot list + map (mobile) and the desktop no-toggle state.
+
+**Guardrails:** no product code written in this task (verify only); if a check fails, fix belongs in
+T1/T2, not here.
+
+**Deps:** **after T1+T2 green.** Wave 2 (final).
+
+**Статус:** _pending_.
+
+### Execution order & parallelism (SCHEDULE-MOBILE-MAP-001)
+
+```
+wave 0:  T1 (extract makePinSvg → shared util; CustomTimeModal stays green)
+              downarrow (T2 imports makePinSvg; both touch the shared/new files)
+wave 1:  T2 (ScheduleJobsMap + mobile toggle wiring)
+              downarrow
+wave 2:  T3 (build + mobile/desktop preview verify)
+```
+
+**Dependency graph:** T1 -> T2 -> T3, no fan-out (deliberate: T1 and T2 share
+`CustomTimeModal.tsx` + `utils/mapPins.ts`, so they are sequenced, not parallel). Migrations: NONE.
+Deploys: standard frontend build (owner-consented per standing rule; on deploy, force session logout
+per memory). Reuse without modification: `loadGoogleMaps`, `getProviderColor`, `formatTimeInTZ`,
+`scheduledItems`/`scheduleFilters`, `BottomSheet`/gear sheet, `DayView` (list path). Protected:
+`CustomTimeModal` behavior (pin-import swap only), desktop Schedule, `useScheduleData`, all backend.

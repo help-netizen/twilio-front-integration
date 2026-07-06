@@ -4,7 +4,7 @@
  * toolbar split (ScheduleToolbar + CalendarControls), AI Assistant modal.
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScheduleData } from '../hooks/useScheduleData';
 import { useJobDetail } from '../hooks/useJobDetail';
@@ -15,6 +15,7 @@ import { MobileScheduleBar } from '../components/schedule/MobileScheduleBar';
 import { AIAssistantModal } from '../components/schedule/AIAssistantModal';
 import { WeekView } from '../components/schedule/WeekView';
 import { DayView } from '../components/schedule/DayView';
+import { ScheduleJobsMap } from '../components/schedule/ScheduleJobsMap';
 import { MonthView } from '../components/schedule/MonthView';
 import { TimelineView } from '../components/schedule/TimelineView';
 import { TimelineWeekView } from '../components/schedule/TimelineWeekView';
@@ -39,6 +40,10 @@ export function SchedulePage() {
     // Dispatch-only controls hidden for providers without schedule.dispatch (PF007)
     const canDispatch = schedule.canDispatch;
     const [showAIAssistant, setShowAIAssistant] = useState(false);
+    // SCHEDULE-MOBILE-MAP-001: mobile day list⇄map toggle. Map is mobile-only —
+    // reset to list whenever we leave mobile width so desktop never renders it.
+    const [mobileMapOpen, setMobileMapOpen] = useState(false);
+    useEffect(() => { if (!isMobile) setMobileMapOpen(false); }, [isMobile]);
 
     // ─── Job detail floating panel (same as Jobs page) ───────────────
     const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
@@ -131,6 +136,10 @@ export function SchedulePage() {
             case 'week':
                 return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'day':
+                // Mobile-only: the map replaces the day list (full-width) when toggled on.
+                if (isMobile && mobileMapOpen) {
+                    return <ScheduleJobsMap jobs={schedule.scheduledItems} companyTz={schedule.settings.timezone} />;
+                }
                 return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} />;
             case 'month':
                 return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
@@ -169,6 +178,8 @@ export function SchedulePage() {
                         onNavigateDate={schedule.navigateDate}
                         onSelectDate={schedule.setCurrentDate}
                         onFiltersChange={schedule.setFilters}
+                        mapOpen={mobileMapOpen}
+                        onToggleMap={() => setMobileMapOpen(v => !v)}
                         onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
                         onToggleAIAssistant={() => setShowAIAssistant(true)}
                         onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}

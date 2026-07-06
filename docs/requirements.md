@@ -3807,3 +3807,83 @@ When an inbound call reaches the «Dispatch Team» queue node during business ho
 - Zenbooker/payments untouched. VAPI live assistant untouched (no PATCH — the flow only dials its SIP URI resolved from `vapi_tenant_resources` / env `VAPI_SIP_URI`).
 - Protected: `answerOnBridge="true"` on both queue and vapi Dials; `vapi.completed` → end-call interception; voicemail greeting selection by `config.branchKey`; `TELEPHONY-AUTONOMOUS-MODE-001` (forces after-hours branch — feature simply not in its path).
 - Prod apply is a **data change**, not a deploy: no docker build, no Keycloak logout (no SPA chunks change). Owner-consented per standing rule.
+
+
+## SCHEDULE-MOBILE-MAP-001: Map view for the mobile Schedule day
+
+### 1. Problem
+
+On the **mobile** Schedule the day view is a stacked list of jobs (`DayView` mobile branch) for
+the selected day + selected technician filter (mobile forces `viewMode=day` — `useScheduleData`
+~l.81). A field tech / dispatcher on a phone has no spatial view of the day: they cannot see how
+the day's stops lay out geographically or in what order they run. Jobs already carry `lat`/`lng`
+from SCHED-ROUTE-001, and the desktop slot-picker (`CustomTimeModal`) already renders numbered,
+per-technician-colored pins with a proven Google-Maps setup — but that map is trapped inside the
+slot picker and is desktop-oriented.
+
+### 2. Owner decisions (binding)
+
+1. **Toggle = ONE icon-button next to the mobile Schedule FILTER (gear) button.** In list mode it
+   shows a **Map** icon (tap → map); in map mode it shows a **List** icon (tap → back to list). A
+   single button whose icon swaps by mode — NOT two buttons. The map is **full-screen** (replaces
+   the list area) for the same jobs, not an overlay.
+2. The map shows **exactly the jobs the list currently shows**: the selected day + the selected
+   technician filter. **No "only if one tech" gate** — any number of techs plot together.
+3. **Un-geocoded jobs** (`geocoding_status !== 'success'` or null `lat`/`lng`) are **NOT plotted**;
+   a small note shows their count ("N job(s) without a location").
+4. **Pin numbering = route order per tech**; draw simple **straight connector lines** (`Polyline`)
+   between a tech's consecutive stops in stop order. **NO paid Directions API** (no road-following).
+5. **Frontend-only.** NO backend, NO migration (jobs already carry `lat`/`lng`). **Desktop Schedule
+   untouched. Mobile-only.** Reuse the desktop map's pin/color rendering.
+
+### 3. Functional requirements
+
+- **FR-1 (toggle button):** on mobile Schedule a single icon-button renders adjacent to (left of)
+  the gear/filter button; icon = Map when list is shown, List when map is shown; tap flips the day
+  area between `DayView` list and the map. Desktop shows neither the button nor the map.
+- **FR-2 (same jobs):** the map plots the SAME item set the mobile list renders — `scheduledItems`
+  (already provider/tag-filtered, day-scoped on mobile). No separate fetch/query.
+- **FR-3 (per-tech numbered pins):** each plotted job is a pin colored by its assigned technician
+  (`getProviderColor(techId).accent`, matching the tiles' left-border color) and numbered by its
+  1-based position in that tech's `start_at`-ordered stops. Jobs with no tech → an "Unassigned"
+  group (neutral color), numbered among themselves.
+- **FR-4 (no-geo excluded + counted):** jobs without a successful geocode are omitted from the map;
+  a small note shows the count of such listed jobs. No client-side geocoding fallback.
+- **FR-5 (connectors):** for each tech with ≥2 plotted stops, one straight `Polyline` through the
+  stops in order, in the tech color. No cross-tech lines; 1-stop tech → no line; no Directions API.
+- **FR-6 (pin InfoWindow):** tapping a pin opens an InfoWindow with tech name + number, time
+  (company tz), job title/customer, and address.
+- **FR-7 (reactivity):** changing the provider filter or the selected day updates the map in place
+  (re-plots + re-fits) while staying in map mode.
+- **FR-8 (empty/back):** an empty day → empty map + message; tapping the List icon returns to the
+  list with the map cleanly unmounted (no marker/listener leaks).
+- **FR-9 (reuse without breakage):** the pin SVG (`makePinSvg`) is extracted to a shared util used
+  by BOTH the new mobile map and `CustomTimeModal`; the slot-picker map keeps its exact current
+  behavior (numbered pins, green "new job" star, geocode-on-miss, InfoWindow, legend).
+
+### 4. Acceptance criteria
+
+- **AC-1:** `npm run build` (tsc -b, strict `noUnusedLocals`) passes; shared `mapPins.ts` is
+  imported by both consumers with no unused exports.
+- **AC-2:** On mobile, one swap-icon button sits left of the gear; Map icon in list mode, List icon
+  in map mode; tapping toggles the day area between list and full-width map (verified in preview).
+- **AC-3:** In map mode the plotted pins == the geocoded subset of the listed jobs; per-tech color
+  matches the tile left-border color; numbering is per-tech in start-time order.
+- **AC-4:** Jobs with `geocoding_status !== 'success'`/null coords are not plotted and the
+  "N without a location" note shows N = (listed − plotted).
+- **AC-5:** A tech with ≥2 stops shows a straight in-order polyline in its color; no Directions/road
+  geometry; two techs → two separate lines.
+- **AC-6:** Tapping a pin opens the InfoWindow; changing provider or day re-plots in place; tapping
+  List returns to the list with no console errors and no duplicate pins on re-entry.
+- **AC-7 (freeze):** desktop Schedule renders no toggle/map; `CustomTimeModal` slot-picker map is
+  visually and behaviorally unchanged (pins, star, geocode-on-miss, legend). No backend file and no
+  migration changed.
+
+### 5. Constraints & protected parts
+
+- Frontend only; no `/api/*` change, no migration, `backend/**` untouched.
+- Reuse `loadGoogleMaps()`, `getProviderColor()`, and the extracted `makePinSvg()`; do not add a
+  second Google-Maps loader or a second per-tech color scheme on this page.
+- Protected: `CustomTimeModal` (live VAPI-SLOT-ENGINE slot picker) — only edit is swapping its inline
+  `makePinSvg` for the shared import (byte-identical output). Desktop Schedule views untouched.
+- Google Maps via the existing `VITE_GOOGLE_MAPS_API_KEY`; missing key → graceful inline message.
