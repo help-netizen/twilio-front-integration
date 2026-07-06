@@ -6983,3 +6983,65 @@ wave 3 (verify):         T5 (scripts/verify-contact-merge-001.js: s1…s16 + sab
 - **Волна 5:** MT2-12 — гейты.
 
 **Критический путь:** MT2-01 → MT2-05 → MT2-07/08 → MT2-11 → MT2-12 (5 волн). **Стержень фичи** — AC-3-цепочка lib→api→wire: MT2-03 (TC-DOC-1..4) → MT2-05 (TC-API-1) → MT2-08 (UI) → TC-UI-8 (manual on-wire). **Backend/main-repo — ноль диффов** (AC-11); прод-выкладка приложения (build/TestFlight) и MANUAL-пасс §8.5 — owner-gated, вне этого плана.
+
+---
+
+## CALLFLOW-BUSY-TO-AGENT-001: business-hours queue exhaustion → Sara; voicemail last resort (data-only)
+
+Spec: `docs/specs/CALLFLOW-BUSY-TO-AGENT-001.md` · Test cases: `docs/test-cases/CALLFLOW-BUSY-TO-AGENT-001.md`. **NO migration, NO deploy, NO runtime code change** — one prod `call_flows` row updated by script (owner-consented data change). Product-code freeze list (any edit = task failure): `backend/src/services/callFlowRuntime.js`, `backend/src/services/groupRouting.js`, `backend/src/webhooks/twilioWebhooks.js`, `backend/src/routes/callFlows.js`, `frontend/**`.
+
+### CALLFLOW-BUSY-TO-AGENT-001-T1: pure graph transform + idempotent apply script + unit suite (P0)
+
+**Goal:** `applyBusyToAgentTransform(graph)` implementing EXACTLY the spec delta (add `n-vapi-bh-backup` with config/provider deep-copied from `n-1780888101885`; repoint the one structurally-matched queue fallback edge; append `t-vapi-bh-backup-success` (hidden, `vapi.completed`→`sk-done-routed`) + `t-vapi-bh-backup-fallback` (`vapi.no_target vapi.failed vapi.timeout`→`sk-vm-business-hours`, label 'AI unavailable / failed')), wrapped in the CLI per the spec contract.
+
+**Files (create):** `scripts/apply-callflow-busy-to-agent-001.js` (transform exported via `module.exports`, CLI gated by `require.main===module`; dry-run DEFAULT, `--apply` transactional `SELECT … FOR UPDATE`; hardcoded COMPANY/FLOW/GROUP/state ids, NO override flags; exit 0/2/1 per spec; preconditions P1–P6) · `tests/callFlowBusyToAgentTransform.test.js` (T-G1-01…09).
+
+**Guardrails:** transform is pure (input not mutated, no DB inside); matcher is a token-SET compare on `event_key`; refuse on ANY partial application (never auto-heal); delta fields strictly inside the editor `reactFlowToGraph` whitelist; `DATABASE_URL` default = local `postgresql://localhost/twilio_calls`, never prod.
+
+**Tests / gate:** **G1** — all T-G1 cases green incl. the sabotage control (T-G1-09) proving refusal is non-vacuous. Worktree jest: `--testPathIgnorePatterns "/node_modules/"`.
+
+**Deps:** none (wave 0).
+
+**Статус:** done ✅ — `applyBusyToAgentTransform` + CLI shipped (`scripts/apply-callflow-busy-to-agent-001.js`); G1 suite 27/27 green (`tests/callFlowBusyToAgentTransform.test.js`); regression suites (callFlowRuntime/vapi/autonomous/twilioWebhooks) 25/25 green, freeze list untouched. Local dev-DB dry-run → REFUSED P1 exit 2 (row `cf-bbd3689d` absent locally — correct durability refusal); full CLI contract (WOULD-APPLY diff / transactional APPLY + trigger bump + post-write self-check / NOOP re-run / P2 drift REFUSED exit 2, sentinels untouched) smoke-verified on a throwaway scratch DB. Fixture note for T2/T3: the after-hours vapi pair is modeled as the editor-persisted collapsed 'Next' edge (`collapseDuplicateVapiEdges` merges the same-target pair on any editor save) — that is what makes the spec's 9-state/**8-transition** count and T-G1-01's 10/10 post-delta consistent; the transform itself is count-agnostic (P3–P6 anchors only), and T3 runs against the real prod row either way.
+
+### CALLFLOW-BUSY-TO-AGENT-001-T2: runtime-path jest over the transformed graph (P0, tests only)
+
+**Goal:** pin S1–S6 runtime semantics WITHOUT touching product code: no-agents/ring-timeout/dial-fail → vapi TwiML (`answerOnBridge="true"`, `vapiNode=1`); Sara-fail → BUSINESS-hours greeting (env markers `VM_GREETING` vs `VM_AFTER_HOURS_GREETING`); `vapi.completed` → hangup; `queue.connected` + after-hours branch unchanged; duplicate-event no-loop; plus the untransformed-graph CONTROL (T-G2-10) proving today's voicemail behavior is what the delta changes.
+
+**Files (create):** `tests/services/callFlowRuntime.busyToAgent.test.js` — harness mirrors `tests/services/callFlowRuntime.vapi.test.js` (mock `db/connection`, `realtimeService`, `groupRouting`); the graph under test is **built by importing `applyBusyToAgentTransform` from T1's script and applying it to the PROD_SHAPE fixture** (no hand-copied "expected" graph → no spec/fixture drift).
+
+**Guardrails:** `callFlowRuntime.js` and the rest of the freeze list UNMODIFIED (this task is the tripwire for that); existing suites (`callFlowRuntime.test.js`, `callFlowRuntime.vapi.test.js`, `callFlowAutonomousMode.test.js`, `twilioWebhooks.test.js`) stay green.
+
+**Tests / gate:** **G2** — T-G2-01…10 green + regression suites green.
+
+**Deps:** **after T1** (imports the transform). Wave 1.
+
+**Статус:** done ✅ — `tests/services/callFlowRuntime.busyToAgent.test.js` shipped (tests only): G2 suite 18/18 green covering T-G2-01…10 (S1 no-agents→Sip incl. `no_available_agents` broadcast + saved `n-vapi-bh-backup`; S2 two-phase queue-Dial→`queue.timeout`→Sip in the dial-action response; S3 busy/failed/canceled/unknown mappings; S4A vapi.failed/timeout→BUSINESS VM marker; S4B unresolvable-SIP→business VM in the SAME response + full no-agents-AND-no-SIP chain; S4 non-case vapi.completed→completed; S6 queue.connected intercept; S5 after-hours byte-path via `n-1780888101885`→AFTERHOURS marker; dup-event no-loop; T-G2-10 untransformed CONTROL voicemails). Graph under test built by IMPORTING `applyBusyToAgentTransform` from T1's script (no hand-copied delta). Freeze list untouched (git diff empty); full regression green: G1 27/27, callFlowRuntime 6/6, vapi 6/6, autonomousMode 5/5, twilioWebhooks 8/8, routes/callFlows 3/3 (73/73 combined). Runtime note (report-only, no patch): a stray `queue.timeout` at `n-vapi-bh-backup` completes via advance's eventless probe resolving the hidden `t-vapi-bh-backup-success` edge → `sk-done-routed` final (not the "no edge → complete" path the spec sketched) — observable contract identical (`<Hangup>` + status completed, no re-dial loop).
+
+### CALLFLOW-BUSY-TO-AGENT-001-T3: real-DB verify + prod apply (P0 GATE; prod step = owner-consented data change)
+
+**Goal:** prove the script against a REAL copy of the prod graph, then apply to prod.
+
+**Files (create):** `scripts/verify-callflow-busy-to-agent-001.js` — seeds/uses a local copy of the real prod row (`cf-bbd3689d`, company …0001) + isolation sentinel rows (other company / other group); runs T-G3-01…07: dry-run read-only, apply, byte-identical NOOP re-run, sentinel isolation, editor-loadable invariants (no dangling refs, kinds ∈ ENABLED_KINDS mirror, visible adjacency), REAL `groupRouting.ensureFlowForGroup` returns the customized graph unchanged (durability on real data), sabotage controls (corrupted token → REFUSED/P5; deleted vapi node → REFUSED/P4).
+
+**Prod step (T-G3-08):** with explicit prod `DATABASE_URL`: dry-run → owner reviews printed before/after diff → **explicit owner "да" (standing rule)** → `--apply` → NOOP re-run check → 1-minute owner editor smoke (flow renders, validation valid) + optional live test call while dispatchers are busy. NO deploy / NO restart / NO session logout (data-only). Rollback = inverse one-row UPDATE from the before-JSON captured in the dry-run log.
+
+**Guardrails:** verify script self-seeds and cleans its fixtures; every assertion row-targeted (never whole-table counts); prod credentials never hardcoded; the before-JSON of the prod row is saved to the task log BEFORE apply.
+
+**Tests / gate:** **G3** — 8/8 steps PASS on the copy; prod apply recorded with both dry-run and apply outputs.
+
+**Deps:** **strictly after T1+T2 green** (G1+G2 are the entry condition). Wave 2 (final).
+
+**Статус:** harness half DONE ✅ — `scripts/verify-callflow-busy-to-agent-001.js` shipped and green **8/8 on the real local Postgres** (`postgresql://localhost/twilio_calls`): G3-01 dry-run read-only (WOULD-APPLY + 4 changes + diff; bytes+updated_at unchanged) · G3-02 apply (10/10, fallback repointed, 2 new edges, config/provider copied; stored bytes == `JSON.stringify(transform output)`; trigger bumped updated_at; row stays the ensureFlowForGroup selection; post-commit self-check) · G3-03 byte-identical NOOP fixed point · G3-04 other-company + other-group sentinels byte-untouched across dry-run/apply/noop/refuse, row count stable · G3-05 editor invariants (no dangling refs, ENABLED_KINDS mirror, exactly one isInitial, exact S8 visible adjacency, ALL fields on the `reactFlowToGraph` whitelist, collapse-safe pair; frontend TSX not requireable from node → whitelist/invariant mirror asserted AND SAID SO) · G3-06 REAL `groupRouting.ensureFlowForGroup` returns the 10/10 customized graph with ZERO writes · G3-07 sabotage (token-drift → REFUSED exit 2 naming P5; deleted `n-1780888101885` → REFUSED naming P4; DB bytes untouched; harness's own assertions inverted out-of-band DID trip → non-vacuous) · G3-08 REAL `callFlowRuntime.startExecution` over the REAL DB row (mocked ONLY availableAgentsForGroup→[], isBusinessHours→true, getAutonomousMode→false, realtime recorders) → `<Sip>` + `answerOnBridge="true"` + `vapiNode=1`, NO `<Record>`/VM markers; real `call_flow_executions` row parked at `n-vapi-bh-backup`. Harness self-seeds the prod graph SHAPE under the prod ids + tag `vfy1`, FK-ordered cleanup verified (DB back to baseline), `--section` selector works, **hard local-only guard** (refuses any non-localhost `DATABASE_URL`, exit 1). Jest re-run green: G1+G2 45/45; freeze list untouched. **ОСТАЛОСЬ (orchestrator, owner-consented):** T-G3-08 prod apply — с явным прод `DATABASE_URL`: dry-run (сохранить напечатанный `BEFORE graph_json` = rollback-payload) → owner «да» → `--apply` → повторный запуск = NOOP → 1-мин owner editor smoke. NO deploy/restart/logout.
+
+### Execution order & parallelism (CALLFLOW-BUSY-TO-AGENT-001)
+
+```
+wave 0:  T1 (transform + script + G1 unit)          ← the only product artifact (a script)
+              ↓ (T2 imports the transform)
+wave 1:  T2 (runtime-path jest, tests only, G2)
+              ↓ (G1+G2 green = entry condition)
+wave 2:  T3 (real-DB verify G3 → owner-consented prod data apply)
+```
+
+**Dependency graph:** T1 → T2 → T3, no fan-out (deliberate: T2's fixture is T1's transform output, T3 gates on both). Migrations: NONE. Deploys: NONE — the "release" is the T3 prod row update. Reuse without modification: `callFlowRuntime.js` (queue/vapi renderers, `advance`, dial-status maps), `handleDialAction` TwiML-response path, `ensureFlowForGroup` (its empty-graph-only regeneration is the verified durability guarantee), the flow editor (ELK auto-layout — new node needs no coordinates), Sara's existing SIP resolution (`vapi_tenant_resources` → env). Protected: `answerOnBridge="true"`, `vapi.completed`-ends-call interception, after-hours branch, autonomous-mode forcing, other tenants' flows.

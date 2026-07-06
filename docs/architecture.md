@@ -4370,3 +4370,53 @@ src/app/
 - **OQ-M2-2:** send = both channels, `{channel, recipient, message?}`; invoice `includePaymentLink` unused — CLOSED (web parity).
 - **OQ-M2-3:** tab-created tasks require an own-job parent picked from the local cache — CLOSED.
 - **OQ-M2-4:** archived estimates excluded (`include_archived` omitted) — CLOSED.
+
+## CALLFLOW-BUSY-TO-AGENT-001: queue-exhaustion → Sara via a data-only graph delta (design)
+
+### 1. Existing functionality (verified in code — extend, do not duplicate)
+
+- `backend/src/services/callFlowRuntime.js` — the whole mechanism already exists:
+  - `renderQueueNode` (l.230): `agents.length===0` → `followFailureEdge` (l.218) with default probe order `['transfer.failed','queue.timeout','queue.failed',null]` → follows the FIRST outgoing edge whose whitespace-split `event_key` contains the probed event (`eventMatches` l.77); only when NO edge matches does it fall back to hardcoded `buildVoicemailTwiml`. The prod fallback edge (`event_key='queue.timeout queue.not_answered queue.failed'`) matches on the 2nd probe → **repointing that ONE edge covers the no-agents case**.
+  - `eventFromDialStatus` (l.566): `no-answer→queue.timeout`, `busy|failed|canceled→queue.failed`, anything else→`queue.not_answered` — **all three tokens sit on that same edge**, so ring-timeout and dial-fail ride the same repoint. `completed|answered→queue.connected` is intercepted in `advance` (l.596) before edge routing — success path untouched.
+  - `renderVapiNode` (l.443): resolves SIP per-render from node config `sip_uri` → `vapi_tenant_resources` (tenant …0001, then `'default'`, env fallback `VAPI_SIP_URI`; l.396–436) and emits `<Dial answerOnBridge="true" … action="…voice-dial-action?vapiNode=1">`. Unresolvable SIP → `followFailureEdge(['vapi.no_target','vapi.failed','vapi.timeout',null])`. `vapiEventFromDialStatus` (l.578) + `advance` interception of `vapi.completed` (l.610) already implement "completed=end call, failure=follow edge".
+  - **Mid-call handoff needs no `<Redirect>`:** `handleDialAction` (`backend/src/webhooks/twilioWebhooks.js` l.398, mounted `POST /webhooks/twilio/voice-dial-action` in `routes/webhooks.js` l.26) calls `advance()` and **sends the follow-on node's TwiML as the dial-action HTTP response** (l.446–457) — Twilio continues the live caller leg straight into the vapi `<Dial><Sip>`. Same inline mechanism for the instant no-agents case (`followFailureEdge` → `renderNodeById` inside the initial inbound response).
+  - Per-call graph snapshot: `createExecution` (l.155) copies `flow.graph` into `context_json` → in-flight calls finish on the old graph; new calls pick the new graph up immediately (no restart — `resolveGroupForNumber`→`ensureFlowForGroup` re-reads `call_flows` per inbound call, `groupRouting.js` l.127).
+- Flow editor (`frontend/src/pages/telephony/CallFlowBuilderPage.tsx`): positions are NOT persisted — `graphToReactFlow` (l.251) assigns synthetic coords and `layoutWithElkLayered` (l.453) auto-lays-out on load → the new node needs no x/y. `reactFlowToGraph` (l.330) serializes a FIXED field whitelist; the delta must stay inside it to survive an editor save round-trip. `collapseDuplicateVapiEdges` (l.159) only merges vapi success+fallback edges with the SAME target — the new node's two edges have different targets → rendered as-is. `validateGraph` (`routes/callFlows.js` l.143): `vapi_agent` ∈ `ENABLED_KINDS`, no per-kind rule → delta validates clean.
+- Jest harness precedent: `tests/services/callFlowRuntime.vapi.test.js` (mocked `db`/`realtimeService`/`groupRouting`, graph-in-context executions) — the runtime-path tests extend this pattern; `callFlowRuntime.js` itself is NOT modified.
+
+### 2. Node-reuse decision: dedicated second `vapi_agent` node (NOT reuse of `n-1780888101885`)
+
+**Add `n-vapi-bh-backup` ('AI Backup') for the business-hours path.** Rationale:
+1. **Outgoing edges belong to the node.** Reusing `n-1780888101885` would send business-hours Sara-failures down its existing fallback → `sk-vm-after-hours` → the caller hears the AFTER-HOURS greeting mid-day (violates owner decision 2, which pins `sk-vm-business-hours`).
+2. **The runtime cannot branch evented edges by daypart.** `nextNodeIdForEvent` (l.122) picks the FIRST edge matching the event; `condExpr`/branch evaluation only runs on the eventless path → per-daypart failure targets from ONE node would require a runtime change. Two nodes keep it data-only (owner decision 1).
+3. **Cost ≈ zero.** Assistant behavior lives in VAPI, not on the node; SIP is resolved per-render from `vapi_tenant_resources`, so both nodes dial the same Sara. The transform deep-copies `config`/`provider` from `n-1780888101885` (editor-created shape: `provider:'vapi', config:{}`), so any future per-node pin also matches.
+4. **Editor picture stays literal:** 'AI Greeting' on the after-hours branch, 'AI Backup' behind the queue, each with its own labeled failure edge.
+
+### 3. The graph delta (data-only; full JSON in `docs/specs/CALLFLOW-BUSY-TO-AGENT-001.md`)
+
+1. **ADD state** `n-vapi-bh-backup` `{name:'AI Backup', kind:'vapi_agent', provider/config copied from n-1780888101885}`.
+2. **REPOINT** the single queue fallback edge (matched structurally: `from sk-current-group → sk-vm-business-hours`, `event_key` token-set `{queue.timeout, queue.not_answered, queue.failed}`): `to_state_id → 'n-vapi-bh-backup'`. Every other field (id, label 'Not answered / timeout', edgeRole, system flags) byte-identical.
+3. **ADD** hidden success edge `t-vapi-bh-backup-success`: `n-vapi-bh-backup → sk-done-routed`, `event_key='vapi.completed'`, `hidden:true` (mirrors the `skt-success` convention; runtime keeps hidden edges that carry `edgeRole`/`transitionMode` — l.123; at runtime `vapi.completed` is intercepted anyway, the edge is defensive/documentation).
+4. **ADD** visible fallback edge `t-vapi-bh-backup-fallback`: `n-vapi-bh-backup → sk-vm-business-hours`, label/edgeLabel 'AI unavailable / failed', `edgeRole:'fallback'`, `event_key='vapi.no_target vapi.failed vapi.timeout'`, `insertable:true, insertMode:'between'`.
+
+Result chain (business hours): queue —(all 3 failure events)→ AI Backup —(Sara fails)→ business-hours voicemail → final. After-hours subtree, success edges, completion edges: untouched.
+
+### 4. `ensureFlowForGroup` safety finding (owner decision 6) — SAFE, no neutralization needed
+
+Every `call_flows.graph_json` write path was enumerated (`grep` over backend + scripts):
+- `groupRouting.ensureFlowForGroup` (l.40–88, runs per inbound call): if a row exists AND parsed `graph.states` is non-empty → returns it **as-is** (may only flip `status→'active'`; graph untouched). Regenerates the skeleton ONLY when `states` is empty/missing; INSERTs only when NO row exists.
+- Duplicate `ensureFlowForGroup` in `routes/userGroups.js` (l.62–105) — same guards. `ensureDefaultGroup` (l.224–228) and POST-create-group (l.386–389) INSERT flows only for freshly created groups.
+- `routes/callFlows.js` GET `/:id` (l.106–117) — regenerates only when `!hasRenderableGraph` (empty states). PUT `/:id` (l.304) — user-driven editor save (intentional user control, not seeding).
+⇒ **No code path can regenerate or overwrite a non-empty customized graph.** The transform keeps `states` non-empty (9→10) → the customization is durable. Selection durability: `ensureFlowForGroup` picks `ORDER BY updated_at DESC LIMIT 1` per (group, company); `call_flows.updated_at` auto-bumps via trigger `trg_call_flows_updated_at` (migration 040), so the script's UPDATE keeps `cf-bbd3689d` the selected row. The script additionally REFUSES if `cf-bbd3689d` is not currently the newest-updated renderable flow for (ug-2385d69d, …0001) — guards against editing a shadowed row.
+
+### 5. Runtime-change verdict: **NONE needed**
+
+The pipeline has **no deploy step** — only the prod data update. Verified end-to-end against code: instant no-agents fallback renders the vapi TwiML inside the same inbound-webhook response (`followFailureEdge`→`renderNodeById`); ring-timeout/dial-fail render it as the dial-action response (`handleDialAction`→`advance`→`res.send(flowTwiml)`); Sara-failure renders the business-hours voicemail the same way (greeting chosen by `sk-vm-business-hours.config.branchKey='business_hours'` → `VM_GREETING`, `buildVoicemailTwiml` l.38–42). `callFlowRuntime.js`, `groupRouting.js`, `twilioWebhooks.js`, `callFlows.js`: **frozen** (AC-8). New jest files pin the runtime path without touching product code.
+
+### 6. New components
+
+- `scripts/apply-callflow-busy-to-agent-001.js` — idempotent apply script. Pure exported transform `applyBusyToAgentTransform(graph) → {status:'applied'|'noop', graph, changes[]}` (throws `ShapeError` on any violated precondition); CLI gated by `require.main===module`; default mode **dry-run** (prints row, changes, before/after pretty-JSON diff), `--apply` writes inside a `BEGIN … SELECT graph_json FROM call_flows WHERE id=$1 AND company_id=$2 FOR UPDATE … UPDATE … COMMIT` transaction and re-reads asserting the transform now NOOPs. Company/flow/group/state ids **hardcoded** (`…0001` / `cf-bbd3689d` / `ug-2385d69d`) — no override flags, so the script cannot be pointed at another tenant. `DATABASE_URL` defaults to the house local `postgresql://localhost/twilio_calls`; prod = explicit env + owner consent. Exit 0 = applied/noop, 2 = refused (no write), 1 = error.
+- `tests/callFlowBusyToAgentTransform.test.js` — transform unit suite (G1).
+- `tests/services/callFlowRuntime.busyToAgent.test.js` — runtime-path suite over the TRANSFORMED graph (built by importing `applyBusyToAgentTransform`, not hand-copied) with mocked db/groupRouting (G2).
+
+**Database: no migration** (data update via script; `call_flows` schema untouched; max migration on disk unchanged). **No new API endpoints, no frontend changes.**

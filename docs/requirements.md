@@ -3766,3 +3766,44 @@ The v1 app (M00–M11) covers the read path + status/notes/photos, but a field t
 - **New (all in `albusto-mobile`):** JobDetail "Estimates & Invoices" section + document detail screen + document editor (items + Price Book picker) + send sheet; Tasks tab (list/complete/create) + in-job task create; search UI on Schedule (local filter + server sections) + contact result row with Call; shared "needs connection" placeholder component; API modules for estimates/invoices/price-book/tasks/jobs-search/contacts-search over the existing client.
 - **Modified (app):** tab navigator (third tab), JobDetail (section replaces the `invoice_total` line), Schedule header (search entry).
 - **Backend:** **no changes** (routes/permissions consumed as-is; migration count stays at 155).
+
+## CALLFLOW-BUSY-TO-AGENT-001: business-hours queue exhaustion routes to the AI agent (Sara), voicemail becomes the LAST resort
+
+### 1. Problem
+
+When an inbound call reaches the «Dispatch Team» queue node during business hours and no dispatcher takes it, the caller hits the voicemail announcement ("Hello! Our team is currently assisting other customers…") — three ways: (a) NO dispatcher available at all (everyone offline in presence OR busy on a call → `availableAgentsForGroup` returns `[]` → instant fallback), (b) dispatchers ring but nobody answers before the Dial timeout (`DialCallStatus=no-answer` → `queue.timeout`), (c) the dial fails outright (`busy|failed|canceled` → `queue.failed`). The company already has a live voice assistant (VAPI Sara, assistant `30e85a87`) answering the after-hours branch of the same flow. During business hours a missed caller should get Sara — who can qualify, book and answer — instead of a recorder. Voicemail should only be heard when Sara herself is unreachable.
+
+### 2. Owner decisions (binding)
+
+1. **All three failure cases** (no-agents instant / ring-timeout / dial-fail) route through the **one existing queue fallback edge → Sara**. Prefer **DATA-ONLY** (no runtime code change).
+2. **Fallback chain:** Dispatchers → Sara; Sara fails/unconfigured (`vapi.no_target vapi.failed vapi.timeout`) → **business-hours voicemail** (`sk-vm-business-hours`) — voicemail stays the LAST resort, reached only after trying Sara.
+3. **After-hours branch untouched** (hours-check → existing `n-1780888101885` 'AI Greeting' → `sk-vm-after-hours` on failure — as today).
+4. Change the **current active prod flow** (`call_flows.id='cf-bbd3689d'`, company `00000000-0000-0000-0000-000000000001`, group `ug-2385d69d`) as **editor-format data via an idempotent script**; the graph must stay fully loadable/editable in the flow-editor UI. Prod flow-data update is owner-consented.
+5. `answerOnBridge="true"` is already emitted by `renderVapiNode` — keep, no change (memory: otherwise Sara's greeting clips).
+6. Verify that **no seeding/reset path** (`ensureFlowForGroup` and friends) can later overwrite/regenerate the customized graph; if any can, the design must neutralize it.
+
+### 3. Functional requirements
+
+- **FR-1 (no-agents instant → Sara):** business hours, `availableAgentsForGroup` → `[]` → the queue node's failure routing lands on a `vapi_agent` node and the caller is SIP-dialed to Sara **in the same webhook response** (no announcement, no voicemail).
+- **FR-2 (ring-timeout → Sara):** dispatchers ring, Dial times out (`queue.timeout`) → the dial-action response TwiML dials Sara on the still-live caller leg.
+- **FR-3 (dial-fail → Sara):** `queue.failed` / `queue.not_answered` → same edge → Sara.
+- **FR-4 (Sara-fail → business VM):** from the new business-hours vapi node, `vapi.no_target|vapi.failed|vapi.timeout` → `sk-vm-business-hours` (business-hours greeting `VM_GREETING`, NOT the after-hours one). `vapi.completed` still ends the call (runtime interception, `callFlowRuntime.advance`).
+- **FR-5 (untouched paths):** `queue.connected`/`call.handoff` success path, the whole after-hours subtree, voicemail→final completion edges, and every other tenant's flow behave byte-identically to today.
+- **FR-6 (idempotent script, data-only):** a script applies the graph delta to exactly the one prod row; pure transform function (unit-testable), dry-run diff mode, no-op on re-run, **refuses** (no write) when the expected graph shape is not found. No migration, no deploy, no restart — `ensureFlowForGroup` re-reads `call_flows` per inbound call.
+
+### 4. Acceptance criteria
+
+- **AC-1:** Simulated no-agents call renders vapi `<Dial>…<Sip>` TwiML with `answerOnBridge="true"` and `?vapiNode=1` dial-action directly from the queue node's failure routing.
+- **AC-2:** `advance(callSid,'queue.timeout')` and `…'queue.failed'` / `…'queue.not_answered'` at the queue node return the vapi node's TwiML (returned as the dial-action HTTP response — verified against `handleDialAction`).
+- **AC-3:** `advance` at the new vapi node with `vapi.failed`/`vapi.timeout` (and `renderVapiNode` with unresolvable SIP) returns voicemail TwiML with the **business-hours** greeting; `vapi.completed` returns `<Hangup>` and never reaches voicemail.
+- **AC-4:** after-hours flow: `isBusinessHours=false` still routes hours-check → `n-1780888101885`; its failure still lands on `sk-vm-after-hours`. Transform leaves the after-hours subtree byte-identical.
+- **AC-5:** script run twice → second run exits 0 with NOOP and identical `graph_json`; script against a mutated/unexpected graph → exits non-zero, writes nothing (sabotage control proves the guard is non-vacuous).
+- **AC-6:** transformed graph loads in the flow editor (no dangling transitions, all kinds in `ENABLED_KINDS`, `validateGraph`-clean) and survives an editor save round-trip (delta uses only `reactFlowToGraph`-serialized fields).
+- **AC-7:** only `call_flows` row `cf-bbd3689d` of company `…0001` changes; all other rows (other tenants, other groups) byte-identical before/after.
+- **AC-8 (code freeze):** `backend/src/services/callFlowRuntime.js`, `groupRouting.js`, `webhooks/twilioWebhooks.js`, `routes/callFlows.js` are NOT modified — runtime-change verdict is «none needed» (see architecture).
+
+### 5. Constraints & protected parts
+
+- Zenbooker/payments untouched. VAPI live assistant untouched (no PATCH — the flow only dials its SIP URI resolved from `vapi_tenant_resources` / env `VAPI_SIP_URI`).
+- Protected: `answerOnBridge="true"` on both queue and vapi Dials; `vapi.completed` → end-call interception; voicemail greeting selection by `config.branchKey`; `TELEPHONY-AUTONOMOUS-MODE-001` (forces after-hours branch — feature simply not in its path).
+- Prod apply is a **data change**, not a deploy: no docker build, no Keycloak logout (no SPA chunks change). Owner-consented per standing rule.
