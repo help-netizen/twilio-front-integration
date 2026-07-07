@@ -3948,3 +3948,127 @@ raising only the fallback ceiling makes e.g. Weston MA 02493 return 2–3 real s
   the Tier-1 pass and `rankAndDiversify`).
 - Fixed engine config for the 25 mi cap (no `slot_engine_settings` column, no Settings UI).
 - Do not touch Sara's VAPI assistant/prompt; `recommendSlots.js` unchanged.
+
+## PWA-FIX-001: an installed Albusto PWA (app.albusto.com) on iOS stays in its standalone window during navigation (stop ejecting into SFSafariViewController)
+
+**Status:** Requirements · **Priority:** P1 · **Date:** 2026-07-07 · **Owner:** Frontend / PWA
+**Type:** bug-fix + hardening — **frontend only** (`frontend/`, Vite + React SPA). **NO backend, NO migration** (migration count stays at 155). One run covers all four areas: (A) Web App Manifest, (B) Apple/PWA `<head>` meta, (C) brand icons, (D) auth "no-eject" hardening. Continuity/ground truth: verified diagnosis below (do NOT re-derive) + owner binding decisions.
+
+### Verified diagnosis (ground truth — confirmed in code 2026-07-07, do not re-derive)
+
+1. **No Web App Manifest ships.** `/manifest.webmanifest`, `/manifest.json`, `/site.webmanifest` all resolve to `index.html` (SPA catch-all, `content-type: text/html`). `frontend/index.html` has **no** `<link rel="manifest">`; `frontend/public/` contains only `sse-debug.html`, `sw-push.js`, `vite.svg` — no manifest, no PWA icons.
+2. **`frontend/index.html` `<head>` is minimal** (`frontend/index.html:1-13`): `<meta charset>`, `<link rel="icon" href="/vite.svg">`, `<meta name="viewport" content="width=device-width, initial-scale=1.0">`, `<title>Albusto</title>`. Missing: `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`, `apple-mobile-web-app-title`, `theme-color`, `apple-touch-icon`, `viewport-fit=cover`.
+3. **SPA = React Router `BrowserRouter`** (`frontend/src/App.tsx:101`); `/` → `<Navigate>` to `/pulse` (`App.tsx:111`); all in-app navigation is client-side. A manifest with `scope:"/"` therefore keeps every route inside the standalone window.
+4. **Auth = Keycloak** (`frontend/src/auth/AuthProvider.tsx`): silent refresh already exists — `setInterval(... kc.updateToken(60) ...)` at `AuthProvider.tsx:261` and `kc.onTokenExpired` at `:268`. **BUT both reject-paths call `kc.login()` immediately** (`:264` inside the interval `.catch`, `:272` inside the `onTokenExpired` `.catch`). `kc.login()` is a full cross-origin redirect to `auth.albusto.com`, which is what iOS uses to **eject the standalone window into an SFSafariViewController overlay**. This is the eject trigger; missing scope (item 1) is the reinforcing trigger.
+5. **The "broken layout" symptom** = SFSafariViewController's own top-bar + bottom-toolbar + different safe-area insets — NOT a CSS breakpoint bug, NOT reproducible by resizing a desktop browser.
+6. **Brand:** product = **Albusto**. Warm near-white background `--blanc-surface-strong` `#fffdf9`; `theme.css` `--primary` `#030213` (near-black). Palette Т2. (`--blanc-*` tokens are internal — never render the word "Blanc" in UI.)
+7. **A push service worker already exists** (`frontend/public/sw-push.js`, registered at scope `/` via `pushNotificationService.ts:33`). The manifest work is independent of it and must not disturb it.
+
+### Binding owner decisions (interview done — these OVERRIDE any conflicting assumption)
+
+- **D1 — All four areas ship in one run:** (A) `manifest.webmanifest` with `scope:"/"`, (B) `index.html` Apple/PWA meta, (C) brand PNG icons (letter-mark "A" in a rounded square, palette Т2), (D) auth fix.
+- **D2 — Manifest values:** `start_url:"/"`, `display:"standalone"`, `scope:"/"`, `name`/`short_name` = "Albusto", warm background/theme color from the Т2 palette (`background_color` ≈ `#fffdf9`, `theme_color` pinned by the Architect from the palette — near-black `#030213` or a warm-surface value, chosen for the iOS status-bar look).
+- **D3 — Icons:** brand letter-mark "A" in a rounded square, palette Т2, as PNGs: **180×180 apple-touch-icon**, **192×192**, **512×512**, and **512×512 `maskable`**. Declared in the manifest (`icons[]`) and (apple-touch) in `index.html`.
+- **D4 — Auth "no-eject":** replace the instant `kc.login()` on a *transient* `updateToken` failure with a **bounded retry + backoff**; perform a **full redirect (`kc.login()`) ONLY when the refresh is genuinely dead** (e.g. `invalid_grant` / "session not active" — the refresh token is expired/revoked). Transient/network failures must NOT redirect. Both reject-sites (`:264`, `:272`) adopt the shared policy.
+- **D5 — Verification:** `npm run build` (`tsc -b`; prod is stricter — `noUnusedLocals`) must stay green. Standalone-on-iOS behavior is **owner-gated manual** verification. Deploy is **owner-gated**.
+
+### Duplication check (result)
+
+**Not a duplicate — no PWA/manifest/install requirement exists in `Docs/requirements.md`.** Adjacent-but-distinct items: **MOBILE-NO-SOFTPHONE-001** (browser softphone is desktop-only; unrelated — the PWA is the desktop-web app installed to a Home Screen, not the softphone), **MOBILE-TECH-APP-001/002** (a *native* iOS app in a separate repo — not this web PWA), and the existing **push service worker** (`sw-push.js`, notifications — orthogonal to the manifest). This feature adds the install/standalone contract the web app has never had and hardens the one code path (`kc.login()` on transient refresh failure) that breaks it.
+
+### 1. Problem
+
+A user who has "Add to Home Screen"-installed app.albusto.com on their iPhone expects it to behave like an app: launch and stay in a full-screen standalone window. Instead, because (a) the site ships no manifest with a `scope`, and (b) any transient Keycloak token-refresh hiccup immediately fires a full cross-origin redirect to `auth.albusto.com`, iOS ejects the standalone window into an in-app `SFSafariViewController`. That overlay has its own chrome (top bar, bottom toolbar) and different safe-area insets, so the app looks "broken" and the user is knocked out of the app-like experience — often mid-session, with no action on their part.
+
+### 2. Goals / Non-goals
+
+**Goals**
+- The installed PWA stays in its **standalone** window across all client-side navigation (every route under `scope:"/"`).
+- A **transient** token-refresh failure no longer triggers a full-page redirect (no eject); the app self-heals via silent retry.
+- The app is **installable** with correct branding: name "Albusto", warm Т2 palette, a proper "A" letter-mark icon on the Home Screen and splash (no generic screenshot icon).
+- `npm run build` stays green; desktop browser and an ordinary Safari tab are **unaffected** (backward compatible).
+
+**Non-goals (out of scope)**
+- Offline capability / caching strategy / a fetch-handling service worker (the existing `sw-push.js` stays push-only; no offline app-shell in this feature).
+- Android/Chrome install polish beyond what the same manifest already yields, push-notification changes, or any auth flow rework beyond the transient-vs-dead refresh decision.
+- Backend, Caddy, or DNS code changes (the manifest content-type is a **deploy constraint**, noted in §7 — not a code deliverable here).
+- Redesigning the login screen, session lifetimes, or the Keycloak realm.
+
+### 3. User stories (actor = user of the installed Albusto PWA on iPhone)
+
+1. **Stay in the app while navigating.** The user opens the installed Albusto icon, lands on Pulse, taps into a lead, a job, then Schedule — the whole time the app stays full-screen standalone; the Safari chrome never appears.
+2. **Survive a network blip.** The user is on the app when the token silently needs refreshing during a brief connectivity dip; the refresh retries and succeeds, and the user never leaves the standalone window (no flash to `auth.albusto.com`, no SFSafariViewController).
+3. **Real re-login only when truly needed.** The user's session has genuinely expired/been revoked; the app performs the full login redirect deliberately — the one legitimate case — and after signing in returns to the app.
+4. **Install with brand identity.** A user adds app.albusto.com to the Home Screen; the icon is the Albusto "A" letter-mark in a rounded Т2-palette square (not a page screenshot), the title reads "Albusto", and launch shows the correct status-bar/splash colors.
+5. **Desktop unaffected.** A user on a desktop browser or a normal mobile Safari tab sees no change — same layout, same auth behavior for a real expiry — the fix is invisible to them.
+
+### 4. Functional requirements
+
+#### 4.1 Web App Manifest (FR-MAN)
+
+- **FR-MAN-1 — Ship a manifest file.** Add a real `manifest.webmanifest` served from the site root, referenced from `index.html` via `<link rel="manifest" href="/manifest.webmanifest">`.
+- **FR-MAN-2 — Install/standalone fields.** `name:"Albusto"`, `short_name:"Albusto"`, `start_url:"/"`, `display:"standalone"`, **`scope:"/"`** (covers every SPA route so client-side navigation never leaves the standalone context), `background_color` (warm near-white, ≈ `#fffdf9`), `theme_color` (Т2 palette — value pinned by the Architect for the iOS status-bar look), `orientation` optional (Architect's call).
+- **FR-MAN-3 — Icons array.** `icons[]` declares the 192, 512, and 512-`maskable` PNGs (see FR-ICON) with correct `sizes`, `type:"image/png"`, and `purpose` (`"any"` / `"maskable"`).
+
+#### 4.2 Apple / PWA `<head>` meta (FR-META)
+
+- **FR-META-1 — Manifest + Apple capability.** In `frontend/index.html` `<head>`: `<link rel="manifest">` (FR-MAN-1), `apple-mobile-web-app-capable="yes"`, `apple-mobile-web-app-status-bar-style` (Architect picks the value to match `theme_color` — e.g. `default`/`black`/`black-translucent`), `apple-mobile-web-app-title="Albusto"`.
+- **FR-META-2 — theme-color + apple-touch-icon.** `<meta name="theme-color">` matching the manifest `theme_color`; `<link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png">` (180×180).
+- **FR-META-3 — viewport-fit=cover.** Update the existing viewport meta to `width=device-width, initial-scale=1.0, viewport-fit=cover` so standalone respects iOS safe-area insets (pairs with any `env(safe-area-inset-*)` the app already uses).
+
+#### 4.3 Brand icons (FR-ICON)
+
+- **FR-ICON-1 — Produce 4 PNGs, Albusto brand.** Letter-mark "A" in a rounded square, palette Т2 (warm near-white / near-black `#030213` per the design system): **180×180** (apple-touch-icon), **192×192**, **512×512**, **512×512 maskable** (with adequate safe-zone padding so iOS/Android masking doesn't clip the "A"). Product name/identity = **Albusto** only.
+- **FR-ICON-2 — Placement & wiring.** Icons live under the served static root (e.g. `frontend/public/icons/`); referenced from the manifest `icons[]` (192/512/512-maskable) and `index.html` (apple-touch 180). Files are valid PNGs at their declared pixel sizes.
+
+#### 4.4 Auth "no-eject" hardening (FR-AUTH)
+
+- **FR-AUTH-1 — Do not redirect on a transient refresh failure.** At both `AuthProvider.tsx:264` (interval `.catch`) and `:272` (`onTokenExpired` `.catch`), replace the immediate `kc.login()` with a shared policy: on a *transient* failure (network error / timeout / non-fatal), **retry `updateToken` with bounded backoff** (attempt count + delay pinned by the Architect); the standalone window is preserved.
+- **FR-AUTH-2 — Full redirect ONLY when the refresh is genuinely dead.** Perform `kc.login()` only when the refresh token is expired/revoked / session not active (`invalid_grant` / Keycloak "session not active") — the one legitimate cross-origin re-auth case. Distinguishing transient vs. dead (error inspection / `kc.isTokenExpired` / refresh-token expiry) is pinned by the Architect.
+- **FR-AUTH-3 — Silent success path unchanged.** A successful (possibly retried) refresh updates the token and re-fetches the authz context exactly as today (`setToken` + `fetchAuthzContext`); no user-visible interruption. `onAuthRefreshSuccess` (`:275`) behavior is preserved.
+- **FR-AUTH-4 — Single shared policy.** Both reject-sites use one shared retry/redirect decision (no divergent copy-paste), so the "transient → retry, dead → redirect" rule is defined once.
+
+### 5. Non-functional requirements
+
+- **Frontend-only:** all deliverables are `frontend/` files (`index.html`, `public/manifest.webmanifest`, `public/icons/*.png`, `src/auth/AuthProvider.tsx` + any small shared auth helper). No backend, no migration, no Caddy code change in this feature.
+- **Backward compatible:** desktop browsers and ordinary mobile Safari tabs behave exactly as before; the manifest/meta are additive; the auth change only affects the *transient-failure* branch — a genuine expiry still redirects (story 3). No regression to the existing push service worker (`sw-push.js`), SSE bridge, or `fetchAuthzContext` flow.
+- **Build gate:** `npm run build` (`tsc -b`) green, including prod-strict `noUnusedLocals` (any new helper/imports must be used); the manifest is valid JSON with a `.webmanifest` extension; icons are valid PNGs at declared sizes.
+- **No secrets / no new deps required** (icon generation may be a build-time/asset step but ships static PNGs); product name in all surfaces = **Albusto**.
+
+### 6. Acceptance criteria
+
+- **AC-1 — Scope covers all routes:** the shipped manifest has `scope:"/"`, `start_url:"/"`, `display:"standalone"`; every SPA route (`/pulse`, leads, jobs, schedule, settings, …) falls under scope, so standalone navigation stays in-window.
+- **AC-2 — No eject on standalone navigation:** in the installed iOS PWA, navigating across routes and surviving a transient token refresh does NOT drop into SFSafariViewController (owner-gated manual iOS check).
+- **AC-3 — Live session never full-redirects:** with a valid/refreshable session, a token refresh (including a retried transient failure) completes without any `kc.login()` full-page redirect; a genuinely expired/revoked session still redirects to login exactly once (verified by code path + manual).
+- **AC-4 — Build green:** `npm run build` passes (tsc -b, `noUnusedLocals`) with the new manifest link, meta tags, and auth code.
+- **AC-5 — Icons valid & branded:** the 180/192/512/512-maskable PNGs exist at their declared sizes, are referenced correctly from the manifest and `index.html`, render as the Albusto "A" letter-mark (no clipping in the maskable safe-zone), and produce a branded Home-Screen icon (manual install check).
+- **AC-6 — Meta present:** `index.html` contains `<link rel="manifest">`, `apple-mobile-web-app-capable`, status-bar-style, `apple-mobile-web-app-title`, `theme-color`, `apple-touch-icon`, and `viewport-fit=cover`.
+- **AC-7 — Backward compatible:** desktop browser and normal Safari tab show unchanged layout and auth behavior; the push service worker and SSE/authz flows are regression-free.
+
+### 7. Constraints & dependencies
+
+**Frontend files touched:** `frontend/index.html` (head meta + manifest link + viewport-fit), `frontend/public/manifest.webmanifest` (new), `frontend/public/icons/*.png` (new — 180/192/512/512-maskable), `frontend/src/auth/AuthProvider.tsx` (both `.catch` sites → shared retry/redirect policy; possibly a small `src/auth/` helper for the transient-vs-dead decision).
+
+**Integrations affected:** **none** (Twilio / Front / Zenbooker / Gmail untouched). Auth provider = Keycloak (`auth.albusto.com`) — behavior changes only in the transient-refresh branch; the realm, PKCE init (`pkceMethod:'S256'`, `onLoad:'login-required'`), and genuine re-login are unchanged.
+
+**Deploy constraint (out of code — flag for the deploy/Architect step):** in production the manifest must be served as a **real static file with `content-type: application/manifest+json`** (and the icon PNGs as their real types), NOT swallowed by the SPA `index.html` catch-all (which currently returns `text/html` for `/manifest.*`). This is a **static-serving / Caddy** concern (`Caddyfile`), not a frontend code change — it must be arranged at deploy time or the manifest won't be honored by iOS. (Vite serves `public/` at root in dev; prod static serving must not route `/manifest.webmanifest` and `/icons/*` through the SPA fallback.)
+
+**Protected parts (must not break):**
+- **Keycloak auth core:** init options (`pkceMethod:'S256'`, `onLoad:'login-required'`, `checkLoginIframe:false`), the silent-refresh mechanism itself, `onAuthRefreshSuccess`, `fetchAuthzContext` on token update, and the **genuine** re-login redirect (a truly dead session MUST still redirect).
+- **Existing push service worker** `frontend/public/sw-push.js` (registered scope `/` — `pushNotificationService.ts:33`) and the SSE push bridge — the manifest/icons are additive and must not shadow or unregister it.
+- **Desktop + normal-tab behavior** — no visual or auth-flow change for non-installed contexts (backward compatibility is a hard requirement).
+- **Softphone (desktop-only)** and all standing locked decisions (MOBILE-NO-SOFTPHONE-001) — untouched.
+
+**Verification note:** `npm run build` is the CI gate (per the house lesson: verify with `npm run build`, not just `tsc --noEmit` — prod Docker is stricter on `noUnusedLocals`). Standalone-on-iOS and Home-Screen-install checks are **owner-gated manual** (no automated iOS-standalone harness). Deploy is **owner-gated**; the Caddy content-type step (above) must accompany the deploy or the fix is inert on prod.
+
+### 8. Open questions
+
+- **OQ-1 — theme_color / status-bar-style value:** exact Т2 value for `theme_color` + matching `apple-mobile-web-app-status-bar-style` (warm surface vs. near-black `#030213`) → Architect/design, to match the desired iOS status-bar look.
+- **OQ-2 — Retry policy numbers:** attempt count + backoff schedule for the transient `updateToken` retry, and the precise transient-vs-dead classifier (error string / `invalid_grant` detection / refresh-token expiry check) → Architect.
+- **OQ-3 — Icon generation pipeline:** produce the 4 PNGs as committed static assets vs. a build-time generation step (from a single SVG source) → Architect/Implementer; either is acceptable so long as valid PNGs at the declared sizes ship.
+
+### 9. Involved modules (summary)
+
+- **New:** `frontend/public/manifest.webmanifest`; `frontend/public/icons/apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, `icon-512-maskable.png`; optional `frontend/src/auth/` refresh-policy helper.
+- **Modified:** `frontend/index.html` (Apple/PWA meta + manifest link + `viewport-fit=cover`); `frontend/src/auth/AuthProvider.tsx` (both `.catch` sites → transient-retry / dead-redirect policy).
+- **Backend:** **none.** **Deploy/infra (non-code):** Caddy/static serving must return `application/manifest+json` for `/manifest.webmanifest` and real image types for `/icons/*` (not the SPA `text/html` fallback).

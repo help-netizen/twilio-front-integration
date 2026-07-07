@@ -6986,6 +6986,7 @@ wave 3 (verify):         T5 (scripts/verify-contact-merge-001.js: s1…s16 + sab
 
 ---
 
+<<<<<<< HEAD
 ## CALLFLOW-BUSY-TO-AGENT-001: business-hours queue exhaustion → Sara; voicemail last resort (data-only)
 
 Spec: `docs/specs/CALLFLOW-BUSY-TO-AGENT-001.md` · Test cases: `docs/test-cases/CALLFLOW-BUSY-TO-AGENT-001.md`. **NO migration, NO deploy, NO runtime code change** — one prod `call_flows` row updated by script (owner-consented data change). Product-code freeze list (any edit = task failure): `backend/src/services/callFlowRuntime.js`, `backend/src/services/groupRouting.js`, `backend/src/webhooks/twilioWebhooks.js`, `backend/src/routes/callFlows.js`, `frontend/**`.
@@ -7255,3 +7256,160 @@ session logout per memory. **Reuse unmodified:** `haversineMiles`, `overlapMinut
 `checkFeasibility`, `scoreCandidate`, `rankAndDiversify`, `dedupeBestPerSlot`, `mergeConfig`.
 **Protected/frozen:** the Tier-1 candidate loop body (extracted, not edited), Sara/VAPI config +
 prompt, `recommendSlots.js`, `CustomTimeModal`/Schedule UI, all `slot_engine_settings` persistence.
+=======
+## PWA-FIX-001 — план
+
+> **Дата:** 2026-07-07 · Planner (агент 05)
+> **Фича:** installable PWA contract + auth "no-eject" — держать установленный на iOS PWA `app.albusto.com` в standalone-окне, не выбрасывая в SFSafariViewController.
+> **Scope:** frontend-only (`frontend/`, Vite + React SPA). **NO backend, NO migration** (count stays 155). Нет API-routes → middleware/`company_id`/tenant-isolation чек-лист НЕ применим (spec §2, test-cases "Not applicable").
+> **Related docs:** requirements `## PWA-FIX-001`; architecture `## PWA-FIX-001`; spec `Docs/specs/PWA-FIX-001-SPEC.md`; test-cases `Docs/test-cases/PWA-FIX-001.md` (41 TC).
+> **Harness:** во frontend НЕТ jest/vitest. Единственный автогейт — `npm run build` (`tsc -b` + vite, prod-strict `noUnusedLocals`). Юнит-покрытие `refreshPolicy` = standalone Node-скрипт `frontend/scripts/verify-pwa-refresh-policy.mjs` (option (b)) + sabotage negative-control. `sips` @ `/usr/bin/sips`, `node` @ `/usr/local/bin/node`.
+>
+> **ПИН .ts/.mjs seam (Planner-решение):** `frontend/tsconfig.app.json` = `moduleResolution:"bundler"`, поэтому raw Node ESM НЕ резолвит `import './refreshPolicy.ts'` (нет tsx/loader-гарантии, а `dist/` — хешированные ассеты). Файл-мапа зафиксирована как ЕДИНЫЙ `refreshPolicy.ts` (не расщепляем). Значит `.mjs` **дублирует крошечную чистую логику** (rule-order + `DEAD_GRANT_PATTERNS` + `REFRESH_RETRY_BACKOFF_MS`) у себя и прогоняет по ней 8-строчную truth-table (§3.3.1) + sabotage-кейс. Дрейф ловит **STATIC drift-guard**: скрипт `readFileSync('../src/auth/refreshPolicy.ts')` и `assert`ит, что все 4 паттерна (`invalid_grant`, `session…not…active`, `token…expired`, `refresh…token`) и массив `[2000,5000,10000]` присутствуют в `.ts` дословно. Так single-source-of-truth сохраняется без нового рантайм-депа и без tsx. (Sabotage: если `DEAD_GRANT_PATTERNS` расширят до `/token/i`/`/failed/i`, benign-кейс TC-PWA-011 перевернётся в `'dead'` → скрипт FAIL.)
+
+---
+
+### PWA-01: brand-иконки — генерация 4 PNG + committed SVG-источники
+
+**Цель:** положить брендовые иконки Albusto (капитал "A" `#fffdf9` на скруглённой ink-плашке `#030213`, `rx≈112`) как валидные PNG точных размеров + committed SVG-исходники (не референсятся в рантайме).
+
+**Файлы, которые можно менять (все НОВЫЕ, disjoint от остальных задач):**
+- `frontend/public/icons/albusto-mark.svg` (**создать**) — 512-viewBox letter-mark; "A" = hand-built `<path>` (без шрифт-зависимости при растеризации).
+- `frontend/public/icons/albusto-mark-maskable.svg` (**создать**, либо inline-padded вариант) — та же марка, "A" внутри ≥20% safe-inset на full-bleed плашке.
+- `frontend/public/icons/icon-192.png` (192×192, `purpose:"any"`)
+- `frontend/public/icons/icon-512.png` (512×512, `purpose:"any"`)
+- `frontend/public/icons/icon-512-maskable.png` (512×512, `purpose:"maskable"`)
+- `frontend/public/icons/apple-touch-icon-180.png` (180×180)
+
+**Инструмент (build-time only, НЕ рантайм/Docker-деп):** `brew install librsvg` → `rsvg-convert -w N -h N <src>.svg -o <out>.png` (architecture §5, точные команды). **Коммитим PNG** — прод Docker `librsvg` не нужен.
+
+**Пины путей (parallel-safe, чтобы PWA-02/PWA-03 не разъехались):** ровно `/icons/icon-192.png`, `/icons/icon-512.png`, `/icons/icon-512-maskable.png`, `/icons/apple-touch-icon-180.png`.
+
+**Spec §refs:** §1.3.1–§1.3.4, §3.1 (icons), architecture §5. **TC refs:** TC-PWA-035 (4 PNG существуют), TC-PWA-036 (`sips` pixel-dims 192/512/512/180), TC-PWA-037 (SVG committed, не референсится), TC-PWA-038/-039 (MANUAL: safe-zone/бренд).
+
+**Ожидаемый результат:** 4 PNG валидны и читаются `sips -g pixelWidth -g pixelHeight` в точных размерах; SVG-источники на диске; слово "Blanc" не встречается нигде.
+
+**Зависимости:** нет. **Волна 1.**
+
+**Статус:** done — commit 3008487 (Reviewer APPROVED). 4 PNG пиксель-точные (Pillow-fallback, librsvg брю-права упали) + 2 SVG-источника.
+
+---
+
+### PWA-02: манифест — `manifest.webmanifest` (scoped standalone contract)
+
+**Цель:** отгрузить Web App Manifest со `scope:"/"` + `display:"standalone"`, чтобы iOS держал все SPA-роуты в standalone-окне.
+
+**Файлы, которые можно менять (НОВЫЙ, disjoint):**
+- `frontend/public/manifest.webmanifest` (**создать**) — дословный JSON из spec §3.1: `name/short_name="Albusto"`, `start_url="/"`, `scope="/"`, `display="standalone"`, `background_color=theme_color="#fffdf9"`, `orientation="portrait"`, `icons[]` = 192/512/512-maskable (type `image/png`; один `purpose:"maskable"`). **`apple-touch-icon-180` НЕ в `icons[]`** (iOS читает его из `<link>`).
+
+**Пин путей:** `icons[].src` = `/icons/icon-192.png`, `/icons/icon-512.png`, `/icons/icon-512-maskable.png` (совпадает с PWA-01).
+
+**Spec §refs:** §1.1.1–§1.1.4, §3.1. **TC refs:** TC-PWA-024 (валидный JSON, `.webmanifest`), TC-PWA-025 (exact-value поля), TC-PWA-026 (icons array), TC-PWA-027 (apple-touch НЕ в манифесте), TC-PWA-028 (src → реальные файлы).
+
+**Ожидаемый результат:** файл — валидный JSON; поля точны по §3.1; 3 `icons[].src` резолвятся в файлы, созданные PWA-01.
+
+**Зависимости:** пути согласованы с PWA-01, но файлы disjoint → может идти параллельно. **Волна 1.**
+
+**Статус:** done — commit 3008487 (Reviewer APPROVED). Валидный JSON, scope/start_url="/", display=standalone.
+
+---
+
+### PWA-03: `index.html` `<head>` — manifest link + Apple/PWA meta + `viewport-fit=cover`
+
+**Цель:** добавить в `<head>` ссылку на манифест, Apple-PWA meta и `viewport-fit=cover` — точный набор/порядок из spec §3.2.
+
+**Файлы, которые можно менять (единственный правщик этого файла):**
+- `frontend/index.html` — заменить viewport-meta **на месте** на `width=device-width, initial-scale=1.0, viewport-fit=cover`; добавить `<link rel="manifest" href="/manifest.webmanifest" />`, `<meta name="theme-color" content="#fffdf9" />`, `apple-mobile-web-app-capable=yes`, `apple-mobile-web-app-status-bar-style=default` (НЕ `black-translucent`), `apple-mobile-web-app-title=Albusto`, `<link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" />`. Все href **root-absolute**. Сохранить `charset`, `link rel=icon /vite.svg`, `<title>Albusto</title>`.
+
+**Пин путей:** `/manifest.webmanifest` (PWA-02), `/icons/apple-touch-icon-180.png` (PWA-01).
+
+**Spec §refs:** §1.2.1–§1.2.6, §3.2. **TC refs:** TC-PWA-029 (manifest link), TC-PWA-030 (Apple meta trio), TC-PWA-031 (theme-color=#fffdf9), TC-PWA-032 (apple-touch-icon link), TC-PWA-033 (viewport-fit=cover, один viewport-meta), TC-PWA-034 (charset/vite.svg/title сохранены).
+
+**Ожидаемый результат:** grep находит все теги с точным content; ровно один viewport-meta; ничего существующего не удалено/переименовано.
+
+**Зависимости:** нет (файл disjoint от PWA-01/02). **Волна 1.**
+
+**Статус:** done — commit 3008487 (Reviewer APPROVED). Все теги + viewport-fit=cover, пути совпадают.
+
+---
+
+### PWA-04: `refreshPolicy.ts` (pure) + verify-скрипт с sabotage-контролем
+
+**Цель:** чистый классификатор transient-vs-dead + backoff-константа (без Keycloak/timers/React) + автономный Node-гейт truth-table с negative-control.
+
+**Файлы, которые можно менять (оба НОВЫЕ, disjoint):**
+- `frontend/src/auth/refreshPolicy.ts` (**создать**) — API по spec §3.3: `export const REFRESH_RETRY_BACKOFF_MS = [2000,5000,10000] as const;`, `type RefreshFailureKind`, `interface RefreshFailureInput`, `function classifyRefreshFailure(...)`; внутренний `extractErrorText` (`.error`/`.error_description`/`.message`/`String()`, `''` для undefined/`{}`); `DEAD_GRANT_PATTERNS = [/invalid_grant/i, /session[_\s-]*not[_\s-]*active/i, /token[_\s-]*(is[_\s-]*)?expired/i, /refresh[_\s-]*token/i]`. Rule-order по §3.3.1: (1) offline⇒transient; (2) no-token⇒dead; (3) grant-pattern⇒dead; (4) else⇒transient. **Bias: ambiguous⇒transient.**
+- `frontend/scripts/verify-pwa-refresh-policy.mjs` (**создать**, создать и каталог `frontend/scripts/`) — **ПИН seam:** дублирует rule-order + `DEAD_GRANT_PATTERNS` + backoff у себя, прогоняет 8 строк truth-table §3.3.1 + backoff-asserts + sabotage-кейс; плюс **drift-guard**: `readFileSync` `../src/auth/refreshPolicy.ts` и `assert`ит присутствие 4 паттернов и `[2000, 5000, 10000]` дословно. `process.exit(1)` при любом провале. Запуск: `node frontend/scripts/verify-pwa-refresh-policy.mjs`.
+
+**Spec §refs:** §3.3, §3.3.1 (truth-table), §4.2, §4.3 (build-gate note). **TC refs:** TC-PWA-001..008 (8 строк), -009 (`extractErrorText` precedence), -010 (case-insensitive/substring), **-011 (sabotage negative-control)**, -012 (backoff `[2000,5000,10000]`), -013 (length=3, sum=17000).
+
+**Ожидаемый результат:** `node frontend/scripts/verify-pwa-refresh-policy.mjs` → exit 0, все truth-table + backoff + drift-guard проходят; sabotage-кейс подтверждает bias-to-transient. `refreshPolicy.ts` компилируется под `tsc`.
+
+**Зависимости:** нет (файлы disjoint). **Волна 1.**
+
+**Статус:** done — commit 3008487 (Reviewer APPROVED, sabotage-verified). verify 30/30 assertions.
+
+---
+
+### PWA-05: `AuthProvider.tsx` — оба `.catch`-сайта через один `refreshTokenOrLogin`
+
+**Цель:** развести обе точки отказа silent-refresh (interval `:264`, `onTokenExpired` `:272`) через ОДИН импур-оркестратор `refreshTokenOrLogin`, backed by `refreshPolicy.ts`: retry transient (backoff 2/5/10s), redirect ровно один раз на dead ИЛИ на исчерпании retry-budget.
+
+**Файлы, которые можно менять (единственный правщик; shared-ish файл — идёт один):**
+- `frontend/src/auth/AuthProvider.tsx` — импортировать `classifyRefreshFailure` + `REFRESH_RETRY_BACKOFF_MS` из `./refreshPolicy`; добавить module-scope `refreshTokenOrLogin(kc, onRefreshed, attempt=0)` (spec §3.4) + локальный `sleep`; interval → `setInterval(() => { void refreshTokenOrLogin(kc, applyToken); }, 30000)`; `onTokenExpired` → `kc.onTokenExpired = () => { void refreshTokenOrLogin(kc, applyToken); }`; `applyToken = () => { setToken(kc.token || null); if (kc.token) fetchAuthzContext(kc.token); }` — **дословно** сохранить success-side-effect.
+
+**Файлы, которые трогать НЕЛЬЗЯ (protected, spec §4.5/§6):** `kc.login()` в `handleSessionExpired` (`:172`) и security-fallback effect (`:294`) — ОСТАЮТСЯ; `onAuthRefreshSuccess` (`:275`), `refreshOnResume` (`:303-319`), Keycloak-init options (`pkceMethod:'S256'`, `onLoad:'login-required'`, `checkLoginIframe:false`), `fetchAuthzContext`, `sw-push.js`, SSE-bridge, `authedFetch.ts`.
+
+**Build-gate:** ОБА экспорта `refreshPolicy` должны быть consumed (prod `noUnusedLocals`).
+
+**Spec §refs:** §1.4.1–§1.4.9, §3.4, §4.1, §4.5. **TC refs:** TC-PWA-014..018/-023 (оркестратор-решение; UNIT при extract fake-kc, иначе MANUAL), -019 (STATIC: оба сайта → один helper, старые `.catch(()=>kc.login())` удалены), -020 (STATIC: protected `:172`/`:294` остались), -021 (STATIC: applyToken дословно), -022 (STATIC: оба экспорта consumed).
+
+**Ожидаемый результат:** оба таймер-сайта зовут единый `refreshTokenOrLogin`; transient → retry без redirect; dead/exhausted → ровно один `kc.login()`; happy-path и protected redirect-сайты байт-идентичны; `noUnusedLocals` зелёный.
+
+**Зависимости:** после **PWA-04** (импортит `refreshPolicy.ts`). **Волна 2.**
+
+**Статус:** done — commit 3008487 (Reviewer APPROVED + fix: onRefreshed только при refreshed, убран per-30s authz-fetch).
+
+---
+
+### PWA-06: финальная верификация — build + static-гейты + refresh-policy скрипт (+ owner-handoff)
+
+**Цель:** прогнать все автогейты; код НЕ менять (фиксы — назад в соответствующую задачу). MANUAL iOS + DEPLOY curl + Caddy-MIME — owner-handoff.
+
+**Файлы, которые можно менять:** нет (read-only прогон).
+
+**Автогейты (все локально):**
+1. **BUILD (TC-PWA-040, AC-4):** `cd frontend && npm run build` → exit 0, ноль TS-ошибок, ноль `noUnusedLocals` (couples TC-PWA-022); `dist/manifest.webmanifest` + `dist/icons/*.png` эмитятся (public/ копируется verbatim).
+2. **refresh-policy (TC-PWA-001..013, sabotage -011):** `node frontend/scripts/verify-pwa-refresh-policy.mjs` → exit 0 (truth-table + backoff + drift-guard + sabotage negative-control).
+3. **Manifest STATIC (TC-PWA-024..028):** `node -e "JSON.parse(...)"` парсит `frontend/public/manifest.webmanifest`; поля по §3.1; 3 `icons[].src` резолвятся; apple-touch НЕ в `icons[]`.
+4. **Head STATIC (TC-PWA-029..034):** grep `frontend/index.html` — manifest link, Apple meta trio (`status-bar-style=default`), theme-color=#fffdf9, apple-touch-icon, viewport-fit=cover (один viewport-meta), сохранены charset/vite.svg/title.
+5. **Icons STATIC (TC-PWA-035..037):** stat 4 PNG; `sips -g pixelWidth -g pixelHeight` = 192/512/512/180; SVG-источники есть и не референсятся.
+6. **Auth STATIC (TC-PWA-019/-020/-021/-022):** оба сайта → один `refreshTokenOrLogin`; старые `.catch(()=>kc.login())` удалены; protected `:172`/`:294` `kc.login()` на месте; `applyToken` дословно; оба экспорта consumed.
+
+**OWNER-HANDOFF (НЕ автоматизируется здесь — перечислить владельцу):**
+- **MANUAL iOS on-device (TC-PWA-M1..M8, -038, -039):** add-to-home-screen иконка/имя; standalone-launch без Safari-chrome; навигация Pulse→lead→job→Schedule→Settings без eject; safe-area на notched; transient-blip не выбрасывает (Airplane Mode ~17s); dead-session → ровно один redirect; desktop/normal-tab не задет; maskable safe-zone/бренд-марка визуально.
+- **DEPLOY curl (TC-PWA-D1..D4, §5) — после прод-деплоя:** `curl -sI https://app.albusto.com/manifest.webmanifest` → `content-type: application/manifest+json` (**FAIL если `text/html`**); `/icons/*.png` → `image/png`; body манифеста начинается с `{ "name": "Albusto"`.
+- **DEPLOY-CONSTRAINT (Caddy MIME, §5) — owner-действие, НЕ код репо:** прод Caddy (`/etc/caddy/Caddyfile`) `file_server` должен матчить `/manifest.webmanifest` и `/icons/*.png` ДО SPA `try_files … /index.html`; при нужде добавить `application/manifest+json` в MIME-map. Иначе `text/html`-манифест → iOS молча игнорит → фикс инертен на проде.
+
+**Spec §refs:** §4.3, §5, §7. **TC refs:** TC-PWA-040 (BUILD), -024..037 (STATIC), -019..022 (STATIC auth), -001..013 (UNIT via скрипт); M1..M8/-038/-039 (MANUAL owner), D1..D4 (DEPLOY owner).
+
+**Ожидаемый результат:** все автогейты зелёные; MANUAL/DEPLOY/Caddy-MIME оформлены как owner-handoff-список.
+
+**Зависимости:** после **PWA-01..05** (всё). **Волна 3.**
+
+**Статус:** done — оркестратор: npm install + npm run build ЗЕЛЁНЫЙ (tsc -b + vite), dist содержит manifest+icons+head-теги, verify 30/30. MANUAL iOS + DEPLOY Caddy-MIME — owner-gated.
+
+---
+
+### PWA-FIX-001 — порядок выполнения и параллелизм
+
+- **Волна 1 (parallel ×4, disjoint файлы):** PWA-01 (иконки `public/icons/*`), PWA-02 (`manifest.webmanifest`), PWA-03 (`index.html`), PWA-04 (`refreshPolicy.ts` + verify-скрипт). Пути иконок/манифеста ПИНЕНЫ (`/icons/icon-{192,512,512-maskable}.png`, `/icons/apple-touch-icon-180.png`, `/manifest.webmanifest`) → параллельные агенты не разъезжаются, хотя файлы непересекающиеся.
+- **Волна 2 (одиночная):** PWA-05 (`AuthProvider.tsx` wiring) — после PWA-04 (импортит `refreshPolicy.ts`); единственный правщик shared-ish файла.
+- **Волна 3 (одиночная):** PWA-06 — верификация после всего.
+
+**Критический путь:** PWA-04 → PWA-05 → PWA-06 (3 волны). PWA-асеты (PWA-01/02/03) полностью параллельны auth-ветке и не гейтят критпуть.
+
+**.ts/.mjs verify-seam (пин):** `.mjs` дублирует чистую логику + STATIC drift-guard грепает `refreshPolicy.ts` на 4 паттерна и backoff-массив (single-source-of-truth без tsx/нового депа; см. шапку раздела). Sabotage TC-PWA-011 гарантирует bias-to-transient.
+
+**Owner-gated (вне авто-плана):** MANUAL iOS on-device (TC-PWA-M1..M8, -038/-039), DEPLOY curl content-type (TC-PWA-D1..D4), Caddy `.webmanifest` MIME-шаг (§5). Прод-деплой — только с явного «да» владельца.
+>>>>>>> dc01fed (docs(PWA-FIX-001): requirements/architecture/spec/test-cases/tasks + changelog + project-spec)

@@ -4584,3 +4584,188 @@ Sara/VAPI config + prompt untouched; `recommendSlots.js` unchanged (it already r
 and falls back to `SLOT_FALLBACK` on empty — now strictly less often). `CustomTimeModal`/Schedule UI
 unchanged (reads `recommendations[]`; `fallback_tier` optional/ignore-safe). Google Routes travel
 model, multi-tech, learning weights remain future work.
+
+---
+
+## PWA-FIX-001: keep the installed Albusto PWA standalone on iOS (stop the SFSafariViewController eject)
+
+**Status:** Architecture
+**Feature:** installable PWA contract + auth "no-eject" hardening — **frontend only** (`frontend/`, Vite + React SPA). NO backend, NO migration (count stays 155).
+**Related requirements:** `PWA-FIX-001` in `Docs/requirements.md` (FR-MAN-1..3, FR-META-1..3, FR-ICON-1..2, FR-AUTH-1..4; AC-1..7).
+
+### 0. Root cause (from requirements — do not re-derive)
+
+Two reinforcing triggers eject the installed iOS PWA into an in-app SFSafariViewController: (1) **no manifest with `scope`** ships (`/manifest.*` → SPA `index.html`, `text/html`), so iOS has no standalone contract; (2) **both silent-refresh reject-sites in `AuthProvider.tsx` call `kc.login()` immediately** (`:264` interval `.catch`, `:272` `onTokenExpired` `.catch`) — a full cross-origin redirect to `auth.albusto.com` that iOS answers by breaking out of the standalone window. Fix = ship a scoped manifest + Apple meta + brand icons, and make the refresh-failure path retry transient errors, redirecting only on a genuinely dead session.
+
+### 1. File map
+
+**New:**
+- `frontend/public/manifest.webmanifest` — Web App Manifest; scoped install contract (`scope:"/"`, `display:"standalone"`) that keeps every SPA route in-window.
+- `frontend/public/icons/albusto-mark.svg` — source letter-mark "A" (committed; the rasterization source, not shipped-referenced).
+- `frontend/public/icons/icon-192.png` — 192×192 `purpose:"any"` icon.
+- `frontend/public/icons/icon-512.png` — 512×512 `purpose:"any"` icon (splash / high-DPI).
+- `frontend/public/icons/icon-512-maskable.png` — 512×512 `purpose:"maskable"` (safe-zone padded so iOS/Android masking never clips the "A").
+- `frontend/public/icons/apple-touch-icon-180.png` — 180×180 apple-touch-icon (Home-Screen icon; referenced from `index.html`).
+- `frontend/src/auth/refreshPolicy.ts` — **pure** module: the transient-vs-dead classifier + retry-schedule decision (no Keycloak, no timers, no React → 100% jest-coverable). Consumed by `AuthProvider.tsx`.
+
+**Changed:**
+- `frontend/index.html` — add manifest link + Apple/PWA meta + `viewport-fit=cover` to `<head>` (§3).
+- `frontend/src/auth/AuthProvider.tsx` — both `.catch` sites (`:264`, `:272`) route through one shared `refreshTokenOrLogin()` helper backed by `refreshPolicy.ts` (§4). Success path (`setToken` + `fetchAuthzContext`) and `onAuthRefreshSuccess` unchanged.
+
+**Untouched (protected):** `frontend/public/sw-push.js` (push SW, scope `/` — additive manifest does NOT register/shadow/unregister it; a manifest does not create or claim a service worker), `pushNotificationService.ts`, SSE bridge, `fetchAuthzContext`, `sse-debug.html`, Keycloak init options (`pkceMethod:'S256'`, `onLoad:'login-required'`, `checkLoginIframe:false`), the genuine no-session `kc.login()` calls at `:172`/`:294`, `authedFetch.ts`, `useRealtimeEvents.ts`.
+
+### 2. Manifest — exact JSON (`frontend/public/manifest.webmanifest`)
+
+Field set validated against W3C manifest (required/recommended) + iOS practice. `theme_color`/`background_color` = **`#fffdf9`** (warm near-white `--blanc-surface-strong`; matches the real top-of-page surface so the iOS status-bar area blends — NOT `#030213`, which is ink/text).
+
+```json
+{
+  "name": "Albusto",
+  "short_name": "Albusto",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fffdf9",
+  "theme_color": "#fffdf9",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
+```
+
+Notes: `apple-touch-icon-180.png` is NOT in `icons[]` (iOS reads it from the `<link>`, not the manifest). `orientation:"portrait"` is the Architect's call (D2 optional) — the CRM is portrait-first on phones; harmless on desktop/tablet. `id` omitted (defaults to `start_url`; no multi-install disambiguation needed).
+
+### 3. `index.html` `<head>` — exact additions & order
+
+Vite serves `public/` at the site root, so all hrefs are **root-absolute** (`/manifest.webmanifest`, `/icons/...`) — never relative (a relative href breaks on deep routes like `/leads/:id`). Replace the existing `viewport` meta in place; add the rest. Final `<head>` order:
+
+```html
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/vite.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#fffdf9" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Albusto" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" />
+<title>Albusto</title>
+```
+
+`status-bar-style="default"` = dark text on the light surface (matches the light UI + `#fffdf9` theme; NOT `black-translucent`, which would draw content under the status bar and fight the app's own safe-area handling). `viewport-fit=cover` pairs with the `env(safe-area-inset-*)` the app already uses (`AppLayout.css`, `BottomSheet.tsx`, etc.). All tags are additive/idempotent — desktop and normal Safari tabs ignore Apple meta and read the manifest without behavior change (AC-7).
+
+### 4. Auth "no-eject" design
+
+**4a. Pure decision module — `frontend/src/auth/refreshPolicy.ts` (jest-covered, no Keycloak/timers/React):**
+
+```ts
+// Backoff schedule for transient updateToken failures (ms). Length = max retries (3).
+export const REFRESH_RETRY_BACKOFF_MS = [2000, 5000, 10000] as const;
+
+export type RefreshFailureKind = 'transient' | 'dead';
+
+// keycloak-js 26 rejects updateToken with limited detail: often {} or an Error;
+// on a genuinely dead refresh it also CLEARS kc.refreshToken. So we classify from
+// (a) whether a refresh token still exists, (b) the error's grant signal, (c) online state.
+export interface RefreshFailureInput {
+  /** kc.refreshToken AFTER the failed updateToken (undefined ⇒ adapter gave up ⇒ dead). */
+  hasRefreshToken: boolean;
+  /** navigator.onLine at failure time (false ⇒ treat as transient). */
+  online: boolean;
+  /** the rejection value keycloak handed us (may be undefined / {} / Error). */
+  error: unknown;
+}
+
+// Dead-session signals seen from Keycloak's token endpoint on an expired/revoked refresh.
+const DEAD_GRANT_PATTERNS = [/invalid_grant/i, /session[_\s-]*not[_\s-]*active/i,
+                             /token[_\s-]*(is[_\s-]*)?expired/i, /refresh[_\s-]*token/i];
+
+export function classifyRefreshFailure(input: RefreshFailureInput): RefreshFailureKind {
+  if (!input.online) return 'transient';           // offline blip ⇒ retry
+  if (!input.hasRefreshToken) return 'dead';        // adapter cleared it ⇒ real expiry
+  const msg = extractErrorText(input.error);        // '' when error is undefined/{}
+  if (msg && DEAD_GRANT_PATTERNS.some(re => re.test(msg))) return 'dead';
+  return 'transient';                               // generic/empty reject ⇒ retry (never eject on ambiguity)
+}
+
+function extractErrorText(error: unknown): string { /* pull .error/.error_description/.message/String() */ }
+```
+
+**Bias is deliberate: ambiguous → `transient`.** keycloak-js gives thin error detail, so we only declare `dead` on a positive signal (no refresh token, or a grant/session-expiry string). A truly dead session is caught either by the missing refresh token OR by exhausting retries (below), so we never trap the user in an un-refreshable loop — but we also never eject on a mere network blip.
+
+**4b. Impure orchestrator in `AuthProvider.tsx` (module-scope helper, timer/Keycloak seam):**
+
+```ts
+// Shared by BOTH reject-sites (FR-AUTH-4). Recursion-free bounded retry.
+async function refreshTokenOrLogin(
+  kc: Keycloak,
+  onRefreshed: () => void,          // success side-effect: setToken + fetchAuthzContext
+  attempt = 0,
+): Promise<void> {
+  try {
+    const refreshed = await kc.updateToken(60);
+    if (refreshed || attempt === 0) onRefreshed();   // apply new token (updateToken(60) may no-op if still valid)
+  } catch (err) {
+    const kind = classifyRefreshFailure({
+      hasRefreshToken: !!kc.refreshToken,
+      online: navigator.onLine,
+      error: err,
+    });
+    if (kind === 'dead' || attempt >= REFRESH_RETRY_BACKOFF_MS.length) {
+      kc.login();                                    // the ONE legitimate cross-origin re-auth
+      return;
+    }
+    await sleep(REFRESH_RETRY_BACKOFF_MS[attempt]);   // silent backoff, standalone preserved
+    return refreshTokenOrLogin(kc, onRefreshed, attempt + 1);
+  }
+}
+```
+
+- **Interval site (`:261-266`):** `setInterval(() => { void refreshTokenOrLogin(kc, applyToken); }, 30000)` where `applyToken = () => { setToken(kc.token || null); if (kc.token) fetchAuthzContext(kc.token); }`.
+- **`onTokenExpired` site (`:268-273`):** `kc.onTokenExpired = () => { void refreshTokenOrLogin(kc, applyToken); }`.
+- **Success path preserved exactly:** `applyToken` = the current `.then(() => { setToken…; fetchAuthzContext… })` body; `onAuthRefreshSuccess` (`:275`) is untouched.
+- **`sleep`** = a tiny local `(ms) => new Promise(r => setTimeout(r, ms))`. (Kept impure in the provider; the *decision* is pure in `refreshPolicy.ts`.)
+
+**What's pure-testable (jest, no Keycloak):** `classifyRefreshFailure` — offline⇒transient, no-refresh-token⇒dead, `invalid_grant`/"session not active"/expired string⇒dead, empty/`{}`/undefined reject⇒transient; and `REFRESH_RETRY_BACKOFF_MS` length = retry budget. The orchestrator's loop-termination (dead OR attempts exhausted ⇒ exactly one `login()`; transient N times then success ⇒ zero `login()`) is coverable by injecting a fake `kc` with a scripted `updateToken` + a no-op `sleep` seam if the Implementer extracts `refreshTokenOrLogin` to the same module with `sleep` as a param — recommended so AC-3's "never full-redirect on a live/refreshable session" is a unit test, not just manual.
+
+### 5. Icon generation — source spec + exact commands
+
+**Source SVG (`frontend/public/icons/albusto-mark.svg`):** 512×512 viewBox; rounded-square plate `rx≈112` (≈22% — matches the Blanc 22px-on-96 radius family) filled **`#030213`** (ink); centered capital **"A"** in **`#fffdf9`** (warm near-white), Manrope/heading-weight geometric (or a hand-built `<path>` "A" so no font dependency at raster time), optical size ≈ 60% of the plate. Ink plate + light letter gives maximal contrast and reads as a real app icon (inverse of the on-canvas UI, which is correct for a Home-Screen tile). **Maskable variant** = same mark with the plate filling the full 512 canvas and the "A" scaled to sit inside a **≥20% safe inset** (well past the 10% floor) so Android's circle/squircle and iOS masking never clip it.
+
+**Tooling:** this machine has only `sips` (cannot rasterize SVG). Use **`rsvg-convert`** (librsvg) — deterministic, no headless browser, one-time:
+
+```bash
+# one-time (Architect-approved dep, local build tool only — not a runtime/app dep):
+brew install librsvg
+
+cd frontend/public/icons
+
+# "any" icons from the standard mark:
+rsvg-convert -w 192 -h 192 albusto-mark.svg -o icon-192.png
+rsvg-convert -w 512 -h 512 albusto-mark.svg -o icon-512.png
+rsvg-convert -w 180 -h 180 albusto-mark.svg -o apple-touch-icon-180.png
+
+# maskable from the safe-inset mark (separate source or an inline-padded copy):
+rsvg-convert -w 512 -h 512 albusto-mark-maskable.svg -o icon-512-maskable.png
+
+# verify real PNG pixel dims (sips CAN do this):
+sips -g pixelWidth -g pixelHeight icon-192.png icon-512.png icon-512-maskable.png apple-touch-icon-180.png
+```
+
+(If the Implementer prefers a single source, generate the maskable by wrapping the mark's `<g>` in a `transform="scale(0.8) translate(...)"` on a full-bleed plate rather than a second file — either is fine so long as the safe-zone holds.) Committing the PNGs means the prod Docker build needs no `librsvg`; regeneration is a documented one-off.
+
+### 6. Deploy constraint (owner/deploy step — NOT code in this feature)
+
+Prod static serving (Caddy, `/etc/caddy/Caddyfile`) must return `/manifest.webmanifest` as a **real file with `content-type: application/manifest+json`** and `/icons/*.png` as `image/png` — i.e. these paths must be matched by the static `file_server` BEFORE the SPA `try_files … /index.html` catch-all, or iOS silently ignores a `text/html` manifest and the fix is inert. Vite already emits them into `dist/` (public/ is copied verbatim), so the requirement is purely that the SPA-fallback rule not swallow existing static files (a `file_server` with `try_files {path} /index.html` already serves a real file first — **verify** the prod Caddyfile does this and returns the right MIME; add `application/manifest+json` to the MIME map if Caddy doesn't know `.webmanifest`). Flag at deploy; no repo change here.
+
+### 7. Backward-compat & risks
+
+- **Additive & invisible off-install:** manifest + Apple meta are ignored by desktop browsers and normal Safari tabs; the icon files are new; nothing existing is renamed or removed (AC-7). The push SW is orthogonal — a manifest neither registers nor claims a service worker.
+- **Auth change is failure-branch-only:** the happy path (token still valid, or a clean refresh) is byte-for-byte the same; only the two `.catch` bodies change, and a genuinely dead session STILL redirects exactly once (story 3 / AC-3).
+- **Risk — over-classifying dead as transient:** if a real expiry somehow presents online + with a stale-but-present `refreshToken` + an empty error, we'd retry 3× (~17s) before the retry-budget exhaustion forces `login()`. Acceptable: bounded, self-terminating, and the interval/`onTokenExpired`/401-interceptor safety nets remain. Never an infinite loop.
+- **Risk — retry storm:** each reject-site runs its own bounded chain; the 30s interval won't stack because a live token makes `updateToken(60)` a no-op. Backoff (2/5/10s) keeps ≤3 network attempts per event.
+- **Risk — maskable clipping:** mitigated by the ≥20% safe inset (past the 10% spec floor); verify visually on install (AC-5, manual).
+- **Build gate:** `refreshPolicy.ts` exports must all be consumed by `AuthProvider.tsx` (prod `noUnusedLocals`); `npm run build` (`tsc -b` + vite) is the CI gate (AC-4).
