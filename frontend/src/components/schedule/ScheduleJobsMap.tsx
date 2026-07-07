@@ -9,8 +9,12 @@
  * Behavior:
  *  - `await loadGoogleMaps()` on mount; loader rejection (missing key / load
  *    failure) → inline "Map unavailable" message (never a blank/broken map).
- *  - Plottable = geocoding_status==='success' && lat/lng present. Un-geocoded
- *    jobs are excluded (owner decision 3) and counted in a small note.
+ *  - Plottable = lat/lng present. Mirrors the desktop route map
+ *    (CustomTimeModal), which plots any job with truthy lat/lng and ignores
+ *    geocoding_status. Jobs with NO coordinates are excluded and counted in a
+ *    small note. (Gating on status==='success' wrongly hid jobs that carry
+ *    valid coords from Zenbooker/import but were never promoted past
+ *    'not_geocoded', plus every lead — leads' geocoding_status is always NULL.)
  *  - Group plottable jobs by assigned tech id (else "Unassigned"), sort each
  *    group by start_at, number 1..N = route order. Pin color =
  *    getProviderColor(techId).accent (matches the tile left-border on the same
@@ -138,9 +142,11 @@ export function ScheduleJobsMap({ jobs, companyTz }: ScheduleJobsMapProps) {
     // Plottable subset + grouping (memoized on jobs identity — the parent passes
     // a fresh array on each filter/day change).
     const { groups, plotted } = useMemo(() => {
-        const plottable = jobs.filter(
-            j => j.geocoding_status === 'success' && j.lat != null && j.lng != null,
-        );
+        // Plottable = has coordinates. Match the desktop route map, which plots
+        // any job with truthy lat/lng and never inspects geocoding_status: real
+        // jobs carry valid coords (from Zenbooker/import) while their status is
+        // often still 'not_geocoded', and leads always report a NULL status.
+        const plottable = jobs.filter(j => j.lat != null && j.lng != null);
         return buildGroups(plottable);
     }, [jobs]);
 

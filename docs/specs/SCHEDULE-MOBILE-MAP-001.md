@@ -62,8 +62,13 @@ Behavior:
   message ("Map unavailable") instead of a broken map. Build `new google.maps.Map` with the
   same options as the slot picker (`mapTypeControl/streetView/fullscreen: false`, POI+transit
   hidden).
-- **Plottable set:** `jobs.filter(j => j.geocoding_status === 'success' && j.lat != null && j.lng != null)`.
-  No geocoding fallback (owner decision 3).
+- **Plottable set:** `jobs.filter(j => j.lat != null && j.lng != null)` — coordinate presence
+  only, mirroring the desktop route map (`CustomTimeModal`), which plots any job with truthy
+  lat/lng and never inspects `geocoding_status`. Rationale: real jobs carry valid coordinates
+  (from Zenbooker/import) while `geocoding_status` is frequently still `'not_geocoded'`, and
+  leads always report a NULL status — gating on `=== 'success'` wrongly hid all of them. No
+  client-side geocoding fallback for coordinate-less items (owner decision 3); those are counted
+  in the "no location" note below.
 - **Grouping & numbering:** group plottable jobs by their assigned technician id
   (`assigned_techs[0]?.id`; jobs with no tech → an "Unassigned" group). Within each group sort
   by `start_at` ascending; the pin number is the 1-based index in that per-tech order (route
@@ -130,12 +135,14 @@ Behavior:
 - **Ожидаемый результат:** `currentDate` changes → items reload → `scheduledItems` changes →
   map re-places to the new day's geocoded jobs; stays in map mode.
 
-### S4 — Un-geocoded jobs excluded + counted
-- **Предусловия:** the day's listed jobs include some with `geocoding_status !== 'success'`
-  (or null lat/lng).
-- **Ожидаемый результат:** those jobs get **no pin**; a small note reads "N job(s) without a
-  location" with N = count of listed-but-unplottable jobs. Geocoded jobs plot normally.
-  Edge: **all** listed jobs un-geocoded → empty map + the count note (see S7).
+### S4 — Coordinate-less jobs excluded + counted
+- **Предусловия:** the day's listed jobs include some with **null lat/lng**. Jobs that carry
+  coordinates but a non-`'success'` `geocoding_status` (e.g. `'not_geocoded'` from Zenbooker
+  import) MUST still plot — status is not a gate.
+- **Ожидаемый результат:** only the coordinate-less jobs get **no pin**; a small note reads
+  "N job(s) without a location" with N = count of listed-but-unplottable jobs. All jobs with
+  lat/lng plot normally regardless of status.
+  Edge: **all** listed jobs coordinate-less → empty map + the count note (see S7).
 
 ### S5 — Tap a pin → InfoWindow
 - **Шаги:** tap a pin.
