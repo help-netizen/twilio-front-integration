@@ -123,8 +123,13 @@ export function JobOpsSection({
             {/* ── JOB-ACTIONS-SLIM-001: curated framed primary actions per state ── */}
             {isActionable && (
                 <div className="flex items-stretch gap-2 max-md:flex-wrap">
-                    {/* Submitted/scheduled → On the way (secondary outline) + Start job */}
-                    {job.zb_status === 'scheduled' && (
+                    {/* Submitted/scheduled → On the way (secondary outline) + Start job.
+                        Suppressed when the ONWAY-001 primary CTA above already offers
+                        "On the way" (same action) — otherwise a Submitted/Rescheduled
+                        job with messages.send shows the button twice. Kept as the
+                        fallback when the CTA is absent (no send perm, or a `scheduled`
+                        job whose blanc_status isn't a pre-visit source status). */}
+                    {job.zb_status === 'scheduled' && !showOnWayCta && (
                         <button onClick={() => onMarkEnroute(job.id)}
                             className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
                             style={{

@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-07-06 — ONWAY-DEDUPE-001: две кнопки «On the way» на карточке джоба (frontend-only)
+
+**Баг (прод):** на карточке джоба в статусе `Submitted` (ZB `zb_status='scheduled'`) показывались **две** кнопки «On the way». `JobStatusTags.tsx` рисует её в двух независимых блоках: (1) ONWAY-001 primary CTA (градиентная) — при `blanc_status ∈ {Submitted, Rescheduled}` + право `messages.send`, открывает модалку с ETA-SMS клиенту; (2) старая JOB-ACTIONS-SLIM-001 (белый outline) — при `zb_status='scheduled'`, просто дёргает `onMarkEnroute` без SMS. Для Submitted-джоба оба условия истинны → дубль.
+
+- **Фикс** (`JobStatusTags.tsx`): вторую (plain) кнопку гейтим `&& !showOnWayCta` — она подавляется, когда primary CTA уже предлагает «On the way» (то же действие), но **остаётся фолбэком**, когда CTA нет (нет права `messages.send`, либо `scheduled`-джоб, чей `blanc_status` не pre-visit). После фикса Submitted-джоб показывает один «On the way» (CTA с SMS) + «Start job». `npm run build` зелёный.
+
 ## 2026-07-06 — SCHEDULE-MOBILE-MAP-001 HOTFIX: пины пропадали при `geocoding_status='not_geocoded'` (frontend-only)
 
 **Баг (прод):** у техника Robert на 9 июля список показывал 4 работы, а карта была пуста. Причина — фильтр карты требовал `geocoding_status === 'success'`, но реальные работы приходят из Zenbooker/импорта с валидными `lat/lng`, а `geocoding_status` у них остаётся `'not_geocoded'` (у лидов статус вообще всегда NULL). Все 4 работы Robert имели корректные координаты MA — их просто отбрасывал слишком строгий гейт.
