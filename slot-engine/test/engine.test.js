@@ -133,16 +133,45 @@ test('empty-day candidate allowed when configured + tech base within range', () 
   assert.ok(res.recommendations.every((r) => r.date === '2026-06-26'));
 });
 
-test('empty-day rejected by default (no anchor)', () => {
+// SLOT-ENGINE-NEAREST-FALLBACK-001 (spec §7 B5, §6): the DEFAULT_CONFIG now ships
+// fallback_max_distance_miles=25 (> the 10 mi normal radius). An empty future day that
+// Tier-1 rejects (allow_empty_day_candidates=false) is now RESCUED by Tier-2, which sets
+// allow_empty_day_candidates=true and anchors on the tech base (BASE ~1.5 mi from the new
+// point, well within 25). This is the sanctioned behavior change, not a regression — so we
+// assert the NEW outcome AND, as a companion, that a Tier-1-only config (fallback disabled)
+// still returns 0, proving only the fallback changed the result.
+test('empty-day now rescued by Tier-2 fallback (was rejected pre-feature)', () => {
   const req = baseRequest();
   req.new_request.earliest_allowed_date = '2026-06-26';
   req.new_request.latest_allowed_date = '2026-06-26';
-  assert.equal(recommendSlots(req).recommendations.length, 0);
+  const res = recommendSlots(req);
+  assert.ok(res.recommendations.length >= 1, 'Tier-2 anchors the empty day on the base');
+  assert.equal(res.summary.used_nearest_fallback, true);
+  assert.ok(res.recommendations.every((r) => r.fallback_tier === 2), 'every rec tagged Tier-2');
+  assert.ok(res.recommendations.every((r) => r.reason_codes.includes('nearest_tech_fallback')));
+  // companion: Tier-1-only (fallback off) still yields 0 → the legacy empty-day contract is intact.
+  const legacy = baseRequest({ config_override: { geography: { fallback_max_distance_miles: 0 } } });
+  legacy.new_request.earliest_allowed_date = '2026-06-26';
+  legacy.new_request.latest_allowed_date = '2026-06-26';
+  assert.equal(recommendSlots(legacy).recommendations.length, 0, 'Tier-1 alone still rejects the empty day');
 });
 
-test('tiny max_extra_travel rejects every insertion', () => {
+// SLOT-ENGINE-NEAREST-FALLBACK-001 (spec §7 B9, §3.3): a 0.01-min extra-travel cap makes
+// Tier-1 reject every insertion via extra_travel_exceeded. Tier-2's deriveFallbackConfig
+// LIFTS the travel caps (edge/extra) with the buildConfigOverride formula, so the same
+// candidates now pass — Tier-2 widens travel caps (never overlap/feasibility). Sanctioned:
+// assert the NEW outcome + a Tier-1-only companion that stays 0.
+test('tiny max_extra_travel: Tier-1 rejects but Tier-2 widens travel caps and rescues', () => {
   const req = baseRequest({ config_override: { travel: { max_extra_travel_minutes: 0.01 } } });
-  assert.equal(recommendSlots(req).recommendations.length, 0);
+  const res = recommendSlots(req);
+  assert.ok(res.recommendations.length >= 1, 'Tier-2 lifts the extra-travel cap → candidates pass');
+  assert.equal(res.summary.used_nearest_fallback, true);
+  assert.ok(res.recommendations.every((r) => r.fallback_tier === 2));
+  // companion: with the fallback disabled, the 0.01 cap still rejects everything (Tier-1 intact).
+  const legacy = baseRequest({ config_override: {
+    travel: { max_extra_travel_minutes: 0.01 }, geography: { fallback_max_distance_miles: 0 },
+  } });
+  assert.equal(recommendSlots(legacy).recommendations.length, 0, 'Tier-1 alone still rejects on extra-travel');
 });
 
 test('huge min_required_slack makes everything infeasible', () => {

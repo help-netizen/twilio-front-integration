@@ -3887,3 +3887,64 @@ slot picker and is desktop-oriented.
 - Protected: `CustomTimeModal` (live VAPI-SLOT-ENGINE slot picker) — only edit is swapping its inline
   `makePinSvg` for the shared import (byte-identical output). Desktop Schedule views untouched.
 - Google Maps via the existing `VITE_GOOGLE_MAPS_API_KEY`; missing key → graceful inline message.
+
+---
+
+## SLOT-ENGINE-NEAREST-FALLBACK-001 — Tier-2 nearest-tech distance fallback
+
+**Status:** Requirements
+**Priority:** P1
+**Owner:** Slot Engine / Voice
+**Spec:** `Docs/specs/SLOT-ENGINE-NEAREST-FALLBACK-001.md`
+**Test cases:** `Docs/test-cases/SLOT-ENGINE-NEAREST-FALLBACK-001.md`
+**Depends on:** SLOT-ENGINE-001, REC-SETTINGS-001, VAPI-SLOT-ENGINE-001
+
+### 1. Description
+
+A caller who is inside the service area but has no technician within the normal radius currently
+gets ZERO engine recommendations, so Sara falls back to generic `checkAvailability` slots. Add a
+**Tier-2 "nearest-tech fallback"** to the slot engine: when Tier-1 (normal radius) yields no feasible
+candidate, relax the distance gate to the nearest technician(s) up to a **separate 25 mi ceiling** and
+return real engine-ranked windows. Verified root cause: the resolved distance gate is 10 mi on both
+the busy-day and empty-day paths (`buildConfigOverride` maps one `max_distance_miles` onto both);
+raising only the fallback ceiling makes e.g. Weston MA 02493 return 2–3 real slots.
+
+### 2. Functional requirements
+
+- **FR-1 (Tier-1 unchanged):** For any currently-covered location, output is byte-identical to today
+  (same recs, scores, order, no new fields). Tier-1 runs first, untouched.
+- **FR-2 (Tier-2 trigger):** Tier-2 fires **only** when Tier-1 produces zero feasible candidates.
+- **FR-3 (Tier-2 gate):** Tier-2 relaxes the distance ceilings (busy-day + empty-day) to
+  `geography.fallback_max_distance_miles` (default **25**); a candidate beyond 25 mi is still rejected.
+- **FR-4 (nearest):** "nearest" = min(distance to tech base, distance to that tech's nearest existing
+  job that day); Tier-2 recs are ranked nearest-first (existing distance-weighted score).
+- **FR-5 (non-overlap):** `overlap.max_timeframe_overlap_minutes=0` is preserved in Tier-2 — no
+  returned window overlaps an existing job; feasibility (drive time within the 2-hour window) still
+  enforced.
+- **FR-6 (empty-day):** A nearest tech with an empty day is eligible in Tier-2, driving from base.
+- **FR-7 (shape):** Same slot shape + `top_n` (2–3). Tier-2 recs additively carry `fallback_tier=2`
+  and reason `nearest_tech_fallback`; `summary.used_nearest_fallback` reflects whether Tier-2 ran.
+- **FR-8 (off-switch):** `fallback_max_distance_miles ≤ normal radius` (or 0/null) disables Tier-2 →
+  exact legacy behavior.
+- **FR-9 (CRM passthrough):** `buildConfigOverride` emits `fallback_max_distance_miles=25` on every
+  request (fixed constant, no per-company setting).
+
+### 3. Acceptance criteria
+
+- **AC-1:** Weston-style request (in-area, all techs ≥11.8 mi) returns ≥1 rec with `fallback_tier=2`
+  and `used_nearest_fallback=true`; a ~40 mi request returns `[]`.
+- **AC-2:** The entire existing `slot-engine` suite (`engine.test.js`, `scenarios.test.js`,
+  `explain.test.js`) passes unchanged; a snapshot of `baseRequest()` recs is deep-equal to baseline.
+- **AC-3:** No Tier-2 rec overlaps an existing job; a physically-infeasible window is still rejected.
+- **AC-4:** `buildConfigOverride(DEFAULTS).geography.fallback_max_distance_miles === 25`.
+- **AC-5:** No migration, no new company setting, no Sara/VAPI change, no `recommendSlots.js` logic
+  change.
+
+### 4. Constraints & protected parts
+
+- **Tier-1 is frozen** — implemented by running the current candidate loop verbatim in Pass 1; the
+  loop body is extracted to a helper but not modified.
+- `deriveFallbackConfig` operates on a config **clone** — never mutates the request config (protects
+  the Tier-1 pass and `rankAndDiversify`).
+- Fixed engine config for the 25 mi cap (no `slot_engine_settings` column, no Settings UI).
+- Do not touch Sara's VAPI assistant/prompt; `recommendSlots.js` unchanged.

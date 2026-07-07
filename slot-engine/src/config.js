@@ -52,6 +52,10 @@ const DEFAULT_CONFIG = {
     allow_empty_day_candidates: false,
     max_distance_from_base_if_empty_day_miles: 20,
     min_geo_confidence_for_auto_recommendation: 0.50,
+    // Tier-2 "nearest-tech" fallback ceiling (SLOT-ENGINE-NEAREST-FALLBACK-001).
+    // Fires only when Tier-1 yields ZERO recs AND this > max_distance_from_existing_job_miles.
+    // Set to 0/null/<= normal radius to DISABLE the fallback (Tier-1-only legacy behavior).
+    fallback_max_distance_miles: 25,
   },
 
   overlap: {

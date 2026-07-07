@@ -7162,3 +7162,96 @@ Deploys: standard frontend build (owner-consented per standing rule; on deploy, 
 per memory). Reuse without modification: `loadGoogleMaps`, `getProviderColor`, `formatTimeInTZ`,
 `scheduledItems`/`scheduleFilters`, `BottomSheet`/gear sheet, `DayView` (list path). Protected:
 `CustomTimeModal` behavior (pin-import swap only), desktop Schedule, `useScheduleData`, all backend.
+
+---
+
+## SLOT-ENGINE-NEAREST-FALLBACK-001 — Tier-2 nearest-tech distance fallback
+
+**Feature:** two-pass slot engine — Tier-1 (normal radius, unchanged) → Tier-2 nearest-tech fallback
+(≤25 mi) when Tier-1 is empty. No migration, no Sara/VAPI change.
+**Status:** done — Implementer + Tester + Reviewer(APPROVED, 8/8 adversarial checks). engine `node --test` 52/52, backend jest 238/238 (slot suites + agentSkills golden). Tier-1 proven byte-identical (pre-change engine vs baseline, 8/8 covered inputs). Master-ready; deploy owner-gated.
+**Related docs:** Requirements `Docs/requirements.md#SLOT-ENGINE-NEAREST-FALLBACK-001` · Architecture
+`Docs/architecture.md#SLOT-ENGINE-NEAREST-FALLBACK-001` · Spec
+`Docs/specs/SLOT-ENGINE-NEAREST-FALLBACK-001.md` · Test cases
+`Docs/test-cases/SLOT-ENGINE-NEAREST-FALLBACK-001.md`
+
+### SLOT-ENGINE-NEAREST-FALLBACK-001-T1: engine config key
+
+**Goal:** add the Tier-2 ceiling to the engine default config.
+**Files:** `slot-engine/src/config.js`.
+**Do:** add `fallback_max_distance_miles: 25` inside `DEFAULT_CONFIG.geography`. Nothing else.
+**Constraints:** additive; existing keys/values untouched. `mergeConfig` already deep-merges it.
+**Deps:** none. **Wave 0** (parallel with T3 — disjoint files).
+**Статус:** done — `fallback_max_distance_miles: 25` added to `DEFAULT_CONFIG.geography`.
+
+### SLOT-ENGINE-NEAREST-FALLBACK-001-T2: engine Tier-2 two-pass
+
+**Goal:** run the candidate loop twice — Tier-1 as-is, then Tier-2 (widened ceilings) only when
+Tier-1 dedupes to zero.
+**Files:** `slot-engine/src/engine.js`.
+**Do:**
+1. Extract `recommendSlots` lines ~86–195 (the `for date/win/tech/idx` body building
+   `evaluated`/`generated`/`rejected`) into `generateCandidates(dates, techs, snapshot, config, ctx)`
+   returning `{evaluated, generated, rejected}` — pure cut/paste, NO logic change (`ctx` carries
+   `nowStamp,nr,newPoint,newGeoConf,newDuration,lowGeo,shiftStart,shiftEnd,shiftCapacity`).
+2. Add `deriveFallbackConfig(config, fbCap)`: clone config; set
+   `geography.max_distance_from_existing_job_miles=fbCap`,
+   `geography.max_distance_from_base_if_empty_day_miles=fbCap`,
+   `geography.allow_empty_day_candidates=true`; lift `travel.max_edge_distance_miles`,
+   `travel.max_edge_travel_minutes`, `travel.max_extra_travel_minutes` to `max(current, sized-to-fbCap
+   with K=2.64,BUF=10,×1.10)`. Do NOT touch overlap/feasibility/scoring/ranking. Must clone (never
+   mutate the passed config).
+3. In `recommendSlots`: Pass 1 = `generateCandidates(...config...)` → `dedupeBestPerSlot`. If
+   result empty AND `config.geography.fallback_max_distance_miles > config.geography.max_distance_from_existing_job_miles`
+   → Pass 2 = `generateCandidates(...deriveFallbackConfig(config,fbCap)...)`, dedupe, tag each
+   `fallback_tier=2`. `rankAndDiversify` on whichever set (uses `config.ranking.*` unchanged).
+4. Tagging + summary: `rankAndDiversify` passes through `fallback_tier`; push reason
+   `nearest_tech_fallback` on Tier-2 recs; add `summary.used_nearest_fallback`
+   (+ `generated_candidates_count` sums both passes when Pass 2 ran).
+**Constraints:** Tier-1 path byte-identical (Pass 1 = verbatim loop). New rec fields additive. No new
+deps. Anchor = `recommendSlots` (engine.js:48) loop body 86–195.
+**Deps:** **after T1** (reads the new key). **Wave 1.**
+**Статус:** done — `generateCandidates` extracted (literal), `deriveFallbackConfig` (clones via `mergeConfig`, lifts only distance+travel caps), two-pass trigger `deduped.length===0 && fbCap>normalRadius`, `fallback_tier:2`/`nearest_tech_fallback`/`summary.used_nearest_fallback` tags. Overlap/feasibility untouched.
+
+### SLOT-ENGINE-NEAREST-FALLBACK-001-T3: CRM-seam passthrough
+
+**Goal:** the CRM-built override must widen Tier-2 (the live path resolves both gates to 10 mi).
+**Files:** `backend/src/services/slotEngineSettingsService.js` (`buildConfigOverride`).
+**Do:** in the returned `geography` block add `fallback_max_distance_miles: 25` (fixed constant,
+alongside `allow_empty_day_candidates:true`). Update the function's doc comment (currently "2 fixed
+values" → 3). No change to `DEFAULTS`/`VALIDATION`/`validate`/`coerceStored`/`resolve`/`save` (NOT a
+per-company setting).
+**Constraints:** no migration, no new settings key, no Settings UI. Fixed 25.
+**Deps:** none (independent of T1/T2 — different repo path). **Wave 0** (parallel with T1).
+**Статус:** done — `buildConfigOverride` emits `geography.fallback_max_distance_miles: 25` (fixed constant). No DEFAULTS/VALIDATION/migration. All prior keys preserved (TC-RS-001/006 green).
+
+### SLOT-ENGINE-NEAREST-FALLBACK-001-T4: tests
+
+**Goal:** prove Tier-2 behavior + Tier-1 regression + CRM passthrough; include the negative control.
+**Files:** new `slot-engine/test/fallback.test.js`; one case in `backend/tests/` for `buildConfigOverride`.
+**Do:** implement FB-P0-00..10, FB-P1-01..04, FB-P2-01..03 per
+`Docs/test-cases/SLOT-ENGINE-NEAREST-FALLBACK-001.md`. Capture a `baseRequest()` recs BASELINE and
+deep-equal it (FB-P0-02). Run the FULL `slot-engine` suite (FB-P0-09). Run the P3 sabotage checks
+manually and record in the PR (FB-P3-01/02). Backend Jest case: `buildConfigOverride(DEFAULTS)` has
+`fallback_max_distance_miles===25` (worktree: `--testPathIgnorePatterns "/node_modules/"`).
+**Constraints:** `node --test`, no new framework; reuse `scenarios.test.js` fixture helpers. Verify
+fixture distances (FB-P0-00) so a coord typo fails loudly.
+**Deps:** **after T1+T2** (engine behavior) and **T3** (backend case). **Wave 2 (final).**
+**Статус:** done — `slot-engine/test/fallback.test.js` (15 tests: FB-1..7 + byte-identical guard + summary math), 2 sanctioned rewrites in `engine.test.js` (+`fallback_max_distance_miles:0` companions), `tests/slotEngineSettings.test.js` passthrough. slot-engine 52/52; backend jest 238/238. Negative control: sabotage→8 targeted fails, Tier-1 tests stay green, restored→green. GOTCHA: spec's "Weston centroid" was 9.54mi (inside gate) — Tester substituted measured 11.75/15.3/30.6mi points (FB_SANITY).
+
+### Execution order & parallelism (SLOT-ENGINE-NEAREST-FALLBACK-001)
+
+```
+wave 0:  T1 (engine config key)      ‖  T3 (CRM buildConfigOverride)     [disjoint files]
+              downarrow (T2 needs T1)
+wave 1:  T2 (engine two-pass Tier-2)
+              downarrow
+wave 2:  T4 (tests: slot-engine suite + fallback.test + backend passthrough)
+```
+
+**Graph:** T1 → T2 → T4; T3 → T4 (T3 parallel with T1). Migrations: **NONE**. Deploys: slot-engine
+service redeploy (+ backend redeploy for T3) — owner-consented per standing rule; on deploy, force
+session logout per memory. **Reuse unmodified:** `haversineMiles`, `overlapMinutes`,
+`checkFeasibility`, `scoreCandidate`, `rankAndDiversify`, `dedupeBestPerSlot`, `mergeConfig`.
+**Protected/frozen:** the Tier-1 candidate loop body (extracted, not edited), Sara/VAPI config +
+prompt, `recommendSlots.js`, `CustomTimeModal`/Schedule UI, all `slot_engine_settings` persistence.

@@ -4,7 +4,7 @@
  * Stateless: recommendSlots(request) -> response. Single-technician, fixed
  * candidate windows, haversine travel. See docs/specs/SLOT-ENGINE-001.md.
  */
-const { loadConfig } = require('./config');
+const { loadConfig, mergeConfig } = require('./config');
 const { adjustedTravelMinutes, haversineMiles } = require('./geo');
 const { hmToMin, minToHm, overlapMinutes, clamp, horizonDates } = require('./time');
 
@@ -78,6 +78,58 @@ function recommendSlots(request) {
       // never propose a date earlier than today
       && (!nowStamp.date || !config.planning.exclude_past_timeframes || d >= nowStamp.date));
 
+  // Per-request constants shared by both candidate-generation passes.
+  const ctx = { nowStamp, nr, newPoint, newGeoConf, newDuration, lowGeo, shiftStart, shiftEnd, shiftCapacity };
+
+  // ── PASS 1: Tier-1 (config as-is) ───────────────────────────────────────────
+  // MUST stay byte-identical to legacy output for any currently-covered location.
+  const p1 = generateCandidates(dates, techs, snapshot, config, ctx);
+  let deduped = dedupeBestPerSlot(p1.evaluated);
+  let generated = p1.generated;
+  let rejected = p1.rejected;
+  let usedFallback = false;
+
+  // ── PASS 2: Tier-2 (nearest-tech distance fallback) ─────────────────────────
+  // Fires ONLY when Tier-1 produced nothing AND a wider ceiling is configured.
+  const fbCap = config.geography.fallback_max_distance_miles;
+  const canFallback = fbCap != null && fbCap > config.geography.max_distance_from_existing_job_miles;
+  if (deduped.length === 0 && canFallback) {
+    const fbConfig = deriveFallbackConfig(config, fbCap);
+    const p2 = generateCandidates(dates, techs, snapshot, fbConfig, ctx);
+    const dedupedFb = dedupeBestPerSlot(p2.evaluated).map((c) => {
+      const codes = c.reason_codes.includes('nearest_tech_fallback') ? c.reason_codes : c.reason_codes.concat('nearest_tech_fallback');
+      return { ...c, fallback_tier: 2, reason_codes: codes };
+    });
+    deduped = dedupedFb;
+    generated += p2.generated;
+    rejected = config.debug.include_rejected_candidates ? rejected.concat(p2.rejected) : rejected;
+    usedFallback = dedupedFb.length > 0;
+  }
+
+  const ranked = rankAndDiversify(deduped, config);
+  return {
+    request_id: request.request_id,
+    config_version: config.config_version,
+    generated_at: new Date().toISOString(),
+    recommendations: ranked.map((r, i) => ({ rank: i + 1, ...r })),
+    summary: {
+      generated_candidates_count: generated,
+      feasible_candidates_count: deduped.length,
+      returned_recommendations_count: ranked.length,
+      used_nearest_fallback: usedFallback,
+    },
+    ...(config.debug.include_rejected_candidates ? { debug: { rejected_candidates_sample: rejected.slice(0, 25) } } : {}),
+  };
+}
+
+/**
+ * Candidate generation (SLOT-ENGINE-001 core loop). Pure over (dates, techs, snapshot,
+ * config, ctx) — no side effects on inputs — so it can be run twice (Tier-1, then Tier-2
+ * with a widened config). `ctx` carries the already-computed per-request constants.
+ * Returns { evaluated, generated, rejected }.
+ */
+function generateCandidates(dates, techs, snapshot, config, ctx) {
+  const { nowStamp, nr, newPoint, newGeoConf, newDuration, lowGeo, shiftStart, shiftEnd, shiftCapacity } = ctx;
   const evaluated = [];
   let generated = 0;
   const rejected = [];
@@ -193,24 +245,34 @@ function recommendSlots(request) {
       }
     }
   }
+  return { evaluated, generated, rejected };
+}
 
-  // One slot per (technician, date, window): multiple insertion positions can be
-  // feasible for the same window — keep the best-scoring one so the UI never shows
-  // two near-identical cards for the same tech+window.
-  const deduped = dedupeBestPerSlot(evaluated);
-  const ranked = rankAndDiversify(deduped, config);
-  return {
-    request_id: request.request_id,
-    config_version: config.config_version,
-    generated_at: new Date().toISOString(),
-    recommendations: ranked.map((r, i) => ({ rank: i + 1, ...r })),
-    summary: {
-      generated_candidates_count: generated,
-      feasible_candidates_count: deduped.length,
-      returned_recommendations_count: ranked.length,
+/**
+ * deriveFallbackConfig(config, fbCap) — clone of `config` with ONLY the distance ceilings
+ * widened to the Tier-2 fallback distance (SLOT-ENGINE-NEAREST-FALLBACK-001 §3.3). Never
+ * mutates `config`. Overlap (=0), feasibility, scoring and ranking are inherited untouched;
+ * we only stop rejecting on raw distance so the same loop admits nearest-tech candidates.
+ * Edge/extra-travel caps are lifted with the SAME formula buildConfigOverride uses
+ * (K=2.64 min/mi, BUF=10, ×1.10 headroom), floored at the current caps so Tier-2 is never
+ * MORE permissive on travel than a correctly-sized Tier-1.
+ */
+function deriveFallbackConfig(config, fbCap) {
+  const K = 2.64, BUF = 10;
+  const edge = Math.max(config.travel.max_edge_travel_minutes, Math.ceil((K * fbCap + BUF) * 1.10));
+  const extra = Math.max(config.travel.max_extra_travel_minutes, Math.ceil((2 * K * fbCap + BUF) * 1.10));
+  return mergeConfig(config, {
+    geography: {
+      max_distance_from_existing_job_miles: fbCap,
+      max_distance_from_base_if_empty_day_miles: fbCap,
+      allow_empty_day_candidates: true,
     },
-    ...(config.debug.include_rejected_candidates ? { debug: { rejected_candidates_sample: rejected.slice(0, 25) } } : {}),
-  };
+    travel: {
+      max_edge_distance_miles: Math.max(config.travel.max_edge_distance_miles, fbCap),
+      max_edge_travel_minutes: edge,
+      max_extra_travel_minutes: extra,
+    },
+  });
 }
 
 /** Earliest/latest propagation over an ordered route. Returns {E,L,routeSlack,workload} or {rejected}. */
@@ -314,6 +376,7 @@ function rankAndDiversify(cands, config) {
       technicians: [{ id: c.techId, name: c.techName }],
       score: c.score, confidence: c.confidence,
       ...(c.requires_dispatch_confirmation ? { requires_dispatch_confirmation: true } : {}),
+      ...(c.fallback_tier ? { fallback_tier: c.fallback_tier } : {}),
       feasible_arrival_interval: c.feasible_arrival_interval,
       metrics: c.metrics, reason_codes: c.reason_codes, explanation: c.explanation,
     });

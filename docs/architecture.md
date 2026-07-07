@@ -4521,3 +4521,66 @@ Desktop Schedule (`CalendarControls`, all desktop views) untouched. `useSchedule
 (reads only). `CustomTimeModal` behavior frozen except the pin-import swap. No backend, no
 migration, no route, no SSE event. Verification = `npm run build` + mobile preview (no Jest for
 pure UI on this repo).
+
+---
+
+## SLOT-ENGINE-NEAREST-FALLBACK-001 — Tier-2 nearest-tech distance fallback
+
+**Status:** Architecture
+**Related requirements:** `SLOT-ENGINE-NEAREST-FALLBACK-001` in `Docs/requirements.md`
+**Spec:** `Docs/specs/SLOT-ENGINE-NEAREST-FALLBACK-001.md`
+
+### 1. Files touched
+
+- `slot-engine/src/config.js` — add `geography.fallback_max_distance_miles: 25` to `DEFAULT_CONFIG`.
+- `slot-engine/src/engine.js` — extract the candidate-generation loop (`recommendSlots` lines
+  ~86–195) into `generateCandidates(dates, techs, snapshot, config, ctx)` (behavior-preserving
+  cut/paste), then run it twice: Pass 1 (Tier-1, config as-is), and Pass 2 (Tier-2) ONLY when Pass 1
+  dedupes to zero AND `fallback_max_distance_miles > max_distance_from_existing_job_miles`. Add
+  `deriveFallbackConfig(config, fbCap)` (clones config, widens the two distance ceilings + the
+  edge/extra-travel caps to the fallback distance, sets `allow_empty_day_candidates=true`; leaves
+  overlap/feasibility/scoring/ranking untouched). Tag Tier-2 recs `fallback_tier=2` +
+  `nearest_tech_fallback` reason; add `summary.used_nearest_fallback`.
+- `backend/src/services/slotEngineSettingsService.js` — `buildConfigOverride` emits
+  `geography.fallback_max_distance_miles: 25` as a fixed constant (next to the existing fixed
+  `allow_empty_day_candidates`/`max_day_utilization`).
+
+### 2. Tier-1 / Tier-2 layering (why a two-pass wrapper)
+
+The engine's Tier-1 feasibility is not a separable predicate — it is a chain of `reject`/`continue`
+points inside one nested loop (`empty-day gate` engine.js:104-107, `overlap` :114-116, `nearest
+distance` :121, `edge` :134-139, `extra travel` :147, `checkFeasibility` :150, `slot fit` :159-160,
+`utilization` :164). Rather than thread a distance-band parameter through all of them (fragile, easy
+to drift Tier-1), we run the **entire loop verbatim twice** with different config. Pass 1 is literally
+today's behavior → the strongest possible "Tier-1 unchanged" guarantee (regression proven by a
+deep-equal snapshot of `baseRequest()` recs). Pass 2 reuses the same helpers (haversine `nearest`,
+`overlapMinutes`, `checkFeasibility`, `scoreCandidate`, `rankAndDiversify`) with only the distance
+ceilings widened, so non-overlap, empty-day-from-base, feasibility, and nearest-first ranking all come
+for free. `deriveFallbackConfig` clones the config so no shared-object mutation can leak into Pass 1.
+
+"Nearest" needs no new code: busy-day `nearest` = min haversine to existing jobs (engine.js:119-120),
+empty-day `nearest` = base→new (engine.js:122); the score's `S_dist = exp(-nearest/theta)` already
+orders nearest-first.
+
+### 3. Config keys & why fixed-config (not per-company)
+
+One new key: `geography.fallback_max_distance_miles` (default 25). It is a **fixed engine value** +
+an unconditional emit in `buildConfigOverride`, NOT a `slot_engine_settings` column. The per-company
+settings set (`slotEngineSettingsService` `KEYS`) is a fixed, PUT-replace-all, range-validated group
+of 5; a 6th key ripples into `DEFAULTS`/`VALIDATION`/`validate`/`coerceStored` + a migration + the
+Settings screen — not trivial, and the owner asked for a fixed value unless per-company is trivial.
+**No migration** — nothing persisted; the value lives in code on both the engine and CRM sides. If
+per-company tuning is wanted later, it becomes a 6th settings key without reworking the engine.
+
+**Corrected wiring note:** the live cause was NOT `allow_empty_day_candidates=false` (that is only the
+engine DEFAULT). `buildConfigOverride` already forces `allow_empty_day_candidates=true` and maps one
+`max_distance_miles` (10) onto BOTH the busy-day and empty-day gates; both are 10 mi on prod, so
+Weston misses on both paths. Hence the CRM seam (`buildConfigOverride`) MUST also pass the fallback
+key — the engine default alone would not reach the CRM-driven request.
+
+### 4. Non-goals / freeze
+
+Sara/VAPI config + prompt untouched; `recommendSlots.js` unchanged (it already returns engine recs
+and falls back to `SLOT_FALLBACK` on empty — now strictly less often). `CustomTimeModal`/Schedule UI
+unchanged (reads `recommendations[]`; `fallback_tier` optional/ignore-safe). Google Routes travel
+model, multi-tech, learning weights remain future work.

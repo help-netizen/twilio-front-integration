@@ -151,6 +151,7 @@ function buildConfigOverride(settings) {
             max_distance_from_existing_job_miles: settings.max_distance_miles,
             max_distance_from_base_if_empty_day_miles: settings.max_distance_miles, // ONE radius -> BOTH keys
             allow_empty_day_candidates: true, // fixed, always
+            fallback_max_distance_miles: 25, // fixed, always (SLOT-ENGINE-NEAREST-FALLBACK-001 Tier-2 ceiling)
         },
         overlap: { max_timeframe_overlap_minutes: settings.overlap_minutes },
         feasibility: { min_required_slack_minutes: settings.min_buffer_minutes },

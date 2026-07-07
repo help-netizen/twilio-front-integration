@@ -70,12 +70,14 @@ function configRow(config) {
 // ─── 1. buildConfigOverride — engine key mapping ─────────────────────────────────
 
 describe('buildConfigOverride', () => {
-    it('TC-RS-001: DEFAULTS → exact override (RS-002: now incl. travel block)', () => {
+    it('TC-RS-001: DEFAULTS → exact override (RS-002 travel block; NEAREST-FALLBACK-001 Tier-2 ceiling)', () => {
         expect(svc.buildConfigOverride(DEFAULTS)).toEqual({
             geography: {
                 max_distance_from_existing_job_miles: 10,
                 max_distance_from_base_if_empty_day_miles: 10,
                 allow_empty_day_candidates: true,
+                // SLOT-ENGINE-NEAREST-FALLBACK-001 §6/B10: fixed Tier-2 ceiling, always emitted.
+                fallback_max_distance_miles: 25,
             },
             overlap: { max_timeframe_overlap_minutes: 0 },
             feasibility: { min_required_slack_minutes: 15 },
@@ -122,21 +124,52 @@ describe('buildConfigOverride', () => {
         expect(o.workload.max_day_utilization).toBe(0.95);
     });
 
-    it('TC-RS-006: output carries no extra/exposed keys (superseded by RS-002: 7 keys incl. travel)', () => {
+    it('TC-RS-006: output carries no extra/exposed keys (RS-002 travel + NEAREST-FALLBACK-001 geo key)', () => {
         const o = svc.buildConfigOverride(DEFAULTS);
         // RS-002: top-level set is now 7 keys (travel added). Superseding the old RS-001
         // 6-key list and the `expect(o.travel).toBeUndefined()` assertion.
         expect(Object.keys(o).sort()).toEqual(
             ['feasibility', 'geography', 'overlap', 'planning', 'ranking', 'travel', 'workload']
         );
+        // SLOT-ENGINE-NEAREST-FALLBACK-001: geography now also emits fallback_max_distance_miles.
         expect(Object.keys(o.geography).sort()).toEqual([
             'allow_empty_day_candidates',
+            'fallback_max_distance_miles',
             'max_distance_from_base_if_empty_day_miles',
             'max_distance_from_existing_job_miles',
         ]);
         expect(o.travel).toBeDefined();
         expect(o.scoring).toBeUndefined();
         expect(o.candidate_timeframes).toBeUndefined();
+    });
+});
+
+// ─── 1a. buildConfigOverride — NEAREST-FALLBACK-001 Tier-2 ceiling passthrough (B10/FB-P0-10) ─
+// The CRM seam must emit the fixed Tier-2 ceiling on EVERY request so the engine's canFallback
+// gate is armed (spec §1.2 correction: without this the CRM path keeps the engine default and
+// the fallback is never configured from the CRM). Tier-1 radius stays per-company; Tier-2 = 25.
+
+describe('buildConfigOverride — Tier-2 nearest-tech fallback passthrough (SLOT-ENGINE-NEAREST-FALLBACK-001)', () => {
+    it('FB-P0-10: DEFAULTS → geography.fallback_max_distance_miles === 25', () => {
+        const o = svc.buildConfigOverride(DEFAULTS);
+        expect(o.geography.fallback_max_distance_miles).toBe(25);
+        // alongside the other fixed injects the spec pins in B10.
+        expect(o.geography.max_distance_from_existing_job_miles).toBe(10);
+        expect(o.geography.allow_empty_day_candidates).toBe(true);
+    });
+
+    it('FB-P0-10b: Tier-2 ceiling is strictly wider than Tier-1 → engine canFallback is satisfied', () => {
+        const o = svc.buildConfigOverride(DEFAULTS);
+        expect(o.geography.fallback_max_distance_miles)
+            .toBeGreaterThan(o.geography.max_distance_from_existing_job_miles);
+    });
+
+    it('FB-P0-10c: 25 mi ceiling is a fixed constant — independent of per-company max_distance_miles', () => {
+        for (const D of [1, 10, 30, 100]) {
+            const o = svc.buildConfigOverride({ ...DEFAULTS, max_distance_miles: D });
+            expect(o.geography.fallback_max_distance_miles).toBe(25); // never scales with D
+            expect(o.geography.max_distance_from_existing_job_miles).toBe(D); // Tier-1 tracks D
+        }
     });
 });
 
