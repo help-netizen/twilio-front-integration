@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Albusto brand mark: ink plate + near-white geometric "A".
+       Non-maskable variant: plate fills the square edge-to-edge (rx 112 ~= 22%); iOS applies its own rounding. -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="#030213"/>
+  <!-- Geometric capital "A": apex top-center, splayed legs, solid crossbar, triangular counter (evenodd hole).
+       Outer bbox ~ x[168..344] y[132..380] => ~60% of the 512 plate, vertically centered.
+       Counter is a wide triangle above the crossbar; crossbar = solid band y[300..332]. -->
+  <path fill="#fffdf9" fill-rule="evenodd" d="
+    M 256 132
+    L 344 380
+    L 292 380
+    L 275 332
+    L 237 332
+    L 220 380
+    L 168 380
+    Z
+    M 256 210
+    L 225 300
+    L 287 300
+    Z
+  "/>
+</svg>

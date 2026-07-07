@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import Keycloak from 'keycloak-js';
+import { classifyRefreshFailure, REFRESH_RETRY_BACKOFF_MS } from './refreshPolicy';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -117,6 +118,51 @@ export function ensureKeycloakInitialized(): Promise<boolean> {
 export async function loginWithIdp(idpHint: string, redirectUri: string): Promise<void> {
     await ensureKeycloakInitialized();
     await getKeycloak().login({ idpHint, redirectUri });
+}
+
+// ─── Silent-refresh orchestrator (PWA-FIX-001 / PWA-05) ──────────────────────
+
+// Local impure sleep — the *decision* (transient vs dead) stays pure in
+// refreshPolicy.ts; timers/redirects live here (spec §3.4).
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Single orchestrator behind BOTH silent-refresh seams (the 30s interval and
+// kc.onTokenExpired). On a live token kc.updateToken(60) is a no-op, so a tick
+// costs nothing and never stacks (§4.2). On a refresh FAILURE we classify:
+//   - 'dead'  → redirect to Keycloak exactly once.
+//   - 'transient' → back off (2/5/10s) and retry, up to the budget length; on
+//     budget exhaustion redirect once. Retries chain via awaited recursion — no
+//     synchronous loop (§1.4.2–§1.4.3, §3.4).
+// Duplicate-login safety (§1.4.9): the first successful refresh makes the second
+// updateToken(60) a no-op; on a genuinely dead session kc.login() is an idempotent
+// browser navigation (the second redirect just replaces the first in-flight one).
+async function refreshTokenOrLogin(
+    kc: Keycloak,
+    onRefreshed: () => void,
+    attempt = 0,
+): Promise<void> {
+    try {
+        const refreshed = await kc.updateToken(60);
+        // Apply ONLY when the token actually changed. On a live token updateToken
+        // resolves false → skip (the original 30s interval had NO success handler,
+        // so it must NOT fire a per-tick fetchAuthzContext network call / re-render).
+        // onTokenExpired always has an expired token ⇒ refreshed===true ⇒ applyToken
+        // still runs, preserving that seam's original .then behavior (§1.4.1, §1.4.5, §4.1).
+        if (refreshed) onRefreshed();
+    } catch (err) {
+        const kind = classifyRefreshFailure({
+            hasRefreshToken: !!kc.refreshToken,
+            online: navigator.onLine,
+            error: err,
+        });
+        if (kind === 'dead' || attempt >= REFRESH_RETRY_BACKOFF_MS.length) {
+            console.warn('[Auth] Token refresh failed, redirecting to login');
+            kc.login();
+            return;
+        }
+        await sleep(REFRESH_RETRY_BACKOFF_MS[attempt]);
+        await refreshTokenOrLogin(kc, onRefreshed, attempt + 1);
+    }
 }
 
 // ─── Extract roles from Keycloak token ──────────────────────────────────────
@@ -258,19 +304,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         await fetchAuthzContext(kc.token);
                     }
 
-                    setInterval(() => {
-                        kc.updateToken(60).catch(() => {
-                            console.warn('[Auth] Token refresh failed, redirecting to login');
-                            kc.login();
-                        });
-                    }, 30000);
-
-                    kc.onTokenExpired = () => {
-                        kc.updateToken(60).then(() => {
-                            setToken(kc.token || null);
-                            if (kc.token) fetchAuthzContext(kc.token);
-                        }).catch(() => kc.login());
+                    // PWA-FIX-001 (PWA-05): both silent-refresh seams flow through ONE
+                    // orchestrator. applyToken is the byte-exact success side-effect the
+                    // old onTokenExpired ran (setToken + fetchAuthzContext).
+                    const applyToken = () => {
+                        setToken(kc.token || null);
+                        if (kc.token) fetchAuthzContext(kc.token);
                     };
+
+                    setInterval(() => { void refreshTokenOrLogin(kc, applyToken); }, 30000);
+
+                    kc.onTokenExpired = () => { void refreshTokenOrLogin(kc, applyToken); };
 
                     kc.onAuthRefreshSuccess = () => {
                         setToken(kc.token || null);
