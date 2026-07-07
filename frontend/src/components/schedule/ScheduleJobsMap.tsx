@@ -15,10 +15,16 @@
  *    small note. (Gating on status==='success' wrongly hid jobs that carry
  *    valid coords from Zenbooker/import but were never promoted past
  *    'not_geocoded', plus every lead — leads' geocoding_status is always NULL.)
- *  - Group plottable jobs by assigned tech id (else "Unassigned"), sort each
- *    group by start_at, number 1..N = route order. Pin color =
- *    getProviderColor(techId).accent (matches the tile left-border on the same
- *    page); Unassigned = neutral gray.
+ *  - Grouping mirrors the desktop route map (CustomTimeModal.buildTechGroups): a
+ *    job joins EVERY assigned tech's route, not just assigned_techs[0]. When a
+ *    provider filter is active (selectedProviderIds) only the selected techs'
+ *    routes render, so a joint job (e.g. Robert+Ali) stays on Robert's route as
+ *    his chronological stop when Robert is the one being viewed — instead of
+ *    being mis-filed under whoever happens to be assigned_techs[0]. No provider
+ *    filter → every tech present renders. Jobs with no tech → an "Unassigned"
+ *    route. Each route is sorted by start_at and numbered 1..N; pin color =
+ *    getProviderColor(techId).accent (matches the tile left-border); Unassigned
+ *    = neutral gray.
  *  - Straight google.maps.Polyline per tech through its stops in order (tech
  *    color; NO Directions API — owner decision 4).
  *  - InfoWindow on marker click; fitBounds over plotted points with a max-zoom
@@ -40,6 +46,10 @@ interface ScheduleJobsMapProps {
     jobs: ScheduleItem[];
     /** Company IANA tz (schedule.settings.timezone) — for InfoWindow time formatting. */
     companyTz: string;
+    /** Active provider filter (schedule.filters.providerIds). When set, only these
+        techs' routes render; a multi-tech job appears on each SELECTED tech's route.
+        Empty/undefined → render every tech present (matches the desktop map). */
+    selectedProviderIds?: string[];
 }
 
 // Fallback map view when there is nothing to plot (greater-Boston, matching the
@@ -75,59 +85,86 @@ function escapeHtml(s: string): string {
         .replace(/"/g, '&quot;');
 }
 
-/** Group plottable jobs by assigned tech id, sort each group by start_at, and
- *  number 1..N. Multi-tech jobs count once under assigned_techs[0]. */
-function buildGroups(jobs: ScheduleItem[]): { groups: TechGroupMeta[]; plotted: PlottedJob[] } {
+/** A stable per-tech key: prefer id, fall back to name — the SAME key
+ *  filterItemsByProviderTags matches on and getProviderColor is keyed by, so
+ *  route membership, pin color, and the tile left-border all agree. */
+function techKey(t?: { id?: string; name?: string } | null): string {
+    return (t && (t.id || t.name)) || '';
+}
+
+/** Group plottable jobs into per-tech routes, sort each by start_at, number
+ *  1..N. Mirrors the desktop route map (buildTechGroups): a job joins EVERY
+ *  assigned tech's route. `selectedIds` (the active provider filter) restricts
+ *  which routes render — a multi-tech job then shows on each SELECTED tech's
+ *  route, so a Robert+Ali job stays Robert's stop when only Robert is viewed
+ *  instead of being mis-filed under assigned_techs[0]. Empty selection → render
+ *  every tech present. */
+function buildGroups(
+    jobs: ScheduleItem[],
+    selectedIds: string[],
+): { groups: TechGroupMeta[]; plotted: PlottedJob[] } {
+    const selected = selectedIds.filter(id => id && id !== UNASSIGNED_ID);
+    const hasFilter = selected.length > 0;
+    const wantUnassigned = !hasFilter || selectedIds.includes(UNASSIGNED_ID);
+    const selectedSet = new Set(selected);
+
     // Preserve first-seen order of tech groups for a stable legend.
     const order: string[] = [];
     const buckets = new Map<string, { techName: string; items: ScheduleItem[] }>();
+    const ensure = (key: string, name: string) => {
+        if (!buckets.has(key)) { buckets.set(key, { techName: name, items: [] }); order.push(key); }
+        return buckets.get(key)!;
+    };
 
     for (const job of jobs) {
-        const primary = job.assigned_techs?.[0];
-        const techId = primary?.id || UNASSIGNED_ID;
-        const techName = primary?.name || 'Unassigned';
-        if (!buckets.has(techId)) {
-            buckets.set(techId, { techName, items: [] });
-            order.push(techId);
+        const techs = job.assigned_techs || [];
+        if (techs.length === 0) {
+            if (wantUnassigned) ensure(UNASSIGNED_ID, 'Unassigned').items.push(job);
+            continue;
         }
-        buckets.get(techId)!.items.push(job);
+        // A job joins EVERY assigned tech's route (desktop parity); with a filter
+        // active only the selected techs' routes render.
+        for (const t of techs) {
+            const key = techKey(t);
+            if (!key) continue;
+            if (hasFilter && !selectedSet.has(key)) continue;
+            ensure(key, t.name || 'Technician').items.push(job);
+        }
     }
 
     const groups: TechGroupMeta[] = [];
     const plotted: PlottedJob[] = [];
 
-    for (const techId of order) {
-        const bucket = buckets.get(techId)!;
+    for (const key of order) {
+        const bucket = buckets.get(key)!;
         // Sort by start_at ascending; missing/malformed start sorts as 0.
         const sorted = [...bucket.items].sort((a, b) => {
             const ta = a.start_at ? new Date(a.start_at).getTime() || 0 : 0;
             const tb = b.start_at ? new Date(b.start_at).getTime() || 0 : 0;
             return ta - tb;
         });
-        // getProviderColor is total; mirror the tile's `id || name` key so pin
-        // colors equal the tile left-borders. Unassigned uses the explicit gray.
-        const primary = sorted[0]?.assigned_techs?.[0];
-        const color = techId === UNASSIGNED_ID
-            ? UNASSIGNED_COLOR
-            : getProviderColor(primary?.id || primary?.name || techId).accent;
+        // Color from the GROUP's own tech key — NOT a job's assigned_techs[0],
+        // which for a joint job may be a different tech — so the pin color equals
+        // this tech's tile left-border. Unassigned uses the explicit gray.
+        const color = key === UNASSIGNED_ID ? UNASSIGNED_COLOR : getProviderColor(key).accent;
 
         const stops: PlottedJob[] = sorted.map((job, i) => ({
             job,
             lat: job.lat as number,
             lng: job.lng as number,
             num: i + 1,
-            techId,
+            techId: key,
             techName: bucket.techName,
             color,
         }));
-        groups.push({ techId, techName: bucket.techName, color, stops });
+        groups.push({ techId: key, techName: bucket.techName, color, stops });
         plotted.push(...stops);
     }
 
     return { groups, plotted };
 }
 
-export function ScheduleJobsMap({ jobs, companyTz }: ScheduleJobsMapProps) {
+export function ScheduleJobsMap({ jobs, companyTz, selectedProviderIds }: ScheduleJobsMapProps) {
     const mapDivRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<google.maps.Map | null>(null);
     const markersRef = useRef<google.maps.Marker[]>([]);
@@ -139,18 +176,26 @@ export function ScheduleJobsMap({ jobs, companyTz }: ScheduleJobsMapProps) {
     // 'error' → key missing / load failed → inline message.
     const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
-    // Plottable subset + grouping (memoized on jobs identity — the parent passes
-    // a fresh array on each filter/day change).
-    const { groups, plotted } = useMemo(() => {
+    // Stable string key of the provider filter so the memo (and the marker-place
+    // effect that depends on its output) doesn't churn on a new-array-same-values
+    // render from the parent.
+    const selKey = (selectedProviderIds || []).join('|');
+
+    // Plottable subset + grouping. Recomputes on jobs identity or filter change.
+    const { groups, plotted, unplottableCount } = useMemo(() => {
         // Plottable = has coordinates. Match the desktop route map, which plots
         // any job with truthy lat/lng and never inspects geocoding_status: real
         // jobs carry valid coords (from Zenbooker/import) while their status is
         // often still 'not_geocoded', and leads always report a NULL status.
         const plottable = jobs.filter(j => j.lat != null && j.lng != null);
-        return buildGroups(plottable);
-    }, [jobs]);
-
-    const unplottableCount = jobs.length - plotted.length;
+        const built = buildGroups(plottable, selectedProviderIds || []);
+        // "N without a location" = jobs the list shows but the map didn't place,
+        // counted by DISTINCT entity id (a joint job plots on two routes, so
+        // plotted.length can exceed the job count — never subtract a doubled total).
+        const placed = new Set(built.plotted.map(s => `${s.job.entity_type}:${s.job.entity_id}`));
+        return { ...built, unplottableCount: jobs.length - placed.size };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [jobs, selKey]);
 
     // ── Load Google Maps + build the map instance once ──
     useEffect(() => {

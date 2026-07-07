@@ -69,10 +69,21 @@ Behavior:
   leads always report a NULL status — gating on `=== 'success'` wrongly hid all of them. No
   client-side geocoding fallback for coordinate-less items (owner decision 3); those are counted
   in the "no location" note below.
-- **Grouping & numbering:** group plottable jobs by their assigned technician id
-  (`assigned_techs[0]?.id`; jobs with no tech → an "Unassigned" group). Within each group sort
-  by `start_at` ascending; the pin number is the 1-based index in that per-tech order (route
-  order). Pin color = `getProviderColor(techId).accent` (Unassigned → a neutral gray).
+- **Grouping & numbering:** mirror the desktop route map (`CustomTimeModal.buildTechGroups`) —
+  a job joins **every** assigned tech's route (iterate all `assigned_techs`), **not** just
+  `assigned_techs[0]`. The active provider filter (`selectedProviderIds` = `filters.providerIds`)
+  restricts which routes render: with a filter active, only the selected techs' routes appear, so
+  a multi-tech job shows on each **selected** tech's route (a Robert+Ali job stays Robert's stop
+  when only Robert is viewed — it is **not** mis-filed under Ali just because Ali is
+  `assigned_techs[0]`). No provider filter → every tech present renders. Jobs with no tech → an
+  "Unassigned" route (rendered when no filter, or when the `__unassigned__` sentinel is selected).
+  Within each route sort by `start_at` ascending; the pin number is the 1-based index in that
+  per-tech order (route order). Pin color = `getProviderColor(techKey).accent` where
+  `techKey = tech.id || tech.name` (the group's own tech, matching the tile left-border;
+  Unassigned → a neutral gray). Tech key (`id || name`) is the same key `filterItemsByProviderTags`
+  matches on, so route membership, filter inclusion, and pin color all agree.
+- **Un-plottable count** is by **distinct** entity id (`jobs.length − |distinct plotted job ids|`),
+  since a joint job plots on two routes — never subtract a doubled `plotted.length`.
 - **Markers:** per job `new google.maps.Marker({ icon: { url: makePinSvg(num, colorHex), scaledSize 28×40, anchor (14,40) } })`, `title` = `${techName} #${num} — ${customer_name}`. Click →
   `google.maps.InfoWindow` with tech + number (colored), time (`formatTimeInTZ(start_at)`),
   title/subtitle, address.
@@ -128,6 +139,18 @@ Behavior:
 - **Ожидаемый результат:** `schedule.scheduledItems` changes → the `ScheduleJobsMap` effect
   re-places pins to exactly the new provider's geocoded jobs and re-fits bounds; stays in map
   mode. Selecting a second provider shows both techs' pins in their two colors.
+
+### S2b — Joint (multi-tech) job attributed to the viewed tech
+- **Предусловия:** provider filter = a single tech **Robert**; the day has 3 jobs — two solo
+  Robert jobs and one **joint** job assigned to `[Ali, Robert]` (Ali is `assigned_techs[0]`), all
+  three with coordinates.
+- **Ожидаемый результат:** the map shows **3 pins, all in Robert's color**, numbered by start
+  time (the joint job is Robert's **#3**, not "Ali #1"). **No Ali pin** appears (Ali is not
+  selected). Regression guard: gating on `assigned_techs[0]` would wrongly render the joint job
+  as an Ali-colored #1 and could drop it from Robert's route.
+- **Edge (both selected):** with **Ali + Robert** both in the filter, the joint job renders on
+  **both** routes — Robert's #3 and Ali's stop — two same-location pins in their two colors
+  (desktop parity). The un-plottable count stays correct (counted by distinct entity id).
 
 ### S3 — Day change reflects on the map
 - **Предусловия:** map mode open.

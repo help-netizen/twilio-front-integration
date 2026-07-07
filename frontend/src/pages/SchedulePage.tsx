@@ -138,7 +138,7 @@ export function SchedulePage() {
             case 'day':
                 // Mobile-only: the map replaces the day list (full-width) when toggled on.
                 if (isMobile && mobileMapOpen) {
-                    return <ScheduleJobsMap jobs={schedule.scheduledItems} companyTz={schedule.settings.timezone} />;
+                    return <ScheduleJobsMap jobs={schedule.scheduledItems} companyTz={schedule.settings.timezone} selectedProviderIds={schedule.filters.providerIds} />;
                 }
                 return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} />;
             case 'month':
