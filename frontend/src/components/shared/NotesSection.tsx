@@ -109,7 +109,12 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const canEdit = (n: Note) =>
         n.can_edit ?? (
             isAdmin ? true
-            : (n.source === 'zenbooker' || n.zb_note_id) ? false
+            // Only a genuine ZB-ORIGIN note (explicit source) is admin-only in the
+            // fallback. A note with a zb_note_id but a local created_by was authored
+            // here and merely pushed to Zenbooker — its author keeps edit rights
+            // (NOTE-ZB-AUTHOR-FIX-001). The server-authoritative can_edit above is the
+            // real gate; this fallback only runs for legacy payloads without it.
+            : n.source === 'zenbooker' ? false
             : n.created_by ? n.created_by === myId
             : false
         );

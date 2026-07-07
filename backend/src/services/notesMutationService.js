@@ -31,8 +31,13 @@ const noteAttachmentsService = require('./noteAttachmentsService');
 function canMutateNote(note, { isAdmin, actorSub, actorCrmUserId }) {
     if (isAdmin) return true;
     if (!note) return false;
-    if (note.source === 'zenbooker' || note.zb_note_id) return false; // ZB-synced → admin only
-    if (!note.created_by) return false;                               // legacy/no author → admin only
+    // Notes that ORIGINATED in Zenbooker are admin-only — but discriminate origin by
+    // the LOCAL author, NOT by zb_note_id alone. An app-authored note acquires a
+    // zb_note_id when we push it OUT to Zenbooker (write-through); that must NOT strip
+    // its author's edit/delete rights (NOTE-ZB-AUTHOR-FIX-001). A genuine ZB-origin
+    // note carries an explicit `source: 'zenbooker'` and/or no local `created_by`.
+    if (note.source === 'zenbooker') return false;                    // explicit external origin → admin only
+    if (!note.created_by) return false;                               // no local author (incl. ZB-pulled) → admin only
     // created_by may be the Keycloak sub OR the crm_users.id — the POST-note path
     // stamped `crmUser.id || sub`, so a non-admin author whose crm_users.id differs
     // from their sub would otherwise lose edit/delete on their own note. Match either

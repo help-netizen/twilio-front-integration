@@ -42,13 +42,30 @@ describe('canMutateNote matrix', () => {
         expect(canMutateNote(note, { isAdmin: true, actorSub: OWNER })).toBe(true);
     });
 
-    it('zenbooker-sourced note → admin-only (non-admin denied even if owner)', () => {
+    it('explicit zenbooker-origin note (source tag) → admin-only even for the named author', () => {
         const bySource = { id: 'n1', created_by: OWNER, source: 'zenbooker' };
-        const byZbId = { id: 'n1', created_by: OWNER, zb_note_id: '123x456' };
         expect(canMutateNote(bySource, { isAdmin: false, actorSub: OWNER })).toBe(false);
-        expect(canMutateNote(byZbId, { isAdmin: false, actorSub: OWNER })).toBe(false);
         expect(canMutateNote(bySource, { isAdmin: true, actorSub: OWNER })).toBe(true);
-        expect(canMutateNote(byZbId, { isAdmin: true, actorSub: OWNER })).toBe(true);
+    });
+
+    it('ZB-ORIGIN note (zb_note_id, no local author) → admin-only', () => {
+        // Pulled in from Zenbooker: has a zb_note_id but no created_by.
+        const zbPulled = { id: 'n1', zb_note_id: '123x456' };
+        expect(canMutateNote(zbPulled, { isAdmin: false, actorSub: OWNER })).toBe(false);
+        expect(canMutateNote(zbPulled, { isAdmin: true, actorSub: OWNER })).toBe(true);
+    });
+
+    it('app-authored note pushed to Zenbooker (zb_note_id + created_by) → author keeps edit rights (NOTE-ZB-AUTHOR-FIX-001)', () => {
+        // Regression: a non-admin tech writes a note on a ZB job; our write-through
+        // stamps a zb_note_id on it. That must NOT lock the author out of their own
+        // note — the old `|| note.zb_note_id` guard did exactly that.
+        const pushed = { id: 'n1', created_by: OWNER, zb_note_id: '1783391222388x528007053805919170' };
+        expect(canMutateNote(pushed, { isAdmin: false, actorSub: OWNER })).toBe(true);
+        // author matched by crm_users.id (created_by != sub) too
+        const pushedByCrmId = { id: 'n1', created_by: 'crm-user-99', zb_note_id: '9x9' };
+        expect(canMutateNote(pushedByCrmId, { isAdmin: false, actorSub: OWNER, actorCrmUserId: 'crm-user-99' })).toBe(true);
+        // but a DIFFERENT non-admin still cannot edit it (no over-grant)
+        expect(canMutateNote(pushed, { isAdmin: false, actorSub: OTHER })).toBe(false);
     });
 
     it('admin can mutate any note', () => {
@@ -95,6 +112,17 @@ describe('404 vs 403 ordering through the service', () => {
             text: 'updated', actor: { sub: OWNER, crmUserId: 'crm-user-99', isAdmin: false }, companyId: 'c1',
         });
         expect(res.note.text).toBe('updated');
+        expect(adapter.saveNotes).toHaveBeenCalled();
+    });
+
+    it('author CAN edit their own note after it was pushed to Zenbooker (zb_note_id present) — NOTE-ZB-AUTHOR-FIX-001', async () => {
+        // Full-path regression for the reported bug: editable right after adding,
+        // then the async ZB push stamps zb_note_id and the PATCH started 403ing.
+        const adapter = adapterWith([{ id: 'n1', created_by: 'crm-user-99', zb_note_id: '178x528' }]);
+        const res = await notesMutationService.editNote(adapter, 'n1', {
+            text: 'fixed a typo', actor: { sub: OWNER, crmUserId: 'crm-user-99', isAdmin: false }, companyId: 'c1',
+        });
+        expect(res.note.text).toBe('fixed a typo');
         expect(adapter.saveNotes).toHaveBeenCalled();
     });
 
