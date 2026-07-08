@@ -58,7 +58,7 @@ function FloatingField({
                     data-lpignore="true"
                     data-1p-ignore="true"
                     rows={rows}
-                    className={cn(fieldBase, "block resize-none px-3.5 pt-5 pb-1 leading-relaxed", className)}
+                    className={cn(fieldBase, "block resize-none px-3.5 pt-[22px] pb-1 leading-relaxed", className)}
                     onBlur={onBlur}
                     onFocus={onFocus}
                     onKeyDown={onKeyDown}
@@ -87,7 +87,7 @@ function FloatingField({
                 autoComplete="off"
                 data-lpignore="true"
                 data-1p-ignore="true"
-                className={cn(fieldBase, "h-[50px] px-3.5 pt-[18px] pb-[6px]", className)}
+                className={cn(fieldBase, "h-[50px] px-3.5 pt-[22px] pb-[6px]", className)}
                 onBlur={onBlur}
                 onFocus={onFocus}
                 onKeyDown={onKeyDown}
@@ -128,7 +128,7 @@ function FloatingLabel({
         <div
             className={cn(
                 "group relative rounded-xl bg-[var(--blanc-field,#F0F0F0)]",
-                "[&_input]:border-transparent [&_input]:pt-[18px] [&_input]:pb-[6px]",
+                "[&_input]:border-transparent [&_input]:pt-[22px] [&_input]:pb-[6px]",
                 className,
             )}
             data-filled={filled ? "true" : undefined}

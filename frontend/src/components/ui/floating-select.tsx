@@ -32,7 +32,7 @@ function FloatingSelect({
                 <SelectTrigger
                     id={id}
                     className={cn(
-                        "h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3.5 pt-[18px] pb-[6px] text-[15px] data-[size=default]:h-[50px]",
+                        "h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3.5 pt-[22px] pb-[6px] text-[15px] data-[size=default]:h-[50px]",
                         "focus-visible:border-[var(--blanc-line-strong)] focus-visible:ring-0",
                         "[&>svg]:-mt-3",
                         triggerClassName,
