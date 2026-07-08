@@ -141,7 +141,10 @@ export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, t
                         </FloatingSelect>
 
                         <div className="grid grid-cols-2 gap-3">
-                            <FloatingLabel label="Deadline date" htmlFor="task-due-date" filled={!!dueDate}>
+                            {/* Native date/time inputs ALWAYS render their format (mm/dd/yyyy, --:--),
+                                so the label must always float — filled={!!value} would leave it centered
+                                over that format when empty, overlapping it. */}
+                            <FloatingLabel label="Deadline date" htmlFor="task-due-date" filled>
                                 <input
                                     id="task-due-date"
                                     type="date"
@@ -150,7 +153,7 @@ export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, t
                                     onChange={e => setDueDate(e.target.value)}
                                 />
                             </FloatingLabel>
-                            <FloatingLabel label="Time" htmlFor="task-due-time" filled={!!dueTime}>
+                            <FloatingLabel label="Time" htmlFor="task-due-time" filled>
                                 <input
                                     id="task-due-time"
                                     type="time"

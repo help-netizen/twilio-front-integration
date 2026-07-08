@@ -22,7 +22,8 @@ export function WizardStep3(s: WizardState) {
                 </Button>
             </div>
             <div className="flex items-end gap-3.5">
-                <FloatingLabel label="Starting Date" htmlFor="wz-date" filled={!!s.selectedDate} className="flex-1">
+                {/* Native date input always shows its format → label must always float (else it centers over mm/dd/yyyy). */}
+                <FloatingLabel label="Starting Date" htmlFor="wz-date" filled className="flex-1">
                     <input id="wz-date" type="date" className={dateInputClass} value={s.selectedDate} onChange={(e) => { s.setSelectedDate(e.target.value); s.setSelectedTimeslot(null); s.setTimeslotSkipped(false); }} min={serverDate().toISOString().split('T')[0]} />
                 </FloatingLabel>
                 <Button size="sm" variant="outline" onClick={s.fetchTimeslots} disabled={s.timeslotsLoading} className="shrink-0">{s.timeslotsLoading ? 'Loading…' : 'Refresh'}</Button>
