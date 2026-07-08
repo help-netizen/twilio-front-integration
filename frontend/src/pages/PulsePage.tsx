@@ -268,6 +268,11 @@ export const PulsePage: React.FC = () => {
                         </div>
                     ) : (() => {
                         const isAnonTimeline = isAnonymousPhone(p.phone) || isAnonymousPhone((p.selectedConv as any)?.tl_phone);
+                        // Email-only contacts (created from inbound mail — no phone) can still be
+                        // replied to by email when a mailbox is connected. The reply form (SmsForm)
+                        // handles the email channel itself, so surface it whenever there's a phone
+                        // OR an email reply is possible.
+                        const canEmailReply = p.emailConnected && (p.contactEmails?.length ?? 0) > 0;
                         return (
                         <>
                             {/* Action Required bar — its own floating card */}
@@ -422,13 +427,14 @@ export const PulsePage: React.FC = () => {
                                 emailMessages={p.emailMessages}
                             />
 
-                            {/* SMS form card — hidden for anonymous timeline (no callback target) */}
-                            {p.phone && !isAnonTimeline && (
+                            {/* Reply card — hidden for anonymous timeline (no callback target).
+                                Shown when there's a phone OR an email reply is possible. */}
+                            {(p.phone || canEmailReply) && !isAnonTimeline && (
                                 <div className="pulse-card">
                                     <SmsForm
                                         onSend={p.handleSendMessage}
                                         onAiFormat={p.handleAiFormat}
-                                        disabled={!p.phone}
+                                        disabled={!p.phone && !canEmailReply}
                                         lead={p.lead}
                                         mainPhone={p.phone}
                                         secondaryPhone={p.secondaryPhone}
