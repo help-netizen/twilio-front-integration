@@ -201,6 +201,13 @@ function defaultBackdropStyle(variant: OverlayVariant, tier: OverlayTier): React
         position: 'fixed',
         inset: 0,
         zIndex: OVERLAY_Z_BACKDROP[tier],
+        // SELECT-IN-DIALOG-TAP-FIX-001 — when this overlay is opened from INSIDE a Radix
+        // modal Dialog (e.g. the State <Select> in the New Job form), Radix locks the page
+        // by setting `pointer-events: none` on <body>. `pointer-events` INHERITS, and this
+        // portal is a direct child of <body> OUTSIDE Radix's own layer, so without an
+        // explicit re-enable the backdrop is dead: tap-to-close stops working and the touch
+        // falls through to the form behind. Forcing `auto` fixes it and is a no-op normally.
+        pointerEvents: 'auto',
     }
     if (variant === 'bottom-sheet') {
         return {

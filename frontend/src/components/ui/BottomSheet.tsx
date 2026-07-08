@@ -122,6 +122,14 @@ export function BottomSheet({
                     boxShadow: '0 -12px 40px rgba(40, 33, 22, 0.22)',
                     animation: 'blancSlideUp 0.25s ease-out',
                     outline: 'none',
+                    // SELECT-IN-DIALOG-TAP-FIX-001 — a sheet opened from inside a Radix modal
+                    // Dialog (e.g. the State <Select> in the New Job form) is portaled to
+                    // <body> OUTSIDE Radix's layer, so it inherits Radix's `pointer-events:
+                    // none` body lock: rows won't tap and the touch falls through to the form
+                    // (its scroll moves instead of the list). Re-enabling `auto` here makes the
+                    // sheet the real touch target again — rows tap, and touchmove targets our
+                    // own scrollable body so the list scrolls. No-op outside a Radix modal.
+                    pointerEvents: 'auto',
                     transform,
                     transformOrigin: stack.transformOrigin,
                     filter: stack.filter,
