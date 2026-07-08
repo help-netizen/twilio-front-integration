@@ -106,6 +106,16 @@
 - **⚑ DEPLOY-CONSTRAINT (owner, вне кода):** прод Caddy обязан отдавать `/manifest.webmanifest` как `application/manifest+json` и `/icons/*` как `image/png` **ДО** SPA-catch-all `index.html`, иначе iOS проигнорирует манифест (сейчас на проде эти пути отдают `text/html`). Без этого шага фикс на проде инертен. **Ещё НЕ задеплоено** (commit 3008487).
 
 ---
+## 2026-07-08 — MAIL-LOCAL-LLM-001: классификатор триажа писем Mail Secretary переведён с Gemini на локальный Ollama (qwen2.5:14b), Gemini оставлен env-реверсом (orchestrate-пайплайн)
+
+Триаж входящей почты (Mail Secretary) классифицировал письма через облачный Gemini — на той же квоте, что и саммари звонков, поэтому spend-cap-обвал Gemini валил сразу оба тракта. Теперь классификация письма по умолчанию идёт на **локальную модель** (Ollama `qwen2.5:14b` на хосте `mini`): $0, без общей облачной квоты, без ухода содержимого письма за периметр — а Gemini остаётся дремлющим реверсом на один env. Байт-в-байт тот же промпт, тот же парсер вердикта, та же семантика отказа: контракт вокруг классификатора не тронут, менялся только транспорт. Полный прогон через /orchestrate. **Без миграции. Без нового эндпоинта/роута/middleware.** Коммит `b5eed01`.
+
+- **`backend/src/services/mailAgentClassifier.js`** — `classifyEmail` стал тонким **провайдер-диспатчером** по `MAIL_AGENT_PROVIDER` (`ollama` = дефолт | `gemini` = дремлющий реверс). Новый `classifyViaOllama` POST'ит на `${MAIL_AGENT_OLLAMA_URL}/api/generate` (модель `qwen2.5:14b`, `format:"json"`, `temperature 0.1`, `num_ctx 4096`, `num_predict 512`, `keep_alive 10m`, 60s-таймаут), сырую строку `data.response` отдаёт **в существующий `parseVerdict` без пред-парсинга**. Тело Gemini переехало **дословно** в `classifyViaGemini`. `SYSTEM_PROMPT`/`buildUserPrompt`/`parseVerdict`/`CATEGORIES`/`module.exports` — без изменений (sha256-доказанная идентичность промпта).
+- **Env:** `MAIL_AGENT_PROVIDER` (default `ollama`), `MAIL_AGENT_OLLAMA_URL` (default `http://127.0.0.1:11434`), **новый** `MAIL_AGENT_OLLAMA_MODEL` (default `qwen2.5:14b` — отдельный от `MAIL_AGENT_MODEL`, не путать), `MAIL_AGENT_TIMEOUT_MS` default поднят `15000→60000` (локальная инференция медленнее облака).
+- **Инварианты сохранены:** никакого спец-кейса под Google-LSA (классификация общим промптом, как и была); паритет отказа — throw → вызывающий пишет `verdict='error'` и **не создаёт задачу** (ровно как с Gemini). Саммари звонков **остаются на Gemini** — свап трогает только тракт триажа почты.
+- **Проверка:** `scripts/verify-mail-local-llm-001.js` — юнит **62/0/1** (pass/fail/skip) + живой smoke на `mini` **5/5**, совпадает с Gemini-бенчмарком. Reviewer (агент 08) — **APPROVED** (sha256-пруф верности промпта).
+- **Хвост:** **ещё НЕ задеплоено.** Пререквизит достижимости: прод (Vultr) должен дотянуться до Ollama на `mini` — сегодня она `localhost-only`, нужны `OLLAMA_HOST=0.0.0.0` + Tailscale/туннель + спуленный `qwen2.5:14b`. Деплой — только по явному «да» владельца.
+
 
 ## 2026-07-06 — EMAIL-QUOTE-STRIP-001: входящие письма в ленте Pulse прячут процитированную историю треда (показывается только новый ответ), orchestrate-пайплайн
 
