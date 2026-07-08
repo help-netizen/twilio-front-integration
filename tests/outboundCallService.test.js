@@ -25,6 +25,9 @@ const ENV_KEYS = [
     'VAPI_API_KEY',
     'VAPI_OUTBOUND_ASSISTANT_ID',
     'VAPI_OUTBOUND_PHONE_NUMBER_ID',
+    'VAPI_OUTBOUND_TWILIO_NUMBER',
+    'TWILIO_ACCOUNT_SID',
+    'TWILIO_AUTH_TOKEN',
 ];
 const savedEnv = {};
 
@@ -120,6 +123,39 @@ describe('TC-OPC-U08: outboundCallService.placeCall — VAPI request contract', 
 
         // --- Returns the VAPI call.id for the caller (worker) to store. ---
         expect(out).toEqual({ ok: true, vapiCallId: 'vapi_call_x' });
+    });
+
+    test('no registered phoneNumberId but Twilio caller-ID env set → transient phoneNumber (no VAPI import), never phoneNumberId', async () => {
+        delete process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID;
+        process.env.VAPI_OUTBOUND_TWILIO_NUMBER = '+16175006181';
+        process.env.TWILIO_ACCOUNT_SID = 'ACtest';
+        process.env.TWILIO_AUTH_TOKEN = 'tok_test';
+        jest.resetModules();
+        outboundCallService = require('../backend/src/services/outboundCallService');
+        mockPost.mockResolvedValue({ data: { id: 'vapi_call_t' } });
+
+        const out = await outboundCallService.placeCall(CALL_ARGS);
+
+        const [, bodyArg] = mockPost.mock.calls[0];
+        expect(bodyArg.phoneNumberId).toBeUndefined();
+        expect(bodyArg.phoneNumber).toEqual({
+            provider: 'twilio',
+            number: '+16175006181',
+            twilioAccountSid: 'ACtest',
+            twilioAuthToken: 'tok_test',
+        });
+        expect(out).toEqual({ ok: true, vapiCallId: 'vapi_call_t' });
+    });
+
+    test('neither phoneNumberId nor Twilio caller-ID → vapi_config_missing, no POST', async () => {
+        delete process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID;
+        delete process.env.VAPI_OUTBOUND_TWILIO_NUMBER;
+        jest.resetModules();
+        outboundCallService = require('../backend/src/services/outboundCallService');
+
+        const out = await outboundCallService.placeCall(CALL_ARGS);
+        expect(out).toEqual({ ok: false, error: 'vapi_config_missing' });
+        expect(mockPost).not.toHaveBeenCalled();
     });
 
     test('safe-fail: non-2xx (axios throws with response.status) → { ok:false }, never throws', async () => {

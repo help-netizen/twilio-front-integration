@@ -57,11 +57,20 @@ async function placeCall({ companyId, jobId, contactId, customerName, customerNu
     const apiKey = process.env.VAPI_API_KEY;
     const assistantId = process.env.VAPI_OUTBOUND_ASSISTANT_ID;
     const phoneNumberId = process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID;
+    // Caller-ID source. Prefer a registered VAPI phone number (phoneNumberId).
+    // Otherwise place via a TRANSIENT Twilio number (BYO creds): VAPI originates
+    // the outbound leg through Twilio from our own business line WITHOUT importing
+    // the number into VAPI — so that number's inbound Twilio webhook (which routes
+    // customer calls to the CRM) is never rewritten/hijacked.
+    const twilioNumber = process.env.VAPI_OUTBOUND_TWILIO_NUMBER;
+    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+    const hasTransient = twilioNumber && twilioSid && twilioToken;
 
     // Fail fast on missing config or number — never expose which secret is unset
     // beyond a coarse label, and never dial without a destination.
-    if (!apiKey || !assistantId || !phoneNumberId) {
-        console.error('[outboundCallService] VAPI outbound config missing (assistant/phoneNumber/api key)');
+    if (!apiKey || !assistantId || (!phoneNumberId && !hasTransient)) {
+        console.error('[outboundCallService] VAPI outbound config missing (assistant/caller-number/api key)');
         return { ok: false, error: 'vapi_config_missing' };
     }
     if (!customerNumber) {
@@ -72,7 +81,10 @@ async function placeCall({ companyId, jobId, contactId, customerName, customerNu
     const s = slot || {};
     const body = {
         assistantId,
-        phoneNumberId,
+        // Registered number wins; else transient Twilio caller-ID (no VAPI import).
+        ...(phoneNumberId
+            ? { phoneNumberId }
+            : { phoneNumber: { provider: 'twilio', number: twilioNumber, twilioAccountSid: twilioSid, twilioAuthToken: twilioToken } }),
         customer: { number: customerNumber },
         assistantOverrides: {
             variableValues: {
