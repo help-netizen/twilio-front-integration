@@ -107,6 +107,24 @@ async function findOpenSession(companyId, invoiceId, amount) {
     return rows[0] || null;
 }
 
+/**
+ * Find a reusable OPEN, non-expired job checkout session for a job+amount.
+ * `invoice_id IS NULL` is load-bearing: keeps job-link sessions distinct from an
+ * invoice's sessions that merely carry a job_id.
+ */
+async function findOpenJobSession(companyId, jobId, amount) {
+    await ensureMarketplaceSchema();
+    const { rows } = await db.query(
+        `SELECT * FROM stripe_payment_sessions
+         WHERE company_id = $1 AND job_id = $2 AND invoice_id IS NULL
+           AND surface = 'checkout_link' AND status = 'open' AND amount = $3
+           AND (expires_at IS NULL OR expires_at > NOW())
+         ORDER BY created_at DESC LIMIT 1`,
+        [companyId, jobId, amount]
+    );
+    return rows[0] || null;
+}
+
 async function insertSession(companyId, data) {
     await ensureMarketplaceSchema();
     const {
@@ -175,6 +193,21 @@ async function listSessionsForInvoice(companyId, invoiceId) {
          WHERE company_id = $1 AND invoice_id = $2
          ORDER BY created_at DESC`,
         [companyId, invoiceId]
+    );
+    return rows;
+}
+
+/**
+ * All job checkout sessions (job link history). `invoice_id IS NULL` keeps these
+ * distinct from an invoice's sessions that merely carry the same job_id.
+ */
+async function listSessionsForJob(companyId, jobId) {
+    await ensureMarketplaceSchema();
+    const { rows } = await db.query(
+        `SELECT * FROM stripe_payment_sessions
+         WHERE company_id = $1 AND job_id = $2 AND invoice_id IS NULL
+         ORDER BY created_at DESC`,
+        [companyId, jobId]
     );
     return rows;
 }
@@ -250,12 +283,14 @@ module.exports = {
     updateAccountStatus,
     setAccountStatus,
     findOpenSession,
+    findOpenJobSession,
     insertSession,
     getSessionByCheckoutId,
     getSessionByPaymentIntent,
     getSessionById,
     updateSession,
     listSessionsForInvoice,
+    listSessionsForJob,
     listTerminalLocations,
     insertTerminalLocation,
     insertWebhookEvent,

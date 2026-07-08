@@ -38,6 +38,7 @@ import VapiSettingsPage from './pages/VapiSettingsPage';
 import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
 import MailSecretarySettingsPage from './pages/MailSecretarySettingsPage';
 import PublicInvoicePayPage from './pages/PublicInvoicePayPage';
+import PublicPayThanksPage from './pages/PublicPayThanksPage';
 import PublicEstimateViewPage from './pages/PublicEstimateViewPage';
 import TechnicianPhotosPage from './pages/TechnicianPhotosPage';
 import ApiDocsPage from './pages/ApiDocsPage';
@@ -105,6 +106,7 @@ function App() {
           <AppLayout>
             <Routes>
               <Route path="/signup" element={<SignupPage />} />
+              <Route path="/pay/thanks" element={<PublicPayThanksPage />} />
               <Route path="/pay/:token" element={<PublicInvoicePayPage />} />
               <Route path="/e/:token" element={<PublicEstimateViewPage />} />
               <Route path="/onboarding" element={<OnboardingPage />} />

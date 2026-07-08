@@ -890,4 +890,29 @@ router.post('/:id/tap-to-pay/payment-intent', requirePermission('payments.collec
     } catch (err) { jobStripeError(err, res); }
 });
 
+// STRIPE-ADHOC-PAY-001 — invoice-independent job payment links (create/get/send)
+router.post('/:id/stripe-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const data = await stripePaymentsService.ensureJobPaymentLink(companyId, { id: req.user?.sub }, req.params.id, { amount: req.body?.amount });
+        res.json({ ok: true, data });
+    } catch (err) { jobStripeError(err, res); }
+});
+
+router.get('/:id/stripe-payment-link', requirePermission('payments.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const data = await stripePaymentsService.getJobPaymentLink(companyId, req.params.id);
+        res.json({ ok: true, data });
+    } catch (err) { jobStripeError(err, res); }
+});
+
+router.post('/:id/send-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const data = await stripePaymentsService.sendJobPaymentLink(companyId, { id: req.user?.sub }, req.params.id, { channel: req.body?.channel, amount: req.body?.amount, message: req.body?.message });
+        res.json({ ok: true, data });
+    } catch (err) { jobStripeError(err, res); }
+});
+
 module.exports = router;

@@ -194,6 +194,22 @@ async function assertCollectable(companyId) {
     return account;
 }
 
+/**
+ * Validate an ad-hoc (invoice-less) collect amount. Applied on every job/adhoc
+ * entry (link + keyed-card via the resolveSurfaceContext job branch).
+ * @returns {number} the amount normalized to 2dp.
+ */
+function assertAdhocAmount(amount) {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n < 0.5) {
+        throw new StripePaymentsError('INVALID_AMOUNT', 'Amount must be at least $0.50', 400);
+    }
+    if (n > 100000) {
+        throw new StripePaymentsError('INVALID_AMOUNT', 'Amount exceeds the $100,000 limit', 400);
+    }
+    return Number(n.toFixed(2));
+}
+
 function invoiceBalance(invoice) {
     const balance = invoice.balance_due != null ? Number(invoice.balance_due) : (Number(invoice.total || 0) - Number(invoice.amount_paid || 0));
     return balance;
@@ -272,6 +288,137 @@ async function sendPaymentLink(companyId, actor, invoiceId, { channel = 'email',
     return { sent: true, url: link.url, channel };
 }
 
+// ---- job payment links (invoice-independent, ad-hoc) — STRIPE-ADHOC-PAY-001 -
+
+/**
+ * Create (or reuse) a Stripe-hosted Checkout link for an arbitrary amount on a job,
+ * with NO invoice. Mirrors ensurePaymentLink but keyed on the job; the settled
+ * charge lands as one payment_transactions row (job_id set, invoice_id NULL) via
+ * the unchanged webhook.
+ */
+async function ensureJobPaymentLink(companyId, actor, jobId, { amount } = {}) {
+    const account = await assertCollectable(companyId);
+    const ctx = await resolveSurfaceContext(companyId, { jobId, amount }); // loads job (404 foreign) + assertAdhocAmount
+    const payAmount = ctx.amount;
+
+    // Reuse a valid open job session for same job + amount (idempotent).
+    const existing = await q.findOpenJobSession(companyId, ctx.jobId, payAmount);
+    if (existing) return { url: existing.url, expires_at: existing.expires_at, reused: true, session_id: existing.id };
+
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h expiry policy
+    const session = await provider.createCheckoutSession(account.stripe_account_id, {
+        amount: payAmount,
+        currency: 'usd',
+        successUrl: `${baseUrl()}/pay/thanks`,
+        cancelUrl: `${baseUrl()}/pay/thanks`,
+        expiresAt,
+        metadata: {
+            company_id: companyId,
+            invoice_id: '',
+            job_id: String(ctx.jobId),
+            contact_id: ctx.contactId != null ? String(ctx.contactId) : '',
+        },
+    }, { idempotencyKey: `job-${companyId}-${jobId}-${payAmount}` });
+
+    const row = await q.insertSession(companyId, {
+        invoice_id: null,
+        job_id: ctx.jobId,
+        contact_id: ctx.contactId || null,
+        created_by: actor?.id || null,
+        surface: 'checkout_link',
+        amount: payAmount,
+        currency: 'USD',
+        status: 'open',
+        stripe_checkout_session_id: session.id,
+        stripe_payment_intent_id: session.payment_intent || null,
+        stripe_account_id: account.stripe_account_id,
+        url: session.url,
+        expires_at: expiresAt,
+        metadata: {},
+    });
+    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_created', target_type: 'job', target_id: String(jobId), company_id: companyId, details: { amount: payAmount } });
+    return { url: row.url, expires_at: row.expires_at, reused: false, session_id: row.id };
+}
+
+async function getJobPaymentLink(companyId, jobId) {
+    const sessions = await q.listSessionsForJob(companyId, jobId);
+    const active = sessions.find(s => s.status === 'open' && (!s.expires_at || new Date(s.expires_at) > new Date()));
+    return {
+        active: active ? { url: active.url, expires_at: active.expires_at, amount: active.amount } : null,
+        history: sessions.map(s => ({ id: s.id, status: s.status, amount: s.amount, surface: s.surface, failure_reason: s.failure_reason, created_at: s.created_at })),
+    };
+}
+
+/**
+ * Send a job payment link by email or SMS. Real dispatch wired to the SEND-DOC-001
+ * dispatcher (emailService / conversationsService) — this actually delivers, unlike
+ * the invoice sendPaymentLink (which only event-logs). Jobs have no invoice event
+ * stream, so the audit row is the record.
+ */
+async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, message } = {}) {
+    // Resolve the recipient contact directly (company-scoped → foreign 404) BEFORE
+    // any amount validation, so NO_CONTACT surfaces regardless of the amount.
+    const jobsService = require('./jobsService');
+    const job = await jobsService.getJobById(jobId, companyId);
+    if (!job) throw new StripePaymentsError('NOT_FOUND', `Job ${jobId} not found`, 404);
+    const email = job.customer_email || null;
+    const phone = job.customer_phone || null;
+    if (!email && !phone) {
+        throw new StripePaymentsError('NO_CONTACT', 'Job has no email or phone to send to', 422);
+    }
+
+    // Channel select: forced channel honored (422 if that channel's contact missing);
+    // no forced channel → default email if present, else SMS.
+    let chosen = channel;
+    if (chosen === 'email') {
+        if (!email) throw new StripePaymentsError('NO_CONTACT', 'No email on file', 422);
+    } else if (chosen === 'sms') {
+        if (!phone) throw new StripePaymentsError('NO_CONTACT', 'No phone on file', 422);
+    } else {
+        chosen = email ? 'email' : 'sms';
+    }
+
+    const link = await ensureJobPaymentLink(companyId, actor, jobId, { amount });
+    const body = message ? `${message}\n\n${link.url}` : link.url;
+
+    if (chosen === 'email') {
+        const emailMailboxService = require('./emailMailboxService');
+        const mailbox = await emailMailboxService.getMailboxStatus(companyId);
+        if (!mailbox || mailbox.status !== 'connected') {
+            throw new StripePaymentsError('MAILBOX_NOT_CONNECTED', 'Connect Google Email to send.', 409);
+        }
+        let companyName = '';
+        try {
+            const company = await companyQueries.getCompanyById(companyId);
+            companyName = company?.name || '';
+        } catch { /* subject falls back to no company suffix */ }
+        const subject = companyName ? `Payment request from ${companyName}` : 'Payment request';
+        const emailService = require('./emailService');
+        await emailService.sendEmail(companyId, {
+            to: email,
+            subject,
+            body,
+            files: [],
+            userId: actor?.id || null,
+            userEmail: actor?.email || null,
+        });
+    } else {
+        const { resolveCompanyProxyE164 } = require('./messagingHelper');
+        const { toE164 } = require('../utils/phoneUtils');
+        const proxy = await resolveCompanyProxyE164(companyId);
+        if (!proxy) throw new StripePaymentsError('NO_PROXY', 'No company sending number is configured.', 422);
+        const customerE164 = toE164(phone);
+        if (!customerE164) throw new StripePaymentsError('NO_PHONE', 'A valid phone number is required.', 422);
+        const conversationsService = require('./conversationsService');
+        const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
+        // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
+        await conversationsService.sendMessage(conv.id, { body });
+    }
+
+    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_sent', target_type: 'job', target_id: String(jobId), company_id: companyId, details: { channel: chosen } });
+    return { sent: true, url: link.url, channel: chosen };
+}
+
 // ---- manual card entry (Payment Element) — Phase 3 --------------------------
 
 /**
@@ -295,8 +442,20 @@ async function resolveSurfaceContext(companyId, { invoiceId, jobId, amount }) {
         if (!(ctx.amount > 0) || ctx.amount > balance) {
             throw new StripePaymentsError('INVALID_AMOUNT', 'Amount must be > 0 and <= invoice balance', 400);
         }
+    } else if (jobId) {
+        // Ad-hoc job collect (no invoice). Load the job company-scoped so a foreign
+        // id 404s (no cross-tenant leak); pull recipient contact for the send path.
+        const jobsService = require('./jobsService');
+        const job = await jobsService.getJobById(jobId, companyId);
+        if (!job) throw new StripePaymentsError('NOT_FOUND', `Job ${jobId} not found`, 404);
+        ctx.jobId = job.id;
+        ctx.contactId = job.contact_id || null;
+        ctx.email = job.customer_email || null;
+        ctx.phone = job.customer_phone || null;
+        ctx.customerName = job.customer_name || null;
+        ctx.amount = assertAdhocAmount(amount);
     } else {
-        if (!(ctx.amount > 0)) throw new StripePaymentsError('INVALID_AMOUNT', 'amount is required', 400);
+        ctx.amount = assertAdhocAmount(amount);
     }
     return ctx;
 }
@@ -693,9 +852,13 @@ module.exports = {
     getOnboardingLink,
     refreshStatus,
     disconnect,
+    assertAdhocAmount,
     ensurePaymentLink,
     getPaymentLink,
     sendPaymentLink,
+    ensureJobPaymentLink,
+    getJobPaymentLink,
+    sendJobPaymentLink,
     getPublicPayInfo,
     createPublicPaySession,
     createPublicPayIntent,

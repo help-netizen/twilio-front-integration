@@ -3,13 +3,15 @@ import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle } from '../ui/dialog';
-import { invoiceStripeApi } from '../../services/stripePaymentsApi';
+import { invoiceStripeApi, jobStripeApi } from '../../services/stripePaymentsApi';
 import { loadStripe } from '../../utils/loadStripe';
 
 interface Props {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    invoiceId: number;
+    invoiceId?: number;
+    jobId?: number | string;
+    amount?: number;
     onSuccess?: () => void;
 }
 
@@ -18,7 +20,7 @@ interface Props {
  * Stripe-rendered, never touch Albusto). The backend creates a direct-charge
  * PaymentIntent; the canonical ledger is updated by the webhook on success.
  */
-export default function ManualCardDialog({ open, onOpenChange, invoiceId, onSuccess }: Props) {
+export default function ManualCardDialog({ open, onOpenChange, invoiceId, jobId, amount, onSuccess }: Props) {
     const mountRef = useRef<HTMLDivElement>(null);
     const stripeRef = useRef<any>(null);
     const elementsRef = useRef<any>(null);
@@ -33,7 +35,9 @@ export default function ManualCardDialog({ open, onOpenChange, invoiceId, onSucc
         (async () => {
             setLoading(true); setError(null);
             try {
-                const session = await invoiceStripeApi.manualCardSession(invoiceId);
+                const session = jobId != null
+                    ? await jobStripeApi.manualCardSession(jobId, amount)
+                    : await invoiceStripeApi.manualCardSession(invoiceId!, amount);
                 const stripe = await loadStripe(session.account_id);
                 if (cancelled) return;
                 const elements = stripe.elements({ clientSecret: session.client_secret });
@@ -49,7 +53,7 @@ export default function ManualCardDialog({ open, onOpenChange, invoiceId, onSucc
             }
         })();
         return () => { cancelled = true; };
-    }, [open, invoiceId]);
+    }, [open, invoiceId, jobId, amount]);
 
     const submit = async () => {
         if (!stripeRef.current || !elementsRef.current) return;

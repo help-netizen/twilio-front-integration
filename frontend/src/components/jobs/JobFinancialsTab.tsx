@@ -1,10 +1,15 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
-import { Archive, ChevronRight, FileText, Loader2, Plus, Receipt } from 'lucide-react';
+import { Archive, ChevronRight, CreditCard, FileText, Loader2, Plus, Receipt } from 'lucide-react';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
+import { useAuthz } from '../../hooks/useAuthz';
+import { stripePaymentsApi } from '../../services/stripePaymentsApi';
+import { CollectPaymentDialog } from './CollectPaymentDialog';
 import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
 import { InvoiceEditorDialog } from '../invoices/InvoiceEditorDialog';
 import { EstimateDetailPanel } from '../estimates/EstimateDetailPanel';
@@ -69,6 +74,19 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     const [invoiceEvents, setInvoiceEvents] = useState<InvoiceEvent[]>([]);
     const [detailLoading, setDetailLoading] = useState(false);
     const [showInvoiceSend, setShowInvoiceSend] = useState(false);
+    const [showCollect, setShowCollect] = useState(false);
+
+    // ── STRIPE-ADHOC-PAY-001: collect-payment button/CTA gating ─────────────────
+    const navigate = useNavigate();
+    const { hasAnyPermission, hasPermission } = useAuthz();
+    const canCollect = hasAnyPermission('payments.collect_online', 'payments.collect_offline', 'payments.collect_keyed');
+    // Only fetch Stripe readiness when the user could actually collect (FR-BTN-2: no perm → nothing).
+    const { data: stripeStatus, isLoading: stripeLoading } = useQuery({
+        queryKey: ['stripe-payments-status'],
+        queryFn: () => stripePaymentsApi.getStatus().then(r => r.status),
+        enabled: canCollect,
+    });
+    const canManageIntegrations = hasPermission('tenant.integrations.manage');
 
     const openEstimate = async (e: (typeof estimates)[0]) => {
         setDetailLoading(true);
@@ -102,6 +120,24 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     const totalPaid = invoices.reduce((s, i) => s + Number(i.amount_paid || 0), 0);
     const totalDue = Math.max(totalInvoiced - totalPaid, 0);
 
+    // Collect-payment surface (STRIPE-ADHOC-PAY-001 §1). Perm-gate FIRST: no collect
+    // perm → render nothing at all (no button, no CTA). Then split on Stripe readiness.
+    const readiness = stripeStatus?.readiness;
+    const stripeReady = !!stripeStatus?.configured && !!stripeStatus?.can_collect;
+    // CTA copy per readiness (manage user). not_connected/disconnected → "Connect"; the
+    // setup-incomplete states → "Finish setup". payouts_disabled never reaches here (can_collect=true).
+    const isConnectState = readiness === 'not_connected' || readiness === 'disconnected';
+    const ctaTitle = isConnectState
+        ? 'Accept payments right from the job'
+        : 'Finish your Stripe setup to start collecting payments';
+    const ctaBody = isConnectState
+        ? "Connect Stripe to charge your customer's card or send a payment link in seconds — no invoice required."
+        : undefined;
+    const ctaButtonLabel = isConnectState ? 'Connect Stripe' : 'Finish setup';
+    // Show the CTA card only for a permitted-but-not-ready company with a known readiness
+    // state (loading / configured===false → nothing, matching the invoice silent-absence).
+    const showCta = canCollect && !stripeLoading && !!stripeStatus?.configured && !stripeStatus?.can_collect && !!readiness;
+
     return (
         <div className="flex-1 overflow-y-auto bg-[var(--blanc-panel-surface,#fffdf9)] p-5 text-[var(--blanc-ink-1)]">
             <div className="mx-auto max-w-5xl space-y-5">
@@ -112,6 +148,34 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                         <MetricCell label="Due" value={money(totalDue)} tone={totalDue > 0 ? 'warning' : 'default'} />
                     </div>
                 </div>
+
+                {/* Collect payment — STRIPE-ADHOC-PAY-001 §1 (perm-gated, readiness-driven). */}
+                {canCollect && stripeReady && (
+                    <div className="flex justify-end">
+                        <Button size="sm" onClick={() => setShowCollect(true)}>
+                            <CreditCard className="mr-1 size-4" />Collect payment
+                        </Button>
+                    </div>
+                )}
+                {showCta && (
+                    <div className="rounded-2xl bg-[var(--blanc-surface-muted)] px-4 py-4">
+                        <p className="text-sm font-semibold text-[var(--blanc-ink-1)]">{ctaTitle}</p>
+                        {ctaBody && <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{ctaBody}</p>}
+                        {canManageIntegrations ? (
+                            <Button
+                                size="sm"
+                                className="mt-3"
+                                onClick={() => navigate('/settings/integrations/stripe-payments')}
+                            >
+                                {ctaButtonLabel}
+                            </Button>
+                        ) : (
+                            <p className="mt-3 text-sm text-[var(--blanc-ink-2)]">
+                                Ask an account admin to connect Stripe in Settings → Integrations.
+                            </p>
+                        )}
+                    </div>
+                )}
 
 
                 {loading && (
@@ -404,6 +468,15 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                     }}
                 />
             )}
+
+            {/* Collect payment — arbitrary-amount card charge / link, no invoice (STRIPE-ADHOC-PAY-001) */}
+            <CollectPaymentDialog
+                open={showCollect}
+                onOpenChange={setShowCollect}
+                jobId={jobId}
+                outstanding={totalDue}
+                onSuccess={() => refresh()}
+            />
         </div>
     );
 }
