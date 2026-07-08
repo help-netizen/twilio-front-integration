@@ -204,13 +204,22 @@ async function processAttempt(attempt) {
     // --- Business-hours clamp: don't dial outside the company's open hours. ---
     // Push the row back to 'pending' at the next open time; do NOT dial now.
     const now = new Date();
+    // TEMPORARY TEST TOGGLE (OUTBOUND-PARTS-CALL) — when OUTBOUND_CALL_IGNORE_BUSINESS_HOURS
+    // is truthy, skip the business-hours clamp so a queued call dials immediately regardless
+    // of the hour. Owner-enabled for live testing; to restore normal clamping just unset the
+    // env and restart the app (no code revert needed). Absent/unset → normal behavior.
+    const ignoreBusinessHours = /^(1|true|yes|on)$/i.test(
+        process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS || ''
+    );
     let open = true;
-    try {
-        open = await groupRouting.isBusinessHours(group, now);
-    } catch (err) {
-        // If we can't determine hours, err on the side of dialing (open).
-        console.warn('[outboundCallWorker] isBusinessHours failed, proceeding as open:', err.message);
-        open = true;
+    if (!ignoreBusinessHours) {
+        try {
+            open = await groupRouting.isBusinessHours(group, now);
+        } catch (err) {
+            // If we can't determine hours, err on the side of dialing (open).
+            console.warn('[outboundCallWorker] isBusinessHours failed, proceeding as open:', err.message);
+            open = true;
+        }
     }
     if (!open) {
         const nextOpen = nextBusinessMorning(now, group.timezone, settings.next_morning_hour);
