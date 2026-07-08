@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Checkbox } from "./ui/checkbox";
 import { Loader2, MapPin } from "lucide-react";
 import type { SavedAddress } from "../services/contactsApi";
-import { US_STATES, EMPTY_ADDRESS, hasFirstSpaceGate, parseAddressComponents, parseDescription, stateFromZip } from "./addressAutoHelpers";
+import { US_STATES, EMPTY_ADDRESS, hasFirstSpaceGate, parseAddressComponents, parseDescription } from "./addressAutoHelpers";
 import type { AddressFields, SuggestionItem } from "./addressAutoHelpers";
 
 export type { AddressFields, SuggestionItem };
@@ -32,17 +32,6 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
     const { ready, value: searchValue, suggestions: { loading, status, data }, setValue: setSearchValue, clearSuggestions } = usePlacesAutocomplete({ debounce: 200, cache: 60, requestOptions: { componentRestrictions: { country: ["us"] }, ...(locationBias && { locationBias }) } });
 
     useEffect(() => { if (!gateReady && address.street !== searchValue) setSearchValue(address.street, false); }, [address.street]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // When an address arrives with a ZIP but no state (contact-record autofill, a
-    // place pick whose description omitted the state, or Safari autofilling the text
-    // inputs but not the State <Select>), derive the state from the ZIP so it isn't
-    // left blank. Only fills when empty → never overrides a manual/selected state.
-    useEffect(() => {
-        if (!address.state && /^\d{5}/.test(address.zip || "")) {
-            const st = stateFromZip(address.zip);
-            if (st) onChange({ ...address, state: st });
-        }
-    }, [address.zip, address.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const suggestions = useMemo(() => (data || []).slice(0, 8).map((item: google.maps.places.AutocompletePrediction) => ({ place_id: item.place_id, description: item.description })) as SuggestionItem[], [data]);
 
