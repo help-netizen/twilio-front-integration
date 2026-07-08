@@ -208,6 +208,7 @@ router.get('/by-contact', async (req, res) => {
                 open_task: c.open_task_id ? {
                     id: c.open_task_id,
                     title: c.open_task_title,
+                    description: c.open_task_description || null,
                     due_at: c.open_task_due_at,
                     priority: c.open_task_priority,
                     // MAIL-AGENT-001: agent tasks carry the triage comment for the AR bar.

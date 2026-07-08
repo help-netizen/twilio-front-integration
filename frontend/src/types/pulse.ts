@@ -81,8 +81,11 @@ export interface PulseTimelineResponse {
 export interface PulseTask {
     id: number;
     title: string;
+    description?: string | null;
     due_at: string | null;
     priority: 'p1' | 'p2' | 'p3';
+    kind?: string;
+    agent_output?: { reason?: string } | null;
 }
 
 export interface ActionRequiredState {

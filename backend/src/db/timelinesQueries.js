@@ -486,6 +486,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              co.has_unread as contact_has_unread,
              open_task.id as open_task_id,
              open_task.title as open_task_title,
+             open_task.description as open_task_description,
              open_task.due_at as open_task_due_at,
              open_task.priority as open_task_priority,
              open_task.kind as open_task_kind,
@@ -524,7 +525,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              LIMIT 1
          ) latest_call ON true
          LEFT JOIN LATERAL (
-             SELECT ot.id, ot.title, ot.due_at, ot.priority,
+             SELECT ot.id, ot.title, ot.description, ot.due_at, ot.priority,
                     ot.kind, ot.agent_output,
                     (SELECT count(*) FROM tasks tc
                       WHERE tc.thread_id = tl.id AND tc.status = 'open') AS task_count

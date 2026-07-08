@@ -289,7 +289,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                     onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); }}
                                     onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); } }}
                                     className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-green-50 cursor-pointer w-full" style={{ color: 'var(--blanc-success)' }}>
-                                    <CheckCircle2 className="size-3.5" /> Mark Handled
+                                    <CheckCircle2 className="size-3.5" /> Mark done
                                 </div>
                             )}
                             {isActionRequired && (

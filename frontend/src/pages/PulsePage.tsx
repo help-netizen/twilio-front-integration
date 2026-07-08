@@ -149,8 +149,8 @@ export const PulsePage: React.FC = () => {
                     catch { toast.error('Failed to mark as unread'); }
                 }}
                 onMarkHandled={async (timelineId) => {
-                    try { await pulseApi.markHandled(timelineId); p.refetchContacts(); toast.success('Marked as handled'); }
-                    catch { toast.error('Failed to mark handled'); }
+                    try { await pulseApi.markHandled(timelineId); p.refetchContacts(); toast.success('Marked as done'); }
+                    catch { toast.error('Failed to mark done'); }
                 }}
                 onSnooze={async (timelineId, until) => {
                     try { await pulseApi.snoozeThread(timelineId, until); p.refetchContacts(); toast.success('Thread snoozed'); }
@@ -306,6 +306,15 @@ export const PulsePage: React.FC = () => {
                                                 </span>
                                             )}
                                         </div>
+                                        {/* Task text — the "why" of this Action Required. Shown for any task whose
+                                            detail isn't already surfaced by the Mail Secretary reason block below. */}
+                                        {!(conv.open_task?.kind === 'agent' && conv.open_task?.agent_output?.reason) && (conv.open_task?.description || conv.open_task?.title) && (
+                                            <div className="px-5 pb-3">
+                                                <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-1)' }}>
+                                                    {conv.open_task.description || conv.open_task.title}
+                                                </p>
+                                            </div>
+                                        )}
                                         {/* MAIL-AGENT-001: agent comment — why the Mail Secretary flagged this thread */}
                                         {conv.open_task?.kind === 'agent' && conv.open_task?.agent_output?.reason && (
                                             <div className="flex items-start gap-2.5 px-5 pb-3">
@@ -328,11 +337,11 @@ export const PulsePage: React.FC = () => {
                                         {!isSnoozed && (
                                             <div className="flex items-center gap-2.5 px-5 pb-3">
                                                 <button
-                                                    onClick={() => { if (tlId) pulseApi.markHandled(tlId).then(() => { p.refetchContacts(); toast.success('Marked as handled'); }).catch(() => toast.error('Failed')); }}
+                                                    onClick={() => { if (tlId) pulseApi.markHandled(tlId).then(() => { p.refetchContacts(); toast.success('Marked as done'); }).catch(() => toast.error('Failed')); }}
                                                     className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-80"
                                                     style={{ color: 'var(--blanc-success)', backgroundColor: 'rgba(27,139,99,0.1)', minHeight: 42, borderRadius: 14 }}
                                                 >
-                                                    <CheckCircle2 className="size-4" /> Handled
+                                                    <CheckCircle2 className="size-4" /> Done
                                                 </button>
                                                 <SnoozeDropdown
                                                     companyTz={companyTz}
