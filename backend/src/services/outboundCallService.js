@@ -82,9 +82,13 @@ async function placeCall({ companyId, jobId, contactId, customerName, customerNu
     const body = {
         assistantId,
         // Registered number wins; else transient Twilio caller-ID (no VAPI import).
+        // VAPI transient Twilio caller-ID: the inline phoneNumber object uses
+        // `twilioPhoneNumber` (E.164) — NOT `provider`/`number`. Sending provider/number
+        // gets a 400 ("property provider/number should not exist"; twilioPhoneNumber
+        // required) and the call never places. (OUTBOUND-PARTS-CALL-DIAL-FIX-001.)
         ...(phoneNumberId
             ? { phoneNumberId }
-            : { phoneNumber: { provider: 'twilio', number: twilioNumber, twilioAccountSid: twilioSid, twilioAuthToken: twilioToken } }),
+            : { phoneNumber: { twilioPhoneNumber: twilioNumber, twilioAccountSid: twilioSid, twilioAuthToken: twilioToken } }),
         customer: { number: customerNumber },
         assistantOverrides: {
             variableValues: {
