@@ -4401,3 +4401,64 @@ A tech or dispatcher standing on a job frequently needs to take a card payment (
 - **AC-BTN-5:** `npm run build` + backend jest green; execute route / registry diff-free.
 
 **⚑ Note for downstream agents (verified in code):** the part-arrived task is **job-parented** (`onPartArrived` → `parentType:'job'`, no `thread_id`). The Pulse AR `open_task` LATERAL matches only `thread_id = tl.id` (timeline-parented tasks). So THIS feature's task surfaces on the **Job card** today; the Pulse-AR wiring is correct and future-proofs any timeline-parented action task, but the part-arrived task will not appear in Pulse AR unless `onPartArrived` also thread-links it (separate change, out of scope).
+
+---
+
+# MAIL-LOCAL-LLM-001 — Route Mail Secretary triage to a local Ollama LLM
+
+**Status:** requirements (2026-07-08). **Type:** integration / behavior-change (backend only).
+**Builds on** MAIL-AGENT-001 (`Docs/specs/MAIL-AGENT-001.md`) — that pipeline (exclusion DSL, gate,
+task upsert, `mail_agent_reviews` logging, fail-quiet) is UNCHANGED; only the classifier's LLM
+transport is swapped. **Motivation:** the 2026-07-08 Gemini monthly spend-cap outage killed email
+triage; a local model is $0 and outage-resilient. A 100-email identical-prompt benchmark validated
+`qwen2.5:14b` (92% task/no-task agreement, ~1 false-positive/50, 100% valid JSON). Speed is
+explicitly non-critical. Surface: `backend/src/services/mailAgentClassifier.js` (`classifyEmail`).
+
+### Functional
+- **R1 — Transport swap.** When the provider is `ollama`, `classifyEmail(input)` sends the combined
+  prompt to Ollama `POST {url}/api/generate` (model = `MAIL_AGENT_OLLAMA_MODEL`) instead of Gemini
+  `v1beta …:generateContent`. Same `input` object (`fromName/fromEmail/subject/bodyText/knownContact/
+  contactName`), same success return `{ verdict, model, latency_ms }`, same throw-on-exhausted-retries.
+- **R2 — Provider valve.** `MAIL_AGENT_PROVIDER=ollama` (default) `| gemini`. The existing Gemini path
+  is kept dormant and byte-for-byte behavior-equivalent to today so a single env flip is an instant
+  revert (spend-cap regression insurance).
+- **R3 — Config (env, all defaulted).** `MAIL_AGENT_OLLAMA_URL` (default `http://127.0.0.1:11434`);
+  **NEW** `MAIL_AGENT_OLLAMA_MODEL` (default `qwen2.5:14b`) — MUST be a new var, do **not** reuse
+  `MAIL_AGENT_MODEL` (prod `.env` may point it at a Gemini string); `MAIL_AGENT_TIMEOUT_MS` default
+  raised `15000`→`60000`; `MAIL_AGENT_RETRY_MAX` retained (same retry/backoff loop).
+- **R4 — Prompt & parse fidelity.** `SYSTEM_PROMPT` text and `buildUserPrompt()` stay **byte-identical**;
+  the same concatenated prompt is what Ollama receives. `parseVerdict()`, `CATEGORIES`, and the verdict
+  shape (`needs_attention/category/confidence/priority/reason/task_title`) are unchanged; request JSON
+  output (`format:"json"`, `stream:false`) and reuse the existing fence-tolerant parse.
+- **R5 — Review logging.** The `model` recorded in `mail_agent_reviews` reflects the model actually
+  used (the Ollama model name when `provider=ollama`); `latency_ms` measurement is preserved.
+
+### Non-functional / constraints
+- **NFR-1 — Failure parity (identical to today).** Ollama unreachable/HTTP-error/timeout after
+  `MAIL_AGENT_RETRY_MAX` → `classifyEmail` throws → `reviewInboundEmail` writes `verdict='error'`,
+  creates **no** task, pipeline continues (mailAgentService.js l.159–166).
+- **NFR-2 — No downstream change.** mailAgentService orchestration, the **0.6 confidence gate**
+  (lives in mailAgentService.js l.178, NOT the classifier), task creation, `mail_agent_reviews`,
+  `mailAgentRules.js`/exclusion DSL — untouched. The `POST /dry-run` path (also calls `classifyEmail`)
+  inherits the swap automatically.
+- **NFR-3 — Speed non-critical.** No latency SLA; the 60 s timeout accommodates local 14B inference.
+- **NFR-4 — Isolation.** Call summaries (`callSummaryService.js`) STAY on Gemini; only the mail-triage
+  classifier transport changes.
+
+### Out of scope
+- No DB migration, no new/changed API routes, no frontend, no new npm dependency.
+- No change to `SYSTEM_PROMPT` / `buildUserPrompt` / `parseVerdict` / `CATEGORIES` / verdict shape.
+
+### Owner hard constraints (binding)
+- **C1 — NO Google Local Services special-casing:** no sender allowlists, no per-category branches,
+  no prompt tweaks. Minimal faithful transport swap only.
+- **C2 — NO other enhancements** beyond the swap + config valve.
+- **C3 — Deploy blocker (do NOT deploy):** prod (Vultr) cannot yet reach the mini's Ollama
+  (localhost-only today); commit to master is OK, deploy is gated on reachability + standing owner consent.
+
+### Deviations / risks noted
+- **Reachability gap** — prod→mini Ollama is not reachable today; flagged as a deploy blocker (out of
+  this feature's code scope). Verification is therefore local-only until networking is solved.
+- **`MAIL_AGENT_MODEL` reuse trap** — the dedicated new `MAIL_AGENT_OLLAMA_MODEL` var (R3) exists
+  specifically because prod's `MAIL_AGENT_MODEL` likely holds a Gemini model id; reusing it would send
+  a Gemini string to Ollama.

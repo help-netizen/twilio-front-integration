@@ -7933,3 +7933,60 @@ wave 5 (final):  T17 (real-DB verify harness ← весь backend)
 **Wave 1:** BTN-04 (`PulsePage.tsx` + `pulse.ts`) — after BTN-03 (component import) + BTN-02 (data).
 **Wave 2:** BTN-05 (tests + build) — after all.
 No file overlaps between BTN-01/02/03/04 → the only ordering is BTN-04's import dependency on BTN-03 and data dependency on BTN-02.
+
+---
+
+## Фича MAIL-LOCAL-LLM-001: Email-triage classifier — Gemini → local Ollama qwen2.5:14b
+
+Атомарный свап транспорта классификатора mail-triage: default-провайдер становится **local Ollama** (`qwen2.5:14b` на `mini`); Gemini-ветка сохраняется **dormant** (провайдер-диспетчер по env). БЕЗ миграции, БЕЗ routes, БЕЗ frontend. Файлы T1 и T2 **дизъюнктны**, но T2 тестирует T1 → **строго последовательно (T1 → T2), не параллелить**. Артефакты: requirements.md (R1-R5/NFR/C1-C3), architecture.md, specs/MAIL-LOCAL-LLM-001.md (S1-S3 + 7 edge), test-cases/MAIL-LOCAL-LLM-001.md (TC-MLL-001..009).
+
+### Задача TASK-MLL-001: classifyEmail → провайдер-диспетчер (ollama default | gemini dormant)
+
+**Цель:** В `backend/src/services/mailAgentClassifier.js` превратить `classifyEmail` в диспетчер по `MAIL_AGENT_PROVIDER` (default `ollama`; `gemini` — dormant). Добавить `classifyViaOllama()`; переименовать существующее тело в `classifyViaGemini()`. Добавить env-конфиг.
+
+**Файлы, которые можно менять:**
+- `backend/src/services/mailAgentClassifier.js`
+
+**Файлы, которые трогать нельзя:**
+- `SYSTEM_PROMPT` / `buildUserPrompt` / `parseVerdict` / `CATEGORIES` / `module.exports` — контракт неизменен (parity в T2 на этом держится)
+- прочее в `backend/src/services/` — вне scope
+
+**Детали реализации:**
+- `classifyViaOllama()`: `POST {MAIL_AGENT_OLLAMA_URL}/api/generate`, body per spec S2 (`model`, `system`, `prompt`, `stream:false`, `format:"json"`, `options`); читать **`data.response` как STRING** → `parseVerdict(data.response)` **БЕЗ pre-parse** (никакого `JSON.parse` до parseVerdict). Зеркалить Gemini-ветки: пустой/отсутствующий `data.response` → break; плохой JSON → retry-then-break; single-model retry-loop; `AbortController` per-attempt timeout. Вернуть `{ verdict, model: OLLAMA_MODEL, latency_ms }`.
+- env (захват на module-load): `MAIL_AGENT_PROVIDER` (default `ollama`), `MAIL_AGENT_OLLAMA_URL` (trailing-slash trimmed), **NEW** `MAIL_AGENT_OLLAMA_MODEL` (default `qwen2.5:14b`; НЕ переиспользовать `MAIL_AGENT_MODEL` — там Gemini-id), `MAIL_AGENT_TIMEOUT_MS` (default `60000`).
+- **НЕТ** Google-LSA спец-кейсинга.
+
+**Ожидаемый результат:** По умолчанию mail-triage классифицирует через local Ollama; форма verdict и `module.exports` идентичны Gemini-ветке; Gemini снова активен через `MAIL_AGENT_PROVIDER=gemini` без правок кода.
+
+**Зависимости:** нет (WAVE 1). **Статус:** pending
+
+### Задача TASK-MLL-002: verify-скрипт (TC-MLL-001..009)
+
+**Цель:** Создать `scripts/verify-mail-local-llm-001.js`, реализующий TC-MLL-001..009.
+
+**Файлы, которые можно менять:**
+- `scripts/verify-mail-local-llm-001.js` (новый)
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/services/mailAgentClassifier.js` — verify его грузит/читает, НЕ мутирует
+
+**Детали реализации:**
+- `freshLoad(env)` — бастит `require.cache` (классификатор захватывает env на module-load), выставляет env, ре-requires модуль на чистом стейте.
+- fetch-stub в форме **WHATWG Response** (`.ok`/`.status`/`.json()`/`.text()`).
+- TC-MLL-008 — **5-way sabotage** негативный контроль (каждая диверсия обязана краснить).
+- TC-MLL-009 — **live-mini smoke** (последовательно, через tunnel; сеть-gated, non-blocking если mini недоступен).
+
+**Ожидаемый результат:** `node scripts/verify-mail-local-llm-001.js` зелёный на корректном T1; sabotage-контроль краснеет на подделке; live-smoke классифицирует реальным qwen при доступности mini.
+
+**Зависимости:** **после TASK-MLL-001** (тестирует его). **Статус:** pending
+
+### Порядок выполнения (MAIL-LOCAL-LLM-001)
+
+```
+WAVE 1: TASK-MLL-001 (backend/src/services/mailAgentClassifier.js)   ← нет dep
+WAVE 2: TASK-MLL-002 (scripts/verify-mail-local-llm-001.js)          ← после 001
+```
+
+**Граф:** **001 → 002** (строго последовательно). Файлы дизъюнктны, НО 002 тестирует 001 — **НЕ параллелить**.
+
+**Non-code prerequisite (deploy-blocker):** prod (Vultr `108.61.87.117`) должен достигать `mini` (Ollama `qwen2.5:14b`) по `MAIL_AGENT_OLLAMA_URL` — Tailscale/tunnel reachability prod→mini + модель pulled. Config/network-предусловие, не код: T1/T2 проходят локально независимо от него, но БЕЗ него фича не деплоится. Прод-деплой — только с явного «да» владельца.

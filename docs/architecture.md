@@ -5100,3 +5100,30 @@ The button is additionally hidden unless the user has `payments.collect_online` 
 **Deviation (verified):** the part-arrived task is job-parented (`partsCallService.onPartArrived` → `parentType:'job'`, no `thread_id`) → it surfaces on the **Job card**; the Pulse-AR wiring future-proofs timeline-parented action tasks but won't show the part-arrived task unless `onPartArrived` thread-links it (out of scope). No other open_task builder exists (grep: only `timelinesQueries.js` + `calls.js`).
 
 **Protected / unchanged:** `registry.js`, execute route, partsCall/outbound lifecycle, `tasks.actions` column (mig 157 — no new migration), `authedFetch.ts` / `useRealtimeEvents.ts`, TASKS-COUNT-BADGE / AR-TASK-UNIFY queries.
+
+---
+
+## MAIL-LOCAL-LLM-001 — Route Mail Secretary triage to a local Ollama LLM
+
+**Decision.** Swap ONLY the transport inside `backend/src/services/mailAgentClassifier.js` → `classifyEmail` from Gemini v1beta `generateContent` to a local Ollama `POST /api/generate`. Prompt text, verdict shape, and every caller stay byte-identical. A `MAIL_AGENT_PROVIDER` env switch (`ollama` default | `gemini`) picks the transport at call time; the Gemini code path is kept INTACT but dormant as a one-env-var revert valve.
+
+**Files changed — exactly one.** `backend/src/services/mailAgentClassifier.js`. **No** migration, **no** new route, **no** frontend, **no** change to `mailAgentService.js` (`reviewInboundEmail`/`dryRun` call `classifyEmail` and consume `{verdict, model, latency_ms}` unchanged). `callSummaryService` stays on Gemini.
+
+**Internal structure — dispatcher + two private transports + shared helpers:**
+- `classifyEmail(input)` — thin dispatcher: `PROVIDER === 'gemini' ? classifyViaGemini(input) : classifyViaOllama(input)` (ollama = default).
+- `classifyViaOllama(input)` — NEW. Single-model retry loop (`OLLAMA_MODEL`, attempts `0..MAX_RETRIES`, `BACKOFF_MS` jittered); per-attempt `AbortController` + `TIMEOUT_MS`; global `fetch` `POST ${OLLAMA_URL}/api/generate`, body `{ model, prompt: `${SYSTEM_PROMPT}\n\n${buildUserPrompt(input)}`, system: "", format: "json", stream: false, keep_alive: "10m", options: { temperature: 0.1, num_ctx: 4096, num_predict: 512 } }`; retry on `!ok` for 429/5xx else break (no fallback model to try); `latency_ms` = wall-clock. Returns `{ verdict, model: OLLAMA_MODEL, latency_ms }`.
+- `classifyViaGemini(input)` — the EXISTING `classifyEmail` body **verbatim** (two-model fallback loop + `GEMINI_API_KEY` guard), same return shape. Dormant unless `MAIL_AGENT_PROVIDER=gemini`.
+- **Shared / untouched:** `SYSTEM_PROMPT`, `buildUserPrompt`, `parseVerdict`, `CATEGORIES`, `MAX_BODY_CHARS`, `module.exports = { classifyEmail }`.
+
+**Response parsing — exact contract (guards a literal-reading bug).** Ollama's `/api/generate` returns an HTTP-JSON envelope whose `response` field is itself a JSON **string** (the model output, forced by `format:"json"`). So: `const body = await response.json()` → feed the **string** `body.response` **directly** into the EXISTING `parseVerdict(body.response)`. Do **NOT** `JSON.parse(body.response)` first — `parseVerdict` already `JSON.parse`s its string arg, so a pre-parsed object would `String()`-ify to `"[object Object]"` and throw. `parseVerdict`'s ```-fence stripping stays harmless. Empty/missing `body.response` → record error + break (mirrors the Gemini "empty response" branch).
+
+**Env vars:**
+- `MAIL_AGENT_PROVIDER` — `ollama` (default) | `gemini`.
+- `MAIL_AGENT_OLLAMA_URL` — default `http://127.0.0.1:11434` (trailing slash trimmed).
+- `MAIL_AGENT_OLLAMA_MODEL` — NEW, default `qwen2.5:14b` (deliberately NOT reusing `MAIL_AGENT_MODEL`, which stays the Gemini model id).
+- `MAIL_AGENT_TIMEOUT_MS` — default raised **15000 → 60000** (local first-token / cold model-load is slower than Gemini). `MAIL_AGENT_RETRY_MAX` (default 2) reused as-is. `GEMINI_API_KEY` / `MAIL_AGENT_MODEL` / `MAIL_AGENT_FALLBACK_MODEL` retained for the dormant path.
+- These vars live ONLY in this file + `Docs/specs/MAIL-AGENT-001.md` — no `.env.example` / compose reference to update.
+
+**Failure mode (unchanged).** Any transport/parse failure still `throw`s; `reviewInboundEmail` catches it and writes `verdict='error'` — the email-link pipeline is unaffected (its never-throws contract holds). Degradation, not breakage.
+
+**Deploy-time reachability constraint (the real risk).** The `127.0.0.1:11434` default is correct ONLY on a host that co-runs Ollama (local dev). Prod is a Vultr Docker container while Ollama runs on `mini` and is **localhost-only today** (LOCAL-LLM-MINI-001). To go live in prod, the deploy MUST: (1) bind mini's Ollama to the network (`OLLAMA_HOST=0.0.0.0`), (2) set `MAIL_AGENT_OLLAMA_URL` to mini's Tailscale address (e.g. `http://100.78.119.41:11434`) with the prod host on the tailnet, and (3) have `qwen2.5:14b` pulled on mini. If any is missing, every triage throws → `verdict='error'` rows (no dispatcher tasks) until fixed; instant rollback = set `MAIL_AGENT_PROVIDER=gemini`. This is a deploy-config / network prerequisite, not a code concern.
