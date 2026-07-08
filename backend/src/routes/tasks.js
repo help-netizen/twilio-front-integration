@@ -17,6 +17,8 @@ const router = express.Router();
 const tasksQueries = require('../db/tasksQueries');
 const userService = require('../services/userService');
 const tasksService = require('../services/tasksService');
+const jobsService = require('../services/jobsService');
+const taskActions = require('../services/taskActions/registry');
 const { requirePermission } = require('../middleware/authorization');
 
 function companyId(req) {
@@ -196,6 +198,63 @@ router.patch('/:id', requirePermission('tasks.view'), async (req, res) => {
     } catch (err) {
         console.error('[Tasks] PATCH /:id failed:', err.message);
         res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to update task' } });
+    }
+});
+
+// ── POST /:id/actions/:type — execute a typed task action ────────────────────
+// OUTBOUND-PARTS-CALL-001 (spec Part A / arch §3). Runs a CLOSED registry action
+// (robot_call / manual_call). Guarded requirePermission('tasks.manage') — it
+// executes a server action, stronger than tasks.view. company scope is strictly
+// req.companyFilter.company_id; the task is loaded scoped to it → foreign/unknown
+// id = 404 (never a leak); an unknown :type not in the registry = 400.
+router.post('/:id/actions/:type', requirePermission('tasks.manage'), async (req, res) => {
+    try {
+        const { type } = req.params;
+
+        // Unknown action type → 400 (no handler invoked). S11.
+        if (!taskActions.isKnownAction(type)) {
+            return bad(res, 'UNKNOWN_ACTION', `Unknown task action: ${type}`);
+        }
+
+        // Load the task scoped to the company → foreign/absent = 404 (S10). No leak.
+        const task = await tasksQueries.getTaskById(companyId(req), req.params.id);
+        if (!task) {
+            return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
+        }
+
+        // Resolve the related job (company-scoped) so handlers have the customer
+        // phone/name without re-deriving scope. Absent → null (manual_call still
+        // returns a well-formed no-phone directive; robot_call's startRobotCall
+        // resolves the job itself and safe-fails on a stale/missing one).
+        //
+        // NB: getTaskById projects the parent as `parent_type`/`parent_id`, NOT a raw
+        // `job_id` column — so read the job id from the parent projection (OPC1-T17
+        // fix: `task.job_id` was always undefined here, which made robot_call return
+        // `not_dialable` on every real request).
+        const jobId = task.parent_type === 'job' ? task.parent_id : null;
+        let job = null;
+        if (jobId != null) {
+            job = await jobsService.getJobById(jobId, companyId(req));
+        }
+
+        const result = await taskActions.runAction(type, {
+            task,
+            job,
+            jobId,
+            companyId: companyId(req),
+        });
+
+        // Envelope: { ok, state, client? } (spec §A.3). robot_call → state; a
+        // failure carries a reason (no_slots / engine_error / …) but is still a
+        // 200 — the action ran, it just couldn't dial.
+        return res.json({ ok: true, data: result });
+    } catch (err) {
+        // A slipped-through unknown action (defensive) maps to 400; everything else 500.
+        if (err && err.code === 'UNKNOWN_ACTION') {
+            return bad(res, 'UNKNOWN_ACTION', err.message);
+        }
+        console.error('[Tasks] POST /:id/actions/:type failed:', err.message);
+        return res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to run task action' } });
     }
 });
 

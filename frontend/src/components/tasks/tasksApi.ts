@@ -2,6 +2,37 @@ import { authedFetch } from '../../services/apiClient';
 
 export type TaskParentType = 'job' | 'lead' | 'contact' | 'estimate' | 'invoice' | 'timeline';
 
+/**
+ * OUTBOUND-PARTS-CALL-001 (TASK-ACTIONS): a typed action button rendered on the
+ * task card, in addition to the built-in Done/Cancel/Reopen affordances. The set
+ * of `type`s is a closed backend registry (`robot_call`, `manual_call`).
+ * `state:'failed'` + `reason` surface a prior failed attempt (e.g. the robot found
+ * no slots) so the dispatcher sees why and can fall back to a manual call.
+ */
+export type TaskActionType = 'robot_call' | 'manual_call';
+
+export interface TaskAction {
+    type: TaskActionType;
+    label: string;
+    state?: 'failed';
+    reason?: string;
+}
+
+/** Client directive returned by `POST /actions/manual_call` — dial the softphone. */
+export interface TaskActionClientDirective {
+    action: 'open_softphone';
+    phone: string;
+    contactName?: string;
+}
+
+/** Parsed response of `runTaskAction`. `ok:false` carries a human `reason`. */
+export interface RunTaskActionResult {
+    ok: boolean;
+    reason?: string;
+    client?: TaskActionClientDirective;
+    [k: string]: unknown;
+}
+
 export interface Task {
     id: number;
     description: string;
@@ -21,6 +52,8 @@ export interface Task {
     kind?: 'user' | 'agent';
     agent_type?: string | null;
     agent_output?: { reason?: string; category?: string; confidence?: number } | null;
+    /** OUTBOUND-PARTS-CALL-001: typed action buttons (robot_call / manual_call). */
+    actions?: TaskAction[];
 }
 
 export interface Assignee {
@@ -135,6 +168,27 @@ export const snoozeTask = (id: number, dueAtIso: string) => updateTask(id, { due
 export async function deleteTask(id: number): Promise<void> {
     const res = await authedFetch(`${BASE}/${id}`, { method: 'DELETE' });
     await unwrap<unknown>(res);
+}
+
+/**
+ * OUTBOUND-PARTS-CALL-001: execute a typed task action.
+ * `POST /api/tasks/:id/actions/:type`. The route wraps the handler result in the
+ * standard `{ ok, data }` envelope, where `data` is the domain object
+ * `{ ok, state?, client?, reason? }` — so we unwrap `json.data` and return that.
+ * The envelope's own `ok` is always `true` on 2xx and says nothing about the
+ * action outcome; the INNER `data.ok:false` (e.g. no slots) is a domain outcome,
+ * not a thrown error — the caller decides how to surface `data.reason`. A non-2xx
+ * / auth / network failure DOES throw.
+ */
+export async function runTaskAction(id: number, type: TaskActionType): Promise<RunTaskActionResult> {
+    const res = await authedFetch(`${BASE}/${id}/actions/${type}`, { method: 'POST' });
+    const json = (await res.json().catch(() => null)) as
+        | { ok?: boolean; data?: RunTaskActionResult; error?: { message?: string }; message?: string }
+        | null;
+    if (!res.ok || !json || json.ok === false) {
+        throw new Error(json?.error?.message || json?.message || `Request failed: ${res.status}`);
+    }
+    return (json.data as RunTaskActionResult) ?? { ok: false };
 }
 
 export async function listAssignees(): Promise<Assignee[]> {

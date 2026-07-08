@@ -68,6 +68,14 @@ const SKILLS = [
     // identified contact's EXISTING open lead (update, never a dup); L1. Module in T3.
     { name: 'bookOnLead', kind: 'write', requiredLevel: 'L1', run: lazyRun('bookOnLead') },
 
+    // OUTBOUND-PARTS-CALL-001 (OPC1-T13): in-call booking write for the OUTBOUND
+    // "part arrived → finish the visit" assistant. L0 on the outbound surface
+    // (Deviation 1) — the call is server-initiated to a pre-bound known contact,
+    // so it is NOT gated behind the inbound verificationGate; isolation is fully
+    // in-skill (companyId + bound contactId ownership pre-check). Inbound Sara's
+    // tool-set is unchanged — this additive entry only makes the skill executable.
+    { name: 'confirmPartsVisit', kind: 'write', requiredLevel: 'L0', run: lazyRun('confirmPartsVisit') },
+
     // --- 5 RELOCATED legacy L0 tools (byte-compat; own legacy shapes) --------
     // L0 so deriveLevel never blocks them → "never block the call" preserved.
     { name: 'checkServiceArea', kind: 'read', requiredLevel: 'L0', run: lazyRun('checkServiceArea') },

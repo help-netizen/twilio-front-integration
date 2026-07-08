@@ -73,18 +73,37 @@ function vapiSecretAuth(req, res, next) {
  * 5 legacy L0 tools are excluded so their observable output stays byte-identical
  * to the pre-refactor handlers (they never saw the raw caller-ID before).
  *
+ * OUTBOUND-PARTS-CALL-001: for the server-initiated outbound call, the call's
+ * pre-bound identity (`jobId`, `contactId`, `taskId`, `companyId`, slot fields) is
+ * injected at call-open into `call.assistantOverrides.variableValues` — NOT a
+ * caller/model claim. Those variableValues are threaded into the skill input and
+ * OVERRIDE any same-named model `args`, so an outbound skill's ownership pre-check
+ * (e.g. `confirmPartsVisit`) keys on server-injected identity the model cannot
+ * spoof. Inbound Sara calls carry NO `assistantOverrides.variableValues`, so this
+ * is a pure no-op for the inbound path (Sara/legacy tools untouched).
+ *
  * @param {string} name The tool/skill name.
  * @param {object} args Parsed tool arguments.
  * @param {object} [call] The VAPI call metadata (message.call).
  * @returns {object} The skill input (identity block + skill-specific fields).
  */
 function buildSkillInput(name, args, call) {
+    // Server-injected, model-untrusted identity for outbound calls (empty for
+    // inbound Sara). Overrides same-named model args → identity can't be spoofed.
+    const variableValues =
+        (call && call.assistantOverrides && call.assistantOverrides.variableValues) || null;
+
     const callerNumber = call && call.customer && call.customer.number;
     if (LEGACY_TOOLS.has(name) || !callerNumber) {
-        return args;
+        // Legacy L0 tools stay byte-identical (no silent phone); but outbound
+        // variableValues (absent for inbound) still take precedence when present.
+        return variableValues ? { ...args, ...variableValues } : args;
     }
-    // Fallback only — an assistant-supplied `phone` in args is authoritative.
-    return { phone: callerNumber, ...args };
+    // Silent caller-ID is a FALLBACK (args win); variableValues are AUTHORITATIVE
+    // (server-injected) so they are spread LAST to override any model-sent field.
+    return variableValues
+        ? { phone: callerNumber, ...args, ...variableValues }
+        : { phone: callerNumber, ...args };
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -140,3 +159,6 @@ router.post('/', vapiSecretAuth, async (req, res) => {
 });
 
 module.exports = router;
+// Exported additively for unit tests (variableValues anti-spoof precedence). The
+// router remains the default export; this does not alter the mount behavior.
+module.exports.buildSkillInput = buildSkillInput;

@@ -104,6 +104,7 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
                                     onComplete={handleComplete}
                                     onSnooze={handleSnooze}
                                     onEdit={setEditingTask}
+                                    onChanged={() => { refetch(); onTasksChanged?.(); }}
                                 />
                             ))}
                         </div>

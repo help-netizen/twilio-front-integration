@@ -3,8 +3,9 @@
 Multi-tenant CRM and contact center for home-services companies. One workspace
 for every customer conversation (calls, SMS, email) and the work it produces
 (leads, jobs, schedules, estimates, invoices, payments), with AI woven into the
-operational flow — call summaries, live transcription, an inbound voice agent,
-and an email-triage agent that turns important letters into dispatcher tasks.
+operational flow — call summaries, live transcription, inbound and outbound
+voice agents (the latter schedules the finish visit once a part arrives), and
+an email-triage agent that turns important letters into dispatcher tasks.
 
 > Historical note: this repository started in 2024 as a small "Twilio → Front"
 > channel sync — hence its name. The Front integration is long gone; the repo

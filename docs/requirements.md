@@ -4072,3 +4072,172 @@ A user who has "Add to Home Screen"-installed app.albusto.com on their iPhone ex
 - **New:** `frontend/public/manifest.webmanifest`; `frontend/public/icons/apple-touch-icon-180.png`, `icon-192.png`, `icon-512.png`, `icon-512-maskable.png`; optional `frontend/src/auth/` refresh-policy helper.
 - **Modified:** `frontend/index.html` (Apple/PWA meta + manifest link + `viewport-fit=cover`); `frontend/src/auth/AuthProvider.tsx` (both `.catch` sites → transient-retry / dead-redirect policy).
 - **Backend:** **none.** **Deploy/infra (non-code):** Caddy/static serving must return `application/manifest+json` for `/manifest.webmanifest` and real image types for `/icons/*` (not the SPA `text/html` fallback).
+
+
+---
+
+## OUTBOUND-PARTS-CALL-001 — Outbound VAPI voice agent that schedules the completion visit after a part arrives, driven by a task with typed action buttons (2026-07-07)
+
+**Status:** Requirements (Product / Agent-01) · **Priority:** P1 · **Owner:** Voice / CRM / Dispatch
+**Type:** feature — **backend** (a NEW job status `Part arrived`; FSM transitions into/out of it; a status-change **hook + call-orchestration worker** that auto-creates a task and runs the outbound-call lifecycle with retries; a NEW **outbound VAPI call trigger** — `POST https://api.vapi.ai/call` — plus a NEW **outbound assistant** config; a pre-computed slot placed into the call context; write-through reschedule + status flip to `Rescheduled`) + **a reusable task sub-component — TASK-ACTIONS** (typed, backend-executed action buttons on Tasks) + **frontend** (render the action buttons on the task card; `manual_call` opens the softphone).
+**Scope of v1:** **Boston Masters only** (`DEFAULT_COMPANY_ID = 00000000-0000-0000-0000-000000000001`), but all server code is written **company-scoped** for future multi-tenant rollout.
+
+**Binding owner decisions (Step 0.5 interview — these OVERRIDE any conflicting assumption):**
+- **D1 — Trigger = a task with custom buttons, NOT an auto-dial.** When a job moves to `Part arrived`, the system auto-creates a **Task** (existing Tasks system, TASKS-001) bound to that job. The task shows, besides the standard Done/Cancel, **two custom buttons**: **"🤖 Let the robot call"** (launches the outbound VAPI agent) and **"📞 I'll call myself"** (opens the softphone with the customer's number pre-filled — reuse existing click-to-call / outbound-softphone). No call happens until a human presses the robot button.
+- **D2 — Generalize the buttons as typed actions (sub-component TASK-ACTIONS).** A task gains an `actions[]` field — a list of **named** actions the **backend** knows how to execute (v1 = exactly two: `robot_call`, `manual_call`). The UI renders buttons from this list plus the standard Done/Cancel. Each action's logic lives **in code** (NOT arbitrary user-defined code). TASK-ACTIONS is described as a **standalone, reusable requirements component** on which OUTBOUND-PARTS-CALL stands.
+- **D3 — Pre-computed slot; no live API during the call open.** On "robot call", the backend pre-computes the top slot via the existing `recommendSlots` (slot-engine) and places it into the call context (`assistantOverrides`) so the call opens with a concrete window and **no API is hit during that open**. If the customer says "no", the agent pulls alternatives **live** via `recommendSlots`. **If there are no slots OR the slot-engine errors — DO NOT call**; update the task with the reason and what the dispatcher should do.
+- **D4 — No-answer / voicemail / hang-up ⇒ scheduled retries.** Retry schedule **"immediately / +2h / next business morning"** (**3 attempts**, clamped to the company's business hours; the schedule/attempt-count are configurable). **Every attempt** the robot adds a **note to the job** ("tried to reach, no answer, will try again at …"). After the 3rd unsuccessful attempt the task **stays with the dispatcher** and the job status **stays `Part arrived`**.
+- **D5 — Successful booking.** The agent confirms the arrival window → **reschedule the SAME job** (write-through to Zenbooker) **+ flip status to `Rescheduled`** → the task **auto-closes (Done)**. The "3-month warranty" phrase is **NOT** used in v1 (remove from the script).
+- **D6 — No re-verification.** Outbound call to a known contact: the agent does **NOT** confirm name or address (we've already been there); the pre-verified context (`contactId`) is passed into the call.
+- **D7 — Never create a new lead/job.** The flow only transitions the existing job (`Part arrived → Rescheduled`) and updates its visit window. No new lead, no new job.
+
+### Duplication check (result)
+
+**Not a duplicate — a new outbound capability plus a reusable Tasks extension.** Adjacent, reused, and distinguished features:
+
+- **AGENT-SKILLS-001 / -002 (`## AGENT-SKILLS-001`)** built the provider-neutral CRM **skill layer** and the **inbound** `/api/vapi-tools` adapter, and it already contains `rescheduleAppointment` (write Albusto + ZB) and identity skills. This feature **reuses the skill layer** for the reschedule + status-flip write, but is fundamentally **outbound** — AGENT-SKILLS is inbound-only (its non-goals explicitly exclude "outbound calls (different assistant type)"). This feature closes that gap with an **outbound call trigger** and a **separate outbound assistant**.
+- **VAPI-SLOT-ENGINE-001 (`## VAPI-SLOT-ENGINE-001`)** established the `recommendSlots` engine call, the `smart-slot-engine` marketplace gate, and safe-fail semantics — reused verbatim to pre-compute the top slot (D3) and to pull live alternatives.
+- **TASKS-001 / AR-TASK-UNIFY-001** provide the Tasks model (`tasks.thread_id`, parent job/lead/contact, `kind`, `agent_output`, `createTask` app-upsert, "open task = Action Required"). This feature **extends** it with TASK-ACTIONS (typed action buttons) and adds ONE auto-created task per `Part arrived` transition. It does **not** change the existing Tasks visibility/RBAC model or the AR-TASK-UNIFY coupling.
+- **Softphone / click-to-call** (`frontend/src/contexts/SoftPhoneContext.tsx` — `useSoftPhone().openDialer(phone, contactName)`; `POST /api/voice/twiml/outbound`) is reused as-is for the `manual_call` action (desktop-only; MOBILE-NO-SOFTPHONE-001 — mobile falls back to native `tel:`).
+- **On-the-way / ONWAY-001**, **CALLFLOW-BUSY-TO-AGENT-001 (inbound Sara)** — untouched; the inbound path and live Sara assistant (`30e85a87`) must not break.
+
+### 1. Problem
+
+Today, when a technician has done a diagnosis, ordered a part, and the part later arrives, there is **no status to mark "part arrived"** and **no workflow to re-book the completion visit**. A dispatcher must notice the part, remember which job it belongs to, call the customer, negotiate a window, reschedule the job, and push it to Zenbooker — all by hand, one job at a time. The completion visit is the highest-intent, already-won work (the customer is waiting on us), yet it's the most manual step. We want a one-press path: a robot calls the customer with a ready window, books it, reschedules the same job, and closes the loop — with a clean fallback to a human when the robot can't.
+
+### 2. Goals / Non-goals
+
+**Goals**
+- Add a first-class **`Part arrived`** job status with correct FSM transitions.
+- **Auto-create a task** (bound to the job) when a job enters `Part arrived`, carrying **typed action buttons** (`robot_call`, `manual_call`).
+- On `robot_call`: **pre-compute** the best slot, place a **VAPI outbound call**, and drive a short "your part's in, let's book the finish visit" script; book on agreement.
+- On success: **reschedule the same job (Albusto + ZB write-through)**, flip to **`Rescheduled`**, and **auto-close the task**.
+- On no-answer: **retry ×3** on a business-hours schedule, **noting every attempt on the job**; after exhaustion, leave the task for the dispatcher.
+- On no-slots / engine-error: **don't call**; explain the reason on the task.
+- Generalize the buttons into a **reusable TASK-ACTIONS** sub-component (typed, backend-executed actions on tasks).
+
+**Non-goals (out of scope)**
+- **Any re-verification of identity/name/address** on the outbound call (D6) — pre-verified context only.
+- **Creating a new lead or job** (D7) — only transition/reschedule the existing job.
+- Payment capture by voice (never — consistent with AGENT-SKILLS-001).
+- The "3-month warranty" upsell phrase (D5 — removed from v1 script).
+- Multi-tenant rollout (v1 = Boston Masters / `DEFAULT_COMPANY_ID`; code stays company-scoped).
+- **Arbitrary user-defined task actions** — TASK-ACTIONS v1 is a **closed set** of backend-implemented action types (`robot_call`, `manual_call`); no user scripting.
+- Mobile softphone for `manual_call` (desktop softphone only; mobile uses native `tel:` per MOBILE-NO-SOFTPHONE-001).
+- Changing the inbound Sara assistant, the inbound `/api/vapi-tools` contract, the slot-engine scoring, or the dispatcher UI beyond rendering the new task buttons.
+
+### 3. User stories
+
+1. **Part arrives → task appears (S).** A job in `Waiting for parts` is moved to `Part arrived`; the system auto-creates ONE task on that job with buttons **Done / Cancel / 🤖 Let the robot call / 📞 I'll call myself**, and it surfaces as Action Required.
+2. **Robot books it (happy path).** The dispatcher presses **"Let the robot call"**; the backend pre-computes the top slot and dials the customer; the agent says "Hi {name}, your part's arrived — let's schedule the finish visit," offers the ready window, the customer agrees, the agent states the **arrival window**, the job is **rescheduled (Albusto + ZB)** and flipped to **`Rescheduled`**, and the **task auto-closes (Done)**.
+3. **Customer wants a different time.** The customer declines the pre-computed window; the agent pulls **live alternatives** via `recommendSlots`, offers 2–3, the customer picks one → same booking + status-flip + task-close as (2).
+4. **No answer → retries → dispatcher.** The call goes to voicemail / is declined / rings out; the robot **adds a note to the job** and **retries** on "immediately / +2h / next business morning" (3 attempts, within business hours). After the 3rd failure the **task stays with the dispatcher** and the **job stays `Part arrived`**.
+5. **No slots / engine error → don't call.** At robot-launch (or on a live re-pull) the slot-engine returns no availability or errors → **no call is placed**; the task is updated with the reason and the recommended dispatcher action.
+6. **"I'll call myself" (manual).** The dispatcher presses **"I'll call myself"** → the **softphone opens with the customer's number pre-filled** (desktop; native `tel:` on mobile); the dispatcher books manually (no robot involved).
+
+### 4. Functional requirements
+
+#### 4.0 Sub-component — TASK-ACTIONS (reusable typed action buttons on Tasks)
+
+- **FR-TA1 — `actions[]` on a task.** A task carries an ordered list of **typed actions**, each `{ type, label, icon?, state? }` where `type` is a **backend-known** action key. v1 registry = `robot_call`, `manual_call`. The value is stored on the task (new column/JSON on the tasks model, e.g. reuse/extend `agent_output`/`kind` conventions — Architect decides the exact storage; must not break the existing Tasks schema or TASKS-COUNT-BADGE/AR-TASK-UNIFY queries).
+- **FR-TA2 — Backend-executed, closed registry.** Each action `type` maps to a **server-side handler** in a small action registry (NOT arbitrary user code, NOT client-authored logic). The registry is the single source of truth for "what a button does." Invoking an action = `POST /api/tasks/:id/actions/:type` (Architect confirms route shape), authenticated + `requireCompanyAccess`, scoped to `req.companyFilter.company_id`, foreign task id → 404.
+- **FR-TA3 — UI renders buttons from the list.** The task card (`frontend/src/components/tasks/TaskCard.tsx`) renders one button per `actions[]` entry (label + optional icon), **in addition to** the standard Done/Cancel affordances — no hardcoded per-feature buttons. Disabled/loading `state` reflects an in-flight/consumed action.
+- **FR-TA4 — Idempotency & auditability of an action.** An action handler is idempotent-safe (double-press does not double-fire — e.g. `robot_call` won't start a second concurrent call lifecycle). Each invocation is auditable (domain event / job note as appropriate). `manual_call` is a pure client affordance (opens the dialer) and needs no server mutation, but MAY still be logged.
+
+#### 4.1 Job status & FSM
+
+- **FR-1 — New status `Part arrived`.** Add `Part arrived` to the job status set (`BLANC_STATUSES`, `jobsService.js` line 25) **and** to the FSM/SCXML published machine (via a new migration that rewrites the published SCXML per company, following the mig-127 "On the way" precedent), **and** to the hardcoded `ALLOWED_TRANSITIONS` fallback. Required transitions: **`Waiting for parts → Part arrived`**; **`Part arrived → Rescheduled`**, **`Part arrived → Canceled`**, **`Part arrived → Follow Up with Client`**. Do not remove/reorder existing statuses, `OUTBOUND_MAP`, or the Zenbooker sync block (FSM dual-source; `jobsService` authoritative fallback).
+- **FR-2 — Status change is the trigger seam.** Entering `Part arrived` (via `updateBlancStatus(jobId, 'Part arrived', companyId)` / `PATCH /api/jobs/:id/status`) fires a **hook** that enqueues the task creation + (idle) call orchestration. The hook is **fail-safe**: an error in task creation or orchestration **must NOT roll back or block** the status transition (fire-and-forget with its own error capture, mirroring `eventService.logEvent`).
+
+#### 4.2 Auto-task on `Part arrived`
+
+- **FR-3 — One task per transition (idempotent).** On `Part arrived`, create **exactly one** open task bound to the job (parent = job), with the two typed actions `robot_call` + `manual_call` (FR-TA1). Re-entering `Part arrived` (or a duplicate event) must **not** spawn a second open task for the same job (`createTask` app-upsert keyed on job + task kind). The task surfaces as Action Required (AR-TASK-UNIFY-001).
+- **FR-4 — Task content.** The task names the customer + job + "Part arrived — schedule completion visit," so a dispatcher sees the whole picture; it opens the parent job (tasks have no own card). No new lead/job is created (D7).
+
+#### 4.3 Outbound robot call lifecycle (`robot_call` action)
+
+- **FR-5 — Pre-compute the slot, then dial (D3).** On `robot_call`: (a) resolve the customer phone + `contactId` from the job; (b) call `recommendSlots(companyId, ctx, { … job address/zip, durationMinutes, … })` to get the **top-1** slot; (c) **if no slots OR error → DO NOT call** (FR-9); (d) otherwise place an **outbound VAPI call** `POST https://api.vapi.ai/call` with `{ assistantId: <outbound assistant>, phoneNumberId, customer.number, assistantOverrides }`, where `assistantOverrides` carries the **pre-verified context** (`contactId`, customer first name, `jobId`) and the **pre-computed window** — so the call **opens with a concrete slot and hits no API during the open**.
+- **FR-6 — Script (v1).** Greeting ≈ "Hi {name}, how are you — your part has arrived, let's schedule a visit to finish the repair," then offer the pre-computed window. **No name/address confirmation** (D6). On agreement, state the **arrival window** (a range, never an exact minute) and end. **No "3-month warranty" phrase** (D5). The outbound assistant is a **NEW, separate** VAPI assistant config (repo: `voice-agent/assistants/*.json`, modeled on `lead-qualifier-v2.json`; live push is owner-consent-gated and separate from this pipeline).
+- **FR-7 — Customer declines the offered slot → live alternatives.** If the customer rejects the pre-computed window, the agent (via a skill/tool call on the outbound assistant) pulls **live** alternatives through `recommendSlots` and offers 2–3; the pick proceeds to FR-8.
+- **FR-8 — Booking (success, D5).** On confirmation of a window: **reschedule the SAME job** — `scheduleService.rescheduleItem(companyId, 'job', jobId, newStartAt, newEndAt)` **WITH the Zenbooker write-through** (the AGENT-SKILLS-001 AR-4 reschedule ZB-push must be in place; if not yet wired, this feature depends on / closes that gap) — **and** flip status via `updateBlancStatus(jobId, 'Rescheduled', companyId)`, **and** record an **"AI Phone"** audit note + domain event, **and auto-close the task (Done)**. Address is NOT confirmed (D6).
+- **FR-9 — No-slots / engine-error → don't call, explain on the task.** When the pre-compute (FR-5c) or a live re-pull (FR-7) yields no availability or an error, **place no call**; update the task with a human-readable **reason + recommended dispatcher action**; the job stays `Part arrived`; the task stays open with the dispatcher.
+
+#### 4.4 Retries on no-answer
+
+- **FR-10 — Retry schedule (D4).** No-answer / voicemail / declined / hang-up ⇒ retry on **"immediately / +2h / next business morning"**, **3 attempts total**, each clamped to the **company's business hours** (reuse the existing business-hours/tz source used by the call-flow runtime). Attempt count + backoff are **configurable** (per-company setting; Architect chooses storage — a small settings row, mirroring REC-SETTINGS-001).
+- **FR-11 — Note every attempt (D4).** **Each** attempt writes a **job note** ("tried to reach {name}, no answer — next attempt at {time}") via `jobsService.addNote(jobId, text, [], author='AI Phone', createdBy='AI Phone')` (mirrors to ZB when linked) + a domain event.
+- **FR-12 — Exhaustion (D4).** After the 3rd unsuccessful attempt: the **task stays open** with the dispatcher and the **job status stays `Part arrived`** (no flip). A final note records that automated attempts are exhausted and a human should follow up.
+- **FR-13 — Orchestration worker.** The retry/dial lifecycle runs on a **worker/scheduler** (mirror the existing worker patterns: inbox worker, agent worker 5000 ms tick, rules-engine scheduler 60 s). It must be idempotent (no duplicate concurrent call for one task/job — FR-TA4), fail-safe (a worker error never corrupts job state), and business-hours-aware.
+
+#### 4.5 Manual call (`manual_call` action)
+
+- **FR-14 — Open softphone pre-filled.** `manual_call` opens the desktop softphone with the customer number + contact name pre-filled via `useSoftPhone().openDialer(phone, contactName)` (reuse SoftPhoneContext / click-to-call). On mobile, fall back to native `tel:` (MOBILE-NO-SOFTPHONE-001). No robot, no status change on press; the dispatcher books manually (which will itself reschedule + flip status through the normal job UI).
+
+### 5. Non-functional requirements
+
+- **Business hours / timezone:** all dialing and retry scheduling respect the **company's** business hours and timezone (reuse the call-flow runtime's business-hours source; consistent with the "render times in company tz" fix, commit 6d5975a). No calls outside business hours.
+- **Idempotency:** exactly **one** open task per `Part arrived` transition; **one** active call lifecycle per task/job (no duplicate dials on double-press or duplicate events); reschedule/status-flip applied once per successful booking.
+- **Fail-safe:** the `Part arrived` status transition, task creation, orchestration, and each call attempt are **decoupled and fail-safe** — an error in task/call machinery **never** rolls back the status change nor corrupts job/schedule state (fire-and-forget + isolated error capture).
+- **Security (canon):** all task-action routes are `authenticate` + `requireCompanyAccess`, scoped to `req.companyFilter?.company_id`, foreign ids → 404, all SQL by `company_id`. The outbound VAPI trigger runs server-side only; the VAPI outbound API key/secret live in server env (never client). Company isolation is absolute (v1 hardwired to `DEFAULT_COMPANY_ID` but code stays company-scoped).
+- **Graceful degradation:** slot-engine or ZB errors never crash the flow — no-slots/engine-error → don't-call + task reason (FR-9); ZB push failure on reschedule follows the existing `forceSyncOnZbError` discipline; a failed outbound-call POST is treated as a failed attempt (feeds retries).
+- **Latency / cost:** the call opens with a pre-computed slot (no blocking API at open, D3); live re-pulls respect the engine's timeout + safe-fail.
+
+### 6. Acceptance criteria
+
+- **AC-1 (status):** `Part arrived` exists in `BLANC_STATUSES`, the published SCXML, and `ALLOWED_TRANSITIONS`; `Waiting for parts → Part arrived` and `Part arrived → {Rescheduled, Canceled, Follow Up with Client}` are permitted; no existing status/transition is broken.
+- **AC-2 (auto-task):** Moving a job to `Part arrived` creates exactly **one** open task on that job with buttons Done / Cancel / 🤖 Let the robot call / 📞 I'll call myself; re-entering the status does not create a second task; the status change is never blocked by task-creation failure.
+- **AC-3 (robot happy path):** Pressing "Let the robot call" pre-computes the top slot and dials with a concrete window in the call context (no API hit at open); on agreement the SAME job is rescheduled (Albusto **and** ZB), flipped to `Rescheduled`, an "AI Phone" note is recorded, and the task auto-closes (Done).
+- **AC-4 (decline → live alternatives):** A declined pre-computed slot triggers a live `recommendSlots` pull; a chosen alternative books identically to AC-3.
+- **AC-5 (retries):** No-answer produces a job note per attempt and retries on immediately/+2h/next-business-morning (3 attempts, within business hours, configurable); after exhaustion the task stays with the dispatcher and status stays `Part arrived`.
+- **AC-6 (no slots / error):** No availability or an engine error results in **no call placed**, a task updated with the reason + dispatcher action, and the job unchanged.
+- **AC-7 (manual):** "I'll call myself" opens the desktop softphone pre-filled with the customer's number (native `tel:` on mobile); no robot, no status change on press.
+- **AC-8 (no re-verification):** The outbound script never asks the customer to confirm name or address (D6).
+- **AC-9 (no new lead/job):** No path creates a new lead or job; only the existing job transitions/reschedules (D7).
+- **AC-10 (TASK-ACTIONS reusable):** Task buttons render from `actions[]` (not hardcoded); the action registry is a closed, backend-executed set (`robot_call`, `manual_call`); an unknown action type is rejected; a task action route is company-scoped + returns 404 on a foreign id.
+- **AC-11 (isolation / fail-safe):** All server work is scoped to `DEFAULT_COMPANY_ID`; a forced error in task/call/orchestration never rolls back the status transition or corrupts job/schedule state.
+- **AC-12 (no warranty phrase):** The v1 outbound script contains no "3-month warranty" wording.
+
+### 7. Constraints & dependencies
+
+**Reuse (do NOT re-implement):**
+- **Reschedule + ZB write-through:** `scheduleService.rescheduleItem(companyId, 'job', jobId, newStartAt, newEndAt)` (mutates the SAME job) + the **AGENT-SKILLS-001 AR-4 Zenbooker reschedule push** (this feature **depends on** that push existing; if `rescheduleItem` still doesn't call `zenbookerClient.rescheduleJob`, wiring it is a dependency). Status flip via `jobsService.updateBlancStatus`. `POST /api/jobs/:id/reschedule` (ZB write-through, `arrival_window_minutes`) is an alternative surface the Architect may reuse.
+- **Slot pre-compute + live alternatives:** `recommendSlots` skill (slot-engine), gated on `isAppConnected(companyId, 'smart-slot-engine')`, safe-fail (VAPI-SLOT-ENGINE-001).
+- **Skill layer:** the AGENT-SKILLS-001 provider-neutral skill layer (`agentSkills/`) — the outbound assistant's in-call reschedule/alternatives should go through the SAME skills, not a re-implementation; the outbound call is a NEW **consumer** (a separate assistant), the write logic is shared.
+- **Tasks:** TASKS-001 model + `createTask` app-upsert + AR-TASK-UNIFY "open task = Action Required"; `frontend/src/components/tasks/TaskCard.tsx` for button rendering.
+- **Softphone:** `frontend/src/contexts/SoftPhoneContext.tsx` `openDialer(phone, contactName)` + `POST /api/voice/twiml/outbound` (desktop; native `tel:` on mobile).
+- **Business hours / tz + workers:** the call-flow runtime's business-hours/tz source; existing worker/scheduler patterns (inbox worker, agent worker 5 s, rules-engine 60 s).
+- **Audit:** `jobsService.addNote(author='AI Phone')` (ZB-mirrors when linked) + `eventService.logEvent(companyId,'job',jobId,…, actorType='system')`.
+
+**New:**
+- `Part arrived` status (constant + SCXML migration + `ALLOWED_TRANSITIONS`).
+- A status-change **hook** on `updateBlancStatus` + a **call-orchestration worker** (dial + retries).
+- **TASK-ACTIONS** — `actions[]` on tasks + a backend **action registry** (`robot_call`, `manual_call`) + `POST /api/tasks/:id/actions/:type`.
+- An **outbound VAPI call trigger** (server-side `POST https://api.vapi.ai/call`) + a **NEW outbound assistant** config (`voice-agent/assistants/*.json`).
+- A small **per-company retry/schedule settings** row (attempt count + backoff), mirroring REC-SETTINGS-001.
+
+**Integrations affected:** **VAPI** (NEW outbound assistant + `POST /call`; live push owner-consent-gated). **Zenbooker** (reschedule write-through + note mirror; default-company ZB account only, ZB-ISO-001; ZB reschedule/create needs `address.state`). **Twilio** (outbound softphone for `manual_call`; the VAPI outbound telephony `phoneNumberId`). **Slot-engine / smart-slot-engine marketplace app** (pre-compute + live alternatives). **Front / Stripe** — untouched.
+
+**Protected parts (must NOT break):**
+- **Inbound path:** `backend/src/routes/vapi-tools.js` auth/envelope/single-tenant contract, the existing inbound tools, and the **live Sara assistant (`30e85a87`)** — this feature is additive (a NEW outbound assistant), it does not touch the inbound assistant/endpoint.
+- `src/server.js` mount order/wiring; `authedFetch`; `useRealtimeEvents`/SSE; existing DB migrations (only NEW migrations allowed, renumber if branch-parallel per parallel-dialogs rule).
+- **Reschedule / merge-orphan Zenbooker semantics** — `rescheduleItem` must keep mutating the SAME job (no new job), and the ZB write-through must follow `cancelJob`'s pre-check + `forceSyncOnZbError` discipline; do not alter `OUTBOUND_MAP` or the FSM dual-source fallback.
+- **Tasks:** existing Tasks schema, visibility/RBAC model, `HAS_ENTITY_PARENT`/`scopeOwnerId`, TASKS-COUNT-BADGE-001 count query, and AR-TASK-UNIFY-001 coupling — TASK-ACTIONS is additive.
+- **Softphone canon** — desktop-only softphone (MOBILE-NO-SOFTPHONE-001); the intentional warm-up modal stays; `answerOnBridge="true"` untouched.
+- Tenancy/isolation — v1 runs only within `DEFAULT_COMPANY_ID`; no cross-tenant read/write introduced.
+
+**Verify against a real DB / real ZB (not just mocked jest):** exercise the real `Part arrived` transition + auto-task, a real robot booking (Albusto reschedule + ZB push + status flip + task close), a real no-answer retry cycle (job notes + business-hours clamp), and the no-slots/error path, on a prod-DB copy, before any deploy. **Prod deploy and the live VAPI outbound-assistant push are owner-consent-gated (standing rule).**
+
+### 8. Open questions
+
+- **OQ-1 — Retry timing precision.** Exact "next business morning" anchor (e.g. 09:00 company-local?) and the transient-vs-terminal classification of a VAPI/Twilio call result (voicemail vs. declined vs. failed-to-place) → Architect.
+- **OQ-2 — TASK-ACTIONS storage.** Whether `actions[]` reuses/extends the existing tasks `agent_output`/`kind` columns or gets its own column/table, without breaking TASKS-COUNT-BADGE / AR-TASK-UNIFY queries → Architect.
+- **OQ-3 — Outbound `phoneNumberId` & caller ID.** Which VAPI-registered number / Twilio caller ID the outbound assistant dials from (per-company) → Architect / Ops.
+- **OQ-4 — Arrival-window length.** The `arrival_window_minutes` used when stating the window and writing the ZB reschedule (reuse ONWAY-001 / job default vs. a new setting) → Architect / Ops.
+- **OQ-5 — Concurrency / duplicate-guard key.** The exact idempotency key that prevents a second concurrent robot call for one job/task (task id? job id + kind? a lifecycle-state column?) → Architect.
+
+### 9. Involved modules (summary)
+
+- **New:** `Part arrived` status + SCXML migration; a status-change hook + call-orchestration worker; TASK-ACTIONS action registry + `POST /api/tasks/:id/actions/:type`; an outbound VAPI call trigger + NEW outbound assistant config; a per-company retry-settings row.
+- **Modified:** `jobsService.js` (`BLANC_STATUSES`, `ALLOWED_TRANSITIONS`, `updateBlancStatus` hook); `scheduleService.rescheduleItem` (ensure ZB push per AGENT-SKILLS-001 AR-4); Tasks model (`actions[]`) + `TaskCard.tsx` (render buttons); `SoftPhoneContext` consumer for `manual_call` (reuse, likely no change).
+- **Reused unchanged (called):** `recommendSlots`/slot-engine, `agentSkills` reschedule skill, `createTask`, `jobsService.addNote`, `eventService.logEvent`, `zenbookerClient.rescheduleJob`, `SoftPhoneContext.openDialer`, `marketplaceService.isAppConnected`.
+- **Repo config:** NEW `voice-agent/assistants/<outbound-parts>.json` (script + tool-defs; live push separate / owner-gated).

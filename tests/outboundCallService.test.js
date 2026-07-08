@@ -1,0 +1,166 @@
+/**
+ * outboundCallService.test.js — OUTBOUND-PARTS-CALL-001, TC-OPC-U08.
+ *
+ * Unit (mocked axios): pins the VAPI `POST https://api.vapi.ai/call` request
+ * CONTRACT and the safe-fail posture of `outboundCallService.placeCall`.
+ *
+ * NO real HTTP ever leaves the process — `axios` is jest.mocked; we capture the
+ * request the module would send and assert URL / Bearer header / body shape:
+ *   { assistantId, phoneNumberId (from env), customer.number, assistantOverrides.variableValues }.
+ *
+ * Also covers: safe-fail on non-2xx / thrown / missing config — placeCall NEVER
+ * throws, always resolves `{ ok:false, error }` (spec §C.3, Decision D, OQ-3).
+ */
+
+'use strict';
+
+// Capture the axios instance the module builds via axios.create(), so we can
+// assert on its `.post(...)` calls. axios.create returns our stub client.
+const mockPost = jest.fn();
+jest.mock('axios', () => ({
+    create: jest.fn(() => ({ post: mockPost })),
+}));
+
+const ENV_KEYS = [
+    'VAPI_API_KEY',
+    'VAPI_OUTBOUND_ASSISTANT_ID',
+    'VAPI_OUTBOUND_PHONE_NUMBER_ID',
+];
+const savedEnv = {};
+
+function setEnv() {
+    process.env.VAPI_API_KEY = 'sk_test_vapi_key';
+    process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'asst_outbound_123';
+    process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID = 'pn_bostonmasters_999';
+}
+
+const CO = '00000000-0000-0000-0000-000000000001';
+const SLOT = {
+    key: 'slot_key_1',
+    date: '2026-07-10',
+    start: '10:00',
+    end: '12:00',
+    label: 'Tuesday between 10 AM and 12 PM',
+};
+const CALL_ARGS = {
+    companyId: CO,
+    jobId: 50,
+    contactId: 501,
+    customerName: 'Jane',
+    customerNumber: '+16175551212',
+    slot: SLOT,
+};
+
+let outboundCallService;
+
+beforeAll(() => {
+    for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
+});
+afterAll(() => {
+    for (const k of ENV_KEYS) {
+        if (savedEnv[k] === undefined) delete process.env[k];
+        else process.env[k] = savedEnv[k];
+    }
+});
+
+beforeEach(() => {
+    jest.clearAllMocks();
+    jest.resetModules();
+    setEnv();
+    outboundCallService = require('../backend/src/services/outboundCallService');
+});
+
+describe('TC-OPC-U08: outboundCallService.placeCall — VAPI request contract', () => {
+    test('POSTs to https://api.vapi.ai/call with Bearer header + correct body, returns vapiCallId', async () => {
+        mockPost.mockResolvedValue({ data: { id: 'vapi_call_x' } });
+
+        const out = await outboundCallService.placeCall(CALL_ARGS);
+
+        // --- URL: the axios client is created against the VAPI /call endpoint. ---
+        const axios = require('axios');
+        expect(axios.create).toHaveBeenCalledWith(
+            expect.objectContaining({ baseURL: 'https://api.vapi.ai/call' }),
+        );
+
+        // --- Exactly one POST placed. ---
+        expect(mockPost).toHaveBeenCalledTimes(1);
+        const [urlArg, bodyArg, optsArg] = mockPost.mock.calls[0];
+
+        // --- Path is the (empty) POST against the baseURL. ---
+        expect(urlArg).toBe('');
+
+        // --- Bearer token comes from env (per-request header). ---
+        expect(optsArg).toMatchObject({
+            headers: { Authorization: 'Bearer sk_test_vapi_key' },
+        });
+
+        // --- Body shape: assistantId + phoneNumberId from env, customer.number,
+        //     assistantOverrides.variableValues. ---
+        expect(bodyArg).toMatchObject({
+            assistantId: 'asst_outbound_123',
+            phoneNumberId: 'pn_bostonmasters_999',
+            customer: { number: '+16175551212' },
+            assistantOverrides: {
+                variableValues: {
+                    jobId: 50,
+                    contactId: 501,
+                    companyId: CO,
+                    customerName: 'Jane',
+                    slotLabel: SLOT.label,
+                    slotDate: SLOT.date,
+                    slotStart: SLOT.start,
+                    slotEnd: SLOT.end,
+                },
+            },
+        });
+
+        // --- phoneNumberId is the env value, not a literal. ---
+        expect(bodyArg.phoneNumberId).toBe(process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID);
+        expect(bodyArg.assistantId).toBe(process.env.VAPI_OUTBOUND_ASSISTANT_ID);
+
+        // --- Returns the VAPI call.id for the caller (worker) to store. ---
+        expect(out).toEqual({ ok: true, vapiCallId: 'vapi_call_x' });
+    });
+
+    test('safe-fail: non-2xx (axios throws with response.status) → { ok:false }, never throws', async () => {
+        const err = new Error('Request failed with status code 429');
+        err.response = { status: 429 };
+        mockPost.mockRejectedValue(err);
+
+        const out = await outboundCallService.placeCall(CALL_ARGS);
+        expect(out.ok).toBe(false);
+        expect(out.error).toBe('vapi_http_429');
+    });
+
+    test('safe-fail: network/timeout throw (err.code, no response) → { ok:false }, never throws', async () => {
+        const err = new Error('timeout of 15000ms exceeded');
+        err.code = 'ECONNABORTED';
+        mockPost.mockRejectedValue(err);
+
+        const out = await outboundCallService.placeCall(CALL_ARGS);
+        expect(out.ok).toBe(false);
+        expect(out.error).toBe('ECONNABORTED');
+    });
+
+    test('safe-fail: 2xx but no call id in response → { ok:false, no_call_id }', async () => {
+        mockPost.mockResolvedValue({ data: {} });
+        const out = await outboundCallService.placeCall(CALL_ARGS);
+        expect(out).toEqual({ ok: false, error: 'no_call_id' });
+    });
+
+    test('vapi_config_missing: no VAPI env set → { ok:false }, NO POST placed', async () => {
+        for (const k of ENV_KEYS) delete process.env[k];
+        jest.resetModules();
+        const svc = require('../backend/src/services/outboundCallService');
+
+        const out = await svc.placeCall(CALL_ARGS);
+        expect(out).toEqual({ ok: false, error: 'vapi_config_missing' });
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    test('missing customerNumber → { ok:false, missing_customer_number }, NO POST placed', async () => {
+        const out = await outboundCallService.placeCall({ ...CALL_ARGS, customerNumber: null });
+        expect(out).toEqual({ ok: false, error: 'missing_customer_number' });
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+});

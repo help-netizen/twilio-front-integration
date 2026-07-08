@@ -208,7 +208,15 @@ async function getTaskById(companyId, taskId, client = null) {
 
 /**
  * Create a task on exactly one parent. payload:
- *   { parentType, parentId, description, owner_user_id, author_user_id, due_at }
+ *   { parentType, parentId, description, owner_user_id, author_user_id, due_at, kind?, actions? }
+ *
+ * OUTBOUND-PARTS-CALL-001 (T6): `kind` and `actions` are ADDITIVE, optional
+ * passthroughs — appended to the column list ONLY when present in the payload,
+ * so legacy callers (which pass neither) get the byte-for-byte original INSERT
+ * with the new columns left at their table defaults (NULL). `actions` is a jsonb
+ * column (mig 157); it is serialized with JSON.stringify and cast `::jsonb`.
+ * The dedup / one-open-per-job app-upsert lives in the caller
+ * (`partsCallService.onPartArrived`) — `createTask` has no built-in upsert.
  */
 async function createTask(companyId, payload, client = null) {
     requireCompanyId(companyId);
@@ -226,7 +234,24 @@ async function createTask(companyId, payload, client = null) {
         payload.due_at || null,
         payload.parentId,
     ];
-    const placeholders = vals.map((_, i) => (cols[i] === 'due_at' ? `$${i + 1}::timestamptz` : `$${i + 1}`));
+
+    // Additive: only extend cols/vals when the caller opts in, so the legacy
+    // placeholder/`p.col` ordering never shifts for existing callers.
+    if (payload.kind !== undefined) {
+        cols.push('kind');
+        vals.push(payload.kind);
+    }
+    if (payload.actions !== undefined) {
+        cols.push('actions');
+        // Serialize objects/arrays to a json string; a plain string is passed as-is.
+        vals.push(typeof payload.actions === 'string' ? payload.actions : JSON.stringify(payload.actions));
+    }
+
+    const placeholders = vals.map((_, i) => {
+        if (cols[i] === 'due_at') return `$${i + 1}::timestamptz`;
+        if (cols[i] === 'actions') return `$${i + 1}::jsonb`;
+        return `$${i + 1}`;
+    });
     const { rows } = await query(
         `INSERT INTO tasks (${cols.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`,
         vals

@@ -167,6 +167,12 @@ if (process.env.FEATURE_LEADS_TAB !== 'false') {
 // Contacts API
 app.use('/api/contacts', authenticate, requireCompanyAccess, contactsRouter);
 app.use('/api/phone-settings', authenticate, requireCompanyAccess, phoneSettingsRouter);
+// OUTBOUND-PARTS-CALL-001: VAPI end-of-call webhook — SECRET-auth (x-vapi-secret),
+// NOT a user session. Mounted BEFORE the session-authed /api/vapi router below so
+// the machine caller (VAPI) is never blocked by authenticate/requireCompanyAccess/
+// tenant.integrations.manage. Company is derived from the correlated attempt row.
+const vapiCallStatusRouter = require('../backend/src/routes/vapiCallStatus');
+app.use('/api/vapi/call-status', vapiCallStatusRouter);
 app.use('/api/vapi', authenticate, requireCompanyAccess, vapiRouter);
 
 // Telephony Admin routes
@@ -446,6 +452,11 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
 
     // NOTE-ATTACH-UPLOAD-001: sweep abandoned staged note attachments (6h tick)
     require('../backend/src/services/stagedAttachmentCleanupScheduler').start();
+
+    // OUTBOUND-PARTS-CALL-001 (OPC1-T12): outbound parts-visit retry loop (env-gated, default OFF)
+    if (process.env.FEATURE_OUTBOUND_CALL_WORKER === 'true') {
+      require('../backend/src/services/outboundCallWorker').start();
+    }
 
     // Start daily Zenbooker jobs sync cron
     const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');

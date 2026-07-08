@@ -25,6 +25,7 @@ const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 const BLANC_STATUSES = [
     'Submitted',
     'Waiting for parts',
+    'Part arrived',
     'Follow Up with Client',
     'Visit completed',
     'Job is Done',
@@ -36,7 +37,8 @@ const BLANC_STATUSES = [
 /** Manual transitions allowed in Albusto UI (§7) */
 const ALLOWED_TRANSITIONS = {
     'Submitted': ['Follow Up with Client', 'Waiting for parts', 'Canceled', 'On the way'],
-    'Waiting for parts': ['Submitted', 'Follow Up with Client', 'Canceled'],
+    'Waiting for parts': ['Submitted', 'Follow Up with Client', 'Canceled', 'Part arrived'],
+    'Part arrived': ['Rescheduled', 'Canceled', 'Follow Up with Client'],
     'Follow Up with Client': ['Waiting for parts', 'Submitted', 'Canceled'],
     'Visit completed': ['Follow Up with Client', 'Job is Done', 'Canceled'],
     'Job is Done': ['Canceled'],
@@ -917,9 +919,25 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
                     console.log(`[JobsService] Outbound: job ${jobId} → Canceled (ZB cancel)`);
                 }
             }
-            // Submitted, Rescheduled, Follow Up with Client — no ZB action
+            // Submitted, Rescheduled, Follow Up with Client, Part arrived — no ZB action
+            // (Part arrived is an Albusto-only operational state, like Waiting for parts)
         } catch (err) {
             console.error(`[JobsService] Outbound sync error for ${newStatus}:`, err.response?.data || err.message);
+        }
+    }
+
+    // Fail-safe trigger seam (OUTBOUND-PARTS-CALL-001 §B.2 / S13): entering
+    // 'Part arrived' fires the idempotent auto-task creation. Fire-and-forget —
+    // NEVER awaited, NEVER rolls back or blocks the already-committed transition
+    // (mirrors eventService.logEvent discipline). Lazy-require partsCallService to
+    // avoid a circular dependency (partsCallService → tasksQueries).
+    if (newStatus === 'Part arrived' && job.blanc_status !== 'Part arrived') {
+        try {
+            require('./partsCallService')
+                .onPartArrived(jobId, companyId)
+                .catch(err => console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message));
+        } catch (err) {
+            console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message);
         }
     }
 

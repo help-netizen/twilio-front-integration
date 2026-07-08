@@ -6986,7 +6986,6 @@ wave 3 (verify):         T5 (scripts/verify-contact-merge-001.js: s1…s16 + sab
 
 ---
 
-<<<<<<< HEAD
 ## CALLFLOW-BUSY-TO-AGENT-001: business-hours queue exhaustion → Sara; voicemail last resort (data-only)
 
 Spec: `docs/specs/CALLFLOW-BUSY-TO-AGENT-001.md` · Test cases: `docs/test-cases/CALLFLOW-BUSY-TO-AGENT-001.md`. **NO migration, NO deploy, NO runtime code change** — one prod `call_flows` row updated by script (owner-consented data change). Product-code freeze list (any edit = task failure): `backend/src/services/callFlowRuntime.js`, `backend/src/services/groupRouting.js`, `backend/src/webhooks/twilioWebhooks.js`, `backend/src/routes/callFlows.js`, `frontend/**`.
@@ -7256,7 +7255,6 @@ session logout per memory. **Reuse unmodified:** `haversineMiles`, `overlapMinut
 `checkFeasibility`, `scoreCandidate`, `rankAndDiversify`, `dedupeBestPerSlot`, `mergeConfig`.
 **Protected/frozen:** the Tier-1 candidate loop body (extracted, not edited), Sara/VAPI config +
 prompt, `recommendSlots.js`, `CustomTimeModal`/Schedule UI, all `slot_engine_settings` persistence.
-=======
 ## PWA-FIX-001 — план
 
 > **Дата:** 2026-07-07 · Planner (агент 05)
@@ -7412,4 +7410,327 @@ prompt, `recommendSlots.js`, `CustomTimeModal`/Schedule UI, all `slot_engine_set
 **.ts/.mjs verify-seam (пин):** `.mjs` дублирует чистую логику + STATIC drift-guard грепает `refreshPolicy.ts` на 4 паттерна и backoff-массив (single-source-of-truth без tsx/нового депа; см. шапку раздела). Sabotage TC-PWA-011 гарантирует bias-to-transient.
 
 **Owner-gated (вне авто-плана):** MANUAL iOS on-device (TC-PWA-M1..M8, -038/-039), DEPLOY curl content-type (TC-PWA-D1..D4), Caddy `.webmanifest` MIME-шаг (§5). Прод-деплой — только с явного «да» владельца.
->>>>>>> dc01fed (docs(PWA-FIX-001): requirements/architecture/spec/test-cases/tasks + changelog + project-spec)
+
+---
+
+## OUTBOUND-PARTS-CALL-001 — план (+ TASK-ACTIONS sub-component)
+
+> **Дата:** 2026-07-07 · Planner (агент 05)
+> **Фича:** «part arrived → book the finish visit» — новый job-статус `Part arrived` + FSM (мигр 156), переиспользуемый слой **TASK-ACTIONS** (typed backend-executed кнопки на задачах, `tasks.actions` jsonb, мигр 157), исходящий VAPI-звонок (trigger → retry-aware worker → NEW outbound assistant), in-call бронирование через СУЩЕСТВУЮЩИЙ `agentSkills`-слой (новый скилл `confirmPartsVisit`, L0).
+> **Scope v1:** Boston Masters (`DEFAULT_COMPANY_ID = …0001`); ВЕСЬ серверный код company-scoped (`companyId` из `job.company_id`), гейт на дефолт-компанию только на dial-seam.
+> **Related docs:** requirements `## OUTBOUND-PARTS-CALL-001` (D1–D7, FR-TA1…4, FR-1…14, AC-1…12, OQ-1…5); architecture `## OUTBOUND-PARTS-CALL-001` (§0–§11, Decisions A–F, OQ-res §10, Deviations §11); spec `Docs/specs/OUTBOUND-PARTS-CALL-001.md` (S1–S14, API/VAPI-контракты); test-cases `Docs/test-cases/OUTBOUND-PARTS-CALL-001.md` (18 unit + 18 integration + 6 frontend; 7 P0-гейтов).
+>
+> **Проверенные анкеры (Planner подтвердил на диске):** миграции в `backend/db/migrations/`, max = **155** → новые 156–159; шаблон FSM-мигр = `backend/db/migrations/127_job_fsm_on_the_way.sql`. `jobsService.js`: `BLANC_STATUSES`@25, `ALLOWED_TRANSITIONS`@37, `updateBlancStatus`@849, возврат `{...job, blanc_status, _prev_status}`@926. `tasksQueries.createTask`@213 (fixed `cols`@217/`vals`@218 — additive-passthrough точка). `backend/src/routes/tasks.js`: existing router, `requirePermission` импортится @20, роуты @42–232. `src/server.js`: воркеры/шедулеры бутстрапятся @422–448 (`inboxWorker`/`agentWorker`/`rulesEngine`/`overageScheduler`/`routeRetentionScheduler`/`stagedAttachmentCleanupScheduler`) — env-gated precedent. `scheduleService.rescheduleItem` AR-4 ZB write-through **verified present** (`scheduleService.js:240` `zenbookerClient.rescheduleJob`, Deviation 3 satisfied — НЕ править). `/api/vapi-tools` dispatch (`vapi-tools.js:54–61,103,118–119`) + `VAPI_TOOLS_SECRET` — UNCHANGED, только новый consumer.
+>
+> **Harness:** jest в worktree = `--testPathIgnorePatterns "/node_modules/"`; real-DB = `scripts/verify-outbound-parts-call-001.js` (секции `fsm|s1|s2|s3|s4|s5|s6|s8|s9|s10|s14|sab`, тег `OPC1`, self-seed/self-clean, VAPI+ZB — ЕДИНСТВЕННЫЕ моки, sabotage-контроль, exit≠0 при любом FAIL; по образцу `verify-agent-skills-002.js`). Frontend DoD = `cd frontend && npm run build` (`tsc -b`, prod-strict `noUnusedLocals`).
+>
+> **Защищённые файлы:** `src/server.js` (ТОЛЬКО аддитивная env-gated строка старта воркера — отдельная задача OPC1-T12, помечена protected), `jobsService.js` (аддитивный fail-safe hook — минимальная правка), inbound `vapi-tools.js`/Sara `30e85a87` (НЕ трогать; `agentSkills/registry.js` — только additive-entry), `authedFetch.ts`/`useRealtimeEvents.ts` (не трогать), `backend/db/migrations/` (только НОВЫЕ 156–159), `scheduleService.rescheduleItem` (verified — НЕ править).
+
+---
+
+### OPC1-T1: миграция 156 — FSM `Part arrived` (SCXML per-company)
+
+**Цель:** новый валидный SCXML-статус `Part arrived` + переходы, идемпотентно, по образцу мигр 127.
+
+**Файлы (создать):**
+- `backend/db/migrations/156_job_fsm_part_arrived.sql`
+- (опц.) `backend/src/services/fsm/partArrivedTransform.js` — lockstep-хелпер, зеркало `onTheWayTransform.js`, для юнит-тестов трансформа.
+
+**Do:** guard `WHERE v.scxml_source NOT LIKE '%id="Part_arrived"%'`; архивировать текущую published-версию, вставить `version_number+1` как published, перепривязать `active_version_id`. Chained `replace()`: **(A)** `<state id="Part_arrived" blanc:label="Part arrived" blanc:statusName="Part arrived">` с переходами `TO_RESCHEDULED→Rescheduled`, `TO_CANCELED→Canceled`, `TO_FOLLOW_UP→Follow_Up_with_Client` (перед `Canceled <final>`); **(B)** `<transition event="TO_PART_ARRIVED" target="Part_arrived" blanc:action="true"/>` ребёнком `Waiting_for_parts`. `RAISE NOTICE + CONTINUE` если маркеры не найдены.
+**Constraints:** идемпотентно; не трогать другие состояния/переходы; rollback-файл `rollback_156_*.sql` по конвенции. `blanc:action="true"` даёт диспетчеру UI-кнопку перехода (§B1, Deviation 5 — отдельного фронта не нужно).
+**Закрывает:** FSM-MIG-156 (TC-OPC-I01, P0), частично S1.
+**DoD:** миграция применяется на чистой БД; `scripts/verify-outbound-parts-call-001.js --section=fsm` (после T13) зелёный. (Опц. трансформ покрывается юнитом в T9.)
+**Deps:** нет. **Волна 1.**
+
+**Статус:** done — мигр 156 применяется идемпотентно (guard `id="Part_arrived"`), добавляет валидный SCXML-статус + переходы `TO_RESCHEDULED/TO_CANCELED/TO_FOLLOW_UP` и `TO_PART_ARRIVED` из `Waiting_for_parts`; harness `--section=fsm` зелёный.
+
+---
+
+### OPC1-T2: миграция 157 — `tasks.actions jsonb`
+
+**Цель:** ортогональная nullable-колонка под TASK-ACTIONS.
+
+**Файлы (создать):** `backend/db/migrations/157_tasks_actions.sql` (+ `rollback_157_*.sql`).
+**Do:** `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS actions jsonb;`. Ничего больше.
+**Constraints:** NULLABLE, ортогональна `agent_output`/`kind` (владеют MAIL-AGENT-001/AUTO-001; overload сломал бы TASKS-COUNT-BADGE/AR-TASK-UNIFY/agentWorker) → игнорируется всеми существующими запросами. Не менять индексы/констрейнты `tasks`.
+**Закрывает:** фундамент A.1 / OQ-2.
+**DoD:** миграция применяется; existing tasks-запросы не ломаются (проверяется в T13 seed).
+**Deps:** нет. **Волна 1.**
+
+**Статус:** done — мигр 157 добавляет nullable `tasks.actions jsonb` (ортогонально `agent_output`/`kind`) + релаксирует `tasks_kind_check` под новый `kind='part_arrived_call'` (без него авто-задача молча не создавалась — поймано harness T17); существующие tasks-запросы не тронуты.
+
+---
+
+### OPC1-T3: миграция 158 — `outbound_call_attempts` (+ partial-unique)
+
+**Цель:** очередь попыток звонка с concurrency-guard (OQ-5).
+
+**Файлы (создать):** `backend/db/migrations/158_outbound_call_attempts.sql` (+ rollback).
+**Do:** таблица `id, company_id, job_id, task_id, contact_id, phone, vapi_call_id, attempt_no, status, scheduled_at timestamptz, slot_json jsonb, reason text, created_at, updated_at`. `status` ∈ `pending|dialing|answered|no_answer|voicemail|declined|booked|exhausted|canceled|failed`. **Partial-unique index** `(job_id) WHERE status IN ('pending','dialing')` — максимум ОДНА активная попытка на job. Индекс на `(status, scheduled_at)` под claim-loop.
+**Constraints:** FK company_id/job_id по конвенции репо; partial-unique — точный ключ дедупа (OQ-5, S14).
+**Закрывает:** фундамент под startRobotCall/worker/webhook; S14 partial-unique (TC-OPC-I06, P0).
+**DoD:** миграция применяется; partial-unique реально блокит 2-ю активную строку (доказывается в T13 s14).
+**Deps:** нет. **Волна 1.**
+
+**Статус:** done — мигр 158 создаёт `outbound_call_attempts` с partial-unique `(job_id) WHERE status IN ('pending','dialing')` (одна активная попытка на работу) + индекс `(status, scheduled_at)` под claim-loop; дубль реально блокируется (harness s14).
+
+---
+
+### OPC1-T4: миграция 159 — `outbound_call_settings` + `resolve()` accessor
+
+**Цель:** per-company retry-настройки (FR-10) с safe-fail дефолтами.
+
+**Файлы (создать):**
+- `backend/db/migrations/159_outbound_call_settings.sql` (+ rollback)
+- `backend/src/services/outboundCallSettingsService.js` (или встроить `resolve()` в partsCallService — Planner фиксирует ОТДЕЛЬНЫЙ файл-аксессор, mirror `slotEngineSettingsService`).
+
+**Do:** таблица `company_id PK, max_attempts int default 3, backoff_schedule jsonb default '["immediate","+2h","next_business_morning"]', next_morning_hour int default 9, enabled bool default true`. `resolve(companyId)` → дефолты если строки нет (никогда не 500). v1: достаточно строки Boston Masters.
+**Constraints:** mirror `slot_engine_settings` (REC-SETTINGS-001); НЕ Settings-UI в v1; safe-fail.
+**Закрывает:** Part D; TC-OPC-I17 (`resolve` no-row → defaults).
+**DoD:** `resolve()` возвращает дефолты без строки и оверрайды при наличии (T13 s2 покрывает).
+**Deps:** нет. **Волна 1.**
+
+**Статус:** done — мигр 159 + `outboundCallSettingsService.resolve(companyId)` отдают per-company retry-настройки (max_attempts/backoff/next_morning_hour/enabled) с safe-fail дефолтами при отсутствии строки (никогда не 500); harness s2 покрывает no-row→defaults.
+
+---
+
+### OPC1-T5: `partsCallService` — `onPartArrived` + auto-task (idempotent)
+
+**Цель:** идемпотентное авто-создание одной открытой задачи `part_arrived_call` с actions.
+
+**Файлы (создать):** `backend/src/services/partsCallService.js` (в этой задаче — ТОЛЬКО `onPartArrived`; `startRobotCall` = T7).
+**Do:** `onPartArrived(jobId, companyId)`: SELECT-guard `SELECT 1 FROM tasks WHERE company_id=$1 AND job_id=$2 AND kind='part_arrived_call' AND status='open'` → найдено → no-op; иначе `createTask` с `parentType:'job'`, `kind:'part_arrived_call'`, title `"Part arrived — schedule completion visit for {customer}"`, `actions=[{type:'robot_call',label:'🤖 Let the robot call'},{type:'manual_call',label:"📞 I'll call myself"}]`.
+**Constraints:** дедуп = SELECT-guard (createTask НЕ имеет upsert, Deviation 2); никаких новых lead/job (D7); company-scoped.
+**Закрывает:** S1 (TC-OPC-U01, U02, P0; TC-OPC-I02/I03).
+**DoD:** `npx jest tests/partsCallService.test.js --testPathIgnorePatterns "/node_modules/"` (кейсы U01/U02 в T9) зелёный; поведение — в T13 s1.
+**Deps:** после **T6** (нужен `createTask` c `kind`+`actions`-passthrough). **Волна 2.**
+
+**Статус:** done — `onPartArrived` идемпотентен через SELECT-guard по открытой `part_arrived_call`-задаче (повтор = no-op), создаёт ровно одну задачу с двумя typed-actions (`robot_call`/`manual_call`); нового лида/работы не заводит; unit U01/U02 + harness s1 зелёные.
+
+---
+
+### OPC1-T6: `tasksQueries.createTask` — additive `kind`+`actions` passthrough
+
+**Цель:** передавать `kind` и `actions` в INSERT, не ломая существующих вызывающих.
+
+**Файлы (менять):** `backend/src/db/tasksQueries.js` (анкер `createTask`@213, `cols`@217/`vals`@218).
+**Do:** аддитивно добавить `kind` и `actions` в `cols`/`vals` КОГДА присутствуют в payload (условно, чтобы placeholders/`p.col` не поехали); `actions` — как jsonb. Существующие колонки/порядок не трогать.
+**Constraints:** строго аддитивно; все текущие callers (`POST /api/tasks`, MAIL-AGENT/AUTO upsert) работают как раньше; company-scoped уже в сигнатуре.
+**Закрывает:** Deviation 2; TC-OPC-U03 (existing callers untouched, P0).
+**DoD:** `npx jest tests/tasksCreateActions.test.js --testPathIgnorePatterns "/node_modules/"` (кейс в T9) зелёный.
+**Deps:** после **T2** (колонка `actions` существует). **Волна 2.**
+
+**Статус:** done — `createTask` строго аддитивно прокидывает `kind` и `actions` (jsonb) в INSERT только когда они в payload; все существующие callers (POST /api/tasks, MAIL-AGENT/AUTO upsert) байт-совместимы (unit U03).
+
+---
+
+### OPC1-T7: `partsCallService.startRobotCall` — pre-compute slot + enqueue (FR-5/FR-9)
+
+**Цель:** резолв slot и постановка первой попытки; no-slots/engine-fault → НЕ звонить.
+
+**Файлы (менять):** `backend/src/services/partsCallService.js` (+`startRobotCall`).
+**Do:** task→job_id→(phone, contactId, address/zip). **v1-gate:** short-circuit если `companyId !== DEFAULT_COMPANY_ID` (или `settings.enabled`/allowlist). `recommendSlots(companyId, {}, {zip|address,lat,lng,durationMinutes})`, gated `isAppConnected(companyId,'smart-slot-engine')`, safe-fail. **No slots / `fallback:true` / throw / нет телефона (FR-9):** НЕ звонить, НЕ вставлять attempt; записать human-readable reason + dispatcher-action в задачу, выставить `robot_call` action `state:'failed'`, оставить job `Part arrived`. Иначе — top-1 slot в `slot_json`, вставить `pending` attempt (immediate `scheduled_at`); если активная строка уже есть (partial-unique) — вернуть её (in-flight-existing).
+**Constraints:** company-scoped; переиспользовать `recommendSlots`/`isAppConnected` без правок; читать `settings.resolve()` (T4).
+**Закрывает:** S2-начало, S6 (TC-OPC-U04/U05/U06/U07, P0-часть; TC-OPC-I05/I07), S14 (in-flight-existing).
+**DoD:** `npx jest tests/partsCallService.test.js …` (U04–U07 в T9) зелёный; поведение — T13 s2/s6/s14.
+**Deps:** после **T3** (attempts), **T4** (settings), **T5** (partsCallService файл), **T6** (createTask passthrough для reason-write при желании). **Волна 3.**
+
+**Статус:** done — `startRobotCall` заранее считает top-1 слот (`recommendSlots`, gated `isAppConnected`, safe-fail) и кладёт `pending`-попытку; v1-гейт на `DEFAULT_COMPANY_ID`; no-slots/`fallback`/throw/нет телефона → НЕ звонит, причина + dispatcher-action в задачу; активная строка уже есть → возвращает in-flight; unit U04–U07 + harness s2/s6/s14.
+
+---
+
+### OPC1-T8: `outboundCallService.placeCall` — VAPI outbound trigger (FR-6/OQ-3)
+
+**Цель:** серверный POST на VAPI /call с корректным контрактом.
+
+**Файлы (создать):** `backend/src/services/outboundCallService.js`.
+**Do:** `placeCall({companyId,jobId,contactId,phone,customerName,slot})` → `POST https://api.vapi.ai/call`, header `Authorization: Bearer ${VAPI_API_KEY}`, body `{ assistantId: VAPI_OUTBOUND_ASSISTANT_ID, phoneNumberId: VAPI_OUTBOUND_PHONE_NUMBER_ID, customer:{number:phone}, assistantOverrides:{ variableValues:{ jobId,contactId,customerName,companyId,slotLabel,slotDate,slotStart,slotEnd } } }`. Вернуть `call.id`.
+**Constraints:** `VAPI_*` — ТОЛЬКО server env (никогда client/hardcode, OQ-3); никакого API во время открытия звонка (slot уже в variableValues, D3).
+**Закрывает:** TC-OPC-U08 (VAPI request contract, P0).
+**DoD:** `npx jest tests/outboundCallService.test.js …` зелёный (fetch/VAPI застаблен).
+**Deps:** нет (disjoint файл). **Волна 1.**
+
+**Статус:** done — `placeCall` шлёт корректный `POST https://api.vapi.ai/call` (assistantId/phoneNumberId/customer + контекст в `assistantOverrides.variableValues`), `VAPI_*` только из server-env, возвращает `call.id`; safe-fail на ошибке; unit U08.
+
+---
+
+### OPC1-T9: unit-тесты сервис-слоя (partsCall / createTask / outboundCallService)
+
+**Цель:** запинить dispatch/контракт/порядок вызовов на mocked-db + mocked VAPI/ZB.
+
+**Файлы (создать):** `tests/partsCallService.test.js`, `tests/tasksCreateActions.test.js`, `tests/outboundCallService.test.js`.
+**Do:** TC-OPC-U01/U02 (onPartArrived SELECT-guard once/no-op), U03 (createTask passthrough + existing untouched), U04/U05/U06/U07 (startRobotCall slots/v1-gate/no-slots/no-phone), U08 (placeCall VAPI contract).
+**Constraints:** мокать `db`/VAPI/ZB; House-lesson — юнит доказывает shape/branch/order, НЕ поведение БД.
+**Закрывает:** unit-часть S1/S2/S6 + placeCall.
+**DoD:** `npx jest tests/partsCallService.test.js tests/tasksCreateActions.test.js tests/outboundCallService.test.js --testPathIgnorePatterns "/node_modules/"` зелёный.
+**Deps:** после **T5/T6/T7/T8**. **Волна 4.**
+
+**Статус:** done — U01–U08 запинили dispatch/branch/order на mocked-db + mocked VAPI/ZB (SELECT-guard, createTask passthrough, startRobotCall slots/v1-gate/no-slots/no-phone, placeCall VAPI-контракт); все зелёные.
+
+---
+
+### OPC1-T10: `outboundCallWorker` — claim-loop + business-hours clamp + retry
+
+**Цель:** воркер, забирающий `pending` попытки и дозванивающийся с бизнес-часовым клампом.
+
+**Файлы (создать):** `backend/src/services/outboundCallWorker.js`.
+**Do:** `start()` c `setInterval` (default 60s, env `OUTBOUND_CALL_WORKER_INTERVAL_MS`), claim = `UPDATE … WHERE status='pending' AND scheduled_at<=now() … FOR UPDATE SKIP LOCKED` (паттерн `agentWorker`). На строку: **business-hours clamp** `groupRouting.isBusinessHours(group, now)` по группе/tz компании job — вне часов → сдвинуть `scheduled_at` на next-open, НЕ звонить; в часах → `dialing` → `outboundCallService.placeCall(...)` → сохранить `vapi_call_id`. Failed POST = failed attempt (feeds retry). Row-isolated `try/catch`. Пропуск строки с Canceled job/task → attempt `canceled`, без дозвона.
+**Constraints:** воркер-ошибки НИКОГДА не портят job-state; company-tz-aware; переиспользовать `groupRouting.isBusinessHours`.
+**Закрывает:** TC-OPC-U09/U10/U11 (P0-часть), S4/S5-часть, edge-5 (canceled skip).
+**DoD:** `npx jest tests/outboundCallWorker.test.js …` зелёный.
+**Deps:** после **T3** (attempts), **T8** (placeCall). **Волна 2.**
+
+**Статус:** done — воркер (env-gated) клеймит `pending`-попытки `FOR UPDATE SKIP LOCKED`, клампит по business-hours (company tz) — вне часов сдвигает `scheduled_at` без дозвона, в часах `dialing`→`placeCall`→сохраняет `vapi_call_id`; row-isolated try/catch (ошибка не портит job-state); Canceled job/task → attempt `canceled`; unit U09–U11 + harness s4/s5.
+
+---
+
+### OPC1-T11: тесты воркера (jest)
+
+**Цель:** запинить claim-query, clamp и изоляцию ошибок.
+**Файлы (создать):** `tests/outboundCallWorker.test.js`.
+**Do:** U09 (claim только `pending && scheduled_at<=now()` + `FOR UPDATE SKIP LOCKED`), U10 (вне часов → push `scheduled_at`, no dial), U11 (throw в `placeCall` = isolated failed attempt, job-state цел).
+**Constraints:** mocked db + mocked placeCall.
+**Закрывает:** unit воркера.
+**DoD:** `npx jest tests/outboundCallWorker.test.js --testPathIgnorePatterns "/node_modules/"` зелёный.
+**Deps:** после **T10**. **Волна 3.**
+
+**Статус:** done — U09 (claim только `pending && scheduled_at<=now()` + SKIP LOCKED), U10 (вне часов → push `scheduled_at`, no dial), U11 (throw в `placeCall` = isolated failed attempt, job-state цел) на mocked db + placeCall; зелёные.
+
+---
+
+### OPC1-T12: `src/server.js` — старт воркера (PROTECTED-FILE, минимальная правка)
+
+**Цель:** аддитивно бутстрапнуть `outboundCallWorker` рядом с существующими воркерами, env-gated.
+
+**Файлы (менять — PROTECTED):** `src/server.js` (ТОЛЬКО зона @422–448, по прецеденту соседних `.start()`).
+**Do:** ОДНА аддитивная env-gated строка: `if (process.env.FEATURE_OUTBOUND_CALL_WORKER === 'true') { require('../backend/src/services/outboundCallWorker').start(); }` (точный gate/precedent как у `overageScheduler`/`routeRetentionScheduler`). Больше НИЧЕГО.
+**Constraints:** **protected-file** — минимальная аддитивная правка, порядок mount не менять, никаких других строк; default OFF (env не выставлен → воркер не стартует). Deviation 4: если позже появится worker-bootstrap-модуль — стартовать там.
+**Закрывает:** запуск retry-loop в проде (env-gated).
+**DoD:** `node -e "require('./src/server.js')"`-стиль smoke не обязателен; достаточно, что build/require не падает и строка env-gated. Реальный старт — deploy-gated.
+**Deps:** после **T10**. **Волна 3.**
+
+**Статус:** done — ровно +1 аддитивная env-gated строка (`FEATURE_OUTBOUND_CALL_WORKER==='true'` → `outboundCallWorker.start()`) в зоне бутстрапа воркеров, default OFF; порядок mount не тронут, build/require не падает; protected-file правило соблюдено.
+
+---
+
+### OPC1-T13: `confirmPartsVisit` skill (L0) + additive registry-entry
+
+**Цель:** in-call booking-write как тонкая композиция существующих кусков; L0, но с in-skill ownership.
+
+**Файлы (создать/менять):**
+- `backend/src/services/agentSkills/skills/confirmPartsVisit.js` (создать)
+- `backend/src/services/agentSkills/registry.js` (менять — ТОЛЬКО additive-entry `{ name:'confirmPartsVisit', kind:'write', requiredLevel:'L0', run: lazyRun('confirmPartsVisit') }`)
+
+**Do (порядок важен):** 1) ownership pre-check `getJobById(jobId, companyId)`, `String(job.contact_id)===String(contactId)` (из variableValues) → foreign → safe refusal, NO write. 2) confirmed-slot guard (reuse `rescheduleAppointment.isConfirmedSlot`) → malformed → soft refusal. 3) `scheduleService.rescheduleItem(companyId,'job',jobId,newStartAt,newEndAt)` (SAME-job + AR-4 ZB — verified present, НЕ форкать); `arrival_window_minutes = slot.end − slot.start` (OQ-4); ZB **409** → catch → `{ ok:false, success:false, conflict:true, speak:'…teammate…' }`, статус НЕ флипается, task НЕ закрывается. 4) success → `updateBlancStatus(jobId,'Rescheduled',companyId)` (reschedule FIRST, then flip). 5) `addNote(jobId, "Appointment rescheduled to {window} via AI Phone.", [], 'AI Phone', 'AI Phone')` + `eventService.logEvent(…, 'system')` (guarded). 6) auto-close: `updateTask(companyId, taskId, {status:'done'})`; attempt → `booked`.
+**Constraints:** **L0 на outbound-surface (Deviation 1)** — НЕ гейтить inbound `verificationGate`; isolation = in-skill companyId+bound-contactId; inbound Sara/`vapi-tools` UNCHANGED (только additive registry-entry); decline → reuse `recommendSlots` verbatim (FR-7).
+**Закрывает:** S2/S3/S8 (TC-OPC-U12/U13/U14, P0; TC-OPC-I05/I08/I09).
+**DoD:** `npx jest tests/confirmPartsVisit.test.js --testPathIgnorePatterns "/node_modules/"` зелёный (кейсы U12–U14 в этой же задаче).
+**Файлы тестов (создать):** `tests/confirmPartsVisit.test.js`.
+**Deps:** после **T3** (attempts для `booked`), **T5** (task lifecycle/taskId). Reschedule ZB-путь — уже present. **Волна 2.**
+
+**Статус:** done — L0-скилл с in-skill ownership-пречеком (`job.contact_id===bound contactId` → foreign = safe refusal, без записи); `rescheduleItem` ТОЙ ЖЕ работы (AR-4 ZB write-through) → статус `Rescheduled` → AI-Phone нота → task `done` + attempt `booked`; ZB **409** graceful (no false success, статус не флипается); inbound Sara/`vapi-tools` не тронуты (только additive registry-entry); unit U12–U14 + harness s2/s3/s8.
+
+---
+
+### OPC1-T14: TASK-ACTIONS route + registry (+ webhook call-status)
+
+**Цель:** `POST /api/tasks/:id/actions/:type` (закрытый registry) + secret-auth webhook классификации.
+
+**Файлы (создать/менять):**
+- `backend/src/services/taskActions/registry.js` (создать) — `{ robot_call: → partsCallService.startRobotCall(companyId,taskId), manual_call: no-op → {client:'openDialer',phone,contactName} }`.
+- `backend/src/routes/tasks.js` (менять — additive route) — `router.post('/:id/actions/:type', requirePermission('tasks.manage'), …)`; `companyId=req.companyFilter.company_id`; task scoped→ foreign/unknown id **404**; `:type` не в registry **400**; robot_call re-press при активном lifecycle → in-flight state (не 2-й звонок). Res `200 { ok, state, client? }`.
+- `backend/src/routes/vapi.js` (менять — additive route) — `POST /api/vapi/call-status`, **secret-auth** (server-env header/signature, НЕ session); company из correlated `outbound_call_attempts` (по `vapi_call_id`), НЕ из body. Map `endedReason`: `booked`=terminal; `customer-did-not-answer`/`customer-busy`→`no_answer`+retry; `voicemail`→`voicemail`+retry; hang-up/`assistant-forwarded`/failed→`failed`+retry; declined-all→retry(default). Per-attempt job-note (`addNote(…,'AI Phone')`) + event; schedule next (immediate/+2h/next-biz-morning 09:00 local clamp, `max_attempts` из settings). После N-й → `exhausted`, финальная нота, task open с диспетчером, job stays `Part arrived`. Duplicate webhook на terminal `call.id` → no-op. Unknown `call.id` → 200 no-op (без утечки).
+**Constraints:** route middleware `authenticate + requireCompanyAccess + requirePermission('tasks.manage')`; company строго `req.companyFilter.company_id`; SQL по company_id; foreign→404, unknown-type→400; webhook company НИКОГДА из body. Inbound `vapi-tools`/Sara не трогать (это отдельный `vapi.js`-route).
+**Закрывает:** S2/S4/S5/S7/S9/S10/S11/S12/S14 (TC-OPC-U15/U16/U17/U18, P0; TC-OPC-I06/I10/I11/I12/I13/I14/I15).
+**Файлы тестов (создать):** `tests/tasksActionsRoute.test.js`, `tests/vapiCallStatusWebhook.test.js`.
+**DoD:** `npx jest tests/tasksActionsRoute.test.js tests/vapiCallStatusWebhook.test.js --testPathIgnorePatterns "/node_modules/"` зелёный.
+**Deps:** после **T3** (attempts), **T4** (settings), **T7** (startRobotCall для robot_call), **T13** (confirmPartsVisit закрывает task). **Волна 4.**
+
+**Статус:** done — `POST /api/tasks/:id/actions/:type` через закрытый taskActions-реестр (`robot_call`/`manual_call`), `tasks.manage` + company-scoped, foreign→404 / unknown-type→400, re-press при активном lifecycle → in-flight (не 2-й звонок); webhook `POST /api/vapi/call-status` secret-auth, company берётся ИЗ attempt-строки по `vapi_call_id` (анти-спуф, НЕ из body), классифицирует booked/no_answer/voicemail/declined + retry/exhaustion + per-attempt AI-Phone нота; +mount в server.js; unit U15–U18 + harness s9/s10.
+
+---
+
+### OPC1-T15: outbound assistant config (repo artifact)
+
+**Цель:** NEW `parts-visit-scheduler.json` — outbound-ассистент (live-push owner-gated, ВНЕ пайплайна).
+
+**Файлы (создать):** `voice-agent/assistants/parts-visit-scheduler.json`.
+**Do:** модель по `lead-qualifier-v2.json`. `firstMessage`≈"Hi {{customerName}}, your part has arrived — let's schedule the visit to finish the repair", `assistant-speaks-first`. System-script: оффер `{{slotLabel}}` напрямую; **НЕТ ре-верификации имени/адреса (D6)**; **НЕТ фразы про 3-month warranty (D5/AC-12)**; каждый tool — silently. `model.tools[]` = минимальный сабсет `{recommendSlots, confirmPartsVisit}`, `server.url=…/api/vapi-tools`, `secret=REPLACE_WITH_VAPI_TOOLS_SECRET` (реальный `VAPI_TOOLS_SECRET` реинжектится на каждом model-write). `confirmPartsVisit` params `{ chosenSlot:{date,start,end} }` — identity (contactId/jobId/companyId) НЕ параметр, течёт из variableValues.
+**Constraints:** repo-артефакт; live push owner-consent-gated (стандинг-рул); НЕ трогать inbound Sara.
+**Закрывает:** VAPI-контракт (S2/S3 in-call), AC-12 (нет warranty), D5/D6.
+**DoD:** валидный JSON (`node -e "JSON.parse(require('fs').readFileSync('voice-agent/assistants/parts-visit-scheduler.json'))"`); tools = ровно 2; фразы D5/D6 отсутствуют.
+**Deps:** нет (disjoint). **Волна 1.**
+
+**Статус:** done — `voice-agent/assistants/parts-visit-scheduler.json`: assistant-speaks-first оффёр `{{slotLabel}}`, БЕЗ ре-верификации имени/адреса (D6), БЕЗ warranty-фразы (D5/AC-12), silent tool-calls; `model.tools[]` = ровно 2 (`recommendSlots`+`confirmPartsVisit`), identity течёт из variableValues; валидный JSON. Live-push owner-gated.
+
+---
+
+### OPC1-T16: jobsService — `Part arrived` статус + FSM-мап + fail-safe hook
+
+**Цель:** дать статус в hardcoded fallback-мапе и повесить fire-and-forget триггер.
+
+**Файлы (менять — protected, минимальная правка):** `backend/src/services/jobsService.js`.
+**Do:** 1) `BLANC_STATUSES`@25 += `'Part arrived'`. 2) `ALLOWED_TRANSITIONS`@37: `'Waiting for parts'` += `'Part arrived'`; add `'Part arrived': ['Rescheduled','Canceled','Follow Up with Client']`. 3) `OUTBOUND_MAP`/ZB-sync: документированный **no-op** для `Part arrived` (Albusto-only, как `Waiting for parts`) — не менять существующие ветки. 4) в `updateBlancStatus` (после DB UPDATE + ZB-sync, у возврата @926) — fire-and-forget: `if (newStatus==='Part arrived' && job._prev_status!=='Part arrived') { partsCallService.onPartArrived(jobId, companyId).catch(err=>console.error(...)); }` в СВОЁМ `try/catch`, НЕ `await`, ошибка НИКОГДА не роняет транзишн (mirror `eventService.logEvent`).
+**Constraints:** аддитивно; существующие статусы/переходы/ветки не реордерить/удалять; hook fail-safe (S13/AC-11). Dual-source: DB-FSM (мигр 156) authoritative, эта мапа — fallback, оба несут переходы.
+**Закрывает:** S1-триггер, S13 (TC-OPC-I02/I03/I04, P0 fail-safe), FSM fallback.
+**DoD:** `npx jest tests/…jobsService… --testPathIgnorePatterns "/node_modules/"` не ломается; поведение hook/idemp/fail-safe — в T17 (s1/s13).
+**Deps:** после **T5** (`partsCallService.onPartArrived` существует). **Волна 3.**
+
+**Статус:** done — `BLANC_STATUSES`/`ALLOWED_TRANSITIONS` дополнены `Part arrived` (+переходы в Rescheduled/Canceled/Follow Up), ZB-sync no-op (Albusto-only); в `updateBlancStatus` навешан fire-and-forget `onPartArrived` в своём try/catch (НЕ await) — сбой хука НИКОГДА не роняет транзишн (S13); harness s1/s13 подтверждают идемпотентность и fail-safe.
+
+---
+
+### OPC1-T17: real-DB verify harness (VAPI+ZB застаблены, sabotage-контроль) — ПОСЛЕДНЯЯ
+
+**Цель:** доказать ПОВЕДЕНИЕ на реальном Postgres (не shape) по всем 7 P0-гейтам + прочим integration-кейсам.
+
+**Файлы (создать):** `scripts/verify-outbound-parts-call-001.js`.
+**Do:** kit `CheckError`/`check`/`eq`/`sabotageTrips` (mirror `verify-agent-skills-002.js:111–126`), `--section=fsm|s1|s2|s3|s4|s5|s6|s8|s9|s10|s14|sab|all`, self-seed/self-clean, тег `OPC1`, `DATABASE_URL` default `postgresql://localhost/twilio_calls` (НИКОГДА не prod), exit≠0 при любом FAIL. Кейсы TC-OPC-I01…I18: **fsm** (мигр 156 valid state+переходы), **s1** (I02/I03 — hook создаёт ровно одну задачу + идемпотентность), **s13** (I04 — throw в onPartArrived, транзишн выживает), **s2** (I05 happy + I17 settings.resolve + I18 rescheduleItem AR-4 ZB regression), **s14** (I06 — partial-unique реально блокит 2-й dial), **s6** (I07 — no-slots → no attempt/no call), **s8** (I08 — ZB 409 → no false success), **s3** (I09 decline→alternatives), **s4** (I10 no-answer retry + I16 canceled skip), **s5** (I11 exhaustion), **s9** (I12 webhook idempotence), **s10** (I13 foreign→404 + I14 company-from-row + I15 secret-auth). **sab** — sabotage-контроль (напр. снять partial-unique → s14 краснеет).
+**Constraints:** VAPI+ZB = ЕДИНСТВЕННЫЕ моки, каждая DB/service-нога реальна (House-lesson); НЕ трогать прод. Прод-копия/EXPLAIN — только если понадобится, deploy-gated.
+**Закрывает:** ВСЕ 7 P0-гейтов (FSM/S1/S13/S14/S8/S10/S6) + integration S2..S11.
+**DoD:** `node scripts/verify-outbound-parts-call-001.js --section=all` → exit 0; sabotage-секция даёт targeted-fail и восстанавливается в зелёный. Frontend build (T18) отдельно.
+**Deps:** после **T1–T4, T5–T14, T16** (весь backend). **Волна 5 (финал backend).**
+
+**Статус:** done — `scripts/verify-outbound-parts-call-001.js` на реальном Postgres 13/13 (fsm/s1/s13/s2/s14/s6/s8/s3/s4/s5/s9/s10 + sabotage), VAPI+ZB = единственные моки, self-seed/self-clean, exit≠0 при FAIL. Harness поймал 2 бага, невидимых для jest-моков: (1) `tasks_kind_check` не допускал `part_arrived_call` → авто-задача молча не создавалась (починено в T2/мигр 157); (2) `robot_call` читал `task.job_id` вместо `parent_type/parent_id`-проекции → всегда not_dialable (починено). Оба закрыты, sabotage-контроль ×2 краснеет/восстанавливается.
+
+---
+
+### OPC1-T18: frontend — `TaskCard.tsx` рендер actions[] + `tasksApi.ts`
+
+**Цель:** рендер typed-кнопок из `task.actions[]`; robot_call→POST, manual_call→openDialer.
+
+**Файлы (менять):**
+- `frontend/src/services/tasksApi.ts` (или где `Task` тип/api) — `Task.actions?: TaskAction[]`; `runTaskAction(id, type)` → `POST …/actions/:type`.
+- `frontend/src/components/tasks/TaskCard.tsx` — по одной `<Button>` на `task.actions[]` (label + опц. lucide-иконка), В ДОБАВОК к существующим Done/Cancel/Reopen. `robot_call` → `tasksApi.runTaskAction(id,'robot_call')`, spinner/disabled while in-flight, reflect `state`. `manual_call` → desktop `useSoftPhone().openDialer(phone, contactName)` (`SoftPhoneContext.tsx:18,46`), mobile native `tel:` (MOBILE-NO-SOFTPHONE-001).
+**Constraints:** FORM-CANON / Blanc — существующие `<Button>`-варианты, никаких новых surface; никаких hardcoded per-feature кнопок (только из `actions[]`); softphone canon; НЕ трогать `authedFetch`/SSE.
+**Закрывает:** A.4; frontend TC-OPC-F01…F06 (manual/dev-preview + build).
+**DoD:** `cd frontend && npm run build` (tsc -b, prod-strict `noUnusedLocals`) → exit 0; кнопки рендерятся, robot_call шлёт POST, manual_call открывает dialer (manual/dev-preview).
+**Deps:** контракт роута зафиксирован спекой → может идти параллельно бэку; стыковка (реальный вызов) после **T14**. **Волна 4** (стартовать можно раньше, стыковать после T14).
+
+**Статус:** done — `TaskCard.tsx` рендерит по одной `<Button>` на `task.actions[]` рядом со штатными Done/Cancel; `robot_call` → `tasksApi.runTaskAction(id,'robot_call')` POST со spinner/disabled + reflect `state`; `manual_call` → desktop `useSoftPhone().openDialer(phone,contactName)`, mobile native `tel:` (MOBILE-NO-SOFTPHONE-001); никаких hardcoded per-feature кнопок; `cd frontend && npm run build` (tsc -b, prod-strict) зелёный.
+
+---
+
+### OUTBOUND-PARTS-CALL-001 — порядок выполнения и параллелизм
+
+```
+wave 1 (parallel, disjoint):  T1 (mig156 FSM) ‖ T2 (mig157 tasks.actions) ‖ T3 (mig158 attempts) ‖ T4 (mig159 settings+resolve) ‖ T8 (outboundCallService) ‖ T15 (assistant.json)
+        ↓
+wave 2:  T6 (createTask passthrough ←T2) ‖ T5 (onPartArrived ←T6) ‖ T10 (worker ←T3,T8) ‖ T13 (confirmPartsVisit ←T3,T5)
+        ↓
+wave 3:  T7 (startRobotCall ←T3,T4,T5,T6) ‖ T11 (worker tests ←T10) ‖ T12 (server.js worker-start ←T10, PROTECTED) ‖ T16 (jobsService status+hook ←T5)
+        ↓
+wave 4:  T9 (service unit-tests ←T5,T6,T7,T8) ‖ T14 (action-route+registry+webhook ←T3,T4,T7,T13) ‖ T18 (frontend ←T14 для стыковки)
+        ↓
+wave 5 (final):  T17 (real-DB verify harness ← весь backend)
+```
+
+**Граф зависимостей:** T2→T6→T5→{T7,T13,T16}; T3→{T7,T10,T13,T14,T17}; T4→{T7,T14}; T8→{T10}; T10→{T11,T12}; T7→{T9,T14}; T13→T14; T14→T18; всё backend → T17. T1/T8/T15 — листья волны 1. **Verify (T17) — строго последняя.**
+
+**Files-forbidden (перекрёстно):** ЕДИНСТВЕННЫЙ правщик `jobsService.js` = T16; `src/server.js` = T12 (protected, одна env-gated строка); `tasksQueries.js` = T6; `backend/src/routes/tasks.js` = T14; `backend/src/routes/vapi.js` = T14; `partsCallService.js` создаёт T5, дописывает `startRobotCall` T7 (последовательно, НЕ параллельно); `agentSkills/registry.js` = T13 (additive-entry); `TaskCard.tsx`/`tasksApi.ts` = T18. Миграции: T1=156, T2=157, T3=158, T4=159 (номера ПИНЕНЫ, не переиспользовать). НЕ трогать: `scheduleService.rescheduleItem` (verified present), inbound `vapi-tools.js`/Sara `30e85a87`, `authedFetch.ts`, `useRealtimeEvents.ts`, существующие миграции.
+
+**7 P0-гейтов (красный = блок релиза):** FSM-mig-156 (T1/T17-fsm), S1 task-idempotence (T5/T16/T17-s1), S14 call-idempotence partial-unique (T3/T17-s14), S8 ZB-409 no-false-success (T13/T17-s8), S10 cross-tenant (T14/T13/T17-s10), S6 no-slots→no-call (T7/T17-s6), S13 fail-safe (T16/T17-s13).
+
+**Deploy / owner-gated:** новые env `VAPI_API_KEY`/`VAPI_OUTBOUND_ASSISTANT_ID`/`VAPI_OUTBOUND_PHONE_NUMBER_ID`/`FEATURE_OUTBOUND_CALL_WORKER`/`OUTBOUND_CALL_WORKER_INTERVAL_MS`/webhook-secret (опц. `VAPI_WEBHOOK_SECRET`) — deploy-config. Live-push `parts-visit-scheduler.json` + прод-деплой (миграции 156–159) — только с явного «да» владельца (стандинг-рул). На деплое — force session logout (memory).
+
+**Статус:** ✅ DONE — все T1–T18 реализованы. Unit **87/87** зелёных; real-DB harness `scripts/verify-outbound-parts-call-001.js` **13/13** (+ sabotage-контроль ×2); frontend `npm run build` зелёный; **Reviewer APPROVED** (после фиксов). Деплой owner-gated: миграции 156–159 на прод, env выше (+ `FEATURE_OUTBOUND_CALL_WORKER=true`), пуш `parts-visit-scheduler.json` в VAPI. **Перед прод — прогнать harness на prod-copy.**

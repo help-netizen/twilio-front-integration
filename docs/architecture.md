@@ -4769,3 +4769,112 @@ Prod static serving (Caddy, `/etc/caddy/Caddyfile`) must return `/manifest.webma
 - **Risk — retry storm:** each reject-site runs its own bounded chain; the 30s interval won't stack because a live token makes `updateToken(60)` a no-op. Backoff (2/5/10s) keeps ≤3 network attempts per event.
 - **Risk — maskable clipping:** mitigated by the ≥20% safe inset (past the 10% spec floor); verify visually on install (AC-5, manual).
 - **Build gate:** `refreshPolicy.ts` exports must all be consumed by `AuthProvider.tsx` (prod `noUnusedLocals`); `npm run build` (`tsc -b` + vite) is the CI gate (AC-4).
+
+---
+
+## OUTBOUND-PARTS-CALL-001 — outbound VAPI "part arrived → book the finish visit" driven by a task with typed action buttons (+ TASK-ACTIONS sub-component)
+
+**Status:** Architecture · **Date:** 2026-07-07 · **Owner:** Voice / CRM / Dispatch
+**Requirements:** `Docs/requirements.md` → `## OUTBOUND-PARTS-CALL-001` (D1–D7, FR-TA1…4, FR-1…14, AC-1…12, OQ-1…5).
+**Scope of v1:** Boston Masters only (`DEFAULT_COMPANY_ID = 00000000-0000-0000-0000-000000000001`); ALL server code is written **company-scoped** (companyId flows from `job.company_id`, never a blind hardcode) and gated to the default company at the seam.
+
+### 0. The principle & the shape
+
+Reuse everything already built; add exactly three genuinely new things: **(1)** a `Part arrived` status + FSM transitions, **(2)** a reusable **TASK-ACTIONS** layer (typed, backend-executed buttons on tasks), and **(3)** an **outbound** VAPI capability (a call trigger + a retry-aware orchestration worker + a NEW outbound assistant). The in-call reschedule/alternatives write goes through the SAME `agentSkills` layer (AGENT-SKILLS-001) — the outbound assistant is a **new consumer**, not a re-implementation. AGENT-SKILLS is inbound-only; this closes the outbound gap it declared out-of-scope.
+
+```
+ Job → "Part arrived"  ──updateBlancStatus hook (fail-safe)──▶  auto-Task (kind='part_arrived_call', actions=[robot_call, manual_call])
+                                                                          │
+   dispatcher presses a button on TaskCard  ───────────────────▶ POST /api/tasks/:id/actions/:type
+                                                                          │
+                              ┌───────────── robot_call ─────────────────┴──── manual_call ────┐
+                              ▼                                                                 ▼
+                  outboundCallService: pre-compute top slot (recommendSlots)       (pure client) openDialer(phone, name)
+                     · no slots/err → task reason, NO call (FR-9)                   desktop softphone / mobile tel:
+                     · else enqueue attempt row → outboundCallWorker dials VAPI
+                                                                          │
+                     VAPI outbound assistant (parts-visit-scheduler) ── in-call tools ─▶ /api/vapi-tools (SAME dispatch,
+                        booked → confirmPartsVisit skill: rescheduleItem(ZB) + status→Rescheduled + AI-Phone note + task Done
+                        declined → recommendSlots live alternatives
+                                                                          │
+                     POST /api/vapi/call-status (secret-auth webhook) classifies endedReason →
+                        answered+booked = done · no-answer/voicemail/declined = schedule retry (immediately/+2h/next-biz-morning ×3)
+                        exhausted → task stays with dispatcher, job stays Part arrived
+```
+
+### 1. Job status & FSM — `Part arrived` (FR-1, AC-1)
+
+- **`jobsService.js`** (line 25): add `'Part arrived'` to `BLANC_STATUSES`. `OUTBOUND_MAP` / ZB sync block: **no ZB action** for `Part arrived` (Albusto-only operational state, like `Waiting for parts`) — add a documented no-op comment; do NOT alter existing branches.
+- **`ALLOWED_TRANSITIONS`** (line 37): add `'Waiting for parts': [... , 'Part arrived']` and `'Part arrived': ['Rescheduled', 'Canceled', 'Follow Up with Client']`. Do not reorder/remove existing entries.
+- **NEW migration `156_job_fsm_part_arrived.sql`** (next free number — verified max = 155): modeled EXACTLY on `127_job_fsm_on_the_way.sql`. Idempotency guard `WHERE v.scxml_source NOT LIKE '%id="Part_arrived"%'`; archive current published version, insert `version_number+1` as published, repoint `active_version_id`. Chained `replace()` passes: **(A)** insert `<state id="Part_arrived" blanc:label="Part arrived" blanc:statusName="Part arrived">` with transitions `TO_RESCHEDULED`→`Rescheduled`, `TO_CANCELED`→`Canceled`, `TO_FOLLOW_UP`→`Follow_Up_with_Client` (inserted before the `Canceled <final>`); **(B)** inject `<transition event="TO_PART_ARRIVED" target="Part_arrived" .../>` as a child of the `Waiting_for_parts` state. `RAISE NOTICE + CONTINUE` if markers missing. (Optional lockstep helper `backend/src/services/fsm/partArrivedTransform.js` mirroring `onTheWayTransform.js` for unit tests.)
+- FSM stays dual-sourced: `updateBlancStatus` calls `fsmService.resolveTransition` first (DB authoritative for seeded tenants), the hardcoded map is the fallback — both must carry the new transitions.
+
+### 2. Trigger seam — the fail-safe status hook (FR-2, FR-3, NFR fail-safe)
+
+- Inside **`jobsService.updateBlancStatus`**, AFTER the DB `UPDATE` + ZB sync block returns (it already returns `{ ...job, blanc_status, _prev_status }`), add a **fire-and-forget** block: `if (newStatus === 'Part arrived' && job._prev_status !== 'Part arrived') { partsCallService.onPartArrived(jobId, companyId).catch(err => console.error(...)); }`. Wrapped in its own `try/catch` — an error here **NEVER** rolls back or blocks the status transition (mirrors `eventService.logEvent` discipline). Not `await`ed for the mutation's success.
+- **`onPartArrived(jobId, companyId)`** (in the new `partsCallService`): idempotent auto-task creation. Dedup key = **one open task with `kind='part_arrived_call'` per `job_id`** — `SELECT 1 FROM tasks WHERE company_id=$1 AND job_id=$2 AND kind='part_arrived_call' AND status='open'`; if found, no-op (FR-3). Otherwise `createTask` with `parentType:'job'`, `kind:'part_arrived_call'`, title "Part arrived — schedule completion visit for {customer}", and `actions=[robot_call, manual_call]` (see §3). Surfaces as Action Required via AR-TASK-UNIFY-001 (open task on a job parent).
+
+### 3. TASK-ACTIONS sub-component (FR-TA1…4, AC-10) — reusable, closed, backend-executed
+
+- **Storage (OQ-2 → Decision):** NEW nullable `jsonb` column **`tasks.actions`** (migration `157_tasks_actions.sql`, `ADD COLUMN IF NOT EXISTS actions jsonb`). **Do NOT reuse `agent_output`/`kind`** — those are owned by MAIL-AGENT-001 / AUTO-001 and are read by TASKS-COUNT-BADGE / AR-TASK-UNIFY / agentWorker queries; overloading them would break those. `actions` is orthogonal, nullable, ignored by every existing query. Shape: `[{ type, label, icon?, state? }]` where `type` ∈ the closed registry.
+- **Action registry** — NEW `backend/src/services/taskActions/registry.js`: `{ robot_call: handler, manual_call: handler }`. The single source of truth for "what a button does." `manual_call` is a **pure client affordance** — its server handler is a no-op that (optionally) logs an event and returns `{ client: 'openDialer' }`; no mutation. `robot_call` handler = `partsCallService.startRobotCall(companyId, taskId)`.
+- **Route** — NEW `POST /api/tasks/:id/actions/:type` in `backend/src/routes/tasks.js` (extend the existing router; mounted `authenticate + requireCompanyAccess`). Middleware `requirePermission('tasks.manage')` (writes/executes a server action — stronger than `tasks.view`; `tasks.manage` already exists). companyId from `req.companyFilter.company_id`; load the task scoped to companyId → **foreign/unknown id = 404**; unknown `:type` not in registry = **400**. Idempotency-safe: `robot_call` re-press while a lifecycle is already active for that task returns the in-flight state, does NOT start a second call (FR-TA4 / OQ-5 — see §6 guard).
+- **Frontend** — `frontend/src/components/tasks/TaskCard.tsx`: render one `<Button>` per `task.actions[]` entry (label + optional icon via lucide), IN ADDITION to the existing Done/Cancel/Reopen affordances (no hardcoded per-feature buttons). `robot_call` → `tasksApi.runTaskAction(id, 'robot_call')` (new fn in `tasksApi.ts` → `POST …/actions/robot_call`), disabled/spinner while in-flight, reflect `state`. `manual_call` → `useSoftPhone().openDialer(phone, contactName)` on desktop, native `tel:` on mobile (MOBILE-NO-SOFTPHONE-001); no server call needed for the dial itself. `Task` type in `tasksApi.ts` gains `actions?: TaskAction[]`. Design per FORM-CANON / Blanc canon (buttons are existing `<Button>` variants, no new surfaces).
+
+### 4. Outbound VAPI call (FR-5, FR-6, OQ-3)
+
+- **NEW `backend/src/services/outboundCallService.js`**: `placeCall({ companyId, jobId, contactId, phone, customerName, slot })` → `POST https://api.vapi.ai/call` with `{ assistantId: VAPI_OUTBOUND_ASSISTANT_ID, phoneNumberId: VAPI_OUTBOUND_PHONE_NUMBER_ID, customer: { number: phone }, assistantOverrides: { variableValues: { jobId, contactId, customerName, companyId, slotLabel, slotDate, slotStart, slotEnd } } }`. Auth header `Bearer ${process.env.VAPI_API_KEY}`. **OQ-3:** `VAPI_OUTBOUND_PHONE_NUMBER_ID` = the Boston Masters number registered in VAPI, from **server env** (deploy-config, never hardcoded/client). Returns the VAPI `call.id` for correlation.
+- **NEW outbound assistant config** `voice-agent/assistants/parts-visit-scheduler.json` (repo artifact; live push owner-consent-gated, OUT of this pipeline). Modeled on `lead-qualifier-v2.json`. `firstMessage` ≈ "Hi {{customerName}}, your part has arrived — let's schedule the visit to finish the repair." Offers the pre-computed `{{slotLabel}}` window. **No name/address re-verification (D6)**, **no "3-month warranty" phrase (D5/AC-12)**. `model.tools[]` = a MINIMAL subset pointing at the SAME `/api/vapi-tools` dispatch (secret = the SAME `VAPI_TOOLS_SECRET`, re-injected on every model write per VAPI-Sara memory): `recommendSlots` (live alternatives on decline, FR-7) + `confirmPartsVisit` (the booking write, FR-8). The pre-verified context (`contactId`, `jobId`, `companyId`) is carried in `variableValues` and passed by the tools into the skill input — no in-call identity gate.
+
+### 5. In-call booking write — reuse the skill layer (FR-8, AC-3/AC-4)
+
+- **NEW skill `backend/src/services/agentSkills/skills/confirmPartsVisit.js`** + registry entry (additive to `registry.js` — inbound Sara unaffected). It is a thin composition of EXISTING pieces, NOT a new write path:
+  1. `getJobById(jobId, companyId)` ownership pre-check (scope to companyId; the job's `contact_id` must match the call's `contactId` from `variableValues`) — foreign → safe refusal.
+  2. `scheduleService.rescheduleItem(companyId, 'job', jobId, newStartAt, newEndAt)` — the SAME-job reschedule + AGENT-SKILLS-001 AR-4 **ZB write-through** (dependency: if `rescheduleItem` still does not push ZB, wiring it is in-scope). On ZB conflict it throws `409` → catch → graceful "a teammate will confirm" shape, **no false success** (identical posture to `rescheduleAppointment.js`).
+  3. On success: `updateBlancStatus(jobId, 'Rescheduled', companyId)` (order: reschedule FIRST, then status flip — a status flip without a committed reschedule would be wrong; on reschedule-conflict we never reach the flip). **OQ-4 arrival window:** derive `arrival_window_minutes = (slot.end − slot.start)` from the confirmed slot itself — no new parameter invented; the slot IS the window.
+  4. `addNote(jobId, "Appointment rescheduled to {window} via AI Phone.", [], 'AI Phone', 'AI Phone')` + `eventService.logEvent(companyId, 'job', jobId, …, actorType:'system')` (guarded so a note hiccup can't fail a landed write).
+  5. **Auto-close the task**: `updateTask(companyId, taskId, { status: 'done' })` for the open `part_arrived_call` task on this job (taskId carried through the lifecycle, or resolved by job+kind).
+- `confirmPartsVisit` runs at `requiredLevel: 'L0'` on the outbound surface — the outbound call is to a KNOWN contact and identity is server-pre-bound via `variableValues` (D6); ownership is still re-checked in-skill against companyId + the bound contactId (isolation preserved). Live alternatives on decline reuse the EXISTING `recommendSlots` skill verbatim (FR-7).
+
+### 6. Retry lifecycle — attempt queue + worker + status webhook (FR-10…13, OQ-1, OQ-5)
+
+- **Attempt storage (OQ-5 concurrency key):** NEW table `outbound_call_attempts` (migration `158_outbound_call_attempts.sql`): `id, company_id, job_id, task_id, contact_id, phone, vapi_call_id, attempt_no, status ('pending'|'dialing'|'answered'|'no_answer'|'booked'|'exhausted'|'canceled'), scheduled_at timestamptz, slot_json jsonb, reason text, created_at, updated_at`. **Idempotency/duplicate-guard key = a partial unique index on `(job_id) WHERE status IN ('pending','dialing')`** — at most ONE active/queued attempt per job, so a double-press or duplicate event cannot start a second concurrent call (OQ-5, FR-TA4). `startRobotCall` inserts the first `pending` row (immediate `scheduled_at`) or returns the existing active row.
+- **Pre-compute at launch (FR-5, FR-9):** `startRobotCall` resolves phone+contactId from the job, calls `recommendSlots(companyId, {}, { zip/address, durationMinutes })` gated on `isAppConnected(companyId, 'smart-slot-engine')`. **No slots OR engine fault → NO call**: set task reason (write to `tasks.actions`/description a human-readable reason + dispatcher action, or an `agent`-style note), leave job `Part arrived`, task open with dispatcher; do NOT insert a dialing attempt. Else store top-1 slot in `slot_json` and enqueue.
+- **NEW worker `backend/src/services/outboundCallWorker.js`** (start in `src/server.js` alongside `overageScheduler`/`routeRetentionScheduler`; env-gated `FEATURE_OUTBOUND_CALL_WORKER`). Pattern = `agentWorker` claim loop (`UPDATE … WHERE status='pending' AND scheduled_at<=now() … FOR UPDATE SKIP LOCKED`) at a `setInterval` tick (default 60s, like snoozeScheduler). For each claimed row: **business-hours clamp** — reuse `groupRouting.isBusinessHours(group, now)` with the job's company group/timezone; if outside hours, push `scheduled_at` to next open time, do NOT dial. In-hours → mark `dialing`, call `outboundCallService.placeCall(...)`, store `vapi_call_id`. A failed POST = a failed attempt (feeds retry). Worker errors never corrupt job state (isolated try/catch per row).
+- **Result classification (OQ-1) via webhook (recommended over polling):** NEW `POST /api/vapi/call-status` in `backend/src/routes/vapi.js` — **secret-auth** (VAPI signing secret / shared header, NOT a user session; company derived from the correlated attempt row, never the client). On VAPI `end-of-call-report`, map `endedReason`: `assistant booked` / `confirmPartsVisit` success already closed the task → mark attempt `booked`, done. **Transient (retry):** `customer-did-not-answer`, `voicemail`, `customer-busy`, `assistant-forwarded`/hang-up, failed-to-place → per-attempt **job note** via `addNote(…, 'AI Phone')` ("tried to reach {name}, no answer — next attempt at {time}") + domain event, then schedule the next attempt: **attempt 1 = immediate, 2 = +2h, 3 = next business morning (09:00 company-local, clamped)**; total **3 attempts** (count + backoff configurable, see §7). After the 3rd: mark `exhausted`, final note "automated attempts exhausted — please follow up", **task stays open with dispatcher, job stays `Part arrived`** (no flip). All timing is company-tz-aware (consistent with commit 6d5975a).
+
+### 7. Per-company retry settings (FR-10 configurable)
+
+- NEW table `outbound_call_settings` (migration `159_outbound_call_settings.sql`), mirroring `slot_engine_settings` (REC-SETTINGS-001): `company_id PK, max_attempts int default 3, backoff_schedule jsonb default '["immediate","+2h","next_business_morning"]', next_morning_hour int default 9, enabled bool default true`. A `resolve()` accessor returns defaults if no row (safe-fail, never 500). v1: only the Boston Masters row need exist; code reads by `job.company_id`.
+
+### 8. Security, isolation, protected parts
+
+- Task-action route: `authenticate + requireCompanyAccess + requirePermission('tasks.manage')`, companyId strictly `req.companyFilter.company_id`, all SQL by `company_id`, foreign id → 404, unknown action → 400.
+- VAPI call-status webhook: authenticated by **secret** (server env), not a session; company_id resolved from the correlated `outbound_call_attempts` row (never trusted from the body).
+- Outbound VAPI trigger + `VAPI_API_KEY` / `VAPI_OUTBOUND_*` live in **server env only**, never client.
+- **v1 gate:** `partsCallService` short-circuits (or the settings `enabled` flag / a company allowlist) so only `DEFAULT_COMPANY_ID` actually dials; all code stays parameterized on `job.company_id` for later rollout.
+- **Untouched (protected):** inbound `vapi-tools.js` auth/envelope/tools + live Sara `30e85a87` (this only ADDS `confirmPartsVisit` to the registry and a NEW outbound assistant); `src/server.js` mount order (only ADD a worker start); `authedFetch`; `useRealtimeEvents`/SSE; existing migrations (only NEW 156–159); `rescheduleItem`/merge-orphan ZB semantics (SAME-job mutate, `forceSyncOnZbError` discipline); Tasks schema/RBAC/`HAS_ENTITY_PARENT`/TASKS-COUNT-BADGE/AR-TASK-UNIFY (`tasks.actions` is additive & nullable); softphone canon.
+
+### 9. Involved modules (summary)
+
+- **New backend:** `partsCallService.js`, `outboundCallService.js`, `outboundCallWorker.js`, `taskActions/registry.js`, skill `agentSkills/skills/confirmPartsVisit.js` (+ registry entry), route `POST /api/tasks/:id/actions/:type`, route `POST /api/vapi/call-status`, (optional) `fsm/partArrivedTransform.js`.
+- **New migrations:** `156_job_fsm_part_arrived.sql` (SCXML per-company), `157_tasks_actions.sql` (`tasks.actions jsonb`), `158_outbound_call_attempts.sql`, `159_outbound_call_settings.sql`.
+- **New repo config:** `voice-agent/assistants/parts-visit-scheduler.json`.
+- **Modified:** `jobsService.js` (`BLANC_STATUSES`, `ALLOWED_TRANSITIONS`, `updateBlancStatus` hook); `scheduleService.rescheduleItem` (ensure AR-4 ZB push wired); `tasks.js` router (+action route); `agentSkills/registry.js` (+confirmPartsVisit); `src/server.js` (start outbound worker); `frontend TaskCard.tsx` + `tasksApi.ts` (render actions, `runTaskAction`, `Task.actions`).
+- **Reused unchanged (called):** `recommendSlots`, `rescheduleItem` (+AR-4 ZB), `createTask`/`updateTask`, `addNote('AI Phone')`, `eventService.logEvent`, `groupRouting.isBusinessHours`, `marketplaceService.isAppConnected`, `SoftPhoneContext.openDialer`, VAPI `POST /call`.
+- **New env (deploy-config):** `VAPI_API_KEY`, `VAPI_OUTBOUND_ASSISTANT_ID`, `VAPI_OUTBOUND_PHONE_NUMBER_ID`, `FEATURE_OUTBOUND_CALL_WORKER`, `OUTBOUND_CALL_WORKER_INTERVAL_MS`, VAPI call-status webhook secret.
+
+### 10. OQ resolutions (binding for SpecWriter)
+
+- **OQ-1 (retry timing / classification):** next-business-morning anchor = **09:00 company-local** (configurable `next_morning_hour`); result classification via **VAPI end-of-call webhook** `endedReason` — `booked`=terminal-success; `customer-did-not-answer`/`voicemail`/`customer-busy`/hang-up/failed-to-place=transient→retry; the schedule is immediate/+2h/next-biz-morning, 3 attempts, business-hours clamped.
+- **OQ-2 (TASK-ACTIONS storage):** NEW nullable `tasks.actions jsonb` — NOT a reuse of `agent_output`/`kind`.
+- **OQ-3 (caller ID):** `VAPI_OUTBOUND_PHONE_NUMBER_ID` from server env (Boston Masters' VAPI-registered number); deploy-config, not hardcoded.
+- **OQ-4 (arrival window):** `arrival_window_minutes = slot.end − slot.start` from the confirmed slot; no new parameter.
+- **OQ-5 (concurrency guard):** partial unique index on `outbound_call_attempts (job_id) WHERE status IN ('pending','dialing')` — at most one active attempt per job; `robot_call` re-press returns the in-flight row.
+
+### 11. Deviations / notes for SpecWriter
+
+- **`confirmPartsVisit` is L0 on the outbound surface** (deviation from AGENT-SKILLS-001's L2 reschedule). Justification: the outbound call is server-initiated to a pre-bound known contact (D6); identity comes from `variableValues`, not a caller claim. Isolation is preserved by the in-skill ownership pre-check (companyId + bound contactId). SpecWriter must NOT gate it behind the inbound verificationGate.
+- **`createTask` needs `kind` + `actions` passthrough:** `tasksQueries.createTask` currently does not accept `kind`/`actions` in its column list — extend it additively (add `kind`, `actions` to the `cols`/`vals` when present) without breaking existing callers. The AR-TASK-UNIFY app-upsert (one-open-per-job+kind) is enforced in `partsCallService.onPartArrived` via the explicit SELECT guard, since `createTask` has no built-in upsert.
+- **Dependency:** FR-8 assumes `rescheduleItem` already performs the AR-4 ZB write-through. Verify on a real ZB job; if absent, wiring it is in-scope for this feature (do NOT fork a parallel reschedule path).
+- **`Part arrived` needs a UI transition button** (FSM `blanc:action="true"` on `Waiting for parts → Part arrived`) so a dispatcher can move a job there — the migration's SCXML transition provides it; confirm the job-card status control reads it from the published machine (no separate frontend change expected).
