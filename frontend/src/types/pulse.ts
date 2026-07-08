@@ -1,6 +1,7 @@
 // Pulse timeline types
 
 import type { CallData } from '../components/call-list-item';
+import type { TaskAction } from '../components/tasks/tasksApi';
 
 export interface SmsMediaItem {
     id: string;
@@ -86,6 +87,9 @@ export interface PulseTask {
     priority: 'p1' | 'p2' | 'p3';
     kind?: string;
     agent_output?: { reason?: string } | null;
+    /** OUTBOUND-PARTS-CALL-BTN-001: typed action buttons (robot_call / manual_call)
+     *  hydrated onto the by-contact open_task; feeds <TaskActionButtons> in the AR banner. */
+    actions?: TaskAction[];
 }
 
 export interface ActionRequiredState {

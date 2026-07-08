@@ -491,6 +491,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              open_task.priority as open_task_priority,
              open_task.kind as open_task_kind,
              open_task.agent_output as open_task_agent_output,
+             open_task.actions as open_task_actions,
              COALESCE(open_task.task_count, 0) as open_task_count,
              sms.last_message_at as sms_last_message_at,
              sms.last_message_direction as sms_last_message_direction,
@@ -526,7 +527,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
          ) latest_call ON true
          LEFT JOIN LATERAL (
              SELECT ot.id, ot.title, ot.description, ot.due_at, ot.priority,
-                    ot.kind, ot.agent_output,
+                    ot.kind, ot.agent_output, ot.actions,
                     (SELECT count(*) FROM tasks tc
                       WHERE tc.thread_id = tl.id AND tc.status = 'open') AS task_count
              FROM tasks ot

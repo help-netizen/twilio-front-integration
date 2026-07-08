@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-08 — OUTBOUND-PARTS-CALL-BTN-001: кнопки part-arrived задачи появились на карточке джоба и в Pulse «Action Required»
+
+**Баг:** OUTBOUND-PARTS-CALL-001 был собран на ~90%, но кастомные кнопки задачи («🤖 Робот звонит» / «📞 Позвоню сам») не отображались нигде. Причина — read-проекция `SELECT_TASK` в `backend/src/db/tasksQueries.js` **не выбирала колонку `actions` (jsonb)**, поэтому уже подключённый рендер в `TaskCard` не получал данные и гард `actions?.length` всегда был ложным. На проде подтверждено: задача id=355 (джоб 1408) уже имела сохранённые actions (🤖 robot_call + 📞 manual_call), но кнопки не появлялись.
+
+- **BTN-01 (корень бага):** `SELECT_TASK` теперь выбирает `t.actions` → кнопки появляются на карточке джоба. Колонка аддитивная, изоляция (`company_id`) не тронута.
+- **BTN-02:** Pulse «Action Required» `open_task` теперь несёт `actions` (LATERAL в `timelinesQueries.js` + сборка в `routes/calls.js`), по образцу описания из PULSE-AR-POLISH-001; запрос остаётся `company_id`-scoped, колонки только аддитивные.
+- **BTN-03:** выделен общий `frontend/src/components/tasks/TaskActionButtons.tsx` (само-гейтится на `tasks.manage`; 🤖 robot_call перед POST спрашивает `window.confirm('Start automated call to the customer?')`; 📞 manual_call звонит без подтверждения; спиннер + причина отказа); `TaskCard.tsx` переведён на него.
+- **BTN-04:** `PulseTask` получил `actions?`, баннер Pulse AR рендерит `<TaskActionButtons>` (скрыт при snooze).
+- **BTN-06:** `partsCallService.onPartArrived` теперь best-effort, **НЕ-фатально** thread-link’ует созданную part-arrived задачу к канонической ленте контакта (`findOrCreateTimelineByContact`, company-scoped, идемпотентно `WHERE thread_id IS NULL`) → задача всплывает и в Pulse AR; при отсутствии контакта остаётся job-only.
+- **Проверка (BTN-05):** новый `tests/tasksActionsProjection.test.js` + расширенный `tests/partsCallService.test.js`, каждый с доказанным red→green негативным контролем; **47** backend-тестов зелёные по затронутым сьютам, полный прогон **2113** без изменений (10 предсуществующих несвязанных падений); frontend `npm run build` зелёный. Reviewer **APPROVED** (репро + саботаж + адверсариально: цепочка Pulse-id → `tasks.id` ✓, thread-link не-фатален и company-scoped ✓).
+- **Изменения видимы только на фронте**; backend — **4 файла** (`tasksQueries.js`, `timelinesQueries.js`, `calls.js`, `partsCallService.js`), **без миграции** (mig 157 уже в проде). **Master-only, ещё НЕ задеплоено.**
+
 ## 2026-07-08 — ADDR-STATE-FILL-001 + SHEET-SCROLL-FIX-001: два бага поля «Штат» в мобильной форме (frontend-only)
 
 С мобильных скриншотов формы New Job. **Баг 1:** при автозаполнении адреса (из контакта / place-pick без штата в описании / Safari-автозаполнения текстовых инпутов) поле **State оставалось пустым**, хотя City+Zip заполнены (напр. Ashland 01721 = MA). Причина — State это кастомный `<Select>`, а источник не давал совпадающую 2-буквенную аббревиатуру. **Баг 2:** тап по State открывает BottomSheet со списком 51 штата, который **не скроллится** — вместо него скроллится форма под шторкой (iOS Safari scroll-chaining), так что до MA (~21-й) не добраться даже вручную.

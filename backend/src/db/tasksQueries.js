@@ -39,7 +39,7 @@ function isValidParentType(t) {
 const SELECT_TASK = `
     SELECT t.id, t.company_id, t.title AS description, t.status, t.due_at,
            t.completed_at, t.created_at, t.owner_user_id, t.author_user_id,
-           t.kind, t.agent_type, t.agent_output,
+           t.kind, t.agent_type, t.agent_output, t.actions,
            ow.full_name AS assignee_name, ow.email AS assignee_email,
            au.full_name AS author_name,
            CASE

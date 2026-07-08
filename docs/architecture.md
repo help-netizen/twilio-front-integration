@@ -5063,3 +5063,40 @@ The button is additionally hidden unless the user has `payments.collect_online` 
 - **Require-cycle caution:** `resolveSurfaceContext` now needs `jobsService`; require it **lazily** inside the branch (as written) to avoid any load-order cycle, since `stripePaymentsService` is required at the top of `jobs.js` which also pulls `jobsService`.
 - **Amount ceiling is a product guess.** $100k is pragmatic, not sourced from a Product number; trivial to tune in `assertAdhocAmount`. Min $0.50 is a hard Stripe floor and must stay.
 - **CTA copy is unsourced** (no Product FR-CTA block existed). Treat §FR-CTA strings as provisional.
+
+---
+
+## OUTBOUND-PARTS-CALL-BTN-001 — wire the already-built task-action buttons onto the Job card + Pulse AR (read-projection fix + shared component)
+
+**Diagnosis (the bug):** `SELECT_TASK` in `backend/src/db/tasksQueries.js` (projection L40-42, `t.kind, t.agent_type, t.agent_output`) omits `t.actions`. All three read paths — `getTaskById` (L199), `listEntityTasks` (L96), `listTasks` (L160) — and the `createTask` return (via `getTaskById`, L259) therefore drop `actions`, so `TaskCard`'s guard `canAct && !done && task.actions?.length` (L135) is always false → the buttons render nowhere. Single root cause for surface (a).
+
+**Existing (reuse, do NOT duplicate):**
+- `taskActions/registry.js` (robot_call/manual_call, `runAction`, `isKnownAction`) + execute route `POST /api/tasks/:id/actions/:type` (`routes/tasks.js` L210, `requirePermission('tasks.manage')`, 400 unknown / 404 foreign, company-scoped) — byte-unchanged; tested (`tests/tasksActionRoute.test.js`).
+- `TaskCard.tsx` action block (L133-172: button row, spinner, failed-reason) + `tasksApi.ts` (`TaskAction`, `Task.actions?`, `runTaskAction`) — reused; the button logic is EXTRACTED, not rewritten.
+- `TaskStack.tsx` (mounts TaskCard on job/contact/estimate/invoice via `NotesSection` L347; `onChanged` refetch wired) — unchanged.
+- `partsCallService.markRobotCallFailed` (L118) already persists `state:'failed'`+`reason` into `actions` → the failed-reason render is backed by real data.
+
+**Decision A — one-line read fix (surface a):** add `t.actions` to `SELECT_TASK`. Cascades to every task payload; makes the Job-card buttons appear with no frontend change. Additive column → mocked-DB tests unaffected; run the tasks suite to confirm no exact-key snapshot breaks.
+
+**Decision B — shared `TaskActionButtons` (DRY, both surfaces + confirm):** extract `TaskCard`'s `runAction` + button/reason JSX into new `frontend/src/components/tasks/TaskActionButtons.tsx`. Props `{ taskId, actions, onChanged? }`. It **self-gates on `useAuthz().hasPermission('tasks.manage')`** — matches the route gate on BOTH surfaces and closes the latent "owner-but-not-manager sees a button that 403s" gap (TaskCard's `canAct` is manage-OR-own). It owns the `robot_call` → `window.confirm('Start automated call to the customer?')` gate (`manual_call` dials with NO confirm), the spinner, and the failed-reason list. `TaskCard.tsx` renders `<TaskActionButtons>` in place of its inline block (keeps Done/Snooze/Edit). `window.confirm` is acceptable (TaskFormDialog delete precedent); a FORM-CANON styled ConfirmDialog is the optional upgrade.
+
+**Decision C — Pulse open_task actions hydration (surface b):**
+- `backend/src/db/timelinesQueries.js`: add `ot.actions` to the open_task LATERAL SELECT (L529, beside `ot.kind, ot.agent_output`) + `open_task.actions as open_task_actions` to the outer SELECT (L493). Additive columns inside the existing company-scoped by-contact query (LIST-PAGINATION-001) — no predicate / ORDER BY / param change.
+- `backend/src/routes/calls.js`: add `actions: c.open_task_actions || null` to the `open_task` object (L208-217).
+- `frontend/src/types/pulse.ts`: add `actions?: TaskAction[]` to `PulseTask` (import `TaskAction` from `components/tasks/tasksApi`).
+- `frontend/src/pages/PulsePage.tsx`: in the AR banner's `!isSnoozed` block (L342-357), render `<TaskActionButtons taskId={conv.open_task.id} actions={conv.open_task.actions} onChanged={() => p.refetchContacts()} />` when `conv.open_task?.actions?.length`. Self-gating means PulsePage needs no new permission plumbing (it currently uses only `useAuth`).
+
+**Middleware / isolation:** no new routes. The only executing endpoint stays the existing `POST /:id/actions/:type` (`authenticate → requireCompanyAccess → requirePermission('tasks.manage')`; company from `req.companyFilter.company_id`; foreign id → 404). The Pulse hydration stays inside the existing `tl.company_id = $1`-scoped query.
+
+**Files to change:**
+- `backend/src/db/tasksQueries.js` — `SELECT_TASK` += `t.actions` (Decision A).
+- `backend/src/db/timelinesQueries.js` — open_task LATERAL += `ot.actions`; outer SELECT += `open_task.actions as open_task_actions` (Decision C).
+- `backend/src/routes/calls.js` — open_task object += `actions` (Decision C).
+- NEW `frontend/src/components/tasks/TaskActionButtons.tsx` — shared component (Decision B).
+- `frontend/src/components/tasks/TaskCard.tsx` — consume the shared component; remove the inline `runAction` / button JSX (Decision B).
+- `frontend/src/pages/PulsePage.tsx` — render the shared component in the AR banner (Decision C).
+- `frontend/src/types/pulse.ts` — `PulseTask.actions?` (Decision C).
+
+**Deviation (verified):** the part-arrived task is job-parented (`partsCallService.onPartArrived` → `parentType:'job'`, no `thread_id`) → it surfaces on the **Job card**; the Pulse-AR wiring future-proofs timeline-parented action tasks but won't show the part-arrived task unless `onPartArrived` thread-links it (out of scope). No other open_task builder exists (grep: only `timelinesQueries.js` + `calls.js`).
+
+**Protected / unchanged:** `registry.js`, execute route, partsCall/outbound lifecycle, `tasks.actions` column (mig 157 — no new migration), `authedFetch.ts` / `useRealtimeEvents.ts`, TASKS-COUNT-BADGE / AR-TASK-UNIFY queries.

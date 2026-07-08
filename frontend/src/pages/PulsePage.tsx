@@ -14,6 +14,7 @@ import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
 import { TaskFormDialog } from '../components/tasks/TaskFormDialog';
+import { TaskActionButtons } from '../components/tasks/TaskActionButtons';
 import { createTask, type Task } from '../components/tasks/tasksApi';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
 import { OnboardingChecklistCard } from '../components/onboarding/OnboardingChecklistCard';
@@ -353,6 +354,21 @@ export const PulsePage: React.FC = () => {
                                                     onSnooze={(until) => { if (tlId) pulseApi.snoozeThread(tlId, until).then(() => { p.refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed')); }}
                                                 />
                                                 <AssignOwnerDropdown timelineId={tlId} onAssigned={() => p.refetchContacts()} />
+                                            </div>
+                                        )}
+                                        {/* OUTBOUND-PARTS-CALL-BTN-001: typed action buttons (🤖 robot_call /
+                                            📞 manual_call) hydrated onto open_task — ADDITIONAL to Done/Snooze/Assign.
+                                            Hidden while snoozed; TaskActionButtons self-gates on tasks.manage. */}
+                                        {!isSnoozed && (conv.open_task?.actions?.length ?? 0) > 0 && (
+                                            <div className="px-5 pb-3">
+                                                <TaskActionButtons
+                                                    id={conv.open_task.id}
+                                                    actions={conv.open_task.actions}
+                                                    done={false}
+                                                    phone={p.phone}
+                                                    contactName={p.contact?.full_name || conv.contact?.full_name || undefined}
+                                                    onChanged={p.refetchContacts}
+                                                />
                                             </div>
                                         )}
                                     </div>

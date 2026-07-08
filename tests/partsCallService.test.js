@@ -20,6 +20,12 @@ jest.mock('../backend/src/db/tasksQueries', () => ({
     createTask: jest.fn(async () => ({ id: 70, kind: 'part_arrived_call' })),
     getTaskById: jest.fn(async () => ({ id: 70, status: 'open' })),
 }));
+// BTN-06: onPartArrived best-effort thread-links the job task to the customer's
+// Pulse timeline via timelinesQueries.findOrCreateTimelineByContact. Mock the seam
+// so the link/skip/non-fatal branches are asserted without the real timeline DB.
+jest.mock('../backend/src/db/timelinesQueries', () => ({
+    findOrCreateTimelineByContact: jest.fn(),
+}));
 jest.mock('../backend/src/services/jobsService', () => ({
     getJobById: jest.fn(),
 }));
@@ -31,6 +37,8 @@ jest.mock('../backend/src/services/outboundCallSettingsService', () => ({
 }));
 
 const tasksQueries = require('../backend/src/db/tasksQueries');
+const timelinesQueries = require('../backend/src/db/timelinesQueries');
+const dbConn = require('../backend/src/db/connection');
 const jobsService = require('../backend/src/services/jobsService');
 const recommendSlots = require('../backend/src/services/agentSkills/skills/recommendSlots');
 const settings = require('../backend/src/services/outboundCallSettingsService');
@@ -235,5 +243,88 @@ describe('TC-OPC-U07: startRobotCall — not-dialable / no phone → NO call, NO
         expect(recommendSlots.run).not.toHaveBeenCalled();
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
         expect(insertCall).toBeFalsy();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// BTN-06 (OUTBOUND-PARTS-CALL-BTN-001): onPartArrived also thread-links the new
+// job task to the customer's Pulse timeline so it surfaces as Action Required —
+// best-effort, non-fatal, guarded (no contact / a link failure → job-only task,
+// creation never fails). All three branches asserted with the db + timeline seams
+// mocked (no real timeline row is touched).
+// ---------------------------------------------------------------------------
+
+describe('BTN-06: onPartArrived — best-effort Pulse thread-link (AR-TASK-UNIFY)', () => {
+    let errSpy;
+    beforeEach(() => {
+        // The non-fatal branch logs via console.error — silence it for a clean run.
+        errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    });
+    afterEach(() => errSpy.mockRestore());
+
+    test('job HAS contact_id → thread-links task to the customer timeline (thread_id=999, company-scoped, IS NULL guard)', async () => {
+        // 1) dedup SELECT → none; 2) job lookup returns customer_name + contact_id;
+        // 3) the thread-link UPDATE → 1 row affected.
+        mockQuery
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ customer_name: 'Jane', contact_id: 501 }] })
+            .mockResolvedValueOnce({ rowCount: 1 });
+        tasksQueries.createTask.mockResolvedValueOnce({ id: 70, kind: 'part_arrived_call' });
+        timelinesQueries.findOrCreateTimelineByContact.mockResolvedValueOnce({ id: 999 });
+        tasksQueries.getTaskById.mockResolvedValueOnce({ id: 70, thread_id: 999, actions: [{ type: 'robot_call' }] });
+
+        const out = await partsCallService.onPartArrived(50, CO);
+
+        // Timeline resolved for the job's contact, company-scoped, on the shared conn.
+        expect(timelinesQueries.findOrCreateTimelineByContact).toHaveBeenCalledWith(501, CO, dbConn);
+        // The thread-link UPDATE ran: thread_id=$3=999, contact_id=$4=501, company $1,
+        // guarded by `thread_id IS NULL` (idempotent — won't relink an already-linked task).
+        const linkCall = mockQuery.mock.calls.find(
+            (c) => /UPDATE tasks/i.test(String(c[0])) && /thread_id/.test(String(c[0]))
+        );
+        expect(linkCall).toBeTruthy();
+        expect(linkCall[0]).toMatch(/thread_id = \$3/);
+        expect(linkCall[0]).toMatch(/company_id = \$1/);
+        expect(linkCall[0]).toMatch(/thread_id IS NULL/);
+        expect(linkCall[1]).toEqual([CO, 70, 999, 501]);
+        // Returns the re-hydrated (now timeline-linked) task.
+        expect(tasksQueries.getTaskById).toHaveBeenCalledWith(CO, 70, null);
+        expect(out).toMatchObject({ id: 70, thread_id: 999 });
+    });
+
+    test('job has NO contact_id → no link attempted, task returned job-only, no throw', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ customer_name: 'Jane', contact_id: null }] });
+        tasksQueries.createTask.mockResolvedValueOnce({ id: 71, kind: 'part_arrived_call' });
+
+        const out = await partsCallService.onPartArrived(50, CO);
+
+        // The `contactId != null` guard short-circuits — no timeline resolution at all.
+        expect(timelinesQueries.findOrCreateTimelineByContact).not.toHaveBeenCalled();
+        const linkCall = mockQuery.mock.calls.find((c) => /UPDATE tasks/i.test(String(c[0])));
+        expect(linkCall).toBeFalsy();
+        // The job-only created task is returned as-is (no re-hydration).
+        expect(out).toEqual({ id: 71, kind: 'part_arrived_call' });
+        expect(tasksQueries.getTaskById).not.toHaveBeenCalled();
+    });
+
+    test('findOrCreateTimelineByContact THROWS → still resolves with the created task (error swallowed, creation NOT rolled back)', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ customer_name: 'Jane', contact_id: 501 }] });
+        tasksQueries.createTask.mockResolvedValueOnce({ id: 72, kind: 'part_arrived_call' });
+        timelinesQueries.findOrCreateTimelineByContact.mockRejectedValueOnce(new Error('timeline boom'));
+
+        // MUST NOT throw despite the link seam rejecting.
+        const out = await partsCallService.onPartArrived(50, CO);
+
+        // Task creation happened and was NOT rolled back by the failed link.
+        expect(tasksQueries.createTask).toHaveBeenCalledTimes(1);
+        // The thread-link UPDATE never ran (resolution threw before it).
+        const linkCall = mockQuery.mock.calls.find((c) => /UPDATE tasks/i.test(String(c[0])));
+        expect(linkCall).toBeFalsy();
+        // Resolves with the job-only created task (the error is swallowed / logged).
+        expect(out).toEqual({ id: 72, kind: 'part_arrived_call' });
     });
 });

@@ -20,6 +20,7 @@
 const db = require('../db/connection');
 const { requireCompanyId, queryFor } = require('../db/crmUtils');
 const tasksQueries = require('../db/tasksQueries');
+const timelinesQueries = require('../db/timelinesQueries');
 const jobsService = require('./jobsService');
 const recommendSlots = require('./agentSkills/skills/recommendSlots');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
@@ -89,12 +90,13 @@ async function onPartArrived(jobId, companyId, client = null) {
 
     // 2) Resolve the customer name for a human-readable title (company-scoped).
     const jobRow = await query(
-        `SELECT customer_name FROM jobs WHERE id = $1 AND company_id = $2 LIMIT 1`,
+        `SELECT customer_name, contact_id FROM jobs WHERE id = $1 AND company_id = $2 LIMIT 1`,
         [jobId, companyId]
     );
     const customer = (jobRow.rows[0]?.customer_name || '').trim() || 'the customer';
+    const contactId = jobRow.rows[0]?.contact_id ?? null;
 
-    return tasksQueries.createTask(
+    const task = await tasksQueries.createTask(
         companyId,
         {
             parentType: 'job',
@@ -105,6 +107,33 @@ async function onPartArrived(jobId, companyId, client = null) {
         },
         client
     );
+
+    // BTN-06 (AR-TASK-UNIFY): also thread-link this job task to the customer's
+    // Pulse timeline so it surfaces as Action Required in Pulse — the AR lateral
+    // keys on `thread_id = timeline.id`, so a job-only task never shows there.
+    // Best-effort + non-fatal + idempotent: no contact / no resolvable timeline →
+    // the task stays job-only (the Job-card path is untouched) and a failure here
+    // never breaks task creation. Company scope flows through both calls.
+    if (contactId != null) {
+        try {
+            const timeline = await timelinesQueries.findOrCreateTimelineByContact(contactId, companyId, client || db);
+            if (timeline && timeline.id) {
+                const linked = await query(
+                    `UPDATE tasks
+                        SET thread_id = $3, contact_id = $4, subject_type = 'contact', subject_id = $4
+                      WHERE company_id = $1 AND id = $2 AND thread_id IS NULL`,
+                    [companyId, task.id, timeline.id, contactId]
+                );
+                if (linked.rowCount > 0) {
+                    return tasksQueries.getTaskById(companyId, task.id, client);
+                }
+            }
+        } catch (err) {
+            console.error('[partsCallService] Pulse thread-link failed (non-fatal):', err.message);
+        }
+    }
+
+    return task;
 }
 
 /**

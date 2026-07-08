@@ -214,6 +214,8 @@ router.get('/by-contact', async (req, res) => {
                     // MAIL-AGENT-001: agent tasks carry the triage comment for the AR bar.
                     kind: c.open_task_kind || 'user',
                     agent_output: c.open_task_agent_output || null,
+                    // OUTBOUND-PARTS-CALL-BTN-001: typed action buttons for the AR bar.
+                    actions: c.open_task_actions || null,
                 } : null,
             };
         });

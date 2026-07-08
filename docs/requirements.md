@@ -4365,3 +4365,39 @@ A tech or dispatcher standing on a job frequently needs to take a card payment (
 - **Backend (modified):** `backend/src/services/stripePaymentsService.js` (job-generalized link builder + `assertAdhocAmount` + job idempotency key + contact-channel resolution); job routes for `stripe-payment-link` (POST/GET) and `send-payment-link` (POST); reuse of `jobsService.getJobById`. **No webhook change. No migration.**
 - **Frontend (modified/new):** `JobFinancialsTab` (button + CTA), new `CollectPaymentDialog`, generalized `ManualCardDialog` ({jobId?,invoiceId?,amount}), new generic `/pay/thanks` success page.
 - **Unchanged (protected):** invoice collect flow, webhook, `PublicInvoicePayPage`, tap-to-pay, all `payments.*` perms and DB columns (already present).
+
+---
+
+## OUTBOUND-PARTS-CALL-BTN-001 — surface the part-arrived task's action buttons (Job card + Pulse AR) + confirm on the robot call
+
+**Relationship:** completes the FR-TA (TASK-ACTIONS) slice of OUTBOUND-PARTS-CALL-001. The typed-action backend (`taskActions/registry.js`, execute route `POST /api/tasks/:id/actions/:type`, `tasks.actions` jsonb — mig 157) and the `TaskCard` renderer already shipped, but the read projection never returns `actions`, so the buttons render nowhere. This is a **bug-fix** (data plumbing) + a small **enhancement** (second surface + confirm). NOT a new subsystem.
+
+**Brief:** when a part arrives, `partsCallService.onPartArrived` creates one OPEN, job-parented task `kind='part_arrived_call'` carrying `actions=[{robot_call,'🤖 Let the robot call'},{manual_call,"📞 I'll call myself"}]`. A dispatcher must SEE and TRIGGER those two actions from (a) the **Job card** task stack and (b) the **Pulse "Action Required"** banner. 🤖 dials the customer via the robot, so it must **confirm** first; 📞 just opens the dialer with no confirm.
+
+**User scenarios:**
+1. Dispatcher opens the Job card of a job whose part just arrived → the pinned task shows two buttons; 🤖 asks "Start automated call to the customer?" then queues the robot call; 📞 opens the softphone (desktop) / native dialer (mobile) with no confirm.
+2. Dispatcher working the Pulse "Action Required" banner for a timeline-parented action task sees the same two buttons with the same behavior, without leaving Pulse.
+3. A pre-call failure (no slots / no phone) shows a short reason under 🤖 after refresh; the dispatcher falls back to 📞.
+4. A user WITHOUT `tasks.manage` sees no action buttons on either surface (they could not execute them — the route requires `tasks.manage`).
+
+**Constraints / non-functional:**
+- **No new migration** (the `actions` column is live — mig 157); no change to the execute route, the registry, or the outbound-call lifecycle.
+- The action-button gate MUST match the route gate (`tasks.manage`) on both surfaces — never show a button that 403s.
+- Confirm on `robot_call` only; `manual_call` dials with no confirm.
+- English UI copy; `--blanc-*` tokens only; FORM-CANON (`window.confirm` acceptable — Architect's call).
+- `npm run build` (`tsc -b`, `noUnusedLocals`) green; backend jest green. Company-scope unchanged (execute route already scopes to `req.companyFilter.company_id`).
+
+**Potentially involved modules:** backend `db/tasksQueries.js` (read projection), `db/timelinesQueries.js` + `routes/calls.js` (Pulse open_task); frontend `components/tasks/TaskCard.tsx` + new `TaskActionButtons.tsx`, `pages/PulsePage.tsx`, `types/pulse.ts`.
+
+**Affected integrations:** none directly (Twilio/VAPI/Zenbooker only via the already-shipped robot-call lifecycle behind the unchanged execute route).
+
+**Protected parts (must not break):** the execute route `POST /api/tasks/:id/actions/:type` + `taskActions/registry.js` (byte-unchanged); `authedFetch.ts` / `useRealtimeEvents.ts`; TASKS-COUNT-BADGE / AR-TASK-UNIFY task queries (the `actions` column stays additive/nullable); the Pulse by-contact pagination SQL contract (LIST-PAGINATION-001) — additive columns only.
+
+**Acceptance criteria:**
+- **AC-BTN-1:** every task read payload (`getTaskById` / `listEntityTasks` / `listTasks` + createTask return) includes `actions` when present (null otherwise).
+- **AC-BTN-2:** the Job-card task stack renders one button per action; 🤖 confirms then POSTs; 📞 dials with no confirm.
+- **AC-BTN-3:** the Pulse `open_task` carries `actions`; the AR banner renders the same buttons via the shared component for a timeline-parented action task.
+- **AC-BTN-4:** no `tasks.manage` → no buttons on either surface.
+- **AC-BTN-5:** `npm run build` + backend jest green; execute route / registry diff-free.
+
+**⚑ Note for downstream agents (verified in code):** the part-arrived task is **job-parented** (`onPartArrived` → `parentType:'job'`, no `thread_id`). The Pulse AR `open_task` LATERAL matches only `thread_id = tl.id` (timeline-parented tasks). So THIS feature's task surfaces on the **Job card** today; the Pulse-AR wiring is correct and future-proofs any timeline-parented action task, but the part-arrived task will not appear in Pulse AR unless `onPartArrived` also thread-links it (separate change, out of scope).

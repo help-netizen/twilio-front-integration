@@ -7876,3 +7876,60 @@ wave 5 (final):  T17 (real-DB verify harness ← весь backend)
 5. `assertAdhocAmount` для keyed-card job приходит через `resolveSurfaceContext` (path `createCardSession→resolveSurfaceContext`), БЕЗ эдита route/`createManualCardSession` → инвойс keyed-card (invoice-ветка) его не достигает.
 
 **Owner-gated (вне авто-плана):** MANUAL live keyed-charge + hosted-link pay (TC-FLOW-1/2), CTA visuals (TC-CTA-5), `/pay/thanks` public render (TC-THANKS-2), DEPLOY live-charge + prod `/pay/thanks` (TC-DEPLOY-1). Прод-деплой — только с явного «да» владельца.
+
+---
+
+## OUTBOUND-PARTS-CALL-BTN-001 — план (surface the part-arrived task actions on Job card + Pulse AR)
+
+> **STATUS: ✅ DONE (2026-07-08)** — BTN-01…06 implemented, tested, and Reviewer-**APPROVED**; merge-to-master only, **not yet deployed**. Root cause: the `SELECT_TASK` read projection (`tasksQueries.js`) dropped the `actions` jsonb column, so the already-wired TaskCard buttons never received data and rendered nowhere (prod task id=355 / job 1408 already had 🤖 robot_call + 📞 manual_call persisted).
+
+> Completes the FR-TA slice of OUTBOUND-PARTS-CALL-001. **Related docs:** requirements `## OUTBOUND-PARTS-CALL-BTN-001` (AC-BTN-1…5); architecture `## OUTBOUND-PARTS-CALL-BTN-001` (Decisions A–C + Deviation); spec `Docs/specs/OUTBOUND-PARTS-CALL-BTN-001.md` (S-BTN-1…8); test-cases `Docs/test-cases/OUTBOUND-PARTS-CALL-BTN-001.md` (4 jest + 5 manual + 1 build; 4 P0).
+> **Protected files:** `taskActions/registry.js` + execute route `routes/tasks.js` `POST /:id/actions/:type` (byte-unchanged), `authedFetch.ts` / `useRealtimeEvents.ts`, `backend/db/migrations/` (**NO new migration** — mig 157 already live), partsCall / outbound lifecycle.
+
+### BTN-01: backend — `SELECT_TASK` returns `actions` (the bug fix)
+**Цель:** add `t.actions` to the `SELECT_TASK` projection so every task read payload carries it.
+**Файлы:** `backend/src/db/tasksQueries.js`.
+**Трогать нельзя:** the `createTask` INSERT (already handles `actions`), execute route, registry.
+**Ожидаемый результат:** `getTaskById` / `listEntityTasks` / `listTasks` + createTask return include `actions` (null when absent); TaskCard guard now true for the part-arrived task → buttons render on the Job card. SQL still `company_id`-filtered (isolation unchanged). Full tasks jest suite green (additive column; no snapshot break).
+**Зависимости:** none. **Wave 0.** Статус: ✅ DONE
+
+### BTN-02: backend — Pulse `open_task` carries `actions`
+**Цель:** hydrate `actions` into the Pulse "Action Required" open_task.
+**Файлы:** `backend/src/db/timelinesQueries.js`, `backend/src/routes/calls.js`.
+**Трогать нельзя:** the by-contact WHERE / ORDER BY / params (LIST-PAGINATION-001) — SELECT columns only; no other open_task builder exists.
+**Ожидаемый результат:** open_task LATERAL selects `ot.actions`; outer SELECT aliases `open_task.actions as open_task_actions`; `calls.js` open_task object gains `actions: c.open_task_actions || null`. Query stays `tl.company_id = $1`-scoped; additive columns only.
+**Зависимости:** none (disjoint files from BTN-01). **Wave 0.** Статус: ✅ DONE
+
+### BTN-03: frontend — extract shared `TaskActionButtons` + consume in TaskCard (+ robot confirm)
+**Цель:** DRY the action buttons into one component used by both surfaces; add the `robot_call` confirm.
+**Файлы:** NEW `frontend/src/components/tasks/TaskActionButtons.tsx`, `frontend/src/components/tasks/TaskCard.tsx`.
+**Трогать нельзя:** `tasksApi.ts` types (reused as-is), `TaskStack.tsx`.
+**Ожидаемый результат:** `TaskActionButtons({ taskId, actions, onChanged? })` self-gates on `useAuthz().hasPermission('tasks.manage')`; renders button row + spinner + failed-reason; `robot_call` → `window.confirm('Start automated call to the customer?')` before POST; `manual_call` dials (desktop softphone / mobile `tel:`) with NO confirm. `TaskCard.tsx` renders it in place of its inline block; Done/Snooze/Edit unchanged. `npm run build` green.
+**Зависимости:** none (disjoint files; uses existing `tasksApi`). **Wave 0.** Статус: ✅ DONE
+
+### BTN-04: frontend — Pulse AR banner renders the shared buttons
+**Цель:** show the action buttons in the Pulse "Action Required" banner.
+**Файлы:** `frontend/src/pages/PulsePage.tsx`, `frontend/src/types/pulse.ts`.
+**Трогать нельзя:** the by-contact fetch / pagination hooks.
+**Ожидаемый результат:** `PulseTask.actions?: TaskAction[]` (import from `components/tasks/tasksApi`); in the AR banner `!isSnoozed` block, render `<TaskActionButtons taskId={conv.open_task.id} actions={conv.open_task.actions} onChanged={() => p.refetchContacts()} />` when `conv.open_task?.actions?.length`. Self-gating → no new permission plumbing. `npm run build` green.
+**Зависимости:** **after BTN-03** (imports the component) + BTN-02 (live data). **Wave 1.** Статус: ✅ DONE
+
+### BTN-05: verify — backend jest + frontend build + confirm logic review
+**Цель:** lock the fix with tests + build.
+**Файлы:** NEW `tests/tasksActionsProjection.test.js` (or extend `tests/routes/tasks.test.js`); frontend = build only.
+**Трогать нельзя:** production code.
+**Ожидаемый результат:** jest asserts `getTaskById` / `listEntityTasks` return `actions` and that the Pulse open_task assembly carries `actions`; existing `tasksActionRoute.test.js` / `tasksCount.test.js` stay green; `cd frontend && npm run build` exit 0. Frontend behavior (confirm gates robot_call; manual_call no confirm; manage-gate hides buttons) = manual / logic-review (no frontend test runner).
+**Зависимости:** **after BTN-01…04.** **Wave 2.** Статус: ✅ DONE
+
+### BTN-06: backend — part-arrived task also surfaces in Pulse "Action Required" (thread-link)
+**Цель:** thread-link the auto-created part-arrived task to the customer's canonical timeline so the same buttons appear in the Pulse AR banner, not only on the Job card.
+**Файлы:** `backend/src/services/partsCallService.js`.
+**Трогать нельзя:** the status-transition hook must stay non-fatal; `taskActions/registry.js`; migrations.
+**Ожидаемый результат:** `onPartArrived` best-effort, **NON-FATAL** links the created task to the contact's timeline via `findOrCreateTimelineByContact` (company-scoped, idempotent `WHERE thread_id IS NULL`); job-only when there is no contact. Any failure logs and never breaks the `Part arrived` transition or task creation. Link / skip-when-no-contact / non-fatal branches covered by extended `tests/partsCallService.test.js` (proven red→green).
+**Зависимости:** none (disjoint file). **Wave 0.** Статус: ✅ DONE
+
+### OUTBOUND-PARTS-CALL-BTN-001 — порядок выполнения и параллелизм
+**Wave 0 (parallel, disjoint files):** BTN-01 (`tasksQueries.js`) ∥ BTN-02 (`timelinesQueries.js` + `calls.js`) ∥ BTN-03 (`TaskActionButtons.tsx` + `TaskCard.tsx`) ∥ BTN-06 (`partsCallService.js`).
+**Wave 1:** BTN-04 (`PulsePage.tsx` + `pulse.ts`) — after BTN-03 (component import) + BTN-02 (data).
+**Wave 2:** BTN-05 (tests + build) — after all.
+No file overlaps between BTN-01/02/03/04 → the only ordering is BTN-04's import dependency on BTN-03 and data dependency on BTN-02.
