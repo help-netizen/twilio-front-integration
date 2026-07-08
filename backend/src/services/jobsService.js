@@ -844,6 +844,45 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     };
 }
 
+/**
+ * Sum a single job's LOCAL invoice money (dollars), company-scoped, EXCLUDING
+ * void/voided/refunded — the SAME exclusion set as listJobs' payments rollup
+ * (see ~L815). Used by the outbound "part arrived" call flow so the voice agent
+ * can answer "how much do I owe?" without a live DB lookup during the call.
+ *
+ * Returns dollar Numbers (pg NUMERIC comes back as strings → coerced), or null
+ * for ALL three fields when the job has NO local invoice row — mirroring
+ * listJobs' "absent from paymentsMap" signal. NEVER invents 0 for a job that has
+ * no invoice (a job whose only invoices are void/refunded still counts as having
+ * invoices → sums to 0, not null, exactly as listJobs behaves).
+ *
+ * @param {number|string} jobId    Job whose invoices to sum.
+ * @param {string}        companyId Tenant scope (mandatory; missing → null result).
+ * @returns {Promise<{ balanceDue:number|null, total:number|null, amountPaid:number|null }>}
+ */
+async function getJobBalanceDue(jobId, companyId) {
+    const NONE = { balanceDue: null, total: null, amountPaid: null };
+    // Company scoping is mandatory — without it we neither query nor guess.
+    if (!jobId || !companyId) return NONE;
+
+    const { rows } = await db.query(`
+        SELECT
+            SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.total, 0)       ELSE 0 END) AS total,
+            SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS amount_paid,
+            SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS balance_due
+        FROM invoices i
+        WHERE i.job_id = $1 AND i.company_id = $2
+        GROUP BY i.job_id
+    `, [jobId, companyId]);
+
+    // GROUP BY yields NO row when the job has no local invoice → the "no invoice"
+    // signal (all null). Any invoice row present → one row of numeric sums.
+    if (rows.length === 0) return NONE;
+    const r = rows[0];
+    const num = (v) => (v == null ? null : Number(v));
+    return { balanceDue: num(r.balance_due), total: num(r.total), amountPaid: num(r.amount_paid) };
+}
+
 // =============================================================================
 // FSM — Manual status transitions
 // =============================================================================
@@ -1481,6 +1520,7 @@ module.exports = {
     getJobById,
     getJobByZbId,
     listJobs,
+    getJobBalanceDue,
     updateBlancStatus,
     syncFromZenbooker,
     mergeNotes,

@@ -232,6 +232,26 @@ async function processAttempt(attempt) {
         return;
     }
 
+    // --- Outstanding balance for the voice agent ("how much do I owe?"). ---
+    // Company-scoped local-invoice rollup. NON-FATAL: a lookup fault must NEVER
+    // break the dial, so on any error we simply omit the balance and place the
+    // call anyway. Formats a speak-safe STRING for the assistant:
+    //   >0   → "$X.XX"                 (mirrors getInvoiceSummary's currency fmt)
+    //   ≤0   → "paid in full, nothing due"
+    //   null → left undefined/omitted  (job has no local invoice; the prompt then
+    //          says a teammate will confirm — we never invent a number).
+    let balanceDue;
+    try {
+        const bal = await jobsService.getJobBalanceDue(jobId, companyId);
+        if (bal && bal.balanceDue != null) {
+            balanceDue = bal.balanceDue > 0
+                ? `$${Number(bal.balanceDue).toFixed(2)}`
+                : 'paid in full, nothing due';
+        }
+    } catch (err) {
+        console.warn('[outboundCallWorker] getJobBalanceDue failed (non-fatal), omitting balance:', err.message);
+    }
+
     // --- Place the call (safe-fail: placeCall resolves, never rejects). ---
     const result = await outboundCallService.placeCall({
         companyId,
@@ -240,6 +260,7 @@ async function processAttempt(attempt) {
         customerName: job.customer_name,
         customerNumber: attempt.phone || job.customer_phone,
         slot: attempt.slot_json || undefined,
+        balanceDue,
     });
 
     if (result && result.ok) {

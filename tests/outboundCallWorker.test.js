@@ -19,6 +19,7 @@ jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 jest.mock('../backend/src/services/jobsService', () => ({
     getJobById: jest.fn(),
     addNote: jest.fn(async () => ({})),
+    getJobBalanceDue: jest.fn(),
 }));
 jest.mock('../backend/src/services/outboundCallService', () => ({
     placeCall: jest.fn(),
@@ -70,6 +71,9 @@ beforeEach(() => {
     jest.clearAllMocks();
     settings.resolve.mockResolvedValue({ ...DEFAULT_SETTINGS });
     groupRouting.isBusinessHours.mockResolvedValue(true);
+    // Default: no local invoice → balance omitted (prior behavior). Overridden
+    // per-test where the balance-injection path is exercised.
+    jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: null, total: null, amountPaid: null });
     // resolveBusinessHoursGroup reads companies/user_groups — default a group row.
     mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
 });
@@ -283,5 +287,67 @@ describe('TC-OPC-U11: processAttempt — job/status guards + retry-or-exhaust', 
             (c) => c[1] && typeof c[1][2] === 'string' && c[1][2].startsWith('worker_error'),
         );
         expect(termCall).toBeTruthy();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Balance injection (OUTBOUND-PARTS-CALL) — processAttempt resolves the job's
+// outstanding balance (company-scoped, non-fatal) and passes a speak-safe STRING
+// into placeCall so the voice agent can answer "how much do I owe?".
+// ---------------------------------------------------------------------------
+describe('processAttempt — outstanding-balance injection into placeCall', () => {
+    test('balance > 0 → placeCall gets balanceDue formatted "$X.XX", company-scoped lookup', async () => {
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: 200, total: 300, amountPaid: 100 });
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
+
+        await worker.processAttempt(mkAttempt());
+
+        // Resolved with the attempt's company + job (company scoping).
+        expect(jobsService.getJobBalanceDue).toHaveBeenCalledWith(50, CO);
+        expect(outboundCallService.placeCall).toHaveBeenCalledWith(
+            expect.objectContaining({ balanceDue: '$200.00' }),
+        );
+    });
+
+    test('balance === 0 → "paid in full, nothing due"', async () => {
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: 0, total: 0, amountPaid: 0 });
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
+
+        await worker.processAttempt(mkAttempt());
+
+        expect(outboundCallService.placeCall).toHaveBeenCalledWith(
+            expect.objectContaining({ balanceDue: 'paid in full, nothing due' }),
+        );
+    });
+
+    test('balanceDue null (no local invoice) → placeCall called with balanceDue undefined (omitted)', async () => {
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: null, total: null, amountPaid: null });
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
+
+        await worker.processAttempt(mkAttempt());
+
+        expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
+        expect(outboundCallService.placeCall.mock.calls[0][0].balanceDue).toBeUndefined();
+    });
+
+    test('getJobBalanceDue THROWS → non-fatal, call still placed (balanceDue omitted)', async () => {
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        jobsService.getJobBalanceDue.mockRejectedValue(new Error('db boom'));
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await worker.processAttempt(mkAttempt());
+
+        // The dial happened despite the balance lookup throwing.
+        expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
+        expect(outboundCallService.placeCall.mock.calls[0][0].balanceDue).toBeUndefined();
+        warnSpy.mockRestore();
     });
 });

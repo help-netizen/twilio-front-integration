@@ -51,9 +51,15 @@ function getClient() {
  * @param {string}  args.slot.start     Slot start.
  * @param {string}  args.slot.end       Slot end.
  * @param {string}  args.slot.key       Slot key (engine idempotency handle).
+ * @param {string}  [args.balanceDue]   Pre-formatted outstanding-balance phrase
+ *                                       ("$X.XX" / "paid in full, nothing due")
+ *                                       for "how much do I owe?". Resolved by the
+ *                                       worker; omitted when unknown (no local
+ *                                       invoice). Passed through to variableValues
+ *                                       ONLY when defined — never as an empty key.
  * @returns {Promise<{ok:true, vapiCallId:string} | {ok:false, error:string}>}
  */
-async function placeCall({ companyId, jobId, contactId, customerName, customerNumber, slot } = {}) {
+async function placeCall({ companyId, jobId, contactId, customerName, customerNumber, slot, balanceDue } = {}) {
     const apiKey = process.env.VAPI_API_KEY;
     const assistantId = process.env.VAPI_OUTBOUND_ASSISTANT_ID;
     const phoneNumberId = process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID;
@@ -101,6 +107,10 @@ async function placeCall({ companyId, jobId, contactId, customerName, customerNu
                 slotStart: s.start,
                 slotEnd: s.end,
                 slotKey: s.key,
+                // Outstanding-balance phrase for "how much do I owe?". Included
+                // ONLY when the worker resolved one (a string) — never an empty
+                // or undefined key. Absence → the assistant prompt handles it.
+                ...(balanceDue !== undefined ? { balanceDue } : {}),
             },
         },
     };

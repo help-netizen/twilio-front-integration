@@ -138,9 +138,10 @@ describe('TC-OPC-U08: outboundCallService.placeCall — VAPI request contract', 
 
         const [, bodyArg] = mockPost.mock.calls[0];
         expect(bodyArg.phoneNumberId).toBeUndefined();
+        // DIAL-FIX-001: VAPI transient Twilio caller-ID uses `twilioPhoneNumber` (E.164),
+        // NOT `provider`/`number` (those get a 400 and the call never places).
         expect(bodyArg.phoneNumber).toEqual({
-            provider: 'twilio',
-            number: '+16175006181',
+            twilioPhoneNumber: '+16175006181',
             twilioAccountSid: 'ACtest',
             twilioAuthToken: 'tok_test',
         });
@@ -198,5 +199,40 @@ describe('TC-OPC-U08: outboundCallService.placeCall — VAPI request contract', 
         const out = await outboundCallService.placeCall({ ...CALL_ARGS, customerNumber: null });
         expect(out).toEqual({ ok: false, error: 'missing_customer_number' });
         expect(mockPost).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// balanceDue injection (OUTBOUND-PARTS-CALL balance) — passed through to
+// variableValues verbatim ONLY when defined; never sent as an empty/undefined
+// key so the assistant prompt can distinguish "unknown" from "nothing due".
+// ---------------------------------------------------------------------------
+describe('placeCall — balanceDue → variableValues', () => {
+    test('balanceDue passed → included in variableValues as the exact string', async () => {
+        mockPost.mockResolvedValue({ data: { id: 'vapi_call_b' } });
+
+        await outboundCallService.placeCall({ ...CALL_ARGS, balanceDue: '$200.00' });
+
+        const [, bodyArg] = mockPost.mock.calls[0];
+        expect(bodyArg.assistantOverrides.variableValues.balanceDue).toBe('$200.00');
+    });
+
+    test('balanceDue passed as "paid in full, nothing due" → passed through verbatim', async () => {
+        mockPost.mockResolvedValue({ data: { id: 'vapi_call_b2' } });
+
+        await outboundCallService.placeCall({ ...CALL_ARGS, balanceDue: 'paid in full, nothing due' });
+
+        const [, bodyArg] = mockPost.mock.calls[0];
+        expect(bodyArg.assistantOverrides.variableValues.balanceDue).toBe('paid in full, nothing due');
+    });
+
+    test('balanceDue omitted → the key is ABSENT from variableValues (not undefined)', async () => {
+        mockPost.mockResolvedValue({ data: { id: 'vapi_call_c' } });
+
+        await outboundCallService.placeCall(CALL_ARGS); // no balanceDue
+
+        const [, bodyArg] = mockPost.mock.calls[0];
+        // Not just undefined — the key must not be present at all.
+        expect(Object.keys(bodyArg.assistantOverrides.variableValues)).not.toContain('balanceDue');
     });
 });
