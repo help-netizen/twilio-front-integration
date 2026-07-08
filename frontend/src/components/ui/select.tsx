@@ -257,22 +257,23 @@ function SelectContent({
 
   // Mobile → canonical BottomSheet listing the options (SelectItems become rows).
   if (ctx?.isMobile) {
+    // A long list (e.g. the 51-state select) needs a FIXED-height sheet so the sheet's
+    // own body is a real scroll container — the reliable iOS pattern every other mobile
+    // sheet uses. size="auto" (content-height) does NOT create a scrollable body on iOS
+    // Safari for a nested list, so the list wouldn't scroll and the touch fell through to
+    // the form behind. Short lists keep the compact content-height sheet.
+    const itemCount = React.Children.toArray(children).length;
+    const size = itemCount > 8 ? 'full' : 'auto';
     return (
       <BottomSheet
         open={ctx.open}
         onClose={() => ctx.setOpen(false)}
         title={ctx.sheetTitle}
-        size="auto"
+        size={size}
       >
-        {/* The list is its OWN definite-height scroll container — a definite max-height +
-            overflow-y:auto is the reliable iOS-Safari scroll pattern. Without it, a long
-            list (e.g. the 51-state select) doesn't scroll and the touch falls through to
-            the form panel behind the sheet. overscroll-contain keeps the scroll inside. */}
-        <div
-          className="flex flex-col gap-0.5 py-1 overflow-y-auto overscroll-contain"
-          style={{ maxHeight: '60dvh', WebkitOverflowScrolling: 'touch' }}
-          role="listbox"
-        >
+        {/* Plain list — the BottomSheet body owns the scroll (flex-1 + min-height:0 +
+            overflow-y:auto in a fixed-height panel = reliable internal scroll). */}
+        <div className="flex flex-col gap-0.5 py-1" role="listbox">
           {children}
         </div>
       </BottomSheet>
@@ -368,7 +369,7 @@ function SelectItem({
           ctx.setOpen(false);
         }}
         className={cn(
-          "relative flex w-full cursor-pointer select-none items-center gap-2 rounded-md py-2.5 pr-9 pl-3 text-left text-sm outline-none transition-colors",
+          "relative flex w-full shrink-0 cursor-pointer select-none items-center gap-2 rounded-md py-2.5 pr-9 pl-3 text-left text-sm outline-none transition-colors",
           "hover:bg-accent focus-visible:bg-accent focus-visible:outline-none",
           "disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
           className,
