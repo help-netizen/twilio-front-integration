@@ -8,6 +8,27 @@ export const US_STATES = [
     "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
 ] as const;
 
+/**
+ * Derive a US state abbreviation from a ZIP code by its 3-digit prefix, for the
+ * New England service area (MA/RI/NH/ME/VT/CT). Used to fill the State field when
+ * an address arrives with a ZIP but no state — e.g. a contact-record autofill, a
+ * place pick whose description omitted the state, or Safari autofilling the text
+ * inputs but not the State <Select>. Returns '' for any prefix we are NOT certain
+ * of — it never guesses wrong; out-of-region ZIPs are picked manually.
+ */
+export function stateFromZip(zip: string | null | undefined): string {
+    const m = String(zip ?? "").match(/^\s*(\d{3})/);
+    if (!m) return "";
+    const p = Number(m[1]);
+    if (p >= 10 && p <= 27) return "MA";
+    if (p === 28 || p === 29) return "RI";
+    if (p >= 30 && p <= 38) return "NH";
+    if (p >= 39 && p <= 49) return "ME";
+    if (p >= 50 && p <= 59) return "VT";
+    if (p >= 60 && p <= 69) return "CT";
+    return "";
+}
+
 export interface AddressFields {
     street: string;
     apt: string;

@@ -193,6 +193,10 @@ export function BottomSheet({
                         minHeight: 0,
                         overflowY: 'auto',
                         WebkitOverflowScrolling: 'touch',
+                        // Keep touch-scroll INSIDE the sheet — without this, dragging a long
+                        // list (e.g. the 51-item State select) chains to and scrolls the form
+                        // panel behind the sheet instead of the list itself (iOS Safari).
+                        overscrollBehavior: 'contain',
                         paddingLeft: 20,
                         paddingRight: 20,
                         paddingTop: headerVisible ? 0 : 4,
