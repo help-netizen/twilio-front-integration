@@ -25,6 +25,7 @@
  * mapping of the hook's raw drag offset. iOS safe-area lives here too.
  */
 
+import { useEffect, useRef } from 'react';
 import { Overlay } from './Overlay';
 import { OverlayClose } from './OverlayClose';
 
@@ -73,6 +74,34 @@ export function BottomSheet({
 }: BottomSheetProps) {
     const headerVisible = showHeader ?? !!title;
     const label = title ?? ariaLabel;
+
+    // SELECT-IN-DIALOG-SCROLL-FIX-002 — when this sheet is opened from inside a Radix
+    // MODAL Dialog (e.g. the State <Select> in the New Job form), Radix wraps the dialog
+    // in react-remove-scroll with `shards: [contentRef]` — so ONLY the form is an allowed
+    // scroll area. react-remove-scroll adds a `touchmove`/`wheel` listener on `document`
+    // (BUBBLE phase, {passive:false}) that preventDefaults any scroll whose target is
+    // OUTSIDE the lock node / shards. This sheet portals to <body> — outside that — so on
+    // iOS its touch-scroll was being cancelled (list wouldn't scroll; the touch fell to the
+    // form behind). Because that listener is on `document` in the bubble phase, stopping
+    // propagation on our own scroll body BEFORE the event reaches `document` blinds
+    // react-remove-scroll to it, and the browser's native scroll proceeds. stopPropagation
+    // only (never preventDefault) → passive-safe, and pointer-event drag-to-dismiss (which
+    // uses Pointer events, not Touch events) is unaffected.
+    const bodyRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        const el = bodyRef.current;
+        if (!el) return;
+        const stop = (e: Event) => e.stopPropagation();
+        el.addEventListener('touchstart', stop, { passive: true });
+        el.addEventListener('touchmove', stop, { passive: true });
+        el.addEventListener('wheel', stop, { passive: true });
+        return () => {
+            el.removeEventListener('touchstart', stop);
+            el.removeEventListener('touchmove', stop);
+            el.removeEventListener('wheel', stop);
+        };
+    }, [open]);
 
     // Height policy — one knob (tokens) drives standard/full; auto is content-sized.
     const heightStyle: React.CSSProperties =
@@ -195,6 +224,7 @@ export function BottomSheet({
 
                 {/* Scrollable body — min-height:0 is REQUIRED for internal scroll in a fixed-height flex panel */}
                 <div
+                    ref={bodyRef}
                     className={bodyClassName}
                     style={{
                         flex: '1 1 auto',

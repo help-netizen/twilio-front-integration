@@ -140,11 +140,15 @@ function Select({
   // DESKTOP: forward value/defaultValue/onValueChange EXACTLY as the call site gave them,
   // so Radix sees the identical props it saw before this wrapper existed (controlled OR
   // uncontrolled — byte-identical, and uncontrolled selection still sticks).
-  // MOBILE: drive Radix controlled by our mirrored value and pin open={false} — the native
-  // listbox never mounts (our BottomSheet is the picker), but the Root stays mounted so the
-  // trigger keeps its aria wiring.
+  // MOBILE: the Root stays mounted (open={false}) so any SelectGroup aria wiring survives,
+  // but we DELIBERATELY do NOT wire our `onValueChange` into it. SELECT-IN-DIALOG-SELECT-FIX-001:
+  // on mobile the SelectItems live in OUR BottomSheet, never in Radix's Viewport, so Radix's
+  // Root doesn't recognize the chosen value — with onValueChange wired, it "corrected" the
+  // unknown value by calling onValueChange('') right after our own call, wiping the selection
+  // (the sheet closed with nothing chosen). We own value ourselves via SelectContext; the
+  // Root is passed `value` only as a controlled mirror it can never override or reset.
   const radixValueProps = isMobile
-    ? { value, onValueChange: handleValueChange, open: false as const }
+    ? { value, open: false as const }
     : { value: valueProp, defaultValue, onValueChange };
 
   return (
