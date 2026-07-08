@@ -7,7 +7,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Checkbox } from "./ui/checkbox";
 import { Loader2, MapPin } from "lucide-react";
 import type { SavedAddress } from "../services/contactsApi";
-import { US_STATES, EMPTY_ADDRESS, hasFirstSpaceGate, parseAddressComponents, parseDescription } from "./addressAutoHelpers";
+import { US_STATES, EMPTY_ADDRESS, hasFirstSpaceGate, parseAddressComponents, parseDescription, stateFromZip } from "./addressAutoHelpers";
+
+/**
+ * Fill the State from the ZIP when an emitted address has a ZIP but no state (a place
+ * pick whose description omitted the state, a saved/typed ZIP). Applied synchronously
+ * AT THE POINT OF CHANGE — NOT a reactive effect — so it derives exactly once per emit
+ * and can never loop (the earlier effect-based version white-screened the New Job form).
+ * Never overrides a state that's already set; unknown ZIP → '' (manual pick).
+ */
+function withDerivedState(f: AddressFields): AddressFields {
+    return (!f.state && /^\d{5}/.test(f.zip || "")) ? { ...f, state: stateFromZip(f.zip) || "" } : f;
+}
 import type { AddressFields, SuggestionItem } from "./addressAutoHelpers";
 
 export type { AddressFields, SuggestionItem };
@@ -48,13 +59,13 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
 
     const selectSuggestion = useCallback(async (item: SuggestionItem) => {
         clearSuggestions(); setActiveIndex(-1); setGateReady(false);
-        if (!item.place_id || !useDetails) { const parsed = parseDescription(item.description); onChange(parsed); setSearchValue(parsed.street, false); return; }
+        if (!item.place_id || !useDetails) { const parsed = parseDescription(item.description); onChange(withDerivedState(parsed)); setSearchValue(parsed.street, false); return; }
         setSearchValue(item.description, false); setDetailsLoading(true);
         try {
             const result = await getDetails({ placeId: item.place_id, fields: ["address_components", "geometry"] });
-            if (result && typeof result === "object" && "address_components" in result && result.address_components) { const parsed = parseAddressComponents(result.address_components, result.geometry); onChange(parsed); setSearchValue(parsed.street, false); }
-            else { const parsed = parseDescription(item.description); onChange(parsed); setSearchValue(parsed.street, false); }
-        } catch (err) { console.error("Place Details error:", err); const parsed = parseDescription(item.description); onChange(parsed); setSearchValue(parsed.street, false); }
+            if (result && typeof result === "object" && "address_components" in result && result.address_components) { const parsed = parseAddressComponents(result.address_components, result.geometry); onChange(withDerivedState(parsed)); setSearchValue(parsed.street, false); }
+            else { const parsed = parseDescription(item.description); onChange(withDerivedState(parsed)); setSearchValue(parsed.street, false); }
+        } catch (err) { console.error("Place Details error:", err); const parsed = parseDescription(item.description); onChange(withDerivedState(parsed)); setSearchValue(parsed.street, false); }
         finally { setDetailsLoading(false); }
     }, [setSearchValue, clearSuggestions, onChange, useDetails]);
 
@@ -66,8 +77,8 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
         else if (e.key === "Escape") { clearSuggestions(); setActiveIndex(-1); }
     }
 
-    function handleFieldChange(field: keyof AddressFields, val: string) { onChange({ ...address, [field]: val }); }
-    function handleSelectSavedAddress(addr: SavedAddress) { const fields: AddressFields = { street: addr.street_line1, apt: addr.street_line2 || '', city: addr.city, state: addr.state, zip: addr.postal_code, lat: addr.lat, lng: addr.lng }; onChange(fields); setSearchValue(addr.street_line1, false); setShowSaved(false); clearSuggestions(); setGateReady(false); onSelectSaved?.(addr.id); }
+    function handleFieldChange(field: keyof AddressFields, val: string) { onChange(withDerivedState({ ...address, [field]: val })); }
+    function handleSelectSavedAddress(addr: SavedAddress) { const fields: AddressFields = { street: addr.street_line1, apt: addr.street_line2 || '', city: addr.city, state: addr.state, zip: addr.postal_code, lat: addr.lat, lng: addr.lng }; onChange(withDerivedState(fields)); setSearchValue(addr.street_line1, false); setShowSaved(false); clearSuggestions(); setGateReady(false); onSelectSaved?.(addr.id); }
 
     const showDropdown = gateReady && (loading || status === "OK") && (loading || suggestions.length > 0);
 

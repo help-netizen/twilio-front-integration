@@ -264,7 +264,15 @@ function SelectContent({
         title={ctx.sheetTitle}
         size="auto"
       >
-        <div className="flex flex-col gap-0.5 py-1" role="listbox">
+        {/* The list is its OWN definite-height scroll container — a definite max-height +
+            overflow-y:auto is the reliable iOS-Safari scroll pattern. Without it, a long
+            list (e.g. the 51-state select) doesn't scroll and the touch falls through to
+            the form panel behind the sheet. overscroll-contain keeps the scroll inside. */}
+        <div
+          className="flex flex-col gap-0.5 py-1 overflow-y-auto overscroll-contain"
+          style={{ maxHeight: '60dvh', WebkitOverflowScrolling: 'touch' }}
+          role="listbox"
+        >
           {children}
         </div>
       </BottomSheet>

@@ -20,7 +20,7 @@ import { SelectItem } from '../ui/select';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { JOB_SOURCES } from '../leads/CreateLeadDialog';
 import { AddressAutocomplete } from '../AddressAutocomplete';
-import { EMPTY_ADDRESS, type AddressFields } from '../addressAutoHelpers';
+import { EMPTY_ADDRESS, stateFromZip, type AddressFields } from '../addressAutoHelpers';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
 import { useZipCheck } from '../../hooks/useZipCheck';
 import * as contactsApi from '../../services/contactsApi';
@@ -153,12 +153,16 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
         const name = c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || c.phone_e164 || `Contact #${c.id}`;
         setSelectedContact({ id: c.id, name });
         if (addr) {
+            const zip = addr.postal_code ?? '';
+            // Derive State from the ZIP when the contact record has none (point-of-change,
+            // not a reactive effect → cannot loop). Unknown ZIP → '' (manual pick).
+            const state = (addr.state ?? '') || (/^\d{5}/.test(zip) ? (stateFromZip(zip) || '') : '');
             setAddress({
                 street: addr.line1 ?? '',
                 apt: addr.line2 ?? '',
                 city: addr.city ?? '',
-                state: addr.state ?? '',
-                zip: addr.postal_code ?? '',
+                state,
+                zip,
                 lat: addr.lat ?? null,
                 lng: addr.lng ?? null,
             });
