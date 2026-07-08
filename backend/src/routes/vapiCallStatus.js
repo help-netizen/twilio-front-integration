@@ -106,6 +106,14 @@ async function addAttemptNote(jobId, text) {
 router.post('/', webhookSecretAuth, async (req, res) => {
     try {
         const message = req.body && req.body.message;
+        // Only end-of-call reports classify an attempt. Other server messages
+        // (status-update, conversation-update, tool-calls…) can reach this same
+        // server.url and carry the same call.id while the call is still LIVE —
+        // acting on them would prematurely terminate the dialing attempt and
+        // schedule a spurious retry mid-call. Ignore anything else → 200 no-op.
+        if (!message || message.type !== 'end-of-call-report') {
+            return res.json({ ok: true });
+        }
         // The correlation key — the ONLY value we trust from the body.
         const vapiCallId = message && message.call && message.call.id;
         const endedReason = message && (message.endedReason || (message.call && message.call.endedReason));

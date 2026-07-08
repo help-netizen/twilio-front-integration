@@ -163,6 +163,16 @@ describe('company derived from attempt row, not body (S10)', () => {
         expect(res.status).toBe(200);
         expect(mockQuery).not.toHaveBeenCalled();
     });
+
+    test('non-end-of-call message (mid-call status-update, same call.id) → 200 no-op, no correlation/classification', async () => {
+        // A live-call server message that shares this server.url and carries the
+        // dialing attempt's call.id must NOT terminate the attempt or retry.
+        withAttempt(attemptRow()); // would match if it ever queried
+        const res = await post({ message: { type: 'status-update', call: { id: 'vc_dialing' } } });
+        expect(res.status).toBe(200);
+        expect(mockQuery).not.toHaveBeenCalled();
+        expect(mockComputeNext).not.toHaveBeenCalled();
+    });
 });
 
 // ── S9 — idempotence: a non-dialing (terminal) attempt is a no-op ─────────────
