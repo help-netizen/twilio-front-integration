@@ -7734,3 +7734,145 @@ wave 5 (final):  T17 (real-DB verify harness ← весь backend)
 **Deploy / owner-gated:** новые env `VAPI_API_KEY`/`VAPI_OUTBOUND_ASSISTANT_ID`/`VAPI_OUTBOUND_PHONE_NUMBER_ID`/`FEATURE_OUTBOUND_CALL_WORKER`/`OUTBOUND_CALL_WORKER_INTERVAL_MS`/webhook-secret (опц. `VAPI_WEBHOOK_SECRET`) — deploy-config. Live-push `parts-visit-scheduler.json` + прод-деплой (миграции 156–159) — только с явного «да» владельца (стандинг-рул). На деплое — force session logout (memory).
 
 **Статус:** ✅ DONE — все T1–T18 реализованы. Unit **87/87** зелёных; real-DB harness `scripts/verify-outbound-parts-call-001.js` **13/13** (+ sabotage-контроль ×2); frontend `npm run build` зелёный; **Reviewer APPROVED** (после фиксов). Деплой owner-gated: миграции 156–159 на прод, env выше (+ `FEATURE_OUTBOUND_CALL_WORKER=true`), пуш `parts-visit-scheduler.json` в VAPI. **Перед прод — прогнать harness на prod-copy.**
+
+## STRIPE-ADHOC-PAY-001 — план
+
+> **Дата:** 2026-07-07 · Planner (агент 05)
+> **Фича:** invoice-independent Stripe collect (произвольная сумма) из Job → Finance tab — keyed card (уже есть), Stripe-hosted Checkout link (create/get/send/copy), одна `payment_transactions` строка `job_id` set + `invoice_id NULL` через неизменный webhook.
+> **Scope:** backend (`stripePaymentsService.js`, `db/stripePaymentsQueries.js`, `routes/jobs.js` + sibling-тест `tests/stripeAdhocPay.test.js`) + frontend (`stripePaymentsApi.ts`, `ManualCardDialog.tsx`, `CollectPaymentDialog.tsx` [new], `JobFinancialsTab.tsx`, `App.tsx` + `PublicPayThanksPage.tsx` [new]). **NO migration** (max остаётся 155). Инвойс-путь байт-неизменен.
+> **Related docs:** requirements `## STRIPE-ADHOC-PAY-001`; architecture `## STRIPE-ADHOC-PAY-001`; spec `docs/specs/STRIPE-ADHOC-PAY-001-SPEC.md` (§0..§6); test-cases `docs/test-cases/STRIPE-ADHOC-PAY-001.md` (46 TC).
+> **Verified ground-truth (Planner):** (1) keyed-card job path (`POST /:id/stripe-manual-card-session`, `routes/jobs.js:877`) → `createManualCardSession` → `createCardSession` → `resolveSurfaceContext(companyId, params)` (`stripePaymentsService.js:304`), поэтому `assertAdhocAmount` для keyed-card прилетает АВТОМАТОМ через новую `jobId`-ветку `resolveSurfaceContext` — отдельного route-эдита НЕ нужно. (2) `ManualCardDialog.tsx:12` props = `{ invoiceId: number }`, `:36` зовёт `invoiceStripeApi.manualCardSession(invoiceId)`; sole call-site `InvoiceDetailPanel.tsx:810`. (3) `App.tsx:108` = `<Route path="/pay/:token" …>`; публичные роуты — это plain `<Route>` ВНЕ `<ProtectedRoute>` (в `App.tsx` НЕТ массива `PUBLIC_AUTH_PATHS` — публичность = размещение роута вне ProtectedRoute); `/pay/thanks` надо объявить строкой ВЫШЕ `/pay/:token`. (4) `canCollect` true для `{connected_ready, payouts_disabled}` — гейт = `status.can_collect`, НЕ литерал `connected_ready`.
+
+### SAP-01: Backend — service+queries+routes+sibling-тест (job link/get/send + assertAdhocAmount + resolveSurfaceContext job-ветка)
+
+**Цель:** весь backend-seam фичи одним когерентным куском: новый `assertAdhocAmount`, `jobId`-ветка в `resolveSurfaceContext` (грузит job → `contactId` + `email`/`phone`/`customerName`, зовёт `assertAdhocAmount`), новые `ensureJobPaymentLink`/`getJobPaymentLink`/`sendJobPaymentLink` (send = РЕАЛЬНЫЙ dispatch по SEND-DOC-001), новые job-scoped queries, три route в `jobs.js`, и sibling jest-файл, покрывающий это.
+
+**Файлы, которые можно менять:**
+- `backend/src/services/stripePaymentsService.js` — добавить `assertAdhocAmount` (§4.4); расширить `resolveSurfaceContext` `else if (jobId)` веткой (lazy `require('./jobsService').getJobById(jobId, companyId)` → 404 foreign; set `contactId`/`email`/`phone`/`customerName`; `amount = assertAdhocAmount(amount)`) и заменить bare-`else` `amount>0` на `assertAdhocAmount` (тот же `INVALID_AMOUNT`); добавить `ensureJobPaymentLink`/`getJobPaymentLink`/`sendJobPaymentLink` (arch §2 сигнатуры; send → §3.4: `resolveSurfaceContext` → 422 `NO_CONTACT` если ни email ни phone → channel select (forced honored, иначе email-else-SMS) → `ensureJobPaymentLink` → DISPATCH: email через `emailMailboxService.getMailboxStatus`→409 `MAILBOX_NOT_CONNECTED` + `emailService.sendEmail(companyId,{to,subject,body,userId,userEmail})` без files; SMS через `resolveCompanyProxyE164`→422 `NO_PROXY`, `toE164`→422 `NO_PHONE`, `getOrCreateConversation`+`conversationsService.sendMessage(conv.id,{body})`, wallet→402 `WALLET_BLOCKED` → `auditService.log('stripe_payments.payment_link_sent', target_type:'job')`, БЕЗ `invoicesQueries.createEvent` → `{sent:true,url,channel}`); `module.exports` += три fn; `successUrl=cancelUrl=`${baseUrl()}/pay/thanks``; idempotencyKey `job-${companyId}-${jobId}-${amount}`; session insert `invoice_id:null, job_id, surface:'checkout_link'`.
+- `backend/src/db/stripePaymentsQueries.js` — `findOpenJobSession(companyId, jobId, amount)` (`WHERE company_id=$1 AND job_id=$2 AND invoice_id IS NULL AND surface='checkout_link' AND status='open' AND amount=$3 AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY created_at DESC LIMIT 1`) и `listSessionsForJob(companyId, jobId)` (`WHERE company_id=$1 AND job_id=$2 AND invoice_id IS NULL ORDER BY created_at DESC`); обе company-scoped, `ensureMarketplaceSchema()` первой. `invoice_id IS NULL` — load-bearing.
+- `backend/src/routes/jobs.js` — рядом с `:877` добавить `POST /:id/stripe-payment-link` (perm `payments.collect_online` → `ensureJobPaymentLink(companyId, actor, req.params.id, { amount: req.body?.amount })`), `GET /:id/stripe-payment-link` (perm `payments.view` → `getJobPaymentLink(companyId, req.params.id)`), `POST /:id/send-payment-link` (perm `payments.collect_online` → `sendJobPaymentLink(companyId, actor, req.params.id, { channel, amount, message: req.body?.message })`); `companyId = req.companyFilter?.company_id`; `actor = { id: req.user?.sub }`; ошибки через существующий `jobStripeError`; envelope `{ ok:true, data }` / `{ ok:false, error:{ code, message } }`.
+- `tests/stripeAdhocPay.test.js` — НОВЫЙ sibling-файл; reuse mock-harness `tests/stripePayments.test.js` + новые моки `jobsService`/`emailService`/`conversationsService`/`emailMailboxService` + messaging helper (`resolveCompanyProxyE164`/`toE164`). Покрыть: TC-ADHOC-1..9, TC-RSC-1..5, TC-LINK-1..9, TC-GET-1..3, TC-QUERY-1, TC-SEND-1..10, TC-LEDGER-1..3.
+
+**Middleware/изоляция:** роуты уже под `authenticate` + `requireCompanyAccess`; `companyId = req.companyFilter?.company_id` (НЕ `req.companyId`); все SQL фильтруют по `company_id`; `getJobById(id, companyId)` → foreign job = null → **404**, cross-tenant leak невозможен.
+
+**Файлы, которые трогать НЕЛЬЗЯ (protected, §6):** инвойс-ветка `resolveSurfaceContext` `if (invoiceId)` (правки только additive: новая `else if` + swap bare-else); `ensurePaymentLink`/`getPaymentLink`/`sendPaymentLink` (invoice-сигнатуры); `createManualCardSession`/`createCardSession` сигнатуры; `handleWebhook`, `applyStripePayment`, `stripeConnectProvider.js`, `stripePaymentsWebhook.js`; `tests/stripePayments.test.js` (28 it() — не редактировать, extend только в sibling).
+
+**Spec §refs:** §0.1/§0.4/§0.5, §3.1–§3.4, §4.1–§4.7. **TC refs:** TC-ADHOC-1..9, TC-RSC-1..5, TC-LINK-1..9, TC-GET-1..3, TC-QUERY-1, TC-SEND-1..10, TC-LEDGER-1..3, TC-ROUTE-1..6.
+
+**Ожидаемый результат:** `npx jest --testPathIgnorePatterns "/node_modules/" tests/stripeAdhocPay.test.js` зелёный; keyed-card job path теперь ловит `INVALID_AMOUNT` (<$0.50 / >$100k) через `resolveSurfaceContext`; job link создаётся/reused/отправляется реальным email/SMS dispatch; ledger — одна `job_id`-строка `invoice_id NULL`; SQL изолированы по `company_id`, foreign job → 404.
+
+**Зависимости:** нет. **Волна 1.**
+
+**Статус:** done — commit 879a501 (Reviewer APPROVED, sabotage-verified). 44 adhoc-теста; инвойс-путь байт-в-байт.
+
+---
+
+### SAP-02: Frontend — `/pay/thanks` public route + PublicPayThanksPage (независимо)
+
+**Цель:** статическая публичная страница «Thanks — your payment was received» для Stripe post-payment redirect; роут объявлен ВЫШЕ `/pay/:token` (иначе `:token="thanks"` коллизия → внутренний 404).
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/PublicPayThanksPage.tsx` — НОВЫЙ минимальный публичный компонент (без auth, FORM-CANON-совместимый, tokens-only `--blanc-*`, английский, product name «Albusto»): заголовок «Thank you» + «Your payment was received.».
+- `frontend/src/App.tsx` — импорт + `<Route path="/pay/thanks" element={<PublicPayThanksPage />} />` СТРОКОЙ ВЫШЕ `<Route path="/pay/:token" …>` (`:108`), вне `<ProtectedRoute>` (публичность = позиция вне ProtectedRoute; массива PUBLIC_AUTH_PATHS в App.tsx нет).
+
+**Файлы, которые трогать НЕЛЬЗЯ:** `PublicInvoicePayPage.tsx`, `/pay/:token` роут (только добавить строку ВЫШЕ, не менять его), `AuthProvider.tsx`, `ProtectedRoute`.
+
+**Spec §refs:** §0.6.3, §3.3, §5 NFR. **TC refs:** TC-THANKS-1 (STATIC: line(`/pay/thanks`) < line(`/pay/:token`)), TC-THANKS-2 (MANUAL: рендерится без логина).
+
+**Ожидаемый результат:** `/pay/thanks` рендерит thanks-страницу без login-redirect и без 404; объявлен перед `/pay/:token`.
+
+**Зависимости:** нет (файлы disjoint от SAP-01 и SAP-03). **Волна 1.**
+
+**Статус:** done — commit 879a501 (Reviewer APPROVED). Роут перед /pay/:token.
+
+---
+
+### SAP-03: Frontend prep — `jobStripeApi` + генерализация `ManualCardDialog`
+
+**Цель:** API-слой и обобщённый keyed-card диалог, на которые опирается SAP-04. `jobStripeApi` зеркалит `invoiceStripeApi`; `ManualCardDialog` принимает `{invoiceId?, jobId?, amount?}` без слома инвойс-call-site.
+
+**Файлы, которые можно менять:**
+- `frontend/src/services/stripePaymentsApi.ts` — добавить `jobStripeApi = { createLink(jobId, amount?), getLink(jobId), sendLink(jobId, { channel?, message? }), manualCardSession(jobId, amount?) }` на `/api/jobs/:id/...` (POST/GET/POST/POST существующий); error-unwrap `json.error?.message` идентично `invoiceStripeApi`. `invoiceStripeApi` НЕ трогать.
+- `frontend/src/components/invoices/ManualCardDialog.tsx` — props `{ invoiceId?: number, jobId?: number|string, amount?: number }` (+ существующие `open,onOpenChange,onSuccess`); в `:36` выбор surface: `jobId` present → `jobStripeApi.manualCardSession(jobId, amount)`, иначе `invoiceStripeApi.manualCardSession(invoiceId, amount)`. Ровно один id present.
+
+**Файлы, которые трогать НЕЛЬЗЯ:** `InvoiceDetailPanel.tsx:810` call-site — остаётся `<ManualCardDialog invoiceId={…} />` (новые props опциональны → компилится и ведёт себя идентично); `invoiceStripeApi` объект.
+
+**Build-gate:** prod `noUnusedLocals` — не оставлять неиспользуемых импортов/типов.
+
+**Spec §refs:** §4.8, §4.9, §3.5. **TC refs:** TC-DLG-1 (props), TC-DLG-2 (jobStripeApi shape), TC-COMPAT-4 (invoice call-site жив), TC-COMPAT-2 (invoiceStripeApi неизменен).
+
+**Ожидаемый результат:** `jobStripeApi` бьёт в job-роуты; `ManualCardDialog` работает и для `jobId`, и для `invoiceId`; инвойс call-site компилится без изменений.
+
+**Зависимости:** нет (disjoint от SAP-01/02). **Волна 1.**
+
+**Статус:** done — commit 879a501 (Reviewer APPROVED + fix: sendLink signature получил amount). Инвойс-call-site цел.
+
+---
+
+### SAP-04: Frontend — `CollectPaymentDialog` [new] + `JobFinancialsTab` button/CTA wiring
+
+**Цель:** UI-поверхность фичи: кнопка «Collect payment» + CTA-состояния на Finance-tab по `getStatus().status.can_collect`, и новый FORM-CANON `CollectPaymentDialog` (amount step → method chooser: keyed → `ManualCardDialog {jobId,amount}`; send → `jobStripeApi.sendLink`; copy → `jobStripeApi.createLink`+clipboard).
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/jobs/CollectPaymentDialog.tsx` — НОВЫЙ; props `{ open, onOpenChange, jobId: number|string, outstanding: number, onSuccess? }`; FORM-CANON (`<Dialog><DialogContent variant="panel">` → `DialogPanelHeader`/`DialogBody`/`DialogPanelFooter`); amount prefill = `outstanding>0 ? outstanding : blank` (editable); client-mirror `assertAdhocAmount` (<$0.50 «Amount must be at least $0.50», >100000 «Amount exceeds the $100,000 limit», 2dp round on blur, submit disabled на invalid); method chooser 3 метода; toasts «Payment link copied»/«Payment link sent» + on error «Copy link instead». Tokens-only, английский, «Albusto».
+- `frontend/src/components/jobs/JobFinancialsTab.tsx` — `stripePaymentsApi.getStatus()` (React Query); на metrics-row (справа от Due): если user держит ≥1 из `payments.collect_online`/`collect_keyed`/`collect_offline` И `status.can_collect===true` → primary «Collect payment» → открывает `CollectPaymentDialog` (передать `jobId` + `totalDue`); нет collect-perm → рендерит **ничего** (perm-gate ПЕРЕД CTA); `can_collect===false` + permitted → muted CTA-карточка (`var(--blanc-surface-muted)`) по §1.3 (manage vs non-manage copy, все кнопки → `/settings/integrations/stripe-payments`); loading/`configured===false` → ничего. Гейт по `can_collect`, НЕ по литералу `connected_ready` (§0.6.4).
+
+**Файлы, которые трогать НЕЛЬЗЯ:** `stripePaymentsApi.getStatus`/`invoiceStripeApi`; `ManualCardDialog` (уже обобщён в SAP-03 — только вызывать); инвойс-компоненты.
+
+**Build-gate:** prod `noUnusedLocals` зелёный.
+
+**Spec §refs:** §1.1–§1.3, §2.1–§2.3, §3.4 UI, §4.9. **TC refs:** TC-BTN-1/2 (гейт `can_collect` + no-perm→null), TC-CTA-1..5 (copy/manage/loading/tokens/visual), TC-DLG-3..7 (props/prefill/validation/chooser/error-UX), TC-FLOW-1/2 (MANUAL).
+
+**Ожидаемый результат:** на Finance-tab кнопка/CTA по правилам §1; диалог собирает произвольную сумму тремя методами; кнопка видна на `connected_ready` И `payouts_disabled`; нет collect-perm → пусто.
+
+**Зависимости:** после **SAP-01** (job-роуты), **SAP-03** (`jobStripeApi` + обобщённый `ManualCardDialog`). **Волна 2.**
+
+**Статус:** done — commit 879a501 (Reviewer APPROVED + fix: CollectPaymentDialog шлёт amount в sendLink).
+
+---
+
+### SAP-05: Финальная верификация — jest + build + STATIC-гейты (+ owner-handoff)
+
+**Цель:** прогнать все автогейты; код НЕ менять (фиксы — назад в SAP-01..04). MANUAL live-charge + `/pay/thanks` live + DEPLOY — owner-gated.
+
+**Файлы, которые можно менять:** нет (read-only прогон).
+
+**Автогейты (все локально):**
+1. **Backend jest (TC-COMPAT-1, TC-BUILD-2, §C/§E/§G):** `npx jest --testPathIgnorePatterns "/node_modules/" tests/stripeAdhocPay.test.js tests/stripePayments.test.js` → новый файл зелёный И все **28** инвойс-`it()` зелёные (backward-compat AC-5/AC-6).
+2. **Frontend BUILD (TC-BUILD-1, AC-6):** `cd frontend && npm run build` (`tsc -b` + vite, prod-strict `noUnusedLocals`) → exit 0; ноль unused-locals от `CollectPaymentDialog`/generalized `ManualCardDialog`/`jobStripeApi`/`PublicPayThanksPage`.
+3. **STATIC — route order (TC-THANKS-1):** в `frontend/src/App.tsx` line(`path="/pay/thanks"`) < line(`path="/pay/:token"`).
+4. **STATIC — invoice backward-compat (TC-COMPAT-2/3/4/5):** `InvoiceDetailPanel.tsx` всё ещё `<ManualCardDialog invoiceId={…} />`; `resolveSurfaceContext` invoice-`if(invoiceId)` блок диф = только additive (`else if (jobId)` + swap bare-else); НЕТ диффов в `PublicInvoicePayPage.tsx`/`handleWebhook`/`applyStripePayment`/`stripeConnectProvider.js`/`stripePaymentsWebhook.js`.
+5. **STATIC — no migration:** max миграция остаётся **155** (нет новых файлов в `backend/db/migrations` с номером >155); нет новых perm.
+6. **STATIC — routes/perms (TC-ROUTE-1/2/3/5):** три job-роута с `collect_online`/`payments.view`/`collect_online`; `companyId=req.companyFilter?.company_id`.
+7. **STATIC — gating (TC-BTN-1, §0.6.4):** `JobFinancialsTab` гейтит по `status.can_collect`, НЕ по литералу `connected_ready`.
+
+**OWNER-HANDOFF (не автоматизируется здесь):**
+- **MANUAL (TC-FLOW-1/2, TC-CTA-5, TC-DLG-4..7, TC-THANKS-2):** keyed-card на job → Stripe Payment Element → confirm → toast + одна ledger-строка без инвойса; copy-link → оплата на Stripe hosted → redirect `/pay/thanks`; CTA-состояния визуально (manage/non-manage, кнопка на `payouts_disabled`); amount-валидация UI; send-link error-UX «Copy link instead»; `/pay/thanks` без логина.
+- **DEPLOY (TC-DEPLOY-1) — после прод-деплоя, owner-consent:** на `connected_ready` test-mode компании — один реальный keyed charge + одна hosted-link оплата; `/pay/thanks` reachable в проде (не 404). Прод-деплой — только с явного «да» владельца.
+
+**Spec §refs:** §5, §6, §3.5. **TC refs:** TC-COMPAT-1..5, TC-BUILD-1/2, TC-THANKS-1, TC-ROUTE-1/2/3/5, TC-BTN-1; MANUAL/DEPLOY — owner.
+
+**Ожидаемый результат:** все автогейты зелёные (jest new+28, build, STATIC×6); MANUAL/DEPLOY оформлены owner-handoff-списком.
+
+**Зависимости:** после **SAP-01..04** (всё). **Волна 3.**
+
+**Статус:** done — оркестратор: backend jest 72/72, npm run build exit 0, static-гейты PASS (/pay/thanks order, max mig 155, инвойс call-site). MANUAL Stripe-charge + деплой owner-gated.
+
+---
+
+### STRIPE-ADHOC-PAY-001 — порядок выполнения и параллелизм
+
+- **Волна 1 (parallel ×3, disjoint файлы):** SAP-01 (backend seam: `stripePaymentsService.js` + `db/stripePaymentsQueries.js` + `routes/jobs.js` + `tests/stripeAdhocPay.test.js`) ∥ SAP-02 (`App.tsx` + `pages/PublicPayThanksPage.tsx`) ∥ SAP-03 (`services/stripePaymentsApi.ts` + `components/invoices/ManualCardDialog.tsx`). Файлы полностью непересекающиеся.
+- **Волна 2 (одиночная):** SAP-04 (`components/jobs/CollectPaymentDialog.tsx` [new] + `JobFinancialsTab.tsx`) — после SAP-01 (job-роуты) и SAP-03 (`jobStripeApi` + обобщённый `ManualCardDialog`).
+- **Волна 3 (одиночная):** SAP-05 — верификация после всего.
+
+**Критический путь:** SAP-01 → SAP-04 → SAP-05 (SAP-03 тоже гейтит SAP-04, идёт параллельно SAP-01 в волне 1; SAP-02 полностью параллельна и критпуть не удлиняет).
+
+**Backward-compat guard (AC-5) — как защищён инвойс-путь:**
+1. `resolveSurfaceContext`: правки ТОЛЬКО additive — новая `else if (jobId)` ветка + swap bare-`else` `amount>0` на `assertAdhocAmount` (тот же `INVALID_AMOUNT`); инвойс-`if(invoiceId)` блок байт-неизменен (TC-COMPAT-3 STATIC diff-гейт).
+2. `ManualCardDialog`: новые props `jobId?`/`amount?` ОПЦИОНАЛЬНЫ → sole call-site `InvoiceDetailPanel.tsx:810` (`invoiceId` only) компилится и ведёт себя идентично (TC-COMPAT-4).
+3. Sibling-тест `tests/stripeAdhocPay.test.js` — 28 инвойс-`it()` в `tests/stripePayments.test.js` НЕ редактируются; SAP-05 гейт №1 гоняет ОБА файла (TC-COMPAT-1).
+4. Webhook/ledger/provider/public-pay — zero-diff (TC-COMPAT-5 STATIC).
+5. `assertAdhocAmount` для keyed-card job приходит через `resolveSurfaceContext` (path `createCardSession→resolveSurfaceContext`), БЕЗ эдита route/`createManualCardSession` → инвойс keyed-card (invoice-ветка) его не достигает.
+
+**Owner-gated (вне авто-плана):** MANUAL live keyed-charge + hosted-link pay (TC-FLOW-1/2), CTA visuals (TC-CTA-5), `/pay/thanks` public render (TC-THANKS-2), DEPLOY live-charge + prod `/pay/thanks` (TC-DEPLOY-1). Прод-деплой — только с явного «да» владельца.

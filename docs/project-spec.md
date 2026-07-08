@@ -49,7 +49,7 @@ Direct construction of a Twilio REST client (`twilio(sid, token)`) inside servic
 
 ---
 
-## Stripe Payments — Tenant Customer Payments (F018 / STRIPE-PAY-001, Phases 1–2)
+## Stripe Payments — Tenant Customer Payments (F018 / STRIPE-PAY-001, Phases 1–5 + STRIPE-ADHOC-PAY-001)
 
 A marketplace integration that lets each tenant company connect its own Stripe
 account (Stripe Connect, direct charges, tenant = merchant of record, no application
@@ -63,11 +63,33 @@ billing (ADR-001): a dedicated `stripeConnectProvider` and a distinct webhook se
 → `connected_ready`) gates online collection; status is refreshed from Stripe via
 `refresh-status` and `account.updated` webhooks.
 
-**Collection:** authorized users create/reuse a Stripe Checkout payment link per
-invoice (`payments.collect_online`); public customers pay via an opaque-token Pay-now
-endpoint. Successful payments are written once to the canonical `payment_transactions`
-ledger (`external_source='stripe'`) through `paymentsService.createTransaction`, with
-invoice paid/balance updated via the canonical invoice path.
+**Collection (Phases 1–2, invoice-scoped):** authorized users create/reuse a Stripe
+Checkout payment link per invoice (`payments.collect_online`); public customers pay via
+an opaque-token Pay-now endpoint. Successful payments are written once to the canonical
+`payment_transactions` ledger (`external_source='stripe'`) through
+`paymentsService.createTransaction`, with invoice paid/balance updated via the canonical
+invoice path.
+
+**Phases 3–5 (done, 2026-06-14):** manual card entry via Stripe **Payment Element**
+(`payments.collect_keyed`, `ManualCardDialog`); **Tap to Pay / Terminal** — full backend
+(`connection-token`, `card_present` payment-intent, cancel; `payments.collect_terminal`),
+the on-device NFC UI awaiting the native mobile shell (MOBILE-TECH-APP v1.5/M12);
+**refunds** (`POST /api/payments/:id/stripe-refund`, `payments.refund`, idempotent
+`applyStripeRefund`) and **dispute** handling (`charge.refunded` / `charge.dispute.created`
+webhooks). Migrations 111–112 (`stripe_terminal_locations`, collect_keyed/terminal perms).
+
+**Phase-independent ad-hoc collection (STRIPE-ADHOC-PAY-001, 2026-07-07):** a
+**Collect payment** entry point on the Job card → Finance tab, invoice-INDEPENDENT and
+**arbitrary-amount**. Enter any amount (min $0.50 / max $100k, `assertAdhocAmount`) →
+charge card manually, **send a payment link** (email via `emailService.sendEmail` + SMS
+via `conversationsService.sendMessage`, mirroring `sendInvoice`), or copy the link. The
+ad-hoc link is a Stripe-hosted Checkout that redirects to a static `/pay/thanks` page; the
+payment lands in `payment_transactions` with `job_id` and **no invoice** (the existing
+webhook resolves `job_id` from session metadata — no ledger/webhook change). Reuses the
+`checkout_link` surface (`invoice_id` NULL, `job_id` set); idempotent per
+`job-${companyId}-${jobId}-${amount}`. When Stripe isn't `connected_ready` the button is
+replaced by a Connect-Stripe CTA (or "ask an admin" for non-`tenant.integrations.manage`
+users). No migration.
 
 **Storage:** `stripe_connected_accounts` (one per company), `stripe_payment_sessions`,
 `stripe_webhook_events`. Idempotency is enforced at two layers: per Stripe event id
@@ -77,8 +99,8 @@ resolving the connected-account id to a company before any ledger mutation; unkn
 accounts are rejected without mutation. Card data never touches Albusto (Stripe-hosted
 Checkout only); secrets live in env, not tenant metadata.
 
-**Out of scope (later phases):** manual card entry (Payment Element), Tap to Pay /
-Terminal, refunds, dispute visibility, expanded reporting filters, application fees.
+**Out of scope:** on-device Tap-to-Pay NFC UI (needs the native mobile shell — v1.5/M12),
+expanded reporting filters, application fees.
 
 ---
 

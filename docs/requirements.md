@@ -4105,6 +4105,27 @@ A user who has "Add to Home Screen"-installed app.albusto.com on their iPhone ex
 
 Today, when a technician has done a diagnosis, ordered a part, and the part later arrives, there is **no status to mark "part arrived"** and **no workflow to re-book the completion visit**. A dispatcher must notice the part, remember which job it belongs to, call the customer, negotiate a window, reschedule the job, and push it to Zenbooker — all by hand, one job at a time. The completion visit is the highest-intent, already-won work (the customer is waiting on us), yet it's the most manual step. We want a one-press path: a robot calls the customer with a ready window, books it, reschedules the same job, and closes the loop — with a clean fallback to a human when the robot can't.
 
+## STRIPE-ADHOC-PAY-001: collect an arbitrary Stripe payment straight from the Job card (Finance tab) — no invoice required
+
+**Status:** Requirements · **Priority:** P1 · **Date:** 2026-07-07 · **Owner:** Frontend + one Backend task
+**Type:** feature — **frontend + 1 backend task**, **NO migration** (job_id columns on `checkout_link` / `payment_transactions` and the `payments.*` perms already exist; max migration stays **155**). One run adds: (A) a gated "Collect payment" entry point + readiness/permission CTA in the Job → Finance tab, (B) a FORM-CANON collect dialog with amount + method chooser, (C) generalized manual-card + ad-hoc payment-link paths keyed to a `jobId` instead of only an `invoiceId`, (D) a standalone (invoice-free) job payment ledger row on webhook settle. **Backward-compat is a hard requirement: the existing invoice collect flow must remain byte-unchanged; every job branch is additive / behind optional props.**
+
+### Verified ground truth (confirmed in code 2026-07-07 — do not re-derive)
+
+1. **Stripe collect surfaces already exist for invoices.** `backend/src/services/stripePaymentsService.js` exposes `ensurePaymentLink` / `sendPaymentLink(companyId, actor, invoiceId, …)` (line 264), `resolveSurfaceContext({ invoiceId, jobId, amount })` (line 282) — which **already accepts a `jobId` + explicit `amount` branch** — and `createCardSession` (line 304), whose Stripe metadata already carries `job_id` (line 310) and whose idempotency key already falls back to `jobId`/`adhoc` (line 314). The `checkout_link` surface already has a `job_id` column (invoice_id nullable) and `payment_transactions` already has `job_id`. **No migration is needed.**
+2. **The manual-card job route already exists.** `POST /api/jobs/:id/stripe-manual-card-session` is live for keyed card entry from a job. `ManualCardDialog` on the frontend currently binds to an invoice; it must be generalized to accept `{ jobId?, invoiceId?, amount }` and call the job route on the job path.
+3. **The webhook already resolves `job_id` from session metadata.** The Stripe webhook writes the settled `payment_transactions` row from the PaymentIntent/session `metadata` (which includes `job_id`) — so a standalone job payment records itself **with no webhook change**.
+4. **`sendPaymentLink` today only EVENT-LOGS — it does NOT prove a live dispatcher.** `stripePaymentsService.js:264` calls `invoicesQueries.createEvent(…, 'payment_link_sent', …)` + `auditService.log(…)` and returns `{ sent:true, url }`; its own inline comment says *"Actual email/SMS dispatch is handled by the shared messaging path / invoice send"* — but **no email/SMS send call is present in this function.** By contrast **SEND-DOC-001** *does* dispatch estimate/invoice docs over email (mailProvider, PDF+link) and SMS. Whether a real payment-link delivery path is wired is **unverified** — see the ⚑ OPEN ITEM at the end.
+5. **Design canon:** entity edit/collect surfaces = right-side slide-over "layer" (FORM-CANON — auto bottom-sheet on mobile); fields = floating-label filled primitives; tokens only (`--blanc-*`). CTA/placeholder cards use `--blanc-surface-muted`. Product name in UI = **Albusto** (never "Blanc").
+
+### Duplication check (result)
+
+**Not a duplicate.** **SEND-DOC-001** sends an *estimate/invoice* document (and can attach a pay link) — it is invoice-anchored and document-centric; STRIPE-ADHOC-PAY-001 is **invoice-free** collection of an *arbitrary amount* from the job itself. Prior Stripe work built the invoice-anchored collect surfaces (payment link, keyed card, tap-to-pay) and the `payments.*` perms; this feature **reuses** those primitives (which already have latent `jobId` branches) and exposes them from the Job → Finance tab with no invoice. No existing requirement grants "collect an ad-hoc amount from a job."
+
+### 1. Problem
+
+A tech or dispatcher standing on a job frequently needs to take a card payment (deposit, diagnostic fee, balance, tip) **without first cutting an invoice**. Today the only Stripe collect surfaces are invoice-anchored, so the user must create a throwaway invoice just to charge a card — friction that pushes payments off-platform (cash / external terminal) and leaves the CRM ledger incomplete. The plumbing to charge a job directly already exists half-built (`resolveSurfaceContext` job branch, `job_id` metadata, the manual-card job route, the `job_id` ledger column) but is not exposed in the UI and the payment-link path is not job-generalized.
+
 ### 2. Goals / Non-goals
 
 **Goals**
@@ -4241,3 +4262,106 @@ Today, when a technician has done a diagnosis, ordered a part, and the part late
 - **Modified:** `jobsService.js` (`BLANC_STATUSES`, `ALLOWED_TRANSITIONS`, `updateBlancStatus` hook); `scheduleService.rescheduleItem` (ensure ZB push per AGENT-SKILLS-001 AR-4); Tasks model (`actions[]`) + `TaskCard.tsx` (render buttons); `SoftPhoneContext` consumer for `manual_call` (reuse, likely no change).
 - **Reused unchanged (called):** `recommendSlots`/slot-engine, `agentSkills` reschedule skill, `createTask`, `jobsService.addNote`, `eventService.logEvent`, `zenbookerClient.rescheduleJob`, `SoftPhoneContext.openDialer`, `marketplaceService.isAppConnected`.
 - **Repo config:** NEW `voice-agent/assistants/<outbound-parts>.json` (script + tool-defs; live push separate / owner-gated).
+
+- From **Job → Finance tab**, a permitted user on a Stripe-ready company can collect an **arbitrary** amount (prefilled to the job's outstanding balance) via keyed card, a hosted payment link, or a copied link — **with no invoice created**.
+- The charge lands as **one `payment_transactions` row carrying `job_id` and no invoice**, via the existing webhook (no webhook change, no auto-invoice).
+- Clear readiness/permission states: a proper CTA when Stripe isn't connected/finished, and nothing at all when the user can't collect.
+- **The invoice collect flow is byte-unchanged**; `npm run build` + backend jest stay green.
+
+**Non-goals (out of scope)**
+- Any change to the invoice collect flow, `PublicInvoicePayPage`, or the webhook.
+- A new migration or new perms (all exist).
+- Refunds, partial captures, saved cards, subscriptions, or tap-to-pay UI changes (tap-to-pay stays as-is; this feature is button/link/keyed-card).
+- Building net-new email/SMS delivery infrastructure — "Send payment link" **reuses** whatever dispatcher exists (see ⚑ OPEN ITEM); "Copy link" is the guaranteed hand-off.
+
+### 3. User stories (actor = tenant_admin / manager / dispatcher / provider with a `payments.collect_*` perm, on a Stripe-ready company)
+
+1. **Charge a card on the spot.** On a job with a $180 outstanding balance, the user opens Finance → **Collect payment**, sees $180 prefilled (editable), picks **Enter card manually**, keys the customer's card, and the payment records against the job — no invoice.
+2. **Send a pay link.** The user chooses **Send payment link**; the customer's card-holder link goes to the job's contact (email and/or SMS) and the customer pays on Stripe's hosted page.
+3. **Copy a link to paste anywhere.** The user chooses **Copy payment link**, gets the URL, and pastes it into their own text thread — reliable regardless of send-channel wiring.
+4. **Guided when Stripe isn't ready.** An admin who hasn't connected Stripe sees a CTA card ("Accept payments right from the job…") with **[Connect Stripe]** routing to Settings → Integrations → Stripe Payments; if setup is half-done they see **[Finish setup]**.
+5. **Non-admin nudge.** A user with collect perms but *without* integration-manage perms, on an unready company, sees plain text: "Ask an account admin to connect Stripe in Settings → Integrations." (no button).
+6. **Invisible to the unpermitted.** A user with no collect perm sees **nothing** — no button, no CTA — in the Finance tab.
+
+### 4. Functional requirements
+
+#### 4.1 Button + gating (FR-BTN)
+- **FR-BTN-1 — Gated "Collect payment" button.** In `JobFinancialsTab`, render a **Collect payment** button **iff** Stripe account status is `connected_ready` **AND** the user holds **any** of `payments.collect_online` / `payments.collect_offline` / `payments.collect_keyed`.
+- **FR-BTN-2 — No collect perm → render nothing.** If the user holds none of the three collect perms, render **nothing** in the collect area (no button, no CTA, no placeholder).
+
+#### 4.2 Readiness CTA / placeholder (FR-CTA)
+- **FR-CTA-1 — CTA when permitted but Stripe not ready.** User HAS a collect perm but Stripe is **not** `connected_ready` → show an English CTA card on `--blanc-surface-muted` (FORM-CANON styling, tokens only).
+- **FR-CTA-2 — Copy + routing per readiness state (integration-manage users):**
+  - `not_connected` → title **"Accept payments right from the job"**, body **"Connect Stripe to charge your customer's card or send a payment link in seconds — no invoice required."**, action **[Connect Stripe]**.
+  - `onboarding_incomplete` / `action_required` → body **"Finish your Stripe setup to start collecting payments"**, action **[Finish setup]**.
+  - Both actions route to **Settings → Integrations → Stripe Payments**.
+- **FR-CTA-3 — Non-manage users.** User lacks `tenant.integrations.manage` → show plain text **"Ask an account admin to connect Stripe in Settings → Integrations."** with **no button**.
+
+#### 4.3 Collect dialog (FR-DLG)
+- **FR-DLG-1 — FORM-CANON surface.** A `CollectPaymentDialog` follows FORM-CANON: right-side panel on desktop, auto bottom-sheet on mobile; `DialogPanelHeader` / `DialogBody` / `DialogPanelFooter`; floating-label filled fields; tokens only.
+- **FR-DLG-2 — Amount field.** Prefilled to the job's **outstanding** amount (`totalInvoiced − totalPaid` if `> 0`, else blank); **editable**; validated **min $0.50 / max $100,000 / 2 decimal places**.
+- **FR-DLG-3 — Method chooser.** Three methods: **Enter card manually** / **Send payment link** / **Copy payment link**.
+
+#### 4.4 Manual card — arbitrary amount (FR-CARD) — frontend only
+- **FR-CARD-1 — Generalize `ManualCardDialog`.** Accept `{ jobId?, invoiceId?, amount }`. The **job** path calls the existing **`POST /api/jobs/:id/stripe-manual-card-session`**; the invoice path is unchanged.
+- **FR-CARD-2 — No backend change to the card route**, but the shared amount validation (`assertAdhocAmount`, FR-LINK amount rules: min/max/2dp) applies to the keyed-card amount as well.
+
+#### 4.5 Ad-hoc job payment link (FR-LINK) — backend + frontend
+- **FR-LINK-1 — Generalize the Checkout-session/link builder to `{ jobId, amount }`.** The link reuses the existing **`checkout_link`** surface with **`job_id` set and `invoice_id` NULL** — **no migration** (columns exist).
+- **FR-LINK-2 — New job-scoped routes (all company-scoped):**
+  - `POST /api/jobs/:id/stripe-payment-link` — create/reuse a link — perm **`payments.collect_online`**.
+  - `GET /api/jobs/:id/stripe-payment-link` — read the current link — perm **`payments.view`**.
+  - `POST /api/jobs/:id/send-payment-link` — send the link — perm **`payments.collect_online`**.
+- **FR-LINK-3 — Idempotent.** Reuse a valid open job session; idempotency key **`job-${companyId}-${jobId}-${amount}`**.
+- **FR-LINK-4 — Recipient resolution + channels.** Resolve the recipient from the **job's contact** (`jobsService.getJobById` → `contact_id` / email / phone); **send to whichever channel(s) exist** (email and/or SMS). If **neither** exists → **422 `NO_CONTACT`**. **Copy** returns the link URL (no send).
+
+#### 4.6 Standalone (invoice-free) job payment ledger (FR-LEDGER)
+- **FR-LEDGER-1 — One `payment_transactions` row with `job_id`, no invoice.** The existing webhook resolves `job_id` from session metadata — **no webhook change**.
+- **FR-LEDGER-2 — Idempotency mirrors the invoice path** (same settle/dedup guarantees).
+- **FR-LEDGER-3 — No auto-created invoice** on a standalone job payment.
+
+### 5. Non-functional requirements
+
+- **Scope:** frontend + **one** backend task. **NO migration** (`checkout_link.job_id`, `payment_transactions.job_id`, and the `payments.*` perms already exist; **max migration stays 155**).
+- **Backward compatible:** the **invoice** collect flow (link create/send, keyed card, hosted pay page, webhook, ledger) is **byte-unchanged**; every job path is **additive** (new routes, additive service branches, optional dialog props). No regression to SEND-DOC-001, the webhook, or `PublicInvoicePayPage`.
+- **Company-scope on every route** (`:id` resolved within the caller's company; cross-tenant job ids 404).
+- **Public pay = Stripe-HOSTED Checkout** — the customer pays on Stripe's page (our `PublicInvoicePayPage` is **not** used and stays untouched). The job link's Stripe **success redirect targets a generic `/pay/thanks`** page, which **MUST exist** or the Stripe redirect 404s (payment still settles via the webhook, but the customer sees a 404).
+- **Build/test gate:** `npm run build` (`tsc -b`, prod-strict `noUnusedLocals`) green; backend **jest** green.
+- **Product name = Albusto** in all UI; tokens only (`--blanc-*`).
+
+### 6. Acceptance criteria
+
+- **AC-1 — Button gating:** the **Collect payment** button shows **only** when Stripe is `connected_ready` AND the user has ≥1 `payments.collect_*`; with no collect perm the collect area is empty (FR-BTN-1/2).
+- **AC-2 — CTA copy per state + per permission:** each readiness state (`not_connected` / `onboarding_incomplete` / `action_required`) shows its specified title/body/action and routes to Settings → Integrations → Stripe Payments for manage-users; non-manage users see the "Ask an account admin…" text with no button (FR-CTA-1/2/3).
+- **AC-3 — Arbitrary manual-card:** keying a card for an arbitrary amount records **one** `payment_transactions` row against the **job** with **no invoice** (FR-CARD, FR-LEDGER).
+- **AC-4 — Link create/send/copy + reuse:** creating, sending, and copying a job link works; a repeat create for the same `{companyId, jobId, amount}` **reuses** the open session (FR-LINK-1/3); send resolves the job contact's channels and **422 `NO_CONTACT`** when neither email nor phone exists (FR-LINK-4).
+- **AC-5 — Invoice flow byte-unchanged:** the invoice collect path (link/keyed/webhook/ledger/hosted page) is unchanged (diff shows only additive job branches).
+- **AC-6 — Build + tests green:** `npm run build` and backend `jest` pass.
+- **AC-7 — Amount validation enforced:** min **$0.50** / max **$100,000** / **2dp** enforced on **both** the payment-link **and** the keyed-card amount (`assertAdhocAmount`).
+
+### 7. Constraints & dependencies
+
+**Backend (one task):** generalize the Checkout-session/link builder to `{ jobId, amount }` reusing the `checkout_link` surface (`job_id` set, `invoice_id` NULL); add job-scoped routes `POST/GET /api/jobs/:id/stripe-payment-link` and `POST /api/jobs/:id/send-payment-link` (perms: create/send = `payments.collect_online`, read = `payments.view`); shared `assertAdhocAmount` (min $0.50 / max $100,000 / 2dp) applied to link **and** keyed-card; idempotency key `job-${companyId}-${jobId}-${amount}`; recipient from `jobsService.getJobById` (contact email/phone), 422 `NO_CONTACT` when neither. **No webhook change** (metadata `job_id` already resolved). **No migration.**
+
+**Frontend:** `JobFinancialsTab` (gated button + readiness/permission CTA on `--blanc-surface-muted`); new `CollectPaymentDialog` (FORM-CANON, amount + 3-way method chooser); generalize `ManualCardDialog` to `{ jobId?, invoiceId?, amount }` (job path → `POST /api/jobs/:id/stripe-manual-card-session`); a generic **`/pay/thanks`** success page (Stripe hosted-checkout redirect target — must exist).
+
+**Integrations affected:** **Stripe** (Connect account, hosted Checkout, PaymentIntent/session metadata, webhook). Twilio/Front/Zenbooker/Gmail untouched — except that "Send payment link" delivery would ride whatever email/SMS dispatcher SEND-DOC-001 uses (see ⚑ OPEN ITEM). No new perms.
+
+**Protected parts (must not break):**
+- The **invoice** Stripe collect flow (ensurePaymentLink/sendPaymentLink for invoices, keyed card on invoices, the webhook, `PublicInvoicePayPage`, invoice ledger) — byte-unchanged.
+- The **webhook** settle/dedup logic and the tap-to-pay surface — untouched.
+- Company-scope / RBAC on every payments route.
+
+**Verification note:** `npm run build` + backend `jest` are the CI gates. Live card charges are **owner-gated manual** (Stripe test-mode); deploy is **owner-gated**.
+
+### 8. ⚑ OPEN ITEM for the Spec Writer (verified concern — record explicitly, do NOT silently assume "Send" delivers)
+
+**The payment-link *send* path may not have a live dispatcher.** `stripePaymentsService.js:264` `sendPaymentLink` today **only event-logs** (`invoicesQueries.createEvent('payment_link_sent', …)`) + audit-logs and returns `{ sent:true, url }`; its own comment defers to a *"shared messaging path / invoice send"* but **no email/SMS send call is present in the function.** By contrast **SEND-DOC-001** *does* dispatch estimate/invoice documents over email (mailProvider, PDF + link) and SMS.
+
+**Spec must verify** whether a real send path exists to wire for the payment link — the SEND-DOC-001 email (mailProvider) / SMS (Twilio) infrastructure — so **FR-LINK "Send payment link" actually delivers**. If a genuine dispatcher exists, wire "Send" to it (email and/or SMS per FR-LINK-4). **If it is genuinely absent in v1, "Copy link" is the reliable hand-off and "Send" is best-effort/deferred** — and that must be stated as an explicit requirement note, not assumed. This is a **requirement note**, not an assumption that Send works.
+
+### 9. Involved modules (summary)
+
+- **Backend (modified):** `backend/src/services/stripePaymentsService.js` (job-generalized link builder + `assertAdhocAmount` + job idempotency key + contact-channel resolution); job routes for `stripe-payment-link` (POST/GET) and `send-payment-link` (POST); reuse of `jobsService.getJobById`. **No webhook change. No migration.**
+- **Frontend (modified/new):** `JobFinancialsTab` (button + CTA), new `CollectPaymentDialog`, generalized `ManualCardDialog` ({jobId?,invoiceId?,amount}), new generic `/pay/thanks` success page.
+- **Unchanged (protected):** invoice collect flow, webhook, `PublicInvoicePayPage`, tap-to-pay, all `payments.*` perms and DB columns (already present).

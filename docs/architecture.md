@@ -4878,3 +4878,188 @@ Reuse everything already built; add exactly three genuinely new things: **(1)** 
 - **`createTask` needs `kind` + `actions` passthrough:** `tasksQueries.createTask` currently does not accept `kind`/`actions` in its column list — extend it additively (add `kind`, `actions` to the `cols`/`vals` when present) without breaking existing callers. The AR-TASK-UNIFY app-upsert (one-open-per-job+kind) is enforced in `partsCallService.onPartArrived` via the explicit SELECT guard, since `createTask` has no built-in upsert.
 - **Dependency:** FR-8 assumes `rescheduleItem` already performs the AR-4 ZB write-through. Verify on a real ZB job; if absent, wiring it is in-scope for this feature (do NOT fork a parallel reschedule path).
 - **`Part arrived` needs a UI transition button** (FSM `blanc:action="true"` on `Waiting for parts → Part arrived`) so a dispatcher can move a job there — the migration's SCXML transition provides it; confirm the job-card status control reads it from the published machine (no separate frontend change expected).
+
+## STRIPE-ADHOC-PAY-001: invoice-independent Stripe collect (arbitrary amount) from the Job Finance tab
+
+**Status:** Architecture
+**Feature:** collect an arbitrary-amount card payment against a **job with no invoice** — in-app keyed card (already possible) **plus** a shareable Stripe-hosted Checkout link (create / get / send), surfaced from the Job → Finance tab. Reuses the F018 / STRIPE-PAY-001 machinery end-to-end.
+**Related requirements:** `STRIPE-ADHOC-PAY-001` — FR-BTN / FR-CTA / FR-DLG / FR-CARD / FR-LINK / FR-LEDGER, AC-1..6. **NOTE (source gap):** at authoring time `Docs/requirements.md` did **not** yet contain a `## STRIPE-ADHOC-PAY-001` block (last block = `PWA-FIX-001`); this fragment is built from the binding requirement summary passed to the Architect (FR-* + AC-1..6 + the 4 open questions) and the code ground-truth. The exact FR-CTA English copy below is Architect-proposed to match the invoice-collect voice and MUST be reconciled if/when the Product block lands.
+
+### 0. Ground truth (code-verified — do not re-derive)
+
+- **Manual/keyed card on a job with an arbitrary amount ALREADY works.** `POST /api/jobs/:id/stripe-manual-card-session` (`backend/src/routes/jobs.js:877`, perm `payments.collect_keyed`) → `createManualCardSession(companyId, actor, { jobId, amount })` → `createCardSession('manual_card', …)` → `resolveSurfaceContext({ jobId, amount })` (`stripePaymentsService.js:282`). The Payment Element renders in-app (`ManualCardDialog.tsx`); the ledger is written by the webhook. **⇒ FR-CARD on a job = frontend wiring only** (generalize `ManualCardDialog` + add a job API fn; backend already accepts it).
+- **GAP — payment LINKS are invoice-only.** `ensurePaymentLink` (`:202`) and `sendPaymentLink` (`:264`) take an `invoiceId`, call `invoicesService.getInvoice`, and reuse via `findOpenSession(companyId, invoiceId, amount)` / `listSessionsForInvoice(companyId, invoiceId)` — both **invoice-keyed**. `stripe_payment_sessions` already has a `job_id` column (written at `:236-237`, `:320`). **⇒ FR-LINK on a job = new service fns + new job-scoped queries + new routes** (below).
+- **The Checkout link is Stripe-HOSTED, not our public page.** `provider.createCheckoutSession` (`stripeConnectProvider.js:121`) POSTs `/checkout/sessions` and returns Stripe's hosted `session.url`. The payment happens on Stripe. `PublicInvoicePayPage` (`/pay/:token`) is a **separate**, invoice-token-bound embedded flow (`getPublicPayInfo` → `getInvoiceByPublicToken`) that the ad-hoc link **does not touch** (see §4).
+- **Webhook already resolves `job_id`.** `handleWebhook` → `payment_intent.succeeded` / `checkout.session.completed` read `session.job_id` (and the PI/checkout metadata `job_id`) and pass it to `applyStripePayment`, which writes `payment_transactions.job_id` with `invoice_id: null` (`:512-568`). **⇒ FR-LEDGER needs ZERO webhook/ledger change** — a job-scoped session flows through the existing path and lands a job-linked, invoice-less ledger row.
+- **`sendPaymentLink` does NOT actually dispatch email/SMS today** — it creates an `invoices.createEvent('payment_link_sent', …)` + audit row only (`:268-271`); real delivery is deferred ("shared messaging path"). The job send-link mirrors this: it **validates a recipient exists** and logs the intent (see §3-Q3), so behavior is consistent with the invoice path and no new messaging integration is introduced by this feature.
+- **Max migration = 155** (`155_backfill_outbound_email_links.sql`). Perms `payments.collect_online` / `payments.collect_keyed` already exist (`permissionCatalog.js:92,94`; migs 118). **⇒ NO migration (§7).**
+
+### 1. File map
+
+**Changed — Backend:**
+- `backend/src/services/stripePaymentsService.js` — add `ensureJobPaymentLink`, `getJobPaymentLink`, `sendJobPaymentLink`; **extend** `resolveSurfaceContext` so the `jobId` branch loads the job and populates `contactId` (+ returns `email`/`phone`/`customerName` for send). All existing invoice fns keep their exact signatures (§6).
+- `backend/src/db/stripePaymentsQueries.js` — add `findOpenJobSession(companyId, jobId, amount)` and `listSessionsForJob(companyId, jobId)` (job analogues of `findOpenSession` / `listSessionsForInvoice`). No change to existing queries.
+- `backend/src/routes/jobs.js` — add `POST /:id/stripe-payment-link`, `GET /:id/stripe-payment-link`, `POST /:id/send-payment-link` next to the existing job Stripe endpoints (§5).
+
+**Changed — Frontend:**
+- `frontend/src/services/stripePaymentsApi.ts` — add a `jobStripeApi` object: `createLink`, `getLink`, `sendLink`, `manualCardSession` (all `/api/jobs/:id/...`), mirroring `invoiceStripeApi`.
+- `frontend/src/components/invoices/ManualCardDialog.tsx` — **generalize** props from `{ invoiceId }` to `{ invoiceId?, jobId?, amount? }`; pick the API surface by which id is present. Invoice call-sites unchanged (§6).
+- `frontend/src/components/jobs/JobFinancialsTab.tsx` — add the "Collect payment" button on the metrics row + wire the new `CollectPaymentDialog`; fetch Stripe readiness for the CTA state (§FR-CTA).
+
+**New — Frontend:**
+- `frontend/src/components/jobs/CollectPaymentDialog.tsx` — FORM-CANON right-panel / mobile bottom-sheet: **amount step** (prefilled with `Due` when > 0, else empty) → **method chooser** ("Enter card manually" | "Create payment link" → copy / send). Delegates keyed entry to the generalized `ManualCardDialog` and link ops to `jobStripeApi`.
+
+**Untouched (protected):** the whole invoice collect path (`ensurePaymentLink`/`getPaymentLink`/`sendPaymentLink`, `invoiceStripeApi`, `InvoiceDetailPanel` collect dropdown), `PublicInvoicePayPage` + `/api/public/invoices/*`, the webhook (`handleWebhook`) and ledger (`applyStripePayment`), `stripeConnectProvider.js`, `stripePaymentsWebhook.js`, `authedFetch.ts`.
+
+### 2. Backend function signatures (new / changed in `stripePaymentsService.js`)
+
+```js
+// CHANGED: resolveSurfaceContext jobId branch now loads the job → contactId + recipient fields.
+// Invoice branch is byte-unchanged. `jobsService` is required lazily to avoid a require cycle
+// (jobsService → … does not currently import stripePaymentsService, but keep it lazy for safety).
+async function resolveSurfaceContext(companyId, { invoiceId, jobId, amount }) {
+  // ...invoice branch unchanged...
+  } else if (jobId) {
+    const job = await require('./jobsService').getJobById(jobId, companyId); // company-scoped → null if foreign
+    if (!job) throw new StripePaymentsError('NOT_FOUND', `Job ${jobId} not found`, 404);
+    ctx.jobId = job.id;
+    ctx.contactId = job.contact_id || null;
+    ctx.email = job.customer_email || null;   // exposed for send-link recipient resolution
+    ctx.phone = job.customer_phone || null;
+    ctx.customerName = job.customer_name || null;
+    ctx.amount = assertAdhocAmount(amount);   // §Q4
+  } else {
+    ctx.amount = assertAdhocAmount(amount);   // adhoc (no invoice, no job) keeps working
+  }
+  return ctx;
+}
+
+// NEW: job-scoped Checkout link (mirrors ensurePaymentLink; surface stays 'checkout_link').
+async function ensureJobPaymentLink(companyId, actor, jobId, { amount } = {}) {
+  const account = await assertCollectable(companyId);                 // 409 NOT_READY
+  const ctx = await resolveSurfaceContext(companyId, { jobId, amount }); // 404 / INVALID_AMOUNT
+  const existing = await q.findOpenJobSession(companyId, jobId, ctx.amount); // reuse (idempotent UX)
+  if (existing) return { url: existing.url, expires_at: existing.expires_at, reused: true, session_id: existing.id };
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const session = await provider.createCheckoutSession(account.stripe_account_id, {
+    amount: ctx.amount, currency: 'usd',
+    invoiceNumber: null,                                              // Checkout line item = generic "Payment"
+    successUrl: `${baseUrl()}/pay/thanks`, cancelUrl: `${baseUrl()}/pay/thanks`, // §4 (no invoice token)
+    expiresAt,
+    metadata: { company_id: companyId, invoice_id: '', job_id: String(jobId),
+                contact_id: ctx.contactId != null ? String(ctx.contactId) : '' },
+  }, { idempotencyKey: `job-${companyId}-${jobId}-${ctx.amount}` });  // §Q1
+  const row = await q.insertSession(companyId, {
+    invoice_id: null, job_id: jobId, contact_id: ctx.contactId, created_by: actor?.id || null,
+    surface: 'checkout_link', amount: ctx.amount, currency: 'USD', status: 'open',
+    stripe_checkout_session_id: session.id, stripe_payment_intent_id: session.payment_intent || null,
+    stripe_account_id: account.stripe_account_id, url: session.url, expires_at: expiresAt, metadata: {},
+  });
+  await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_created',
+    target_type: 'job', target_id: String(jobId), company_id: companyId, details: { amount: ctx.amount } });
+  return { url: row.url, expires_at: row.expires_at, reused: false, session_id: row.id };
+}
+
+// NEW: active link + history for a job (mirrors getPaymentLink).
+async function getJobPaymentLink(companyId, jobId) {
+  const sessions = await q.listSessionsForJob(companyId, jobId);
+  const active = sessions.find(s => s.surface === 'checkout_link' && s.status === 'open'
+    && (!s.expires_at || new Date(s.expires_at) > new Date()));
+  return { active: active ? { url: active.url, expires_at: active.expires_at, amount: active.amount } : null,
+           history: sessions.map(s => ({ id: s.id, status: s.status, amount: s.amount, surface: s.surface,
+             failure_reason: s.failure_reason, created_at: s.created_at })) };
+}
+
+// NEW: send the job link (channel fallbacks §Q3; delivery = event+audit, mirroring sendPaymentLink).
+async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, message } = {}) {
+  const ctx = await resolveSurfaceContext(companyId, { jobId, amount }); // gives email/phone
+  const hasEmail = !!ctx.email, hasPhone = !!ctx.phone;
+  if (!hasEmail && !hasPhone) throw new StripePaymentsError('NO_CONTACT', 'Job has no email or phone to send to', 422);
+  const chosen = channel || (hasEmail ? 'email' : 'sms');            // caller may force; default prefers email
+  if (chosen === 'email' && !hasEmail) throw new StripePaymentsError('NO_CONTACT', 'No email on file', 422);
+  if (chosen === 'sms' && !hasPhone)   throw new StripePaymentsError('NO_CONTACT', 'No phone on file', 422);
+  const link = await ensureJobPaymentLink(companyId, actor, jobId, { amount });
+  await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_sent',
+    target_type: 'job', target_id: String(jobId), company_id: companyId, details: { channel: chosen } });
+  return { sent: true, url: link.url, channel: chosen };             // NOTE: no invoice event (jobs have no invoice_event stream)
+}
+
+// NEW helper — the arbitrary-amount validator (§Q4), shared by the job/adhoc branches.
+function assertAdhocAmount(amount) {
+  const a = Number(amount);
+  if (!Number.isFinite(a) || a < 0.5)   throw new StripePaymentsError('INVALID_AMOUNT', 'Amount must be at least $0.50', 400);
+  if (a > 100000)                        throw new StripePaymentsError('INVALID_AMOUNT', 'Amount exceeds the $100,000 limit', 400);
+  return Number(a.toFixed(2));
+}
+```
+
+`module.exports` gains `ensureJobPaymentLink, getJobPaymentLink, sendJobPaymentLink`. `createManualCardSession` is reused **unchanged** for the keyed-card-on-job path (it already routes `{ jobId, amount }` through the now-contact-aware `resolveSurfaceContext`).
+
+New queries in `stripePaymentsQueries.js` (both `company_id`-scoped, `ensureMarketplaceSchema()` first, like their invoice twins):
+
+```js
+async function findOpenJobSession(companyId, jobId, amount) { /* WHERE company_id=$1 AND job_id=$2 AND invoice_id IS NULL
+    AND surface='checkout_link' AND status='open' AND amount=$3 AND (expires_at IS NULL OR expires_at>NOW())
+    ORDER BY created_at DESC LIMIT 1 */ }
+async function listSessionsForJob(companyId, jobId) { /* WHERE company_id=$1 AND job_id=$2 AND invoice_id IS NULL
+    ORDER BY created_at DESC */ }
+```
+
+`invoice_id IS NULL` in both is load-bearing: it keeps job-link sessions distinct from an invoice's sessions that merely also carry a `job_id` (invoice-with-a-job case), so `getJobPaymentLink` never surfaces an invoice's link on the job and `findOpenJobSession` only reuses true ad-hoc links.
+
+### 3. The 4 open questions — resolutions
+
+**Q1 — `surface` value for the job link → REUSE `checkout_link` (job_id set, invoice_id NULL). No new enum value, no migration.** Verified nothing hard-requires distinguishing: the webhook switches on Stripe event type, not `surface`; the only `surface`-keyed reads are `findOpenSession`/`listSessionsForInvoice`, both **also** filtered by `invoice_id = $2`, so an invoice-less `checkout_link` row is invisible to them and needs the new `invoice_id IS NULL` job queries anyway. **Idempotency key = `job-${companyId}-${jobId}-${amount}`** (distinct namespace from the invoice `inv-…` and public `public-…` keys → no cross-collision). Reuse of an open, non-expired same-amount session gives the same "click again = same link" UX as invoices.
+
+**Q2 — contact resolution for a job w/o invoice → `jobsService.getJobById(jobId, companyId)`.** Verified shape (`jobsService.js:75-94, 589-614`): the row exposes `contact_id`, `customer_email`, `customer_phone`, `customer_name`, and is **company-scoped** (`j.company_id = $2`) so a foreign job returns `null` → 404. `resolveSurfaceContext`'s `jobId` branch (which today leaves `contactId` null) is extended to set `ctx.contactId = job.contact_id` and expose `email`/`phone`/`customerName`. That `contactId` flows into the session row + PI metadata, so the ledger row and the Pulse timeline attribute the payment to the customer even with no invoice. (`getJobById` is passed **no** `providerScope` here — collection is a `payments.collect_*`-gated action, not a job-visibility read; the route perm is the gate.)
+
+**Q3 — send-link recipient fallbacks → send to whatever channel exists; 422 `NO_CONTACT` if neither.** Mirrors the intent of the invoice `sendPaymentLink` (which today only event-logs; no real dispatcher exists yet — §0). Rule: email **and** phone absent ⇒ `NO_CONTACT`; caller may force `channel:'email'|'sms'` (422 if that specific channel is missing); with no forced channel we **default to email, else SMS**. Because there is no live SMS/email payment-link dispatcher yet, `sendJobPaymentLink` performs the recipient validation + ensures the link + audit-logs the send intent, returning `{ sent, url, channel }` — identical delivery semantics to the invoice path (the UI's "Send" today effectively means "link is ready to hand off"; wiring a real dispatcher is a cross-cutting follow-up, not this feature). Unlike invoices there is **no** `invoices.createEvent` (jobs have no invoice-event stream); the audit row is the record.
+
+**Q4 — amount ceiling → min `$0.50` (Stripe minimum), max `$100,000`.** No existing invoice/manual-card **max** validation exists (invoice paths cap at the invoice **balance**, not an absolute ceiling; the pure ad-hoc branch only asserted `> 0`). `assertAdhocAmount` (§2) defines: reject `< 0.50` (`INVALID_AMOUNT`, "at least $0.50"), reject `> 100000` (`INVALID_AMOUNT`, "exceeds the $100,000 limit"), round to 2dp. Applied on **every** job/adhoc entry (link + keyed card) so the manual-card-on-job path — which previously only checked `> 0` — inherits the same guard. Enforced server-side; the dialog mirrors it for UX but the service is the source of truth.
+
+### 4. Public-pay-page decision — **REUSE nothing; the ad-hoc link is Stripe-HOSTED (no page change).**
+
+This is the load-bearing architectural call. The ad-hoc "payment link" is a **Stripe-hosted Checkout Session URL** (`provider.createCheckoutSession` → `session.url`), exactly like the invoice `ensurePaymentLink`. The customer pays on **Stripe's** page, not on our `PublicInvoicePayPage`. Therefore:
+
+- **`PublicInvoicePayPage` (`/pay/:token`, invoice-token-bound via `getPublicPayInfo`/`getInvoiceByPublicToken`) is NOT touched and NOT reused.** It has no job concept and needs none — a job link never routes there. No job variant, no generalization of the public page, no new public route.
+- **Success/cancel URLs:** the invoice link points success/cancel at `/i/${public_token}`. A job has no public token, so the job link points both at a **generic post-payment landing** (`${baseUrl()}/pay/thanks`). Implementer options, in preference order: (a) a tiny static "Thanks — your payment was received" route (add `path="/pay/thanks"` in `App.tsx` rendering a minimal public component — cheapest, and it also improves the invoice cancel UX), or (b) reuse an existing marketing/landing route. **A job link that opens a broken page is the failure mode to avoid** — because payment is on Stripe's hosted page, the only "our" page is the post-payment redirect, and `/pay/thanks` guarantees it's never a 404. The ledger is settled by the webhook regardless of whether the customer follows the redirect.
+
+### 5. Routes (all on the existing job router; company-scoped; gated)
+
+`backend/src/routes/jobs.js` already mounts under `authenticate` + `requireCompanyAccess`; `companyId = req.companyFilter?.company_id`; actor `= { id: req.user?.sub }` (matches the sibling `stripe-manual-card-session` route). Errors via the existing `jobStripeError` (maps `StripePaymentsError` → `{ ok:false, error:{ code, message } }`).
+
+- `POST /api/jobs/:id/stripe-payment-link` — perm **`payments.collect_online`** → `ensureJobPaymentLink(companyId, actor, id, { amount: req.body?.amount })`. Create/reuse the link.
+- `GET  /api/jobs/:id/stripe-payment-link` — perm **`payments.view`** → `getJobPaymentLink(companyId, id)`. Active link + history.
+- `POST /api/jobs/:id/send-payment-link` — perm **`payments.collect_online`** → `sendJobPaymentLink(companyId, actor, id, { channel, amount, message: req.body?.message })`.
+
+(Keyed card on job = existing `POST /:id/stripe-manual-card-session`, perm `payments.collect_keyed` — unchanged; the dialog just calls it with `{ jobId, amount }`.) Every handler's SQL is `company_id`-filtered via the new job queries + `getJobById(id, companyId)`; a foreign job id ⇒ 404, never a cross-tenant leak.
+
+### FR-CTA — Job Finance tab button & readiness states (Architect-proposed copy)
+
+`JobFinancialsTab` fetches `stripePaymentsApi.getStatus()` once (React Query, same as the settings page) and renders on the metrics row (right of `Due`):
+
+- **`can_collect === true`** → primary **"Collect payment"** button → opens `CollectPaymentDialog`.
+- **`readiness === 'not_connected'`** → button **"Set up payments"** (if the user has `tenant.integrations.manage`) linking to `/settings/integrations/stripe-payments`; else a muted hint **"Online payments aren't set up yet — ask an admin."**
+- **`readiness ∈ {onboarding_incomplete, action_required, payments_disabled}`** → button **"Finish payment setup"** → same settings deep-link (admins) / **"Payment setup needs an admin's attention."** (non-admins).
+- **loading / `configured === false`** → button hidden (Stripe not configured platform-side) — matches the invoice path's silent-absence behavior.
+
+The button is additionally hidden unless the user has `payments.collect_online` **or** `payments.collect_keyed` (either surface is actionable), read from the existing authz context — no new permission. *(Exact strings are Architect-proposed; reconcile with the Product FR-CTA block when it lands — §Related.)*
+
+### 6. Backward-compat, idempotency, concurrency
+
+- **Invoice collect flow byte-unchanged.** No existing service fn, query, route, or component signature changes. `resolveSurfaceContext`'s invoice branch is edited only by *adding* a sibling `else if (jobId)` branch and swapping the bare `else` amount check for `assertAdhocAmount` (same `INVALID_AMOUNT` code; stricter only in adding min-$0.50/max-$100k, which the invoice branch never reaches). `ManualCardDialog` gains **optional** `jobId?`/`amount?` props; the sole existing call-site (`InvoiceDetailPanel`, passing `invoiceId`) compiles and behaves identically.
+- **Idempotency:** `job-${companyId}-${jobId}-${amount}` on `createCheckoutSession` (Stripe-side idempotency) + `findOpenJobSession` reuse (app-side) ⇒ double-clicks and retries return the same link, never a duplicate Checkout session.
+- **Concurrency:** two simultaneous creates race to `findOpenJobSession`; the loser may create a second Stripe session, but the shared idempotency key makes Stripe return the **same** session for identical `(job, amount)`, so at most one charge can complete. The webhook is idempotent per external id (`applyStripePayment` dedups on `findByExternalSourceId`), so even a duplicated session can only produce one ledger row.
+- **Ledger correctness:** a completed job link/card ⇒ `payment_transactions` row with `job_id` set, `invoice_id NULL`, attributed `contact_id` — surfaced in the job/contact timeline exactly like any other payment, with no invoice side-effects (the `if (invoiceId)` invoice-balance block in `applyStripePayment` is skipped).
+
+### 7. Migration verdict
+
+**NO migration.** `stripe_payment_sessions.job_id` (mig 114) and `payment_transactions.job_id` already exist and are already written by the current code; perms `payments.collect_online` / `payments.collect_keyed` / `payments.view` already exist (mig 118 + `permissionCatalog.js`). **Current max migration = 155** (`155_backfill_outbound_email_links.sql`) — unchanged by this feature.
+
+### 8. Risks
+
+- **Send has no real dispatcher.** `sendJobPaymentLink` validates + logs but does not truly text/email the link (same as the invoice path today). If Product expects the customer to actually *receive* it, that's a shared messaging-integration follow-up spanning both invoice and job paths — flagged, not silently assumed. Mitigation for v1: the dialog's **"Copy link"** action always works and is the reliable hand-off.
+- **`/pay/thanks` must exist** or Stripe's post-payment redirect 404s (payment still settles via webhook, but the customer sees a broken page). §4 option (a) is the safe default; do NOT ship the job link without a landing route.
+- **Require-cycle caution:** `resolveSurfaceContext` now needs `jobsService`; require it **lazily** inside the branch (as written) to avoid any load-order cycle, since `stripePaymentsService` is required at the top of `jobs.js` which also pulls `jobsService`.
+- **Amount ceiling is a product guess.** $100k is pragmatic, not sourced from a Product number; trivial to tune in `assertAdhocAmount`. Min $0.50 is a hard Stripe floor and must stay.
+- **CTA copy is unsourced** (no Product FR-CTA block existed). Treat §FR-CTA strings as provisional.
