@@ -23,6 +23,7 @@ const tasksQueries = require('../db/tasksQueries');
 const timelinesQueries = require('../db/timelinesQueries');
 const jobsService = require('./jobsService');
 const recommendSlots = require('./agentSkills/skills/recommendSlots');
+const slotEngineService = require('./slotEngineService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
 
 // v1 dial seam is gated to Boston Masters (spec §Scope / C.1). All code stays
@@ -164,6 +165,100 @@ async function markRobotCallFailed(companyId, taskId, reason, client) {
 }
 
 /**
+ * localPartsInTz(date, tz) — company-local 'YYYY-MM-DD' + 'HH:MM' (24h) for an
+ * instant. Uses Intl.formatToParts so the result is locale-separator-independent
+ * (never depends on the runtime's default locale for the field glue).
+ */
+function localPartsInTz(date, tz) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+    }).formatToParts(date).reduce((acc, p) => {
+        acc[p.type] = p.value;
+        return acc;
+    }, {});
+    return {
+        date: `${parts.year}-${parts.month}-${parts.day}`,
+        time: `${parts.hour}:${parts.minute}`,
+    };
+}
+
+/**
+ * buildRobotCallSlot({ startIso, endIso, techName? }, companyId) — SLOTPICK-001.
+ *
+ * Convert a dispatcher-picked UTC arrival window (emitted by CustomTimeModal as
+ * `Date.toISOString()` instants) into the CANONICAL `slot_json` the outbound
+ * lifecycle offers on the call — the SAME shape recommendSlots produces
+ * (`{ key, date, start, end, label, techName, confidence }`). The client label is
+ * NEVER trusted; the server re-derives everything in the company timezone.
+ *
+ * Validation (server authority — any failure → `{ ok:false, error:'invalid_slot' }`):
+ *   1. `startIso`/`endIso` parse to valid Dates.
+ *   2. instant `start < end`.
+ *   3. company-local `date(start) === date(end)` (an arrival window is same-day).
+ *   4. `date >= todayStr` (company-local today; same-day allowed = grace).
+ *   5. `date <= todayStr + 60d` (HORIZON).
+ *
+ * @param {{ startIso?: string, endIso?: string, techName?: string }} picked
+ * @param {string} companyId
+ * @returns {Promise<{ ok:true, slot:object }|{ ok:false, error:'invalid_slot' }>}
+ */
+async function buildRobotCallSlot({ startIso, endIso, techName } = {}, companyId) {
+    requireCompanyId(companyId);
+
+    // 1) Both instants must parse.
+    const startDate = new Date(startIso);
+    const endDate = new Date(endIso);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        return { ok: false, error: 'invalid_slot' };
+    }
+
+    // 2) Ordered instants.
+    if (startDate.getTime() >= endDate.getTime()) {
+        return { ok: false, error: 'invalid_slot' };
+    }
+
+    // 3) Derive company-local date/start/end.
+    const tz = await slotEngineService.resolveTimezone(companyId);
+    const s = localPartsInTz(startDate, tz);
+    const e = localPartsInTz(endDate, tz);
+    const date = s.date;
+    const start = s.time;
+    const end = e.time;
+
+    // No crossing of company-local midnight — same day required.
+    if (s.date !== e.date) {
+        return { ok: false, error: 'invalid_slot' };
+    }
+
+    // 4/5) Horizon: date in [todayStr, todayStr + 60d] (company-local). ISO date
+    //       strings sort lexicographically, so string comparison is exact here.
+    const todayStr = localPartsInTz(new Date(), tz).date;
+    const horizon = new Date(`${todayStr}T00:00:00Z`);
+    horizon.setUTCDate(horizon.getUTCDate() + 60);
+    const horizonStr = horizon.toISOString().slice(0, 10);
+    if (date < todayStr || date > horizonStr) {
+        return { ok: false, error: 'invalid_slot' };
+    }
+
+    const slot = {
+        key: `${date}|${start}|${end}`,
+        date,
+        start,
+        end,
+        label: recommendSlots.formatSlotLabel(date, start, end),
+        techName: techName || null,
+        confidence: null,
+    };
+    return { ok: true, slot };
+}
+
+/**
  * startRobotCall(jobId, companyId, taskId, client?) — pre-compute a slot, then
  * enqueue the FIRST outbound attempt (FR-5, FR-9; spec §C.1 / S2-start / S6 / S14).
  *
@@ -186,17 +281,26 @@ async function markRobotCallFailed(companyId, taskId, reason, client) {
  *      reason to the task, mark the robot_call action failed, leave the job
  *      `Part arrived`. Returns { ok:false, reason:'no_slots'|'engine_error' }.
  *   5. Else INSERT one `pending` attempt (immediate scheduled_at) carrying the
- *      top-1 slot in slot_json. The partial-unique (job_id) WHERE status IN
+ *      chosen slot in slot_json. The partial-unique (job_id) WHERE status IN
  *      ('pending','dialing') guard makes a double-press (S14) a graceful no-op:
  *      the unique_violation is caught → return the existing active row
  *      { ok:true, already:true, attemptId }. Returns { ok:true, attemptId, slot }.
+ *
+ * SLOTPICK-001: when `dispatcherSlot` ({ startIso, endIso, techName? }) is supplied
+ * the dispatcher already picked the window in the reschedule modal — we convert +
+ * validate it server-side via `buildRobotCallSlot` and SKIP step 4 (recommendSlots).
+ * A window that fails validation is a client-correctable pick (bad/expired/out-of-
+ * horizon), so we return { ok:false, reason:'invalid_slot' } WITHOUT stamping the
+ * task failed (the route maps it to HTTP 400). No `dispatcherSlot` → the pre-existing
+ * auto-compute path (step 4) runs byte-identically (backward-compat).
  *
  * @param {number|string} jobId
  * @param {string} companyId
  * @param {number|string} taskId
  * @param {object} [client] optional pg client for tx-aware execution
+ * @param {{ startIso:string, endIso:string, techName?:string }|null} [dispatcherSlot]
  */
-async function startRobotCall(jobId, companyId, taskId, client = null) {
+async function startRobotCall(jobId, companyId, taskId, client = null, dispatcherSlot = null) {
     requireCompanyId(companyId);
     const query = queryFor(client, db);
 
@@ -221,27 +325,41 @@ async function startRobotCall(jobId, companyId, taskId, client = null) {
             return { ok: false, reason: 'no_phone' };
         }
 
-        // 4) Pre-compute the top slot. recommendSlots internally gates on the
-        //    smart-slot-engine app and safe-fails; we treat every non-happy outcome
-        //    (available:false / fallback:true / empty / throw) as "no slots → no call".
-        let recs;
-        try {
-            recs = await recommendSlots.run(companyId, {}, {
-                address: (job.address && String(job.address).trim()) || undefined,
-                lat: job.lat != null ? Number(job.lat) : undefined,
-                lng: job.lng != null ? Number(job.lng) : undefined,
-                durationMinutes: FINISH_VISIT_DURATION_MIN,
-            });
-        } catch (err) {
-            console.error('[partsCallService] recommendSlots threw:', err.message);
-            await markRobotCallFailed(companyId, taskId, ENGINE_ERROR_DISPATCHER_REASON, client);
-            return { ok: false, reason: 'engine_error' };
-        }
+        // 4) Resolve the slot to offer.
+        //    (a) SLOTPICK-001 dispatcher pick: convert + validate the chosen window
+        //        server-side and SKIP the engine. Invalid → NO INSERT, NO task-stamp
+        //        (client-correctable); the route maps reason:'invalid_slot' → HTTP 400.
+        //    (b) Auto-compute (backward-compat): recommendSlots internally gates on the
+        //        smart-slot-engine app and safe-fails; every non-happy outcome
+        //        (available:false / fallback:true / empty / throw) is "no slots → no call".
+        let slot;
+        if (dispatcherSlot) {
+            const built = await buildRobotCallSlot(dispatcherSlot, companyId);
+            if (!built.ok) {
+                return { ok: false, reason: 'invalid_slot' };
+            }
+            slot = built.slot;
+        } else {
+            let recs;
+            try {
+                recs = await recommendSlots.run(companyId, {}, {
+                    address: (job.address && String(job.address).trim()) || undefined,
+                    lat: job.lat != null ? Number(job.lat) : undefined,
+                    lng: job.lng != null ? Number(job.lng) : undefined,
+                    durationMinutes: FINISH_VISIT_DURATION_MIN,
+                });
+            } catch (err) {
+                console.error('[partsCallService] recommendSlots threw:', err.message);
+                await markRobotCallFailed(companyId, taskId, ENGINE_ERROR_DISPATCHER_REASON, client);
+                return { ok: false, reason: 'engine_error' };
+            }
 
-        const topSlot = recs && recs.available && Array.isArray(recs.slots) ? recs.slots[0] : null;
-        if (!recs || recs.fallback || !topSlot) {
-            await markRobotCallFailed(companyId, taskId, NO_SLOTS_DISPATCHER_REASON, client);
-            return { ok: false, reason: 'no_slots' };
+            const topSlot = recs && recs.available && Array.isArray(recs.slots) ? recs.slots[0] : null;
+            if (!recs || recs.fallback || !topSlot) {
+                await markRobotCallFailed(companyId, taskId, NO_SLOTS_DISPATCHER_REASON, client);
+                return { ok: false, reason: 'no_slots' };
+            }
+            slot = topSlot;
         }
 
         // 5) Enqueue the first attempt (immediate). The partial-unique index makes a
@@ -252,9 +370,9 @@ async function startRobotCall(jobId, companyId, taskId, client = null) {
                     (company_id, job_id, task_id, contact_id, phone, attempt_no, status, scheduled_at, slot_json)
                  VALUES ($1, $2, $3, $4, $5, 1, 'pending', now(), $6::jsonb)
                  RETURNING id`,
-                [companyId, jobId, taskId, job.contact_id ?? null, phone, JSON.stringify(topSlot)]
+                [companyId, jobId, taskId, job.contact_id ?? null, phone, JSON.stringify(slot)]
             );
-            return { ok: true, attemptId: rows[0].id, slot: topSlot };
+            return { ok: true, attemptId: rows[0].id, slot };
         } catch (err) {
             if (err.code === '23505') {
                 // In-flight active attempt already exists — return it (no 2nd call).
@@ -278,6 +396,8 @@ async function startRobotCall(jobId, companyId, taskId, client = null) {
 module.exports = {
     onPartArrived,
     startRobotCall,
+    // SLOTPICK-001: ISO→canonical slot_json conversion + validation (route/tests).
+    buildRobotCallSlot,
     // Exported for T7 / tests to reference the canonical constants.
     PART_ARRIVED_CALL_KIND,
     PART_ARRIVED_ACTIONS,

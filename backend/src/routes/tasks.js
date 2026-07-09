@@ -241,8 +241,21 @@ router.post('/:id/actions/:type', requirePermission('tasks.manage'), async (req,
             task,
             job,
             jobId,
+            // SLOTPICK-001: thread the (optional) dispatcher-picked window through to
+            // robot_call's handler. Absent → undefined → startRobotCall auto-computes
+            // (backward-compat). The client window NEVER influences company scope.
+            slot: req.body?.slot,
             companyId: companyId(req),
         });
+
+        // SLOTPICK-001: a dispatcher-picked slot that fails server validation
+        // (bad/expired/out-of-horizon window) is a CLIENT error → HTTP 400, surfaced
+        // live in the modal so the dispatcher can re-pick. Nothing was enqueued and
+        // the task was NOT stamped failed. Every OTHER outcome (incl. domain refusals
+        // like no_phone / not_dialable) stays the 200 envelope below.
+        if (result && result.ok === false && result.reason === 'invalid_slot') {
+            return res.status(400).json({ ok: false, error: { code: 'INVALID_SLOT' }, reason: 'invalid_slot' });
+        }
 
         // Envelope: { ok, state, client? } (spec §A.3). robot_call → state; a
         // failure carries a reason (no_slots / engine_error / …) but is still a

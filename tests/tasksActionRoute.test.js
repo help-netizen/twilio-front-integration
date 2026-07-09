@@ -143,8 +143,9 @@ describe('robot_call dispatch (S11 sub, spec §A.3)', () => {
 
         expect(res.status).toBe(200);
         expect(res.body.data).toEqual({ ok: true, state: 'queued', attemptId: 11 });
-        // jobId first, then companyId (from companyFilter), then taskId.
-        expect(mockStartRobotCall).toHaveBeenCalledWith(50, COMPANY, 7);
+        // jobId, companyId (from companyFilter), taskId, client(null), dispatcherSlot.
+        // SLOTPICK-001: a bodyless POST threads dispatcherSlot=undefined → auto-compute.
+        expect(mockStartRobotCall).toHaveBeenCalledWith(50, COMPANY, 7, null, undefined);
     });
 
     test('startRobotCall no_slots result surfaces as state:failed + reason (still 200)', async () => {
@@ -171,6 +172,69 @@ describe('robot_call dispatch (S11 sub, spec §A.3)', () => {
 
         expect(res.status).toBe(200);
         expect(res.body.data.state).toBe('in_flight_existing');
+    });
+});
+
+// ── SLOTPICK-001 — dispatcher slot body threading + invalid_slot → 400 ────────
+describe('SLOTPICK-001: req.body.slot threading + invalid_slot → 400 (TC-SP-10…12)', () => {
+    const OPEN_JOB_TASK = { id: 7, parent_type: 'job', parent_id: 50, status: 'open' };
+    const SLOT = { startIso: '2026-07-09T13:00:00Z', endIso: '2026-07-09T15:00:00Z' };
+
+    test('TC-SP-10: valid slot in body → startRobotCall(jobId, company, taskId, null, slot); 200 queued', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [OPEN_JOB_TASK] }); // getTaskById
+        mockGetJobById.mockResolvedValueOnce({ id: 50, customer_phone: '+16170001111', customer_name: 'Jane' });
+        mockStartRobotCall.mockResolvedValueOnce({ ok: true, state: 'queued', attemptId: 7 });
+
+        const res = await request(makeApp())
+            .post(`/api/tasks/7/actions/robot_call`)
+            .set('Authorization', 'Bearer t')
+            .send({ slot: SLOT });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true, data: { ok: true, state: 'queued', attemptId: 7 } });
+        // The raw {startIso,endIso} is threaded straight to the 5th arg (server converts).
+        expect(mockStartRobotCall).toHaveBeenCalledWith(50, COMPANY, 7, null, SLOT);
+    });
+
+    test('TC-SP-11: startRobotCall reason:invalid_slot → HTTP 400 (not 200)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [OPEN_JOB_TASK] });
+        mockGetJobById.mockResolvedValueOnce({ id: 50, customer_phone: '+16170001111', customer_name: 'Jane' });
+        mockStartRobotCall.mockResolvedValueOnce({ ok: false, reason: 'invalid_slot' });
+
+        const res = await request(makeApp())
+            .post(`/api/tasks/7/actions/robot_call`)
+            .set('Authorization', 'Bearer t')
+            .send({ slot: { startIso: 'bad', endIso: 'worse' } });
+
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({ ok: false, error: { code: 'INVALID_SLOT' }, reason: 'invalid_slot' });
+    });
+
+    test('TC-SP-12a: non-slot domain refusal (no_phone) stays the 200 envelope', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [OPEN_JOB_TASK] });
+        mockGetJobById.mockResolvedValueOnce({ id: 50, customer_phone: null, customer_name: 'Jane' });
+        mockStartRobotCall.mockResolvedValueOnce({ ok: false, reason: 'no_phone' });
+
+        const res = await request(makeApp())
+            .post(`/api/tasks/7/actions/robot_call`)
+            .set('Authorization', 'Bearer t')
+            .send({ slot: SLOT });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true, data: { ok: false, state: 'failed', reason: 'no_phone' } });
+    });
+
+    test('TC-SP-12b: NO body → dispatcherSlot=undefined (auto-compute), still 200', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [OPEN_JOB_TASK] });
+        mockGetJobById.mockResolvedValueOnce({ id: 50, customer_phone: '+16170001111', customer_name: 'Jane' });
+        mockStartRobotCall.mockResolvedValueOnce({ ok: true, state: 'queued', attemptId: 3 });
+
+        const res = await request(makeApp())
+            .post(`/api/tasks/7/actions/robot_call`)
+            .set('Authorization', 'Bearer t');
+
+        expect(res.status).toBe(200);
+        expect(mockStartRobotCall).toHaveBeenCalledWith(50, COMPANY, 7, null, undefined);
     });
 });
 

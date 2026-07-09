@@ -90,6 +90,10 @@ export interface PulseTask {
     /** OUTBOUND-PARTS-CALL-BTN-001: typed action buttons (robot_call / manual_call)
      *  hydrated onto the by-contact open_task; feeds <TaskActionButtons> in the AR banner. */
     actions?: TaskAction[];
+    /** OUTBOUND-PARTS-CALL-SLOTPICK-001 (SP-03): the open_task's parent — lets the AR
+     *  banner resolve the jobId for the robot_call slot-picker. */
+    parent_id?: number;
+    parent_type?: string;
 }
 
 export interface ActionRequiredState {

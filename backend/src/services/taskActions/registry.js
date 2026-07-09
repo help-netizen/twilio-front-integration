@@ -41,13 +41,17 @@ const partsCallService = require('../partsCallService');
  * @param {{ task: object, job: object|null, companyId: string }} ctx
  * @returns {Promise<{ ok: boolean, state: string, reason?: string }>}
  */
-async function robotCall({ task, jobId, companyId }) {
-    // startRobotCall(jobId, companyId, taskId) — jobId first (verified signature).
-    // The route resolves jobId from the task's parent projection (getTaskById exposes
-    // `parent_type`/`parent_id`, not a raw `job_id`); fall back defensively to any
-    // job_id present on the task object.
+async function robotCall({ task, jobId, companyId, slot }) {
+    // startRobotCall(jobId, companyId, taskId, client, dispatcherSlot) — jobId first
+    // (verified signature). The route resolves jobId from the task's parent projection
+    // (getTaskById exposes `parent_type`/`parent_id`, not a raw `job_id`); fall back
+    // defensively to any job_id present on the task object.
     const resolvedJobId = jobId != null ? jobId : task.job_id;
-    const result = await partsCallService.startRobotCall(resolvedJobId, companyId, task.id);
+    // SLOTPICK-001: thread the dispatcher-picked window ({startIso,endIso}) straight
+    // through as the 5th arg — startRobotCall converts+validates it (invalid →
+    // reason:'invalid_slot' → route 400) and SKIPS the engine. `slot` is undefined
+    // when the caller sent no body → startRobotCall's default null → auto-compute.
+    const result = await partsCallService.startRobotCall(resolvedJobId, companyId, task.id, null, slot);
 
     if (result && result.ok) {
         return {

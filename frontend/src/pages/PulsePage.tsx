@@ -367,6 +367,7 @@ export const PulsePage: React.FC = () => {
                                                     done={false}
                                                     phone={p.phone}
                                                     contactName={p.contact?.full_name || conv.contact?.full_name || undefined}
+                                                    jobId={conv.open_task?.parent_type === 'job' ? conv.open_task?.parent_id : undefined}
                                                     onChanged={p.refetchContacts}
                                                 />
                                             </div>

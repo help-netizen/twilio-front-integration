@@ -216,6 +216,11 @@ router.get('/by-contact', async (req, res) => {
                     agent_output: c.open_task_agent_output || null,
                     // OUTBOUND-PARTS-CALL-BTN-001: typed action buttons for the AR bar.
                     actions: c.open_task_actions || null,
+                    // SLOTPICK-001 (SP-03): the task's parent (job) id/type so the Pulse AR
+                    // robot-call button can getJob(jobId) for coords — mirrors TaskCard's
+                    // parent_type/parent_id. Additive.
+                    parent_id: c.open_task_parent_id ?? null,
+                    parent_type: c.open_task_parent_type || null,
                 } : null,
             };
         });

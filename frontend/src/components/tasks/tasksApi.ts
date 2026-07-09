@@ -179,9 +179,17 @@ export async function deleteTask(id: number): Promise<void> {
  * action outcome; the INNER `data.ok:false` (e.g. no slots) is a domain outcome,
  * not a thrown error — the caller decides how to surface `data.reason`. A non-2xx
  * / auth / network failure DOES throw.
+ *
+ * OUTBOUND-PARTS-CALL-SLOTPICK-001: an optional `body` (e.g. the dispatcher's
+ * chosen `{ slot }`) is sent as JSON. Omit it → identical bodyless POST as before.
  */
-export async function runTaskAction(id: number, type: TaskActionType): Promise<RunTaskActionResult> {
-    const res = await authedFetch(`${BASE}/${id}/actions/${type}`, { method: 'POST' });
+export async function runTaskAction(id: number, type: TaskActionType, body?: unknown): Promise<RunTaskActionResult> {
+    const res = await authedFetch(
+        `${BASE}/${id}/actions/${type}`,
+        body === undefined
+            ? { method: 'POST' }
+            : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    );
     const json = (await res.json().catch(() => null)) as
         | { ok?: boolean; data?: RunTaskActionResult; error?: { message?: string }; message?: string }
         | null;

@@ -169,3 +169,30 @@ describe('BTN-02: Pulse by-contact open_task carries `actions`', () => {
         expect(conv.open_task.actions).toBeNull();
     });
 });
+
+// ══ SP-03 (SLOTPICK-001) ══════════════════════════════════════════════════════
+// The part-arrived task is job-parented; the Pulse AR open_task must carry that
+// job id so the robot-call button can getJob(jobId) for coords on the Pulse
+// surface (mirrors TaskCard's parent_type/parent_id). Same mapping seam as BTN-02.
+describe('SP-03: Pulse by-contact open_task carries `parent_id`/`parent_type`', () => {
+    beforeEach(() => mockGetUnifiedTimelinePage.mockReset());
+
+    test('open_task_parent_id/type set (job) → open_task.parent_id/type equal them', async () => {
+        mockGetUnifiedTimelinePage.mockResolvedValue([taskRow({ open_task_parent_id: 50, open_task_parent_type: 'job' })]);
+        const res = await request(callsApp(), '/api/calls/by-contact');
+        expect(res.status).toBe(200);
+        const conv = res.body.conversations[0];
+        // THE mapping under test (revert → these keys are gone → this fails RED).
+        expect(conv.open_task.parent_id).toBe(50);
+        expect(conv.open_task.parent_type).toBe('job');
+    });
+
+    test('open_task_parent_* absent → parent_id/parent_type null (present-but-null)', async () => {
+        mockGetUnifiedTimelinePage.mockResolvedValue([taskRow()]); // no parent columns
+        const res = await request(callsApp(), '/api/calls/by-contact');
+        const conv = res.body.conversations[0];
+        expect(conv.open_task).not.toBeNull();
+        expect(conv.open_task.parent_id).toBeNull();
+        expect(conv.open_task.parent_type).toBeNull();
+    });
+});

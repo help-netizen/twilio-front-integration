@@ -55,6 +55,13 @@ interface CustomTimeModalProps {
      * so the user knows where to pick a time. Does NOT auto-create a slot.
      */
     preselectTechId?: string;
+    /**
+     * OUTBOUND-PARTS-CALL-SLOTPICK-001 — additive header/CTA overrides so the same
+     * modal can front a different flow (e.g. picking the robot call's slot). Both
+     * omitted → byte-identical to the reschedule/new-job callers.
+     */
+    title?: string;
+    confirmLabel?: string;
 }
 
 interface TechGroup {
@@ -533,7 +540,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId }: CustomTimeModalProps) {
+export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId, title = 'Schedule Time Slot', confirmLabel }: CustomTimeModalProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
     const navigate = useNavigate();
@@ -735,7 +742,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     return (
         <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
             <DialogContent className="md:max-w-5xl max-h-[90vh] ctm-dialog" aria-describedby={undefined}>
-                <DialogTitle className="sr-only">Schedule Time Slot</DialogTitle>
+                <DialogTitle className="sr-only">{title}</DialogTitle>
 
                 {/* Date navigation */}
                 <div className="ctm-date-nav">
@@ -948,7 +955,9 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                     )}
                     <Button variant="ghost" onClick={onClose}>Cancel</Button>
                     <Button onClick={handleConfirm} disabled={!selectedSlot}>
-                        {selectedSlot ? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}` : 'Select a timeslot'}
+                        {selectedSlot
+                            ? (confirmLabel ?? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}`)
+                            : 'Select a timeslot'}
                     </Button>
                 </DialogFooter>
             </DialogContent>

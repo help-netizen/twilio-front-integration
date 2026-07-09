@@ -137,4 +137,4 @@ async function run(companyId, _verifiedContext, input = {}) {
     }
 }
 
-module.exports = { run };
+module.exports = { run, formatSlotLabel };

@@ -29,11 +29,18 @@ jest.mock('../backend/src/db/timelinesQueries', () => ({
 jest.mock('../backend/src/services/jobsService', () => ({
     getJobById: jest.fn(),
 }));
-jest.mock('../backend/src/services/agentSkills/skills/recommendSlots', () => ({
-    run: jest.fn(),
-}));
+// recommendSlots.run is mocked (no engine); formatSlotLabel is the REAL pure helper
+// so buildRobotCallSlot builds the same label the voice surface offers (SLOTPICK-001).
+jest.mock('../backend/src/services/agentSkills/skills/recommendSlots', () => {
+    const actual = jest.requireActual('../backend/src/services/agentSkills/skills/recommendSlots');
+    return { run: jest.fn(), formatSlotLabel: actual.formatSlotLabel };
+});
 jest.mock('../backend/src/services/outboundCallSettingsService', () => ({
     resolve: jest.fn(async () => ({ enabled: true, max_attempts: 3 })),
+}));
+// SLOTPICK-001: buildRobotCallSlot derives company-local date/time via resolveTimezone.
+jest.mock('../backend/src/services/slotEngineService', () => ({
+    resolveTimezone: jest.fn(async () => 'America/New_York'),
 }));
 
 const tasksQueries = require('../backend/src/db/tasksQueries');
@@ -42,6 +49,7 @@ const dbConn = require('../backend/src/db/connection');
 const jobsService = require('../backend/src/services/jobsService');
 const recommendSlots = require('../backend/src/services/agentSkills/skills/recommendSlots');
 const settings = require('../backend/src/services/outboundCallSettingsService');
+const slotEngineService = require('../backend/src/services/slotEngineService');
 const partsCallService = require('../backend/src/services/partsCallService');
 
 const CO = '00000000-0000-0000-0000-000000000001';
@@ -243,6 +251,161 @@ describe('TC-OPC-U07: startRobotCall — not-dialable / no phone → NO call, NO
         expect(recommendSlots.run).not.toHaveBeenCalled();
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
         expect(insertCall).toBeFalsy();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// SLOTPICK-001 — buildRobotCallSlot: ISO → canonical slot_json + validation
+// (TC-SP-01…06). Company-local derivation is pinned via a mocked resolveTimezone
+// + a frozen clock so the horizon window is deterministic. EDT = UTC−4 for the
+// July/Sep 2026 dates used here (US DST is in effect through Nov 1 2026).
+// ---------------------------------------------------------------------------
+
+describe('SLOTPICK-001: buildRobotCallSlot — ISO→slot_json conversion + validation', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-08T12:00:00Z')); // company-local today = 2026-07-08 (EDT)
+        slotEngineService.resolveTimezone.mockResolvedValue('America/New_York');
+    });
+    afterEach(() => jest.useRealTimers());
+
+    test('TC-SP-01: valid UTC window → canonical slot in company tz (EDT = UTC−4)', async () => {
+        const out = await partsCallService.buildRobotCallSlot(
+            { startIso: '2026-07-09T13:00:00Z', endIso: '2026-07-09T15:00:00Z' },
+            CO,
+        );
+        expect(slotEngineService.resolveTimezone).toHaveBeenCalledWith(CO);
+        expect(out.ok).toBe(true);
+        expect(out.slot).toEqual({
+            key: '2026-07-09|09:00|11:00',
+            date: '2026-07-09',
+            start: '09:00',
+            end: '11:00',
+            label: recommendSlots.formatSlotLabel('2026-07-09', '09:00', '11:00'),
+            techName: null,
+            confidence: null,
+        });
+    });
+
+    test('TC-SP-01b: techName passthrough → carried onto the slot (else null)', async () => {
+        const out = await partsCallService.buildRobotCallSlot(
+            { startIso: '2026-07-09T13:00:00Z', endIso: '2026-07-09T15:00:00Z', techName: 'Alex' },
+            CO,
+        );
+        expect(out.ok).toBe(true);
+        expect(out.slot.techName).toBe('Alex');
+    });
+
+    test('TC-SP-02: bad / empty / missing ISO → invalid_slot (no throw)', async () => {
+        await expect(partsCallService.buildRobotCallSlot({ startIso: 'not-a-date', endIso: '2026-07-09T15:00:00Z' }, CO))
+            .resolves.toEqual({ ok: false, error: 'invalid_slot' });
+        await expect(partsCallService.buildRobotCallSlot({ startIso: '', endIso: '2026-07-09T15:00:00Z' }, CO))
+            .resolves.toEqual({ ok: false, error: 'invalid_slot' });
+        await expect(partsCallService.buildRobotCallSlot({ startIso: '2026-07-09T13:00:00Z' }, CO))
+            .resolves.toEqual({ ok: false, error: 'invalid_slot' }); // endIso missing
+    });
+
+    test('TC-SP-03: start ≥ end instant (equal + reversed) → invalid_slot', async () => {
+        await expect(partsCallService.buildRobotCallSlot({ startIso: '2026-07-09T13:00:00Z', endIso: '2026-07-09T13:00:00Z' }, CO))
+            .resolves.toEqual({ ok: false, error: 'invalid_slot' });
+        await expect(partsCallService.buildRobotCallSlot({ startIso: '2026-07-09T15:00:00Z', endIso: '2026-07-09T13:00:00Z' }, CO))
+            .resolves.toEqual({ ok: false, error: 'invalid_slot' });
+    });
+
+    test('TC-SP-04: window crossing company-local midnight → invalid_slot', async () => {
+        // 2026-07-09 23:00 EDT (→03:00Z next day) … 2026-07-10 01:00 EDT (→05:00Z):
+        // instants ordered, but local date(start)=07-09 ≠ date(end)=07-10.
+        const out = await partsCallService.buildRobotCallSlot(
+            { startIso: '2026-07-10T03:00:00Z', endIso: '2026-07-10T05:00:00Z' },
+            CO,
+        );
+        expect(out).toEqual({ ok: false, error: 'invalid_slot' });
+    });
+
+    test('TC-SP-05: past company-local day rejected; same-day allowed (grace)', async () => {
+        await expect(partsCallService.buildRobotCallSlot({ startIso: '2026-07-07T16:00:00Z', endIso: '2026-07-07T18:00:00Z' }, CO))
+            .resolves.toEqual({ ok: false, error: 'invalid_slot' }); // 2026-07-07 < today
+        const same = await partsCallService.buildRobotCallSlot({ startIso: '2026-07-08T20:00:00Z', endIso: '2026-07-08T22:00:00Z' }, CO);
+        expect(same.ok).toBe(true);
+        expect(same.slot.date).toBe('2026-07-08'); // == today → allowed
+    });
+
+    test('TC-SP-06: horizon — today+60d allowed, today+61d rejected', async () => {
+        const at60 = await partsCallService.buildRobotCallSlot({ startIso: '2026-09-06T16:00:00Z', endIso: '2026-09-06T18:00:00Z' }, CO);
+        expect(at60.ok).toBe(true);
+        expect(at60.slot.date).toBe('2026-09-06'); // 2026-07-08 + 60d
+        await expect(partsCallService.buildRobotCallSlot({ startIso: '2026-09-07T16:00:00Z', endIso: '2026-09-07T18:00:00Z' }, CO))
+            .resolves.toEqual({ ok: false, error: 'invalid_slot' }); // +61d
+    });
+});
+
+// ---------------------------------------------------------------------------
+// SLOTPICK-001 — startRobotCall dispatcher-slot passthrough (TC-SP-07…09).
+// A dispatcher-picked window is built+validated server-side and SKIPS the engine;
+// no window → the pre-existing auto-compute path runs unchanged (backward-compat).
+// ---------------------------------------------------------------------------
+
+describe('SLOTPICK-001: startRobotCall — dispatcher slot passthrough vs auto-compute', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-08T12:00:00Z'));
+        slotEngineService.resolveTimezone.mockResolvedValue('America/New_York');
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        settings.resolve.mockResolvedValue({ enabled: true, max_attempts: 3 });
+    });
+    afterEach(() => jest.useRealTimers());
+
+    const EXPECTED_SLOT = () => ({
+        key: '2026-07-09|09:00|11:00',
+        date: '2026-07-09',
+        start: '09:00',
+        end: '11:00',
+        label: recommendSlots.formatSlotLabel('2026-07-09', '09:00', '11:00'),
+        techName: null,
+        confidence: null,
+    });
+
+    test('TC-SP-07: valid dispatcher slot → SKIP recommendSlots, enqueue the built slot_json', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 901 }] }); // the INSERT
+        const dispatcherSlot = { startIso: '2026-07-09T13:00:00Z', endIso: '2026-07-09T15:00:00Z' };
+
+        const out = await partsCallService.startRobotCall(50, CO, 70, null, dispatcherSlot);
+
+        // Engine precompute is SKIPPED entirely.
+        expect(recommendSlots.run).not.toHaveBeenCalled();
+        expect(out).toEqual({ ok: true, attemptId: 901, slot: EXPECTED_SLOT() });
+
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(insertCall).toBeTruthy();
+        const params = insertCall[1];
+        expect(params[0]).toBe(CO); // company_id scoped
+        expect(params[1]).toBe(50);
+        expect(params[2]).toBe(70);
+        expect(JSON.parse(params[5])).toEqual(EXPECTED_SLOT()); // the built canonical slot, not the raw ISO
+    });
+
+    test('TC-SP-08: invalid dispatcher slot → reason:invalid_slot; NO recommendSlots, NO INSERT, task NOT stamped', async () => {
+        const out = await partsCallService.startRobotCall(50, CO, 70, null, { startIso: 'bad', endIso: 'worse' });
+
+        expect(out).toEqual({ ok: false, reason: 'invalid_slot' });
+        expect(recommendSlots.run).not.toHaveBeenCalled();
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(insertCall).toBeFalsy();
+        // markRobotCallFailed (SELECT actions → UPDATE tasks SET actions) must NOT run.
+        const stampCall = mockQuery.mock.calls.find((c) => /UPDATE tasks SET actions/i.test(c[0]));
+        expect(stampCall).toBeFalsy();
+    });
+
+    test('TC-SP-09: NO dispatcher slot → auto-compute path unchanged (recommendSlots top-1)', async () => {
+        recommendSlots.run.mockResolvedValue({ available: true, slots: [TOP_SLOT] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 902 }] });
+
+        const out = await partsCallService.startRobotCall(50, CO, 70); // 3-arg / no slot
+
+        expect(recommendSlots.run).toHaveBeenCalledTimes(1);
+        expect(out).toEqual({ ok: true, attemptId: 902, slot: TOP_SLOT });
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(JSON.parse(insertCall[1][5])).toEqual(TOP_SLOT);
     });
 });
 

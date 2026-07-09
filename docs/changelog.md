@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-08 — OUTBOUND-PARTS-CALL-SLOTPICK-001: диспетчер выбирает точный слот робо-звонка, переиспользуя форму переноса (CustomTimeModal)
+
+**Суть:** раньше `robot_call` сам считал слот (`recommendSlots` top-1) и клиенту предлагалось «что дала» эвристика. Теперь 🤖 «Робот звонит» на part-arrived задаче открывает **ту же форму переноса** `CustomTimeModal` (рекомендации + таймлайны техников + карта) — отличаются только заголовок «Schedule the robot call» и CTA «Queue robot call». Диспетчер **обязан явно выбрать слот**: ранжированную рекомендацию (верхняя преселект) **или** ручной клик по таймлайну / произвольное время. Отсутствие рекомендаций / выключенный движок **не блокирует**. Выбранное окно предлагается клиенту на звонке **дословно**.
+
+- **SP-01 (backend):** `partsCallService.buildRobotCallSlot({startIso,endIso,techName?}, companyId)` конвертирует ISO-окно модалки → company-local `slot_json {key,date,start,end,label,techName,confidence}` (tz через `slotEngineService.resolveTimezone`, Intl); валидирует parse / `start<end` / тот же локальный день / диапазон `[today, today+60d]`. `startRobotCall` получил 5-й арг `dispatcherSlot` — использует его, минуя `recommendSlots`; `null` → авто-расчёт без изменений. `recommendSlots.formatSlotLabel` вынесен в экспорт.
+- **SP-02 (backend):** `routes/tasks.js` протягивает `req.body.slot` → registry `robot_call` → `startRobotCall`; `invalid_slot` → HTTP **400** (живо всплывает в модалке). Бестелесный POST → авто-расчёт (обратная совместимость).
+- **SP-03 (backend):** Pulse `open_task` теперь несёт `parent_id`/`parent_type` (LATERAL в `timelinesQueries.js` + сборка в `calls.js`) → кнопка в баннере Pulse AR резолвит джоб для `getJob`. Аддитивно, `company_id`-scoped.
+- **Фронт (SP-04…08):** `CustomTimeModal` получил аддитивные `title?`/`confirmLabel?` (вызовы переноса/нового джоба байт-идентичны); `runTaskAction(id,type,body?)` умеет JSON-тело; **новый** `RobotCallSlotModal.tsx` (getJob → CustomTimeModal → POST `{slot:{startIso,endIso}}`, держит модалку открытой на 400/отказе); `TaskActionButtons` открывает обёртку вместо `window.confirm`, `jobId?`; `jobId` проброшен на **обеих** поверхностях (TaskCard + Pulse AR).
+- **Проверка (SP-09):** backend jest **63** зелёных (incl. доказанные red→green негативы: `buildRobotCallSlot` ISO→slot_json + валидация, `startRobotCall` passthrough, route body-threading + `invalid_slot`→400 + non-slot-still-200, open_task `parent_id` проекция); frontend `npm run build` зелёный; FE = build + logic-review. Reviewer **APPROVED**.
+- **Известный follow-up (задокументирован, НЕ реализован):** `buildRobotCallSlot` берёт tz из `dispatch_settings.timezone`, а модалка показывает `company.timezone` — сейчас совпадают и это тот же путь, что у авто-расчёта; но если тенант задаст их по-разному, поставленное в очередь окно может съехать относительно увиденного диспетчером.
+- **Без миграции.** Master-only, ещё **НЕ задеплоено**.
+
 ## 2026-07-08 — OUTBOUND-PARTS-CALL-BTN-001: кнопки part-arrived задачи появились на карточке джоба и в Pulse «Action Required»
 
 **Баг:** OUTBOUND-PARTS-CALL-001 был собран на ~90%, но кастомные кнопки задачи («🤖 Робот звонит» / «📞 Позвоню сам») не отображались нигде. Причина — read-проекция `SELECT_TASK` в `backend/src/db/tasksQueries.js` **не выбирала колонку `actions` (jsonb)**, поэтому уже подключённый рендер в `TaskCard` не получал данные и гард `actions?.length` всегда был ложным. На проде подтверждено: задача id=355 (джоб 1408) уже имела сохранённые actions (🤖 robot_call + 📞 manual_call), но кнопки не появлялись.

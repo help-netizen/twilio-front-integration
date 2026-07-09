@@ -492,6 +492,11 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              open_task.kind as open_task_kind,
              open_task.agent_output as open_task_agent_output,
              open_task.actions as open_task_actions,
+             -- SLOTPICK-001 (SP-03): expose the open task's parent (job) id/type so the
+             -- Pulse AR robot-call button can getJob(jobId) for coords. Mirrors the
+             -- getTaskById SELECT_TASK projection. Additive — WHERE/ORDER/params unchanged.
+             open_task.parent_id as open_task_parent_id,
+             open_task.parent_type as open_task_parent_type,
              COALESCE(open_task.task_count, 0) as open_task_count,
              sms.last_message_at as sms_last_message_at,
              sms.last_message_direction as sms_last_message_direction,
@@ -528,6 +533,19 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
          LEFT JOIN LATERAL (
              SELECT ot.id, ot.title, ot.description, ot.due_at, ot.priority,
                     ot.kind, ot.agent_output, ot.actions,
+                    -- SLOTPICK-001 (SP-03): derive parent_type/_id via the SAME CASE the
+                    -- getTaskById SELECT_TASK projection uses (job/lead/estimate/invoice/
+                    -- contact/timeline), so a Pulse AR consumer resolves the job id exactly
+                    -- as the Job-card TaskCard does.
+                    CASE
+                        WHEN ot.job_id      IS NOT NULL THEN 'job'
+                        WHEN ot.lead_id     IS NOT NULL THEN 'lead'
+                        WHEN ot.estimate_id IS NOT NULL THEN 'estimate'
+                        WHEN ot.invoice_id  IS NOT NULL THEN 'invoice'
+                        WHEN ot.contact_id  IS NOT NULL THEN 'contact'
+                        WHEN ot.thread_id   IS NOT NULL THEN 'timeline'
+                    END AS parent_type,
+                    COALESCE(ot.job_id, ot.lead_id, ot.estimate_id, ot.invoice_id, ot.contact_id, ot.thread_id) AS parent_id,
                     (SELECT count(*) FROM tasks tc
                       WHERE tc.thread_id = tl.id AND tc.status = 'open') AS task_count
              FROM tasks ot

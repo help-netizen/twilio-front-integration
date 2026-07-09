@@ -93,7 +93,13 @@ export function TaskCard({ task, tz, canAct, onComplete, onReopen, onSnooze, onE
                 in addition to the built-in Done/Cancel affordances below. The shared
                 component self-gates on tasks.manage and guards done/actions internally,
                 and adds a confirm before a robot_call. */}
-            <TaskActionButtons id={task.id} actions={task.actions} done={done} onChanged={onChanged} />
+            <TaskActionButtons
+                id={task.id}
+                actions={task.actions}
+                done={done}
+                jobId={task.parent_type === 'job' ? task.parent_id : undefined}
+                onChanged={onChanged}
+            />
 
             <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>
