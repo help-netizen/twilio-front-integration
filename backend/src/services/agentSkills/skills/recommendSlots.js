@@ -42,15 +42,27 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
  * already company-local wall-clock. Falls back to a bare "date start–end" string
  * if the date can't be parsed.
  */
+// 12-hour, speech-friendly time ("10:00" -> "10 AM", "14:30" -> "2:30 PM"). The voice
+// agent reads slotLabel verbatim, so keep it natural — never 24h "14:00" or a dash range.
+function to12h(hhmm) {
+    const [h, m] = String(hhmm).split(':').map(Number);
+    if (!Number.isFinite(h)) return String(hhmm);
+    const period = h < 12 ? 'AM' : 'PM';
+    const h12 = ((h + 11) % 12) + 1;
+    return m ? `${h12}:${String(m).padStart(2, '0')} ${period}` : `${h12} ${period}`;
+}
+
 function formatSlotLabel(date, start, end) {
     const [y, mo, d] = String(date).split('-').map(Number);
     if (Number.isFinite(y) && Number.isFinite(mo) && Number.isFinite(d)) {
-        // Noon UTC keeps the weekday stable regardless of the runtime tz.
-        const dow = WEEKDAYS[new Date(Date.UTC(y, mo - 1, d, 12)).getUTCDay()] || '';
-        const mon = MONTHS[mo - 1] || '';
-        return `${dow} ${mon} ${d}, ${start}–${end}`.trim();
+        // Noon UTC keeps the weekday stable regardless of the runtime tz. FULL weekday +
+        // month names so the agent says "Thursday, July 9" — not the abbreviated "Thu Jul 9".
+        const dt = new Date(Date.UTC(y, mo - 1, d, 12));
+        const dow = dt.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+        const mon = dt.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+        return `${dow}, ${mon} ${d}, ${to12h(start)} to ${to12h(end)}`;
     }
-    return `${date}, ${start}–${end}`;
+    return `${date}, ${to12h(start)} to ${to12h(end)}`;
 }
 
 /**
