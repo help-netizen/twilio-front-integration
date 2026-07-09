@@ -124,7 +124,7 @@
     ],
     "provider": "openai"
   },
-  "firstMessage": "Hi {{customerName}}, this is the scheduling team at Home Appliance Repair Service — great news, your part has arrived! Let's schedule a visit to finish the repair.",
+  "firstMessage": "Hi {{customerName}}, this is the scheduling team at Home Appliance Repair Service — great news, your part has arrived! We can come out {{slotLabel}} to finish the repair — does that work for you?",
   "endCallFunctionEnabled": true,
   "endCallMessage": "Thanks so much — we'll see you then. Take care.",
   "transcriber": {
@@ -154,7 +154,7 @@
     "version": "1.0.0"
   },
   "backgroundSound": "https://api.albusto.com/public-assets/background_sound.mp3",
-  "firstMessageMode": "assistant-waits-for-user",
+  "firstMessageMode": "assistant-speaks-first",
   "backgroundDenoisingEnabled": true,
   "artifactPlan": {
     "recordingEnabled": true,
@@ -162,11 +162,11 @@
   },
   "messagePlan": {
     "idleMessages": [
-      "Hi {{customerName}}? This is the scheduling team at Home Appliance Repair Service — great news, your part has arrived. Can you hear me okay?",
-      "Still there? Take your time."
+      "Still there? Take your time.",
+      "I'm here whenever you're ready."
     ],
     "idleMessageMaxSpokenCount": 2,
-    "idleTimeoutSeconds": 5
+    "idleTimeoutSeconds": 8
   },
   "startSpeakingPlan": {
     "smartEndpointingPlan": {
