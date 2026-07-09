@@ -318,8 +318,23 @@ async function startRobotCall(jobId, companyId, taskId, client = null, dispatche
             return { ok: false, reason: 'disabled' };
         }
 
-        // 3) No phone → can't dial (FR-9). Reason on task; job stays Part arrived.
-        const phone = (job.customer_phone || '').trim() || null;
+        // 3) Resolve the number to dial. Prefer the job's own customer_phone, but
+        //    fall back to the linked contact's phone_e164 — many jobs (esp. manual /
+        //    ZB-synced ones) carry the number ONLY on the contact record, so reading
+        //    job.customer_phone alone wrongly reported no_phone. (PARTS-CALL-PHONE-FALLBACK-001)
+        let phone = (job.customer_phone || '').trim() || null;
+        if (!phone && job.contact_id != null) {
+            try {
+                const cRes = await query(
+                    `SELECT phone_e164 FROM contacts WHERE id = $1 AND company_id = $2 LIMIT 1`,
+                    [job.contact_id, companyId]
+                );
+                phone = (cRes.rows[0]?.phone_e164 || '').trim() || null;
+            } catch (err) {
+                console.error('[partsCallService] contact phone fallback lookup failed:', err.message);
+            }
+        }
+        // No phone anywhere → can't dial (FR-9). Reason on task; job stays Part arrived.
         if (!phone) {
             await markRobotCallFailed(companyId, taskId, NO_SLOTS_DISPATCHER_REASON, client);
             return { ok: false, reason: 'no_phone' };

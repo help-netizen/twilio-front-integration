@@ -252,6 +252,22 @@ describe('TC-OPC-U07: startRobotCall — not-dialable / no phone → NO call, NO
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
         expect(insertCall).toBeFalsy();
     });
+
+    test('PHONE-FALLBACK-001: job.customer_phone null but contact has phone_e164 → falls back to the contact phone + enqueues', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, customer_phone: null }); // contact_id 501
+        recommendSlots.run.mockResolvedValue({ available: true, slots: [TOP_SLOT] });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ phone_e164: '+15085140320' }] }) // contact fallback lookup
+            .mockResolvedValueOnce({ rows: [{ id: 951 }] }); // the enqueue INSERT
+        const out = await partsCallService.startRobotCall(50, CO, 70);
+        expect(out).toEqual({ ok: true, attemptId: 951, slot: TOP_SLOT });
+        // fallback lookup is company-scoped by contact_id
+        const lookup = mockQuery.mock.calls.find((c) => /FROM contacts WHERE id = \$1 AND company_id = \$2/i.test(c[0]));
+        expect(lookup && lookup[1]).toEqual([501, CO]);
+        // the enqueued attempt dials the contact's phone
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(insertCall[1]).toContain('+15085140320');
+    });
 });
 
 // ---------------------------------------------------------------------------
