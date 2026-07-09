@@ -5184,3 +5184,70 @@ The button is additionally hidden unless the user has `payments.collect_online` 
 5. `formatSlotLabel` is not exported today → additive export required (no logic change).
 
 **Protected / unchanged:** `routes/schedule.js` slot-recommendations route + `fetchSlotRecommendations` + `slotRecommendationsApi.ts`; CustomTimeModal layout/recs/`onConfirm` payload/`disabled` guard; the outbound worker/VAPI lifecycle + `slot_json` copy-forward + `variableValues`; the `startRobotCall` auto-compute path (no-slot callers); `outbound_call_attempts` schema (NO new migration); `authedFetch.ts` / `useRealtimeEvents.ts`; TASKS-COUNT-BADGE / AR-TASK-UNIFY / LIST-PAGINATION queries.
+
+## OUTBOUND-PARTS-CALL-TECHSLOT-001 — single-tech constraint end-to-end + in-call day/day+time (input-shaping only; NO engine change)
+
+**Requirements:** `## OUTBOUND-PARTS-CALL-TECHSLOT-001` (FR-1…5, AC-1…5). Extends OUTBOUND-PARTS-CALL-001/-BTN-001/-SLOTPICK-001.
+
+### §0 — The crux: the slot engine already does what we need (verified)
+`slot-engine/src/engine.js` iterates `const techs = (request.technicians||[]).filter(active)` (`:67`) and loops `for (const tech of techs)` (`:144`), ranking across **whatever technician array it is handed**. So **single-technician = pass a one-element `technicians` array** — pure input shaping, zero engine code. Date scoping already exists: `earliest_allowed_date`/`latest_allowed_date` on `new_request` (`:75-79`). There is **no target-time concept** (scoring is `S_soon = exp(-hours_until/θ)`, `:312`) → nearest-to-time is re-ranked **in the skill** over the ≤5 same-day windows the engine returns. **Verdict: the slot-engine dependency is SMALL / input-shaping; all changes live in the backend proxy + the skill.**
+
+### §1 — Existing functionality (reused / extended, not duplicated)
+- `slotEngineService.getRecommendations(companyId, { new_job })` (`slotEngineService.js:208`) — builds the snapshot + proxies to the engine. `buildTechnicians` (`:102-130`) returns ALL active ZB members. Already forwards `newJob.earliest_allowed_date`/`latest_allowed_date` (`:220-221`→`:250-251`) and `exclude_job_id`. **EXTEND** with an optional `new_job.technician_id`.
+- `agentSkills/skills/recommendSlots.js` — L0 legacy tool; args `{zip,lat,lng,address,unitType,durationMinutes,excludeSlots,daysAhead}` (`:83`) → `getRecommendations` (`:111`); maps recs → `slots` capped at `MAX_SLOTS=3`. **EXTEND** with `technicianId`/`targetDay`/`targetTime`.
+- `partsCallService.startRobotCall` (`:303`) loads the company-scoped job (`:309`) then enqueues; `buildRobotCallSlot({startIso,endIso,techName},companyId)` (`:211`) builds `slot_json` (`:249-257`). **EXTEND**: `multi_tech` gate + carry `techId`(+coords) in `slot_json`.
+- `outboundCallService.placeCall` (`:62`) builds `assistantOverrides.variableValues` (`:100-113`) from the slot. **EXTEND**: add `technicianId`(+coords).
+- `vapi-tools.buildSkillInput` (`:90-107`) spreads `variableValues` OVER model args (legacy path `:100`) — the injection mechanism (server value wins). Generic name dispatch (`:121-143`) — **no code change**.
+- `CustomTimeModal` (`conversations/CustomTimeModal.tsx`) — `onConfirm({…techId})` already emits the picked lane (`:41,718-724`); `buildTechGroups` shows ALL techs (`:152-193`); recs fetch (`:593-600`) sends `{lat,lng,address,duration_minutes,territory_id,exclude_job_id}` (no tech today). **EXTEND** with optional `recommendTechId`.
+- `RobotCallSlotModal` (`tasks/RobotCallSlotModal.tsx`) — already `getJob`s the job (has `assigned_techs`) (`:43`); `handleQueue(slot:{start,end})` drops `techId` and POSTs `{slot:{startIso,endIso}}` (`:61-67`). **EXTEND**: multi-tech message + capture `techId`.
+- **Do NOT duplicate:** the engine ranking loop, `rescheduleItem`, the recs route, the task-action registry/route slot passthrough, `formatSlotLabel`.
+
+### §2 — The technicianId thread (6 hops; only 3 need code)
+Modal pick → in-call constraint. Opaque passthroughs (route `slot: req.body?.slot` `tasks.js:247`; `registry.robotCall` `registry.js:44-54`; worker `slot: attempt.slot_json` `outboundCallWorker.js:262` + retry copy `:307-312`; INSERT `JSON.stringify(slot)` `partsCallService.js:388`) carry `techId` **with no change**. Code touch-points:
+1. **`RobotCallSlotModal.handleQueue`** — accept `techId` from `onConfirm` and POST `{ slot:{ startIso, endIso, techId } }` (today it is dropped).
+2. **`partsCallService.buildRobotCallSlot`** — destructure `techId` and place it on the `slot` object → rides into `slot_json` via the existing stringified INSERT. **Storage = `slot_json.techId`** (freeform JSONB — **NO migration**; lowest friction; already flows worker→placeCall; survives retries via copy-forward).
+3. **`outboundCallService.placeCall`** — `variableValues.technicianId = s.techId` → `buildSkillInput` spreads it into `recommendSlots` input (authoritative, model can't override).
+
+**Storage decision:** `slot_json.techId` (JSONB), NOT a new `outbound_call_attempts.tech_id` column — no migration is otherwise needed here and the JSONB already threads worker→placeCall and copies forward on retry. The job's coords ride the SAME channel (`slot_json.lat`/`lng`, set by `startRobotCall` from the already-loaded job) so the in-call `recommendSlots` has a server-injected location (see §5).
+
+### §3 — slotEngineService: optional `technician_id` (the single-tech filter) + ranking-cap widen
+In `getRecommendations`, read `newJob.technician_id`. When present:
+- **Filter** the built `technicians` to that one: `technicians.filter(t => String(t.id)===String(technician_id))` BEFORE putting them in the engine body → the engine ranks over a one-element array = that tech only.
+- **Widen ranking caps** for the constrained query. **Critical, verified gap:** engine defaults are `top_n:3, max_recommendations_per_technician:2, max_recommendations_per_same_timeframe:2` (`config.js`), and `buildConfigOverride` only overrides `top_n` (`slotEngineSettingsService.js:159`) — the per-tech cap stays **2**, so a single-tech single-day query would return only 2 of the 5 daily windows, breaking req-4 "offer that day's windows" and req-5 "nearest among ALL that day's windows". Fix by deep-merging a ranking widen onto the existing `config_override` (via the engine's `mergeConfig`) whenever `technician_id` is present: `ranking:{ top_n: max(shown, N), max_recommendations_per_technician: N, max_recommendations_per_same_timeframe: N }` where `N` = `candidate_timeframes` count (5). **Still input-shaping (config_override) — NO engine change.**
+- **Date window** already forwarded (`:220-221`→`:250-251`); the skill sets `earliest=latest=targetDay` via `new_job`.
+- Absent `technician_id` → byte-identical legacy behavior.
+
+### §4 — recommendSlots skill: new args + single-nearest re-rank
+New optional args on `run(companyId,_ctx,input)`: `technicianId`, `targetDay`, `targetTime`.
+- `technicianId` present → set `newJob.technician_id = technicianId` (→ §3 filter + widen). Absent → all-tech (legacy).
+- `targetDay` (`YYYY-MM-DD`) present → set `newJob.earliest_allowed_date = newJob.latest_allowed_date = targetDay` → engine returns only that day's windows for the tech. Map to `slots` (≤`MAX_SLOTS`) — **req 4**.
+- `targetTime` (`HH:MM`) present (with `targetDay`) → after fetching that day's windows, **re-rank by proximity of `time_frame.start` to `targetTime`** and return **exactly ONE** window — **req 5**. Nearest = window whose `[start,end)` contains `targetTime` (distance 0), else `argmin |start_minutes − T_minutes|`, tie → earlier start. Return `{ available:true, slots:[thatOne] }`.
+- Neither → legacy soonest across horizon (tech-constrained if `technicianId`).
+- All faults still degrade to `SLOT_FALLBACK` (call continues). `technicianId` arrives via `variableValues` (server-injected); `targetDay`/`targetTime` via model args (VAPI schema, §6).
+
+### §5 — In-call location (prerequisite for req 4/5)
+The in-call `recommendSlots` (customer counter-proposes) needs the job's location. Inject it server-side: `startRobotCall` puts `job.lat`/`job.lng` on `slot_json` (§2 channel); `placeCall` copies them into `variableValues.lat`/`lng`; `buildSkillInput` spreads them into `recommendSlots` input. No model-claimed location; no migration. **Fork:** if the outbound assistant prompt already supplies the job address to the model, explicit coord injection is optional — Architect to confirm; default = inject (robust).
+
+### §6 — VAPI tool-schema PATCH (OUTBOUND assistant) — explicit task
+The `recommendSlots` tool param schema lives on the remote OUTBOUND assistant (`VAPI_OUTBOUND_ASSISTANT_ID`, `outboundCallService.js:64`), NOT in git; dispatch is generic-by-name (`vapi-tools.js:121-143`). **PATCH** the tool's `parameters` to add two **model-fillable** params: `targetDay` (string, `YYYY-MM-DD`) and `targetTime` (string, `HH:MM` 24h), and update the tool description to instruct passing them when the customer names a specific day / day+time. **`technicianId` is NOT added to the schema** — it is server-injected via `variableValues` (spread last, always wins). REST PATCH per the `vapi-sara-agent` memory pattern (CLI `update` panics; `get` first — live config drifts; re-inject `VAPI_TOOLS_SECRET` into `model.tools[].server` on any model write) — **note: this is the OUTBOUND assistant, not inbound Sara.** MANUAL step.
+
+### §7 — Req 1 gate (two surfaces)
+- **Server (authoritative):** `startRobotCall`, right after the job load + dialable guard (`partsCallService.js:308-313`), if `(job.assigned_techs||[]).length >= 2` → `return { ok:false, reason:'multi_tech' }` (before v1-gate/phone/slot; no `markRobotCallFailed`). The execute route's existing envelope maps any non-`invalid_slot` `{ok:false}` to a **200** domain refusal `{ ok:true, data:{ ok:false, state:'failed', reason:'multi_tech' } }` — **no route change**.
+- **Modal (human):** `RobotCallSlotModal`, after `getJob`, if `job.assigned_techs.length >= 2` render a short message ("This job has multiple technicians — the robot call isn't available; please call manually") in place of `CustomTimeModal`. Both surfaces inherit this (shared `TaskActionButtons` → wrapper).
+
+### §8 — Req 3 (reschedule recs scoped to current tech)
+`CustomTimeModal` gains optional `recommendTechId?: string` → forwarded as `technician_id` in `fetchSlotRecommendations` (`:593-600`); `SlotRecommendationsInput` gains `technician_id?` (flows into `new_job` via the existing `{ new_job }` wrap, `slotRecommendationsApi.ts:62` → route `:210` → `getRecommendations` → §3 filter). **Reschedule caller = `JobInfoSections.tsx:285-294`** (the only existing-job reschedule opener; already reads `assigned_techs[0]` for `initialSlot`): pass `recommendTechId = [...job.assigned_techs].sort((a,b)=>String(a.id).localeCompare(String(b.id)))[0]?.id`. `buildTechGroups` unchanged → timelines show ALL techs (dispatcher override = req 2). New-job callers (`ConvertToJobSteps`, `WizardStep3`, `NewJobDialog`) send nothing → all-tech (unchanged). Reschedule stays time-only (`rescheduleItem` — assignment untouched).
+
+### §9 — New/changed components
+**Backend (extend, no new files):** `slotEngineService.js` (§3), `agentSkills/skills/recommendSlots.js` (§4), `partsCallService.js` (§2 hop 2 + §5 + §7 server gate), `outboundCallService.js` (§2 hop 3 + §5).
+**Frontend (extend, no new files):** `RobotCallSlotModal.tsx` (§2 hop 1 + §7 modal), `CustomTimeModal.tsx` + `slotRecommendationsApi.ts` (§8 prop + field), `JobInfoSections.tsx` (§8 caller).
+**External:** VAPI OUTBOUND assistant `recommendSlots` tool schema (§6).
+**No new API endpoint; no new route; no new migration.** Company scope preserved throughout (`req.companyFilter.company_id` on the recs route; `companyId` arg on the skill/service/partsCall; `variableValues.companyId` unchanged on the call).
+
+### §10 — Open questions / forks
+1. **In-call location injection (§5)** — inject coords via `slot_json`→`variableValues` (default) vs. rely on the assistant prompt already carrying the address. Recommend inject.
+2. **`targetDay` resolution** — v1 expects `YYYY-MM-DD` (the model resolves relative "Thursday"→date). If unreliable, a later iteration can let the skill resolve a weekday within horizon. Out of scope v1.
+3. **Ranking-widen `N`** — use the engine `candidate_timeframes` count (5 default); if a tenant customizes windows, size to that count.
+4. **`multi_tech` — stamp task?** — chosen NOT to stamp (mirrors `not_dialable`; dispatcher uses manual). Reversible.
+
+**Protected / unchanged:** `slot-engine/src/*`; the schedule recs route + `fetchSlotRecommendations` shape (additive field only); `CustomTimeModal` layout/recs/`onConfirm`/`disabled`/`buildTechGroups`; the task-action execute route envelope + registry (slot opaque); the outbound worker + `slot_json` copy-forward; `scheduleService.rescheduleItem` (time-only); the SLOTPICK auto-compute + `buildRobotCallSlot` validation; `outbound_call_attempts` schema (**NO migration**); `authedFetch.ts` / `useRealtimeEvents.ts`.

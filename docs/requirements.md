@@ -4498,3 +4498,83 @@ explicitly non-critical. Surface: `backend/src/services/mailAgentClassifier.js` 
 - **AC-SP-3 (revised):** the chosen ISO window is POSTed as `{ slot:{ startIso, endIso } }`; the server converts ISO→company-tz `date`/`start`/`end`, validates (valid ISO, `start<end`, same-day, not past, ≤60d horizon) and builds `slot_json` (`key`+`label` server-side, `techName`/`confidence` null); an invalid slot → **HTTP 400** `reason:'invalid_slot'`, nothing enqueued, `recommendSlots` not run, task not stamped, modal stays open.
 - **AC-SP-4 (revised):** recommendations come from the EXISTING `POST /api/schedule/slot-recommendations` (gated `schedule.dispatch`) fed with the wrapper's server-derived job coords; NO new route. The 🤖 button gates `tasks.manage`; a user with `tasks.manage` but not `schedule.dispatch` sees empty recs but can still manual-pick and queue.
 - **AC-SP-5 (revised):** the dispatcher-chosen slot is pinned across retries; both surfaces (Job card + Pulse AR) share `TaskActionButtons` → the `RobotCallSlotModal` wrapper → `CustomTimeModal` (the Pulse open_task carries `parent_id` so the wrapper can `getJob`); `npm run build` + backend jest green; schedule recs route / CustomTimeModal reschedule behavior / outbound lifecycle diff-free.
+
+
+## OUTBOUND-PARTS-CALL-TECHSLOT-001 — the robot offers ONE technician's real windows; block multi-tech jobs; in-call day / day+time handling (2026-07-09)
+
+**Relationship:** extends OUTBOUND-PARTS-CALL-001 / -BTN-001 / -SLOTPICK-001. SLOTPICK let the dispatcher pick the OPENING window the robot offers; this feature makes the robot's IN-CALL alternatives come from **one specific technician** (the one the dispatcher picked) and adds day / day+time handling when the customer counter-proposes. It also forbids the robot call on jobs with 2+ technicians and scopes the desktop reschedule recommendations to the job's current technician. **Enhancement, not a new subsystem** — reuses the shipped slot engine, the schedule recs route, `CustomTimeModal`, the outbound worker/VAPI lifecycle, and `recommendSlots`. **The crux: NO slot-engine algorithm change — the engine already ranks across whatever `technicians` array it is handed (`slot-engine/src/engine.js:67,144`) and already honors `earliest_allowed_date`/`latest_allowed_date` (`:75-79`); single-tech = pass a ONE-element technicians array (input shaping in the backend proxy).**
+
+**⚑ BINDING DECISIONS (owner-confirmed, 2026-07-09):**
+- **First tech of a 2+ job = `assigned_techs[0]` under a deterministic (stable, by-id) ordering.**
+- **In-call nearest-to-time = exactly ONE nearest window** (not a list).
+- **Req-1 gate is enforced on BOTH surfaces:** a human message in the modal AND a server-side reject in `partsCallService.startRobotCall` (`reason:'multi_tech'`) so it cannot be bypassed.
+- **Assignment is preserved on reschedule** (time-only; both techs stay assigned — already true via `scheduleService.rescheduleItem`, never touched).
+
+---
+
+### Requirement 1 — Forbid the robot call for jobs with 2+ technicians
+
+**FR-1.1:** When a `part_arrived_call` task's job has **2 or more** `assigned_techs`, the 🤖 "Let the robot call" path MUST NOT queue an outbound attempt.
+**FR-1.2 (modal surface):** Clicking 🤖 on such a job opens the `RobotCallSlotModal` wrapper, which — after `getJob` returns the job — detects `assigned_techs.length >= 2` and renders a clear human message ("This job has multiple technicians — the robot call isn't available; please call manually") **instead of** the `CustomTimeModal` slot picker. No queue is possible from this state.
+**FR-1.3 (server surface, non-bypassable):** `partsCallService.startRobotCall`, after loading the company-scoped job, rejects a 2+ tech job with `{ ok:false, reason:'multi_tech' }` **before** any enqueue, even if the client is bypassed. The task is left open (not stamped failed) so the dispatcher can use 📞 manual.
+**FR-1.4:** Applies identically on both surfaces that mount `TaskActionButtons` → `RobotCallSlotModal` (Job card `TaskCard` + Pulse "Action Required" banner).
+
+**AC-1.1:** A part-arrived job with ≥2 `assigned_techs`: 🤖 opens the modal showing the multi-tech message (no picker, no CTA) on both surfaces.
+**AC-1.2:** A direct `POST /api/tasks/:id/actions/robot_call` (with or without a `slot`) for a ≥2-tech job returns a 200 domain refusal `reason:'multi_tech'`; **no** `outbound_call_attempts` row is inserted; the task stays open/unstamped.
+**AC-1.3:** A single-tech (or zero-tech) job is unaffected — the picker renders and queuing works as SLOTPICK-001.
+
+### Requirement 2 — The robot offers windows ONLY from the technician the dispatcher picked
+
+**FR-2.1:** In the robot-call slot modal the dispatcher may pick a window on **ANY** technician's timeline lane (not necessarily the repair tech). The picked lane's `techId` (already emitted by `CustomTimeModal.onConfirm({…techId})`) is the chosen technician.
+**FR-2.2:** That `techId` MUST be threaded end-to-end so the **in-call** `recommendSlots` is constrained to exactly that technician: modal → POST body `slot.techId` → `startRobotCall`/`buildRobotCallSlot` → `outbound_call_attempts.slot_json.techId` → worker → `placeCall` `assistantOverrides.variableValues.technicianId` → `recommendSlots` input (server-injected, model-untrusted).
+**FR-2.3:** When constrained, every window the robot offers on the call (opening slot and any in-call alternative) belongs to that one technician; no other technician's availability is offered.
+**FR-2.4 (fallback):** If a robot-call slot somehow carries no `techId` (should not happen — req 1 blocks 2+ tech jobs and the modal always yields a lane pick), the constraint falls back to the job's single assigned technician; absent even that, `recommendSlots` behaves as legacy (all-tech).
+
+**AC-2.1:** Picking a window on technician B's lane (even if the job's repair tech is A) queues an attempt whose `slot_json.techId = B`; the placed call's `variableValues.technicianId = B`.
+**AC-2.2:** An in-call `recommendSlots` invocation with `technicianId=B` returns only windows feasible for B (verified: the backend proxy sends a one-element `technicians` array).
+**AC-2.3:** No `technicianId` → legacy all-tech recommendations (backward-compat).
+
+### Requirement 3 — Desktop reschedule recommendations scoped to the job's current technician
+
+**FR-3.1:** When `CustomTimeModal` is opened to **reschedule an existing job** (`JobInfoSections`, `initialSlot` present), the ranked recommendations default to the job's **current** technician. For a 2+ tech job that technician is `assigned_techs[0]` under a **deterministic stable (by-id) ordering**.
+**FR-3.2:** The technician **timelines still show ALL technicians** (`buildTechGroups` unchanged) so the dispatcher can override by clicking a different lane (feeds req 2's pick).
+**FR-3.3:** The reschedule is **time-only**: `assigned_techs` is NOT modified (both techs stay assigned). Already true — `scheduleService.rescheduleItem` never writes assignment; this feature does not change that.
+**FR-3.4:** The **new-job** flows (`ConvertToJobSteps`, `WizardStep3`, `NewJobDialog`) are unaffected — they pass no tech constraint → all-tech recommendations as today.
+
+**AC-3.1:** Rescheduling a single-tech job requests recommendations scoped to that tech (`new_job.technician_id` set) — recs come back only for that tech; timelines still render all techs.
+**AC-3.2:** Rescheduling a 2+ tech job scopes recs to the stable-sorted `assigned_techs[0]`; after saving, the job still has BOTH techs assigned (assignment unchanged).
+**AC-3.3:** New-job flows are byte-identical (no `technician_id` sent).
+
+### Requirement 4 — In-call: customer asks a SPECIFIC DAY → offer that tech's windows on that day
+
+**FR-4.1:** The outbound `recommendSlots` tool accepts an optional `targetDay` (`YYYY-MM-DD`). When present, recommendations are constrained to that single day (backend sets `earliest_allowed_date = latest_allowed_date = targetDay`) for the constrained technician.
+**FR-4.2:** The robot offers up to `MAX_SLOTS` (3) available windows on that day for that technician; if none are available that day, it degrades to the existing safe-fallback (no fabricated window).
+
+**AC-4.1:** `recommendSlots({ technicianId:B, targetDay:'2026-07-16' })` returns only 2026-07-16 windows feasible for B (≤3), engine-ranked.
+**AC-4.2:** No feasible window that day → `{ available:false, fallback:true }` (call continues; robot says none available and offers to check another day).
+
+### Requirement 5 — In-call: customer asks a SPECIFIC DAY + TIME → the single nearest available window
+
+**FR-5.1:** The outbound `recommendSlots` tool accepts an optional `targetTime` (`HH:MM`, 24h), meaningful only together with `targetDay`. When present, the skill re-ranks that day's windows for the technician by proximity of the window start to `targetTime` and returns **exactly ONE** window — the nearest.
+**FR-5.2:** "Nearest" = prefer the window whose `[start,end)` contains `targetTime` (an exact hit, distance 0); otherwise the window minimizing `|window_start − targetTime|`; ties break to the earlier start.
+**FR-5.3:** If the requested window is free, that window is the nearest (returned as the single offer); if busy, the single nearest available window is offered.
+**FR-5.4:** No engine algorithm change — the engine has no target-time concept (`slot-engine/src/engine.js:312` scores "sooner", not "nearest to T"); the nearest re-rank happens IN THE SKILL over the (≤5) same-day windows the engine returns.
+
+**AC-5.1:** `recommendSlots({ technicianId:B, targetDay:D, targetTime:'14:30' })` with a free 14:00–16:00 window → returns exactly that one window.
+**AC-5.2:** Same call when 14:00–16:00 is occupied but 16:00–18:00 is free → returns exactly the 16:00–18:00 window (single nearest).
+**AC-5.3:** Exactly one slot is returned (never a list) whenever `targetTime` is present.
+
+---
+
+**Constraints / non-functional:**
+- **NO new migration.** The chosen technician is stored in the existing freeform `outbound_call_attempts.slot_json` (`slot_json.techId`; the job's coords ride the same channel as `slot_json.lat`/`lng` so the in-call `recommendSlots` has a server-injected location). `slot_json` is copied forward on retry → the constraint persists across retries.
+- **NO slot-engine (`slot-engine/src/*`) code change** — single-tech = one-element `technicians` array; day = `earliest=latest=targetDay`; nearest-to-time = re-rank in the skill. The only engine-shaping is in the backend proxy `slotEngineService` (a one-tech filter + a query-scoped ranking-cap widen so the engine returns that tech's full same-day window set rather than the default per-tech cap of 2).
+- **NO change** to the schedule recs route contract (it already passes `req.body` through and is company-scoped via `req.companyFilter.company_id`), the task-action execute route / registry (the `slot` object is threaded opaquely — `techId` rides along), the outbound worker lifecycle, `CustomTimeModal` layout / `onConfirm` payload / `disabled` guard, or the SLOTPICK auto-compute / ISO→`slot_json` path.
+- The chosen `technicianId` is **server-injected** (`variableValues`), never a model claim; `targetDay`/`targetTime` are the only model-fillable additions (VAPI tool-schema PATCH on the OUTBOUND assistant). Company-scoped on every query.
+- English UI; existing modal styles/tokens; `npm run build` (tsc -b) + backend jest green.
+
+**Potentially involved modules:** backend `services/slotEngineService.js` (optional `technician_id` filter + ranking-cap widen), `services/agentSkills/skills/recommendSlots.js` (new `technicianId`/`targetDay`/`targetTime` args + single-nearest re-rank), `services/partsCallService.js` (`multi_tech` gate + `techId`/coords into `slot_json`), `services/outboundCallService.js` (`technicianId`/coords into `variableValues`); frontend `components/tasks/RobotCallSlotModal.tsx` (multi-tech message + capture `techId`), `components/conversations/CustomTimeModal.tsx` + `services/slotRecommendationsApi.ts` (optional `recommendTechId`→`technician_id`), `components/jobs/JobInfoSections.tsx` (pass `recommendTechId = assigned_techs[0]`). External: the OUTBOUND VAPI assistant (`VAPI_OUTBOUND_ASSISTANT_ID`) `recommendSlots` tool param schema (PATCH: `targetDay`,`targetTime`).
+
+**Affected integrations:** Albusto slot engine (read-only, via the existing proxy — input-shaping only); VAPI (outbound assistant tool-schema PATCH + injected `variableValues`); ZenBooker/Twilio only via the already-shipped robot-call lifecycle (unchanged).
+
+**Protected parts (must not break):** `slot-engine/src/*` (NO change); the schedule recs route + `fetchSlotRecommendations` request/response contract (additive `technician_id` field only); `CustomTimeModal` layout / recs fetch shape / `onConfirm` payload / `disabled` guard / `buildTechGroups` (all-tech timelines); the task-action execute route envelope + `registry` contract (slot threaded opaquely); the outbound worker + `slot_json` copy-forward; `scheduleService.rescheduleItem` (time-only, never reassigns); the SLOTPICK auto-compute + `buildRobotCallSlot` ISO→`slot_json` validation; `outbound_call_attempts` schema (NO new migration); `authedFetch.ts` / `useRealtimeEvents.ts`.
