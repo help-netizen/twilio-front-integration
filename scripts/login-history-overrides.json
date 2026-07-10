@@ -1,20 +1,73 @@
 {
-  "8611665": { "tag": "Feature", "text": "Tasks — track follow-ups on any job, lead, estimate or invoice" },
-  "2754e1b": { "tag": "Feature", "text": "Roles & Access editor — manage role permissions in-app" },
-  "3b328f8": { "tag": "Polish", "text": "Role-based access audit + hardening across the app" },
-  "2412bf9": { "tag": "Fix", "text": "Technicians can start, update & complete their own jobs" },
-  "800fe6c": { "tag": "Fix", "text": "More reliable service-area check for ZIP codes" },
-  "b44da9e": { "tag": "Feature", "text": "Note attachments upload instantly with a progress indicator" },
-  "5f7de54": { "tag": "Feature", "text": "Technicians can prepare estimates & invoices and take payment" },
-  "81efead": { "tag": "Polish", "text": "More consistent panels, sheets & menus across the app" },
-  "96758c7": { "hide": true },
-  "11c2693": { "hide": true },
-  "d7f8c21": { "tag": "Feature", "text": "Job tiles show paid vs. due at a glance" },
-  "2079c67": { "tag": "Fix", "text": "Easier to close detail cards on mobile" },
-  "610107f": { "hide": true },
-  "ca5aa2a": { "tag": "Feature", "text": "Pulse conversations grouped by day, with Action Required pinned on top" },
-  "cb736d5": { "hide": true },
-  "abf8417": { "tag": "Feature", "text": "Pulse: a conversation you flag for action is now a real task — assign it, set a due date, and track it" },
-  "b8790e4": { "tag": "Polish", "text": "Job cards now lead with the job type, matching the jobs list" },
-  "94eec53": { "tag": "Fix", "text": "Fixed editing or deleting a job note right after adding it" }
+  "8611665": {
+    "tag": "Feature",
+    "text": "Tasks — track follow-ups on any job, lead, estimate or invoice"
+  },
+  "2754e1b": {
+    "tag": "Feature",
+    "text": "Roles & Access editor — manage role permissions in-app"
+  },
+  "3b328f8": {
+    "tag": "Polish",
+    "text": "Role-based access audit + hardening across the app"
+  },
+  "2412bf9": {
+    "tag": "Fix",
+    "text": "Technicians can start, update & complete their own jobs"
+  },
+  "800fe6c": {
+    "tag": "Fix",
+    "text": "More reliable service-area check for ZIP codes"
+  },
+  "b44da9e": {
+    "tag": "Feature",
+    "text": "Note attachments upload instantly with a progress indicator"
+  },
+  "5f7de54": {
+    "tag": "Feature",
+    "text": "Technicians can prepare estimates & invoices and take payment"
+  },
+  "81efead": {
+    "tag": "Polish",
+    "text": "More consistent panels, sheets & menus across the app"
+  },
+  "96758c7": {
+    "hide": true
+  },
+  "11c2693": {
+    "hide": true
+  },
+  "d7f8c21": {
+    "tag": "Feature",
+    "text": "Job tiles show paid vs. due at a glance"
+  },
+  "2079c67": {
+    "tag": "Fix",
+    "text": "Easier to close detail cards on mobile"
+  },
+  "610107f": {
+    "hide": true
+  },
+  "ca5aa2a": {
+    "tag": "Feature",
+    "text": "Pulse conversations grouped by day, with Action Required pinned on top"
+  },
+  "cb736d5": {
+    "hide": true
+  },
+  "abf8417": {
+    "tag": "Feature",
+    "text": "Pulse: a conversation you flag for action is now a real task — assign it, set a due date, and track it"
+  },
+  "b8790e4": {
+    "tag": "Polish",
+    "text": "Job cards now lead with the job type, matching the jobs list"
+  },
+  "94eec53": {
+    "tag": "Fix",
+    "text": "Fixed editing or deleting a job note right after adding it"
+  },
+  "e6c2b57": {
+    "hide": true
+  }
 }
