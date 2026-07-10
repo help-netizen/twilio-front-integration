@@ -38,7 +38,10 @@ const BLANC_STATUSES = [
 const ALLOWED_TRANSITIONS = {
     'Submitted': ['Follow Up with Client', 'Waiting for parts', 'Canceled', 'On the way'],
     'Waiting for parts': ['Submitted', 'Follow Up with Client', 'Canceled', 'Part arrived'],
-    'Part arrived': ['Rescheduled', 'Canceled', 'Follow Up with Client'],
+    // JOB-FSM-PART-ARRIVED-FORWARD-001: non-blocking — forward (On the way / Visit
+    // completed), lateral (Rescheduled), back (Waiting for parts / Submitted), plus the
+    // original Follow Up / Canceled. Mirrors the published-graph fix in migration 160.
+    'Part arrived': ['On the way', 'Visit completed', 'Rescheduled', 'Waiting for parts', 'Follow Up with Client', 'Submitted', 'Canceled'],
     'Follow Up with Client': ['Waiting for parts', 'Submitted', 'Canceled'],
     'Visit completed': ['Follow Up with Client', 'Job is Done', 'Canceled'],
     'Job is Done': ['Canceled'],
