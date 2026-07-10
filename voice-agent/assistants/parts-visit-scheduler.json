@@ -190,5 +190,9 @@
     "pciEnabled": false,
     "zdrEnabled": false
   },
-  "isServerUrlSecretSet": false
+  "isServerUrlSecretSet": false,
+  "serverMessages": [
+    "end-of-call-report",
+    "status-update"
+  ]
 }
