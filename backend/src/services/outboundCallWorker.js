@@ -26,6 +26,10 @@ const jobsService = require('./jobsService');
 const outboundCallService = require('./outboundCallService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
 const groupRouting = require('./groupRouting');
+// OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04): the CC-01 cancel helpers. Used by the
+// honest Guard-1 (task stamp) and the shared no-resurrection retry guard
+// (isChainCanceled). partsCallService never requires this module — no cycle.
+const partsCallService = require('./partsCallService');
 // OUTBOUND-CALL-TIMELINE-001 (CT-04): mirror a placed robot call into the
 // customer's Pulse timeline. The service is NON-FATAL by contract, but we still
 // wrap the call here (best-effort side-effect — never blocks/reclassifies a dial).
@@ -177,6 +181,53 @@ async function addFailedAttemptNote(jobId, customerName, nextScheduledAt, exhaus
 }
 
 // =============================================================================
+// OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04) — the shared no-resurrection guard
+// =============================================================================
+
+/**
+ * retryBlockReason(attempt) — may this failing attempt's chain schedule its NEXT
+ * attempt? Shared by BOTH retry-insertion sites (this worker's
+ * `scheduleRetryOrExhaust` and the webhook's transient branch in
+ * `routes/vapiCallStatus.js`) so the compound predicate lives in exactly one
+ * place (spec S10). Company scope comes from the attempt ROW (anti-spoof).
+ *
+ * Two independent belts:
+ *   1. Company-scoped job re-read — the job must still exist, be non-canceled
+ *      and sit in 'Part arrived' (belt #2 of S10: works even when the cancel
+ *      hook's marker write failed).
+ *   2. `partsCallService.isChainCanceled` — a `canceled` row NEWER than the
+ *      failing attempt (leave-hook flip or mid-flight marker, S9) kills the
+ *      chain even if the job happens to sit in 'Part arrived' again. Old
+ *      canceled rows (id <= attempt.id) never block a fresh re-queue (S12).
+ *
+ * @returns {Promise<string|null>} a short block reason ('job_not_found' |
+ *   'job_canceled' | 'job_status_<X>' | 'chain_canceled') when the retry INSERT
+ *   must be skipped, or null when the chain may continue. FAIL-OPEN: any read
+ *   fault → null (happy-path retries behave exactly as today) — never throws.
+ */
+async function retryBlockReason(attempt) {
+    const companyId = attempt.company_id;
+    const jobId = attempt.job_id;
+    try {
+        const job = await jobsService.getJobById(jobId, companyId);
+        if (!job) return 'job_not_found';
+        if (job.zb_canceled || job.blanc_status === 'Canceled') return 'job_canceled';
+        if (job.blanc_status !== 'Part arrived') return `job_status_${job.blanc_status}`;
+    } catch (err) {
+        console.warn('[outboundCallWorker] retry-guard job re-read failed (fail-open):', err.message);
+    }
+    try {
+        if (await partsCallService.isChainCanceled(companyId, jobId, attempt.id)) {
+            return 'chain_canceled';
+        }
+    } catch (err) {
+        // isChainCanceled is fail-open (false) by contract; belt-and-braces.
+        console.warn('[outboundCallWorker] retry-guard chain read failed (fail-open):', err.message);
+    }
+    return null;
+}
+
+// =============================================================================
 // Per-attempt processing
 // =============================================================================
 
@@ -192,12 +243,47 @@ async function processAttempt(attempt) {
 
     // --- Guard 1: job must still be actionable (Part arrived, not Canceled). ---
     // A job moved on (rescheduled/canceled) since enqueue should not be dialed.
+    // CANCEL-001 (CC-04, S11): Guard-1 is now the HONEST net — a claimed row on
+    // a job that left 'Part arrived' terminates as 'canceled' (was a dishonest
+    // 'failed' with no note) and gets the same FR-3 job note + task stamp a
+    // leave-hook cancel writes, so a sync-path race (status changed without any
+    // hook firing) is still visible to the dispatcher. `job_not_found` keeps
+    // 'failed' and writes nothing — there is no job to note on.
     const job = await jobsService.getJobById(jobId, companyId);
-    if (!job || job.zb_canceled || job.blanc_status === 'Canceled' || job.blanc_status !== 'Part arrived') {
-        const reason = !job
-            ? 'job_not_found'
-            : (job.zb_canceled || job.blanc_status === 'Canceled' ? 'job_canceled' : `job_status_${job.blanc_status}`);
-        await terminate(attempt.id, 'failed', reason);
+    if (!job) {
+        await terminate(attempt.id, 'failed', 'job_not_found');
+        return;
+    }
+    if (job.zb_canceled || job.blanc_status !== 'Part arrived') {
+        // Reason keeps Guard-1's historical vocabulary (TC-CC-15).
+        const reason = job.zb_canceled || job.blanc_status === 'Canceled'
+            ? 'job_canceled'
+            : `job_status_${job.blanc_status}`;
+        await terminate(attempt.id, 'canceled', reason);
+        // FR-3 copy (mirrors partsCallService.buildCancelCopy status_change).
+        // zb_canceled with blanc_status still 'Part arrived' uses the S3 label.
+        const newStatus = job.blanc_status !== 'Part arrived'
+            ? job.blanc_status
+            : 'Canceled (Zenbooker)';
+        try {
+            await jobsService.addNote(
+                jobId,
+                `AI: robot call canceled — job left 'Part arrived' (status changed to '${newStatus}').`,
+                [], 'AI Phone', 'AI Phone'
+            );
+        } catch (err) {
+            console.warn('[outboundCallWorker] Guard-1 cancel note failed (non-fatal):', err.message);
+        }
+        try {
+            if (attempt.task_id != null) {
+                await partsCallService.markRobotCallCanceled(
+                    companyId, attempt.task_id,
+                    `Canceled — job status changed to '${newStatus}'.`
+                );
+            }
+        } catch (err) {
+            console.warn('[outboundCallWorker] Guard-1 task stamp failed (non-fatal):', err.message);
+        }
         return;
     }
 
@@ -322,6 +408,18 @@ async function scheduleRetryOrExhaust(attempt, job, settings, group, failReason,
         [attempt.id, failReason]
     );
 
+    // CANCEL-001 (CC-04, S10): no-resurrection guard — the SAME compound guard
+    // as the webhook's retry site. THIS attempt already carries its honest
+    // 'failed' above; when the job left 'Part arrived' (or the chain carries a
+    // newer `canceled` row) we skip the next-attempt INSERT AND the notes — the
+    // cancel event already wrote its own note (no double-noting). Fail-open +
+    // never throws, so the worker loop is untouched.
+    const blockedBy = await retryBlockReason(attempt);
+    if (blockedBy) {
+        console.log(`[outboundCallWorker] retry skipped for attempt ${attempt.id} (job ${attempt.job_id}): ${blockedBy}`);
+        return;
+    }
+
     if (attempt.attempt_no < maxAttempts) {
         const nextScheduledAt = computeNextScheduledAt(attempt.attempt_no, settings, group, now);
         // Enqueue the next attempt. The partial-unique (job_id) WHERE
@@ -435,4 +533,7 @@ module.exports = {
     computeNextScheduledAt,
     nextBusinessMorning,
     resolveBusinessHoursGroup,
+    // CANCEL-001 (CC-04): shared with routes/vapiCallStatus.js — both retry-
+    // insertion sites run ONE guard (spec S10).
+    retryBlockReason,
 };

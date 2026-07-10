@@ -11,7 +11,10 @@ import { useAuthz } from '../../hooks/useAuthz';
  * OUTBOUND-PARTS-CALL-BTN-001: the typed action-button row for a task, shared by
  * the Job-card `TaskCard` and the Pulse "Action Required" banner. Renders one
  * button per `actions[]` entry (🤖 robot_call / 📞 manual_call), with a spinner
- * while a request runs and a reason line under any previously-failed action.
+ * while a request runs and a reason line under any previously failed or canceled
+ * action (OUTBOUND-PARTS-CALL-CANCEL-001 — the backend reason already carries the
+ * "Canceled — …" copy). Buttons stay clickable after a cancel: re-queue is allowed
+ * (spec S12) and the server re-checks dialability on execute.
  *
  * - `manual_call` → dials (softphone on desktop, `tel:` on mobile), NO confirm.
  * - `robot_call` → opens `RobotCallSlotModal` (the dispatcher explicitly picks the
@@ -114,7 +117,7 @@ export function TaskActionButtons({ id, actions, done, phone, contactName, jobId
                 })}
             </div>
             {actions
-                .filter((a) => a.state === 'failed' && a.reason)
+                .filter((a) => (a.state === 'failed' || a.state === 'canceled') && a.reason)
                 .map((a) => (
                     <p
                         key={`reason-${a.type}`}

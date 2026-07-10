@@ -890,6 +890,30 @@ async function getJobBalanceDue(jobId, companyId) {
 // FSM — Manual status transitions
 // =============================================================================
 
+/**
+ * OUTBOUND-PARTS-CALL-CANCEL-001 (CC-02) — the leave-hook seam, symmetric to the
+ * onPartArrived enter-hook below. Fired (fire-and-forget — NEVER awaited into the
+ * caller's failure path) after ANY committed write that takes a job OUT of
+ * 'Part arrived': updateBlancStatus, cancelJob, markComplete, and the
+ * syncFromZenbooker `zb_canceled` false→true flip (the sync cannot exit the
+ * status via blanc_status — 'Part arrived' ∉ autoStatuses, preserved below).
+ * Cancels the queued robot call (pending flip / dialing marker), writes the FR-3
+ * job note and stamps the task — all inside
+ * partsCallService.cancelScheduledRobotCalls, which is idempotent and never
+ * throws. Same idiom as the enter-hook (lazy-require against the circular dep,
+ * sync try/catch + async .catch, console.warn only — a cancel failure must never
+ * fail the status change, S1/S10).
+ */
+function fireRobotCallLeaveHook(jobId, companyId, newStatus) {
+    try {
+        require('./partsCallService')
+            .cancelScheduledRobotCalls({ jobId }, companyId, { kind: 'status_change', newStatus })
+            .catch(err => console.warn('[jobsService] robot-call leave-hook failed (non-blocking):', err.message));
+    } catch (err) {
+        console.warn('[jobsService] robot-call leave-hook failed (non-blocking):', err.message);
+    }
+}
+
 async function updateBlancStatus(jobId, newStatus, companyId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
@@ -981,6 +1005,13 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
         } catch (err) {
             console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message);
         }
+    }
+
+    // CANCEL-001 leave-hook (CC-02 S1/S2): the job just left 'Part arrived' — any
+    // queued robot call must not survive the exit. companyId can be null on the
+    // legacy no-company path → fall back to the job row's own tenant.
+    if (job.blanc_status === 'Part arrived' && newStatus !== 'Part arrived') {
+        fireRobotCallLeaveHook(jobId, companyId || job.company_id, newStatus);
     }
 
     return { ...job, blanc_status: newStatus, _prev_status: job.blanc_status };
@@ -1172,6 +1203,15 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
             cols.city ?? null,
         ]);
 
+        // CANCEL-001 leave-hook (CC-02 S3): the sync can never move a job out of
+        // 'Part arrived' via blanc_status (∉ autoStatuses — preserved above), so
+        // the ONLY sync-borne exit is the zb_canceled false→true FLIP (written
+        // unconditionally by the UPDATE). Fire exactly on that flip, scoped to
+        // the row being synced.
+        if (existing.blanc_status === 'Part arrived' && !existing.zb_canceled && cols.zb_canceled) {
+            fireRobotCallLeaveHook(existing.id, effectiveCompanyId, 'Canceled (Zenbooker)');
+        }
+
         if (!shouldUpdateBlancStatus) {
             console.log(`[JobsService] Synced job ${zbJobId}: preserved manual blanc_status "${existing.blanc_status}" (ZB would set "${newBlancStatus}")`);
         } else {
@@ -1298,6 +1338,12 @@ async function cancelJob(jobId) {
         'UPDATE jobs SET zb_canceled = true, blanc_status = $1, updated_at = NOW() WHERE id = $2',
         ['Canceled', jobId]
     );
+    // CANCEL-001 leave-hook (CC-02 S2): this writer sets blanc_status DIRECTLY
+    // (bypasses updateBlancStatus — fsm.js /apply + the jobs.js cancel route), so
+    // it needs its own exit hook. Pre-state from the job loaded above.
+    if (job.blanc_status === 'Part arrived') {
+        fireRobotCallLeaveHook(jobId, job.company_id, 'Canceled');
+    }
     return { ...job, blanc_status: 'Canceled', zb_canceled: true };
 }
 
@@ -1355,6 +1401,11 @@ async function markComplete(jobId) {
         "UPDATE jobs SET zb_status = 'complete', blanc_status = 'Visit completed', updated_at = NOW() WHERE id = $1",
         [jobId]
     );
+    // CANCEL-001 leave-hook (CC-02 S2): direct blanc_status writer, same as
+    // cancelJob above — a completed visit ends the robot-call plan.
+    if (job.blanc_status === 'Part arrived') {
+        fireRobotCallLeaveHook(jobId, job.company_id, 'Visit completed');
+    }
     return { ...job, zb_status: 'complete', blanc_status: 'Visit completed' };
 }
 

@@ -35,12 +35,20 @@ jest.mock('../backend/src/services/groupRouting', () => ({
 jest.mock('../backend/src/services/vapiCallTimelineService', () => ({
     recordPlacement: jest.fn(),
 }));
+// OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04): the CC-01 cancel helpers. Mocked —
+// isChainCanceled feeds the shared no-resurrection retry guard,
+// markRobotCallCanceled is the honest Guard-1's task stamp.
+jest.mock('../backend/src/services/partsCallService', () => ({
+    isChainCanceled: jest.fn(),
+    markRobotCallCanceled: jest.fn(),
+}));
 
 const jobsService = require('../backend/src/services/jobsService');
 const outboundCallService = require('../backend/src/services/outboundCallService');
 const settings = require('../backend/src/services/outboundCallSettingsService');
 const groupRouting = require('../backend/src/services/groupRouting');
 const vapiCallTimeline = require('../backend/src/services/vapiCallTimelineService');
+const partsCallService = require('../backend/src/services/partsCallService');
 const worker = require('../backend/src/services/outboundCallWorker');
 
 const CO = '00000000-0000-0000-0000-000000000001';
@@ -86,6 +94,9 @@ beforeEach(() => {
     // above wipes call history each test; this resets the impl (e.g. after a
     // per-test mockRejectedValue) so leaks can't cross tests.
     vapiCallTimeline.recordPlacement.mockResolvedValue(undefined);
+    // CC-04 defaults: chain clean (guard passes), task stamp succeeds.
+    partsCallService.isChainCanceled.mockResolvedValue(false);
+    partsCallService.markRobotCallCanceled.mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -219,7 +230,10 @@ describe('TC-OPC-U10: processAttempt — outside business hours → reschedule, 
 // ---------------------------------------------------------------------------
 
 describe('TC-OPC-U11: processAttempt — job/status guards + retry-or-exhaust', () => {
-    test('job not Part arrived (canceled meanwhile) → terminated, NO dial', async () => {
+    // CANCEL-001 (CC-04, S11 / TC-CC-15): Guard-1 is now the HONEST net — a
+    // claimed row on a job that left 'Part arrived' terminates as 'canceled'
+    // (WAS a dishonest 'failed' with no note) + FR-3 job note + task stamp.
+    test('job not Part arrived (canceled meanwhile) → terminated CANCELED (honest), NO dial', async () => {
         jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, blanc_status: 'Canceled' });
         mockQuery.mockResolvedValue({ rows: [] }); // terminate UPDATE
 
@@ -227,12 +241,17 @@ describe('TC-OPC-U11: processAttempt — job/status guards + retry-or-exhaust', 
 
         expect(outboundCallService.placeCall).not.toHaveBeenCalled();
         const termCall = mockQuery.mock.calls.find(
-            (c) => /SET status = \$2, reason = \$3/i.test(c[0]) && c[1] && c[1][1] === 'failed',
+            (c) => /SET status = \$2, reason = \$3/i.test(c[0]) && c[1] && c[1][1] === 'canceled',
         );
         expect(termCall).toBeTruthy();
+        expect(termCall[1][2]).toBe('job_canceled'); // historical reason vocabulary kept
+        // No dishonest 'failed' write anywhere.
+        expect(mockQuery.mock.calls.some(
+            (c) => /SET status = \$2/i.test(c[0]) && c[1] && c[1][1] === 'failed',
+        )).toBe(false);
     });
 
-    test('job not found → terminated failed (job_not_found), NO dial', async () => {
+    test('job not found → terminated failed (job_not_found), NO dial, NO note/stamp (regression)', async () => {
         jobsService.getJobById.mockResolvedValue(null);
         mockQuery.mockResolvedValue({ rows: [] });
 
@@ -242,6 +261,10 @@ describe('TC-OPC-U11: processAttempt — job/status guards + retry-or-exhaust', 
             (c) => c[1] && c[1][2] === 'job_not_found',
         );
         expect(termCall).toBeTruthy();
+        expect(termCall[1][1]).toBe('failed'); // not-found keeps today's 'failed'
+        // No job to note on: nothing written (TC-CC-15 regression leg).
+        expect(jobsService.addNote).not.toHaveBeenCalled();
+        expect(partsCallService.markRobotCallCanceled).not.toHaveBeenCalled();
     });
 
     test('placeCall ok:false, attempt_no < max → mark failed + enqueue next attempt + note', async () => {
@@ -297,6 +320,192 @@ describe('TC-OPC-U11: processAttempt — job/status guards + retry-or-exhaust', 
             (c) => c[1] && typeof c[1][2] === 'string' && c[1][2].startsWith('worker_error'),
         );
         expect(termCall).toBeTruthy();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04, S11 / TC-CC-15) — honest Guard-1.
+// A claimed attempt on a job that left 'Part arrived' terminates as 'canceled'
+// (historical reason vocabulary kept) + ONE FR-3 cancel note ('AI Phone') +
+// markRobotCallCanceled task stamp. job_not_found keeps 'failed' + writes
+// nothing (covered in TC-OPC-U11 above). All side-writes are non-fatal.
+// ---------------------------------------------------------------------------
+describe('TC-CC-15: honest Guard-1 — canceled + FR-3 note + task stamp', () => {
+    test('job Rescheduled → terminate(canceled, job_status_Rescheduled) + note + stamp', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, blanc_status: 'Rescheduled' });
+        mockQuery.mockResolvedValue({ rows: [] });
+
+        await worker.processAttempt(mkAttempt());
+
+        expect(outboundCallService.placeCall).not.toHaveBeenCalled();
+        // terminate(attempt.id, 'canceled', 'job_status_Rescheduled')
+        const termCall = mockQuery.mock.calls.find(
+            (c) => /SET status = \$2, reason = \$3/i.test(c[0]) && c[1] && c[1][1] === 'canceled',
+        );
+        expect(termCall).toBeTruthy();
+        expect(termCall[1]).toEqual([900, 'canceled', 'job_status_Rescheduled']);
+        // ONE FR-3 cancel note, author 'AI Phone' (jobsService.addNote path).
+        expect(jobsService.addNote).toHaveBeenCalledTimes(1);
+        expect(jobsService.addNote).toHaveBeenCalledWith(
+            50,
+            "AI: robot call canceled — job left 'Part arrived' (status changed to 'Rescheduled').",
+            [], 'AI Phone', 'AI Phone',
+        );
+        // Task stamped canceled with the FR-3 short reason (company-scoped).
+        expect(partsCallService.markRobotCallCanceled).toHaveBeenCalledTimes(1);
+        expect(partsCallService.markRobotCallCanceled).toHaveBeenCalledWith(
+            CO, 70, "Canceled — job status changed to 'Rescheduled'.",
+        );
+    });
+
+    test('zb_canceled with blanc_status still Part arrived → canceled/job_canceled + S3 label in note', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, zb_canceled: true });
+        mockQuery.mockResolvedValue({ rows: [] });
+
+        await worker.processAttempt(mkAttempt());
+
+        const termCall = mockQuery.mock.calls.find(
+            (c) => /SET status = \$2, reason = \$3/i.test(c[0]) && c[1] && c[1][1] === 'canceled',
+        );
+        expect(termCall).toBeTruthy();
+        expect(termCall[1][2]).toBe('job_canceled');
+        expect(jobsService.addNote).toHaveBeenCalledWith(
+            50,
+            "AI: robot call canceled — job left 'Part arrived' (status changed to 'Canceled (Zenbooker)').",
+            [], 'AI Phone', 'AI Phone',
+        );
+        expect(partsCallService.markRobotCallCanceled).toHaveBeenCalledWith(
+            CO, 70, "Canceled — job status changed to 'Canceled (Zenbooker)'.",
+        );
+    });
+
+    test('attempt without task_id → cancel + note, NO stamp call', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, blanc_status: 'Visit completed' });
+        mockQuery.mockResolvedValue({ rows: [] });
+
+        await worker.processAttempt(mkAttempt({ task_id: null }));
+
+        expect(jobsService.addNote).toHaveBeenCalledTimes(1);
+        expect(partsCallService.markRobotCallCanceled).not.toHaveBeenCalled();
+    });
+
+    // Non-fatality: note + stamp faults must not throw out of processAttempt
+    // (the worker loop survives; the honest 'canceled' flip already stands).
+    test('addNote AND markRobotCallCanceled REJECT → processAttempt still resolves; canceled flip stands', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, blanc_status: 'Rescheduled' });
+        mockQuery.mockResolvedValue({ rows: [] });
+        jobsService.addNote.mockRejectedValueOnce(new Error('note down'));
+        partsCallService.markRobotCallCanceled.mockRejectedValueOnce(new Error('stamp down'));
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await expect(worker.processAttempt(mkAttempt())).resolves.toBeUndefined();
+
+        const termCall = mockQuery.mock.calls.find(
+            (c) => /SET status = \$2, reason = \$3/i.test(c[0]) && c[1] && c[1][1] === 'canceled',
+        );
+        expect(termCall).toBeTruthy();
+        warnSpy.mockRestore();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04, S9/S10 / TC-CC-14) — the shared
+// no-resurrection guard in scheduleRetryOrExhaust: after the honest 'failed'
+// flip, the next-attempt INSERT (and notes) are skipped when the job left
+// 'Part arrived' or the chain carries a NEWER canceled row (isChainCanceled).
+// Fail-open: guard faults behave as "not blocked" (regression pin below).
+// ---------------------------------------------------------------------------
+describe('TC-CC-14: scheduleRetryOrExhaust — no-resurrection guard', () => {
+    function failPlace() {
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: false, error: 'vapi_http_500' });
+    }
+
+    test('chain canceled (marker newer than attempt) → failed kept, NO next-attempt INSERT, NO retry note', async () => {
+        failPlace();
+        partsCallService.isChainCanceled.mockResolvedValue(true);
+
+        await worker.processAttempt(mkAttempt({ attempt_no: 1 }));
+
+        // THIS attempt still flipped to honest 'failed' with the place reason.
+        const failCall = mockQuery.mock.calls.find(
+            (c) => /SET status = 'failed', reason = \$2/i.test(c[0]) && c[1] && c[1][1] === 'vapi_http_500',
+        );
+        expect(failCall).toBeTruthy();
+        // Guard consulted company-scoped with THIS attempt id (S12 threshold).
+        expect(partsCallService.isChainCanceled).toHaveBeenCalledWith(CO, 50, 900);
+        // NO resurrection: no INSERT, no note.
+        expect(mockQuery.mock.calls.some((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]))).toBe(false);
+        expect(jobsService.addNote).not.toHaveBeenCalled();
+    });
+
+    test('job left Part arrived between dial and retry (re-read) → NO INSERT; chain read short-circuited', async () => {
+        // Guard-1 read (dialable) then the guard re-read (job moved on).
+        jobsService.getJobById
+            .mockResolvedValueOnce(DIALABLE_JOB)
+            .mockResolvedValueOnce({ ...DIALABLE_JOB, blanc_status: 'Rescheduled' });
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: false, error: 'vapi_http_500' });
+
+        await worker.processAttempt(mkAttempt({ attempt_no: 1 }));
+
+        expect(mockQuery.mock.calls.some((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]))).toBe(false);
+        expect(jobsService.addNote).not.toHaveBeenCalled();
+        // Job leg blocked first → the chain read never ran (short-circuit).
+        expect(partsCallService.isChainCanceled).not.toHaveBeenCalled();
+    });
+
+    test('exhausted path guarded too: attempt_no == max + chain canceled → NO exhausted note', async () => {
+        failPlace();
+        partsCallService.isChainCanceled.mockResolvedValue(true);
+
+        await worker.processAttempt(mkAttempt({ attempt_no: 3 }));
+
+        expect(mockQuery.mock.calls.some((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]))).toBe(false);
+        expect(jobsService.addNote).not.toHaveBeenCalled(); // no "exhausted" note either
+    });
+
+    test('regression pin: job Part arrived + chain clean → retry INSERT + note exactly as today', async () => {
+        failPlace();
+        partsCallService.isChainCanceled.mockResolvedValue(false);
+
+        await worker.processAttempt(mkAttempt({ attempt_no: 1 }));
+
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(insertCall).toBeTruthy();
+        expect(insertCall[1]).toContain(2); // attempt_no + 1
+        expect(jobsService.addNote).toHaveBeenCalledWith(
+            50, expect.stringMatching(/next attempt/i), [], 'AI Phone', 'AI Phone',
+        );
+    });
+
+    test('fail-open: isChainCanceled REJECTS (belt) → retry proceeds, worker loop survives', async () => {
+        failPlace();
+        partsCallService.isChainCanceled.mockRejectedValue(new Error('guard read down'));
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await expect(worker.processAttempt(mkAttempt({ attempt_no: 1 }))).resolves.toBeUndefined();
+
+        expect(mockQuery.mock.calls.some((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]))).toBe(true);
+        expect(jobsService.addNote).toHaveBeenCalled();
+        warnSpy.mockRestore();
+    });
+
+    test('fail-open: guard job re-read REJECTS → chain leg still consulted, retry proceeds', async () => {
+        jobsService.getJobById
+            .mockResolvedValueOnce(DIALABLE_JOB)                    // Guard-1 (dialable)
+            .mockRejectedValueOnce(new Error('job read down'));     // guard re-read faults
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: false, error: 'vapi_http_500' });
+        partsCallService.isChainCanceled.mockResolvedValue(false);
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await expect(worker.processAttempt(mkAttempt({ attempt_no: 1 }))).resolves.toBeUndefined();
+
+        expect(partsCallService.isChainCanceled).toHaveBeenCalledWith(CO, 50, 900);
+        expect(mockQuery.mock.calls.some((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]))).toBe(true);
+        warnSpy.mockRestore();
     });
 });
 

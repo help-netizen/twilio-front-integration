@@ -8247,3 +8247,115 @@ Spec: `Docs/specs/GMAIL-PUSH-FIX-001.md` (S1–S5 + due-matrix). Test-cases: `Do
 **Wave 1 (parallel, disjoint files):** GPF-01 (`GmailProvider.js`) ∥ GPF-02 (`emailQueries.js`) ∥ GPF-03 (`emailTimelineService.js`). Три фикса не пересекаются по файлам.
 **Wave 2:** GPF-04 (tests + `scripts/verify-gmail-push-fix-001.js`) — после GPF-01…03.
 БЕЗ миграции, БЕЗ frontend, БЕЗ GCP. **Helper-решение:** `isMailboxDue` co-located и экспортируется из `emailQueries.js` (НЕ отдельный `mailDuePredicate.js`) → FIX#2 атомарен в одном файле, а SQL WHERE зеркалит helper. Deploy на «да» владельца; rebase на origin/master перед push (быстро движется).
+
+## Фича OUTBOUND-PARTS-CALL-CANCEL-001: отмена запланированного робо-звонка (status-leave + human contact) + guard от воскрешения ретраев
+
+> Spec: `Docs/specs/OUTBOUND-PARTS-CALL-CANCEL-001.md` · Test-cases: `Docs/test-cases/OUTBOUND-PARTS-CALL-CANCEL-001.md`
+> Миграции НЕТ (verified: status без CHECK, `canceled` уже в COMMENT-словаре mig 158, `reason` существует).
+> Все хуки fire-and-forget/safe-fail; вся SQL company-scoped (изоляция между компаниями).
+
+### Задача CC-01: partsCallService — cancel-ядро + штампы (canceled/queued)
+
+**Цель:** `cancelScheduledRobotCalls(scope, companyId, cause)` (flip pending→canceled c re-check `status='pending'`, canceled-МАРКЕР при dialing-only, одна заметка на job c точным копирайтом FR-3 через `addNote(..., [], 'AI Phone', 'AI Phone')`, штамп задачи, `logEvent 'outbound_call_canceled'`, никогда не throw); `isChainCanceled(companyId, jobId, sinceAttemptId)` (EXISTS canceled c id>); рефактор `markRobotCallFailed` → общий `stampRobotCallAction` + `markRobotCallCanceled`; в `startRobotCall` на успех (fresh И already) — штамп `{state:'queued', reason:null}`.
+
+**Файлы, которые можно менять:**
+- backend/src/services/partsCallService.js
+
+**Файлы, которые трогать нельзя:**
+- backend/db/migrations/158_outbound_call_attempts.sql — схема/индексы не меняются
+- backend/src/services/jobsService.js — хуки в CC-02
+
+**Ожидаемый результат:** экспортированы cancelScheduledRobotCalls/isChainCanceled/markRobotCallCanceled; поведение startRobotCall кроме queued-штампа байт-в-байт; SQL фильтрует company_id (данные изолированы между компаниями). TC-CC-01…05, 17.
+
+**Зависимости:** нет. **Статус:** pending
+
+### Задача CC-02: jobsService — leave-хуки (updateBlancStatus / cancelJob / markComplete / syncFromZenbooker)
+
+**Цель:** 4 fire-and-forget хука (lazy-require, паттерн `jobsService.js:976-984`): (1) updateBlancStatus после UPDATE — `job.blanc_status==='Part arrived' && newStatus!=='Part arrived'` → cancel `{kind:'status_change', newStatus}`, companyId `companyId || job.company_id`; (2) cancelJob (:1285) — pre-read Part arrived → `'Canceled'`; (3) markComplete (:1342) → `'Visit completed'`; (4) syncFromZenbooker — флип `zb_canceled false→true` при existing `Part arrived` → `'Canceled (Zenbooker)'`. FSM-валидацию/ZB-матрицу не трогать.
+
+**Файлы, которые можно менять:**
+- backend/src/services/jobsService.js
+
+**Файлы, которые трогать нельзя:**
+- backend/src/routes/fsm.js, backend/src/routes/jobs.js — покрыты сервис-хуками, правок не требуют
+- ZB-preserve логика `jobsService.js:1105-1120` — regression-pin TC-CC-09
+
+**Ожидаемый результат:** любой выход job из Part arrived любым write-путём отменяет очередь + заметка + штамп; сбой хука не ломает смену статуса. TC-CC-07…09.
+
+**Зависимости:** после CC-01. **Статус:** pending
+
+### Задача CC-03: inboxWorker — human-contact хук + partsCallService.onHumanContact
+
+**Цель:** в `processVoiceEvent` после upsert-блока (~:383) — условие `!skipUpsert && call && call.is_final && call.status==='completed' && !call.parent_call_sid && duration>0 && call.answered_at && direction∈{inbound,outbound}` → fire-and-forget `onHumanContact(call)`. В partsCallService: `onHumanContact` — исключения (sid `vapi:%`, `answered_by==='ai'`, Sara: `call_flow_executions.current_node_id` → kind `vapi_agent` в `JSON.parse(context_json).graph.states`), внешний номер inbound→from/outbound→to (≥7 цифр), затем cancelScheduledRobotCalls по `{contactId, phone}` c company_id ИЗ СТРОКИ call.
+
+**Файлы, которые можно менять:**
+- backend/src/services/inboxWorker.js
+- backend/src/services/partsCallService.js
+
+**Файлы, которые трогать нельзя:**
+- backend/src/db/callsQueries.js — upsertCall SQL неприкосновенен
+- guards processVoiceEvent :283-341 (skipUpsert/voicemail/in-progress) — хук читает их результат
+
+**Ожидаемый результат:** живой разговор (обе стороны) отменяет план; voicemail/no-answer/busy/IVR-hangup/робот/Sara — нет; повторный финальный webhook — no-op без второй заметки. TC-CC-06, 10.
+
+**Зависимости:** после CC-01. **Статус:** pending
+
+### Задача CC-04: retry-guard (vapiCallStatus + outboundCallWorker) + честный Guard-1
+
+**Цель:** в transient-ветке webhook ПОСЛЕ пометки attempt (:284-287): `blocked = (!job || job.zb_canceled || job.blanc_status!=='Part arrived')` (re-read `getJobById(jobId, companyId)`) `|| isChainCanceled(companyId, jobId, attempt.id)` → пропустить retry-INSERT (:296-305), exhausted-INSERT (:320-327) и обе заметки; `logEvent 'outbound_call_retry_skipped'`. Booked-ветка/idempotence не трогаются. Тот же guard в `scheduleRetryOrExhaust` перед INSERT (:330-339). Guard-1 воркера (:193-201): job есть, но не dialable → `terminate(...,'canceled', reason)` + cancel-заметка + `markRobotCallCanceled` (job_not_found — как сегодня `'failed'`, без заметки).
+
+**Файлы, которые можно менять:**
+- backend/src/routes/vapiCallStatus.js
+- backend/src/services/outboundCallWorker.js
+
+**Файлы, которые трогать нельзя:**
+- webhookSecretAuth / correlateAttempt / anti-spoof (:72-142) — не менять
+- backoff-математика computeNextScheduledAt — reuse, не дублировать
+
+**Ожидаемый результат:** цепочка НИКОГДА не воскресает после отмены/ухода статуса; happy-path ретраи байт-в-байт как сегодня (regression-pin TC-CC-12). TC-CC-11…16.
+
+**Зависимости:** после CC-01 (isChainCanceled, markRobotCallCanceled). **Статус:** pending
+
+### Задача CC-05: Frontend — рендер state:'canceled' + типы
+
+**Цель:** `tasksApi.ts` — `TaskAction.state?: 'failed' | 'canceled' | 'queued'`; `TaskActionButtons.tsx` — reason-строка (:116-127) также для `state==='canceled'` (тот же TriangleAlert-ряд); кнопки остаются кликабельны (re-queue разрешён, S12).
+
+**Файлы, которые можно менять:**
+- frontend/src/components/tasks/tasksApi.ts
+- frontend/src/components/tasks/TaskActionButtons.tsx
+
+**Файлы, которые трогать нельзя:**
+- frontend/src/lib/authedFetch.ts, frontend/src/hooks/useRealtimeEvents.ts
+
+**Ожидаемый результат:** после отмены диспетчер видит причину под кнопками (Job card + Pulse AR); `npm run build` зелёный. TC-CC-18.
+
+**Зависимости:** независима (после CC-01 для смысловой согласованности reason-строк). **Статус:** pending
+
+### Задача CC-06: Jest-тесты по Docs/test-cases/OUTBOUND-PARTS-CALL-CANCEL-001.md
+
+**Цель:** TC-CC-01…17 в существующих сьютах: `tests/partsCallService.test.js` (A/B/F), новый блок leave-хуков (C), `tests/inboxWorker.test.js` (D), `tests/vapiCallStatusWebhook.test.js` + `tests/outboundCallWorker.test.js` (E). Worktree gotcha: `--testPathIgnorePatterns "/node_modules/"`.
+
+**Файлы, которые можно менять:**
+- tests/partsCallService.test.js, tests/inboxWorker.test.js, tests/vapiCallStatusWebhook.test.js, tests/outboundCallWorker.test.js (+ новый tests/jobsServiceLeaveHook.test.js при необходимости)
+
+**Ожидаемый результат:** все новые тесты зелёные, существующие сьюты не сломаны.
+
+**Зависимости:** после CC-02, CC-03, CC-04. **Статус:** pending
+
+### Задача CC-07 (reviewer fix): confirmPartsVisit — booked-before-flip (свой attempt терминализируется ДО смены статуса)
+
+**Цель:** закрыть GATING-дефект ревью: skill сам флипал job 'Part arrived'→'Rescheduled' (`updateBlancStatus`, confirmPartsVisit.js) во время СВОЕГО звонка → leave-хук CC-02 находил собственный `dialing` attempt → ложная заметка "AI: robot call canceled — job left 'Part arrived'…" + mid-flight маркер рядом с "Appointment rescheduled…" на КАЖДОМ успешном робо-букинге. Фикс: в success-path после закоммиченного reschedule и ПЕРЕД флипом — `UPDATE outbound_call_attempts SET status='booked', updated_at=now() WHERE company_id=$1 AND job_id=$2 AND status='dialing'` (vapi call id в skill input НЕ приходит — variableValues инжектятся до существования call id; partial-unique индекс гарантирует ≤1 active row на job), non-fatal (сбой штампа не ломает букинг); ZB-конфликт → штампа НЕТ. Хук видит 0 active rows → `{canceled:0}` no-op; webhook попадает в idempotence early-return (`attempt.status !== 'dialing'`, тот же терминал `booked`). Spec S15.
+
+**Файлы, которые можно менять:**
+- backend/src/services/agentSkills/skills/confirmPartsVisit.js
+- tests/confirmPartsVisit.test.js
+
+**Ожидаемый результат:** на успешном робо-букинге НЕТ cancel-заметки/маркера/события; booked-ветка webhook идемпотентна на pre-stamped row. Тесты: PIN (порядок reschedule → booked-stamp → flip + leave-hook видит 0 active + нет 'canceled' SQL/заметки), non-fatal (stamp reject → букинг завершается), 0-row no-op (inbound без плана), no-stamp на ZB-409; red→green проверен (stamp закомментирован → PIN красный).
+
+**Зависимости:** после CC-01/CC-02 (использует их инварианты). **Статус:** ✅ DONE — 19/19 `tests/confirmPartsVisit.test.js` (16 существующих + 3 CC-07), полный cancel-сет 182/182 across 6 suites
+
+### Волны исполнения
+- **Wave 1:** CC-01 → (CC-02 ∥ CC-03 ∥ CC-04 — все три трогают разные файлы, но CC-03 делит partsCallService.js c CC-01 — выполнять после него)
+- **Wave 2:** CC-05 (FE, параллельно wave 1 после CC-01)
+- **Wave 3:** CC-06 (тесты) → changelog/project-spec — стандартным хвостом пайплайна
+- **Wave 4 (review fix):** CC-07 (booked-before-flip) — после ревью

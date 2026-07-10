@@ -22,6 +22,7 @@ const { requireCompanyId, queryFor } = require('../db/crmUtils');
 const tasksQueries = require('../db/tasksQueries');
 const timelinesQueries = require('../db/timelinesQueries');
 const jobsService = require('./jobsService');
+const eventService = require('./eventService');
 const recommendSlots = require('./agentSkills/skills/recommendSlots');
 const slotEngineService = require('./slotEngineService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
@@ -138,29 +139,401 @@ async function onPartArrived(jobId, companyId, client = null) {
 }
 
 /**
- * Stamp the task's `robot_call` action with `state:'failed'` + a dispatcher-facing
- * `reason`, company-scoped, so the button reflects the pre-call failure (S6, FR-9).
- * Best-effort: a write failure here never turns a safe-fail into a throw — the task
- * simply stays open with the dispatcher. Preserves every other action verbatim.
+ * stampRobotCallAction(companyId, taskId, state, reason?, client?) — the ONE
+ * writer of the task's `robot_call` action state (OUTBOUND-PARTS-CALL-CANCEL-001,
+ * CC-01; generalizes the original markRobotCallFailed jsonb-map pattern).
+ *
+ * States: 'failed' (+reason, pre-call fault — S6/FR-9), 'canceled' (+reason,
+ * CANCEL-001 FR-3), 'queued' (reason CLEARED — a successful re-queue makes the
+ * button live again, spec dev-4/S12). `reason == null` removes any stale reason
+ * key so the frontend never renders an outdated line. Company-scoped, best-effort:
+ * a write failure here never turns a safe-fail into a throw — the task simply
+ * stays open with the dispatcher. Preserves every other action verbatim.
  */
-async function markRobotCallFailed(companyId, taskId, reason, client) {
+async function stampRobotCallAction(companyId, taskId, state, reason = null, client = null) {
     const query = queryFor(client, db);
     try {
-        const { rows } = await query(
+        const res = await query(
             `SELECT actions FROM tasks WHERE company_id = $1 AND id = $2 LIMIT 1`,
             [companyId, taskId]
         );
+        const rows = (res && res.rows) || [];
         if (rows.length === 0) return;
         const actions = Array.isArray(rows[0].actions) ? rows[0].actions : PART_ARRIVED_ACTIONS;
-        const next = actions.map((a) =>
-            a && a.type === 'robot_call' ? { ...a, state: 'failed', reason } : a
-        );
+        const next = actions.map((a) => {
+            if (!a || a.type !== 'robot_call') return a;
+            const stamped = { ...a, state };
+            if (reason != null) stamped.reason = reason;
+            else delete stamped.reason;
+            return stamped;
+        });
         await query(
             `UPDATE tasks SET actions = $3::jsonb WHERE company_id = $1 AND id = $2`,
             [companyId, taskId, JSON.stringify(next)]
         );
     } catch (err) {
-        console.error('[partsCallService] markRobotCallFailed failed (non-fatal):', err.message);
+        console.error('[partsCallService] stampRobotCallAction failed (non-fatal):', err.message);
+    }
+}
+
+/**
+ * markRobotCallFailed — kept as the pre-existing call-site API (delegates).
+ * Stamps `state:'failed'` + the dispatcher-facing reason (S6, FR-9).
+ */
+async function markRobotCallFailed(companyId, taskId, reason, client) {
+    return stampRobotCallAction(companyId, taskId, 'failed', reason, client);
+}
+
+/**
+ * markRobotCallCanceled — CANCEL-001 stamp (used by the cancel core here and by
+ * the worker's honest Guard-1, CC-04). Stamps `state:'canceled'` + reason.
+ */
+async function markRobotCallCanceled(companyId, taskId, reason, client) {
+    return stampRobotCallAction(companyId, taskId, 'canceled', reason, client);
+}
+
+// ─── OUTBOUND-PARTS-CALL-CANCEL-001 (CC-01) — the cancel core ────────────────
+
+// FR-3 copy. The job note is the long English form; the task's robot_call action
+// carries the short stamp reason. The suffix is appended when a `dialing`
+// (in-flight) attempt existed at cancel time (S9): that call is NOT killed —
+// only its retry chain dies (marker + isChainCanceled guard).
+const MIDFLIGHT_NOTE_SUFFIX = ' A call already in progress will not be retried.';
+
+function buildCancelCopy(cause = {}) {
+    if (cause && cause.kind === 'human_contact') {
+        const direction = cause.direction === 'outbound' ? 'outbound' : 'inbound';
+        const at = cause.at || new Date().toISOString();
+        return {
+            dbReason: `human_contact:${direction}`.slice(0, 120),
+            noteText: `AI: robot call canceled — customer was already reached by phone (${direction} call completed at ${at}).`,
+            stampReason: 'Canceled — customer was already reached by phone.',
+        };
+    }
+    // Default: status_change.
+    const newStatus = String((cause && cause.newStatus) || 'unknown');
+    return {
+        dbReason: `status_change:${newStatus}`.slice(0, 120),
+        noteText: `AI: robot call canceled — job left 'Part arrived' (status changed to '${newStatus}').`,
+        stampReason: `Canceled — job status changed to '${newStatus}'.`,
+    };
+}
+
+/**
+ * cancelScheduledRobotCalls(scope, companyId, cause, client?) — the SINGLE cancel
+ * core every CANCEL-001 hook calls (status-leave hooks CC-02, human-contact hook
+ * CC-03). Idempotent, company-scoped, and it NEVER throws (fire-and-forget safe).
+ *
+ * scope — which attempts to cancel:
+ *   • `{ jobId }`             — status-leave hooks (S1-S3).
+ *   • `{ contactId, phone }`  — human-contact hook (S4/S5): matched by contact_id
+ *     OR by last-10 phone digits INSIDE the company-scoped active subset; a phone
+ *     under 7 digits is ignored, and no usable key → `{canceled:0}` w/o querying.
+ * cause — `{ kind:'status_change', newStatus }` or
+ *         `{ kind:'human_contact', direction:'inbound'|'outbound', at:ISO }` —
+ *         drives the FR-3 note/stamp/reason copy (buildCancelCopy).
+ *
+ * Per the partial-unique invariant (mig 158) each job has at most ONE active row:
+ *   • `pending` → flip to `canceled` (+reason). The UPDATE re-checks
+ *     `status='pending'` so a race with the worker's claim-loop can never
+ *     half-cancel a claimed row (S13) — a lost race falls through to the marker.
+ *   • `dialing` → NEVER touched mid-flight (owner default). Instead a `canceled`
+ *     MARKER row is inserted (mirrors the exhausted-marker column set,
+ *     vapiCallStatus.js:320-327) whose id is HIGHER than the in-flight attempt's,
+ *     so the retry guard (`isChainCanceled`, CC-04) blocks resurrection (S9).
+ *   • nothing active → `{canceled:0}` and NO side effects (S13 idempotency).
+ *
+ * When anything was canceled/marked, per affected job (all best-effort, each
+ * sub-step guarded — partial progress acceptable, the row flip is the source of
+ * truth): ONE job note via `jobsService.addNote(jobId, text, [], 'AI Phone',
+ * 'AI Phone')` (+ mid-flight suffix when a marker was inserted), the task's
+ * robot_call action stamped `{state:'canceled', reason}` (task id from the
+ * attempt row, else the open part_arrived_call task), and an
+ * `outbound_call_canceled` domain event.
+ *
+ * @returns {Promise<{canceled:number, marker:boolean, error?:string}>}
+ */
+async function cancelScheduledRobotCalls(scope = {}, companyId, cause = {}, client = null) {
+    const query = queryFor(client, db);
+    try {
+        requireCompanyId(companyId);
+        const copy = buildCancelCopy(cause);
+
+        // 1) Find the active rows in scope (company-scoped; ≤1 per job by the
+        //    partial-unique invariant, but contact/phone scope may span jobs).
+        let active;
+        if (scope && scope.jobId != null) {
+            active = await query(
+                `SELECT id, job_id, task_id, contact_id, phone, attempt_no, status, slot_json
+                 FROM outbound_call_attempts
+                 WHERE company_id = $1 AND job_id = $2 AND status IN ('pending','dialing')
+                 ORDER BY id`,
+                [companyId, scope.jobId]
+            );
+        } else {
+            const contactId = (scope && scope.contactId) ?? null;
+            const digits = String((scope && scope.phone) || '').replace(/\D/g, '');
+            const phoneDigits = digits.length >= 7 ? digits : '';
+            if (contactId == null && phoneDigits === '') {
+                // No usable match key (spec: digits applied only when >= 7) → no-op.
+                return { canceled: 0, marker: false };
+            }
+            active = await query(
+                `SELECT id, job_id, task_id, contact_id, phone, attempt_no, status, slot_json
+                 FROM outbound_call_attempts
+                 WHERE company_id = $1 AND status IN ('pending','dialing')
+                   AND (
+                         ($2::bigint IS NOT NULL AND contact_id = $2)
+                      OR ($3 <> '' AND phone IS NOT NULL
+                          AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), 10) = RIGHT($3, 10))
+                       )
+                 ORDER BY id`,
+                [companyId, contactId, phoneDigits]
+            );
+        }
+        const rows = (active && active.rows) || [];
+        if (rows.length === 0) {
+            // Idempotent no-op (S13): nothing canceled → NO note, NO stamp, NO event.
+            return { canceled: 0, marker: false };
+        }
+
+        // 2) Group by job — one note/stamp/event per affected job.
+        const byJob = new Map();
+        for (const row of rows) {
+            if (!byJob.has(row.job_id)) byJob.set(row.job_id, []);
+            byJob.get(row.job_id).push(row);
+        }
+
+        let totalCanceled = 0;
+        let anyMarker = false;
+
+        for (const [jobId, jobRows] of byJob) {
+            let flipped = 0;
+            let marker = false;
+
+            for (const row of jobRows) {
+                if (row.status === 'pending') {
+                    const upd = await query(
+                        `UPDATE outbound_call_attempts
+                            SET status = 'canceled', reason = $3, updated_at = now()
+                          WHERE company_id = $1 AND id = $2 AND status = 'pending'
+                          RETURNING id`,
+                        [companyId, row.id, copy.dbReason]
+                    );
+                    const n = upd ? (upd.rowCount != null ? upd.rowCount : (upd.rows || []).length) : 0;
+                    if (n > 0) {
+                        flipped += 1;
+                        continue;
+                    }
+                    // Lost the race to the claim-loop (S13): the row is dialing
+                    // now — fall through to the mid-flight marker path.
+                }
+                // Mid-flight (S9): leave the dialing row alone; insert a `canceled`
+                // MARKER (id > in-flight id) so isChainCanceled kills the retry
+                // chain. Column set mirrors the exhausted marker
+                // (vapiCallStatus.js:320-327). Best-effort (S10 belt #2 re-checks
+                // the job independently), so a marker fault never aborts the rest.
+                try {
+                    await query(
+                        `INSERT INTO outbound_call_attempts
+                            (company_id, job_id, task_id, contact_id, phone, attempt_no, status, scheduled_at, slot_json, reason)
+                         VALUES ($1, $2, $3, $4, $5, $6, 'canceled', now(), $7, $8)`,
+                        [
+                            companyId, row.job_id, row.task_id, row.contact_id, row.phone,
+                            row.attempt_no, row.slot_json ? JSON.stringify(row.slot_json) : null,
+                            copy.dbReason,
+                        ]
+                    );
+                    marker = true;
+                } catch (err) {
+                    console.warn('[partsCallService] cancel marker insert failed (non-fatal):', err.message);
+                }
+            }
+
+            if (flipped === 0 && !marker) continue; // nothing actually changed for this job
+            totalCanceled += flipped;
+            anyMarker = anyMarker || marker;
+
+            // 3) ONE job note (FR-3; + suffix when an in-flight call survived).
+            const noteText = copy.noteText + (marker ? MIDFLIGHT_NOTE_SUFFIX : '');
+            try {
+                await jobsService.addNote(jobId, noteText, [], 'AI Phone', 'AI Phone');
+            } catch (err) {
+                console.warn('[partsCallService] cancel note failed (non-fatal):', err.message);
+            }
+
+            // 4) Stamp the task's robot_call action {state:'canceled', reason}.
+            try {
+                let taskId = (jobRows.find((r) => r.task_id != null) || {}).task_id ?? null;
+                if (taskId == null) {
+                    // Same lookup the enter-hook uses: the open part_arrived_call task.
+                    const t = await query(
+                        `SELECT id FROM tasks
+                         WHERE company_id = $1 AND job_id = $2 AND kind = $3 AND status = 'open'
+                         LIMIT 1`,
+                        [companyId, jobId, PART_ARRIVED_CALL_KIND]
+                    );
+                    taskId = (t && t.rows && t.rows[0] && t.rows[0].id) ?? null;
+                }
+                if (taskId != null) {
+                    await stampRobotCallAction(companyId, taskId, 'canceled', copy.stampReason, client);
+                }
+            } catch (err) {
+                console.warn('[partsCallService] cancel task stamp failed (non-fatal):', err.message);
+            }
+
+            // 5) Domain event (fire-and-forget; eventService guards itself too).
+            try {
+                eventService.logEvent(companyId, 'job', jobId, 'outbound_call_canceled', {
+                    canceled: flipped,
+                    marker,
+                    kind: cause && cause.kind === 'human_contact' ? 'human_contact' : 'status_change',
+                    ...(cause && cause.newStatus ? { newStatus: cause.newStatus } : {}),
+                }, 'system');
+            } catch (err) {
+                console.warn('[partsCallService] cancel event log failed (non-fatal):', err.message);
+            }
+        }
+
+        return { canceled: totalCanceled, marker: anyMarker };
+    } catch (err) {
+        // NEVER throws — a cancel hook can never fail a status change / worker loop.
+        console.warn('[partsCallService] cancelScheduledRobotCalls failed (non-fatal):', err.message);
+        return { canceled: 0, marker: false, error: err.message };
+    }
+}
+
+/**
+ * isChainCanceled(companyId, jobId, sinceAttemptId, client?) — the retry-guard
+ * read (CC-04, S9/S12): TRUE when a `canceled` row NEWER than the failing attempt
+ * exists for this (company, job). Old cancels (id <= sinceAttemptId) never block
+ * a NEW chain — a dispatcher re-queue after any cancel works (S12: the fresh
+ * attempt's id is higher than every historical canceled row). Fail-open on a
+ * read fault (returns false — happy-path retries behave exactly as today; the
+ * guard's independent job re-read is belt #2, S10).
+ */
+async function isChainCanceled(companyId, jobId, sinceAttemptId, client = null) {
+    const query = queryFor(client, db);
+    try {
+        requireCompanyId(companyId);
+        const res = await query(
+            `SELECT EXISTS (
+                SELECT 1 FROM outbound_call_attempts
+                 WHERE company_id = $1 AND job_id = $2
+                   AND status = 'canceled' AND id > $3
+             ) AS canceled`,
+            [companyId, jobId, sinceAttemptId]
+        );
+        const row = res && res.rows && res.rows[0];
+        return !!(row && row.canceled === true);
+    } catch (err) {
+        console.warn('[partsCallService] isChainCanceled read failed (fail-open):', err.message);
+        return false;
+    }
+}
+
+/**
+ * saraHandledCall(callSid, query) — the Sara discriminator (S8). Sara's leg is a
+ * `<Sip>` dial (callFlowRuntime.js:467-479), so the PARENT call row carries
+ * `answered_by=<sip-username>` — NOT `'ai'` — and the answered_by exclusion
+ * can't see her. The tell is the call-flow execution: on `vapi.completed` the
+ * execution is completed while `current_node_id` STAYS on the vapi node
+ * (callFlowRuntime.js:610-613). So: load `call_flow_executions` by call_sid
+ * (unique index, mig 091), JSON.parse the TEXT `context_json`, and check whether
+ * the node the execution rests on is `kind === 'vapi_agent'`. If Sara FORWARDED
+ * to a human queue (vapi.failed/timeout edges) the execution advanced to a
+ * queue/transfer node → NOT Sara-handled → a completed human conversation
+ * cancels (correct). Any parse fault → false (treated as human-handled only by
+ * the caller's remaining predicate).
+ */
+async function saraHandledCall(callSid, query) {
+    const res = await query(
+        `SELECT current_node_id, context_json
+           FROM call_flow_executions
+          WHERE call_sid = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [callSid]
+    );
+    const row = res && res.rows && res.rows[0];
+    if (!row || !row.current_node_id) return false;
+    let context = {};
+    try { context = JSON.parse(row.context_json || '{}'); } catch { context = {}; }
+    const states = context && context.graph && Array.isArray(context.graph.states)
+        ? context.graph.states
+        : [];
+    const node = states.find((s) => s && s.id === row.current_node_id) || null;
+    return !!(node && node.kind === 'vapi_agent');
+}
+
+/**
+ * onHumanContact(call, client?) — trigger-2 of OUTBOUND-PARTS-CALL-CANCEL-001
+ * (CC-03, S4/S5): a REAL completed conversation with the customer (either
+ * direction, human-answered) cancels the scheduled robot-call plan for that
+ * contact/number. Fired fire-and-forget by the inboxWorker post-final-upsert
+ * hook with the upsertCall RESULT row (the hook already enforced the base
+ * predicate: !skipUpsert, is_final, status='completed', parent row only,
+ * duration_sec>0, answered_at set, direction ∈ {inbound,outbound}).
+ *
+ * This side owns the AI exclusions (S7/S8) — belt-and-braces even for rows
+ * that should never reach the hook:
+ *   1. `call_sid LIKE 'vapi:%'`   — synthetic robot row (pre-re-key).
+ *   2. `answered_by = 'ai'`       — robot row post-re-key (vapiCallTimelineService).
+ *   3. `saraHandledCall(...)`     — Sara-attended inbound (see helper above).
+ *
+ * Then the external party's number — `from_number` for inbound / `to_number`
+ * for outbound — plus the row's `contact_id` become the cancel scope; the
+ * <7-digit phone guard and the company-scoped contact-OR-digits match live in
+ * `cancelScheduledRobotCalls` (scope `{contactId, phone}`). `company_id` comes
+ * from the STORED row (tenant resolved by AccountSid at ingest — S14), never a
+ * payload. Idempotent (no active rows → `{canceled:0}`, no note/stamp) and it
+ * NEVER throws.
+ *
+ * @param {object} call the upserted `calls` row
+ * @param {object} [client] optional pg client for tx-aware execution
+ * @returns {Promise<{canceled:number, marker:boolean, error?:string}>}
+ */
+async function onHumanContact(call, client = null) {
+    const query = queryFor(client, db);
+    try {
+        if (!call || !call.company_id) return { canceled: 0, marker: false };
+        const direction = call.direction;
+        if (direction !== 'inbound' && direction !== 'outbound') {
+            return { canceled: 0, marker: false };
+        }
+
+        // AI exclusions (S7): the robot's own call never cancels its own plan.
+        if (String(call.call_sid || '').startsWith('vapi:')) {
+            return { canceled: 0, marker: false };
+        }
+        if (String(call.answered_by || '') === 'ai') {
+            return { canceled: 0, marker: false };
+        }
+        // S8: Sara (AI-answered inbound) is not a human contact — plan survives.
+        if (await saraHandledCall(call.call_sid, query)) {
+            return { canceled: 0, marker: false };
+        }
+
+        // External party's number: inbound → from, outbound → to (spec trigger-2).
+        const externalNumber = direction === 'inbound' ? call.from_number : call.to_number;
+
+        // FR-3 note timestamp: the call's end instant (ISO-8601), else "now".
+        let at = new Date().toISOString();
+        if (call.ended_at) {
+            const ended = new Date(call.ended_at);
+            if (!Number.isNaN(ended.getTime())) at = ended.toISOString();
+        }
+
+        return await cancelScheduledRobotCalls(
+            { contactId: call.contact_id ?? null, phone: externalNumber },
+            call.company_id,
+            { kind: 'human_contact', direction, at },
+            client
+        );
+    } catch (err) {
+        // NEVER throws — a cancel fault can never fail the inbox-worker pipeline.
+        console.warn('[partsCallService] onHumanContact failed (non-fatal):', err.message);
+        return { canceled: 0, marker: false, error: err.message };
     }
 }
 
@@ -442,6 +815,10 @@ async function startRobotCall(jobId, companyId, taskId, client = null, dispatche
                  RETURNING id`,
                 [companyId, jobId, taskId, job.contact_id ?? null, phone, JSON.stringify(slot)]
             );
+            // CANCEL-001 dev-4 / S12: a successful enqueue makes the robot_call
+            // action live again — reset any stale 'canceled'/'failed' stamp
+            // (reason cleared). Best-effort (stamp is internally guarded).
+            await stampRobotCallAction(companyId, taskId, 'queued', null, client);
             return { ok: true, attemptId: rows[0].id, slot };
         } catch (err) {
             if (err.code === '23505') {
@@ -452,6 +829,9 @@ async function startRobotCall(jobId, companyId, taskId, client = null, dispatche
                      ORDER BY id DESC LIMIT 1`,
                     [companyId, jobId]
                 );
+                // CANCEL-001 dev-4 / S12: the already:true path is ALSO a successful
+                // enqueue (an active attempt exists) — reset the stamp to 'queued'.
+                await stampRobotCallAction(companyId, taskId, 'queued', null, client);
                 return { ok: true, already: true, attemptId: existing.rows[0]?.id ?? null };
             }
             throw err;
@@ -468,6 +848,16 @@ module.exports = {
     startRobotCall,
     // SLOTPICK-001: ISO→canonical slot_json conversion + validation (route/tests).
     buildRobotCallSlot,
+    // OUTBOUND-PARTS-CALL-CANCEL-001 (CC-01): the cancel core (status-leave hooks
+    // CC-02 + human-contact hook CC-03 call it), the retry-chain guard (CC-04) and
+    // the generalized robot_call action stamps.
+    cancelScheduledRobotCalls,
+    isChainCanceled,
+    // CC-03: trigger-2 — real human conversation cancels the plan (inboxWorker hook).
+    onHumanContact,
+    stampRobotCallAction,
+    markRobotCallFailed,
+    markRobotCallCanceled,
     // Exported for T7 / tests to reference the canonical constants.
     PART_ARRIVED_CALL_KIND,
     PART_ARRIVED_ACTIONS,

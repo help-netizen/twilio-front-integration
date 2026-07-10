@@ -45,6 +45,15 @@
  *                              duration/summary/transcript/recording), run BEFORE
  *                              the state-machine writes so a state throw can't
  *                              starve it and a repeat webhook re-finalizes idempotently.
+ *
+ * ── NO-RESURRECTION GUARD — OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04, S9/S10) ────
+ *   The transient branch (retry / exhausted) is gated by the shared
+ *   `outboundCallWorker.retryBlockReason` guard: the failing attempt keeps its
+ *   honest terminal status, but when the job left 'Part arrived' / is canceled /
+ *   the chain carries a newer `canceled` row, NO retry or exhausted row is
+ *   inserted and NO note is written (the cancel event already noted the job) —
+ *   only an `outbound_call_retry_skipped` event. Fail-open: a guard fault means
+ *   "not blocked" (retries behave exactly as before this guard existed).
  */
 
 const express = require('express');
@@ -55,9 +64,14 @@ const eventService = require('../services/eventService');
 const outboundCallSettingsService = require('../services/outboundCallSettingsService');
 // REUSE the worker's exported scheduling primitives — do NOT duplicate the
 // backoff math or re-implement business-hours resolution (arch §6 / task constraint).
+// retryBlockReason is the CANCEL-001 (CC-04) no-resurrection guard SHARED with the
+// worker's retry-insertion site (spec S10 — both sites run one helper): job re-read
+// (must still be 'Part arrived', non-canceled) + partsCallService.isChainCanceled
+// (a `canceled` row newer than the failing attempt). Fail-open, never throws.
 const {
     computeNextScheduledAt,
     resolveBusinessHoursGroup,
+    retryBlockReason,
 } = require('../services/outboundCallWorker');
 // OUTBOUND-CALL-TIMELINE-001 (CT-05): the NON-FATAL timeline seam (CT-01). Puts
 // the robot call into the Pulse `calls` timeline — mid-call live transitions
@@ -285,6 +299,29 @@ router.post('/', webhookSecretAuth, async (req, res) => {
             `UPDATE outbound_call_attempts SET status = $2, reason = $3, updated_at = now() WHERE id = $1`,
             [attempt.id, klass, String(endedReason || klass).slice(0, 120)]
         );
+
+        // ── OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04) — no-resurrection guard ─────
+        // THIS attempt already carries its honest terminal status (above). But a
+        // chain whose job left 'Part arrived' (or that a leave-hook/human-contact
+        // cancel marked while this call was in flight — S9/S10) must NOT be
+        // resurrected: skip the retry INSERT, the exhausted marker AND both notes
+        // (the cancel event already wrote its own note — never double-note).
+        // SHARED helper with the worker's insertion site (S10); it is fail-open
+        // and never throws, and we belt-and-brace it locally too so a guard fault
+        // behaves as "not blocked" and can never break the webhook's 200.
+        let retryBlockedBy = null;
+        try {
+            retryBlockedBy = await retryBlockReason(attempt);
+        } catch (guardErr) {
+            console.warn('[vapiCallStatus] retry guard failed (fail-open):', guardErr && guardErr.message);
+        }
+        if (retryBlockedBy) {
+            try {
+                eventService.logEvent(companyId, 'job', jobId, 'outbound_call_retry_skipped',
+                    { attemptNo: attempt.attempt_no, outcome: klass, blockedBy: retryBlockedBy }, 'system');
+            } catch (_e) { /* non-fatal */ }
+            return res.json({ ok: true });
+        }
 
         if (attempt.attempt_no < maxAttempts) {
             // Reuse the worker's backoff math (no duplication): immediate / +2h /

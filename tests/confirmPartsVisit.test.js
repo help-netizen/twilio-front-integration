@@ -11,12 +11,23 @@
  *         addNote + logEvent → updateTask(done); ZB-409 → conflict shape, NO flip,
  *         NO task-close; "reschedule ok but flip throws" → success with
  *         statusFlipped:false, task left OPEN, booked:false.
+ *   CC-07 (CANCEL-001 booked-before-flip) — the committed success path stamps the
+ *         robot's OWN 'dialing' attempt 'booked' BEFORE the status flip, so the
+ *         updateBlancStatus leave-hook (cancelScheduledRobotCalls) sees no active
+ *         row and can never write the false "robot call canceled" note/marker on
+ *         a successful robot booking. Stamp fault → non-fatal; no attempt → 0-row
+ *         no-op; ZB-409 → NO stamp (nothing landed).
  *
  * The skill require()s its deps lazily inside run(), so they are jest.mocked at
  * the module boundary. NO real DB, NO real ZB, NO dial.
  */
 
 'use strict';
+
+// CC-07: the booked-stamp goes straight through db/connection (lazy-required in
+// the success path only) — same mock idiom as partsCallService.test.js.
+const mockDbQuery = jest.fn();
+jest.mock('../backend/src/db/connection', () => ({ query: mockDbQuery }));
 
 jest.mock('../backend/src/services/jobsService', () => ({
     getJobById: jest.fn(),
@@ -54,6 +65,8 @@ beforeEach(() => {
     jobsService.updateBlancStatus.mockResolvedValue({});
     jobsService.addNote.mockResolvedValue({});
     tasksQueries.updateTask.mockResolvedValue({ id: 70, status: 'done' });
+    // CC-07 default: the booked-stamp UPDATE matches the one dialing row.
+    mockDbQuery.mockResolvedValue({ rowCount: 1, rows: [] });
 });
 
 // ---------------------------------------------------------------------------
@@ -179,6 +192,9 @@ describe('TC-OPC-U14: confirmPartsVisit — success order + failure postures', (
         expect(jobsService.updateBlancStatus).not.toHaveBeenCalled();
         expect(jobsService.addNote).not.toHaveBeenCalled();
         expect(tasksQueries.updateTask).not.toHaveBeenCalled();
+        // CC-07 honesty: nothing landed → the attempt is NOT terminalized (it
+        // stays 'dialing' for the webhook to classify by endedReason).
+        expect(mockDbQuery).not.toHaveBeenCalled();
     });
 
     test('reschedule OK but flip throws → success with statusFlipped:false, booked:false, task left OPEN', async () => {
@@ -203,5 +219,97 @@ describe('TC-OPC-U14: confirmPartsVisit — success order + failure postures', (
         expect(out).toMatchObject({ ok: true, success: true, statusFlipped: true, booked: true });
         // A note failure does not block the task-close on a fully committed booking.
         expect(tasksQueries.updateTask).toHaveBeenCalledWith(CO, 70, { status: 'done' });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// CC-07 (CANCEL-001): booked-before-flip — the robot's own attempt is
+// terminalized BEFORE the status transition, so the jobsService leave-hook
+// (fireRobotCallLeaveHook → cancelScheduledRobotCalls) no-ops on the robot's
+// own successful booking instead of writing a false "robot call canceled"
+// note + mid-flight marker beside the "Appointment rescheduled" note.
+// ---------------------------------------------------------------------------
+
+describe('CC-07: confirmPartsVisit — booked-before-flip terminalizes own attempt', () => {
+    test('PIN: dialing attempt is UPDATEd to booked BEFORE the flip; leave-hook would see no active row; no canceled note', async () => {
+        const seq = [];
+        // Simulated attempt row: the mock db flips it exactly as the real UPDATE
+        // (company+job+'dialing' → 'booked') would.
+        const attemptRow = { status: 'dialing' };
+
+        jobsService.getJobById.mockImplementation(async () => { seq.push('getJobById'); return JOB; });
+        scheduleService.rescheduleItem.mockImplementation(async () => { seq.push('rescheduleItem'); return { ok: true }; });
+        mockDbQuery.mockImplementation(async (sql) => {
+            seq.push('stampBooked');
+            if (/SET status = 'booked'/.test(sql) && attemptRow.status === 'dialing') {
+                attemptRow.status = 'booked';
+                return { rowCount: 1, rows: [] };
+            }
+            return { rowCount: 0, rows: [] };
+        });
+        jobsService.updateBlancStatus.mockImplementation(async () => {
+            seq.push('updateBlancStatus');
+            // Integration-reasoning pin: at flip time — the moment the REAL
+            // leave-hook fires its active-rows SELECT
+            // (WHERE status IN ('pending','dialing'), partsCallService cancel
+            // core) — the robot's own attempt is ALREADY terminal, so the hook
+            // finds nothing → {canceled:0} → no note, no marker, no event.
+            expect(['pending', 'dialing']).not.toContain(attemptRow.status);
+            expect(attemptRow.status).toBe('booked');
+            return {};
+        });
+
+        const out = await confirmPartsVisit.run(CO, L0, INPUT);
+
+        // SQL ORDER: committed reschedule → booked-stamp → status flip.
+        expect(seq.indexOf('rescheduleItem')).toBeLessThan(seq.indexOf('stampBooked'));
+        expect(seq.indexOf('stampBooked')).toBeLessThan(seq.indexOf('updateBlancStatus'));
+
+        // Exact UPDATE contract: terminal 'booked', scoped company+job+'dialing'
+        // (no vapi call id reaches the skill input — job-scope is sufficient by
+        // the partial-unique active-attempt index).
+        expect(mockDbQuery).toHaveBeenCalledTimes(1);
+        const [sql, params] = mockDbQuery.mock.calls[0];
+        expect(sql).toMatch(/UPDATE outbound_call_attempts/);
+        expect(sql).toMatch(/SET status = 'booked'/);
+        expect(sql).toMatch(/status = 'dialing'/);
+        expect(params).toEqual([CO, 50]);
+
+        // NO cancel side-effects anywhere in this flow: the only db write is the
+        // booked-stamp (no 'canceled' SQL), and the only job note is the
+        // reschedule note — never the FR-3 "robot call canceled" copy.
+        expect(mockDbQuery.mock.calls.every(([q]) => !/canceled/i.test(q))).toBe(true);
+        expect(jobsService.addNote).toHaveBeenCalledTimes(1);
+        expect(jobsService.addNote).toHaveBeenCalledWith(50, expect.stringMatching(/^Appointment rescheduled/), [], 'AI Phone', 'AI Phone');
+        expect(jobsService.addNote).not.toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/canceled/i), expect.anything(), expect.anything(), expect.anything());
+
+        expect(out).toMatchObject({ ok: true, success: true, statusFlipped: true, booked: true });
+    });
+
+    test('booked-stamp UPDATE rejects → booking still completes (non-fatal): flip, note, task-close all land', async () => {
+        jobsService.getJobById.mockResolvedValue(JOB);
+        mockDbQuery.mockRejectedValue(new Error('attempts table down'));
+
+        const out = await confirmPartsVisit.run(CO, L0, INPUT);
+
+        expect(out).toMatchObject({ ok: true, success: true, conflict: false, statusFlipped: true, booked: true });
+        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(50, 'Rescheduled', CO);
+        expect(jobsService.addNote).toHaveBeenCalledWith(50, expect.stringMatching(/via AI Phone/i), [], 'AI Phone', 'AI Phone');
+        expect(tasksQueries.updateTask).toHaveBeenCalledWith(CO, 70, { status: 'done' });
+    });
+
+    test('no dialing attempt (inbound booking, no robot plan) → UPDATE matches 0 rows, flow unchanged', async () => {
+        jobsService.getJobById.mockResolvedValue(JOB);
+        mockDbQuery.mockResolvedValue({ rowCount: 0, rows: [] });
+
+        const out = await confirmPartsVisit.run(CO, L0, INPUT);
+
+        // The stamp still ran once (harmless 0-row no-op)…
+        expect(mockDbQuery).toHaveBeenCalledTimes(1);
+        expect(mockDbQuery.mock.calls[0][1]).toEqual([CO, 50]);
+        // …and the booking flow is byte-identical to the pre-CC-07 success path.
+        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(50, 'Rescheduled', CO);
+        expect(tasksQueries.updateTask).toHaveBeenCalledWith(CO, 70, { status: 'done' });
+        expect(out).toMatchObject({ ok: true, success: true, statusFlipped: true, booked: true });
     });
 });

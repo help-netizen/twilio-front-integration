@@ -386,6 +386,38 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
         console.log(`[${traceId}] Call not updated (out-of-order event)`, { callSid: normalized.callSid });
     }
 
+    // OUTBOUND-PARTS-CALL-CANCEL-001 (CC-03) — trigger-2 human-contact hook.
+    // A real completed conversation with the customer (either direction,
+    // human-answered) cancels any scheduled part-arrived robot call. The
+    // predicate runs on the upsertCall RESULT row — the monotonic and
+    // voicemail-preserve guards above already filtered stale events, so:
+    //   • upsert actually applied (!skipUpsert && call — out-of-order rows out),
+    //   • final `completed` only (no-answer/busy/failed/voicemail_left out),
+    //   • parent (customer-facing) rows only (child legs out),
+    //   • real talk time (duration_sec > 0 — IVR hangups / zero-length out),
+    //   • somebody actually picked up (answered_at set),
+    //   • direction inbound|outbound (internal out).
+    // Robot/Sara exclusions (vapi:% sid, answered_by='ai', call_flow_executions
+    // vapi_agent discriminator) live inside partsCallService.onHumanContact.
+    // Fire-and-forget + double-guarded: NEVER blocks or fails the voice-event
+    // pipeline (spec: Failure semantics).
+    if (!skipUpsert && call
+        && call.is_final
+        && call.status === 'completed'
+        && call.parent_call_sid == null
+        && Number(call.duration_sec || 0) > 0
+        && call.answered_at != null
+        && (call.direction === 'inbound' || call.direction === 'outbound')) {
+        try {
+            const partsCallService = require('./partsCallService');
+            Promise.resolve(partsCallService.onHumanContact(call)).catch((err) => {
+                console.warn(`[${traceId}] human-contact cancel hook failed (non-fatal):`, err.message);
+            });
+        } catch (err) {
+            console.warn(`[${traceId}] human-contact cancel hook failed (non-fatal):`, err.message);
+        }
+    }
+
     // Append immutable event
     await queries.appendCallEvent(
         normalized.callSid,

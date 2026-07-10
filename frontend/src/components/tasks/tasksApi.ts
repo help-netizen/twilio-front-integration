@@ -8,13 +8,17 @@ export type TaskParentType = 'job' | 'lead' | 'contact' | 'estimate' | 'invoice'
  * of `type`s is a closed backend registry (`robot_call`, `manual_call`).
  * `state:'failed'` + `reason` surface a prior failed attempt (e.g. the robot found
  * no slots) so the dispatcher sees why and can fall back to a manual call.
+ * OUTBOUND-PARTS-CALL-CANCEL-001: `state:'canceled'` + `reason` surface a canceled
+ * robot-call plan (job left 'Part arrived' / customer already reached); re-queueing
+ * resets the stamp to `state:'queued'` (no reason). The action stays clickable in
+ * every state — the server re-checks dialability on execute.
  */
 export type TaskActionType = 'robot_call' | 'manual_call';
 
 export interface TaskAction {
     type: TaskActionType;
     label: string;
-    state?: 'failed';
+    state?: 'failed' | 'canceled' | 'queued';
     reason?: string;
 }
 

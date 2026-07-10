@@ -14,6 +14,12 @@
  *   - `tasksQueries.updateTask`         (close the open part_arrived_call task)
  * Nothing here is forked — the skill only orders and isolates.
  *
+ * CANCEL-001 (CC-07, booked-before-flip): between the committed reschedule and
+ * the status flip, the skill terminalizes its OWN in-flight attempt
+ * (`outbound_call_attempts` company+job+'dialing' → 'booked', non-fatal) so the
+ * updateBlancStatus leave-hook no-ops instead of writing a false "robot call
+ * canceled" note + marker on the robot's own successful booking.
+ *
  * ── L0 on the outbound surface (Deviation 1) ────────────────────────────────
  *   Registered `requiredLevel:'L0'`, so it is NOT gated behind the inbound
  *   `verificationGate` (an outbound call has no caller-claimed identity to
@@ -159,6 +165,40 @@ async function run(companyId, verifiedContext, input) {
         }
         // Any other unexpected throw → the choke-point's SAFE_FALLBACK (no false success).
         throw err;
+    }
+
+    // --- CANCEL-001 (CC-07, booked-before-flip): the reschedule is COMMITTED —
+    //     if this booking is happening DURING the robot's own call, the attempt
+    //     row is still 'dialing', and the status flip below fires the jobsService
+    //     leave-hook (fireRobotCallLeaveHook → cancelScheduledRobotCalls), which
+    //     would find that row active and write a FALSE "AI: robot call canceled"
+    //     note + a mid-flight 'canceled' marker right beside the "Appointment
+    //     rescheduled" note — on EVERY successful robot booking. Terminalize the
+    //     attempt as honest 'booked' FIRST: the hook's active-rows SELECT then
+    //     finds nothing → {canceled:0} no-op (no note, no marker), and the
+    //     end-of-call webhook hits its idempotence early-return
+    //     (vapiCallStatus.js — non-'dialing' is terminal; 'booked' is the same
+    //     value it would have stamped). No VAPI call id reaches the skill input
+    //     (variableValues are injected at call-open, before the call id exists),
+    //     so the scope is company+job+'dialing' — the partial-unique active index
+    //     allows at most ONE such row per job. Also correct on an INBOUND (Sara)
+    //     booking while a robot attempt dials the same job: the visit just got
+    //     booked, the plan is moot → 'booked' is the honest terminal state.
+    //     No-plan bookings simply match 0 rows. NON-FATAL: a stamp fault must
+    //     never break the landed booking (require inside the guard too).
+    try {
+        const db = require('../../../db/connection');
+        await db.query(
+            `UPDATE outbound_call_attempts
+                SET status = 'booked', updated_at = now()
+              WHERE company_id = $1 AND job_id = $2 AND status = 'dialing'`,
+            [companyId, jobId],
+        );
+    } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error(
+            `[agentSkills] confirmPartsVisit attempt booked-stamp failed (non-fatal): ${e && e.message}`,
+        );
     }
 
     // --- Reschedule landed. Flip the status to 'Rescheduled' (reschedule FIRST,

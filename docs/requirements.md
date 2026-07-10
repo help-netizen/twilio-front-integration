@@ -4657,3 +4657,46 @@ explicitly non-critical. Surface: `backend/src/services/mailAgentClassifier.js` 
 **Затронутые интеграции:** Google / Gmail — API-surface unchanged; Pub/Sub push infra unchanged (app-side cursor + poll cadence only). Twilio / Front / Zenbooker / Stripe — untouched.
 
 **Защищённые части кода (НЕЛЬЗЯ ломать):** `emailPush.js` `verifyPush` (token + OIDC) and fast-ack 200; `syncIncrementalHistory` inbox-checkpoint advance (`email_sync_state.last_history_id` + `email_mailboxes.history_id`); 404→backfill self-heal; outbound linking at send time; MAIL-LOCAL-LLM / mail-agent classifier; EMAIL-TIMELINE-001 projection + standalone `/email` inbox.
+
+## Фича OUTBOUND-PARTS-CALL-CANCEL-001: отмена запланированного робо-звонка при выходе job из «Part arrived» или при живом контакте с клиентом
+
+**Краткое описание:** Очередь исходящего робо-звонка (part-arrived scheduling, `outbound_call_attempts`) должна жить ТОЛЬКО пока job в статусе `Part arrived`. Две причины отмены: (1) job покинул `Part arrived` любым путём; (2) состоялся успешный ЖИВОЙ разговор с клиентом (входящий или исходящий, человеком — не роботом и не Sara). Каждая отмена пишет заметку на job (почему) и штампует состояние `robot_call`-кнопки на задаче.
+
+**Пользовательские сценарии:**
+1. Диспетчер перевёл job из `Part arrived` в `Rescheduled` (или любой другой статус, вкл. Canceled через FSM/side-door) → очереди робо-звонка по этому job отменяются, на job появляется заметка «robot call canceled — job left 'Part arrived' (status changed to 'Rescheduled')», кнопка 🤖 на задаче показывает причину отмены.
+2. Клиент сам позвонил и поговорил с диспетчером (completed, длительность > 0, трубку взял человек) → запланированный робо-звонок этому клиенту отменяется + заметка «customer was already reached by phone (inbound call …)».
+3. Диспетчер сам дозвонился клиенту (исходящий звонок из софтфона, completed, длительность > 0) → то же самое (outbound call …).
+4. Клиент позвонил и попал на голосовую почту / не дозвонился / поговорил только с Sara (AI) → отмены НЕТ (живого контакта не было).
+5. Робот сам звонил (его звонок виден в timeline как звонок с `answered_by='ai'`) → его собственный звонок НИКОГДА не отменяет его же план.
+6. После отмены диспетчер снова нажимает 🤖 → новая очередь стартует штатно (отмена не блокирует re-queue); штамп «canceled» на кнопке сбрасывается.
+7. Если робо-звонок был «в проводе» (`dialing`) в момент отмены — разговор не обрывается; но неудачный исход этого звонка НЕ воскрешает цепочку ретраев (guard на insert ретрая в webhook).
+
+**Функциональные требования:**
+- FR-1 (status-cancel): при переходе job ИЗ `Part arrived` в любой другой blanc_status (manual PATCH `jobs.js:281`, FSM `/apply` `fsm.js:276-278`, `jobs.js:851` On-the-way, cancel `jobs.js:560`, complete `jobs.js:607`) все `pending`-строки `outbound_call_attempts` этого job переводятся в `status='canceled'` (+reason). Каналы, минующие `updateBlancStatus`: `cancelJob` и `markComplete` (пишут blanc_status напрямую, `jobsService.js:1298,1355`) хукуются отдельно. ZB-sync (`syncFromZenbooker`) НЕ может вывести job из `Part arrived` (не-`autoStatuses` сохраняются, `jobsService.js:1105-1120`), но МОЖЕТ выставить `zb_canceled=true` — этот флип для `Part arrived`-job тоже отменяет план.
+- FR-2 (human-contact-cancel): после ФИНАЛЬНОГО upsert звонка (`inboxWorker.processVoiceEvent` → `queries.upsertCall`) с `status='completed'`, `is_final=true`, `parent_call_sid IS NULL`, `duration_sec > 0`, `answered_at IS NOT NULL`, `direction IN ('inbound','outbound')` — отменить активные attempts той же компании, сматченные по `contact_id` ИЛИ по последним 10 цифрам телефона внешней стороны (inbound → `from_number`, outbound → `to_number`). Исключения (НЕ отменяют): `call_sid LIKE 'vapi:%'`, `answered_by='ai'` (робот), звонок, чей call-flow execution завершился на узле `vapi_agent` (Sara), `no-answer`/`busy`/`failed`/`voicemail_left` (не completed), `voicemail_recording` (не final), IVR-hangup (нет `answered_at`).
+- FR-3 (note): каждая отмена пишет РОВНО ОДНУ заметку на job (автор 'AI Phone', как `vapiCallStatus.js:117-122`). Копирайт (EN, точный):
+  - статус: `AI: robot call canceled — job left 'Part arrived' (status changed to '<newStatus>').`
+  - живой контакт: `AI: robot call canceled — customer was already reached by phone (<inbound|outbound> call completed at <ISO-time>).`
+  - если в момент отмены существовала `dialing`-строка, к заметке добавляется: ` A call already in progress will not be retried.`
+- FR-4 (no-resurrection): guard на insert ретрая в `vapiCallStatus.js` (transient-ветка :289-315) и в `outboundCallWorker.scheduleRetryOrExhaust` (:325-340): ретрай НЕ вставляется, если (а) company-scoped re-read job даёт `!job || zb_canceled || blanc_status !== 'Part arrived'`, ИЛИ (б) существует строка `status='canceled'` этого job с `id >` id провалившегося attempt. Exhausted-маркер и его заметка в этом случае тоже пропускаются.
+- FR-5 (task stamp): отмена штампует `robot_call`-action задачи `state:'canceled'` + короткий `reason` (расширение прецедента `markRobotCallFailed`, `partsCallService.js:146-165`). Успешный `startRobotCall` (включая `already:true`) сбрасывает штамп в `state:'queued'` — re-queue после отмены работает.
+- FR-6 (idempotence): повторный финальный webhook того же звонка / повторная смена статуса не находят активных attempts → no-op, ни второй заметки, ни второго штампа.
+- FR-7 (изоляция): все SELECT/UPDATE/INSERT фильтруются по `company_id`; телефонный матч не пересекает границы компании.
+- FR-8 (dialing не убиваем): `dialing`-строка НЕ terminate'ится отменой (звонок уже идёт); отмена лишь ставит canceled-маркер для FR-4.
+- FR-9 (без миграции): у `outbound_call_attempts.status` НЕТ CHECK-констрейнта (mig 158 — plain TEXT; `canceled` уже задокументирован в COMMENT). Частичный unique-индекс покрывает только `pending|dialing` → `canceled` безопасен. Миграция 161 НЕ нужна.
+
+**Ограничения и нефункциональные требования:**
+- Все хуки fire-and-forget + safe-fail (как `onPartArrived`-хук, `jobsService.js:976-984`): сбой отмены никогда не ломает смену статуса, webhook (200) или inbox-worker.
+- Матч по телефону — только полные последние 10 цифр (E164-normalized), минимум 7 цифр; anonymous-звонки без цифр — no-op.
+- AMD-ограничение принято: исходящий звонок, на который ответил автоответчик, Twilio классифицирует `completed` (без AMD) — считается контактом (следуем классификации Twilio, как сформулировал владелец).
+
+**Потенциально вовлечённые модули:** backend `services/partsCallService.js` (cancel-сервис + штампы), `services/jobsService.js` (leave-хуки), `services/inboxWorker.js` (post-final-upsert хук), `routes/vapiCallStatus.js` + `services/outboundCallWorker.js` (retry-guard, честный `canceled` в Guard-1), frontend `components/tasks/tasksApi.ts` + `components/tasks/TaskActionButtons.tsx` (рендер `state:'canceled'`).
+
+**Затронутые интеграции:** Twilio (только чтение уже приходящих статусов), VAPI (только guard в существующем webhook). Zenbooker — только чтение флипа `zb_canceled` в существующем sync. Новых внешних вызовов нет.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `callsQueries.upsertCall` SQL (:15-63) — хук ставится ПОСЛЕ вызова, сам запрос не трогать.
+- FSM-валидация `updateBlancStatus` (:893-927) и ZB-sync матрица (:942-969) — хук строго после UPDATE, не в транзакции с ним.
+- Anti-spoof/idempotence webhook (`vapiCallStatus.js:125-224`), партиальный unique-индекс mig 158, claim-loop `outboundCallWorker.tick`.
+- `onPartArrived` / `startRobotCall` семантика (SLOTPICK/TECHSLOT ветки) — только добавка `queued`-штампа на успех.
+- `inboxWorker` guards (skipUpsert/voicemail-preserve :283-341) — не менять, хук читает их РЕЗУЛЬТАТ.

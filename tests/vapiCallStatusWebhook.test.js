@@ -33,11 +33,18 @@ jest.mock('../backend/src/services/outboundCallSettingsService', () => ({
 }));
 
 // Reuse the worker's scheduling primitives — mocked so we assert wiring, not math.
+// retryBlockReason (CANCEL-001 CC-04) is the SHARED no-resurrection guard: the
+// route must consult it after the honest mark-update and skip the retry INSERT /
+// exhausted marker / notes when it returns a block reason. Its predicate internals
+// (job re-read + partsCallService.isChainCanceled) are pinned against the REAL
+// helper in tests/outboundCallWorker.test.js — here we assert the route's WIRING.
 const mockComputeNext = jest.fn();
 const mockResolveGroup = jest.fn();
+const mockRetryBlockReason = jest.fn();
 jest.mock('../backend/src/services/outboundCallWorker', () => ({
     computeNextScheduledAt: (...a) => mockComputeNext(...a),
     resolveBusinessHoursGroup: (...a) => mockResolveGroup(...a),
+    retryBlockReason: (...a) => mockRetryBlockReason(...a),
 }));
 
 // OUTBOUND-CALL-TIMELINE-001 (CT-05) — the timeline seam (CT-01). Mocked so we
@@ -96,6 +103,7 @@ beforeEach(() => {
     mockResolveSettings.mockReset();
     mockComputeNext.mockReset();
     mockResolveGroup.mockReset();
+    mockRetryBlockReason.mockReset();
     mockFinalize.mockReset();
     mockApplyStatusUpdate.mockReset();
 
@@ -103,6 +111,8 @@ beforeEach(() => {
     mockResolveSettings.mockResolvedValue({ max_attempts: 3 });
     mockResolveGroup.mockResolvedValue('default-group');
     mockComputeNext.mockReturnValue(new Date('2026-07-08T14:00:00.000Z'));
+    // CC-04 guard default: not blocked → retries behave exactly as before.
+    mockRetryBlockReason.mockResolvedValue(null);
     // booked-detect default: job is NOT rescheduled.
     mockGetJobById.mockResolvedValue({ id: 50, blanc_status: 'Part arrived' });
     // Timeline seam succeeds by default (returns the effective sid). CT-05 asserts
@@ -322,6 +332,133 @@ describe('retry-or-exhaust (U18, S5 slice)', () => {
         expect(eventService.logEvent).toHaveBeenCalledWith(
             COMPANY, 'job', 50, 'outbound_call_exhausted', expect.any(Object), 'system'
         );
+    });
+});
+
+// ── OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04) — no-resurrection guard (S9/S10) ───
+// After the honest mark-update, the route consults the SHARED guard
+// (outboundCallWorker.retryBlockReason — job re-read + isChainCanceled; its
+// predicate is pinned in tests/outboundCallWorker.test.js). Blocked → NO retry
+// INSERT, NO exhausted marker, NO notes (the cancel event already noted the
+// job), only an `outbound_call_retry_skipped` event + 200. Fail-open: a guard
+// fault means "not blocked" — retries proceed exactly as before.
+describe('no-resurrection retry guard (CC-04, TC-CC-11…13)', () => {
+    // TC-CC-11 wiring: every block reason the predicate can emit → same skip.
+    test.each([
+        ['job left Part arrived', 'job_status_Canceled'],
+        ['job gone', 'job_not_found'],
+        ['job zb-canceled', 'job_canceled'],
+        ['chain canceled (marker newer than attempt, TC-CC-12)', 'chain_canceled'],
+    ])('blocked (%s) → honest mark kept, NO retry INSERT, NO note, retry_skipped event', async (_label, blockReason) => {
+        withAttempt(attemptRow({ attempt_no: 1 }));
+        mockQuery.mockResolvedValue({ rows: [] });
+        mockRetryBlockReason.mockResolvedValue(blockReason);
+
+        const res = await post(endReport('vc_guard', 'customer-did-not-answer'));
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true });
+
+        // The failing attempt still got its HONEST terminal transient status.
+        const markUpd = mockQuery.mock.calls.find(c => /UPDATE outbound_call_attempts SET status = \$2/.test(String(c[0])));
+        expect(markUpd).toBeTruthy();
+        expect(markUpd[1][1]).toBe('no_answer');
+        // Guard consulted with the correlated ROW (company scope from the row).
+        expect(mockRetryBlockReason).toHaveBeenCalledTimes(1);
+        expect(mockRetryBlockReason).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 100, company_id: COMPANY, job_id: 50 })
+        );
+        // NO resurrection: no INSERT of any kind, no retry math, no note.
+        expect(mockQuery.mock.calls.some(c => /INSERT INTO outbound_call_attempts/i.test(String(c[0])))).toBe(false);
+        expect(mockComputeNext).not.toHaveBeenCalled();
+        expect(mockAddNote).not.toHaveBeenCalled();
+        // Only the skip event — never outbound_call_retry.
+        expect(eventService.logEvent).toHaveBeenCalledWith(
+            COMPANY, 'job', 50, 'outbound_call_retry_skipped',
+            expect.objectContaining({ attemptNo: 1, outcome: 'no_answer', blockedBy: blockReason }), 'system'
+        );
+        expect(eventService.logEvent).not.toHaveBeenCalledWith(
+            COMPANY, 'job', 50, 'outbound_call_retry', expect.any(Object), 'system'
+        );
+    });
+
+    // TC-CC-12 converse — regression pin: guard clean → retry byte-identical to today.
+    test('NOT blocked → retry INSERT (attempt_no+1, slot copied) + "next attempt" note as today', async () => {
+        withAttempt(attemptRow({ attempt_no: 1, slot_json: { date: '2026-07-11', label: 'Fri 10-12' } }));
+        mockQuery.mockResolvedValue({ rows: [] });
+        mockRetryBlockReason.mockResolvedValue(null);
+
+        const res = await post(endReport('vc_clean', 'customer-did-not-answer'));
+        expect(res.status).toBe(200);
+
+        const insert = mockQuery.mock.calls.find(c => /INSERT INTO outbound_call_attempts/i.test(String(c[0])));
+        expect(insert).toBeTruthy();
+        expect(insert[1]).toContain(2); // attempt_no + 1
+        expect(insert[1]).toContain(JSON.stringify({ date: '2026-07-11', label: 'Fri 10-12' })); // slot_json copied
+        expect(mockAddNote).toHaveBeenCalledWith(50, expect.stringMatching(/next attempt/i), [], 'AI Phone', 'AI Phone');
+        expect(eventService.logEvent).toHaveBeenCalledWith(
+            COMPANY, 'job', 50, 'outbound_call_retry', expect.any(Object), 'system'
+        );
+        expect(eventService.logEvent).not.toHaveBeenCalledWith(
+            COMPANY, 'job', 50, 'outbound_call_retry_skipped', expect.any(Object), 'system'
+        );
+    });
+
+    // TC-CC-13: the exhausted insertion site is guarded by the SAME check.
+    test('blocked at attempt_no == max → NO exhausted marker INSERT, NO exhausted note; honest mark kept', async () => {
+        withAttempt(attemptRow({ attempt_no: 3 }));
+        mockQuery.mockResolvedValue({ rows: [] });
+        mockRetryBlockReason.mockResolvedValue('chain_canceled');
+
+        const res = await post(endReport('vc_exh_guard', 'customer-did-not-answer'));
+        expect(res.status).toBe(200);
+
+        const markUpd = mockQuery.mock.calls.find(c => /UPDATE outbound_call_attempts SET status = \$2/.test(String(c[0])));
+        expect(markUpd[1][1]).toBe('no_answer'); // honest terminal transient status
+        expect(mockQuery.mock.calls.some(
+            c => /INSERT INTO outbound_call_attempts/i.test(String(c[0]))
+        )).toBe(false); // no exhausted marker
+        expect(mockAddNote).not.toHaveBeenCalled();
+        expect(eventService.logEvent).not.toHaveBeenCalledWith(
+            COMPANY, 'job', 50, 'outbound_call_exhausted', expect.any(Object), 'system'
+        );
+        expect(eventService.logEvent).toHaveBeenCalledWith(
+            COMPANY, 'job', 50, 'outbound_call_retry_skipped', expect.any(Object), 'system'
+        );
+    });
+
+    // Fail-open + webhook safety: a guard FAULT can neither break the 200 nor
+    // silently starve the retry chain (behaves as "not blocked").
+    test('guard REJECTS → still 200 AND retry proceeds as today (fail-open)', async () => {
+        withAttempt(attemptRow({ attempt_no: 1 }));
+        mockQuery.mockResolvedValue({ rows: [] });
+        mockRetryBlockReason.mockRejectedValue(new Error('guard boom'));
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const res = await post(endReport('vc_guard_boom', 'customer-did-not-answer'));
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true });
+        // Fail-open: the retry INSERT + note + event happened exactly as today.
+        expect(mockQuery.mock.calls.some(c => /INSERT INTO outbound_call_attempts/i.test(String(c[0])))).toBe(true);
+        expect(mockAddNote).toHaveBeenCalled();
+        expect(eventService.logEvent).toHaveBeenCalledWith(
+            COMPANY, 'job', 50, 'outbound_call_retry', expect.any(Object), 'system'
+        );
+        warnSpy.mockRestore();
+    });
+
+    // TC-CC-16: booked wins BEFORE the guard — a mid-call booking still lands
+    // `booked` even when the guard would block (job Rescheduled IS the booking).
+    test('booked branch untouched: job Rescheduled → booked; guard never consulted', async () => {
+        withAttempt(attemptRow());
+        mockGetJobById.mockResolvedValueOnce({ id: 50, blanc_status: 'Rescheduled' }); // booked-detect
+        mockRetryBlockReason.mockResolvedValue('job_status_Rescheduled'); // would block, if reached
+        mockQuery.mockResolvedValue({ rows: [] });
+
+        const res = await post(endReport('vc_booked_guard', 'assistant-ended-call'));
+        expect(res.status).toBe(200);
+        expect(mockQuery.mock.calls.some(c => /SET status = 'booked'/i.test(String(c[0])))).toBe(true);
+        expect(mockRetryBlockReason).not.toHaveBeenCalled(); // booked returns first
+        expect(mockQuery.mock.calls.some(c => /INSERT INTO outbound_call_attempts/i.test(String(c[0])))).toBe(false);
     });
 });
 
