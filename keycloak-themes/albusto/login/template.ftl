@@ -17,7 +17,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="${url.resourcesPath}/css/albusto-login.css">
+  <#-- LOGIN-CSS-CACHE-BUST-001: Keycloak serves theme resources with
+       Cache-Control max-age=2592000 (30d) under a NON-changing /resources/<ver>/
+       path, so browsers keep a stale CSS for up to a month after a theme change
+       (the Google button rendered as an unstyled link on phones that cached the
+       pre-GOOGLE-SSO-FIX css). BUMP ?v= on EVERY albusto-login.css change. -->
+  <link rel="stylesheet" href="${url.resourcesPath}/css/albusto-login.css?v=2">
   <#if properties.scripts?has_content>
     <#list properties.scripts?split(' ') as script>
       <script src="${url.resourcesPath}/${script}" type="text/javascript"></script>
