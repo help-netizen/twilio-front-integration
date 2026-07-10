@@ -2,12 +2,15 @@
 #
 # Docker Compose auto-loads this file alongside docker-compose.yml. Values under
 # `environment:` take precedence over `env_file: .env`, so a parallel/independent
-# deploy that rewrites the host .env cannot silently revert Mail Secretary email
-# triage from the local LLM (Ollama) back to Gemini (MAIL-LOCAL-LLM-001).
+# deploy that rewrites the host .env cannot silently change the mail-triage provider.
 #
-# The mini's Ollama is reachable from prod over Tailscale (100.78.119.41:11434).
+# 2026-07-10: TEMPORARILY on gemini — the mini is memory-pressured (~11GB swap, qwen3:8b
+# resident for RAG) so qwen2.5:14b cold-loads exceed even the 120s timeout and emails
+# fell to verdict='error'. Flip MAIL_AGENT_PROVIDER back to "ollama" when the mini frees
+# up (or point MAIL_AGENT_OLLAMA_MODEL at qwen3:8b, which is already resident -> no cold load).
 services:
   app:
     environment:
-      MAIL_AGENT_PROVIDER: "ollama"
+      MAIL_AGENT_PROVIDER: "gemini"
       MAIL_AGENT_OLLAMA_URL: "http://100.78.119.41:11434"
+      MAIL_AGENT_TIMEOUT_MS: "120000"
