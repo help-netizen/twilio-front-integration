@@ -213,7 +213,7 @@ router.post('/:machineKey/versions/:versionId/restore', requireEditorEnabled, re
 
 // ─── Apply transition (placeholder) ────────────────────────────────────────────
 
-router.post('/:machineKey/apply', requirePermission('jobs.edit'), async (req, res) => {
+router.post('/:machineKey/apply', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {
   try {
     const companyId = req.companyFilter?.company_id;
     const { machineKey } = req.params;

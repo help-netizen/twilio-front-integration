@@ -25,7 +25,7 @@ interface JobOpsSectionProps {
 // ONWAY-001 — pre-visit statuses where the "On the way" CTA is offered.
 // JOB-FSM-PART-ARRIVED-FORWARD-001: "Part arrived" is a pre-visit source too — the
 // part is in, the tech heads out to finish the job, so the customer gets the ETA notice.
-const ONWAY_SOURCE_STATUSES = ['Submitted', 'Rescheduled', 'Part arrived'];
+export const ONWAY_SOURCE_STATUSES = ['Submitted', 'Rescheduled', 'Part arrived'];
 
 // ─── Component ───────────────────────────────────────────────────────────────
 

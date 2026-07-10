@@ -140,3 +140,30 @@ describe('FSM /apply cancel guard (side-door)', () => {
         expect(ok.status).toBe(200);
     });
 });
+
+// RBAC-FSM-FIX (side-door base gate): a provider holds jobs.done_pending_approval but
+// NOT jobs.edit. The /apply base permission gate must accept it — mirroring PATCH
+// /jobs/:id/status — so a provider can advance a job (e.g. Part arrived → On the way)
+// via the FSM side-door, while the closing guard still blocks Cancel.
+describe('FSM /apply provider parity (widened base gate)', () => {
+    test('provider (no jobs.edit) CAN apply a non-closing transition (On the way) via /apply', async () => {
+        const res = await request(appFsmAs(PROVIDER))
+            .post('/job/apply').send({ entityId: 5, event: 'On the way' });
+        expect(res.status).toBe(200);
+    });
+    test('provider CANNOT Cancel via /apply (cancel stays jobs.close)', async () => {
+        const res = await request(appFsmAs(PROVIDER))
+            .post('/job/apply').send({ entityId: 5, event: 'Canceled', reason: 'no-show' });
+        expect(res.status).toBe(403);
+    });
+    test('a holder of jobs.close (dispatcher/admin) can still Cancel via /apply', async () => {
+        const res = await request(appFsmAs(['jobs.edit', 'jobs.close']))
+            .post('/job/apply').send({ entityId: 5, event: 'Canceled', reason: 'no-show' });
+        expect(res.status).toBe(200);
+    });
+    test('a view-only user (no jobs.edit / done_pending_approval) is blocked at the base gate', async () => {
+        const res = await request(appFsmAs(['jobs.view']))
+            .post('/job/apply').send({ entityId: 5, event: 'On the way' });
+        expect(res.status).toBe(403);
+    });
+});

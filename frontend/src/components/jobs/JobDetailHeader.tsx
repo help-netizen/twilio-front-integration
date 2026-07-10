@@ -4,6 +4,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { BLANC_STATUSES, BLANC_STATUS_COLORS } from './jobHelpers';
+import { ONWAY_SOURCE_STATUSES } from './JobStatusTags';
 import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
 import { useAuthz } from '../../hooks/useAuthz';
 
@@ -37,7 +38,15 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
     const initialState = fsmData?.initialState || null;
     const { data: fsmActions } = useFsmActions('job', job.blanc_status);
     const allowedTargets = new Set(fsmActions?.map(a => a.target) || []);
-    const reachable = allStatuses.filter(s => s !== job.blanc_status && allowedTargets.has(s));
+    // ONWAY-DEDUP-001: JobOpsSection shows the ONWAY-001 CTA (customer-ETA flow)
+    // with this exact predicate. When it's present, drop the plain FSM "On the way"
+    // item here so the panel doesn't offer two "On the way" affordances. Without
+    // messages.send the CTA is absent, so the plain item stays (their only path).
+    const showOnWayCta =
+        ONWAY_SOURCE_STATUSES.includes(job.blanc_status) && hasPermission('messages.send');
+    const reachable = allStatuses.filter(
+        s => s !== job.blanc_status && allowedTargets.has(s) && !(showOnWayCta && s === 'On the way'),
+    );
     const unreachable = allStatuses.filter(s => s !== job.blanc_status && !allowedTargets.has(s));
     const canReset = initialState && job.blanc_status !== initialState;
 
