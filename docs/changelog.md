@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-07-10 — YELP-LEAD-AUTORESPONDER-001 (Phase 1a): авто-ответ на Yelp-лид за секунды + создание лида в Albusto
+
+Новый лид с Yelp («Request a Quote») приходит письмом (relay `reply+<токен>@messaging.yelp.com`, переадресация help@abchomes-appliance.com → help@bostonmasters). Теперь на входящем ingest'е письмо распознаётся, клиенту сразу уходит персональное приветствие, и в Albusto создаётся полноценный лид — всё бэкендом, без браузера.
+
+- **Детект (обе проверки обязательны):** отправитель `@messaging.yelp.com` И сигнал первого сообщения (`utm_source=request_a_quote_first_message` или заголовок «…requested a quote…for a &lt;service&gt;»). Ответы клиента (`request_a_quote_new_message`) и подтверждения Yelp (`no-reply@*yelp.com`) НЕ триггерят — оба дискриминатора нагружены (доказано саботажем: каждый роняет свой тест).
+- **Парсинг** Q&A-блока: имя, услуга, проблема (бренд/прибор/симптом), ZIP, relay-адрес+токен — fail-safe (нет поля → null, лид всё равно создаётся); нет relay-токена → отправка отменяется (без мисроута), лид создаётся.
+- **Приветствие**: Gemini (транспорт зеркалит `mailAgentClassifier.classifyViaGemini`) генерит короткое тёплое письмо со ссылкой на прибор/проблему, просит телефон + удобное время, без цены; при любой ошибке/таймауте/без ключа — детерминированный статический шаблон. Отправка одна на тред через `emailService.sendEmail(to=relay)` (Yelp = один email-ответ на тред).
+- **Лид**: `leadsService.createLead` (JobSource='Yelp', Status='Submitted', City/State(ZIP→||'MA')/PostalCode, Phone=null в 1a) → всплывает в Pulse/Leads через существующий `lead.created` SSE, без фронтенда. Контакт из relay-адреса НЕ создаётся.
+- **Идемпотентность (claim = освобождаемый лок)**: миграция 162 `yelp_lead_events` UNIQUE(company_id, provider_message_id), атомарный `INSERT … ON CONFLICT DO NOTHING RETURNING` ДО createLead. Сбой createLead → claim освобождается (следующий 5-мин полл повторит → лид at-least-once); успех → claim держится (`markGreeted`), повторный ingest / реплей полла = дешёвый no-op (без повторного приветствия). Гасит гонку push+polling (ту, что дала 95 дублей контактов).
+- **Хук** в `emailTimelineService.linkInboundMessage` после `draft_or_sent` и ДО mute/no-contact — fail-open (никогда не роняет ingest), аддитивный (не-Yelp письма идут в Mail Secretary без изменений); обработанный Yelp-лид → `{skipped:'yelp_lead'}` (Секретарь не плодит дубль-задачу).
+- **Гейт**: `YELP_AUTORESPONDER_ENABLED` (default OFF) + скоуп default-company на время 1a-раскатки.
+- Тесты: 31 mocked jest зелёных (6 файлов: detect/parse/claim/happy/safe-fail/hook); 4 саботаж-контроля нагружены (домен→YLA-D-03, сигнал→YLA-D-02, claim→YLA-C-04, хук→YLA-M-02); Reviewer APPROVED (0 must-fix, воспроизвёл сам + саботаж). Real-PG (C-02/C-03, нужна миграция на CI-БД) и live (свежий тест-лид) — при деплое. **НЕ задеплоено.** Phase 1b (headless Yelp Business → телефон за кнопкой) — отдельный трек позже, прицепится к созданному лиду.
+
+---
+
 ## 2026-07-10 — OUTBOUND-PARTS-CALL-CANCEL-001: планировщик робозвонка отменяется при смене статуса и при живом разговоре с клиентом
 
 Очередь робозвонка (part-arrived) живёт только пока работа в статусе «Part arrived»:

@@ -84,7 +84,7 @@ function toEmailItem(row) {
  * @param {string} companyId
  * @param {import('../mail/MailProvider').NormalizedInboundMessage} msg
  * @returns {Promise<object>} one of:
- *   {skipped:'outbound'|'draft_or_sent'|'muted_sender'|'no_contact'|'no_message'} |
+ *   {skipped:'outbound'|'draft_or_sent'|'yelp_lead'|'muted_sender'|'no_contact'|'no_message'} |
  *   {linked:true, contactId, timelineId, alreadyLinked?:boolean} |
  *   {error:string}
  */
@@ -104,6 +104,28 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
         }
         if (Array.isArray(msg.labelIds) && msg.labelIds.some(l => SENT_DRAFT_LABELS.has(l))) {
             return { skipped: 'draft_or_sent' };
+        }
+
+        // (a.4) YELP-LEAD-AUTORESPONDER-001 — intercept a Yelp *new-lead* email
+        //     BEFORE the mute guard and (crucially) BEFORE the no-contact
+        //     Mail-Secretary branch below (l.~141). A Phase-1a Yelp lead has no
+        //     phone → no contact, so without this early intercept it would hit
+        //     reviewInboundEmail({noContact:true}) and generate a mail-agent
+        //     review/AR task. When the autoresponder handles it, we short-circuit
+        //     with {skipped:'yelp_lead'} — no link, no unread, no SSE, no review.
+        //     Gated on !opts.skipAgent (same gate the agent paths use) and fully
+        //     fail-open (mirrors the isSenderMuted try/catch below): a handler
+        //     problem must NEVER early-return wrongly and must NEVER throw out of
+        //     the pipeline — the email then just flows through the normal path.
+        if (!opts.skipAgent) {
+            try {
+                const yelp = await require('../yelpLeadService').maybeHandleYelpLead(companyId, msg);
+                if (yelp && yelp.handled) {
+                    return { skipped: 'yelp_lead' };
+                }
+            } catch (e) {
+                console.error('[EmailTimeline] maybeHandleYelpLead failed (fail-open):', e.message);
+            }
         }
 
         // (a.5) Mute guard (MAIL-MUTE-001, FR-2/FR-3). A `from:`-muted sender (an

@@ -8359,3 +8359,168 @@ Spec: `Docs/specs/GMAIL-PUSH-FIX-001.md` (S1–S5 + due-matrix). Test-cases: `Do
 - **Wave 2:** CC-05 (FE, параллельно wave 1 после CC-01)
 - **Wave 3:** CC-06 (тесты) → changelog/project-spec — стандартным хвостом пайплайна
 - **Wave 4 (review fix):** CC-07 (booked-before-flip) — после ревью
+
+---
+
+## YELP-LEAD-AUTORESPONDER-001 — Yelp new-lead email → auto-greeting + lead (Phase 1a, email-only, backend)
+
+**Feature:** When a Yelp **new-lead** email is ingested, auto-send exactly **one** LLM-personalized greeting back through the Yelp relay **and** create a `JobSource='Yelp'` lead. Purely additive to the Mail Secretary — all non-Yelp mail behaves exactly as today.
+**Status:** planned
+**Phase:** 1a (email-only, default company `00000000-0000-0000-0000-000000000001`, feature-flagged OFF)
+**Feature flag:** `YELP_AUTORESPONDER_ENABLED` (default OFF) + default-company scope.
+**Related docs:**
+- Spec: `Docs/specs/YELP-LEAD-AUTORESPONDER-001.md` (scenarios S1–S8)
+- Test cases: `Docs/test-cases/YELP-LEAD-AUTORESPONDER-001.md` (32 cases, YLA-*)
+- Surrounding flow: `EMAIL-TIMELINE-001` (inbound linking via `linkInboundMessage`), `MAIL-SECRETARY-001`, `EMAIL-001`
+
+### Verified seams (confirmed on disk in this worktree — AUTHORITATIVE)
+- **Hook:** `backend/src/services/email/emailTimelineService.js` → `linkInboundMessage(companyId, msg, opts={})` at **:91**. Guard order: no_message (:93) → outbound (:102) → **draft_or_sent (:105)** → mute guard (:120, gated `!opts.skipAgent`, fail-open try/catch :122–126) → no_contact + `reviewInboundEmail({noContact:true})` (:138–143) → contact-path `reviewInboundEmail` (:201). **Insert the Yelp branch AFTER :106 (draft_or_sent) and BEFORE :120 (mute).**
+- **Greeting transport:** mirror `backend/src/services/mailAgentClassifier.js` → `classifyViaGemini` (:92; v1beta `generativelanguage.googleapis.com/.../:generateContent?key=…` at :113; two-model fallback, bounded retries, hard timeout). **Do NOT use callSummaryService.**
+- **Lead:** `backend/src/services/leadsService.js` → `createLead(fields, companyId)` at **:312**; PascalCase→snake `FIELD_MAP` at :131–163. No FSM gate on create; `Phone` optional (null in 1a).
+- **Send:** `backend/src/services/emailService.js` → `sendEmail(companyId, {to, subject, body, cc?, files?, userId?, userEmail?})` at **:68** (fresh-thread send; replying to the `reply+<hex>@messaging.yelp.com` relay is what threads it Yelp-side).
+- **Migration dir:** `backend/db/migrations/` (NOT `backend/src/db/migrations/`). Highest on disk = `160_job_fsm_part_arrived_forward.sql` → **next free = 161** (re-verify at build; parallel sessions add migrations).
+
+### Canonical names (LOCK — source AND the 7 test files must match; Tester's named-checks are built on these)
+> The orchestrator brief used aliases `isYelpNewLead` / `claimYelpMessage` / `generateGreeting`; the already-written 32-case test doc uses the names below. Since the Implementer writes both source and tests, adopt the **test-doc names as canonical** (may additionally export the aliases). See Residual Risk R1.
+- `yelpLeadService.detectYelpLead(msg)` (pure) · `yelpLeadService.parseYelpLead(msg)` (pure) · `yelpLeadService.maybeHandleYelpLead(companyId, msg)`
+- `yelpLeadQueries.claimYelpLead(companyId, providerMessageId[, threadToken])` · `releaseClaim(id)` · `markGreeted(id, {...})` · `threadAlreadyGreeted(companyId, threadToken)`
+- `yelpGreetingService.buildGreeting({ name, service, problem })`
+
+### Locked sequencing / semantics (must hold)
+- **Internal order in `maybeHandleYelpLead`:** env/scope gate → `detectYelpLead` → `parseYelpLead` → **CLAIM** → `createLead` → **greet + send** (best-effort) → `markGreeted`. **Never throws** (fail-open).
+- **CLAIM-as-releasable-lock:** claim (atomic `ON CONFLICT DO NOTHING RETURNING`) **before** createLead. If `createLead` throws → `releaseClaim(id)` + log, so the next poll re-scan re-attempts the lead. On success → greet + send best-effort, then `markGreeted` (HOLD claim). **Net: lead at-least-once, greeting at-most-once.** A send failure *after* the lead exists is logged, **NOT** retried (Yelp = one reply per thread).
+- **Detect (both required):** `from_email` matches `/@messaging\.yelp\.com$/i` **AND** a first-message signal (`utm_source=request_a_quote_first_message` OR a "…requested a quote…for a `<service>`" header line). In-thread replies (`request_a_quote_new_message`) and `no-reply@…yelp.com` confirmations must **NOT** match.
+- **Relay extraction:** derive `reply_to` + `thread_token` from `from_email`'s `reply+<hex>@messaging.yelp.com` local-part (the `NormalizedInboundMessage` shape has **no** `reply_to`/raw-header field — `MailProvider.js:25–43`). If no valid `reply+<token>` recovered → **BAIL the send** (never misroute) but still create the lead.
+- **Data isolation:** `companyId` threads through from `linkInboundMessage`; every query is company-scoped; `yelp_lead_events` uniqueness is per `company_id`; greeting sent only via that company's mailbox. No new API routes → no route middleware needed.
+
+---
+
+### TASK-YLA-001: Migration — `yelp_lead_events` table (+ rollback)
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `backend/db/migrations/161_yelp_lead_events.sql` — NEW: `CREATE TABLE IF NOT EXISTS yelp_lead_events (id …, company_id uuid NOT NULL, provider_message_id text NOT NULL, thread_token text, lead_id …, greeting_provider_message_id text, status text, greeted_at timestamptz, created_at timestamptz DEFAULT now())` with **`UNIQUE(company_id, provider_message_id)`**.
+- `backend/db/migrations/rollback_161_yelp_lead_events.sql` — NEW: `DROP TABLE IF EXISTS yelp_lead_events;` (convention matches `rollback_158/159_*`).
+**Files NOT to modify:**
+- earlier migrations (do not renumber) · `src/server.js` (protected)
+**Expected result:**
+- Up creates the table + unique constraint; a duplicate `(company_id, provider_message_id)` INSERT raises `23505` (or is absorbed by `ON CONFLICT`). Down drops it cleanly; re-apply up is idempotent (`IF NOT EXISTS`).
+- **Re-verify 161 is still the next free integer at build** (across this + sibling `.claude/worktrees/*/backend/db/migrations`); renumber if taken.
+**Related test cases:** YLA-MIG-01, YLA-MIG-02, YLA-MIG-03 (manual/CI-DB psql); underpins YLA-C-02, YLA-C-03.
+
+---
+
+### TASK-YLA-002: Queries — `yelpLeadQueries.js` (atomic claim / release / mark)
+**Status:** pending
+**Dependencies:** TASK-YLA-001
+**Files to modify:**
+- `backend/src/db/yelpLeadQueries.js` — NEW: `claimYelpLead(companyId, providerMessageId[, threadToken])` = `INSERT … ON CONFLICT (company_id, provider_message_id) DO NOTHING RETURNING id` (returns `{ claimed:true, id }` on a row, `{ claimed:false }` on empty); `releaseClaim(id)` = `DELETE … WHERE id=$1`; `markGreeted(id, { leadId, greetingProviderMessageId, threadToken })`; `threadAlreadyGreeted(companyId, threadToken)` (defense-in-depth for R6 one-reply-per-thread). All via the shared `db.query` seam.
+**Files NOT to modify:**
+- `backend/src/db/connection.js` (use it, don't change) · `src/server.js` (protected)
+**Expected result:**
+- Claim SQL matches `/insert into yelp_lead_events/i` + `/on conflict\s*\(\s*company_id\s*,\s*provider_message_id\s*\)\s*do nothing/i` + `/returning/i`; first claim of a `(company, pmid)` wins, second no-ops. All queries company-scoped.
+- **Note:** YLA-C-01 asserts claim params `=== [companyId, pmid]` (2 args). If `thread_token` is bound at claim time, update that assertion to 3 args — keep source and test in sync.
+**Related test cases:** YLA-C-01 (unit, SQL shape + params), YLA-C-02 (real-PG constraint).
+
+---
+
+### TASK-YLA-003: Service — `yelpGreetingService.js` (Gemini greeting + static fallback)
+**Status:** pending
+**Dependencies:** none (parallel-safe; separate file)
+**Files to modify:**
+- `backend/src/services/yelpGreetingService.js` — NEW: `buildGreeting({ name, service, problem })` → short warm greeting that references the appliance/problem and asks best phone + preferred time, **NO price**. Gemini call mirrors `mailAgentClassifier.classifyViaGemini` transport shape (v1beta `:generateContent`, two-model fallback, bounded retries, hard timeout). **Static-template fallback on ANY Gemini error/timeout/quota** — `buildGreeting` resolves to a non-empty string (never propagates the Gemini error).
+**Files NOT to modify:**
+- `backend/src/services/mailAgentClassifier.js` (reference only) · `backend/src/services/callSummaryService.js` (do NOT use) · `src/server.js` (protected)
+**Expected result:**
+- With Gemini reachable → personalized greeting including the customer name + service. With Gemini throwing → static greeting that still includes `name` and references `service`. Never throws.
+**Related test cases:** YLA-S-01 (Gemini throws → static); consumed by YLA-H-01/H-02, YLA-S-02.
+
+---
+
+### TASK-YLA-004: Service — `yelpLeadService.js` (detect + parse helpers + orchestrator)
+**Status:** pending
+**Dependencies:** TASK-YLA-002, TASK-YLA-003
+**Files to modify:**
+- `backend/src/services/yelpLeadService.js` — NEW:
+  - `detectYelpLead(msg)` (pure) — domain gate `/@messaging\.yelp\.com$/i` (lower-cased) **AND** first-message signal; returns truthy only for the new-lead class.
+  - `parseYelpLead(msg)` (pure, fail-safe) — extract `{ name, service, problem, zip, reply_to, thread_token }`; missing field → `null`; `reply_to`/`thread_token` from the `reply+<hex>@…` local-part (null if absent); never throws.
+  - `maybeHandleYelpLead(companyId, msg)` — env/scope gate → detect → **claim** → parse → `createLead` (release claim + log on failure) → greet + send best-effort (bail send if `reply_to` null) → `markGreeted`. Field map: `FirstName`/`LastName` (split `name` on first space; `LastName=''` if single token), `Phone`=null, `PostalCode`=zip, `City`/`State` (from zip, else `'MA'`), `JobType`=service, `JobSource='Yelp'`, `Description`=problem, `Comments`=thread_token+reply_to+raw-body fallback, `Status='Submitted'`. **Do NOT create a contact from the relay address.** Never throws.
+**Files NOT to modify:**
+- `backend/src/services/leadsService.js` (`createLead(fields, companyId)` signature unchanged) · `backend/src/services/emailService.js` (`sendEmail` signature unchanged) · `src/server.js` (protected)
+**Expected result:**
+- Gate OFF / non-default company → immediate no-op (no detect/claim/parse/create/send). Gate ON + new-lead → exactly one `createLead` (`JobSource='Yelp'`, `Status='Submitted'`, no truthy `Phone`) + one `sendEmail(to=reply_to)`; returns a handled signal. Lost claim → zero of createLead/greet/send. `reply_to` null → no `sendEmail`; lead still created.
+**Related test cases:** YLA-D-01..07, YLA-P-01..05, YLA-C-03, YLA-C-04, YLA-H-01/H-02, YLA-S-02..05, YLA-N-01, YLA-N-02.
+
+---
+
+### TASK-YLA-005: Hook — intercept in `emailTimelineService.linkInboundMessage`
+**Status:** pending
+**Dependencies:** TASK-YLA-004
+**Files to modify:**
+- `backend/src/services/email/emailTimelineService.js` — insert ONE branch **after** the draft_or_sent guard (:106) and **before** the mute guard (:120), gated `if (!opts.skipAgent)`, wrapped so it can **never throw** (mirror the isSenderMuted try/catch at :122–126). On handled → `return { skipped: 'yelp_lead' }`. Extend the JSDoc return union (:86–89) with `'yelp_lead'`.
+**Files NOT to modify:**
+- everything else in the file — preserve guard order, the mute/no_contact/Mail-Secretary branches, and all existing side effects untouched · `backend/src/services/mailAgentService.js` (Mail Secretary — unchanged) · `src/server.js` / `frontend/src/lib/authedFetch.ts` (protected)
+**Expected result:**
+- Detected Yelp new-lead → `{ skipped:'yelp_lead' }`; `reviewInboundEmail`, `createTask`, `markContactUnread`, `publishMessageAdded` each NOT called (no Mail-Secretary task/AR/unread). Non-Yelp inbound → pipeline byte-for-byte unchanged (no-contact still reaches `reviewInboundEmail({noContact:true})`). Gate OFF → falls through to the normal pipeline (must not swallow the email).
+**Related test cases:** YLA-M-01, YLA-M-02, YLA-N-03, YLA-S-05.
+
+---
+
+### TASK-YLA-006: Tests — mocked jest suite (6 files, no DB/network)
+**Status:** pending
+**Dependencies:** TASK-YLA-002, TASK-YLA-003, TASK-YLA-004, TASK-YLA-005
+**Files to modify (all NEW):**
+- `tests/yelpLeadService.detect.test.js` — YLA-D-01..07 (+ sabotage YLA-N-01: drop the domain gate → assert `DET-reply-not-detected`/`DET-confirm-not-detected` flip RED)
+- `tests/yelpLeadService.parse.test.js` — YLA-P-01..05
+- `tests/yelpLeadService.claim.test.js` — YLA-C-01 (SQL/params via mocked `db/connection`), YLA-C-04 (claim-before-create ordering via `mock.invocationCallOrder`)
+- `tests/yelpLeadHappyPath.test.js` — YLA-H-01, YLA-H-02
+- `tests/yelpLeadSafeFail.test.js` — YLA-S-01..05
+- `tests/yelpLeadHook.test.js` — YLA-M-01, YLA-M-02 (+ sabotage YLA-N-03: move interception below :143 → assert `HOOK-yelp-not-reviewed` flips RED). Mirror `tests/emailTimelineInbound.test.js` mocks (emailQueries, timelinesQueries, queries, connection, realtimeService, providerRegistry, mailAgentService, + new yelpLeadService).
+**Files NOT to modify:** any production file · `tests/emailTimelineInbound.test.js` (reference only)
+**Harness (worktree gotchas):** every `jest.mock` factory closure var must be `mock*`-prefixed; run one file at a time:
+`node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js <file> --rootDir . --testPathIgnorePatterns "/node_modules/" --forceExit`
+**Expected result:** all mocked YLA cases green; the three sabotage procedures each flip their named check RED then revert.
+**Related test cases:** YLA-D-*, YLA-P-*, YLA-C-01, YLA-C-04, YLA-H-*, YLA-S-*, YLA-M-*, YLA-N-01, YLA-N-03.
+
+---
+
+### TASK-YLA-007: Tests — real-Postgres claim/idempotency (1 file)
+**Status:** pending
+**Dependencies:** TASK-YLA-001 (migration applied to the test DB), TASK-YLA-002, TASK-YLA-004
+**Files to modify (NEW):**
+- `tests/yelpLeadClaim.db.test.js` — YLA-C-02 (two inserts of one `(company, pmid)` → exactly ONE row; the **constraint**, not app logic, enforces it), YLA-C-03 (poll re-scan re-fires `maybeHandleYelpLead` on the same pmid → exactly ONE `createLead` + ONE `sendEmail`; second invocation short-circuits on the lost claim → named check `CLAIM-single-greet-on-reingest`). Real `db` for the claim; `leadsService.createLead` / `emailService.sendEmail` / `yelpGreetingService` stubbed; gate ON. Sabotage YLA-N-02 (remove the claim → double-greet) runs against this file.
+**Files NOT to modify:** production files
+**Expected result:** DB constraint proven; end-to-end idempotency proven on re-ingest; YLA-N-02 flips `CLAIM-single-greet-on-reingest` RED when the claim is removed.
+**Related test cases:** YLA-C-02, YLA-C-03, YLA-N-02.
+
+---
+
+### Manual / non-jest verification (no code task)
+- **YLA-MIG-01/02/03** — psql up/down + next-free-number static check (see TASK-YLA-001).
+- **YLA-LIVE-01** — prod smoke on real Yelp+Gmail+Gemini: `YELP_AUTORESPONDER_ENABLED=true`, **owner's explicit "да" per deploy** (deploy-consent), Yelp **test account only** (never a real prospect). Measure by DB ingest lag, not inbox feel.
+
+### Execution order (single Implementer, one pass — no parallel-file conflicts)
+```
+TASK-YLA-001 (migration + rollback)
+        │
+        ▼
+TASK-YLA-002 (yelpLeadQueries)      TASK-YLA-003 (yelpGreetingService)  ← independent, either order
+        └───────────────┬───────────────┘
+                        ▼
+              TASK-YLA-004 (yelpLeadService: detect/parse/orchestrate)
+                        │
+                        ▼
+              TASK-YLA-005 (hook edit in emailTimelineService)
+                        │
+              ┌─────────┴─────────┐
+              ▼                   ▼
+   TASK-YLA-006 (mocked jest)   TASK-YLA-007 (real-PG claim)
+```
+
+### Residual risks the Implementer MUST watch
+- **R1 — Naming reconciliation (highest friction).** Orchestrator aliases (`isYelpNewLead`/`claimYelpMessage`/`generateGreeting`) vs the already-written test-doc names (`detectYelpLead`/`claimYelpLead`/`buildGreeting`). **Adopt the test-doc names as canonical** so the 7 test files and named sabotage checks resolve; export aliases only if convenient. Do not let source and tests drift.
+- **R2 — GAP #2, claim-vs-createLead recovery (the one spot to pin).** Orchestrator wording "return handled:false-ish" on a `createLead` failure conflicts with test **YLA-S-03** ("does NOT fall through to the Mail Secretary mid-way — committed to the Yelp branch"). Reconcile as: on failure → `releaseClaim(id)` + log + **return a HANDLED sentinel** (do not fall through this cycle); the released claim lets the **next poll re-scan** re-attempt the lead (lead at-least-once). Pin YLA-S-03 to assert `releaseClaim` called **and** no `reviewInboundEmail`.
+- **R3 — Claim arity vs thread_token.** `ON CONFLICT (company_id, provider_message_id)` is locked; binding `thread_token` at claim time is optional. If bound, bump YLA-C-01's param assertion from 2→3 args. Ensure `threadAlreadyGreeted` (R6 secondary guard) can still read a non-null `thread_token` (write it at `markGreeted` if not at claim).
+- **R4 — Relay-source assumption (GAP #1).** `NormalizedInboundMessage` carries no `reply_to`/raw headers (`MailProvider.js:25–43`); the parser derives relay+token from `from_email`. Confirm a live Yelp sample's `from_email` really is `reply+<hex>@messaging.yelp.com`; if Yelp uses a display-alias From with the relay only in a `Reply-To:` header, `GmailProvider` must surface `reply_to` and the YLA-P-04/YLA-D-01 fixtures update.
+- **R5 — Hook placement is the whole additivity story.** The branch MUST sit before the no-contact Mail-Secretary branch (:138) — a 1a Yelp lead has no phone → no contact and would otherwise hit `reviewInboundEmail({noContact:true})`. YLA-N-03 guards this; do not relocate below :143.
+- **R6 — Migration number drift.** Re-verify 161 is free immediately before creating the file (parallel worktrees add migrations).

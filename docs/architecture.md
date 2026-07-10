@@ -5385,3 +5385,36 @@ WHERE m.status = 'connected'
 **Data isolation:** каждый SQL фильтрует `company_id`; телефонный матч выполняется ВНУТРИ company-scoped выборки активных attempts (крошечная кардинальность, индекс `idx_outbound_call_attempts_claim (company_id, status, scheduled_at)`); companyId приходит из строки job/attempt/call, никогда из тела webhook (анти-spoof прецедент `vapiCallStatus.js:125-142` сохраняется).
 
 **Порядок и падения:** хуки НИКОГДА не await'ятся в транзакции статуса и не роняют webhook/worker (`.catch(console.warn)`); заметка пишется только при `canceled ≥ 1` (rowCount>0) или dialing-маркере — повторные события = тихий no-op.
+
+---
+
+## Архитектурное решение для YELP-LEAD-AUTORESPONDER-001 (Phase 1a — email-only, backend)
+
+Detect a Yelp NEW-LEAD email inside the existing inbound-email seam → parse → send ONE LLM greeting via email → create an Albusto lead. Additive branch off the SAME seam the Mail Secretary uses; the Mail Secretary triage is untouched.
+
+**Существующий функционал (REUSE, не дублировать):**
+- `emailTimelineService.linkInboundMessage` (`backend/src/services/email/emailTimelineService.js`) — THE inbound seam (push + poll both fan into it). Add ONE early hook, mirroring the `isSenderMuted` fail-open block (:120-130).
+- `leadsService.createLead(fields, companyId)` (`backend/src/services/leadsService.js:312`) — **exact lead-creation reuse path.** PascalCase FIELD_MAP: `FirstName/LastName/Phone/Email/Address/City/State/PostalCode/JobType/JobSource/Description(→lead_notes)/Comments/Status`. Normalizes phone→E.164, Title-cases names, defaults `status='Submitted'` (a NEW_LEAD_STATUS), sets `company_id`, emits `lead.created` SSE. Do NOT invent a leads table. Phone is OPTIONAL (Yelp hides it on first contact) — createLead accepts null phone.
+- `emailService.sendEmail(companyId, {to, subject, body})` (`backend/src/services/emailService.js:68`) — sends from the mailbox (help@bostonmasters, Gmail); `body` is `text/html`. `to` = the Yelp relay From. ONE send per claim.
+- `mailAgentClassifier.classifyViaGemini` (`backend/src/services/mailAgentClassifier.js:92`) — REUSE the v1beta `generateContent` + bounded-retry/hard-timeout transport shape for the greeting generator.
+- `mailAgentQueries` unique-claim idiom (`mail_agent_reviews` UNIQUE(company_id,email_message_id) + `INSERT … ON CONFLICT DO NOTHING RETURNING`, :105-117) — the race-safe idempotency primitive to imitate.
+
+**Новые компоненты (Backend only):**
+- `backend/src/services/yelpLeadService.js` — `maybeHandleYelpLead(companyId, msg)`: detect → **claim (idempotency)** → parse → `createLead` → greet → `sendEmail`. Never throws; returns `{handled:boolean}`.
+- `backend/src/services/yelpGreetingService.js` — `generateGreeting({customerName, service, problem, companyName})`, Gemini-default (`YELP_GREETING_PROVIDER`, default `gemini` — local mini is memory-pressured), with a static-template fallback so a LLM failure still yields one reply.
+- `backend/src/db/yelpLeadQueries.js` — `claimYelpMessage(companyId, providerMessageId, {leadId, threadId})` (INSERT…ON CONFLICT DO NOTHING RETURNING) + `getEmailForParse(companyId, providerMessageId)` (body_text/body_html/from_email/subject/provider_thread_id from `email_messages`).
+
+**Изменяемые компоненты:**
+- `emailTimelineService.linkInboundMessage` — insert the hook AFTER the outbound/DRAFT guards (:107) and BEFORE the mute guard + contact lookup + Mail Secretary; gated on `!opts.skipAgent`; **fail-open** (any error → log + fall through to the normal pipeline). On `{handled:true}` → `return {skipped:'yelp_lead'}` so the Mail Secretary never sees Yelp relay mail (no duplicate "unknown sender" task).
+
+**Database:** ОДНА миграция нужна (justified). `161_yelp_lead_events.sql` (+ rollback) — marker `yelp_lead_events(id, company_id UUID FK, provider_message_id TEXT, lead_id BIGINT, provider_thread_id TEXT, greeted_at TIMESTAMPTZ, created_at, UNIQUE(company_id, provider_message_id))`. **Why a migration (not reuse-a-column):** the poll re-scans `email_messages WHERE contact_id IS NULL AND on_timeline=false` every 5 min (`emailQueries.listUnlinkedInboundForTimeline:533`) — a Yelp relay email (`reply+<token>@messaging.yelp.com`) NEVER matches a contact, so it is re-returned indefinitely and re-fires the hook; push also replays history. Read-then-write dedup is the exact race that produced 95 duplicate contacts on prod (`mailAgentService.js:190-194`) — only a DB UNIQUE claim is safe. `mail_agent_reviews` cannot be reused without a migration anyway (its `verdict` CHECK whitelists only Secretary verdicts, mig 152:26-28) and would pollute the Secretary decisions feed + `getStats` — a dedicated table is the same cost and cleaner. Each poll re-touch then becomes a cheap ON-CONFLICT no-op.
+
+**Detection predicate:** `from_email` matches `/@messaging\.yelp\.com$/i` **AND** a first-message signal — `utm_source=request_a_quote_first_message` in the body OR a "requested a quote … for a <service>" / "New quote request" header. BOTH required → in-thread customer replies and Yelp's own confirmations lack the first-message marker, so they fall through to the normal pipeline and are never re-greeted.
+
+**Parse:** regex the labeled Q&A + header — name / service(→JobType) / free-text problem(→lead_notes) / zip / phone(optional). Prefer `msg.body_text`, fallback to the stored `email_messages` row's `body_text`/`body_html` (push `msg` body can be thin — the Secretary does the same fallback). Fail-safe partial: any missing field → null; always create the lead with `JobSource='Yelp'` + raw-body fallback in notes. Never throw.
+
+**Pulse surfacing:** `createLead` → `status='Submitted'` + `lead.created` SSE → nav "new leads" badge (LEADS-NEW-BADGE-001) + `LeadsPage` list + `LeadDetailPanel`. Do NOT create a contact from the relay address (would be a junk contact) — idempotency is the marker table, not a contact link. No frontend change.
+
+**Gate / scope:** Phase 1a gated by env `YELP_AUTORESPONDER_ENABLED` (default off) + default-company scope; promote to a marketplace app/settings row (like the Secretary) in a later phase. Backend-only + 1 migration. NO frontend build, NO browser, NO DNS/GCP; no new API endpoints, no `src/server.js` change.
+
+**Риски:** (1) forwarded-email header rewriting mangles the `reply+<token>` From → misrouted reply; regex on the ACTUAL sender + bail if the token is absent. (2) one-reply-per-thread — claim BEFORE send guarantees at-most-once greeting; trade-off: a createLead/send failure after the claim is not retried (accepted; logged). (3) history-replay / poll re-scan → durable UNIQUE claim (above). (4) Gemini failure → static-template greeting; the lead is always created regardless. (5) Yelp HTML layout drift breaks the regex → fail-safe partial parse + raw-body fallback still yields the lead.
