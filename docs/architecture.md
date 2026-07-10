@@ -5304,3 +5304,39 @@ Reuse `publishCallUpdate` with the FULL re-read row (so `timeline_id`/`contact_i
 - External/manual: OUTBOUND assistant `serverMessages += 'status-update'` (repo half `voice-agent/assistants/parts-visit-scheduler.json`; live REST PATCH deploy-time; re-inject `VAPI_TOOLS_SECRET` on model writes — vapi-sara memory).
 
 **Protected / unchanged:** `upsertCall` SQL, softphone `voice.js:344-385`, Sara `callFlowRuntime.js:443-480`, OPC1 auth/anti-spoof/idempotence/state machine, `outbound_call_attempts` schema, `authedFetch.ts`, `useRealtimeEvents.ts`, `src/server.js` (no new mounts).
+## Архитектурное решение для фичи GMAIL-PUSH-FIX-001
+
+**Проблема (verified prod 2026-07-10):** одиночное входящее письмо доезжает до таймлайна за ~10 мин вместо секунд. Три первопричины:
+- **BUG#1 (push wasted):** `GmailProvider.handlePushNotification` возвращает `cursor = <push historyId>`. По семантике Gmail этот id — точка ПОСЛЕ изменения, поэтому `history.list(startHistoryId=<push historyId>)` для одного письма пуст → push ничего не импортирует. Корректный poll `emailSyncService.syncIncrementalHistory` ходит от `syncState.last_history_id || mailbox.history_id` (прошлый чекпойнт) и двигает ОБА чекпойнта на свежий `profile.history_id`; push-путь `pullChangesNormalized` — отдельная копия walk, чекпойнт не двигает (возвращённый cursor игнорируется в `ingestPushNotification`), 404-gap самолечит бэкофилом.
+- **BUG#2 (poll throttle):** `emailQueries.listDueMailboxes` гейтит `last_sync_started_at < now()-interval '10 minutes'`. `syncIncrementalHistory` штампует `last_sync_started_at` в начале и не сбрасывает → мейлбокс исключён на 10 мин после СТАРТА, даже если синк кончился за секунды → реальная каденция импорта ~10 мин вместо `EMAIL_SYNC_INTERVAL_MS`.
+- **BUG#3:** успешный push нигде не логируется.
+
+**Существующий функционал (переиспользуется, НЕ дублируется):** `syncIncrementalHistory`/`pullChangesNormalized`/`backfillNormalized` (import + 404-heal, владельцы Gmail-специфики); `emailTimelineService.ingestPushNotification`/`ingestPolledForCompany`/`linkInboundMessage`/`linkOutboundMessage` (идемпотентная привязка); `emailPush.js POST /google` (fast-ack 200 + `setImmediate`) — БЕЗ изменений.
+
+**FIX#1 — Design A (source fix), выбран (не B):** `GmailProvider.handlePushNotification` возвращает `cursor: null`. Downstream `pullChangesNormalized(companyId, null)` уже трактует falsy cursor как «идти от `mailbox.history_id`» (poll-maintained прошлая точка) → импортирует+нормализует письмо → `ingestPushNotification` линкует (inbound/outbound routing без изменений) за секунды. Идемпотентность (no-op link UPDATE + `getMessageLinkState`), 404-heal, fast-ack, safe-fail — сохранены.
+- **Почему не B** (звать `emailSyncService.syncMailbox` + `ingestPolledForCompany` из push): нарушает AC-12 seam — `emailTimelineService` НЕ имеет права `require('../emailSyncService')`, что статически проверяет **TC-ET-037** (`tests/mailProvider.test.js:167-175`, P0). Seam-preserving вариант B потребовал бы нового метода в `MailProvider` + правки контрактного теста — избыточно для backend-only хотфикса без миграции. Единственный минус A (push не двигает чекпойнт → между poll-тиками перечитывает то же окно от `mailbox.history_id`) идемпотентен и ограничен: FIX#2 двигает этот floor каждые ~5 мин.
+- `pullChangesNormalized` НЕ мёртвый код: остаётся push-walk (A) и живёт через `reimportThreadBestEffort → provider.pullChanges(companyId, null)` (send-reconcile).
+- Outbound ничего не теряет: A сохраняет inline `linkOutboundMessage`; плюс send-time линк в `sendForContact` и outbound-проход в `ingestPolledForCompany`.
+
+**FIX#2 — `listDueMailboxes` predicate (точно):** каденция по FINISH + анти-overlap только для реально in-flight синка, 10-мин escape hatch для «застрявших»:
+```sql
+WHERE m.status = 'connected'
+  AND (s.last_sync_finished_at IS NULL
+       OR s.last_sync_finished_at < now() - ($1 || ' minutes')::interval)
+  AND (s.last_sync_started_at IS NULL
+       OR (s.last_sync_finished_at IS NOT NULL
+           AND s.last_sync_finished_at >= s.last_sync_started_at)
+       OR s.last_sync_started_at < now() - interval '10 minutes')
+```
+Потребитель — ТОЛЬКО inbox-sync scheduler (`emailSyncService.runSchedulerTick`). Timeline link-poll (`src/server.js` → `listConnectedMailboxes` → `ingestPolledForCompany`) этот запрос НЕ использует (каждый тик, без троттла). Итог: fallback-каденция импорта возвращается к `EMAIL_SYNC_INTERVAL_MS` (5 мин); с push (FIX#1) — секунды.
+
+**FIX#3:** одна success-строка в `ingestPushNotification` перед `return {handled:true,…}` (company/processed/linked/skipped).
+
+**Файлы для изменений (backend-only, NO migration / route / frontend):**
+- `backend/src/services/mail/GmailProvider.js` — `handlePushNotification`: `cursor: null` + JSDoc почему.
+- `backend/src/db/emailQueries.js` — `listDueMailboxes`: заменить overlap-предикат на формулу выше.
+- `backend/src/services/email/emailTimelineService.js` — `ingestPushNotification`: success-лог (FIX#3).
+
+**Тесты (ожидаемая правка):** `tests/mailProvider.test.js` TC-ET-040 (l.134-138) пиннит `cursor:'777'` → обновить на `cursor:null` (тест кодирует исправляемый баг); добавить кейсы `listDueMailboxes` (in-flight блок / stuck escape / каденция).
+
+**Protected / unchanged:** `emailPush.js` route; AC-12 seam (TC-ET-037); `syncIncrementalHistory` checkpoint-advance; `pullChangesNormalized`/`reimportThreadBestEffort`; `MailProvider` интерфейс; схема БД (переиспользуются `email_sync_state.last_sync_started_at/finished_at`, `email_mailboxes.history_id`); `authedFetch.ts` / `useRealtimeEvents.ts`; watch-renewal + link-poll schedulers.

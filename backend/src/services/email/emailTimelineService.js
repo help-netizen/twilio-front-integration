@@ -446,6 +446,7 @@ async function ingestPushNotification(pushPayload) {
             else skipped++;
         }
 
+        console.log('[EmailPush] push handled: company=%s processed=%s linked=%s skipped=%s', companyId, list.length, linked, skipped);
         return { handled: true, company: companyId, processed: list.length, linked, skipped };
     } catch (err) {
         console.error('[EmailTimeline] ingestPushNotification error:', err.message);

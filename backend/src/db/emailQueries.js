@@ -400,10 +400,29 @@ async function listDueMailboxes(intervalMinutes = 5) {
           AND (s.last_sync_finished_at IS NULL
                OR s.last_sync_finished_at < now() - ($1 || ' minutes')::interval)
           AND (s.last_sync_started_at IS NULL
+               OR (s.last_sync_finished_at IS NOT NULL
+                   AND s.last_sync_finished_at >= s.last_sync_started_at)
                OR s.last_sync_started_at < now() - interval '10 minutes')
         ORDER BY s.last_sync_finished_at ASC NULLS FIRST
     `, [String(intervalMinutes)]);
     return result.rows;
+}
+
+/**
+ * Pure mirror of the listDueMailboxes WHERE clause (row-level decision), so the
+ * due/not-due logic is unit-testable without a live Postgres. Keep IN SYNC with
+ * the SQL above. row: { last_sync_started_at, last_sync_finished_at }.
+ */
+function isMailboxDue(row, { intervalMinutes, now = new Date() } = {}) {
+    const nowMs = (now instanceof Date ? now : new Date(now)).getTime();
+    const startedMs = row.last_sync_started_at ? new Date(row.last_sync_started_at).getTime() : null;
+    const finishedMs = row.last_sync_finished_at ? new Date(row.last_sync_finished_at).getTime() : null;
+    const intervalMs = Number(intervalMinutes) * 60000;
+    const cadenceOk = finishedMs === null || finishedMs < nowMs - intervalMs;
+    const overlapOk = startedMs === null
+        || (finishedMs !== null && finishedMs >= startedMs)
+        || startedMs < nowMs - 10 * 60000;
+    return cadenceOk && overlapOk;
 }
 
 // ─── EMAIL-TIMELINE-001: email ↔ contact ↔ timeline link ─────────────────
@@ -724,6 +743,7 @@ module.exports = {
     getSyncState,
     upsertSyncState,
     listDueMailboxes,
+    isMailboxDue,
     // EMAIL-TIMELINE-001: email ↔ contact ↔ timeline link
     findEmailContact,
     linkMessageToContact,

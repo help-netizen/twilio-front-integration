@@ -138,9 +138,17 @@ class GmailProvider extends MailProvider {
             const mailbox = await emailQueries.getMailboxByEmail(emailAddress);
             if (!mailbox) return null; // unknown / foreign mailbox → route still fast-acks 200
 
+            // Do NOT seed the pull from the push's historyId. Gmail's push carries the
+            // mailbox's CURRENT historyId, which already INCLUDES the triggering message;
+            // gmail.users.history.list({startHistoryId: thatId}) returns only changes
+            // strictly AFTER it → empty for a single new email. Returning cursor:null makes
+            // the downstream emailSyncService.pullChangesNormalized(companyId, null) fall
+            // back to the mailbox's STORED history_id (the poll-maintained past checkpoint)
+            // and correctly pull the new message. (Google's guidance: always list from your
+            // own stored last-synced historyId, never the notification's.)
             return {
                 companyId: mailbox.company_id,
-                cursor: historyId != null ? String(historyId) : null,
+                cursor: null,
             };
         } catch (err) {
             console.error('[GmailProvider] handlePushNotification decode failed:', err.message);

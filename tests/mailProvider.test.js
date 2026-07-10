@@ -131,11 +131,13 @@ describe('GmailProvider.handlePushNotification (TC-ET-040)', () => {
         message: { data: Buffer.from(JSON.stringify(obj)).toString('base64') },
     });
 
-    it('decodes {emailAddress, historyId} → {companyId, cursor} from getMailboxByEmail', async () => {
+    it('decodes {emailAddress, historyId} but returns cursor:null — never trusts the push historyId', async () => {
         emailQueries.getMailboxByEmail.mockResolvedValue({ company_id: COMPANY });
         const out = await p.handlePushNotification(envelope({ emailAddress: 'mb@co.com', historyId: 777 }));
         expect(emailQueries.getMailboxByEmail).toHaveBeenCalledWith('mb@co.com');
-        expect(out).toEqual({ companyId: COMPANY, cursor: '777' });
+        // GMAIL-PUSH-FIX-001 (FIX#1): the push's historyId is DISCARDED; the pull
+        // re-seeds from the mailbox's STORED cursor, so cursor is uniformly null.
+        expect(out).toEqual({ companyId: COMPANY, cursor: null });
     });
 
     it('unknown/foreign mailbox → null (no throw)', async () => {

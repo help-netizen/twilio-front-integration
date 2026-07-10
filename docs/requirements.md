@@ -4629,3 +4629,31 @@ explicitly non-critical. Surface: `backend/src/services/mailAgentClassifier.js` 
 **Затронутые интеграции:** VAPI (payload fields already sent, currently discarded; serverMessages config), Twilio (read-only reconcile of the re-keyed leg). Zenbooker/Front — нет.
 
 **Защищённые части кода (НЕЛЬЗЯ ломать):** `inboxWorker.processVoiceEvent`/`upsertCall` conflict semantics (`callsQueries.js:15-63` — extend call sites only, not the query); softphone path `routes/voice.js:344-385`; Sara inbound `callFlowRuntime.renderVapiNode`; OPC1 webhook auth + anti-spoof + idempotence (`vapiCallStatus.js:51-63,106-144`); `outbound_call_attempts` schema/state machine; `authedFetch.ts`; `useRealtimeEvents.ts`; `src/server.js` core (no new mounts needed).
+## GMAIL-PUSH-FIX-001 — Restore real-time Gmail push ingest (single email in seconds, not ~10 min) (2026-07-10)
+
+**Status:** Requirements (Product/Agent-01). Backend-only **bug fix** that REPAIRS the push path of **EMAIL-TIMELINE-001** (§ line 1955, "near real-time Gmail `users.watch` → Pub/Sub push"). Dedup checked: `grep -i gmail-push docs/requirements.md` = none. Owner-approved brief, confirmed on prod 2026-07-10. **NO migration; NO Google Cloud / Pub/Sub / topic / subscription / OIDC / DNS / Caddy change** — `gmail-inbound-push` sub, `gmail-inbound` topic, push endpoint + token are all verified correct. Bug is 100% app code.
+
+**Краткое описание:** Push is wired end-to-end but silently ingests almost nothing — a single inbound email is never pulled by the push and waits for the fallback poll (measured 571s). Fix three app-code bugs so a single inbound email is pulled, hydrated, and linked onto the timeline within seconds.
+
+**Root cause (verified in code):**
+- **Bug 1 (primary):** `GmailProvider.handlePushNotification` (`backend/src/services/mail/GmailProvider.js:141-144`) returns `cursor` = the historyId FROM THE PUSH; `ingestPushNotification` (`services/email/emailTimelineService.js:430-431`) feeds it to `pullChangesNormalized` (`emailSyncService.js:436,449`) as `history.list(startHistoryId=…)`. Gmail's pushed historyId already INCLUDES the triggering message → the list returns only changes strictly AFTER it → EMPTY for a single email → message never pulled; the fresh cursor (line 495) is discarded (push path advances no checkpoint — comment 374-375). Only multi-email bursts partially ingest.
+- **Bug 2:** `listDueMailboxes` (`db/emailQueries.js:387-388`) hardcodes `AND (last_sync_started_at IS NULL OR last_sync_started_at < now() - interval '10 minutes')` → a mailbox is "due" only every 10 min regardless of whether the prior sync FINISHED; the 60s tick (`EMAIL_SYNC_INTERVAL_MS=60000`) is effectively ~10 min.
+- **Bug 3:** a SUCCESSFUL push is logged nowhere (`ingestPushNotification` returns `{handled:true}` silently; route fast-acks silently) — caused a false diagnosis 2026-07-06.
+
+**Функциональные требования:**
+- **GMAIL-PUSH-FIX-001-R1 (push lists from the STORED checkpoint):** the push ingest MUST walk history from the mailbox's stored checkpoint, not the push notification's historyId, so a single inbound email is pulled, hydrated into the inbox, AND linked onto the timeline on the push. Architect picks the design — **A:** `handlePushNotification` returns `cursor:null` so `pullChangesNormalized` falls back to `mailboxData.history_id`; or **B (leaned):** `ingestPushNotification` reuses the verified poll path `syncMailbox`→`syncIncrementalHistory` + the `ingestPolledForCompany` link pass. Either way: preserve idempotency, 404→backfill self-heal, company_id scoping, fast-ack 200.
+- **GMAIL-PUSH-FIX-001-R2 (poll cadence honors the interval):** repair `listDueMailboxes` so a mailbox becomes due per `EMAIL_SYNC_INTERVAL_MS` (the `last_sync_finished_at` guard) while a genuinely in-flight, not-stuck sync is NOT re-entered; keep the 10-min bound ONLY as a stuck-sync escape hatch (a started-but-never-finished sync must not wedge a mailbox forever).
+- **GMAIL-PUSH-FIX-001-R3 (observability):** emit exactly one success log line in `ingestPushNotification` when a push is handled (company + processed/linked counts), so a working push is visible in logs.
+
+**Нефункциональные требования / критерии успеха:**
+- **GMAIL-PUSH-FIX-001-N1 (latency — THE success criterion):** a single inbound email is ingested **and** linked within **~15s** of the Gmail push (target: seconds), replacing the observed 571s poll wait; the poll stays a correctness backstop only.
+- **GMAIL-PUSH-FIX-001-N2 (no regressions):** push verification (`verifyPush` token + OIDC audience) unchanged and NOT weakened; fast-ack 200 + safe-fail (never throw back to Pub/Sub) preserved; idempotent (a re-delivered push must not double-post); 404 history-gap self-heal preserved; outbound sends stay linked at send time.
+- **GMAIL-PUSH-FIX-001-N3:** backend `jest` green; the standalone `/email` inbox and EMAIL-TIMELINE-001 send/sync/OAuth paths unchanged beyond the checkpoint-cursor fix.
+
+**Out of scope:** no DB migration; no GCP/Pub/Sub/topic/subscription/OIDC/DNS/Caddy change; no frontend; do NOT change `EMAIL_SYNC_INTERVAL_MS`; do NOT touch the mail-agent / MAIL-LOCAL-LLM email-triage classifier; no rework of Gmail OAuth, token refresh, `users.watch`, or the `email_*` schema.
+
+**Потенциально вовлечённые модули:** `services/mail/GmailProvider.js` (push cursor), `services/email/emailTimelineService.js` (`ingestPushNotification` + success log), `services/emailSyncService.js` (`pullChangesNormalized` / `syncMailbox` reuse per design), `db/emailQueries.js` (`listDueMailboxes` guard), `routes/emailPush.js` (verify/fast-ack — read-only, do not weaken).
+
+**Затронутые интеграции:** Google / Gmail — API-surface unchanged; Pub/Sub push infra unchanged (app-side cursor + poll cadence only). Twilio / Front / Zenbooker / Stripe — untouched.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):** `emailPush.js` `verifyPush` (token + OIDC) and fast-ack 200; `syncIncrementalHistory` inbox-checkpoint advance (`email_sync_state.last_history_id` + `email_mailboxes.history_id`); 404→backfill self-heal; outbound linking at send time; MAIL-LOCAL-LLM / mail-agent classifier; EMAIL-TIMELINE-001 projection + standalone `/email` inbox.

@@ -8212,3 +8212,38 @@ Three streams: backend engine-shaping/skill (TS-01→TS-02) / backend thread+gat
 **Wave 1:** CT-04 (`outboundCallWorker.js`) + CT-05 (`routes/vapiCallStatus.js`) — both after CT-01 (they call its exports), parallel to each other (disjoint files).
 **Wave 2:** CT-08 (jest+build) — after all code; CT-07 (VAPI serverMessages) — manual, deploy-time (repo half can land any time after CT-05).
 Только одна межзадачная связь: CT-04/CT-05 → CT-01 exports. **Никаких миграций, никаких новых роутов/SSE-имён; вся фича deploy-safe при выключенном роботе (hooks просто не вызываются).**
+# GMAIL-PUSH-FIX-001 — Restore real-time Gmail push ingest (backend-only)
+Spec: `Docs/specs/GMAIL-PUSH-FIX-001.md` (S1–S5 + due-matrix). Test-cases: `Docs/test-cases/GMAIL-PUSH-FIX-001.md` (TC-ET-040/037 + TC-GPF-001…008). Requirements R1–R3 / N1–N3; architecture LOCKED (Design A). Три backend-фикса, БЕЗ миграции, БЕЗ frontend, БЕЗ GCP/Pub-Sub. Push-подписка `gmail-inbound-push` (endpoint app.albusto.com, верный token) УЖЕ верна — баг 100% app-side; live-тест нужен ТОЛЬКО задеплоенный код.
+
+### GPF-01: FIX#1 — GmailProvider.handlePushNotification → cursor:null (всегда)
+**Цель:** collapse the l.143 ternary `cursor: historyId != null ? String(historyId) : null` → `cursor: null`. Add JSDoc: pushed `historyId` = точка ПОСЛЕ изменения → `history.list(startHistoryId=pushId)` пуст для одиночного письма; `cursor:null` → `pullChangesNormalized(companyId, null)` откатывается на poll-поддерживаемый `mailbox.history_id` checkpoint → письмо внутри окна.
+**Файлы:** `backend/src/services/mail/GmailProvider.js`.
+**Трогать нельзя:** mailbox-gate `getMailboxByEmail` (foreign→null), missing `message.data`/bad-base64 safe-fail→null, поле `companyId`, inbound/outbound routing в `ingestPushNotification` (другой файл). НЕ добавлять require (AC-12).
+**Ожидаемый результат:** `handlePushNotification(envelope)` → `{ companyId, cursor:null }` при любом historyId (777/0/absent); foreign→null; missing/bad data→null (без изменений). `cursor:null` уже легален downstream → интерфейс не ломается; AC-12 seam цел. Покрытие TC-ET-040 (flip) + TC-GPF-004.
+**Зависимости:** нет. **Wave 1 (parallel).** Статус: pending
+
+### GPF-02: FIX#2 — listDueMailboxes predicate + чистый isMailboxDue helper (export)
+**Цель:** заменить WHERE-предикат `listDueMailboxes`: cadence off last FINISH (honors `EMAIL_SYNC_INTERVAL_MS`, default 5m); overlap-block ТОЛЬКО для genuinely in-flight (started с no newer finish: `finished IS NULL OR finished < started`); 10-min stuck-escape. ПЛЮС извлечь ЧИСТЫЙ предикат `isMailboxDue(row, { intervalMinutes, now })` (row: `last_sync_started_at`/`last_sync_finished_at`) с ТЕМИ ЖЕ тремя клаузами, экспортировать; SQL WHERE зеркалит helper. Rationale: DB-тесты мокают `db.connection` → SQL WHERE не исполняется в jest; чистый предикат делает 6-стейт due-матрицу юнит-тестируемой; живой SQL проверяет TC-GPF-003 на деплое.
+**Файлы:** `backend/src/db/emailQueries.js` (predicate + helper + добавить `isMailboxDue` в export-блок ~l.726).
+**Трогать нельзя:** сигнатуру `listDueMailboxes(intervalMinutes=5)` и её ЕДИНСТВЕННОГО вызывающего `emailSyncService.runSchedulerTick` → `listDueMailboxes(Math.floor(SYNC_INTERVAL_MS/60000))` (param как `String(intervalMinutes)`); timeline link-poll (`listConnectedMailboxes`/`ingestPolledForCompany`) — НЕ использует этот запрос, не трогать; `EMAIL_SYNC_INTERVAL_MS` не менять.
+**Ожидаемый результат:** DUE ⇔ `status='connected'` AND (never finished OR finish<now−$1m) AND (never started OR finished≥started OR started>10m ago). Матрица: never-synced DUE · idle-elapsed/idle-fresh-start DUE · idle-fresh NOT DUE · in-flight (finished NULL или finished<started, <10m) NOT DUE · stuck>10m DUE · crashed-first-run NOT DUE (до 10m escape). SQL зеркалит `isMailboxDue`; helper экспортирован. Кормит ТОЛЬКО `runSchedulerTick`. Покрытие TC-GPF-001 (7-row) / 002 (SQL-shape) / 003 (live pg) / 008 (sub-minute floor).
+**Зависимости:** нет. **Wave 1 (parallel).** Статус: pending
+
+### GPF-03: FIX#3 — ingestPushNotification success-log line
+**Цель:** одна success-строка ПЕРЕД `{handled:true,…}` return (~l.449): `[EmailPush] push handled: company=<id> processed=<n> linked=<n> skipped=<n>`. Рабочий push был невидим в логах (ложная диагностика 2026-07-06).
+**Файлы:** `backend/src/services/email/emailTimelineService.js`.
+**Трогать нельзя:** НЕ добавлять ни одного require в этот файл (AC-12 seam, TC-ET-037 tripwire — ни `../emailSyncService`/`../emailService`/`../emailMailboxService`/`googleapis`). Лог ТОЛЬКО на `{handled:true}` — НЕ на `{handled:false}` (S3) и НЕ на catch/error. Возвращаемый объект не менять.
+**Ожидаемый результат:** на любом `{handled:true}` — одна `[EmailPush] push handled …` строка с company + processed/linked/skipped. Отсутствует на `{handled:false}` и error-пути. AC-12 seam зелён (TC-ET-037). Покрытие TC-GPF-005.
+**Зависимости:** нет. **Wave 1 (parallel).** Статус: pending
+
+### GPF-04: verify — jest (3 suites) + live-push harness + прогон
+**Цель:** зафиксировать три фикса тестами + собрать live-push harness.
+**Файлы:** `tests/mailProvider.test.js` (TC-ET-040: `cursor:'777'`→`null` + переименовать `it`; +TC-GPF-004 edges: historyId absent/0/foreign/missing-data/bad-base64; TC-ET-037 НЕ трогать — остаётся зелёным); НОВЫЙ `tests/emailDueMailboxes.test.js` (TC-GPF-001 7-row `isMailboxDue` матрица @ frozen `NOW=2026-07-10T12:00:00Z` + disconnected control; TC-GPF-002 SQL-shape + param `['5']` над мок-пулом; TC-GPF-008 sub-minute interval→0); НОВЫЙ `tests/emailPushIngestLog.test.js` (TC-GPF-005 FIX#3 лог+counts, и НЕ на null/`handled:false` пути); НОВЫЙ `scripts/verify-gmail-push-fix-001.js` (TC-GPF-007 live: raw Gmail self-send уникальный subject → `docker cp` в контейнер → `docker compose exec -T … node` → poll `email_messages` ≤~15s + grep `[EmailPush] push handled`; опц. встроить TC-GPF-003 live-pg матрицу).
+**Трогать нельзя:** production-код (он в GPF-01…03); TC-ET-037 без изменений; регресс-сьюты `emailPush.test.js`/`emailMailboxMultitenancy.test.js` — только зелёные.
+**Ожидаемый результат:** `npx jest --runTestsByPath tests/mailProvider.test.js tests/emailDueMailboxes.test.js tests/emailPushIngestLog.test.js --testPathIgnorePatterns "/node_modules/"` зелёный; регресс зелёный; TC-GPF-006 sabotage задокументирован (revert FIX#1→TC-ET-040 red; revert FIX#2→row B idle-fresh-start red). Live harness raw-send (NOT `emailService.sendEmail` — иначе send-path void'ит измерение); TC-GPF-007 прогон ОДИН раз на деплое по «да» владельца.
+**Зависимости:** после GPF-01, GPF-02, GPF-03. **Wave 2.** Статус: pending
+
+### GMAIL-PUSH-FIX-001 — порядок выполнения и параллелизм
+**Wave 1 (parallel, disjoint files):** GPF-01 (`GmailProvider.js`) ∥ GPF-02 (`emailQueries.js`) ∥ GPF-03 (`emailTimelineService.js`). Три фикса не пересекаются по файлам.
+**Wave 2:** GPF-04 (tests + `scripts/verify-gmail-push-fix-001.js`) — после GPF-01…03.
+БЕЗ миграции, БЕЗ frontend, БЕЗ GCP. **Helper-решение:** `isMailboxDue` co-located и экспортируется из `emailQueries.js` (НЕ отдельный `mailDuePredicate.js`) → FIX#2 атомарен в одном файле, а SQL WHERE зеркалит helper. Deploy на «да» владельца; rebase на origin/master перед push (быстро движется).
