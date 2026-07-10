@@ -56,6 +56,13 @@ interface CustomTimeModalProps {
      */
     preselectTechId?: string;
     /**
+     * OUTBOUND-PARTS-CALL-TECHSLOT-001 — scope the RECOMMENDATIONS column to this
+     * one technician (sent as `technician_id` in the recs request). The technician
+     * TIMELINES still show ALL techs, so the dispatcher can override by clicking
+     * any lane. Omitted → all-tech recommendations (new-job flows unchanged).
+     */
+    recommendTechId?: string;
+    /**
      * OUTBOUND-PARTS-CALL-SLOTPICK-001 — additive header/CTA overrides so the same
      * modal can front a different flow (e.g. picking the robot call's slot). Both
      * omitted → byte-identical to the reschedule/new-job callers.
@@ -540,7 +547,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId, title = 'Schedule Time Slot', confirmLabel }: CustomTimeModalProps) {
+export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId, recommendTechId, title = 'Schedule Time Slot', confirmLabel }: CustomTimeModalProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
     const navigate = useNavigate();
@@ -597,6 +604,9 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             duration_minutes: durationMin,
             territory_id: territoryId,
             exclude_job_id: excludeJobId,
+            // TECHSLOT-001 — when set, only this tech's windows are recommended
+            // (undefined is stripped by fetchSlotRecommendations → legacy body).
+            technician_id: recommendTechId,
         })
             .then(r => {
                 if (!cancelled) {
@@ -609,7 +619,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             .finally(() => { if (!cancelled) setRecsLoading(false); });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, canRecommend, newJobCoords?.lat, newJobCoords?.lng, newJobAddress, excludeJobId]);
+    }, [open, canRecommend, newJobCoords?.lat, newJobCoords?.lng, newJobAddress, excludeJobId, recommendTechId]);
 
     // Apply a recommendation via the EXISTING pick mechanism (setSelectedDate + setSelectedSlot).
     const applyRecommendation = useCallback((rec: SlotRecommendation) => {

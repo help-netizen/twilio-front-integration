@@ -67,6 +67,11 @@ const DIALABLE_JOB = {
     lng: -71.1,
 };
 
+// TECHSLOT-001: startRobotCall enriches EVERY enqueued slot_json with the tech
+// constraint + the job's coords ({…, techId, lat, lng}) at the INSERT point.
+// DIALABLE_JOB has no assigned_techs (→ []) so techId defaults to null here.
+const enriched = (slot, over = {}) => ({ ...slot, techId: null, lat: 42.1, lng: -71.1, ...over });
+
 beforeEach(() => {
     jest.clearAllMocks();
     settings.resolve.mockResolvedValue({ enabled: true, max_attempts: 3 });
@@ -130,7 +135,8 @@ describe('TC-OPC-U04: startRobotCall — slots present → store top-1 slot + in
 
         const out = await partsCallService.startRobotCall(50, CO, 70);
 
-        expect(out).toEqual({ ok: true, attemptId: 900, slot: TOP_SLOT });
+        // TECHSLOT-001: the top-1 slot is enriched with techId(+null)/job coords.
+        expect(out).toEqual({ ok: true, attemptId: 900, slot: enriched(TOP_SLOT) });
 
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
         expect(insertCall).toBeTruthy();
@@ -142,7 +148,7 @@ describe('TC-OPC-U04: startRobotCall — slots present → store top-1 slot + in
         expect(params[1]).toBe(50);
         expect(params[2]).toBe(70);
         expect(params[4]).toBe('+16175551212');
-        expect(JSON.parse(params[5])).toEqual(TOP_SLOT);
+        expect(JSON.parse(params[5])).toEqual(enriched(TOP_SLOT));
     });
 });
 
@@ -260,7 +266,7 @@ describe('TC-OPC-U07: startRobotCall — not-dialable / no phone → NO call, NO
             .mockResolvedValueOnce({ rows: [{ phone_e164: '+15085140320' }] }) // contact fallback lookup
             .mockResolvedValueOnce({ rows: [{ id: 951 }] }); // the enqueue INSERT
         const out = await partsCallService.startRobotCall(50, CO, 70);
-        expect(out).toEqual({ ok: true, attemptId: 951, slot: TOP_SLOT });
+        expect(out).toEqual({ ok: true, attemptId: 951, slot: enriched(TOP_SLOT) });
         // fallback lookup is company-scoped by contact_id
         const lookup = mockQuery.mock.calls.find((c) => /FROM contacts WHERE id = \$1 AND company_id = \$2/i.test(c[0]));
         expect(lookup && lookup[1]).toEqual([501, CO]);
@@ -300,6 +306,7 @@ describe('SLOTPICK-001: buildRobotCallSlot — ISO→slot_json conversion + vali
             label: recommendSlots.formatSlotLabel('2026-07-09', '09:00', '11:00'),
             techName: null,
             confidence: null,
+            techId: null, // TECHSLOT-001: carried when picked; null otherwise
         });
     });
 
@@ -379,6 +386,7 @@ describe('SLOTPICK-001: startRobotCall — dispatcher slot passthrough vs auto-c
         label: recommendSlots.formatSlotLabel('2026-07-09', '09:00', '11:00'),
         techName: null,
         confidence: null,
+        techId: null, // TECHSLOT-001: no lane pick + no assigned tech → null
     });
 
     test('TC-SP-07: valid dispatcher slot → SKIP recommendSlots, enqueue the built slot_json', async () => {
@@ -389,7 +397,7 @@ describe('SLOTPICK-001: startRobotCall — dispatcher slot passthrough vs auto-c
 
         // Engine precompute is SKIPPED entirely.
         expect(recommendSlots.run).not.toHaveBeenCalled();
-        expect(out).toEqual({ ok: true, attemptId: 901, slot: EXPECTED_SLOT() });
+        expect(out).toEqual({ ok: true, attemptId: 901, slot: enriched(EXPECTED_SLOT()) });
 
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
         expect(insertCall).toBeTruthy();
@@ -397,7 +405,7 @@ describe('SLOTPICK-001: startRobotCall — dispatcher slot passthrough vs auto-c
         expect(params[0]).toBe(CO); // company_id scoped
         expect(params[1]).toBe(50);
         expect(params[2]).toBe(70);
-        expect(JSON.parse(params[5])).toEqual(EXPECTED_SLOT()); // the built canonical slot, not the raw ISO
+        expect(JSON.parse(params[5])).toEqual(enriched(EXPECTED_SLOT())); // the built canonical slot, not the raw ISO
     });
 
     test('TC-SP-08: invalid dispatcher slot → reason:invalid_slot; NO recommendSlots, NO INSERT, task NOT stamped', async () => {
@@ -419,9 +427,174 @@ describe('SLOTPICK-001: startRobotCall — dispatcher slot passthrough vs auto-c
         const out = await partsCallService.startRobotCall(50, CO, 70); // 3-arg / no slot
 
         expect(recommendSlots.run).toHaveBeenCalledTimes(1);
-        expect(out).toEqual({ ok: true, attemptId: 902, slot: TOP_SLOT });
+        expect(out).toEqual({ ok: true, attemptId: 902, slot: enriched(TOP_SLOT) });
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
-        expect(JSON.parse(insertCall[1][5])).toEqual(TOP_SLOT);
+        expect(JSON.parse(insertCall[1][5])).toEqual(enriched(TOP_SLOT));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// OUTBOUND-PARTS-CALL-TECHSLOT-001 — multi_tech server gate (TC-TS-14…16) +
+// techId/coords into slot_json (TC-TS-17). The gate fires right after the job
+// load + dialable guard — BEFORE the v1 settings gate, the phone resolution and
+// ANY slot work — and NEVER stamps the task (mirrors not_dialable, arch §7/§10.4).
+// techId rides buildRobotCallSlot; both slot paths converge on an enrich that
+// adds { techId, lat, lng } to the enqueued slot_json (arch §2/§5).
+// ---------------------------------------------------------------------------
+
+describe('TECHSLOT-001: startRobotCall — multi_tech gate (TC-TS-14/15/16)', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-08T12:00:00Z'));
+        slotEngineService.resolveTimezone.mockResolvedValue('America/New_York');
+    });
+    afterEach(() => jest.useRealTimers());
+
+    const DISPATCHER_SLOT = { startIso: '2026-07-09T13:00:00Z', endIso: '2026-07-09T15:00:00Z', techId: 'A' };
+
+    test('TC-TS-14: 2 assigned techs → { ok:false, reason:multi_tech }; NO INSERT, NO task stamp, before v1/phone/slot', async () => {
+        jobsService.getJobById.mockResolvedValue({
+            ...DIALABLE_JOB,
+            assigned_techs: [{ id: 'A' }, { id: 'B' }],
+        });
+
+        const out = await partsCallService.startRobotCall(50, CO, 70, null, DISPATCHER_SLOT);
+
+        expect(out).toEqual({ ok: false, reason: 'multi_tech' });
+        // No attempt INSERT and no markRobotCallFailed stamp — in fact NO query at
+        // all runs after the (mocked) job load: the gate short-circuits first.
+        expect(mockQuery).not.toHaveBeenCalled();
+        // Fires BEFORE the v1 gate / phone / slot steps: settings, the engine and
+        // even the tz resolution (buildRobotCallSlot's first dependency) untouched.
+        expect(settings.resolve).not.toHaveBeenCalled();
+        expect(recommendSlots.run).not.toHaveBeenCalled();
+        expect(slotEngineService.resolveTimezone).not.toHaveBeenCalled();
+    });
+
+    test('TC-TS-14b: 3 techs + NO dispatcher slot (auto-compute path) → same multi_tech refusal', async () => {
+        jobsService.getJobById.mockResolvedValue({
+            ...DIALABLE_JOB,
+            assigned_techs: [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+        });
+
+        const out = await partsCallService.startRobotCall(50, CO, 70);
+
+        expect(out).toEqual({ ok: false, reason: 'multi_tech' });
+        expect(recommendSlots.run).not.toHaveBeenCalled();
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    test('TC-TS-15: exactly 1 assigned tech → NOT blocked; proceeds to the INSERT', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, assigned_techs: [{ id: 'A' }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 910 }] }); // the INSERT
+
+        const out = await partsCallService.startRobotCall(50, CO, 70, null, DISPATCHER_SLOT);
+
+        expect(out.ok).toBe(true);
+        expect(out.attemptId).toBe(910);
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(insertCall).toBeTruthy();
+    });
+
+    test('TC-TS-16: 0 assigned techs → NOT blocked (length not ≥2); proceeds', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, assigned_techs: [] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 911 }] });
+
+        const out = await partsCallService.startRobotCall(50, CO, 70, null, DISPATCHER_SLOT);
+
+        expect(out.ok).toBe(true);
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(insertCall).toBeTruthy();
+    });
+});
+
+describe('TECHSLOT-001: techId + job coords into slot_json (TC-TS-17)', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-08T12:00:00Z'));
+        slotEngineService.resolveTimezone.mockResolvedValue('America/New_York');
+    });
+    afterEach(() => jest.useRealTimers());
+
+    const ISO_WINDOW = { startIso: '2026-07-09T13:00:00Z', endIso: '2026-07-09T15:00:00Z' };
+
+    test('buildRobotCallSlot carries techId onto the built slot (else null)', async () => {
+        const withTech = await partsCallService.buildRobotCallSlot({ ...ISO_WINDOW, techId: 'B' }, CO);
+        expect(withTech.ok).toBe(true);
+        expect(withTech.slot).toEqual({
+            key: '2026-07-09|09:00|11:00',
+            date: '2026-07-09',
+            start: '09:00',
+            end: '11:00',
+            label: recommendSlots.formatSlotLabel('2026-07-09', '09:00', '11:00'),
+            techName: null,
+            confidence: null,
+            techId: 'B',
+        });
+
+        const without = await partsCallService.buildRobotCallSlot({ ...ISO_WINDOW }, CO);
+        expect(without.ok).toBe(true);
+        expect(without.slot.techId).toBeNull();
+    });
+
+    test('TC-TS-17: dispatcher slot with techId → inserted slot_json = canonical keys + techId + job lat/lng', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, assigned_techs: [{ id: 'A' }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 920 }] });
+
+        const out = await partsCallService.startRobotCall(50, CO, 70, null, { ...ISO_WINDOW, techId: 'B' });
+
+        expect(out.ok).toBe(true);
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(JSON.parse(insertCall[1][5])).toEqual({
+            key: '2026-07-09|09:00|11:00',
+            date: '2026-07-09',
+            start: '09:00',
+            end: '11:00',
+            label: recommendSlots.formatSlotLabel('2026-07-09', '09:00', '11:00'),
+            techName: null,
+            confidence: null,
+            techId: 'B', // the dispatcher's lane pick WINS over the single assigned tech
+            lat: 42.1,
+            lng: -71.1,
+        });
+    });
+
+    test('TC-TS-17b: invalid ISO still → invalid_slot even when techId present (SLOTPICK regression)', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, assigned_techs: [{ id: 'A' }] });
+
+        const out = await partsCallService.startRobotCall(50, CO, 70, null, { startIso: 'bad', endIso: 'worse', techId: 'B' });
+
+        expect(out).toEqual({ ok: false, reason: 'invalid_slot' });
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(insertCall).toBeFalsy();
+    });
+
+    test('single-tech default: dispatcher slot WITHOUT techId → defaults to the sole assigned tech (spec edge 1)', async () => {
+        jobsService.getJobById.mockResolvedValue({ ...DIALABLE_JOB, assigned_techs: [{ id: 'A' }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 921 }] });
+
+        const out = await partsCallService.startRobotCall(50, CO, 70, null, { ...ISO_WINDOW });
+
+        expect(out.ok).toBe(true);
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(JSON.parse(insertCall[1][5])).toMatchObject({ techId: 'A', lat: 42.1, lng: -71.1 });
+    });
+
+    test('auto-compute path enriched too: sole-tech default + coords; missing job coords → null (non-fatal)', async () => {
+        jobsService.getJobById.mockResolvedValue({
+            ...DIALABLE_JOB,
+            assigned_techs: [{ id: 'A' }],
+            lat: null,
+            lng: null,
+        });
+        recommendSlots.run.mockResolvedValue({ available: true, slots: [TOP_SLOT] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 922 }] });
+
+        const out = await partsCallService.startRobotCall(50, CO, 70);
+
+        expect(out.ok).toBe(true);
+        const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(JSON.parse(insertCall[1][5])).toEqual({ ...TOP_SLOT, techId: 'A', lat: null, lng: null });
     });
 });
 

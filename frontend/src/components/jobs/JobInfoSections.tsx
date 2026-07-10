@@ -98,10 +98,16 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
         setRescheduling(true);
         try {
             const arrivalMinutes = Math.round((new Date(slot.end).getTime() - new Date(slot.start).getTime()) / 60000);
+            // OUTBOUND-PARTS-CALL-TECHSLOT-001 (req 3) — a job with 2+ assigned
+            // technicians reschedules TIME-ONLY: omit tech_id so the backend's
+            // `if (tech_id)` reassign block (jobs.js reschedule) never runs and BOTH
+            // techs stay assigned. Single/zero-tech jobs keep JOB-TECH-ASSIGN-001
+            // behavior — picking another tech's lane still reassigns.
+            const multiTech = (job.assigned_techs || []).length >= 2;
             const updated = await rescheduleJob(job.id, {
                 start_date: slot.start,
                 arrival_window_minutes: arrivalMinutes,
-                tech_id: slot.techId,
+                ...(multiTech ? {} : { tech_id: slot.techId }),
             });
             toast.success('Job rescheduled', { description: slot.formatted });
             onJobUpdated?.(updated);
@@ -291,6 +297,12 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                 newJobDuration={120}
                 territoryId={territoryId}
                 excludeJobId={job.id}
+                // OUTBOUND-PARTS-CALL-TECHSLOT-001 (req 3) — reschedule recommendations
+                // default to the job's CURRENT tech: first of a stable by-id sort
+                // (deterministic for 2+ tech jobs). No assigned techs → undefined
+                // (legacy all-tech recs). The timelines still show ALL techs so the
+                // dispatcher can override; the submit path above is unchanged.
+                recommendTechId={[...(job.assigned_techs || [])].sort((a, b) => String(a.id).localeCompare(String(b.id)))[0]?.id}
                 initialSlot={job.start_date && job.end_date && job.assigned_techs?.[0]?.id ? {
                     techId: job.assigned_techs[0].id,
                     start: job.start_date,

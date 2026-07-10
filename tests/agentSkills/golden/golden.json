@@ -11,7 +11,7 @@
   "checkAvailability.no_slots": "{\"slots\":[],\"error\":\"No availability found in the next 5 days\"}",
   "checkAvailability.throws": "{\"slots\":[],\"error\":\"schedule unreachable\"}",
   "recommendSlots.not_connected": "{\"available\":false,\"slots\":[],\"fallback\":true}",
-  "recommendSlots.happy": "{\"available\":true,\"slots\":[{\"key\":\"2026-07-08|10:00|13:00\",\"date\":\"2026-07-08\",\"start\":\"10:00\",\"end\":\"13:00\",\"label\":\"Wed Jul 8, 10:00–13:00\",\"techName\":\"Alex\",\"confidence\":\"high\"}]}",
+  "recommendSlots.happy": "{\"available\":true,\"slots\":[{\"key\":\"2026-07-08|10:00|13:00\",\"date\":\"2026-07-08\",\"start\":\"10:00\",\"end\":\"13:00\",\"label\":\"Wednesday, July 8, 10 AM to 1 PM\",\"techName\":\"Alex\",\"confidence\":\"high\"}]}",
   "recommendSlots.engine_unavailable": "{\"available\":false,\"slots\":[],\"fallback\":true}",
   "recommendSlots.empty_recs": "{\"available\":false,\"slots\":[],\"fallback\":true}",
   "recommendSlots.throws": "{\"available\":false,\"slots\":[],\"fallback\":true}",

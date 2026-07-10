@@ -81,7 +81,8 @@ describe('AGENT-SKILLS-001 G3 — 5 relocated L0 tools byte-compat (golden gate)
             expect(recorded['recommendSlots.not_connected']).toBe(
                 '{"available":false,"slots":[],"fallback":true}');
             expect(recorded['recommendSlots.happy']).toBe(
-                '{"available":true,"slots":[{"key":"2026-07-08|10:00|13:00","date":"2026-07-08","start":"10:00","end":"13:00","label":"Wed Jul 8, 10:00–13:00","techName":"Alex","confidence":"high"}]}');
+                // Label format per f73636d formatSlotLabel: full weekday/month + 12h.
+                '{"available":true,"slots":[{"key":"2026-07-08|10:00|13:00","date":"2026-07-08","start":"10:00","end":"13:00","label":"Wednesday, July 8, 10 AM to 1 PM","techName":"Alex","confidence":"high"}]}');
             expect(recorded['createLead.no_phone']).toBe(
                 '{"success":false,"error":"Phone number is required to create lead"}');
         });

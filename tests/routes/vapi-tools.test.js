@@ -650,7 +650,7 @@ describe('Group 10 — recommendSlots', () => {
             date: '2026-07-08',
             start: '10:00',
             end: '13:00',
-            label: 'Wed Jul 8, 10:00–13:00',
+            label: 'Wednesday, July 8, 10 AM to 1 PM', // f73636d formatSlotLabel: full weekday/month + 12h
             techName: 'Alex',
             confidence: 'high',
         });

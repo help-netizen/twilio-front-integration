@@ -8082,62 +8082,62 @@ Three largely-disjoint streams: backend slot-passthrough+validation (SP-01) / ba
 **Файлы:** `backend/src/services/slotEngineService.js`.
 **Трогать нельзя:** `buildTechnicians` roster query; `buildScheduledJobs`; the safe-fail envelope; `buildConfigOverride` (settings-based — the widen is query-scoped, layered here); the already-present earliest/latest forwarding.
 **Ожидаемый результат:** `getRecommendations` reads `newJob.technician_id`; when present → (a) `technicians = technicians.filter(t=>String(t.id)===String(technician_id))` before the engine body (one-element array; unknown id → `[]`, safe); (b) deep-merge onto `config_override` a `ranking:{ top_n:max(shown,N), max_recommendations_per_technician:N, max_recommendations_per_same_timeframe:N }` where `N` = `candidate_timeframes` count (5). Absent → byte-identical legacy. Company-scoped. Covered by TC-TS-01…05.
-**Зависимости:** none. **Wave 0.** Статус: pending
+**Зависимости:** none. **Wave 0.** Статус: ✅ DONE
 
 ### TS-02: backend — recommendSlots skill: `technicianId` / `targetDay` / `targetTime` + single-nearest re-rank
 **Цель:** thread the tech constraint into the in-call recs and add day / day+time handling (req 4/5).
 **Файлы:** `backend/src/services/agentSkills/skills/recommendSlots.js`.
 **Трогать нельзя:** the marketplace gate, the `SLOT_FALLBACK` safe-fail on every fault, the location resolution, `MAX_SLOTS`, `formatSlotLabel`, the keyed-slot mapping/dedup/exclude.
 **Ожидаемый результат:** accept `technicianId`/`targetDay`/`targetTime`. `technicianId`→`newJob.technician_id`. `targetDay`(`YYYY-MM-DD`)→`newJob.earliest_allowed_date=newJob.latest_allowed_date=targetDay`; map that day's recs to ≤`MAX_SLOTS` slots (req 4). `targetTime`(`HH:MM`, with targetDay)→re-rank that day's windows: pick the ONE window whose `[start,end)` contains T (dist 0) else `argmin|start−T|` (tie→earlier start); return `slots:[thatOne]` (req 5). Neither→legacy. `targetTime` w/o `targetDay`→ignored. All faults→`SLOT_FALLBACK`. Covered by TC-TS-06…13.
-**Зависимости:** **after TS-01** (service must accept `technician_id`). **Wave 1.** Статус: pending
+**Зависимости:** **after TS-01** (service must accept `technician_id`). **Wave 1.** Статус: ✅ DONE
 
 ### TS-03: backend — partsCallService: `multi_tech` server gate + `techId`(+coords) into slot_json
 **Цель:** forbid the robot call for 2+ tech jobs (non-bypassable) and carry the dispatcher's tech + the job location on the attempt.
 **Файлы:** `backend/src/services/partsCallService.js`.
 **Трогать нельзя:** the dialable/v1-gate/phone order; the SLOTPICK auto-compute block; `buildRobotCallSlot` validation rules; the INSERT columns (slot rides in `slot_json`).
 **Ожидаемый результат:** in `startRobotCall`, right after the job load + dialable guard (L308-313): if `(job.assigned_techs||[]).length>=2` → `return { ok:false, reason:'multi_tech' }` (before v1/phone/slot; NO `markRobotCallFailed`). `buildRobotCallSlot({startIso,endIso,techName,techId},companyId)` → include `techId` on the returned `slot` object; `startRobotCall` enriches the built `slot` with the loaded job's `lat`/`lng` before INSERT (in-call recs location). `slot_json` now `{…, techId, lat, lng}`. Company-scoped. Covered by TC-TS-14…17.
-**Зависимости:** file-disjoint from TS-01/TS-02/TS-05. **Wave 0.** Статус: pending
+**Зависимости:** file-disjoint from TS-01/TS-02/TS-05. **Wave 0.** Статус: ✅ DONE
 
 ### TS-04: backend — outboundCallService.placeCall: inject `technicianId`(+coords) into variableValues
 **Цель:** make the in-call `recommendSlots` server-constrained to the chosen tech + located at the job.
 **Файлы:** `backend/src/services/outboundCallService.js`.
 **Трогать нельзя:** the caller-ID/transient-Twilio logic; the existing `variableValues` keys; the safe-fail (never throws) contract.
 **Ожидаемый результат:** in the `variableValues` block (L100-113) add `...(s.techId?{technicianId:s.techId}:{})` and `...(s.lat!=null&&s.lng!=null?{lat:s.lat,lng:s.lng}:{})` from the slot. Absent → keys omitted (auto-compute path unchanged). `buildSkillInput` already spreads `variableValues` over model args → `recommendSlots` receives `technicianId`. Covered by TC-TS-18.
-**Зависимости:** contract on TS-03's `slot_json` shape (additive; file-disjoint). **Wave 0.** Статус: pending
+**Зависимости:** contract on TS-03's `slot_json` shape (additive; file-disjoint). **Wave 0.** Статус: ✅ DONE
 
 ### TS-05: frontend — RobotCallSlotModal: multi-tech message (req 1) + capture `techId` (req 2)
 **Цель:** block 2+ tech jobs with a human message and stop dropping the picked `techId`.
 **Файлы:** `frontend/src/components/tasks/RobotCallSlotModal.tsx`.
 **Трогать нельзя:** the `getJob` fetch/loading/close-on-fail; the SLOTPICK queue/keep-open behavior for single-tech.
 **Ожидаемый результат:** after `getJob`, if `job.assigned_techs && job.assigned_techs.length>=2` render "This job has multiple technicians — the robot call isn't available; please call manually" INSTEAD of `CustomTimeModal` (no CTA, no POST). `handleQueue(slot:{start,end,techId?})` → POST `{ slot:{ startIso:slot.start, endIso:slot.end, techId:slot.techId } }` (techId from `onConfirm`). English UI. `npm run build` green. FE = logic-review (TC-TS-19, TC-TS-20).
-**Зависимости:** none (FE build independent; backend accepts techId via TS-03). **Wave 0.** Статус: pending
+**Зависимости:** none (FE build independent; backend accepts techId via TS-03). **Wave 0.** Статус: ✅ DONE
 
 ### TS-06: frontend — CustomTimeModal `recommendTechId?` → `technician_id` recs scope (req 3)
 **Цель:** let the reschedule caller scope recommendations to one technician while timelines still show all.
 **Файлы:** `frontend/src/components/conversations/CustomTimeModal.tsx`, `frontend/src/services/slotRecommendationsApi.ts`.
 **Трогать нельзя:** `buildTechGroups` (ALL techs), `onConfirm` payload, the `disabled` guard, the recs response handling, layout.
 **Ожидаемый результат:** add optional `recommendTechId?:string` prop; include it as `technician_id` in the `fetchSlotRecommendations` call (L593-600) when set. `SlotRecommendationsInput` gains `technician_id?:string` (flows into `new_job` via the existing `{new_job}` wrap). Omitted → no `technician_id` (new-job flows unchanged). `npm run build` green. FE = logic-review (TC-TS-21).
-**Зависимости:** none. **Wave 0.** Статус: pending
+**Зависимости:** none. **Wave 0.** Статус: ✅ DONE
 
 ### TS-07: frontend — JobInfoSections passes stable-sorted `assigned_techs[0]` on reschedule (req 3)
 **Цель:** default reschedule recs to the job's current tech deterministically.
 **Файлы:** `frontend/src/components/jobs/JobInfoSections.tsx`.
 **Трогать нельзя:** the reschedule submit (time-only `rescheduleItem` — assignment preserved); `initialSlot`; new-job callers.
 **Ожидаемый результат:** pass `recommendTechId={[...(job.assigned_techs||[])].sort((a,b)=>String(a.id).localeCompare(String(b.id)))[0]?.id}` to the reschedule `<CustomTimeModal>` (L285-294). Confirm `ConvertToJobSteps`/`WizardStep3`/`NewJobDialog` pass nothing (all-tech, unchanged). `npm run build` green. FE = logic-review (TC-TS-22).
-**Зависимости:** **after TS-06** (prop exists). **Wave 1.** Статус: pending
+**Зависимости:** **after TS-06** (prop exists). **Wave 1.** Статус: ✅ DONE (+ REQ-3 guard: 2+ techs → reschedule payload omits `tech_id`, time-only)
 
 ### TS-08: MANUAL / VAPI — PATCH the OUTBOUND assistant `recommendSlots` tool schema (`targetDay`,`targetTime`)
 **Цель:** let the model pass the customer's requested day / day+time to `recommendSlots`.
 **Файлы:** none (remote assistant `VAPI_OUTBOUND_ASSISTANT_ID`; not in git).
 **Ожидаемый результат:** REST PATCH the `recommendSlots` tool `parameters` → add `targetDay` (string, `YYYY-MM-DD`) + `targetTime` (string, `HH:MM` 24h), update the tool description to pass them when the customer names a day / day+time. `technicianId` NOT added (server-injected via `variableValues`). GOTCHAs (vapi-sara memory, but OUTBOUND assistant): `get` first (live drifts); CLI `update` panics → use REST PATCH; re-inject `VAPI_TOOLS_SECRET` into `model.tools[].server` on any model write. Verify by TC-TS-23. **MANUAL.**
-**Зависимости:** **after TS-02** (skill handles the params before the model can send them). **Wave 2 (manual).** Статус: pending
+**Зависимости:** **after TS-02** (skill handles the params before the model can send them). **Wave 2 (manual).** Статус: ✅ DONE (repo half: `voice-agent/assistants/parts-visit-scheduler.json` schema += `targetDay`/`targetTime` + prompt guidance, NO `technicianId`); **live REST PATCH = deploy-time manual step, NOT yet applied**
 
 ### TS-09: verify — backend jest + frontend build + logic-review + VAPI check
 **Цель:** lock the filter/widen, the skill args + single-nearest, the multi_tech gate, and the techId/coords thread.
 **Файлы:** `tests/slotEngineProxy.test.js`, `tests/recommendSlots.test.js`, `tests/partsCallService.test.js`, `tests/outboundCallService.test.js` (extend); frontend = build only.
 **Трогать нельзя:** production code.
 **Ожидаемый результат:** jest covers TC-TS-01…18 (slotEngine filter+widen, skill args+nearest re-rank, `multi_tech`, techId/coords in slot_json, placeCall variableValues); existing `partsCallService`/`outboundCall*`/`slotEngineProxy`/`recommendSlots` suites green; `cd frontend && npm run build` exit 0. FE behaviors TC-TS-19…22 = logic-review; VAPI schema TC-TS-23 + e2e TC-TS-24 = manual (owner test call). Run worktree jest with `--testPathIgnorePatterns "/node_modules/"`.
-**Зависимости:** **after TS-01…07** (+ TS-08 for the manual VAPI check). **Wave 3.** Статус: pending
+**Зависимости:** **after TS-01…07** (+ TS-08 for the manual VAPI check). **Wave 3.** Статус: ✅ DONE via Tester+Reviewer — **294** backend jest green across **14** suites (incl. new `tests/recommendSlots.test.js` + red→green negative controls; stale f73636d goldens fixed in `vapi-tools.test.js`/`golden.json`/`agentSkillsLegacyGolden`); frontend `npm run build` green; FE TC-TS-19…22 logic-reviewed; Reviewer **APPROVED**. TC-TS-23 (live VAPI schema) + TC-TS-24 (owner e2e call) = deploy-time
 
 ### OUTBOUND-PARTS-CALL-TECHSLOT-001 — порядок выполнения и параллелизм
 **Wave 0 (parallel, disjoint files):** TS-01 (`slotEngineService.js`) ∥ TS-03 (`partsCallService.js`) ∥ TS-04 (`outboundCallService.js`) ∥ TS-05 (`RobotCallSlotModal.tsx`) ∥ TS-06 (`CustomTimeModal.tsx`+`slotRecommendationsApi.ts`). No file overlap. (TS-04 rides TS-03's additive `slot_json` shape; TS-05 rides TS-03's additive body field — both additive, safe to build in parallel against the agreed contract.)

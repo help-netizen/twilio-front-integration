@@ -39,6 +39,11 @@ export interface SlotRecommendationsInput {
     latest_allowed_date?: string;
     /** When rescheduling, the job being moved — excluded from the engine snapshot. */
     exclude_job_id?: number;
+    /**
+     * OUTBOUND-PARTS-CALL-TECHSLOT-001 — scope recommendations to this ONE
+     * technician. Omitted → all-tech recommendations (legacy behavior).
+     */
+    technician_id?: string;
 }
 
 const DISABLED: SlotRecommendationsResult = { enabled: false, recommendations: [] };

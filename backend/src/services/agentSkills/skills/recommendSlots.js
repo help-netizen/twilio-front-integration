@@ -17,6 +17,17 @@
  * FROZEN shape (no ok/speak). Only change vs. the old handler: `companyId`
  * arrives as the arg (adapter passes DEFAULT_COMPANY_ID) instead of the module
  * constant. `verifiedContext` unused (L0 — never blocked).
+ *
+ * OUTBOUND-PARTS-CALL-TECHSLOT-001 (§4, additive — legacy inputs byte-identical):
+ *   - `technicianId` (server-injected via variableValues; the model never sends
+ *     it) → `new_job.technician_id`: the engine is constrained to that ONE tech.
+ *   - `targetDay` ('YYYY-MM-DD', model-resolved) → `earliest = latest = targetDay`
+ *     (that day only; up to MAX_SLOTS windows) — req 4.
+ *   - `targetTime` ('HH:MM' 24h, meaningful only WITH targetDay) → EXACTLY ONE
+ *     window: the one whose [start,end) contains T (distance 0), else
+ *     argmin |start − T|, tie → earlier start. Never a list — req 5.
+ *   Malformed targetDay/targetTime → the arg is ignored (behaves as absent);
+ *   the output shape and the SLOT_FALLBACK safe-fail contract are unchanged.
  */
 
 'use strict';
@@ -52,6 +63,45 @@ function to12h(hhmm) {
     return m ? `${h12}:${String(m).padStart(2, '0')} ${period}` : `${h12} ${period}`;
 }
 
+// TECHSLOT-001 req-4: strict 'YYYY-MM-DD' — anything else is ignored (the engine's
+// own past/horizon filter handles well-formed-but-impossible dates → empty → fallback).
+const TARGET_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 'HH:MM' (24h, lenient 'H:MM') → minutes since midnight, or null when malformed. */
+function parseHHMM(value) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(value ?? '').trim());
+    if (!m) return null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h > 23 || min > 59) return null;
+    return h * 60 + min;
+}
+
+/**
+ * TECHSLOT-001 req-5 single-nearest re-rank (the engine has no target-time
+ * concept — this is the in-skill re-rank over ONE day's windows). Pick the
+ * window whose [start,end) contains T (distance 0); else the one minimizing
+ * |start − T|; tie → earlier start. Returns one slot or null (unparseable set).
+ */
+function pickNearestSlot(slots, targetMinutes) {
+    let best = null;
+    let bestDist = Infinity;
+    let bestStart = Infinity;
+    for (const slot of slots) {
+        const start = parseHHMM(slot.start);
+        if (start === null) continue;
+        const end = parseHHMM(slot.end);
+        const contains = end !== null && start <= targetMinutes && targetMinutes < end;
+        const dist = contains ? 0 : Math.abs(start - targetMinutes);
+        if (dist < bestDist || (dist === bestDist && start < bestStart)) {
+            best = slot;
+            bestDist = dist;
+            bestStart = start;
+        }
+    }
+    return best;
+}
+
 function formatSlotLabel(date, start, end) {
     const [y, mo, d] = String(date).split('-').map(Number);
     if (Number.isFinite(y) && Number.isFinite(mo) && Number.isFinite(d)) {
@@ -75,12 +125,19 @@ function formatSlotLabel(date, start, end) {
  *
  * @param {string} companyId Tenant scope (DEFAULT_COMPANY_ID on the voice surface).
  * @param {object} _verifiedContext Unused for this L0 tool.
- * @param {{ zip?, lat?, lng?, address?, unitType?, durationMinutes?, excludeSlots?, daysAhead? }} input
+ * @param {{ zip?, lat?, lng?, address?, unitType?, durationMinutes?, excludeSlots?, daysAhead?,
+ *           technicianId?, targetDay?, targetTime? }} input
+ *   TECHSLOT-001: `technicianId` (server-injected) → one-tech constraint;
+ *   `targetDay` 'YYYY-MM-DD' → that day only; `targetTime` 'HH:MM' (with
+ *   targetDay) → exactly ONE nearest window. Malformed new args are ignored.
  * @returns {Promise<object>} Frozen legacy shape (no ok/speak); never throws.
  */
 async function run(companyId, _verifiedContext, input = {}) {
     try {
-        const { zip, lat, lng, address, unitType, durationMinutes, excludeSlots, daysAhead } = input;
+        const {
+            zip, lat, lng, address, unitType, durationMinutes, excludeSlots, daysAhead,
+            technicianId, targetDay, targetTime,
+        } = input;
 
         // 1. Gate: don't touch the engine unless the app is connected.
         const connected = await marketplaceService.isAppConnected(
@@ -107,6 +164,27 @@ async function run(companyId, _verifiedContext, input = {}) {
             newJob.latest_allowed_date = base.toISOString().slice(0, 10);
         }
 
+        // TECHSLOT-001: single-technician constraint. Server-injected via
+        // variableValues (buildSkillInput spreads them AFTER model args, so this
+        // value is authoritative — the model can't set it). Absent → all-tech.
+        if (technicianId != null && String(technicianId).trim() !== '') {
+            newJob.technician_id = technicianId;
+        }
+
+        // TECHSLOT-001 req-4: a specific day → that day only (earliest = latest).
+        // Wins over daysAhead. Malformed → ignored (behaves as absent, never a fault);
+        // a well-formed past/out-of-horizon day is dropped by the engine → fallback.
+        const day = (typeof targetDay === 'string' && TARGET_DAY_RE.test(targetDay.trim()))
+            ? targetDay.trim()
+            : null;
+        if (day) {
+            newJob.earliest_allowed_date = day;
+            newJob.latest_allowed_date = day;
+        }
+        // TECHSLOT-001 req-5: time-of-day is meaningful only WITH a valid targetDay
+        // (no single day to search otherwise); malformed → ignored → day windows.
+        const targetMinutes = day ? parseHHMM(targetTime) : null;
+
         // 3. Call the engine directly.
         const { recommendations, engine_status } = await slotEngineService.getRecommendations(
             companyId,
@@ -118,7 +196,10 @@ async function run(companyId, _verifiedContext, input = {}) {
 
         // 4. Map recs → slots. Stable, tech-agnostic key `date|start|end` collapses
         //    the same window from different techs to one offer and round-trips via
-        //    excludeSlots. Drop excluded keys, dedup, cap to MAX_SLOTS.
+        //    excludeSlots. Drop excluded keys, dedup, cap to MAX_SLOTS — except in
+        //    single-nearest mode (req 5), where ALL of the day's windows must be
+        //    considered or the true nearest could sit past the cap.
+        const wantNearest = targetMinutes !== null;
         const exclude = new Set(Array.isArray(excludeSlots) ? excludeSlots : []);
         const seen = new Set();
         const slots = [];
@@ -126,6 +207,9 @@ async function run(companyId, _verifiedContext, input = {}) {
             const start = rec?.time_frame?.start;
             const end = rec?.time_frame?.end;
             if (!rec?.date || !start || !end) continue;
+            // Defensive: with a day scope the engine already returns only that day;
+            // never let a stray other-day window into a day-scoped offer.
+            if (day && rec.date !== day) continue;
             const key = `${rec.date}|${start}|${end}`;
             if (exclude.has(key) || seen.has(key)) continue;
             seen.add(key);
@@ -138,10 +222,18 @@ async function run(companyId, _verifiedContext, input = {}) {
                 techName: rec.technicians?.[0]?.name,
                 confidence: rec.confidence,
             });
-            if (slots.length >= MAX_SLOTS) break;
+            if (!wantNearest && slots.length >= MAX_SLOTS) break;
         }
 
         if (slots.length === 0) return { ...SLOT_FALLBACK };
+
+        // TECHSLOT-001 req-5: day+time → EXACTLY ONE window (never a list).
+        if (wantNearest) {
+            const nearest = pickNearestSlot(slots, targetMinutes);
+            if (!nearest) return { ...SLOT_FALLBACK };
+            return { available: true, slots: [nearest] };
+        }
+
         return { available: true, slots };
     } catch (err) {
         console.error('[vapi-tools] recommendSlots error:', err.message);

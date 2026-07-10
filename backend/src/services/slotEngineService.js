@@ -21,6 +21,12 @@ const DEFAULT_TZ = 'America/New_York';
 const DEFAULT_DURATION_MINUTES = 75;
 const ENGINE_TIMEOUT_MS = 4000;
 
+// OUTBOUND-PARTS-CALL-TECHSLOT-001 §3: the engine's candidate_timeframes count
+// (slot-engine/src/config.js — five fixed 2h arrival windows per day). Used to
+// widen the per-tech ranking caps on single-technician queries so a one-day query
+// can return ALL of that day's windows (the engine defaults cap at 2 per tech).
+const SINGLE_TECH_TIMEFRAME_COUNT = 5;
+
 function isFiniteNum(n) {
     return typeof n === 'number' && Number.isFinite(n);
 }
@@ -202,7 +208,11 @@ async function buildScheduledJobs(companyId, startDate, endDate, tz, excludeJobI
 /**
  * Build the snapshot and proxy it to the slot engine.
  * @param {string} companyId
- * @param {{ new_job: { lat?, lng?, address?, job_type?, duration_minutes?, territory_id?, earliest_allowed_date?, latest_allowed_date? } }} input
+ * @param {{ new_job: { lat?, lng?, address?, job_type?, duration_minutes?, territory_id?, earliest_allowed_date?, latest_allowed_date?, technician_id? } }} input
+ *   `new_job.technician_id` (TECHSLOT-001 §3, optional): constrain the query to that
+ *   ONE technician — the roster is filtered to a one-element array (unknown/foreign
+ *   id → empty → no recommendations, safe) and the per-tech ranking caps are widened
+ *   so a single-day query returns ALL candidate windows. Absent → legacy all-tech.
  * @returns {{ recommendations, summary, engine_status: 'ok' | 'unavailable' }}
  */
 async function getRecommendations(companyId, input = {}) {
@@ -221,10 +231,21 @@ async function getRecommendations(companyId, input = {}) {
     const latest = newJob.latest_allowed_date || addDaysLocal(today, settings.horizon_days);
 
     // 2 + 3. Technicians and scheduled jobs.
-    const [technicians, scheduledJobs] = await Promise.all([
+    const [allTechnicians, scheduledJobs] = await Promise.all([
         buildTechnicians(companyId),
         buildScheduledJobs(companyId, earliest, latest, tz, newJob.exclude_job_id),
     ]);
+
+    // TECHSLOT-001 §3: optional single-technician scope. The engine ranks across
+    // whatever `technicians` array it is handed, so one-tech = a one-element array
+    // — pure input shaping, zero engine change. Unknown/foreign id → [] → the
+    // engine returns no recommendations (safe-fail upstream; never cross-tenant —
+    // the filter only ever narrows THIS company's own roster).
+    const technicianId = newJob.technician_id;
+    const singleTech = technicianId != null && String(technicianId).trim() !== '';
+    const technicians = singleTech
+        ? allTechnicians.filter(t => String(t.id) === String(technicianId))
+        : allTechnicians;
 
     // Base coverage — surfaced to the UI so the dispatcher knows recommendations may
     // be incomplete when some technicians have no base set (the engine can't place a
@@ -234,6 +255,28 @@ async function getRecommendations(companyId, input = {}) {
         technicians_total: activeTechs.length,
         technicians_with_base: activeTechs.filter(t => t.base).length,
     };
+
+    // Per-company tuning (distance/overlap/buffer/horizon/top_n) + the fixed
+    // empty-day + utilization values, mapped to the engine's config shape.
+    let configOverride = slotEngineSettingsService.buildConfigOverride(settings);
+    if (singleTech) {
+        // TECHSLOT-001 §3 (verified gap): the engine's ranking defaults (top_n:3,
+        // max_recommendations_per_technician:2, max_recommendations_per_same_timeframe:2)
+        // would cap a single-tech day query at 2 of the 5 candidate windows —
+        // breaking req-4 "offer that day's windows" and req-5 "true nearest".
+        // Widen the caps for THIS query only, deep-merged onto the settings-based
+        // override (all its other keys preserved; buildConfigOverride untouched).
+        const N = SINGLE_TECH_TIMEFRAME_COUNT;
+        configOverride = {
+            ...configOverride,
+            ranking: {
+                ...configOverride.ranking,
+                top_n: Math.max(Number(configOverride.ranking?.top_n) || 0, N),
+                max_recommendations_per_technician: N,
+                max_recommendations_per_same_timeframe: N,
+            },
+        };
+    }
 
     // 4. Engine request body (per slot-engine/README.md contract).
     const requestId = `alb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -252,9 +295,7 @@ async function getRecommendations(companyId, input = {}) {
         },
         technicians,
         scheduled_jobs: scheduledJobs,
-        // Per-company tuning (distance/overlap/buffer/horizon/top_n) + the fixed
-        // empty-day + utilization values, mapped to the engine's config shape.
-        config_override: slotEngineSettingsService.buildConfigOverride(settings),
+        config_override: configOverride,
     };
 
     // 5. Proxy with a short timeout. Any engine fault → safe-failure.

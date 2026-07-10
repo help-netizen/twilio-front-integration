@@ -189,13 +189,17 @@ function localPartsInTz(date, tz) {
 }
 
 /**
- * buildRobotCallSlot({ startIso, endIso, techName? }, companyId) — SLOTPICK-001.
+ * buildRobotCallSlot({ startIso, endIso, techName?, techId? }, companyId) —
+ * SLOTPICK-001 (+ TECHSLOT-001).
  *
  * Convert a dispatcher-picked UTC arrival window (emitted by CustomTimeModal as
  * `Date.toISOString()` instants) into the CANONICAL `slot_json` the outbound
  * lifecycle offers on the call — the SAME shape recommendSlots produces
- * (`{ key, date, start, end, label, techName, confidence }`). The client label is
- * NEVER trusted; the server re-derives everything in the company timezone.
+ * (`{ key, date, start, end, label, techName, confidence }`), plus the picked
+ * technician (`techId`, TECHSLOT-001 §2) so the in-call recommendSlots can be
+ * server-constrained to that tech. The client label is NEVER trusted; the
+ * server re-derives everything in the company timezone. `techId` is an opaque
+ * passthrough (it only ever narrows within the company's own roster downstream).
  *
  * Validation (server authority — any failure → `{ ok:false, error:'invalid_slot' }`):
  *   1. `startIso`/`endIso` parse to valid Dates.
@@ -204,11 +208,11 @@ function localPartsInTz(date, tz) {
  *   4. `date >= todayStr` (company-local today; same-day allowed = grace).
  *   5. `date <= todayStr + 60d` (HORIZON).
  *
- * @param {{ startIso?: string, endIso?: string, techName?: string }} picked
+ * @param {{ startIso?: string, endIso?: string, techName?: string, techId?: string }} picked
  * @param {string} companyId
  * @returns {Promise<{ ok:true, slot:object }|{ ok:false, error:'invalid_slot' }>}
  */
-async function buildRobotCallSlot({ startIso, endIso, techName } = {}, companyId) {
+async function buildRobotCallSlot({ startIso, endIso, techName, techId } = {}, companyId) {
     requireCompanyId(companyId);
 
     // 1) Both instants must parse.
@@ -254,6 +258,9 @@ async function buildRobotCallSlot({ startIso, endIso, techName } = {}, companyId
         label: recommendSlots.formatSlotLabel(date, start, end),
         techName: techName || null,
         confidence: null,
+        // TECHSLOT-001 (§2): the dispatcher's lane pick rides the slot into
+        // slot_json → worker → placeCall variableValues → in-call recommendSlots.
+        techId: techId || null,
     };
     return { ok: true, slot };
 }
@@ -286,19 +293,33 @@ async function buildRobotCallSlot({ startIso, endIso, techName } = {}, companyId
  *      the unique_violation is caught → return the existing active row
  *      { ok:true, already:true, attemptId }. Returns { ok:true, attemptId, slot }.
  *
- * SLOTPICK-001: when `dispatcherSlot` ({ startIso, endIso, techName? }) is supplied
- * the dispatcher already picked the window in the reschedule modal — we convert +
- * validate it server-side via `buildRobotCallSlot` and SKIP step 4 (recommendSlots).
- * A window that fails validation is a client-correctable pick (bad/expired/out-of-
- * horizon), so we return { ok:false, reason:'invalid_slot' } WITHOUT stamping the
- * task failed (the route maps it to HTTP 400). No `dispatcherSlot` → the pre-existing
- * auto-compute path (step 4) runs byte-identically (backward-compat).
+ * SLOTPICK-001: when `dispatcherSlot` ({ startIso, endIso, techName?, techId? }) is
+ * supplied the dispatcher already picked the window in the reschedule modal — we
+ * convert + validate it server-side via `buildRobotCallSlot` and SKIP step 4
+ * (recommendSlots). A window that fails validation is a client-correctable pick
+ * (bad/expired/out-of-horizon), so we return { ok:false, reason:'invalid_slot' }
+ * WITHOUT stamping the task failed (the route maps it to HTTP 400). No
+ * `dispatcherSlot` → the pre-existing auto-compute path (step 4) runs
+ * byte-identically (backward-compat).
+ *
+ * TECHSLOT-001:
+ *   - req 1 (server-authoritative, non-bypassable): a job with 2+ assigned
+ *     technicians is NEVER robot-called — { ok:false, reason:'multi_tech' } right
+ *     after the dialable guard, BEFORE the v1/phone/slot steps. NO attempt row,
+ *     NO task stamp (mirrors not_dialable; the modal self-blocks with its own
+ *     message, a direct API caller gets the route's 200 envelope refusal).
+ *   - §2/§5: whatever slot wins (dispatcher pick OR auto-compute) is enriched
+ *     before the INSERT with the tech constraint + the job's location:
+ *     `slot_json.techId` (dispatcher pick > single-assigned-tech default > null)
+ *     and `slot_json.lat`/`lng` (from the already-loaded job; null when absent —
+ *     non-fatal). The worker copies slot_json forward on retries, and placeCall
+ *     lifts these into `variableValues` for the in-call recommendSlots.
  *
  * @param {number|string} jobId
  * @param {string} companyId
  * @param {number|string} taskId
  * @param {object} [client] optional pg client for tx-aware execution
- * @param {{ startIso:string, endIso:string, techName?:string }|null} [dispatcherSlot]
+ * @param {{ startIso:string, endIso:string, techName?:string, techId?:string }|null} [dispatcherSlot]
  */
 async function startRobotCall(jobId, companyId, taskId, client = null, dispatcherSlot = null) {
     requireCompanyId(companyId);
@@ -310,6 +331,16 @@ async function startRobotCall(jobId, companyId, taskId, client = null, dispatche
         if (!job || job.zb_canceled || job.blanc_status === 'Canceled'
             || job.blanc_status !== 'Part arrived') {
             return { ok: false, reason: 'not_dialable' };
+        }
+
+        // 1b) TECHSLOT-001 req-1 gate (server-authoritative, non-bypassable): a
+        //     job with 2+ assigned technicians is never robot-called — the
+        //     dispatcher calls manually. A domain refusal like not_dialable:
+        //     NO attempt, NO markRobotCallFailed stamp (the task stays open and
+        //     client-correctable), fired BEFORE the v1/phone/slot steps. The
+        //     execute route maps it to a 200 envelope refusal (not a 400).
+        if ((job.assigned_techs || []).length >= 2) {
+            return { ok: false, reason: 'multi_tech' };
         }
 
         // 2) v1 dial-seam gate: Boston Masters + settings.enabled only.
@@ -376,6 +407,30 @@ async function startRobotCall(jobId, companyId, taskId, client = null, dispatche
             }
             slot = topSlot;
         }
+
+        // 4c) TECHSLOT-001 (§2/§5): both slot paths converge here — carry the
+        //     technician constraint + the job's location on the attempt.
+        //     techId: the dispatcher's lane pick wins; when absent and the job
+        //     has exactly ONE assigned tech, default to it (spec edge 1) so the
+        //     in-call recs still scope to the job's tech; no tech at all → null
+        //     (legacy all-tech in the skill). Coords come from the already-loaded
+        //     job; missing/invalid → null, non-fatal (the in-call skill falls
+        //     back to address/zip resolution). slot_json is copied forward on
+        //     retry, so the constraint + location persist across attempts. The
+        //     multi_tech gate (1b) guarantees ≤1 assigned tech by this point.
+        const assignedTechs = Array.isArray(job.assigned_techs) ? job.assigned_techs : [];
+        const soleTechId =
+            assignedTechs.length === 1 && assignedTechs[0] && assignedTechs[0].id != null
+                ? assignedTechs[0].id
+                : null;
+        const jobLat = job.lat != null ? Number(job.lat) : NaN;
+        const jobLng = job.lng != null ? Number(job.lng) : NaN;
+        slot = {
+            ...slot,
+            techId: slot.techId || soleTechId,
+            lat: Number.isFinite(jobLat) ? jobLat : null,
+            lng: Number.isFinite(jobLng) ? jobLng : null,
+        };
 
         // 5) Enqueue the first attempt (immediate). The partial-unique index makes a
         //    concurrent double-press (S14) a graceful no-op — we return the in-flight row.

@@ -51,6 +51,14 @@ function getClient() {
  * @param {string}  args.slot.start     Slot start.
  * @param {string}  args.slot.end       Slot end.
  * @param {string}  args.slot.key       Slot key (engine idempotency handle).
+ * @param {string}  [args.slot.techId]  TECHSLOT-001: the dispatcher-picked (or
+ *                                       single-assigned-default) technician the
+ *                                       in-call recommendSlots must be scoped to.
+ *                                       Injected as variableValues.technicianId
+ *                                       ONLY when present (legacy slots omit it).
+ * @param {number}  [args.slot.lat]     TECHSLOT-001: job latitude — the in-call
+ * @param {number}  [args.slot.lng]     recs location. Injected ONLY when BOTH
+ *                                       coords are present (never a half pair).
  * @param {string}  [args.balanceDue]   Pre-formatted outstanding-balance phrase
  *                                       ("$X.XX" / "paid in full, nothing due")
  *                                       for "how much do I owe?". Resolved by the
@@ -111,6 +119,16 @@ async function placeCall({ companyId, jobId, contactId, customerName, customerNu
                 // ONLY when the worker resolved one (a string) — never an empty
                 // or undefined key. Absence → the assistant prompt handles it.
                 ...(balanceDue !== undefined ? { balanceDue } : {}),
+                // TECHSLOT-001 (§2 hop 3 / §5): server-injected in-call scheduling
+                // constraint + location. Present ONLY when the slot_json carries
+                // them (dispatcher lane pick / single-tech default + job coords
+                // stamped by startRobotCall) — absent keys keep the legacy /
+                // auto-compute call body byte-identical. Downstream,
+                // vapi-tools.buildSkillInput spreads variableValues LAST over the
+                // model args, so the model can never override these; recommendSlots
+                // then scopes to that technician and locates at the job.
+                ...(s.techId ? { technicianId: s.techId } : {}),
+                ...(s.lat != null && s.lng != null ? { lat: s.lat, lng: s.lng } : {}),
             },
         },
     };

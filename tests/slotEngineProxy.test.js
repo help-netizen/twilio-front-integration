@@ -350,3 +350,106 @@ describe('getRecommendations consumes resolved settings (config_override + horiz
         expect(out.engine_status).toBe('ok');
     });
 });
+
+// ─── OUTBOUND-PARTS-CALL-TECHSLOT-001 §3 — single-technician filter + ranking widen ──
+
+describe('TECHSLOT-001 §3: new_job.technician_id single-tech filter + ranking-cap widen', () => {
+    const dbConn = require('../backend/src/db/connection');
+
+    beforeEach(() => {
+        dbConn.query.mockReset().mockResolvedValue({ rows: [] });
+        zenbookerClient.getTeamMembers.mockResolvedValue([
+            { id: 'A', first_name: 'Ann', deactivated: false },
+            { id: 'B', first_name: 'Bob', deactivated: false },
+            { id: 'C', first_name: 'Cid', deactivated: false },
+        ]);
+        global.fetch.mockResolvedValue({ ok: true, json: async () => ({ recommendations: [] }) });
+    });
+
+    const bodyFromFetch = () => JSON.parse(global.fetch.mock.calls[0][1].body);
+
+    it('TC-TS-01: technician_id filters the engine technicians to exactly that one', async () => {
+        await slotEngineService.getRecommendations(COMPANY, {
+            new_job: { lat: 42.35, lng: -71.09, technician_id: 'B' },
+        });
+        const body = bodyFromFetch();
+        expect(body.technicians).toHaveLength(1);
+        expect(body.technicians[0].id).toBe('B');
+    });
+
+    it('TC-TS-01b: technician_id matches across string/number id types (String coercion)', async () => {
+        zenbookerClient.getTeamMembers.mockResolvedValue([
+            { id: 7, first_name: 'Numeric', deactivated: false },
+            { id: 'B', first_name: 'Bob', deactivated: false },
+        ]);
+        await slotEngineService.getRecommendations(COMPANY, {
+            new_job: { lat: 42.35, lng: -71.09, technician_id: 7 },
+        });
+        const body = bodyFromFetch();
+        expect(body.technicians.map(t => t.id)).toEqual(['7']);
+    });
+
+    it('TC-TS-02: no technician_id → all techs + no ranking widen (byte-identical legacy)', async () => {
+        await slotEngineService.getRecommendations(COMPANY, {
+            new_job: { lat: 42.35, lng: -71.09 },
+        });
+        const body = bodyFromFetch();
+        expect(body.technicians.map(t => t.id)).toEqual(['A', 'B', 'C']);
+        // config_override stays exactly the settings-based override — ranking only
+        // has top_n (no per-tech / per-timeframe widen keys).
+        expect(body.config_override).toEqual(settingsService.buildConfigOverride(DEFAULTS));
+        expect(body.config_override.ranking).toEqual({ top_n: DEFAULTS.recommendations_shown });
+    });
+
+    it('TC-TS-03: technician_id → ranking caps widened in config_override, other keys preserved (deep-merge)', async () => {
+        const resolved = { max_distance_miles: 20, overlap_minutes: 30, min_buffer_minutes: 45, horizon_days: 7, recommendations_shown: 3 };
+        settingsService.resolve.mockResolvedValue(resolved);
+        await slotEngineService.getRecommendations(COMPANY, {
+            new_job: { lat: 42.35, lng: -71.09, technician_id: 'B' },
+        });
+        const body = bodyFromFetch();
+        // The widen (candidate_timeframes count = 5).
+        expect(body.config_override.ranking.max_recommendations_per_technician).toBeGreaterThanOrEqual(5);
+        expect(body.config_override.ranking.max_recommendations_per_same_timeframe).toBeGreaterThanOrEqual(5);
+        expect(body.config_override.ranking.top_n).toBeGreaterThanOrEqual(5);
+        // Deep-merge, not replace: every non-ranking key of the settings-based override survives.
+        const base = settingsService.buildConfigOverride(resolved);
+        expect(body.config_override.geography).toEqual(base.geography);
+        expect(body.config_override.overlap).toEqual(base.overlap);
+        expect(body.config_override.feasibility).toEqual(base.feasibility);
+        expect(body.config_override.planning).toEqual(base.planning);
+        expect(body.config_override.workload).toEqual(base.workload);
+        expect(body.config_override.travel).toEqual(base.travel);
+    });
+
+    it('TC-TS-03b: widen keeps top_n at max(shown, 5) when settings show more than 5', async () => {
+        settingsService.resolve.mockResolvedValue({ ...DEFAULTS, recommendations_shown: 8 });
+        await slotEngineService.getRecommendations(COMPANY, {
+            new_job: { lat: 42.35, lng: -71.09, technician_id: 'B' },
+        });
+        expect(bodyFromFetch().config_override.ranking.top_n).toBe(8);
+    });
+
+    it('TC-TS-04: unknown/foreign technician_id → empty technicians, safe result, no throw', async () => {
+        const out = await slotEngineService.getRecommendations(COMPANY, {
+            new_job: { lat: 42.35, lng: -71.09, technician_id: 'ZZZ' },
+        });
+        const body = bodyFromFetch();
+        expect(body.technicians).toEqual([]);
+        expect(out.engine_status).toBe('ok');
+        expect(out.recommendations).toEqual([]);
+    });
+
+    it('TC-TS-05: earliest/latest from targetDay forwarded to new_request alongside the filter', async () => {
+        await slotEngineService.getRecommendations(COMPANY, {
+            new_job: {
+                lat: 42.35, lng: -71.09, technician_id: 'B',
+                earliest_allowed_date: '2026-07-16', latest_allowed_date: '2026-07-16',
+            },
+        });
+        const body = bodyFromFetch();
+        expect(body.new_request.earliest_allowed_date).toBe('2026-07-16');
+        expect(body.new_request.latest_allowed_date).toBe('2026-07-16');
+        expect(body.technicians.map(t => t.id)).toEqual(['B']);
+    });
+});

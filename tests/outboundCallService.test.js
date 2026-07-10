@@ -236,3 +236,67 @@ describe('placeCall — balanceDue → variableValues', () => {
         expect(Object.keys(bodyArg.assistantOverrides.variableValues)).not.toContain('balanceDue');
     });
 });
+
+// ---------------------------------------------------------------------------
+// OUTBOUND-PARTS-CALL-TECHSLOT-001 (TC-TS-18) — technicianId (+ job coords) →
+// variableValues. Injected ONLY when present on the slot_json (dispatcher lane
+// pick / single-tech default + job coords from startRobotCall); absent → keys
+// ABSENT (the legacy/auto-compute call body stays byte-identical). Downstream,
+// vapi-tools.buildSkillInput spreads variableValues LAST over model args, so
+// these server-injected values always win (model can't spoof the constraint).
+// ---------------------------------------------------------------------------
+describe('TC-TS-18: placeCall — slot techId/lat/lng → variableValues technicianId + coords', () => {
+    test('slot carries techId + lat/lng → variableValues gets technicianId + coords; existing keys unchanged', async () => {
+        mockPost.mockResolvedValue({ data: { id: 'vapi_call_ts1' } });
+
+        await outboundCallService.placeCall({
+            ...CALL_ARGS,
+            slot: { ...SLOT, techId: 'B', lat: 42.1, lng: -71.1 },
+        });
+
+        const [, bodyArg] = mockPost.mock.calls[0];
+        const vv = bodyArg.assistantOverrides.variableValues;
+        expect(vv.technicianId).toBe('B');
+        expect(vv.lat).toBe(42.1);
+        expect(vv.lng).toBe(-71.1);
+        // The pre-existing contract keys ride along unchanged.
+        expect(vv).toMatchObject({
+            jobId: 50,
+            contactId: 501,
+            companyId: CO,
+            customerName: 'Jane',
+            slotLabel: SLOT.label,
+            slotDate: SLOT.date,
+            slotStart: SLOT.start,
+            slotEnd: SLOT.end,
+            slotKey: SLOT.key,
+        });
+    });
+
+    test('slot WITHOUT techId/coords → keys ABSENT from variableValues (legacy body unchanged)', async () => {
+        mockPost.mockResolvedValue({ data: { id: 'vapi_call_ts2' } });
+
+        await outboundCallService.placeCall(CALL_ARGS); // SLOT has no techId/lat/lng
+
+        const [, bodyArg] = mockPost.mock.calls[0];
+        const keys = Object.keys(bodyArg.assistantOverrides.variableValues);
+        expect(keys).not.toContain('technicianId');
+        expect(keys).not.toContain('lat');
+        expect(keys).not.toContain('lng');
+    });
+
+    test('null techId / half coords (lat without lng) → all three omitted, never a null/partial injection', async () => {
+        mockPost.mockResolvedValue({ data: { id: 'vapi_call_ts3' } });
+
+        await outboundCallService.placeCall({
+            ...CALL_ARGS,
+            slot: { ...SLOT, techId: null, lat: 42.1, lng: null },
+        });
+
+        const [, bodyArg] = mockPost.mock.calls[0];
+        const keys = Object.keys(bodyArg.assistantOverrides.variableValues);
+        expect(keys).not.toContain('technicianId');
+        expect(keys).not.toContain('lat');
+        expect(keys).not.toContain('lng');
+    });
+});
