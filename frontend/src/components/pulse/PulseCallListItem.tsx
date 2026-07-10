@@ -6,11 +6,12 @@
 import { useState } from 'react';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
-    Settings2, Clock, DollarSign, Hash, Navigation, Timer,
+    Settings2, Clock, DollarSign, Hash, Navigation, Timer, Bot,
 } from 'lucide-react';
 import { formatPhoneDisplay as formatPhoneNumber } from '@/utils/phoneUtils';
 import type { CallData } from '../call-list-item';
 import { PulseCallAudioPlayer } from './PulseCallAudioPlayer';
+import { isAiAnsweredBy } from './pulseHelpers';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -84,6 +85,11 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                     >
                         {statusLabel}
                     </span>
+                    {isAiAnsweredBy(call.answeredBy) && (
+                        <Bot className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} aria-label="AI call">
+                            <title>AI call</title>
+                        </Bot>
+                    )}
                     <div className="flex-1" />
                     <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
                         {formatTime(call.startTime)}

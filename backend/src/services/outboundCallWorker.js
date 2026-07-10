@@ -26,6 +26,10 @@ const jobsService = require('./jobsService');
 const outboundCallService = require('./outboundCallService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
 const groupRouting = require('./groupRouting');
+// OUTBOUND-CALL-TIMELINE-001 (CT-04): mirror a placed robot call into the
+// customer's Pulse timeline. The service is NON-FATAL by contract, but we still
+// wrap the call here (best-effort side-effect — never blocks/reclassifies a dial).
+const vapiCallTimelineService = require('./vapiCallTimelineService');
 
 const DEFAULT_INTERVAL_MS = 60_000; // 60s tick, matching snoozeScheduler.
 
@@ -272,6 +276,27 @@ async function processAttempt(attempt) {
              WHERE id = $1`,
             [attempt.id, result.vapiCallId]
         );
+
+        // OUTBOUND-CALL-TIMELINE-001 (CT-04, spec S1): mirror the placed call
+        // into the customer's Pulse timeline as a live "Ringing" row (softphone
+        // model). Ordered AFTER the vapi_call_id stamp above (the source of truth
+        // for retry correlation). NON-FATAL: a timeline write must NEVER fail the
+        // dial or re-classify the attempt — the call is already placed and this
+        // row is only a best-effort mirror (finalize self-heals it if skipped).
+        // dialedNumber mirrors the exact number handed to placeCall as
+        // customerNumber; callerId is the transient Twilio business line.
+        try {
+            await vapiCallTimelineService.recordPlacement({
+                attempt,
+                vapiCallId: result.vapiCallId,
+                dialedNumber: attempt.phone || job.customer_phone,
+                callerId: process.env.VAPI_OUTBOUND_TWILIO_NUMBER
+                    || process.env.OUTBOUND_CALLER_ID
+                    || null,
+            });
+        } catch (err) {
+            console.warn('[outboundCallWorker] recordPlacement failed (non-fatal):', err.message);
+        }
         return;
     }
 

@@ -5251,3 +5251,56 @@ The `recommendSlots` tool param schema lives on the remote OUTBOUND assistant (`
 4. **`multi_tech` — stamp task?** — chosen NOT to stamp (mirrors `not_dialable`; dispatcher uses manual). Reversible.
 
 **Protected / unchanged:** `slot-engine/src/*`; the schedule recs route + `fetchSlotRecommendations` shape (additive field only); `CustomTimeModal` layout/recs/`onConfirm`/`disabled`/`buildTechGroups`; the task-action execute route envelope + registry (slot opaque); the outbound worker + `slot_json` copy-forward; `scheduleService.rescheduleItem` (time-only); the SLOTPICK auto-compute + `buildRobotCallSlot` validation; `outbound_call_attempts` schema (**NO migration**); `authedFetch.ts` / `useRealtimeEvents.ts`.
+
+---
+
+## OUTBOUND-CALL-TIMELINE-001 — robot-call timeline rows: placement hook + webhook finalize + sid re-key + proxy branch
+
+**Requirements:** `## OUTBOUND-CALL-TIMELINE-001` (FR-1…9, AC-1…10). **Spec:** `Docs/specs/OUTBOUND-CALL-TIMELINE-001.md` (S1–S11). Extends OUTBOUND-PARTS-CALL-001.
+
+### §0 — Существующий функционал (расширяем, НЕ дублируем)
+- `callsQueries.upsertCall` (`backend/src/db/callsQueries.js:15-63`) — THE dedup writer: `INSERT … ON CONFLICT (call_sid) DO UPDATE` with the monotonic `last_event_time` + `(NOT calls.is_final OR EXCLUDED.is_final)` guard. Extend by CALLING it — never fork the SQL. NB: it has no `answered_by` column → the hook sets it with a separate guarded UPDATE.
+- Softphone gold model `routes/voice.js:344-385` — immediate parent row (`initiated`, `is_final=false`) + `realtimeService.publishCallUpdate` (`realtimeService.js:132-155`). Mirrored, not duplicated (robot path can't share code: no TwiML request context).
+- Read/render (REUSE, zero changes): sidebar `timelinesQueries.getUnifiedTimelinePage` lateral (`:527-531`, exposes `latest_call.*` incl. `answered_by` at `:473`); thread feed `pulse.js buildTimeline` (`:130-184`) + `formatCall` (`:352-398`, `gemini_summary` `:388-397`, playback_url `:385`); SSE names `call.updated`/`call.created` already in `sseManager.ts:91-110`; pills `PulseCallListItem.tsx:17-38` + `pulseHelpers.ts:14` (`initiated`→ringing); `hasActiveCall` `usePulsePage.ts:71` → `ContactCard.tsx:58`; AI Bot marker `PulseContactItem.tsx:46,74-77,174-183`.
+- OPC1 webhook `routes/vapiCallStatus.js` — secret auth (`:51-63`), correlation+anti-spoof (`:127-140`), idempotence (`:144`), `classifyEndedReason` (`:77-92` — remains the ATTEMPT classifier; the new calls-status mapper is a separate function with different vocabulary), retry state machine (`:179-259` — UNTOUCHED).
+- `transcriptionService.js:180-203` — synthetic `transcription_sid` (`aai_<jobId>`) + `raw_payload.gemini_summary` precedent; `upsertTranscript`/`upsertRecording` (`callsQueries.js:329-406`).
+- Reconcilers: `reconcileStale.js` (in-process every 5 min via `inboxWorker.js:917-920`; Twilio-404 → `failed` at `:185-191`); `reconcileService.js` hot (CLI) / cold (on-demand); `getNonFinalCalls` (`callsQueries.js:314-323`).
+
+### §1 — Decision A: новый сервис `vapiCallTimelineService.js` (единственный новый файл)
+`backend/src/services/vapiCallTimelineService.js` exports `recordPlacement`, `applyStatusUpdate`, `finalizeFromEndOfCallReport`, plus pure helpers `mapVapiEndedReasonToCallStatus(endedReason, durationSec)` and `resolveFinalSid` (exported for jest). Rationale: both the worker AND the webhook need identical sid/upsert/SSE logic; a service avoids webhook↔worker cross-imports (worker already exports scheduling primitives to the webhook — don't grow that surface) and keeps every function internally try/catch'd (non-fatal by construction: log `[vapiCallTimeline] … (non-fatal)`, return null). Dependencies: `db/queries` (upsertCall/upsertTranscript/upsertRecording/getCallByCallSid/findOrCreateTimeline), `realtimeService` — no circulars.
+
+### §2 — Decision B: sid strategy (fallback + re-key; полный алгоритм — spec S4)
+- Placement: `call_sid = 'vapi:' + vapiCallId` — deterministic (recomputable from `message.call.id`), NO new column/correlation table.
+- Re-key at the FIRST sight of `phoneCallProviderId` (status-update → early; else end-of-call): plain `UPDATE calls SET call_sid=$real WHERE call_sid=$synthetic`; duplicate real-sid row (coldReconcile window) → merge-and-delete-synthetic; `23505` race → retry merge once. Safe because the synthetic row NEVER has FK children (recordings/transcripts written only post-resolution — `v3_schema.sql:93,117` FKs would otherwise block the UPDATE).
+- Consequence: once re-keyed, the existing Twilio pollers maintain/finalize the row for free (webhook-lost coverage, spec S7).
+
+### §3 — Decision C: hooks
+- **Placement hook** — `outboundCallWorker.processAttempt`, immediately after the `vapi_call_id` stamp (`outboundCallWorker.js:266-276`): `await vapiCallTimelineService.recordPlacement({attempt, vapiCallId: result.vapiCallId, dialedNumber: attempt.phone || job.customer_phone, callerId: process.env.VAPI_OUTBOUND_TWILIO_NUMBER || process.env.OUTBOUND_CALLER_ID || null})`. `direction='outbound'` (NOT `outbound-api`): matches the softphone row, renders outgoing in both UI switches (`pulseHelpers.ts:8` `.includes('inbound')`; `PulseContactItem.tsx:137-139` `.startsWith('outbound')`), and equals what `CallProcessor.detectDirection` computes for the leg on later reconciles (`callProcessor.js:152-193`, owned-from → 'outbound') — so reconcile's unconditional `direction=EXCLUDED.direction` overwrite is a no-op.
+- **Webhook hooks** — `routes/vapiCallStatus.js`: (a) new `status-update` branch before the end-of-call gate (`:114`): correlate by `message.call.id` (same SELECT), then `applyStatusUpdate` — the attempt row is never written; (b) in the end-of-call path, right after correlation (`:140`) and BEFORE the booked/declined/retry writes: `finalizeFromEndOfCallReport({attempt, message})` in its own try/catch — a timeline failure cannot starve the state machine and vice-versa. Company id: from the attempt row only (anti-spoof preserved).
+- **`answered_by='ai'`** — guarded `UPDATE … WHERE call_sid=$1 AND answered_by IS NULL` after each upsert (upsertCall doesn't carry the column; extending its 18-column INSERT would touch every webhook write path — rejected as higher-risk).
+
+### §4 — Decision D: reconciler guards (the found fork)
+`reconcileStale.js` SELECT (`:20-26`) and `callsQueries.getNonFinalCalls` gain `AND call_sid LIKE 'CA%'`; `reconcileStaleCalls` gains the 15-min synthetic sweeper (`vapi:%` non-final → `failed`/final + SSE). Without the guard the 5-min stale sweep 404s on Twilio and **kills a live robot call as `failed` ~3–8 min in** (`reconcileStale.js:185-191`). All existing rows have `CA…` sids → byte-identical behavior for them.
+
+### §5 — Decision E: recording proxy (smallest change)
+`routes/calls.js` `GET /:callSid/recording.mp3` (`:526-567`): branch on `/^RE/i.test(recording.recording_sid)` — true → existing Twilio REST path untouched; false → stream `recording.recording_url` via `fetch` (upstream Content-Type, fallback `audio/wav`; `!ok`→502; no url→404). Mount/middleware unchanged (`src/server.js:122` — `authenticate, requireCompanyAccess`).
+
+### §6 — Decision F: frontend = zero required; один optional chip
+Verified end-to-end: live pill, Bot sidebar marker, player/summary/transcript, SSE refetch — all existing (§0). Optional P2 (included as CT-08): thread-feed tile AI chip — export `isAiAnsweredBy` from `pulseHelpers.ts` (move from `PulseContactItem.tsx`, import back), render a small `Bot` icon (lucide, `size-3.5`, `var(--blanc-ink-3)`, `title="AI call"`) beside the status pill in `PulseCallListItem.tsx` when `isAiAnsweredBy(call.answeredBy)` — `CallData.answeredBy` already mapped (`pulseHelpers.ts:34`, `callTypes.ts:36`).
+
+### §7 — SSE / events
+Reuse `publishCallUpdate` with the FULL re-read row (so `timeline_id`/`contact_id` reach `usePulsePage.ts:41`'s gate). No new event names → no `sseManager.ts` change. No `call_events` appends at placement (softphone parity); finalize MAY append one `call.status_changed` (source `'vapi'`) — optional, P3.
+
+### §8 — DB / migrations
+**NO migration.** Columns verified: `calls.call_sid VARCHAR(100) NOT NULL UNIQUE`, `direction NOT NULL`, `answered_by` (mig 016), `timeline_id` (mig 028), `recordings.recording_sid NOT NULL UNIQUE` + `recording_url TEXT` + `source VARCHAR(50)` ('vapi' fits), `transcripts.transcription_sid UNIQUE` + `raw_payload JSONB`.
+
+### §9 — Файлы для изменений
+- `backend/src/services/vapiCallTimelineService.js` — NEW (hooks' engine).
+- `backend/src/services/outboundCallWorker.js` — +placement hook call (≈6 lines).
+- `backend/src/routes/vapiCallStatus.js` — +status-update branch, +finalize call.
+- `backend/src/services/reconcileStale.js`, `backend/src/db/callsQueries.js` — CA-guard + sweeper.
+- `backend/src/routes/calls.js` — proxy branch.
+- (optional FE) `frontend/src/components/pulse/PulseCallListItem.tsx`, `pulseHelpers.ts`, `PulseContactItem.tsx` (import move).
+- External/manual: OUTBOUND assistant `serverMessages += 'status-update'` (repo half `voice-agent/assistants/parts-visit-scheduler.json`; live REST PATCH deploy-time; re-inject `VAPI_TOOLS_SECRET` on model writes — vapi-sara memory).
+
+**Protected / unchanged:** `upsertCall` SQL, softphone `voice.js:344-385`, Sara `callFlowRuntime.js:443-480`, OPC1 auth/anti-spoof/idempotence/state machine, `outbound_call_attempts` schema, `authedFetch.ts`, `useRealtimeEvents.ts`, `src/server.js` (no new mounts).

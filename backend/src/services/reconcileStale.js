@@ -11,22 +11,42 @@ const { getTwilioClient } = require('./twilioClient');
  */
 
 const STALE_THRESHOLD_MINUTES = 3;
+// Synthetic `vapi:<id>` sids (outbound robot calls) never exist in Twilio; the row
+// keeps this sid until a status-update/end-of-call webhook re-keys it to a real
+// CA… sid. If that webhook is lost the row would sit non-final forever, so sweep it
+// to a terminal status after a window far longer than any parts call could run.
+// (OUTBOUND-CALL-TIMELINE-001 S5.2)
+const SYNTHETIC_STALE_THRESHOLD_MINUTES = 15;
 
 async function reconcileStaleCalls() {
     const traceId = `reconcile_${Date.now()}`;
 
+    // Safety net, on its own guard: finalize live-forever synthetic rows whose VAPI
+    // webhook was lost. Runs every cycle regardless of the Twilio sweep below and can
+    // never crash it (or the worker) — its own try/catch.
+    let sweptSynthetic = 0;
     try {
-        // Find all non-final calls older than threshold
+        sweptSynthetic = await sweepStaleSyntheticCalls(traceId);
+    } catch (err) {
+        console.error(`[${traceId}] Synthetic sweep error:`, err.message);
+    }
+
+    try {
+        // Find all non-final calls older than threshold.
+        // Twilio-sid guard (S5): only real CallSids (CA…) are pollable via the Twilio
+        // REST API. Synthetic `vapi:%` rows would 404 → be wrongly marked failed
+        // mid-call, so they are excluded here and handled by the synthetic sweeper above.
         const result = await db.query(
             `SELECT call_sid, parent_call_sid, status, direction, started_at
              FROM calls
              WHERE is_final = false
+               AND call_sid LIKE 'CA%'
                AND started_at < NOW() - INTERVAL '${STALE_THRESHOLD_MINUTES} minutes'
              ORDER BY started_at ASC`
         );
 
         const staleCalls = result.rows;
-        if (staleCalls.length === 0) return { reconciled: 0 };
+        if (staleCalls.length === 0) return { reconciled: 0, sweptSynthetic };
 
         console.log(`[${traceId}] Found ${staleCalls.length} stale call(s)`);
 
@@ -45,11 +65,54 @@ async function reconcileStaleCalls() {
             console.log(`[${traceId}] Reconciled ${reconciled}/${staleCalls.length} stale calls`);
         }
 
-        return { reconciled };
+        return { reconciled, sweptSynthetic };
     } catch (error) {
         console.error(`[${traceId}] Stale reconciliation error:`, error.message);
-        return { reconciled: 0, error: error.message };
+        return { reconciled: 0, sweptSynthetic, error: error.message };
     }
+}
+
+/**
+ * Synthetic-sid safety net (OUTBOUND-CALL-TIMELINE-001 S5.2).
+ *
+ * Outbound VAPI robot calls are inserted with a synthetic `vapi:<vapiCallId>` sid
+ * and re-keyed to the real Twilio CallSid once a status-update/end-of-call webhook
+ * arrives. If that webhook is lost the row stays non-final forever and `hasActiveCall`
+ * keeps the contact's Call button disabled. Such a row is never pollable via Twilio
+ * (guarded out of the main sweep), so finalize it here once it is far older than any
+ * real parts call. Monotonic (`is_final = false` guard → final never regressed) and
+ * company-scoped (SSE re-read uses each row's own company_id). Non-fatal by contract:
+ * the caller wraps this in its own try/catch.
+ */
+async function sweepStaleSyntheticCalls(traceId) {
+    const result = await db.query(
+        `UPDATE calls
+            SET status   = 'failed',
+                is_final = true,
+                ended_at = COALESCE(ended_at, NOW())
+          WHERE is_final = false
+            AND call_sid LIKE 'vapi:%'
+            AND started_at < NOW() - INTERVAL '${SYNTHETIC_STALE_THRESHOLD_MINUTES} minutes'
+          RETURNING call_sid, company_id`
+    );
+
+    const swept = result.rows;
+    if (swept.length === 0) return 0;
+
+    console.log(`[${traceId}] Synthetic sweep: ${swept.length} stale vapi:% row(s) → failed`);
+
+    // Publish per-row SSE, company-scoped re-read. Best-effort — never throws.
+    for (const row of swept) {
+        try {
+            const realtimeService = require('./realtimeService');
+            const updated = await queries.getCallByCallSid(row.call_sid, row.company_id);
+            if (updated) {
+                realtimeService.publishCallUpdate({ eventType: 'call.updated', ...updated });
+            }
+        } catch (e) { /* SSE publish is best-effort */ }
+    }
+
+    return swept.length;
 }
 
 async function reconcileOneCall(call, traceId) {
@@ -194,4 +257,4 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
     }
 }
 
-module.exports = { reconcileStaleCalls };
+module.exports = { reconcileStaleCalls, sweepStaleSyntheticCalls };

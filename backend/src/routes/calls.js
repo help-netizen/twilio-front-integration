@@ -532,6 +532,44 @@ router.get('/:callSid/recording.mp3', async (req, res) => {
             return res.status(404).json({ error: 'Recording not available' });
         }
 
+        // OUTBOUND-CALL-TIMELINE-001 (S8): non-Twilio recordings (e.g. VAPI robot
+        // calls) are persisted as a self-authorizing CDN URL under a synthetic sid
+        // (`vapi_<id>`, written by vapiCallTimelineService finalize), never a Twilio
+        // `RE…` recording sid — there is no Twilio SID to fetch. Stream straight from
+        // recording_url. Same `recording` row getCallMedia already loaded and the same
+        // route auth/company gate apply to both branches — only the fetch source
+        // differs, keyed purely off the sid shape (the tenant check is not weakened).
+        if (!/^RE/i.test(recording.recording_sid || '')) {
+            if (!recording.recording_url) {
+                return res.status(404).json({ error: 'Recording not available' });
+            }
+
+            let upstreamRes;
+            try {
+                // No auth header — VAPI recording URLs are self-authorizing (unlike
+                // the Twilio REST branch below, which needs Basic account auth).
+                upstreamRes = await fetch(recording.recording_url, { redirect: 'follow' });
+            } catch (fetchErr) {
+                console.error(`Recording URL fetch failed: ${fetchErr.message}`);
+                return res.status(502).json({ error: 'Failed to fetch recording' });
+            }
+
+            if (!upstreamRes.ok) {
+                console.error(`Recording URL fetch failed: ${upstreamRes.status}`);
+                return res.status(502).json({ error: 'Failed to fetch recording' });
+            }
+
+            // Content-Type from upstream (VAPI serves wav; fallback audio/wav).
+            // Accept-Ranges/Content-Length passthrough mirror the Twilio branch.
+            res.set('Content-Type', upstreamRes.headers.get('content-type') || 'audio/wav');
+            res.set('Accept-Ranges', 'bytes');
+            if (upstreamRes.headers.get('content-length')) {
+                res.set('Content-Length', upstreamRes.headers.get('content-length'));
+            }
+
+            return upstreamRes.body.pipe(res);
+        }
+
         const accountSid = process.env.TWILIO_ACCOUNT_SID;
         const authToken = process.env.TWILIO_AUTH_TOKEN;
 

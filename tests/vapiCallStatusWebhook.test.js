@@ -40,6 +40,16 @@ jest.mock('../backend/src/services/outboundCallWorker', () => ({
     resolveBusinessHoursGroup: (...a) => mockResolveGroup(...a),
 }));
 
+// OUTBOUND-CALL-TIMELINE-001 (CT-05) — the timeline seam (CT-01). Mocked so we
+// assert the ROUTE'S wiring (called once, {attempt, message}, non-fatal), not the
+// service internals (those are covered by vapiCallTimelineService.test.js).
+const mockFinalize = jest.fn();
+const mockApplyStatusUpdate = jest.fn();
+jest.mock('../backend/src/services/vapiCallTimelineService', () => ({
+    finalizeFromEndOfCallReport: (...a) => mockFinalize(...a),
+    applyStatusUpdate: (...a) => mockApplyStatusUpdate(...a),
+}));
+
 const SECRET = 'test-webhook-secret';
 process.env.VAPI_WEBHOOK_SECRET = SECRET;
 
@@ -65,6 +75,10 @@ function endReport(callId, endedReason) {
     return { message: { type: 'end-of-call-report', call: { id: callId }, endedReason } };
 }
 
+function statusUpdate(callId, status, over = {}) {
+    return { message: { type: 'status-update', status, call: { id: callId, ...over } } };
+}
+
 // A `dialing` attempt row matched by vapi_call_id. company from THIS row.
 function attemptRow(over = {}) {
     return {
@@ -82,6 +96,8 @@ beforeEach(() => {
     mockResolveSettings.mockReset();
     mockComputeNext.mockReset();
     mockResolveGroup.mockReset();
+    mockFinalize.mockReset();
+    mockApplyStatusUpdate.mockReset();
 
     // Defaults for the transient-retry path.
     mockResolveSettings.mockResolvedValue({ max_attempts: 3 });
@@ -89,6 +105,10 @@ beforeEach(() => {
     mockComputeNext.mockReturnValue(new Date('2026-07-08T14:00:00.000Z'));
     // booked-detect default: job is NOT rescheduled.
     mockGetJobById.mockResolvedValue({ id: 50, blanc_status: 'Part arrived' });
+    // Timeline seam succeeds by default (returns the effective sid). CT-05 asserts
+    // the ROUTE stays 200 + FSM intact even when these resolve OR reject.
+    mockFinalize.mockResolvedValue('CA_final');
+    mockApplyStatusUpdate.mockResolvedValue('CA_mid');
 });
 
 // Helper: queue the correlation SELECT (first db.query) → the attempt row.
@@ -164,14 +184,23 @@ describe('company derived from attempt row, not body (S10)', () => {
         expect(mockQuery).not.toHaveBeenCalled();
     });
 
-    test('non-end-of-call message (mid-call status-update, same call.id) → 200 no-op, no correlation/classification', async () => {
-        // A live-call server message that shares this server.url and carries the
-        // dialing attempt's call.id must NOT terminate the attempt or retry.
-        withAttempt(attemptRow()); // would match if it ever queried
-        const res = await post({ message: { type: 'status-update', call: { id: 'vc_dialing' } } });
+    test('mid-call status-update (same call.id) → timeline transition, NEVER terminates the attempt or retries', async () => {
+        // A live-call server message shares this server.url and carries the dialing
+        // attempt's call.id. Post-CT-05 it drives a TIMELINE transition (via the
+        // correlated row) but must still NOT classify the attempt or schedule a
+        // retry — the outbound_call_attempts table is untouched by this branch.
+        withAttempt(attemptRow()); // the status-update correlation SELECT
+        const res = await post(statusUpdate('vc_dialing', 'in-progress'));
         expect(res.status).toBe(200);
-        expect(mockQuery).not.toHaveBeenCalled();
+        // Correlated once; the timeline seam got the ROW-scoped attempt.
+        expect(mockApplyStatusUpdate).toHaveBeenCalledTimes(1);
+        expect(mockApplyStatusUpdate.mock.calls[0][0].attempt.company_id).toBe(COMPANY);
+        // NO attempt state-machine work: no retry math, no end-of-call finalize,
+        // and only the single correlation SELECT ran (no UPDATE/INSERT).
         expect(mockComputeNext).not.toHaveBeenCalled();
+        expect(mockFinalize).not.toHaveBeenCalled();
+        expect(mockQuery.mock.calls.some(c => /UPDATE|INSERT/i.test(String(c[0])))).toBe(false);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -293,5 +322,128 @@ describe('retry-or-exhaust (U18, S5 slice)', () => {
         expect(eventService.logEvent).toHaveBeenCalledWith(
             COMPANY, 'job', 50, 'outbound_call_exhausted', expect.any(Object), 'system'
         );
+    });
+});
+
+// ── OUTBOUND-CALL-TIMELINE-001 (CT-05) — Pulse timeline hooks (TC-CT-008…011) ──
+// The webhook feeds the correlated attempt (whose company_id IS the tenant scope)
+// to the NON-FATAL timeline seam. A timeline fault can never break the 200 or the
+// retry FSM; company ALWAYS flows from the row, never the webhook body.
+describe('timeline hooks — CT-05', () => {
+    // (a) — end-of-call with a correlating attempt calls finalize ONCE with
+    // {attempt, message}, and the pre-existing attempt/note logic still runs.
+    test('(a) end-of-call → finalizeFromEndOfCallReport once with {attempt, message}; attempt/note logic intact', async () => {
+        withAttempt(attemptRow({ attempt_no: 1 }));
+        mockQuery.mockResolvedValue({ rows: [] });
+        const res = await post(endReport('vc_fin', 'customer-did-not-answer'));
+        expect(res.status).toBe(200);
+        expect(mockFinalize).toHaveBeenCalledTimes(1);
+        const arg = mockFinalize.mock.calls[0][0];
+        expect(arg.attempt.id).toBe(100);
+        expect(arg.attempt.company_id).toBe(COMPANY);         // company from the ROW
+        expect(arg.message.type).toBe('end-of-call-report');
+        expect(arg.message.call.id).toBe('vc_fin');
+        // Existing state machine undisturbed: mark-update + retry INSERT + note ran.
+        expect(mockQuery.mock.calls.some(c => /UPDATE outbound_call_attempts SET status = \$2/.test(String(c[0])))).toBe(true);
+        expect(mockQuery.mock.calls.some(c => /INSERT INTO outbound_call_attempts/i.test(String(c[0])))).toBe(true);
+        expect(mockAddNote).toHaveBeenCalled();
+        // The status-update seam is NOT touched on an end-of-call.
+        expect(mockApplyStatusUpdate).not.toHaveBeenCalled();
+    });
+
+    // (b) — NON-FATAL: finalize THROWING must not break the 200 and, crucially,
+    // must not starve the retry FSM (finalize runs BEFORE the state-machine writes;
+    // the inner wrapper is what stops a throw from skipping them). This is the
+    // negative-control target — remove the wrapper and these FSM assertions go red.
+    test('(b) finalize THROWS → still 200 AND attempt state machine unaffected (non-fatal wrapper)', async () => {
+        withAttempt(attemptRow({ attempt_no: 1 }));
+        mockQuery.mockResolvedValue({ rows: [] });
+        mockFinalize.mockRejectedValueOnce(new Error('timeline boom'));
+        const res = await post(endReport('vc_boom', 'customer-did-not-answer'));
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true });
+        expect(mockFinalize).toHaveBeenCalledTimes(1);
+        // The throw did NOT skip the FSM — mark-update + retry INSERT + note + event.
+        expect(mockQuery.mock.calls.some(c => /UPDATE outbound_call_attempts SET status = \$2/.test(String(c[0])))).toBe(true);
+        expect(mockQuery.mock.calls.some(c => /INSERT INTO outbound_call_attempts/i.test(String(c[0])))).toBe(true);
+        expect(mockAddNote).toHaveBeenCalled();
+        expect(eventService.logEvent).toHaveBeenCalledWith(
+            COMPANY, 'job', 50, 'outbound_call_retry', expect.any(Object), 'system'
+        );
+    });
+
+    // (b2) — finalize also runs on a REPEAT (already-terminal) webhook, BEFORE the
+    // idempotence no-op (граничный-2: "idempotence no-op happens AFTER finalize").
+    test('(b2) repeat end-of-call on a terminal attempt → finalize still runs; NO 2nd FSM write', async () => {
+        withAttempt(attemptRow({ status: 'no_answer' })); // already terminal
+        const res = await post(endReport('vc_repeat', 'customer-did-not-answer'));
+        expect(res.status).toBe(200);
+        expect(mockFinalize).toHaveBeenCalledTimes(1);   // finalize re-runs (idempotent)
+        // The idempotence guard fired: no attempt writes, no note, no retry math.
+        expect(mockQuery).toHaveBeenCalledTimes(1);      // only the correlation SELECT
+        expect(mockAddNote).not.toHaveBeenCalled();
+        expect(mockComputeNext).not.toHaveBeenCalled();
+    });
+
+    // (c) — status-update with a correlating attempt calls applyStatusUpdate;
+    // finalize is not called and the attempt table is untouched.
+    test('(c) status-update (correlating attempt) → applyStatusUpdate({attempt, message}); no finalize, no attempt writes', async () => {
+        withAttempt(attemptRow());
+        const res = await post(statusUpdate('vc_live', 'ringing'));
+        expect(res.status).toBe(200);
+        expect(mockApplyStatusUpdate).toHaveBeenCalledTimes(1);
+        const arg = mockApplyStatusUpdate.mock.calls[0][0];
+        expect(arg.attempt.company_id).toBe(COMPANY);          // company from the ROW
+        expect(arg.message.type).toBe('status-update');
+        expect(arg.message.call.id).toBe('vc_live');
+        expect(mockFinalize).not.toHaveBeenCalled();
+        expect(mockComputeNext).not.toHaveBeenCalled();
+        expect(mockQuery).toHaveBeenCalledTimes(1);            // only the correlation SELECT
+    });
+
+    // (d) — a call we did not place: neither timeline fn fires (foreign call ignored).
+    test('(d) status-update with NO correlating attempt → applyStatusUpdate NOT called (foreign call ignored)', async () => {
+        withAttempt(null); // correlation SELECT → no row
+        const res = await post(statusUpdate('foreign-live', 'ringing'));
+        expect(res.status).toBe(200);
+        expect(mockApplyStatusUpdate).not.toHaveBeenCalled();
+        expect(mockFinalize).not.toHaveBeenCalled();
+        expect(mockQuery).toHaveBeenCalledTimes(1);           // only the SELECT, then drop
+    });
+
+    test('(d) end-of-call with NO correlating attempt → finalize NOT called (foreign call ignored)', async () => {
+        withAttempt(null);
+        const res = await post(endReport('foreign-eoc', 'voicemail'));
+        expect(res.status).toBe(200);
+        expect(mockFinalize).not.toHaveBeenCalled();
+        expect(mockApplyStatusUpdate).not.toHaveBeenCalled();
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
+    // (e) — company scoping: the ROW company is what reaches the seam; a spoofed
+    // body companyId is never the source (the route hands over the attempt row).
+    test('(e) company scoping — finalize gets the ROW company; spoofed body companyId ignored', async () => {
+        withAttempt(attemptRow({ company_id: COMPANY }));
+        mockQuery.mockResolvedValue({ rows: [] });
+        const eoc = endReport('vc_scope', 'customer-did-not-answer');
+        eoc.companyId = 'c0000000-0000-4000-8000-0000000000f1';          // spoof
+        eoc.message.companyId = 'c0000000-0000-4000-8000-0000000000f1';  // spoof
+        const res = await post(eoc);
+        expect(res.status).toBe(200);
+        expect(mockFinalize).toHaveBeenCalledTimes(1);
+        // The company source is the attempt row, never the spoofed body.
+        expect(mockFinalize.mock.calls[0][0].attempt.company_id).toBe(COMPANY);
+        expect(JSON.stringify(mockFinalize.mock.calls[0][0].attempt)).not.toContain('0000000000f1');
+    });
+
+    test('(e) company scoping — status-update hands applyStatusUpdate the ROW company', async () => {
+        withAttempt(attemptRow({ company_id: COMPANY }));
+        const su = statusUpdate('vc_scope2', 'in-progress');
+        su.companyId = 'c0000000-0000-4000-8000-0000000000f1';          // spoof
+        su.message.companyId = 'c0000000-0000-4000-8000-0000000000f1';  // spoof
+        const res = await post(su);
+        expect(res.status).toBe(200);
+        expect(mockApplyStatusUpdate.mock.calls[0][0].attempt.company_id).toBe(COMPANY);
+        expect(JSON.stringify(mockApplyStatusUpdate.mock.calls[0][0].attempt)).not.toContain('0000000000f1');
     });
 });

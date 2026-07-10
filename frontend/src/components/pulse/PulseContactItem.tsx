@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import type { Call } from '../../types/models';
 import { tomorrowAtInTZ } from '../../utils/companyTime';
+import { isAiAnsweredBy } from './pulseHelpers';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -43,8 +44,6 @@ export const REASON_LABELS: Record<string, string> = {
     estimate_approved: 'Estimate approved', time_confirmed: 'Time confirmed',
 };
 
-const AI_ANSWERED_BY_MARKERS = ['ai', 'vapi', 'bot', 'assistant'];
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatExactTime(date: Date, tz: string): string {
@@ -69,11 +68,6 @@ function formatRelativeOrDate(date: Date, tz: string): string {
         return `${hours}h ago`;
     }
     return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz });
-}
-
-function isAiAnsweredBy(answeredBy: string | null | undefined): boolean {
-    const normalized = (answeredBy || '').toLowerCase();
-    return AI_ANSWERED_BY_MARKERS.some(marker => normalized.includes(marker));
 }
 
 /** Get initials from a name or phone */

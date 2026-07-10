@@ -8145,3 +8145,70 @@ Three largely-disjoint streams: backend slot-passthrough+validation (SP-01) / ba
 **Wave 2 (manual):** TS-08 (VAPI OUTBOUND assistant schema PATCH) — after TS-02.
 **Wave 3:** TS-09 (jest + build + logic-review + manual VAPI/e2e) — after all.
 Three streams: backend engine-shaping/skill (TS-01→TS-02) / backend thread+gate (TS-03, TS-04) / frontend (TS-05, TS-06→TS-07). Only cross-stream tie: TS-04/TS-05 depend on TS-03's additive `slot_json`/body shape (contract-only). **Slot-engine work is SMALL (input-shaping in TS-01); the VAPI PATCH (TS-08) and the owner test call (TS-24) are the only manual steps.**
+
+---
+
+## OUTBOUND-CALL-TIMELINE-001 — план (robot calls in the Pulse timeline)
+
+> **Related docs:** requirements `## OUTBOUND-CALL-TIMELINE-001` (FR-1…9, AC-1…10); architecture `## OUTBOUND-CALL-TIMELINE-001` (§0–§9, Decisions A–F); spec `Docs/specs/OUTBOUND-CALL-TIMELINE-001.md` (S1–S11 + mapping table + sid algorithm); test-cases `Docs/test-cases/OUTBOUND-CALL-TIMELINE-001.md` (TC-CT-001…026: 18 unit + 5 integration + 3 FE; 11 P0). **NO migration. NO new SSE names. NO new endpoints.**
+
+### CT-01: `vapiCallTimelineService.js` — the timeline engine (NEW file)
+**Цель:** one non-fatal service both hooks call: placement row, mid-call status, finalize (+sid re-key/merge, transcript/summary, recording, SSE).
+**Файлы:** `backend/src/services/vapiCallTimelineService.js` (new).
+**Трогать нельзя:** `db/callsQueries.js` `upsertCall` SQL (call it, don't fork it); `outbound_call_attempts` (this service NEVER writes it).
+**Ожидаемый результат:** exports `recordPlacement`, `applyStatusUpdate`, `finalizeFromEndOfCallReport`, `mapVapiEndedReasonToCallStatus`, `resolveFinalSid`. Spec S1–S4/S6 exactly: synthetic sid `vapi:<vapiCallId>`; `direction:'outbound'`; guarded `answered_by='ai'` UPDATE; mapping table (voicemail_left/no-answer/busy/completed-if-duration/failed); re-key UPDATE → merge on existing real row / 23505; transcript `transcription_sid='vapi_<id>'` + `raw_payload.gemini_summary`; recording `recording_sid='vapi_<id>'`, `source:'vapi'`; child rows only AFTER sid resolution; full-row `publishCallUpdate('call.updated')`; every export try/catch'd (log + null, never throws). Company id ONLY from the attempt arg (isolation — AC-9).
+**Зависимости:** нет. **Wave 0.** Статус: ✅ DONE
+
+### CT-02: reconciler guards — synthetic sids invisible to Twilio pollers + 15-min sweeper
+**Цель:** prevent the 5-min stale sweep from killing a live robot call (Twilio-404→failed, `reconcileStale.js:185-191`); cap orphaned live rows.
+**Файлы:** `backend/src/services/reconcileStale.js`, `backend/src/db/callsQueries.js`.
+**Трогать нельзя:** the CA-row reconcile logic (404→failed for real sids stays); `upsertCall`.
+**Ожидаемый результат:** stale SELECT (`reconcileStale.js:20-26`) + `getNonFinalCalls` (`callsQueries.js:314-323`) gain `AND call_sid LIKE 'CA%'`; new sweeper in `reconcileStaleCalls`: non-final `call_sid LIKE 'vapi:%'` older than 15 min → `failed`/`is_final=true`/`ended_at=COALESCE(…, now())` + `publishCallUpdate`. Existing CA-sid behavior byte-identical (TC-CT-012…014).
+**Зависимости:** нет. **Wave 0.** Статус: ✅ DONE
+
+### CT-03: recording proxy — stream `recording_url` for non-Twilio sids
+**Цель:** VAPI recordings playable via the existing player URL.
+**Файлы:** `backend/src/routes/calls.js` (`GET /:callSid/recording.mp3`, `:526-567`).
+**Трогать нельзя:** route mount/middleware (`src/server.js:122` — `authenticate, requireCompanyAccess`); the `RE…` Twilio REST branch; `/media` route.
+**Ожидаемый результат:** branch on `/^RE/i.test(recording.recording_sid)`: false → require `recording.recording_url` (else 404), `fetch` it WITHOUT auth headers, pipe with upstream Content-Type (fallback `audio/wav`), `!ok`→502. TC-CT-015/016.
+**Зависимости:** нет. **Wave 0.** Статус: ✅ DONE
+
+### CT-04: worker placement hook
+**Цель:** the live row appears the moment the call is placed (softphone model).
+**Файлы:** `backend/src/services/outboundCallWorker.js`.
+**Трогать нельзя:** claim loop, business-hours clamp, retry math, `placeCall` contract, the `vapi_call_id` stamp itself.
+**Ожидаемый результат:** in `processAttempt`, immediately after the `vapi_call_id` UPDATE (`:266-276`): `await vapiCallTimelineService.recordPlacement({attempt, vapiCallId: result.vapiCallId, dialedNumber: attempt.phone || job.customer_phone, callerId: process.env.VAPI_OUTBOUND_TWILIO_NUMBER || process.env.OUTBOUND_CALLER_ID || null})` — hook failure never blocks/re-classifies the dial (TC-CT-003).
+**Зависимости:** after CT-01. **Wave 1.** Статус: ✅ DONE
+
+### CT-05: webhook hooks — status-update branch + finalize call
+**Цель:** live mid-call transitions + finalized row with duration/summary/transcript/recording.
+**Файлы:** `backend/src/routes/vapiCallStatus.js`.
+**Трогать нельзя:** secret auth, correlation/anti-spoof (company from the row ONLY), idempotence gate, `classifyEndedReason`, booked/declined/retry/exhaust writes + note texts (byte-identical), safe-fail 200 envelope.
+**Ожидаемый результат:** (a) `message.type==='status-update'` → correlate by `call.id`, `applyStatusUpdate({attempt, message})`, 200 — NO attempt writes; (b) end-of-call path: after correlation, before the state-machine writes, `finalizeFromEndOfCallReport({attempt, message})` in its own try/catch. TC-CT-008…011.
+**Зависимости:** after CT-01. **Wave 1.** Статус: ✅ DONE
+
+### CT-06: FE (optional P2) — AI chip on the thread-feed call tile
+**Цель:** the feed tile shows the same AI marker the sidebar already has.
+**Файлы:** `frontend/src/components/pulse/pulseHelpers.ts`, `frontend/src/components/pulse/PulseCallListItem.tsx`, `frontend/src/components/pulse/PulseContactItem.tsx` (import move only).
+**Трогать нельзя:** `callToCallData` mapping shape; sidebar marker behavior; `callTypes.ts` (answeredBy already exists).
+**Ожидаемый результат:** move `AI_ANSWERED_BY_MARKERS`+`isAiAnsweredBy` to `pulseHelpers.ts` (export), import in `PulseContactItem` (no behavior change) and in `PulseCallListItem` — render a `Bot` icon (lucide, `size-3.5`, `var(--blanc-ink-3)`, `title="AI call"`) beside the status pill when `isAiAnsweredBy(call.answeredBy)`. `npm run build` green. TC-CT-025.
+**Зависимости:** нет (renders once backend sets answered_by). **Wave 1.** Статус: ✅ DONE (shared `isAiAnsweredBy` in `pulseHelpers.ts`; Bot chip on the feed call tile; inbound Sara also marked — intended)
+
+### CT-07: MANUAL / VAPI — OUTBOUND assistant `serverMessages += 'status-update'`
+**Цель:** VAPI actually sends mid-call status-updates to `/api/vapi/call-status` (FR-7; without it CT-05a is inert — silent degradation, not a blocker).
+**Файлы:** `voice-agent/assistants/parts-visit-scheduler.json` (repo half); live = REST PATCH `VAPI_OUTBOUND_ASSISTANT_ID` (not in git).
+**Ожидаемый результат:** serverMessages contains `end-of-call-report` + `status-update`; artifact/recording enabled so `recordingUrl`/`transcript`/`summary` arrive. GOTCHAs (vapi-sara memory): `get` first (live drifts), CLI update PANICS → REST PATCH, re-inject `VAPI_TOOLS_SECRET` on every model write. **Live PATCH = deploy-time manual step.**
+**Зависимости:** after CT-05. **Wave 2 (manual).** Статус: ⏳ deploy-time MANUAL — repo JSON sync + live REST PATCH of OUTBOUND assistant `c1e2831b-e91f-46a9-86d8-6b40252bd29a` (`serverMessages += status-update`, artifact/recording/transcript/summary on end-of-call); NOT yet applied (CT-05a status-update stays inert until then — graceful degrade, end-of-call still finalizes)
+
+### CT-08: verify — jest + build + regression
+**Цель:** lock the mapping, the sid algorithm, non-fatality, the guards and the proxy.
+**Файлы:** `tests/vapiCallTimelineService.test.js` (new), `tests/outboundCallWorker.test.js` (extend), `tests/vapiCallStatusWebhook.test.js` (extend), `tests/reconcileStale.test.js` (new), `tests/callsRecordingProxy.test.js` (new).
+**Трогать нельзя:** production code.
+**Ожидаемый результат:** TC-CT-001…023 green (incl. red→green negative controls for the non-fatal guarantees); existing `outboundCallWorker`/`vapiCallStatusWebhook`/`callFlowRuntime.vapi` suites green (Sara regression TC-CT-026); `cd frontend && npm run build` exit 0 (TC-CT-024/025). Worktree: `--testPathIgnorePatterns "/node_modules/"`.
+**Зависимости:** after CT-01…06. **Wave 2.** Статус: ✅ DONE via Tester+Reviewer — **107** backend jest green across 6 suites (`vapiCallTimelineService` / `callsRecordingProxy` / `reconcileStaleSynthetic` (new) + `outboundCallWorker` / `vapiCallStatusWebhook` (extended) + Sara-regression), incl. red→green negative controls for the non-fatal guarantees; frontend `cd frontend && npm run build` exit 0; Reviewer **APPROVED**
+
+### OUTBOUND-CALL-TIMELINE-001 — порядок выполнения и параллелизм
+**Wave 0 (parallel, disjoint files):** CT-01 (`vapiCallTimelineService.js`) ∥ CT-02 (`reconcileStale.js`+`callsQueries.js`) ∥ CT-03 (`routes/calls.js`) ∥ CT-06 (frontend chip — independent of backend).
+**Wave 1:** CT-04 (`outboundCallWorker.js`) + CT-05 (`routes/vapiCallStatus.js`) — both after CT-01 (they call its exports), parallel to each other (disjoint files).
+**Wave 2:** CT-08 (jest+build) — after all code; CT-07 (VAPI serverMessages) — manual, deploy-time (repo half can land any time after CT-05).
+Только одна межзадачная связь: CT-04/CT-05 → CT-01 exports. **Никаких миграций, никаких новых роутов/SSE-имён; вся фича deploy-safe при выключенном роботе (hooks просто не вызываются).**

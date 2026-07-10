@@ -4578,3 +4578,54 @@ explicitly non-critical. Surface: `backend/src/services/mailAgentClassifier.js` 
 **Affected integrations:** Albusto slot engine (read-only, via the existing proxy — input-shaping only); VAPI (outbound assistant tool-schema PATCH + injected `variableValues`); ZenBooker/Twilio only via the already-shipped robot-call lifecycle (unchanged).
 
 **Protected parts (must not break):** `slot-engine/src/*` (NO change); the schedule recs route + `fetchSlotRecommendations` request/response contract (additive `technician_id` field only); `CustomTimeModal` layout / recs fetch shape / `onConfirm` payload / `disabled` guard / `buildTechGroups` (all-tech timelines); the task-action execute route envelope + `registry` contract (slot threaded opaquely); the outbound worker + `slot_json` copy-forward; `scheduleService.rescheduleItem` (time-only, never reassigns); the SLOTPICK auto-compute + `buildRobotCallSlot` ISO→`slot_json` validation; `outbound_call_attempts` schema (NO new migration); `authedFetch.ts` / `useRealtimeEvents.ts`.
+
+---
+
+## OUTBOUND-CALL-TIMELINE-001 — outbound robot calls appear in the Pulse timeline like softphone calls (live row + recording/transcript/summary) (2026-07-09)
+
+**Relationship:** extends OUTBOUND-PARTS-CALL-001 (and its -BTN/-SLOTPICK/-TECHSLOT follow-ups). Today a robot call leaves NOTHING in the customer's timeline: VAPI originates its own Twilio leg with its own statusCallback (`outboundCallService.js`), our Twilio webhooks never fire, and `vapiCallStatus.js` updates only `outbound_call_attempts` + job notes. Enhancement of the write path only — the Pulse read/render pipeline (sidebar lateral, thread feed, SSE, pills, player, summary) already exists and is REUSED unchanged.
+
+**Краткое описание:** the moment the worker places a VAPI robot call, a live `calls` row appears in the customer's Pulse timeline (softphone gold model, `routes/voice.js:344-385`); the VAPI end-of-call webhook finalizes it with status/duration and attaches the VAPI transcript (transcripts row), the VAPI summary (`transcripts.raw_payload.gemini_summary` — renders for free) and the VAPI recording (recordings row + extended playback proxy). The call is marked as AI (`calls.answered_by='ai'`, same marker family the UI already renders for inbound Sara).
+
+**Пользовательские сценарии:**
+1. Dispatcher fires 🤖 "Let the robot call" → within seconds the customer's Pulse thread shows an outbound call tile "Ringing" with the Bot marker; the sidebar reorders live.
+2. The customer talks to the robot and books → the tile flips to Completed with duration; expanding it plays the recording and shows the AI summary + transcript.
+3. Customer doesn't pick up / voicemail → the tile finalizes as No Answer / Voicemail; each retry attempt later appears as its OWN tile (like repeated softphone attempts).
+4. Dispatcher opens the contact during a live robot call → the Call button is blocked ("Someone is already on a call") exactly as during a live softphone call.
+5. VAPI's end-of-call webhook is lost → the row still finalizes (Twilio reconcile after re-key; hard 15-min sweeper otherwise) — no eternally-"live" threads.
+
+**FRs:**
+- **FR-1 (placement row):** after `placeCall` succeeds and `vapi_call_id` is stamped (`outboundCallWorker.js:266-276`), upsert a parent `calls` row: `status='initiated'`, `is_final=false`, `direction='outbound'`, from=robot caller-ID, to=dialed number, `company_id`/timeline from the attempt (`findOrCreateTimeline(phone, company_id)`), + SSE `call.updated`. Failure is NON-FATAL (never blocks the dial).
+- **FR-2 (sid):** `call_sid` = real Twilio CallSid of VAPI's leg (`phoneCallProviderId`) when known; synthetic `vapi:<vapiCallId>` fallback at placement; re-key/merge to the real sid as soon as it is learned (status-update or end-of-call). Exact algorithm in spec S4 (handles the coldReconcile duplicate window; `ON CONFLICT (call_sid)` stays the dedup key).
+- **FR-3 (AI marker):** `calls.answered_by='ai'` (mig 016 column). VERIFIED: inbound Sara rows get `answered_by` = SIP username via child-leg propagation (`inboxWorker.js:436-448`) and the UI already renders a Bot icon when `answered_by` contains `ai|vapi|bot|assistant` (`PulseContactItem.tsx:46,74-77,183`) — reuse the same column/markers, no new mechanism.
+- **FR-4 (finalize):** on `end-of-call-report` (after the existing correlation, company from the attempt row — NEVER the body), map `endedReason`→calls.status (voicemail_left / no-answer / busy / completed-if-duration / failed), set started/ended/duration from the payload, `is_final=true`, + SSE. Independent of and non-disruptive to the OPC1 retry state machine.
+- **FR-5 (transcript+summary):** VAPI transcript → transcripts row (synthetic `transcription_sid='vapi_<vapiCallId>'`, precedent `aai_<jobId>` in `transcriptionService.js:180`); VAPI summary → `raw_payload.gemini_summary` (renders via `formatCall`, `pulse.js:388-397`).
+- **FR-6 (recording):** VAPI `recordingUrl` → recordings row (synthetic `recording_sid='vapi_<vapiCallId>'`, `source='vapi'`); extend `GET /api/calls/:callSid/recording.mp3` (`calls.js:526-567`) to stream `recordings.recording_url` when the sid is not a Twilio `RE…` sid.
+- **FR-7 (live transitions, cheap):** handle VAPI `status-update` messages at the already-receiving `/api/vapi/call-status` (today dropped at `:114`): map queued/ringing/in-progress onto the row + early re-key. Requires adding `status-update` to the OUTBOUND assistant's serverMessages (ops); degrades silently without it.
+- **FR-8 (reconciler safety):** Twilio pollers must never see synthetic sids: `call_sid LIKE 'CA%'` guard in `reconcileStale.js` and `getNonFinalCalls` (без него `reconcileStaleCalls` — every 5 min, 3-min threshold — 404s on `vapi:` sids and would mark a LIVE robot call `failed` mid-call, `reconcileStale.js:185-191`). Plus a 15-min sweeper finalizing orphaned non-final `vapi:%` rows as `failed`.
+- **FR-9 (no backfill):** historical attempts are NOT backfilled; only calls placed after deploy get rows.
+
+**ACs:**
+- **AC-1:** worker places a call → within one SSE round-trip the thread feed shows a non-final outbound tile (pill Ringing) and the sidebar shows the Bot marker; `hasActiveCall` blocks the Call button.
+- **AC-2:** end-of-call `customer-ended-call` with `durationSeconds=95`, summary, transcript, recordingUrl → row `completed`/95s/final; transcripts row with `gemini_summary`; recordings row; player streams via the proxy; SSE fired.
+- **AC-3:** `customer-did-not-answer` → `no-answer`; `voicemail` → `voicemail_left`; `customer-busy` → `busy`; zero-duration pipeline error → `failed`. Attempt retry/exhaust behavior byte-identical to before.
+- **AC-4:** `phoneCallProviderId` learned at finalize when a coldReconcile-created row for the same real sid already exists → ONE merged row remains (timeline/company/answered_by preserved), synthetic row deleted, no unique-violation escape.
+- **AC-5:** placement-hook DB failure → call still dials; webhook finalize-hook failure → webhook still 200 and retry insert still happens (jest-proven).
+- **AC-6:** `reconcileStaleCalls` never Twilio-fetches a `vapi:%` sid; a non-final `vapi:%` row older than 15 min is finalized `failed` + SSE; `CA…` rows behave exactly as today.
+- **AC-7:** 3 retry attempts → 3 distinct rows/tiles, one per attempt.
+- **AC-8:** recording proxy: `RE…` sid → Twilio REST path unchanged; `vapi_…` sid → streams `recording_url`; neither → 404. Route stays behind `authenticate, requireCompanyAccess`.
+- **AC-9:** company isolation: all writes carry the attempt row's `company_id`; a foreign/unknown `call.id` webhook remains a 200 no-op; timeline resolution is company-scoped.
+- **AC-10:** inbound Sara flow (dial, rows, recording, AssemblyAI transcript, marker) unchanged; `npm run build` + backend jest green.
+
+**Ограничения и нефункциональные требования:**
+- **NO migration** — `calls.answered_by` (mig 016), `calls.timeline_id` (mig 028), `recordings.recording_url`, `transcripts.raw_payload` all exist; synthetic sids fit `VARCHAR(100)`.
+- NO new SSE event names (LEADS-NEW-BADGE gotcha avoided) — reuse `call.updated` already in `sseManager.ts` namedEvents.
+- NO change to the OPC1 retry state machine, `classifyEndedReason` semantics, booked/declined/exhaust branches, or job-note texts.
+- Never write recordings/transcripts under a synthetic sid before re-key (FK `REFERENCES calls(call_sid)` would block the re-key UPDATE).
+- Zero required frontend changes (rendering verified end-to-end); optional P2: AI chip in the thread-feed tile (`PulseCallListItem`) reusing the sidebar's marker logic.
+
+**Потенциально вовлечённые модули:** backend `services/vapiCallTimelineService.js` (NEW — the only new file), `services/outboundCallWorker.js` (placement hook), `routes/vapiCallStatus.js` (status-update branch + finalize call), `services/reconcileStale.js` + `db/callsQueries.js` (CA-guard + sweeper), `routes/calls.js` (proxy branch); frontend (optional) `components/pulse/PulseCallListItem.tsx` + `pulseHelpers.ts`. External: OUTBOUND VAPI assistant serverMessages (`voice-agent/assistants/parts-visit-scheduler.json` + live PATCH).
+
+**Затронутые интеграции:** VAPI (payload fields already sent, currently discarded; serverMessages config), Twilio (read-only reconcile of the re-keyed leg). Zenbooker/Front — нет.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):** `inboxWorker.processVoiceEvent`/`upsertCall` conflict semantics (`callsQueries.js:15-63` — extend call sites only, not the query); softphone path `routes/voice.js:344-385`; Sara inbound `callFlowRuntime.renderVapiNode`; OPC1 webhook auth + anti-spoof + idempotence (`vapiCallStatus.js:51-63,106-144`); `outbound_call_attempts` schema/state machine; `authedFetch.ts`; `useRealtimeEvents.ts`; `src/server.js` core (no new mounts needed).

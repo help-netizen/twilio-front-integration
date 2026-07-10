@@ -30,11 +30,17 @@ jest.mock('../backend/src/services/outboundCallSettingsService', () => ({
 jest.mock('../backend/src/services/groupRouting', () => ({
     isBusinessHours: jest.fn(),
 }));
+// OUTBOUND-CALL-TIMELINE-001 (CT-04): the placement→timeline mirror seam. Mocked
+// so no real DB/SSE runs; the worker only calls recordPlacement.
+jest.mock('../backend/src/services/vapiCallTimelineService', () => ({
+    recordPlacement: jest.fn(),
+}));
 
 const jobsService = require('../backend/src/services/jobsService');
 const outboundCallService = require('../backend/src/services/outboundCallService');
 const settings = require('../backend/src/services/outboundCallSettingsService');
 const groupRouting = require('../backend/src/services/groupRouting');
+const vapiCallTimeline = require('../backend/src/services/vapiCallTimelineService');
 const worker = require('../backend/src/services/outboundCallWorker');
 
 const CO = '00000000-0000-0000-0000-000000000001';
@@ -76,6 +82,10 @@ beforeEach(() => {
     jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: null, total: null, amountPaid: null });
     // resolveBusinessHoursGroup reads companies/user_groups — default a group row.
     mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+    // CT-04 placement mirror: default resolves (non-fatal seam). clearAllMocks
+    // above wipes call history each test; this resets the impl (e.g. after a
+    // per-test mockRejectedValue) so leaks can't cross tests.
+    vapiCallTimeline.recordPlacement.mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -349,5 +359,103 @@ describe('processAttempt — outstanding-balance injection into placeCall', () =
         expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
         expect(outboundCallService.placeCall.mock.calls[0][0].balanceDue).toBeUndefined();
         warnSpy.mockRestore();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// OUTBOUND-CALL-TIMELINE-001 (CT-04) — placement → Pulse timeline mirror.
+// After a successful placeCall + vapi_call_id stamp, processAttempt calls
+// vapiCallTimelineService.recordPlacement to create the live "Ringing" row.
+// It is a NON-FATAL best-effort side-effect: a timeline failure must never
+// block or re-classify the dial, and a call that never placed gets no row.
+// ---------------------------------------------------------------------------
+describe('CT-04: recordPlacement placement mirror (non-fatal timeline row)', () => {
+    test('successful placeCall → recordPlacement ONCE with {attempt, vapiCallId, dialedNumber, callerId}', async () => {
+        const attempt = mkAttempt();
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ct04_ok' });
+
+        await worker.processAttempt(attempt);
+
+        expect(vapiCallTimeline.recordPlacement).toHaveBeenCalledTimes(1);
+        const arg = vapiCallTimeline.recordPlacement.mock.calls[0][0];
+        // vapiCallId is the id placeCall just returned.
+        expect(arg.vapiCallId).toBe('vapi_ct04_ok');
+        // The company-bearing attempt row is threaded through verbatim (company
+        // scoping is derived from attempt.company_id inside the service).
+        expect(arg.attempt).toBe(attempt);
+        expect(arg.attempt.company_id).toBe(CO);
+        // dialedNumber mirrors the number handed to placeCall as customerNumber.
+        expect(arg.dialedNumber).toBe('+16175551212');
+        expect(arg).toHaveProperty('callerId');
+    });
+
+    test('dialedNumber falls back to job.customer_phone when attempt.phone is null', async () => {
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
+
+        await worker.processAttempt(mkAttempt({ phone: null }));
+
+        // Same expression placeCall received as customerNumber (job fallback).
+        expect(vapiCallTimeline.recordPlacement.mock.calls[0][0].dialedNumber)
+            .toBe(DIALABLE_JOB.customer_phone);
+    });
+
+    test('callerId comes from VAPI_OUTBOUND_TWILIO_NUMBER env (business line)', async () => {
+        const prev = process.env.VAPI_OUTBOUND_TWILIO_NUMBER;
+        process.env.VAPI_OUTBOUND_TWILIO_NUMBER = '+16175006181';
+        try {
+            jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+            mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+            outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
+
+            await worker.processAttempt(mkAttempt());
+
+            expect(vapiCallTimeline.recordPlacement.mock.calls[0][0].callerId).toBe('+16175006181');
+        } finally {
+            if (prev === undefined) delete process.env.VAPI_OUTBOUND_TWILIO_NUMBER;
+            else process.env.VAPI_OUTBOUND_TWILIO_NUMBER = prev;
+        }
+    });
+
+    // KEY non-fatal guarantee: a recordPlacement throw must NOT fail processAttempt,
+    // the vapi_call_id stamp still stands, and the dial is NOT re-classified into
+    // the failed/retry path. (Negative control: delete the try/catch around
+    // recordPlacement in outboundCallWorker.js and this test goes red — the
+    // rejection propagates out of processAttempt.)
+    test('recordPlacement THROWS → processAttempt still succeeds, vapi_call_id stamped, dial NOT re-classified', async () => {
+        const attempt = mkAttempt();
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
+        vapiCallTimeline.recordPlacement.mockRejectedValue(new Error('timeline db down'));
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        // Does not throw / reject — the guard swallows the timeline failure.
+        await expect(worker.processAttempt(attempt)).resolves.toBeUndefined();
+
+        // vapi_call_id was still stamped (it happens BEFORE the hook, unchanged).
+        const storeCall = mockQuery.mock.calls.find(
+            (c) => /vapi_call_id = \$2/i.test(c[0]) && c[1] && c[1][1] === 'vapi_ok',
+        );
+        expect(storeCall).toBeTruthy();
+        // The placed dial was NOT flipped to failed nor a retry enqueued.
+        const failFlip = mockQuery.mock.calls.find((c) => /SET status = 'failed', reason = \$2/i.test(c[0]));
+        expect(failFlip).toBeFalsy();
+        const insertNext = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
+        expect(insertNext).toBeFalsy();
+        warnSpy.mockRestore();
+    });
+
+    test('FAILED placeCall (ok:false) → recordPlacement NOT called (no row for a call that never placed)', async () => {
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({ ok: false, error: 'vapi_http_500' });
+
+        await worker.processAttempt(mkAttempt({ attempt_no: 1 }));
+
+        expect(vapiCallTimeline.recordPlacement).not.toHaveBeenCalled();
     });
 });

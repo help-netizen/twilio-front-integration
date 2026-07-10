@@ -31,6 +31,20 @@
  * ── SAFE-FAIL ────────────────────────────────────────────────────────────────
  *   Any unexpected error is logged and answered 200 (never a 500-storm that VAPI
  *   would hammer-retry). We never swallow silently — every branch logs.
+ *
+ * ── PULSE TIMELINE — OUTBOUND-CALL-TIMELINE-001 (CT-05) ──────────────────────
+ *   Two NON-FATAL hooks into `vapiCallTimelineService` (CT-01) put the robot call
+ *   into the Pulse `calls` timeline like a softphone call. They ride ON TOP of the
+ *   retry FSM and can never disturb it (each is separately try/wrapped, company
+ *   scope from the correlated row):
+ *     • `status-update`      → `applyStatusUpdate` (live ringing→in-progress pill +
+ *                              early re-key to the real Twilio sid). NO attempt
+ *                              writes. Inert until the assistant emits status-update
+ *                              (ops step CT-07) — silent degradation, not a blocker.
+ *     • `end-of-call-report` → `finalizeFromEndOfCallReport` (terminal row +
+ *                              duration/summary/transcript/recording), run BEFORE
+ *                              the state-machine writes so a state throw can't
+ *                              starve it and a repeat webhook re-finalizes idempotently.
  */
 
 const express = require('express');
@@ -45,6 +59,13 @@ const {
     computeNextScheduledAt,
     resolveBusinessHoursGroup,
 } = require('../services/outboundCallWorker');
+// OUTBOUND-CALL-TIMELINE-001 (CT-05): the NON-FATAL timeline seam (CT-01). Puts
+// the robot call into the Pulse `calls` timeline — mid-call live transitions
+// (applyStatusUpdate) and the finalized row with duration/summary/transcript/
+// recording (finalizeFromEndOfCallReport). Its entry points are internally
+// guarded (never throw), but every call here is ALSO wrapped so a hard fault can
+// never disturb the attempt/retry state machine or the webhook's 200.
+const vapiCallTimelineService = require('../services/vapiCallTimelineService');
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
@@ -101,16 +122,64 @@ async function addAttemptNote(jobId, text) {
     }
 }
 
+// ─── Correlation (anti-spoof, S10) ────────────────────────────────────────────
+//
+// The body's `message.call.id` (vapi_call_id) is the ONLY value we trust from a
+// machine webhook. Everything else — companyId, jobId, attempt_no — is read from
+// the correlated `outbound_call_attempts` row. Shared by BOTH the end-of-call
+// classifier and the CT-05 status-update timeline branch so the anti-spoof rule
+// (company from the ROW, never the body) lives in exactly one place. An unknown /
+// foreign id → null (the caller answers a 200 no-op).
+async function correlateAttempt(vapiCallId) {
+    const { rows } = await db.query(
+        `SELECT id, company_id, job_id, task_id, attempt_no, status, phone, contact_id, slot_json
+         FROM outbound_call_attempts
+         WHERE vapi_call_id = $1
+         LIMIT 1`,
+        [vapiCallId]
+    );
+    return rows[0] || null;
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 router.post('/', webhookSecretAuth, async (req, res) => {
     try {
         const message = req.body && req.body.message;
-        // Only end-of-call reports classify an attempt. Other server messages
-        // (status-update, conversation-update, tool-calls…) can reach this same
-        // server.url and carry the same call.id while the call is still LIVE —
-        // acting on them would prematurely terminate the dialing attempt and
-        // schedule a spurious retry mid-call. Ignore anything else → 200 no-op.
+
+        // ── OUTBOUND-CALL-TIMELINE-001 (CT-05a): mid-call status-update ───────
+        // status-update / conversation-update / tool-calls all reach this same
+        // server.url and share the dialing attempt's call.id while the call is
+        // still LIVE. They must NEVER classify the attempt or schedule a retry
+        // (that is end-of-call's job — S2.3). BUT a `status-update` is worth a
+        // TIMELINE write: it carries the live pill transition (ringing →
+        // in-progress) and is usually where the real Twilio sid first appears
+        // (early re-key). Correlate it (same anti-spoof SELECT → company from the
+        // ROW), hand it to the NON-FATAL timeline seam, and return 200 WITHOUT
+        // touching outbound_call_attempts. These only ARRIVE once the assistant's
+        // serverMessages includes 'status-update' (ops step CT-07); until then
+        // this branch is inert — silent degradation, not a blocker.
+        if (message && message.type === 'status-update') {
+            const liveCallId = message.call && message.call.id;
+            if (liveCallId) {
+                const liveAttempt = await correlateAttempt(liveCallId);
+                // Unknown/foreign call.id → drop (we didn't place it) — no timeline row.
+                if (liveAttempt) {
+                    try {
+                        await vapiCallTimelineService.applyStatusUpdate({ attempt: liveAttempt, message });
+                    } catch (tlErr) {
+                        console.warn('[vapiCallStatus] applyStatusUpdate failed (non-fatal):', tlErr && tlErr.message);
+                    }
+                }
+            }
+            return res.json({ ok: true });
+        }
+
+        // Only end-of-call reports classify an attempt. Any OTHER message type
+        // (conversation-update, tool-calls…) can reach this same server.url and
+        // carry the same call.id while the call is still LIVE — acting on them
+        // would prematurely terminate the dialing attempt and schedule a spurious
+        // retry mid-call. Ignore anything else → 200 no-op.
         if (!message || message.type !== 'end-of-call-report') {
             return res.json({ ok: true });
         }
@@ -124,14 +193,7 @@ router.post('/', webhookSecretAuth, async (req, res) => {
         }
 
         // Correlate → the row is the sole source of companyId (anti-spoof S10).
-        const { rows } = await db.query(
-            `SELECT id, company_id, job_id, task_id, attempt_no, status, phone, contact_id, slot_json
-             FROM outbound_call_attempts
-             WHERE vapi_call_id = $1
-             LIMIT 1`,
-            [vapiCallId]
-        );
-        const attempt = rows[0];
+        const attempt = await correlateAttempt(vapiCallId);
         if (!attempt) {
             // Unknown call.id → 200 no-op, no leak (foreign/duplicate/late webhook).
             return res.json({ ok: true });
@@ -139,6 +201,22 @@ router.post('/', webhookSecretAuth, async (req, res) => {
 
         const companyId = attempt.company_id;
         const jobId = attempt.job_id;
+
+        // ── OUTBOUND-CALL-TIMELINE-001 (CT-05b): finalize the Pulse timeline ──
+        // Put the finished robot call into the `calls` timeline (terminal row +
+        // duration/summary/transcript/recording, re-keyed to the real Twilio sid).
+        // Placed AFTER correlation but BEFORE the attempt state-machine writes AND
+        // the idempotence no-op (S3.1 / граничный-2): a state-machine throw can't
+        // starve the timeline, and a REPEAT (already-terminal) webhook still re-
+        // finalizes idempotently. NON-FATAL: the seam is internally guarded, but we
+        // wrap it too so a hard fault can neither break the 200 nor disturb the
+        // retry FSM below. Company scope flows from `attempt`, never the body. If
+        // this is lost, the 15-min synthetic sweeper (CT-02) is the safety net.
+        try {
+            await vapiCallTimelineService.finalizeFromEndOfCallReport({ attempt, message });
+        } catch (tlErr) {
+            console.warn('[vapiCallStatus] finalize timeline failed (non-fatal):', tlErr && tlErr.message);
+        }
 
         // Idempotence (S9 / edge-6): a non-`dialing` attempt is terminal → no-op.
         if (attempt.status !== 'dialing') {
