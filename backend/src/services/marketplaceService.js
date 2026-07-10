@@ -18,6 +18,12 @@ class MarketplaceServiceError extends Error {
 // SLOT-ENGINE-001 Phase 2: app_key gate for the Smart Slot Engine integration.
 const SMART_SLOT_ENGINE_APP_KEY = 'smart-slot-engine';
 
+// REPAIR-ADVISOR-001: app_key gate for the AI Repair Advisor integration.
+// Gate-only (provisioning_mode='none', seed 161) — like smart-slot-engine it
+// resolves through the GENERIC marketplace_installations status='connected' path;
+// NO isAppConnected special-case (only google-email/telephony-twilio are special).
+const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';
+
 // SEND-DOC-001 §4.3: the Google Email marketplace app (seeded with
 // provisioning_mode='none' and NO install row) derives its connected state from
 // the REAL Gmail mailbox, not a marketplace_installations row. Special-cased in
@@ -695,6 +701,7 @@ async function retryProvisioning(companyId, actorId, installationId, { requestId
 module.exports = {
     MarketplaceServiceError,
     SMART_SLOT_ENGINE_APP_KEY,
+    AI_REPAIR_ADVISOR_APP_KEY,
     isAppConnected,
     listApps,
     listInstallations,

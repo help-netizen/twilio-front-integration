@@ -8524,3 +8524,244 @@ TASK-YLA-002 (yelpLeadQueries)      TASK-YLA-003 (yelpGreetingService)  ← inde
 - **R4 — Relay-source assumption (GAP #1).** `NormalizedInboundMessage` carries no `reply_to`/raw headers (`MailProvider.js:25–43`); the parser derives relay+token from `from_email`. Confirm a live Yelp sample's `from_email` really is `reply+<hex>@messaging.yelp.com`; if Yelp uses a display-alias From with the relay only in a `Reply-To:` header, `GmailProvider` must surface `reply_to` and the YLA-P-04/YLA-D-01 fixtures update.
 - **R5 — Hook placement is the whole additivity story.** The branch MUST sit before the no-contact Mail-Secretary branch (:138) — a 1a Yelp lead has no phone → no contact and would otherwise hit `reviewInboundEmail({noContact:true})`. YLA-N-03 guards this; do not relocate below :143.
 - **R6 — Migration number drift.** Re-verify 161 is free immediately before creating the file (parallel worktrees add migrations).
+
+---
+
+## REPAIR-ADVISOR-001 — tasks (2026-07-10)
+
+> **STATUS: planned** — task breakdown by Planner (05). Not started. Backend-only, best-effort, additive.
+>
+> Marketplace app `ai-repair-advisor` (gate-only, mirror of seed 126). When a company has it **connected**, human-path job creation (`createDirectJob` = `POST /api/jobs`, and `convertLead`) emits `job.created` post-commit → fast-returning `kb-diagnostics` subscriber → `setImmediate(runForJob)` (detached) → `ragClient.ask` (KB RAG) → append **exactly ONE** three-section diagnostic note authored `AI Repair Advisor` (`created_by='system'`). Any failure ⇒ no note, logged, job untouched. Idempotent (skip if the job already carries an `AI Repair Advisor` note). **No frontend work** — the tile + connect/disconnect UI render from the seed.
+>
+> **Authoritative sources:** Requirements `Docs/requirements.md › REPAIR-ADVISOR-001` (FR-01…12, AC-01…10, UC-01…07) · Architecture `Docs/architecture.md › REPAIR-ADVISOR-001` (files §1, hook §2, flow §3, note §5, migration §6, seams §7 — authoritative) · Spec `Docs/specs/REPAIR-ADVISOR-001.md` (contracts §3.1–§3.8, error matrix §4, security §5) · Test-cases `Docs/test-cases/REPAIR-ADVISOR-001.md` (TC-RA-001…083, 59 cases; 55 automated / 3 manual-psql+E2E / 1 covered-by-existing).
+
+### Cross-cutting constraints (apply to EVERY task below)
+
+- **Backend is CommonJS.** New services mirror `zenbookerClient.js` (lazy axios singleton + `retryRequest`) and the `marketplaceService`/`eventSubscribers` idioms; do not import — mirror.
+- **Worktree Jest gotcha (RUN-BLOCKER):** the root `package.json` jest config sets `testPathIgnorePatterns: ["/node_modules/", "/\\.claude/worktrees/"]`, so a bare `npm test` **silently skips every test in this worktree** (false green). EVERY new/edited test here MUST be run with the explicit override: `npx jest --runTestsByPath tests/<file>.test.js --testPathIgnorePatterns "/node_modules/"` (replaces the config array, drops the worktree-ignore). House precedent: `tests/googleEmailMarketplace.test.js` run header.
+- **Tests live in root `tests/*.test.js`** (there is NO `backend/**/__tests__` for these). Jest 30, CommonJS. HTTP mocked at the `axios` seam; DB mocked at `jest.mock('../backend/src/db/connection', …)`; service collaborators via `jest.mock('../backend/src/services/…')`.
+- **Best-effort isolation (INVARIANT):** the advisor is strictly **post-commit, detached, best-effort**. No failure mode may delay or fail the `POST /api/jobs` / `convertLead` response, and none may write a malformed/partial note. Emit is additive-only; existing create success/latency/txn behavior stays **byte-for-byte unchanged**.
+- **Tenancy:** `companyId` originates ONLY from `req.companyFilter?.company_id` at the create site, travels on `event.company_id`, and is read by the subscriber. `getJobById(jobId, companyId)` and `isAppConnected(companyId, …)` are company-scoped; `addNote` targets only that job. **No client-supplied company id anywhere** (adversarial decoy `payload.companyId` must be ignored — TC-RA-081). No new HTTP route (connect/disconnect reuses the already-guarded `/api/marketplace/*`).
+- **Out-of-scope triggers stay note-free:** the Zenbooker-webhook sync path and the scheduler/`agentWorker` path do NOT call `createDirectJob`/`convertLead` and MUST emit no `job.created` (AC-06/E-11). Do not add emit there, and do not add a DB `AFTER INSERT` trigger.
+- **Note = exactly the 3 spec'd sections** (Probable causes → Diagnosis steps → Diagnostic mode), diagnostic-mode section conditional on RAG availability. No Stage-2 sections (parts / dispatcher-questions / safety).
+- **Product = Albusto** (UI/user-visible strings never say "Blanc"; `--blanc-*` are internal tokens only). The note text is English.
+- **Deploy is master-only, owner-gated — NOT part of these tasks.** Scope = build + test + review + changelog/memory. Migration 161 SQL is smoke-run against a prod-copy PG in verification (T7), never a prod deploy.
+
+### Protected files (forbidden in ALL tasks unless explicitly listed as files-allowed)
+
+- `src/server.js` (core middleware — **0 changes by design**; no new mount needed), `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`.
+- `backend/src/services/eventBus.js` (dispatch core — the sequential-`await` loop at `:84-105` is reused, NOT modified), `backend/src/services/zenbookerClient.js` (mirror source), the `jobsService.addNote` seam contract (`jobsService.js:1157`, reused as-is).
+- Migrations ≤160 (never modified — changes only via the new seed 161), `MarketplaceConnectDialog`/`MarketplaceDisconnectDialog` and the 5 existing seeded marketplace apps + their pages, the ZB-sync and scheduler job-insert paths.
+
+---
+
+### REPAIR-ADVISOR-T1: Marketplace seed 161 + `ensureMarketplaceSchema` registration + `AI_REPAIR_ADVISOR_APP_KEY` const (P0, S)
+
+**Repo:** backend · **Size:** S · **Depends-on:** — (foundation; enables connect/disconnect end-to-end + unblocks the gate)
+
+**Goal / what-where:** land the data-foundation so the "AI Repair Advisor" tile renders and the runtime gate resolves. Gate-only app, **exact structural copy of seed 126** (`126_seed_smart_slot_engine_marketplace_app.sql`).
+- `backend/db/migrations/161_seed_ai_repair_advisor_marketplace_app.sql` (new) — `INSERT INTO marketplace_apps (...) VALUES (...) ON CONFLICT (app_key) DO UPDATE SET … updated_at = NOW();` with `app_key='ai-repair-advisor'`, `name='AI Repair Advisor'`, `provider_name='Albusto'`, `category='operations'`, `app_type='internal'`, `provisioning_mode='none'`, `status='published'`, `requested_scopes='[]'::jsonb`, metadata `requires_credential_input:false` + a short `access_summary`, **no `setup_path`** (pure gate). Copy seed 126 field-for-field; only values differ.
+- `backend/db/migrations/rollback_161_seed_ai_repair_advisor_marketplace_app.sql` (new) — `DELETE FROM marketplace_apps WHERE app_key='ai-repair-advisor';` (mirror `rollback_145`; idempotent, FK-safe by construction — gate-only app has no install rows depending on it).
+- `backend/src/db/marketplaceQueries.js` — in `ensureMarketplaceSchema()` add one line `await query(readMigration('161_seed_ai_repair_advisor_marketplace_app.sql'));` alongside the existing 126/132/145 seed registrations (idempotent, applies at boot).
+- `backend/src/services/marketplaceService.js` — add `const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';` and **export it** (mirror `SMART_SLOT_ENGINE_APP_KEY`). **Do NOT add an `isAppConnected` special-case** — this key resolves through the generic `marketplace_installations status='connected'` path (only `google-email`/`telephony-twilio` are special-cased).
+- `tests/repairAdvisorEvents.test.js` (**new** — create the file with the marketplace/gate `describe` blocks only; T5/T6 append their own blocks later).
+
+**⚠️ Migration-number risk (re-verify, do NOT assume):** architecture chose **161** (verified master max = 155, all-refs max = 160 shipped prod 2026-07-10, worktree local max = 151 — nothing in 152–160 exists locally). Parallel branches drift. **Immediately before creating the file**, re-run: `for ref in $(git for-each-ref --format='%(refname)' refs/heads refs/remotes); do git ls-tree --name-only "$ref":backend/db/migrations 2>/dev/null | grep -E '^[0-9]+_' | sed -E 's/_.*//'; done | sort -n | uniq | tail`. If 161 is taken, bump to the first free number above the entire range (and update the two filenames + the `readMigration` call + this doc).
+
+**Files-allowed:** the 4 files above + `tests/repairAdvisorEvents.test.js` (new).
+**Files-forbidden:** migrations ≤160; the `isAppConnected` special-case block (do NOT special-case this key); `MarketplaceConnectDialog`; existing seeds/pages; `src/server.js`.
+
+**Definition of Done / tests green:** `ensureMarketplaceSchema()` is idempotent and registers seed 161; the gate resolves via the **generic** install path for the new key.
+- Jest (this task): **TC-RA-070** (`ensureMarketplaceSchema` calls `readMigration('161_…sql')` — mock `db/connection`), **TC-RA-074** (`isAppConnected(COMPANY_A,'ai-repair-advisor')` → `true` iff a `connected` install exists; generic path, NOT the google-email/telephony overlay — mirror `tests/googleEmailMarketplace.test.js` mock seam).
+- Manual/psql (deferred to T7 verification / owner-gated deploy, not blocking this task's Jest DoD): **TC-RA-071** (seed inserts row, `ON CONFLICT` no-op on re-run), **TC-RA-072** (rollback removes exactly that row). **TC-RA-073** (tile connect/disconnect E2E) is owner-gated manual.
+
+**Status:** pending
+
+---
+
+### REPAIR-ADVISOR-T2: `ragClient.js` outbound RAG client + `.env.example` + full parse/transport unit suite (P0, M)
+
+**Repo:** backend · **Size:** M · **Depends-on:** — (independent; the outbound client is self-contained)
+
+**Goal / what-where:** new outbound client, mirror of `zenbookerClient.js` (lazy axios singleton via `getClient()`, `retryRequest`).
+- `backend/src/services/ragClient.js` (new) — `ask({ question, filters })` → `POST {RAG_API_URL}/ask` with body `{ question, filters:{ brand, unitType } }`, wrapped in `retryRequest(fn, 1)` (see decision below); axios `timeout = RAG_TIMEOUT_MS` (default `40000`). Reads `RAG_API_URL` (default `https://app.albusto.com/aihelper/api`) + `RAG_TIMEOUT_MS` at module-eval time (like `zenbookerClient.getClient()`). **Inert** (returns `null`, **zero HTTP**) when `RAG_API_URL` is blank/unset. Tolerant parse per spec §3.1 → normalized `{ summary, causes:[{cause,likelihood}], steps:[{step,expected?}], diagnosticMode, confidence, grounded }` (top-level `summary`/`likely_causes`; fenced ```json block → `diagnosis_steps`|`repair_instructions` alias, `diagnostic_mode`|`diagnostic_mode_entry`|`service_mode`; fence-missing → first-`{`/last-`}` fallback; fenced-block wins on `confidence`/`grounded` conflict). **Empty ⇒ null rule:** after parse, `causes.length===0 && steps.length===0 && !diagnosticMode` → `null` (a `summary` alone is NOT enough). **Best-effort: never throws** — transport failure / timeout / non-2xx / parse failure → `console.warn('[RAG] …', err.message)` + return `null`.
+- `.env.example` — add `RAG_API_URL=https://app.albusto.com/aihelper/api` and `RAG_TIMEOUT_MS=40000`.
+- `tests/ragClient.test.js` (new) — mirror `tests/zenbookerClient.test.js` seam: `jest.doMock('axios', () => ({ create: jest.fn(() => ({ post })) }))` + `jest.resetModules()` + `require()` after env set; `afterEach` restores env + `jest.dontMock('axios')`; spy `console.warn`.
+
+**⚑ Retry-arg decision (spec vs brief conflict — Implementer sets it, test asserts what ships):** the spec pins `retryRequest(fn, 1)` = **single attempt for every error class** (`retryRequest` at `zenbookerClient.js:540` loops `for attempt in [0, maxRetries)`; 5xx retry only happens at `maxRetries ≥ 2`). **Default = `1`** ⇒ TC-RA-010 (timeout) and TC-RA-011 (502) assert `post` called **exactly once**; TC-RA-012 (4xx) short-circuits at one call. If the Implementer chooses to retry 5xx/timeouts, call `retryRequest(fn, N>1)` and re-point TC-RA-011 to `N` calls while TC-RA-012 (4xx) stays at one. Ship-and-assert must agree.
+
+**Files-allowed:** `backend/src/services/ragClient.js` (new), `.env.example`, `tests/ragClient.test.js` (new).
+**Files-forbidden:** `zenbookerClient.js` (mirror, don't modify); `kbDiagnosticsService.js` (T3/T4).
+
+**Definition of Done / tests green:** **TC-RA-001…TC-RA-016** (all 16, Group A) — blank URL → null + zero HTTP (001); happy full envelope → exact normalized object (002); no diag_mode → `diagnosticMode:null` (003); `repair_instructions` alias (004); step string-vs-object + empty dropped (005); no-fence `{…}` fallback (006); unparseable → null (007); empty causes+steps → null (008); summary-alone → null (009); timeout → null, one attempt (010); 502 → null, not retried at `maxRetries=1` (011, see decision); 4xx short-circuit (012); 429 retryable class (013); likelihood passthrough numeric-else-null (014); never-throws internal fault → null (015); fenced-block overrides top-level (016).
+
+**Status:** pending
+
+---
+
+### REPAIR-ADVISOR-T3: `kbDiagnosticsService` pure helpers `buildQuestion` + `formatNote` + unit suite (P0, M)
+
+**Repo:** backend · **Size:** M · **Depends-on:** REPAIR-ADVISOR-T2 (so `kbDiagnosticsService.js` can lazy-`require('./ragClient')` coherently; pure-fn tests don't need it, but keep the module valid)
+
+**Goal / what-where:** create `backend/src/services/kbDiagnosticsService.js` and **export** the two pure functions (house precedent: `rulesEngine.evaluateConditions` / `ruleActions.render`) so they're unit-testable directly.
+- `buildQuestion(job)` (§3.4) — pure over `rowToJob` fields. Problem text `trim(description) || trim(comments) || ''`; service `job_type || service_name || null`; assemble `Customer-reported problem: <problem>. Service type: <svc>.[ Model: <model>.]`; both empty ⇒ return `''` (signals a downstream STOP). Filters from `job.metadata` **case-insensitive key match, omit absent (never empty strings):** `filters.brand` ← `brand`|`make`; `filters.unitType` ← `unit_type`|`unitType`|`appliance`; `model` folded into question **text**, never `filters`. Returns `{ question, filters }`.
+- `formatNote(normalized)` (§3.5) — pure; returns the markdown **string** (author is applied later by `addNote`, NOT here) or `null` (defensive, if nothing renders). Fixed order: title `**AI Repair Advisor — diagnostic starting point**` → optional summary line → `**Probable causes**` (`- <cause> — ~<pct>% likely`, `pct = round(likelihood*100)` if ≤1 else `round(likelihood)`; null/NaN ⇒ bare bullet) → `**Diagnosis steps**` (`N. <step>[ (expected: <expected>)]`) → `**Diagnostic mode**` **only if `diagnosticMode` non-empty (omit header-and-all otherwise)** → footer `_AI-generated from service-manual knowledge base — verify on-site before acting._`. No Stage-2 sections ever.
+- `tests/kbDiagnosticsService.test.js` (**new** — create with the `buildQuestion` + `formatNote` `describe` blocks only; T4 appends `runForJob`/idempotency/isolation blocks). Pure — no mocks.
+
+**Files-allowed:** `backend/src/services/kbDiagnosticsService.js` (new — helpers now; `runForJob` added in T4), `tests/kbDiagnosticsService.test.js` (new).
+**Files-forbidden:** `ragClient.js` (reuse as-is from T2); `jobsService.js`/`marketplaceService.js`.
+
+**Definition of Done / tests green:**
+- `buildQuestion` — **TC-RA-020…TC-RA-027** (8): description-primary (020); comments-fallback (021); both-empty→`''` / service-only path (022); `job_type` wins over `service_name` (023); brand/unitType from metadata + alias order (024); case-insensitive keys (025); `model` in text not filters (026); no metadata → `filters==={}` (027).
+- `formatNote` — **TC-RA-030…TC-RA-036** (7): full 3-section (030); 2-section omits Diagnostic-mode header (031); summary optional (032); likelihood rendering rule (033); step `expected` optional (034); no Stage-2 sections (035); defensive `null` (036).
+
+**Status:** pending
+
+---
+
+### REPAIR-ADVISOR-T4: `kbDiagnosticsService.runForJob` orchestration + integration/idempotency/isolation suite (P0, L)
+
+**Repo:** backend · **Size:** L · **Depends-on:** REPAIR-ADVISOR-T1 (const `AI_REPAIR_ADVISOR_APP_KEY`), REPAIR-ADVISOR-T2 (`ragClient.ask`), REPAIR-ADVISOR-T3 (same file + `buildQuestion`/`formatNote`)
+
+**Goal / what-where:** add `runForJob({ jobId, companyId })` to `kbDiagnosticsService.js` — detached, best-effort; **entire body wrapped** so any throw ⇒ `console.warn('[kb-diagnostics] …', err.message)` + no note (never re-thrown). Lazy `require('./ragClient' | './jobsService' | './marketplaceService')` inside the function (boot-order safety). Ordered step contract (§3.3), each early-return ⇒ no note:
+1. `isAppConnected(companyId, AI_REPAIR_ADVISOR_APP_KEY)` — `!connected` ⇒ STOP (re-checked here so mid-flight disconnect E-01 is honored; NO job read, NO RAG).
+2. `getJobById(jobId, companyId)` — `!job` ⇒ STOP (deleted/foreign, company-scoped).
+3. **Idempotency guard** — `(job.notes || []).some(n => n && n.author === 'AI Repair Advisor')` ⇒ STOP (null-guarded).
+4. `question = buildQuestion(job)` — empty/whitespace ⇒ STOP.
+5. `result = await ragClient.ask({ question, filters })` — `null` ⇒ STOP.
+6. `text = formatNote(result)` — `null` ⇒ STOP.
+7. `await jobsService.addNote(jobId, text, [], 'AI Repair Advisor', 'system')` — the single note.
+- `tests/kbDiagnosticsService.test.js` (extend — append `runForJob` / idempotency / tenant-isolation `describe` blocks; do NOT modify T3's helper blocks). Mock seam: `jest.mock` `ragClient` (`ask`), `jobsService` (`getJobById`,`addNote`), `marketplaceService` (`isAppConnected`, `AI_REPAIR_ADVISOR_APP_KEY:'ai-repair-advisor'`).
+
+**Files-allowed:** `backend/src/services/kbDiagnosticsService.js` (extend), `tests/kbDiagnosticsService.test.js` (extend).
+**Files-forbidden:** `jobsService.js`/`marketplaceService.js`/`ragClient.js` (all reused via lazy require, mocked in tests — no source changes); T3's `buildQuestion`/`formatNote` (don't rewrite).
+
+**Definition of Done / tests green:** connected + good payload → `addNote` called **exactly once** with `(jobId, <non-empty markdown>, [], 'AI Repair Advisor', 'system')`; every failure/empty path ⇒ no note, no throw; idempotency + tenant isolation hold.
+- **TC-RA-040** (idempotency: existing advisor note → STOP, no RAG/addNote; null-guard variant); **TC-RA-050** (not connected → no read/RAG/note); **TC-RA-051** (getJobById→null → no RAG/note/throw); **TC-RA-052** (addNote once, exact args — AC-01/FR-07/FR-08); **TC-RA-053** (ask→null → no note); **TC-RA-054** (ask throws → swallowed, `[kb-diagnostics]` logged); **TC-RA-055** (company-scoped reads/gate use event `companyId`); **TC-RA-056** (empty question → STOP@4); **TC-RA-057** (formatNote→null → STOP@6); **TC-RA-058** (addNote throws → outer guard swallows); **TC-RA-059** (ordered gate — not-connected short-circuits BEFORE getJobById); **TC-RA-080** (MANDATORY tenant isolation — A-connected/B-not → note on A's job only).
+
+**Status:** pending
+
+---
+
+### REPAIR-ADVISOR-T5: `kb-diagnostics` subscriber in `eventSubscribers.js` + `setImmediate` offload + subscriber suite (P0, M)
+
+**Repo:** backend · **Size:** M · **Depends-on:** REPAIR-ADVISOR-T4 (subscriber lazy-requires `kbDiagnosticsService.runForJob`; test `jest.mock`s it — module must exist)
+
+**Goal / what-where:** register the subscriber in `backend/src/services/eventSubscribers.js` (§3.8):
+```
+eventBus.subscribe('kb-diagnostics', 'job.created', (event) => {
+  const jobId = event.payload?.id;
+  const companyId = event.company_id;
+  if (!jobId || !companyId) return;
+  setImmediate(() => require('./kbDiagnosticsService').runForJob({ jobId, companyId }).catch(() => {}));
+});
+```
+- **CRITICAL — sequential-dispatch offload:** `dispatchToSubscribers` runs subscribers **sequentially with `await sub.handle(event)`** (`eventBus.js:84-105`). The handler MUST **return immediately** after scheduling `setImmediate` — it must NOT `await runForJob` (the ~30s RAG round-trip would stall siblings `rules-engine`/`billing-meter` for the whole company). Matches `'job.created'` only. Lazy `require` avoids boot-order cycles. `.catch(()=>{})` at the call site absorbs detached rejections (belt-and-suspenders over runForJob's own guard).
+- `tests/repairAdvisorEvents.test.js` (extend — append subscriber `describe` blocks). Seam: real `eventBus.subscribe`/`emit` + `jest.mock('../backend/src/db/connection', …)` (mirror `tests/rulesEngine.test.js`) + `jest.mock('../backend/src/services/kbDiagnosticsService', () => ({ runForJob: jest.fn() }))`; flush the detached dispatch with `await new Promise(r => setImmediate(r))` **twice** (eventBus dispatch, then the subscriber's own `setImmediate`).
+
+**Files-allowed:** `backend/src/services/eventSubscribers.js`, `tests/repairAdvisorEvents.test.js` (extend).
+**Files-forbidden:** `backend/src/services/eventBus.js` (reuse the dispatch loop as-is — do NOT modify); `kbDiagnosticsService.js` (mocked in tests, lazy-required in the subscriber).
+
+**Definition of Done / tests green:** subscriber matches only `job.created`, returns fast, schedules a detached `runForJob`, guards missing ids, and reads authoritative `event.company_id`.
+- **TC-RA-064** (matches `'job.created'` only — unrelated type ⇒ `runForJob` not called); **TC-RA-065** (returns FAST — `handle` resolves while a never-resolving `runForJob` is still pending; invoked once after a `setImmediate` tick with `{jobId,companyId}`); **TC-RA-066** (missing `jobId`/`companyId` → not scheduled); **TC-RA-067** (detached `runForJob` rejection swallowed by call-site `.catch`, no `unhandledRejection`); **TC-RA-081** (companyId provenance — subscriber uses `event.company_id`, ignores adversarial `payload.companyId` decoy).
+
+**Status:** pending
+
+---
+
+### REPAIR-ADVISOR-T6: Emit `job.created` in `createDirectJob` + `convertLead` + emit-site & out-of-scope suite (P0, M)
+
+**Repo:** backend · **Size:** M · **Depends-on:** REPAIR-ADVISOR-T1 (const/seed for logical end-to-end), REPAIR-ADVISOR-T5 (shared test file append order). Emit code itself only needs the existing `eventBus.emit`.
+
+**Goal / what-where:** additive post-commit emission at the two human create sites (§3.2). **`emit` writes `domain_events` synchronously then `setImmediate`-dispatches — it never blocks or throws into the producer; wrap in `.catch(()=>{})` regardless.**
+- `backend/src/services/jobsService.js` — in `createDirectJob`, immediately before `return { job_id: localJob.id, … }` (**~L567**, post-commit, after the metadata merge): `require('./eventBus').emit(companyId, 'job.created', { id: localJob.id, jobId: localJob.id, companyId }, { actorType:'user', aggregateType:'job', aggregateId: localJob.id }).catch(()=>{})`. **Always** emits. Additive only — existing success/latency/txn behavior byte-for-byte unchanged.
+- `backend/src/services/leadsService.js` — in `convertLead`, guarded by `if (localJobCreated)` (flag set at ~L792), before the final `return { job_id: localJobId, … }` (**~L1028**): emit `job.created` with `{ id: localJobId, jobId: localJobId, companyId }`. The `localJobCreated===true` guard prevents a duplicate note when an existing local job is reused.
+- **Verify anchors before editing** (line numbers drift): confirm the `createDirectJob` return site and the `convertLead` `localJobCreated` guard/return by reading the functions — the spec pins them but re-check.
+- `tests/repairAdvisorEvents.test.js` (extend — append emit-site + out-of-scope `describe` blocks). Seam: `jest.isolateModules` + `jest.doMock('../backend/src/services/eventBus', () => ({ emit: jest.fn().mockResolvedValue({}) }))`, run the REAL `createDirectJob`/`convertLead` via the `loadService` idiom (mirror `tests/jobsCreate.test.js` ZB-failure fallback + `tests/leadsService.convert.test.js`), spy `eventBus.emit`.
+
+**Files-allowed:** `backend/src/services/jobsService.js` (emit site only), `backend/src/services/leadsService.js` (emit site only), `tests/repairAdvisorEvents.test.js` (extend). *(Alt: emit-site cases 060–063 may instead be filed as additions to `tests/jobsCreate.test.js` / `tests/leadsService.convert.test.js` — both already load the real services; either is acceptable.)*
+**Files-forbidden:** the ZB-webhook sync path & scheduler/`agentWorker` job-insert paths (must stay note-free — do NOT add emit; no `AFTER INSERT` trigger); `jobsService.addNote` seam; `createDirectJob`/`convertLead` existing logic (additive post-commit emit only); `eventBus.js`.
+
+**Definition of Done / tests green:** both human sites emit exactly one `job.created` with the load-bearing payload post-commit; convertLead reuse-branch emits nothing; create success is immune to a failing bus; out-of-scope paths emit nothing.
+- **TC-RA-060** (`createDirectJob` emits once, post-commit, `{id,jobId,companyId}` + opts; return shape unchanged); **TC-RA-061** (create still resolves when `emit` rejects — additive-only); **TC-RA-062** (`convertLead` emits when `localJobCreated===true`); **TC-RA-063** (`convertLead` does NOT emit on reuse `localJobCreated===false`); **TC-RA-083** (ZB-sync / scheduler paths emit no `job.created` — AC-06/E-11).
+
+**Status:** pending
+
+---
+
+### REPAIR-ADVISOR-T7: Full green sweep + migration-DB smoke + independent adversarial review (P0, M)
+
+**Repo:** backend · **Size:** M · **Depends-on:** T1–T6 (final gate)
+
+**Goal / what-where:** prove the whole feature is green and additive, with no regressions, and get a fresh adversarial read.
+- **Full Jest sweep (worktree override on EACH file):** `npx jest --runTestsByPath tests/ragClient.test.js tests/kbDiagnosticsService.test.js tests/repairAdvisorEvents.test.js --testPathIgnorePatterns "/node_modules/"` → all **55 automated** cases green. Plus regression: `tests/jobsCreate.test.js`, `tests/leadsService.convert.test.js`, `tests/googleEmailMarketplace.test.js`, `tests/marketplaceTelephonyOverlay.test.js` (create/convert/marketplace paths unchanged).
+- **Frontend build (no-op expected — zero FE code):** `cd frontend && npm run build` (tsc -b; prod Docker stricter, `noUnusedLocals`) must stay clean.
+- **Migration-DB smoke (verification, NOT deploy — lesson LIST-PAGINATION-001):** run `161_seed_…sql` then `rollback_161_…sql` against a disposable/prod-copy PG (e.g. `docker compose run app` one-shot before any `up -d`) → **TC-RA-071** (row present, `ON CONFLICT` re-run no-op), **TC-RA-072** (rollback removes exactly that row). Confirm 161 is still the free number at this moment.
+- **Independent adversarial review** (fresh reviewer, whole diff) against the INVARIANT: post-commit/detached/best-effort; emit additive byte-for-byte; subscriber returns fast (no `await runForJob`); idempotency author-guard; company scoping (no client company id, decoy ignored); note = 3 sections only; out-of-scope paths note-free; `retryRequest` arg matches the shipped assertion.
+- **Documented, not re-implemented:** **TC-RA-082** (401/403 on connect/disconnect) — covered by existing `/api/marketplace/*` guards + marketplace suites (no new route); **TC-RA-073** (tile connect/disconnect E2E) — owner-gated manual.
+
+**Files-allowed:** none (verification/review only; at most trivial test-flake fixups in the three feature test files with justification).
+**Files-forbidden:** any source change beyond fixing a defect the review finds (route defects back to the owning task's scope).
+
+**Definition of Done:** all 55 automated cases green under the override flag; regression suites green; `frontend` build clean; migration 161 up+down verified on a prod-copy; adversarial review sign-off with the INVARIANT checklist ticked; TC-RA-082/073 dispositions recorded.
+
+**Status:** pending
+
+---
+
+### REPAIR-ADVISOR-T8: Changelog + memory (P1, S)
+
+**Repo:** backend · **Size:** S · **Depends-on:** REPAIR-ADVISOR-T7
+
+**Goal / what-where:** record the feature (build/test/review complete; deploy owner-gated & separate).
+- `Docs/changelog.md` — new dated entry `## REPAIR-ADVISOR-001 — AI Repair Advisor (marketplace), Stage 1 (2026-07-…)`: gate-only seed 161; `job.created` emit at `createDirectJob`/`convertLead`; `kb-diagnostics` subscriber + detached `setImmediate(runForJob)`; `ragClient` best-effort; one 3-section note; idempotent; backend-only. Note the migration to run at deploy (161, idempotent) and the retry-arg decision as shipped.
+- **Memory** — append a MEMORY.md index line + a short note file (house practice) capturing the load-bearing gotchas: worktree jest override, `retryRequest(fn,1)`=single attempt, eventBus sequential-await → subscriber must offload via `setImmediate`, RAG-down⇒null⇒no-note best-effort, author-based idempotency, out-of-scope paths note-free, `RAG_API_URL` blank ⇒ inert.
+
+**Files-allowed:** `Docs/changelog.md`, memory files (`~/.claude/.../memory/*`).
+**Files-forbidden:** any source/test file.
+
+**Definition of Done:** changelog entry merged in house style; memory note + index line added; no code change.
+
+**Status:** pending
+
+---
+
+### Execution order & parallelism (REPAIR-ADVISOR-001)
+
+```
+Foundation:  T1 (seed 161 + marketplaceQueries + const)   ─┐  enables connect/disconnect + gate
+Parallel-safe (disjoint files):                            │
+   T2 (ragClient + .env + Group A)  ∥  T1                  │   T2 depends on nothing
+Sequential core (share kbDiagnosticsService.js):           │
+   T3 (buildQuestion/formatNote + B/C)  ← T2               │
+   T4 (runForJob + D/E + isolation-080)  ← T1, T2, T3      │
+Event wiring (share repairAdvisorEvents.test.js, append-only):
+   T5 (kb-diagnostics subscriber + 064-067,081)  ← T4      │
+   T6 (emit createDirectJob/convertLead + 060-063,083) ← T1, T5
+Gate:  T7 (full sweep + migration-DB smoke + adversarial review)  ← T1…T6
+       → T8 (changelog + memory)  ← T7
+```
+
+- **Critical path:** T1 → T3 → T4 → T5 → T6 → T7 → T8. **T2 runs fully in parallel with T1** (independent files), then feeds T3.
+- **Shared-file discipline (append-only, strictly sequential — no parallel edit):** `tests/kbDiagnosticsService.test.js` created in T3 (helper blocks), extended in T4 (runForJob blocks); `tests/repairAdvisorEvents.test.js` created in T1 (marketplace/gate blocks), extended in T5 (subscriber blocks) then T6 (emit blocks); `backend/src/services/kbDiagnosticsService.js` created in T3 (helpers), extended in T4 (runForJob). Each task appends its own disjoint `describe`/function blocks and must not modify a prior task's blocks.
+- **No new HTTP route, `src/server.js` = 0 changes** (connect/disconnect reuses guarded `/api/marketplace/*`).
+- **Migration to run at deploy:** 161 (idempotent seed) — owner-gated, separate from these tasks; smoke-verified up+down in T7.
+- **Every TC-RA id (001–083) is assigned:** A→T2 (16); B+C→T3 (15); D+E+080→T4 (12); 064-067+081→T5 (5); 060-063+083→T6 (5); 070+074→T1 (2 Jest) + 071/072/073 manual (T1 owns SQL, run in T7/owner); 082 covered-by-existing (T7 doc). 55 automated + 3 manual + 1 covered = 59.
+- **Size summary:** S — T1, T8; M — T2, T3, T5, T6, T7; L — T4. Total **8 tasks**.
+
+### Critical-path risks (explicit)
+
+1. **Migration collision (T1).** 161 is free now (local 151 / master 155 / all-refs 160), but parallel branches drift — T1 MUST re-verify the true max across all refs immediately before creating the file and bump if taken. Existing known gotcha.
+2. **Worktree jest-ignore (ALL test tasks).** Bare `npm test` silently skips this worktree ⇒ false green. Every run MUST use `--testPathIgnorePatterns "/node_modules/"`. Bake into each Tester step + T7.
+3. **eventBus sequential-await offload (T5).** `dispatchToSubscribers` awaits subscribers in series; if `kb-diagnostics` awaited the ~30s RAG call it would stall siblings for the whole company. The handler MUST only `setImmediate(runForJob)` and return — TC-RA-065 pins this.
+4. **RAG-down best-effort (T2/T4).** `ragClient.ask` never throws (null on failure/blank/empty); `runForJob` wraps the whole body so any throw ⇒ log + no note. Nothing may reach the create response — TC-RA-053/054/058/061 guard it.
+5. **Idempotency (T4).** One advisor note per job, ever — author-string guard (`n.author==='AI Repair Advisor'`, null-safe) covers redelivery/redispatch; the `convertLead` reuse guard (`localJobCreated`) prevents a second emit. TC-RA-040/063.
+6. **Retry-arg conflict (T2).** Spec pins `retryRequest(fn,1)` = single attempt for all error classes; the brief's "5xx retried" only holds at `maxRetries≥2`. Default 1; Implementer's arg and TC-RA-011's expected call-count must agree.
+7. **Anchor drift (T6).** `jobsService.js:567` / `leadsService.js:1028` / `:792` are spec-pinned but line numbers move — re-read the functions before inserting the emit.
+
+---
+
+Key plan decisions (for Orchestrator): 8 tasks (within 8–12), each ≤5 files (T1 mirrors ONBTEL-T1's seed-pair granularity), backend-only, `src/server.js` untouched by design. Splits chosen for incremental green: seed/const foundation (T1) unblocks the gate + connect/disconnect; the outbound client (T2) is fully independent and parallel to T1; pure helpers (T3) go green before the `runForJob` orchestration (T4); subscriber (T5) and emit sites (T6) are separate files/concerns. The mandatory tenant-isolation test (TC-RA-080) is filed with `runForJob` (T4); companyId-provenance (TC-RA-081) with the subscriber (T5). Migration 161 SQL is smoke-run up+down on a prod-copy in T7 (verification, not deploy); prod deploy is owner-gated and out of scope. Every TC-RA id is assigned to exactly one task.
+
+---
+

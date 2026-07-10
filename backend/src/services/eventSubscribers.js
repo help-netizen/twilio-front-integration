@@ -25,6 +25,22 @@ function registerSubscribers() {
         await billingService.recordUsageEvent(event).catch(() => {});
     });
 
+    // AI Repair Advisor (REPAIR-ADVISOR-001): on a human-path job.created, offload a
+    // detached, best-effort KB diagnostics run. The handler MUST return immediately —
+    // dispatchToSubscribers awaits subscribers sequentially, so awaiting the ~30s RAG
+    // round-trip here would stall siblings (rules-engine/billing-meter) for the whole
+    // company. Lazy require avoids boot-order cycles (mirrors billing-meter above).
+    eventBus.subscribe('kb-diagnostics', 'job.created', (event) => {
+        const companyId = event.company_id;
+        const jobId = event.payload && event.payload.id;
+        if (!jobId || !companyId) return;
+        const kbDiagnosticsService = require('./kbDiagnosticsService');
+        setImmediate(() => {
+            kbDiagnosticsService.runForJob({ jobId, companyId })
+                .catch((err) => console.warn('[kb-diagnostics] runForJob failed:', err && err.message));
+        });
+    });
+
     console.log(`[eventBus] ${eventBus._subscribers.length} subscriber(s) registered`);
 }
 

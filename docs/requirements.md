@@ -4700,3 +4700,138 @@ explicitly non-critical. Surface: `backend/src/services/mailAgentClassifier.js` 
 - Anti-spoof/idempotence webhook (`vapiCallStatus.js:125-224`), партиальный unique-индекс mig 158, claim-loop `outboundCallWorker.tick`.
 - `onPartArrived` / `startRobotCall` семантика (SLOTPICK/TECHSLOT ветки) — только добавка `queued`-штампа на успех.
 - `inboxWorker` guards (skipUpsert/voicemail-preserve :283-341) — не менять, хук читает их РЕЗУЛЬТАТ.
+
+## REPAIR-ADVISOR-001 — AI Repair Advisor (marketplace)
+
+**Status:** Requirements
+**Priority:** P1
+**Owner:** CRM / Integrations
+**Stage:** 1 (of a phased rollout — Stage 2 items listed under Non-goals)
+
+### 1. Purpose
+
+Add a marketplace app **"AI Repair Advisor"** (app key `ai-repair-advisor`) to Albusto CRM. A company connects/disconnects it in **Settings → Integrations** using the existing marketplace lifecycle. Once connected for a company, whenever a job is **created via a human path** the system asynchronously (best-effort) sends the job's problem text to the **KB knowledge-base RAG service** and appends **exactly ONE diagnostic note** to that job. The note gives the technician an evidence-grounded head start: probable causes, diagnosis steps, and how to enter the appliance model's diagnostic mode (when the manual documents one).
+
+Human paths in Stage 1 = **manual job creation** (`POST /api/jobs` → `createDirectJob`) and **lead→job conversion** (`convertLead`). The note is authored by `AI Repair Advisor` with `created_by='system'`, so it renders automatically in the job card and is non-editable by regular users.
+
+This is a **new feature**. It reuses the marketplace canon (F016/F018) and the `jobsService.addNote` seam; it introduces one new outbound integration client (`ragClient.js`) modeled on `zenbookerClient.js`. No frontend work is required — the marketplace tile and its connect/disconnect UI render automatically from the seed.
+
+### 2. User roles & permissions
+
+- **tenant_admin** (or any role holding `tenant.integrations.manage`) — connects/disconnects the app in Settings → Integrations. This is the only user-facing action.
+- **Dispatcher / technician / provider** — consume the resulting note in the job card (read-only; the note is `created_by='system'`). No new permission is granted to them.
+- The diagnostic note generation is a **system action** (no interactive user). It runs under the company context captured at job-creation time.
+
+### 3. Use cases
+
+#### UC-01: Connect the app
+tenant_admin opens Settings → Integrations → sees the "AI Repair Advisor" tile (rendered from the seed) with status "Available" → clicks Connect → marketplace installation status becomes `connected`. From now on, human-path job creation for this company triggers diagnostic notes.
+
+#### UC-02: Disconnect the app
+tenant_admin disconnects the app in Settings → Integrations → installation leaves `connected`. Subsequent job creations produce **no** diagnostic note. Existing notes on past jobs are untouched.
+
+#### UC-03: Job created manually → note appears
+App is connected. A user creates a job via `POST /api/jobs` (`createDirectJob`) with a problem description. Job creation returns success immediately. Asynchronously, the advisor queries the RAG service and appends **one** note (three sections) authored "AI Repair Advisor" to the job. The note appears in the job card.
+
+#### UC-04: Job created via lead conversion → note appears
+App is connected. A lead is converted to a job via `convertLead`. Same behavior as UC-03: one advisor note is appended to the resulting job.
+
+#### UC-05: App NOT connected → no note
+App is not connected (or disconnected) for the company. A job is created via a human path. **No** RAG call is made and **no** note is appended. Job creation is unaffected.
+
+#### UC-06: RAG service down → no note, job unaffected
+App is connected, but the RAG service is unreachable / times out / returns a non-2xx (e.g. current public tunnel 502). Job creation **succeeds normally**; the advisor swallows the error (logged), appends **no** note. The user sees no failure and no partial/error note.
+
+#### UC-07: Job with no / thin description → graceful attempt
+App is connected; the job has an empty or very thin description. The advisor still attempts with whatever text is available (`description`, falling back to `comments`, plus `job_type`/`service_name`). If the RAG returns nothing useful, the advisor degrades gracefully — it either appends no note or a note containing only the sections it could ground — and never crashes or writes a malformed note.
+
+### 4. Functional requirements
+
+| ID | Requirement | Priority |
+|----|-------------|----------|
+| FR-01 | Seed migration registers app `ai-repair-advisor` in `marketplace_apps` (catalog); the migration is added to `marketplaceQueries.ensureMarketplaceSchema()`. Connect/disconnect uses the existing `marketplace_installations` lifecycle (`status='connected'` = enabled). Tile + connect/disconnect UI render automatically (no FE work). | P0 |
+| FR-02 | Runtime gate `isAppConnected(companyId, 'ai-repair-advisor')` in `backend/src/services/marketplaceService.js`, mirroring the pattern at `schedule.js:200`. | P0 |
+| FR-03 | A `job.created` domain event is emitted via the eventBus at **both** human create sites — `createDirectJob` (`POST /api/jobs`) and `convertLead` — carrying at least `{ jobId, companyId }`. | P0 |
+| FR-04 | A new subscriber `kb-diagnostics` in `eventSubscribers.js` handles `job.created`: it checks the gate (FR-02) and, only when connected, schedules a best-effort task with `setImmediate` (fire-and-forget, established post-job-creation pattern). | P0 |
+| FR-05 | New `backend/src/services/ragClient.js` (modeled on `zenbookerClient.js`): `POST {RAG_API_URL}/ask` with body `{ question, filters: { brand, unitType } }`, bounded by `RAG_TIMEOUT_MS`. Parses response `{ summary, likely_causes:[{cause,probability}], + fenced structured JSON (diagnosis_steps / repair_instructions), confidence, grounded }`. | P0 |
+| FR-06 | The `question` is built from `jobs.description` (primary), falling back to `jobs.comments`, plus job type (`jobs.job_type` / `service_name`). Optional `filters.brand` / `filters.unitType` come from `jobs.metadata` custom fields **if present**; otherwise omitted — RAG works without brand/unit filters. | P0 |
+| FR-07 | On a usable RAG response, format **exactly ONE** note with **exactly THREE** sections, in order: **(a) probable causes** (each with a likelihood), **(b) diagnosis steps**, **(c) how to enter the model's diagnostic mode** — section (c) included **only if** the manual/RAG provides one. No other sections in Stage 1. | P0 |
+| FR-08 | Append the note via `jobsService.addNote(jobId, text, [], 'AI Repair Advisor', 'system')` → written to `jobs.notes` JSONB, `created_by='system'` (non-editable by regular users), rendered automatically in the job card. | P0 |
+| FR-09 | **Idempotency:** at most **one** advisor note per job-creation event. Redelivery/retry must not duplicate the note; failures do not retry-storm. | P0 |
+| FR-10 | **Best-effort isolation from job creation:** the RAG call and note append run outside the job-creation transaction/critical path; any error (unreachable, timeout, non-2xx, parse failure) is caught and logged, and **never** propagates to fail or delay the create request. | P0 |
+| FR-11 | **Company scoping:** `companyId` originates from `req.companyFilter?.company_id` at the create site and travels on the event; the gate check and every SQL read/write filters by that `company_id`. Never trust a client-supplied company id. | P0 |
+| FR-12 | Configurable via env `RAG_API_URL` and `RAG_TIMEOUT_MS`. If `RAG_API_URL` is unset/blank, the advisor is inert (no calls, no notes). | P1 |
+
+### 5. Non-goals (explicitly OUT — Stage 2 / future)
+
+- **Additional note sections** — parts recommendations, dispatcher clarifying-questions, and safety warnings are **Stage 2** and MUST NOT appear in the Stage 1 note (three sections only).
+- **Non-human trigger paths** — jobs created via the **Zenbooker webhook sync** and jobs created by the **scheduler** do **NOT** trigger the advisor in Stage 1.
+- **Structured brand/model modeling** — no new brand/model columns and no NLP brand/unit extraction; only existing `jobs.metadata` custom fields are read opportunistically.
+- **Re-generation / refresh** — no re-running the advisor on job edit, no manual "ask again" button, no multiple notes per job.
+- **Bespoke settings UI** — beyond the auto-rendered marketplace tile (connect/disconnect); no dedicated settings page, no per-company RAG tuning.
+- **Persisting raw RAG payloads, streaming, feedback loop, or analytics** on advisor quality.
+- **Deployment network path** — the real Vultr→mini RAG route is decided separately at deploy time and is out of code scope (public tunnel currently 502).
+
+### 6. Constraints & dependencies
+
+**Security (mandatory project rules, restated):**
+- Any new/changed API route: `authenticate` + `requireCompanyAccess`; `company_id` taken ONLY from `req.companyFilter?.company_id` (never from client payload).
+- Every SQL filters by `company_id`; cross-tenant read/write is impossible.
+- Mandatory tests: 401/403 on each new/affected endpoint + tenant-isolation tests.
+
+**Feature constraints:**
+- **RAG availability = best-effort.** Unreachable / timeout / non-2xx ⇒ no note, and job creation MUST NOT fail (UC-06). Governed by `RAG_API_URL` / `RAG_TIMEOUT_MS`.
+- **Async, off the critical path.** `setImmediate` fire-and-forget after job creation; never inside the create transaction.
+- **Trigger scope = human paths only** (`createDirectJob` + `convertLead`). ZB-webhook sync and scheduler-created jobs are OUT.
+- **Idempotency = one advisor note per job-creation event.**
+- **Note = exactly the three specified sections**, diagnostic-mode section conditional on manual availability.
+- Backend is CommonJS. New marketplace seed migration — verify the actual max migration number in `backend/db/migrations` immediately before creating (parallel branches drift).
+- Frontend builds with `npm run build` (tsc -b; prod Docker stricter). No FE code expected, but any incidental FE change must build clean.
+- Prod deploy only on owner's explicit consent.
+
+**Dependencies:**
+- KB knowledge-base RAG service reachable at `RAG_API_URL` exposing `POST /ask`.
+- Marketplace core (F016/F018): `marketplace_apps`, `marketplace_installations`, `marketplaceQueries.ensureMarketplaceSchema()`, `marketplaceService`.
+- eventBus + `eventSubscribers.js`; `jobsService.addNote`.
+
+### 7. Acceptance criteria
+
+- **AC-01:** With the app connected, `POST /api/jobs` creating a job returns success and, within a short async window, the job carries **exactly one** note authored `AI Repair Advisor` with `created_by='system'`, non-editable by regular users, containing up to the three defined sections.
+- **AC-02:** `convertLead` producing a job yields the same one-note behavior as AC-01.
+- **AC-03:** When the app is NOT connected for the company, a human-path job creation produces **no** advisor note and makes **no** RAG call.
+- **AC-04:** When the RAG service is unreachable / times out / returns non-2xx, the job is created successfully, **no** note is appended, the error is logged, and no failure is surfaced to the user.
+- **AC-05:** A job with empty/thin description still triggers an attempt; on an unusable RAG response the outcome is graceful (no note or a note with only grounded sections) — never a crash or malformed note.
+- **AC-06:** Jobs created via the Zenbooker webhook sync or by the scheduler produce **no** advisor note (out-of-scope triggers).
+- **AC-07:** Idempotency — repeated delivery of a single `job.created` event does not create a second advisor note.
+- **AC-08:** Company isolation — the note attaches only to the originating company's job; the RAG question is built only from that job's data; the gate check uses the event's `companyId`.
+- **AC-09:** The three-section format holds: probable causes carry likelihoods; the diagnostic-mode section is **omitted** when the manual has none; no parts/dispatcher-questions/safety sections appear.
+- **AC-10:** Tests cover 401/403 on any new/affected route, tenant isolation, connected-vs-not gating, the RAG-down path, and note formatting.
+
+### 8. Potentially involved modules / parts of the system
+
+**Backend:**
+- `backend/db/migrations/<next>_seed_ai_repair_advisor_marketplace_app.sql` — seed the app into `marketplace_apps` (verify next migration number before creating).
+- `backend/src/db/marketplaceQueries.js` — add the seed migration to `ensureMarketplaceSchema()`.
+- `backend/src/services/marketplaceService.js` — add `isAppConnected(companyId, 'ai-repair-advisor')` gate (mirror `schedule.js:200`).
+- Job create sites — `createDirectJob` (`POST /api/jobs`) and `convertLead` — emit `job.created` via the eventBus.
+- `backend/src/.../eventSubscribers.js` — new `kb-diagnostics` subscriber (gate check + `setImmediate` best-effort task).
+- `backend/src/services/ragClient.js` — **new** outbound client (mirror `zenbookerClient.js`); env `RAG_API_URL` / `RAG_TIMEOUT_MS`.
+- `backend/src/services/jobsService.js` — reuse `addNote(jobId, text, [], 'AI Repair Advisor', 'system')` (no change to the seam).
+
+**Frontend:**
+- None expected — the marketplace tile + connect/disconnect render automatically from the seed (as in F016/F018).
+
+### 9. Affected integrations
+
+- **KB knowledge-base RAG** — new outbound HTTP integration (`POST {RAG_API_URL}/ask`), best-effort, config-gated.
+- **Marketplace** — one new seeded app + runtime gate (reuse of existing lifecycle).
+- **Zenbooker / Twilio / Front / Stripe / Google** — **not** affected (ZB-sync path is explicitly an out-of-scope trigger).
+
+### 10. Protected parts of the code (do NOT break)
+
+- Marketplace core: `/api/marketplace/*` lifecycle, existing seeded apps and their pages, `MarketplaceConnectDialog` (protected since F016) — extend via a new seed only.
+- `jobsService.addNote` contract and the `jobs.notes` JSONB rendering in the job card — reuse as-is.
+- Job creation flows `createDirectJob` and `convertLead` — additive event emission only; their existing success/latency/transaction behavior must be byte-for-byte unchanged (advisor is strictly post-commit, async, best-effort).
+- Zenbooker job-sync and scheduler-created job paths — no advisor coupling (must remain note-free).
+- `frontend/src/lib/authedFetch.ts`, `src/server.js` (mount-only if ever needed) — untouched.
+- Existing migrations — not modified; changes only via the new seed migration.

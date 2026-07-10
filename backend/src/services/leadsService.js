@@ -8,6 +8,7 @@
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
+const eventBus = require('./eventBus');
 
 // =============================================================================
 // UUID Generation (Workiz-style 6-char alphanumeric)
@@ -1024,6 +1025,21 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     }
 
     emitLeadChange('lead.updated', companyId, 'Converted', leadRow.id);
+
+    // [CHANGE START] REPAIR-ADVISOR-001 (T6): post-commit domain event for the
+    // AI Repair Advisor subscriber — ONLY when a NEW local job was created during
+    // this conversion. The reuse/claim-existing branch (localJobCreated===false)
+    // stays note-free so a retry never produces a duplicate advisor note (§3.2).
+    // Fire-and-forget: a failing bus never breaks the conversion.
+    if (localJobCreated) {
+        eventBus.emit(
+            companyId,
+            'job.created',
+            { id: localJobId, jobId: localJobId, companyId },
+            { actorType: 'user', aggregateType: 'job', aggregateId: localJobId }
+        ).catch(() => {});
+    }
+    // [CHANGE END]
 
     return {
         UUID: lead.UUID,

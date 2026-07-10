@@ -15,6 +15,7 @@ const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventService = require('./eventService');
+const eventBus = require('./eventBus');
 const membershipQueries = require('../db/membershipQueries');
 const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 
@@ -568,6 +569,18 @@ async function createDirectJob(companyId, input = {}) {
             console.error('[CreateDirectJob] metadata merge failed (non-fatal):', e.message);
         }
     }
+
+    // [CHANGE START] REPAIR-ADVISOR-001 (T6): post-commit domain event for the
+    // AI Repair Advisor subscriber (kb-diagnostics). Additive only — fire-and-forget
+    // so a failing bus never breaks the create; emit itself also never throws into
+    // the producer (§3.2). The human create-path always emits.
+    eventBus.emit(
+        companyId,
+        'job.created',
+        { id: localJob.id, jobId: localJob.id, companyId },
+        { actorType: 'user', aggregateType: 'job', aggregateId: localJob.id }
+    ).catch(() => {});
+    // [CHANGE END]
 
     return { job_id: localJob.id, zenbooker_job_id: zenbookerJobId, zb_warning: zbWarning };
 }

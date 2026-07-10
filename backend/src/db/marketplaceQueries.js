@@ -42,6 +42,9 @@ async function ensureMarketplaceSchema(client = null) {
         // ONBTEL-001: Telephony — Twilio tile. Derived connection (company_telephony
         // is the source of truth) — no marketplace_installations rows are ever created.
         await query(readMigration('145_seed_telephony_twilio_marketplace_app.sql'));
+        // REPAIR-ADVISOR-001: AI Repair Advisor tile (gate-only, no credential) —
+        // resolves through the generic install path, like the smart-slot-engine seed.
+        await query(readMigration('161_seed_ai_repair_advisor_marketplace_app.sql'));
         return;
     }
 
