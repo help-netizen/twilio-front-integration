@@ -64,9 +64,9 @@ function canCollect(readiness) {
 
 function buildChecklist(account, readiness) {
     return [
-        { key: 'connect', label: 'Connect Stripe account', done: Boolean(account) },
-        { key: 'onboarding', label: 'Complete business onboarding', done: Boolean(account?.details_submitted) },
-        { key: 'payment_methods', label: 'Enable card payments', done: account?.capabilities?.card_payments === 'active' },
+        { key: 'connect', label: 'Connect your Stripe account', done: Boolean(account) },
+        { key: 'onboarding', label: 'Add your business details', done: Boolean(account?.details_submitted) },
+        { key: 'payment_methods', label: 'Turn on card payments', done: account?.capabilities?.card_payments === 'active' },
         { key: 'field_payments', label: 'Configure field payments (Tap to Pay)', done: false, deferred: true },
         { key: 'test_payment', label: 'Run a test payment', done: false },
     ];

@@ -823,6 +823,39 @@ table tbody tr:hover {
 .blanc-heading-md { font-size: clamp(28px, 3vw, 36px); }
 .blanc-heading-sm { font-size: 20px; }
 
+/* STRIPE-CONNECT-UX-001: violet-cloud connect surface (used via ui/CloudBanner) */
+.blanc-cloud {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(127, 66, 225, .16);
+    border-radius: 22px;
+    background:
+        radial-gradient(58% 90% at 12% 18%, rgba(127,66,225,.16), transparent 62%),
+        radial-gradient(48% 74% at 88% 8%, rgba(231,219,253,.95), transparent 66%),
+        radial-gradient(70% 100% at 78% 96%, rgba(127,66,225,.12), transparent 58%),
+        radial-gradient(36% 52% at 40% 78%, rgba(231,219,253,.7), transparent 70%),
+        #FFFFFF;
+}
+.blanc-cloud::before,
+.blanc-cloud::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+}
+.blanc-cloud::before {
+    width: 240px; height: 240px;
+    top: -60px; right: -40px;
+    background: rgba(127, 66, 225, .10);
+    filter: blur(42px);
+}
+.blanc-cloud::after {
+    width: 280px; height: 280px;
+    bottom: -80px; left: -30px;
+    background: rgba(231, 219, 253, .8);
+    filter: blur(48px);
+}
+
 /* Warm page container (max-width + padding) */
 .blanc-container {
     max-width: 1780px;

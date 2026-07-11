@@ -5,7 +5,8 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
-import { Archive, ChevronRight, CreditCard, FileText, Loader2, Plus, Receipt } from 'lucide-react';
+import { Archive, ChevronRight, CreditCard, FileText, Loader2, Lock, Plus, Receipt } from 'lucide-react';
+import { CloudBanner } from '../ui/CloudBanner';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
 import { useAuthz } from '../../hooks/useAuthz';
 import { stripePaymentsApi } from '../../services/stripePaymentsApi';
@@ -127,13 +128,6 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     // CTA copy per readiness (manage user). not_connected/disconnected → "Connect"; the
     // setup-incomplete states → "Finish setup". payouts_disabled never reaches here (can_collect=true).
     const isConnectState = readiness === 'not_connected' || readiness === 'disconnected';
-    const ctaTitle = isConnectState
-        ? 'Accept payments right from the job'
-        : 'Finish your Stripe setup to start collecting payments';
-    const ctaBody = isConnectState
-        ? "Connect Stripe to charge your customer's card or send a payment link in seconds — no invoice required."
-        : undefined;
-    const ctaButtonLabel = isConnectState ? 'Connect Stripe' : 'Finish setup';
     // Show the CTA card only for a permitted-but-not-ready company with a known readiness
     // state (loading / configured===false → nothing, matching the invoice silent-absence).
     const showCta = canCollect && !stripeLoading && !!stripeStatus?.configured && !stripeStatus?.can_collect && !!readiness;
@@ -158,23 +152,41 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                     </div>
                 )}
                 {showCta && (
-                    <div className="rounded-2xl bg-[var(--blanc-surface-muted)] px-4 py-4">
-                        <p className="text-sm font-semibold text-[var(--blanc-ink-1)]">{ctaTitle}</p>
-                        {ctaBody && <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{ctaBody}</p>}
+                    <CloudBanner variant="compact">
                         {canManageIntegrations ? (
-                            <Button
-                                size="sm"
-                                className="mt-3"
-                                onClick={() => navigate('/settings/integrations/stripe-payments')}
-                            >
-                                {ctaButtonLabel}
-                            </Button>
+                            <>
+                                <h3
+                                    className="text-base font-extrabold text-[var(--blanc-ink-1)] sm:text-lg"
+                                    style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em' }}
+                                >
+                                    {isConnectState ? 'Get paid for this job today' : 'Almost there — finish your Stripe setup'}
+                                </h3>
+                                <p className="mt-1.5 max-w-prose text-sm text-[var(--blanc-ink-2)]">
+                                    {isConnectState
+                                        ? "Charge the card on the spot or text a secure payment link. No invoice needed — money hits your bank in days."
+                                        : 'Stripe needs a few more business details before you can take payments.'}
+                                </p>
+                                <div className="mt-4 flex flex-wrap items-center gap-3">
+                                    <Button
+                                        className="h-11 px-5"
+                                        onClick={() => navigate('/settings/integrations/stripe-payments')}
+                                    >
+                                        {isConnectState ? 'Connect Stripe' : 'Finish setup'}
+                                    </Button>
+                                    {isConnectState && (
+                                        <span className="text-xs text-[var(--blanc-ink-3)]">One-time setup · ~5 min</span>
+                                    )}
+                                </div>
+                            </>
                         ) : (
-                            <p className="mt-3 text-sm text-[var(--blanc-ink-2)]">
-                                Ask an account admin to connect Stripe in Settings → Integrations.
-                            </p>
+                            <div className="flex items-start gap-3">
+                                <Lock className="mt-0.5 size-4 shrink-0 text-[var(--blanc-ink-3)]" />
+                                <p className="text-sm text-[var(--blanc-ink-2)]">
+                                    Your company isn't set up for payments yet. Ask an account admin to connect Stripe in Settings → Integrations.
+                                </p>
+                            </div>
                         )}
-                    </div>
+                    </CloudBanner>
                 )}
 
 
