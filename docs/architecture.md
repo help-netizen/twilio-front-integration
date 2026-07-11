@@ -5605,3 +5605,111 @@ The old `ctaTitle/ctaBody/ctaButtonLabel` consts are replaced by the new copy (t
 - Tests: none required (`tests/stripePayments.test.js` has no label asserts); AC = `npm run build` + backend jest + browser preview @375px/desktop.
 
 **Protected / unchanged:** `JobFinancialsTab` gating (`canCollect`, `stripeReady`, `showCta`, readiness→variant branching, navigate target), `stripePaymentsService` `computeReadiness`/`canCollect`/`publicStatus` + checklist keys/semantics, connect/onboard routes, Collect-payment button + `CollectPaymentDialog` path, invoice/estimate send-and-pay (SEND-DOC-001), `SettingsPageShell`/`SettingsSection` APIs, `authedFetch.ts`, `useRealtimeEvents.ts`. No new API endpoints, no new routes, no migration → middleware/company-scope checklist N/A.
+
+---
+
+## SOFTPHONE-WARMUP-SUMMARY-001 — mobile-proof warm-up gate (three belts + device-capability check) + "Today at a glance" summary modal
+
+**Requirements:** `## SOFTPHONE-WARMUP-SUMMARY-001` at END of `Docs/requirements.md` (FR-MOBILE-FIX a/b/c, FR-SUMMARY, FR-COUNT-API, FR-COPY, AC-1..6). Hardens MOBILE-NO-SOFTPHONE-001, evolves the deliberate warm-up modal (softphone-warmup canon — AudioContext user gesture), reuses AR-TASK-UNIFY-001 / TASKS-COUNT-BADGE-001 / LEADS-NEW-BADGE-001 / Pulse unread. **Frontend + ONE additive route tweak; NO migration, no new endpoints.**
+
+### §0 — Существующий функционал (расширяем, НЕ дублируем)
+
+- `frontend/src/hooks/useIsMobile.ts` — THE viewport hook (width-only: `useState(innerWidth < breakpoint)` + `resize` listener). 26 call-sites, all default-breakpoint, drive LAYOUT switching (OVERLAY-CANON-002 BottomSheet swap in `ui/dialog.tsx:87`, `ui/select.tsx:106`, `ui/popover.tsx:58`, `ui/dropdown-menu.tsx:62`, `hooks/useOverlayDismiss.ts:158`; mobile list shells). **Hardened in place — same name, same signature `(breakpoint = 768)`, same "narrow viewport" semantics.** NOT duplicated by a parallel width hook.
+- `frontend/src/components/layout/AppLayout.tsx` — `:39` `isMobile`, `:44` `softPhoneEnabled = !isMobile && softPhoneGroupsLoaded && softPhoneGroups.length > 0`, `:45` `useTwilioDevice({ enabled: softPhoneEnabled })`, `:73` arming effect (`softPhoneEnabled && voice.phoneAllowed && voice.deviceReady → setShowWarmUp(true)`), `:74` `handleWarmUpDismiss` (`warmUpAudio(); setShowWarmUp(false)`), `:94-144` badge counters (`pulseUnreadCount` ← `/api/pulse/unread-count`, `leadsNewCount` ← `/api/leads/new-count`, `openTasksCount` ← `/api/tasks/count`; mount + route + 60s poll + SSE), `:192` warm-up `<Dialog open={showWarmUp && !location.pathname.startsWith('/schedule')}>`, `:193` `{!isMobile && <SoftPhoneWidget …>}`.
+- `frontend/src/components/NotificationReminderBanner.tsx:16-21` — existing `matchMedia('(max-width: 767px)')` + `change`-listener precedent; the hardened hook follows this mechanism.
+- `frontend/src/components/ui/CloudBanner.tsx` + `.blanc-cloud` (STRIPE-CONNECT-UX-001) — the violet-cloud surface; REUSED as the summary backdrop (variant `compact`).
+- `backend/src/routes/tasks.js:44-67` GET `/` (builds `filters.parent_type = req.query.parent_type || undefined`) and `:72-87` GET `/count` (hardcodes `{ status:'open' }`, ignores `parent_type`). Mounted `app.use('/api/tasks', authenticate, requireCompanyAccess, tasksRouter)`; company scope = `req.companyFilter?.company_id` via `companyId(req)`; role branch `canManage → assignee_id | else scopeOwnerId` — ALL reused verbatim.
+- `backend/src/db/tasksQueries.js` `buildTaskListFilters` — already supports `parent_type` (validated `isValidParentType`, invalid silently ignored; `timeline → t.thread_id IS NOT NULL`, AND'ed with `HAS_ENTITY_PARENT`'s `created_by IN ('user','agent')` guard = exactly the AR-TASK-UNIFY-001 definition of Action-Required). **NO changes here.**
+- Tests: `tests/routes/tasks.test.js` (GET /count describe, mocked db) and `tests/tasksCount.test.js` (query layer) — extended, not duplicated.
+
+**Нельзя дублировать:** `useIsMobile` (harden, don't fork a second width hook), `handleWarmUpDismiss`/`warmUpAudio` gesture path, badge fetch callbacks, `countTasks`/`buildTaskListFilters`, `CloudBanner`.
+
+### §1 — Decision A: `useIsMobile` hardening formula (THE critical decision)
+
+**Chosen: (iii) + (i)** — two distinct questions get two distinct hooks in ONE file (`frontend/src/hooks/useIsMobile.ts`):
+
+1. **`useIsMobile(breakpoint = 768)` — hardened in place, semantics UNCHANGED ("narrow viewport").** Internals switch from `innerWidth` + `resize` to `matchMedia`:
+   - Media query: **`` `(max-width: ${breakpoint - 0.02}px)` ``** → default **`(max-width: 767.98px)`** (Tailwind `md` complement; the `.98` avoids the fractional-width gap between `max-width:767px` and `innerWidth<768`).
+   - `useState` initializer = `window.matchMedia(query).matches`; effect subscribes `mql.addEventListener('change', check)` **and keeps** `window.addEventListener('resize', check)` (belt: some engines miss mql `change` on PWA viewport corrections), `check = () => setIsMobile(mql.matches)`; effect body runs `check()` synchronously (as today).
+   - **One-shot post-paint re-check** for the iOS-standalone cold-start quirk (early `innerWidth`/viewport wrong, NO later `resize`): `const raf = requestAnimationFrame(check)` inside the same effect, cancelled in cleanup. First painted frame reads the corrected viewport → `isMobile` flips to `true` within one frame even with zero events.
+   - **All 26 call-sites untouched and behavior-identical on real devices**: an iPad/touch-laptop stays "desktop" for layout (width-only). No coarse-pointer term here — the overlay canon swap must NOT reclassify wide touch devices.
+2. **`useIsMobileDevice()` — NEW sibling export, device-capability gate for the softphone ONLY.** Media query (one `matchMedia`, comma = OR): **`(max-width: 767.98px), (pointer: coarse)`**. Same reactive mechanism (shared internal `useMediaQuery(query)` helper in the file: init from `.matches`, `change` + `resize` listeners, rAF one-shot). `pointer: coarse` = PRIMARY pointer → iPhone/iPad/Android = `true`; touch-screen Windows laptop with mouse/trackpad primary = `false` (softphone keeps working there). **Used ONLY in `AppLayout.tsx`** — no other call-site may adopt it for layout.
+
+**Deliberate product change (D1 spirit):** iPad landscape (wide + coarse pointer) previously could register the WebRTC Device; now softphone is disabled on ANY touch-primary device regardless of viewport. Accepted — browser softphone is desktop-only by canon; iPad layout is unaffected (still desktop layout via width-only `useIsMobile`).
+
+### §2 — Decision B: AppLayout belts (FR-MOBILE-FIX b/c) — state → behavior
+
+`const isMobileDevice = useIsMobileDevice();` added next to `isMobile` (`:39`). The three independent belts (any single failure leaves two blocking, AC-1):
+
+| Surface | Today | After |
+|---|---|---|
+| `softPhoneEnabled` `:44` | `!isMobile && softPhoneGroupsLoaded && softPhoneGroups.length > 0` | `!isMobile && !isMobileDevice && softPhoneGroupsLoaded && softPhoneGroups.length > 0` (belt 1 — no Device registration on any touch phone; `useTwilioDevice({enabled})` gating itself untouched) |
+| Arming effect `:73` | `if (softPhoneEnabled && voice.phoneAllowed && voice.deviceReady) setShowWarmUp(true)` | `if (!isMobile && !isMobileDevice && softPhoneEnabled && voice.phoneAllowed && voice.deviceReady) setShowWarmUp(true)` (belt 2a — explicit, not via `softPhoneEnabled` indirection) |
+| Dialog `open` `:192` | `showWarmUp && !location.pathname.startsWith('/schedule')` | `showWarmUp && !isMobile && !isMobileDevice && !location.pathname.startsWith('/schedule')` (belt 2b; `/schedule` suppression KEPT verbatim) |
+| Reset-on-flip (NEW effect) | — | `useEffect(() => { if (isMobile || isMobileDevice) setShowWarmUp(false); }, [isMobile, isMobileDevice])` (belt 3 — un-latches a modal armed during a transient wrong-width window) |
+| Widget render `:193` | `!isMobile && <SoftPhoneWidget …>` | `!isMobile && !isMobileDevice && <SoftPhoneWidget …>` (D1: zero softphone artifacts on touch devices; `SoftPhoneHeaderButton` already gated by `softPhoneEnabled`) |
+
+`useTwilioDevice` hook internals, `SoftPhoneWidget`, presence, incoming-call auto-open — UNTOUCHED.
+
+### §3 — Decision C: summary modal = NEW `WarmUpSummaryDialog` component (center Dialog stays — THE canonical exception)
+
+**FORM-CANON ruling:** the warm-up modal is a **confirmation-class** dialog (short, one primary action, exists only to capture the audio-unlock gesture) → **center `<DialogContent variant="dialog">` stays**, per current behavior and per the canon's "center modals are ONLY for confirmations". It is NOT an entity view/edit surface — no panel/шторка. (On mobile `dialog.tsx` would auto-bottom-sheet it, but the belts make mobile rendering impossible — moot.)
+
+**Component home: `frontend/src/components/layout/WarmUpSummaryDialog.tsx` — NEW file** (AppLayout is already fat; layout-shell subcomponents live in `components/layout/`, precedent `SoftPhoneHeaderButton.tsx`). Pure presentation — no fetches, no state beyond render.
+
+```tsx
+interface WarmUpSummaryDialogProps {
+    open: boolean;
+    counts: { pulseInbox: number | null; newLeads: number | null; openTasks: number | null }; // null → "—"
+    onNavigate: (path: string) => void; // AppLayout: warmUpAudio(); setShowWarmUp(false); navigate(path)
+    onDismiss: () => void;              // = existing handleWarmUpDismiss (warmUpAudio + close), byte-identical semantics
+}
+```
+
+Render (inside `<Dialog open={…belted expr, passed by AppLayout as `open`}><DialogContent className="sm:max-w-[520px]" onPointerDownOutside={e => e.preventDefault()}>`):
+`DialogHeader` — `DialogTitle` **"Today at a glance"**, `DialogDescription` **"Enabling sound for incoming calls"** → `CloudBanner variant="compact"` backing a `grid grid-cols-3 gap-2` of three `<button type="button">` columns (each `min-h-[64px]` ≥44px target, `rounded-xl`, hover `bg-white/50`; count = `text-2xl tabular-nums` with `fontFamily: var(--blanc-font-heading)`, weight 700; label below = `.blanc-eyebrow`-style caption) → `DialogFooter` — full-width primary `<Button size="lg">` **"Let's go"**. Columns: **"Pulse inbox"** → `onNavigate('/pulse')`, **"New leads"** → `onNavigate('/leads')`, **"Open tasks"** → `onNavigate('/tasks')`. `count === null` → "—" (same size, `--blanc-ink-3`). No icons-for-icons, no `<hr>`, tokens only, "Blanc" never in UI.
+
+**Gesture contract (softphone-warmup canon):** every dismiss path runs `warmUpAudio()` SYNCHRONOUSLY inside the click handler — column click order is `warmUpAudio() → setShowWarmUp(false) → navigate(path)`; `onOpenChange(false)` (Esc/×) keeps routing to `handleWarmUpDismiss`. Never `await`/`setTimeout` before `warmUpAudio()`.
+
+**Counts wiring (AppLayout, zero new requests except AR):**
+- NEW state `const [arCount, setArCount] = useState<number | null>(null)` + `fetchArCount` (same pattern as siblings: `authedFetch('/api/tasks/count?parent_type=timeline')` → `json?.data?.count ?? json?.count`, `catch {}` leaves `null`). Trigger: `useEffect(() => { if (showWarmUp) fetchArCount(); }, [showWarmUp, fetchArCount])` — fires when the modal arms; NO poll, NO SSE, feeds ONLY the modal (nav badges untouched).
+- **D5 "—"/skeleton without touching protected plumbing:** the three badge states' `useState(0)` initializers become `useState<number | null>(null)`; fetch/poll/SSE callbacks stay byte-identical (they set numbers; `catch {}` leaves `null` on never-loaded). The two badge consumers (`AppNavTabs`, `BottomNavBar` props at `:180`/`:187`) receive `pulseUnreadCount ?? 0` etc. — badge components and their prop types untouched.
+- `counts.pulseInbox` = `pulseUnreadCount === null || arCount === null ? null : pulseUnreadCount + arCount`; `newLeads` = `leadsNewCount`; `openTasks` = `openTasksCount`. The modal NEVER waits for counters — it opens on the belted expression alone.
+
+Old `:192` JSX (Phone icon / "SoftPhone Ready" / "Enable Ringtone") is replaced by `<WarmUpSummaryDialog …/>`; `Phone` import stays (used by header button? verify — drop if orphaned, prod tsc `noUnusedLocals`).
+
+### §4 — Backend: `GET /api/tasks/count` `parent_type` pass-through (route layer ONLY)
+
+`backend/src/routes/tasks.js:74` — exact diff shape (mirrors GET `/` `:48` byte-for-byte):
+
+```js
+- const filters = { status: 'open' };
++ const filters = { status: 'open', parent_type: req.query.parent_type || undefined };
+```
+
+Everything else in the handler unchanged: `requirePermission('tasks.view')`, role branch (`canManage → assignee_id | else scopeOwnerId`) applies to the filtered count too, `companyId(req)` = `req.companyFilter?.company_id` (SQL company-scoped in `buildTaskListFilters` `$1`). Validation is the SAME path as GET `/`: `buildTaskListFilters` → `isValidParentType` → invalid/absent values silently ignored ⇒ **no param → byte-identical SQL to today (AC-4 backward-compat, nav badge unchanged)**. No `tasksQueries` changes, no new endpoint, no server.js change (router already mounted with `authenticate, requireCompanyAccess`).
+
+### §5 — Tests
+
+- **Extend `tests/routes/tasks.test.js`** GET /count describe: (1) `?parent_type=timeline` → SQL contains `t.thread_id IS NOT NULL`, params/role-branch unchanged; (2) no param → SQL does NOT contain `thread_id IS NOT NULL` (today's shape, drift guard); (3) `?parent_type=bogus` → ignored, same SQL as (2); (4) provider scope + `parent_type` → both `t.owner_user_id = $2` and `t.thread_id IS NOT NULL` present. `tests/tasksCount.test.js` already covers `parent_type` at the query layer (no edit needed).
+- Frontend: `npm run build` (tsc -b, prod-strict `noUnusedLocals`) — AC-5. Manual/browser: desktop modal + counts vs badges; iPhone viewport + `pointer:coarse` emulation → no modal, no Device registration (network tab: no Twilio token fetch).
+
+### §6 — Риски / guardrails
+
+- **Layout regression via the hook (highest risk):** `useIsMobile` keeps width-only semantics — the coarse-pointer term lives ONLY in `useIsMobileDevice`. Guardrail: no other file may import `useIsMobileDevice`; the 26 layout call-sites' classification on real devices is unchanged (767.98 vs 768 boundary is sub-pixel-only).
+- **iPad / wide touch devices:** softphone (Device, widget, modal) now OFF there — deliberate (D1 spirit), documented in §1. Layout unchanged.
+- **Gesture validity:** `warmUpAudio()` must be the FIRST synchronous statement in every click path (column, "Let's go", Esc/× route through `handleWarmUpDismiss`); navigation after. No async before it.
+- **Double/ghost modal on `/schedule`:** suppression term kept in the same `open` expression; a modal armed elsewhere stays latched (`showWarmUp` true) and appears after leaving `/schedule` — today's behavior, unchanged.
+- **rAF one-shot:** cancel in effect cleanup (`cancelAnimationFrame`) — avoids setState-after-unmount.
+- **`number | null` badge states:** only initializers + `?? 0` at the two consumer JSX lines change; fetch/poll/SSE callbacks and badge components byte-identical. tsc will enforce the coercions.
+- **`noUnusedLocals`:** after the `:192` content swap re-check `Phone`, `DialogHeader/Title/Description/Footer` imports in `AppLayout.tsx` — remove orphans or build fails in prod Docker.
+
+### §7 — Файлы для изменений
+
+- `frontend/src/hooks/useIsMobile.ts` — harden `useIsMobile` (matchMedia `(max-width: 767.98px)` + `change`/`resize` + rAF one-shot); add `useIsMobileDevice()` (`(max-width: 767.98px), (pointer: coarse)`); shared internal `useMediaQuery` helper.
+- `frontend/src/components/layout/WarmUpSummaryDialog.tsx` — **NEW** (pure-presentation summary modal; center Dialog + CloudBanner compact + 3 stat columns + "Let's go").
+- `frontend/src/components/layout/AppLayout.tsx` — belts 1/2a/2b/3 + widget gate (§2); `arCount` state/fetch; badge states → `number | null` + `?? 0` at consumers; `:192` JSX → `<WarmUpSummaryDialog>`; import cleanup.
+- `backend/src/routes/tasks.js` — one-line `parent_type` pass-through in GET /count (§4).
+- `tests/routes/tasks.test.js` — 4 new /count cases (§5).
+
+**Protected / unchanged:** `useTwilioDevice` internals + `enabled` gating; `SoftPhoneWidget`; presence; incoming-call auto-open; `warmUpAudio()` gesture contract; badge fetch/poll/SSE callbacks (`fetchUnreadCount`/`fetchLeadsNewCount`/`fetchOpenTasksCount`, `onGenericEvent`); `AppNavTabs`/`BottomNavBar` components; `GET /api/tasks/count` no-param behavior + role-scoping; `tasksQueries.buildTaskListFilters`/`countTasks`; all 26 `useIsMobile` layout call-sites (esp. OVERLAY-CANON-002 swap in `ui/dialog|select|popover|dropdown-menu` + `useOverlayDismiss`); the `/schedule` suppression; `authedFetch.ts`, `useRealtimeEvents.ts`. No migration, no new endpoints → middleware checklist satisfied by the existing mount (`authenticate, requireCompanyAccess` + `requirePermission('tasks.view')`, company scope `req.companyFilter?.company_id`).

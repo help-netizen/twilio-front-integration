@@ -1,4 +1,4 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 
 // SOFTPHONE-WARMUP-SUMMARY-001 §3: pure presentation — no fetches, no timers,
@@ -8,6 +8,11 @@ import { Button } from '../ui/button';
 // FORM-CANON ruling (pinned): confirmation-class dialog → center
 // variant="dialog" stays. THE canonical center-modal exception (short, one
 // primary action, exists to capture the audio-unlock gesture).
+//
+// Owner iteration #2 (2026-07-11): humanized — time-of-day greeting, airy
+// rhythm, plain stat phrases written as literal strings — "in Pulse inbox" keeps
+// its capital P (product section name; no text-transform) — centered
+// auto-width button, tiny footnote explaining the sound gesture.
 export interface WarmUpSummaryDialogProps {
     open: boolean;
     counts: {
@@ -19,24 +24,39 @@ export interface WarmUpSummaryDialogProps {
     onDismiss: () => void;
 }
 
-const COLUMNS: ReadonlyArray<{ key: keyof WarmUpSummaryDialogProps['counts']; label: string; path: string }> = [
-    { key: 'pulseInbox', label: 'Pulse inbox', path: '/pulse' },
-    { key: 'newLeads', label: 'New leads', path: '/leads' },
-    { key: 'openTasks', label: 'Open tasks', path: '/tasks' },
+const COLUMNS: ReadonlyArray<{ key: keyof WarmUpSummaryDialogProps['counts']; label: string; phrase: string; path: string }> = [
+    { key: 'pulseInbox', label: 'Pulse inbox', phrase: 'in Pulse inbox', path: '/pulse' },
+    { key: 'newLeads', label: 'New leads', phrase: 'new leads', path: '/leads' },
+    { key: 'openTasks', label: 'Open tasks', phrase: 'open tasks', path: '/tasks' },
 ];
+
+function timeOfDayGreeting(): string {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+}
 
 export function WarmUpSummaryDialog({ open, counts, onNavigate, onDismiss }: WarmUpSummaryDialogProps) {
     return (
         <Dialog open={open} onOpenChange={o => { if (!o) onDismiss(); }}>
             {/* Backdrop click must NOT dismiss (pinned §2.7 row 5) — Escape and the corner × still do. */}
-            <DialogContent className="sm:max-w-[520px]" onPointerDownOutside={e => e.preventDefault()}>
-                <DialogHeader>
-                    <DialogTitle style={{ fontFamily: 'var(--blanc-font-heading)', fontWeight: 800 }}>Today at a glance</DialogTitle>
-                    <DialogDescription className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Enabling sound for incoming calls</DialogDescription>
+            <DialogContent className="sm:max-w-[480px] gap-0 p-8 sm:p-10" onPointerDownOutside={e => e.preventDefault()}>
+                <DialogHeader className="text-center sm:text-center space-y-2">
+                    <DialogTitle
+                        className="text-[28px] leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', fontWeight: 800, color: 'var(--blanc-ink-1)' }}
+                    >
+                        {timeOfDayGreeting()}
+                    </DialogTitle>
+                    <DialogDescription className="text-[15px] normal-case" style={{ color: 'var(--blanc-ink-2)' }}>
+                        Here's your day at a glance.
+                    </DialogDescription>
                 </DialogHeader>
-                {/* Owner direction 2026-07-11: no block-in-block — columns sit directly on the dialog surface. */}
-                <div className="grid grid-cols-3 gap-2">
-                    {COLUMNS.map(({ key, label, path }) => {
+                {/* Visually plain stat columns — no plates, no borders, no uppercase.
+                    Still real buttons (a11y + click-to-navigate); hover tints the number. */}
+                <div className="mt-8 grid grid-cols-3 gap-6 sm:gap-8">
+                    {COLUMNS.map(({ key, label, phrase, path }) => {
                         const value = counts[key];
                         return (
                             <button
@@ -44,26 +64,31 @@ export function WarmUpSummaryDialog({ open, counts, onNavigate, onDismiss }: War
                                 type="button"
                                 onClick={() => onNavigate(path)}
                                 aria-label={`${label}: ${value === null ? 'not loaded' : value}`}
-                                className="flex min-h-[64px] flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 hover:bg-[var(--blanc-surface-muted)]"
+                                className="group flex min-h-[44px] flex-col items-center justify-start gap-1.5 bg-transparent"
                             >
                                 <span
-                                    className="text-2xl leading-none tabular-nums"
-                                    style={{
-                                        fontFamily: 'var(--blanc-font-heading)',
-                                        fontWeight: 700,
-                                        color: value === null ? 'var(--blanc-ink-3)' : 'var(--blanc-ink-1)',
-                                    }}
+                                    className={`text-4xl leading-none tabular-nums transition-colors ${
+                                        value === null
+                                            ? 'text-[var(--blanc-ink-3)]'
+                                            : 'text-[var(--blanc-ink-1)] group-hover:text-[var(--blanc-accent)]'
+                                    }`}
+                                    style={{ fontFamily: 'var(--blanc-font-heading)', fontWeight: 800 }}
                                 >
                                     {value === null ? '—' : value}
                                 </span>
-                                <span className="blanc-eyebrow">{label}</span>
+                                <span className="text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
+                                    {phrase}
+                                </span>
                             </button>
                         );
                     })}
                 </div>
-                <DialogFooter>
-                    <Button size="lg" className="w-full" onClick={onDismiss}>Let's go</Button>
-                </DialogFooter>
+                <div className="mt-9 flex justify-center">
+                    <Button size="lg" className="px-10" onClick={onDismiss}>Let's go</Button>
+                </div>
+                <p className="mt-6 text-center text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                    Sound for incoming calls turns on when you continue.
+                </p>
             </DialogContent>
         </Dialog>
     );

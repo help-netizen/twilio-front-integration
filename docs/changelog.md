@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-11 — SOFTPHONE-WARMUP-SUMMARY-001: модалка SoftPhone Ready убрана с мобилы навсегда + стала «Today at a glance» на десктопе (orchestrate-пайплайн)
+
+Регрессия: «SoftPhone Ready» снова всплывала на мобиле — в **iOS PWA standalone** (после PWA-FIX-001). Софтфон-код не менялся: причина — `useIsMobile` ширино-only (innerWidth<768), а ранний innerWidth в standalone может отдать >768 без последующего resize → гейт мигал false → Device регистрировался → модалка залипала. Ширина также не покрывала iPhone-landscape (932px). Других софтфон-артефактов на мобиле не было (widget/header/Device — за гейтами).
+
+- **Ремень от всех причин:** `useIsMobile` усилен (matchMedia 767.98 + change/resize + one-shot rAF-перепроверка пост-пейнт), НОВЫЙ `useIsMobileDevice` = `(max-width: 767.98px), (pointer: coarse)` — только для софтфон-гейта (26 layout-потребителей `useIsMobile` не тронуты, iPad остаётся «десктопом» для оверлеев). Ремни: softPhoneEnabled + arming-эффект + Dialog open + reset-on-flip + widget-рендер. На тач-устройствах (включая landscape и iPad) софтфон теперь не запускается вовсе — осознанно.
+- **Модалка стала полезной:** `WarmUpSummaryDialog` — живое приветствие по времени суток («Good morning/afternoon/evening» + «Here's your day at a glance.», owner-итерации ×2: без блока-в-блоке, воздух, крупные цифры, фразы вместо КАПС-ярлыков, центрированная кнопка) — 3 кликабельных столбца: **Pulse inbox** (unread + action-required таймлайны), **New leads**, **Open tasks**; клик = `warmUpAudio()` (жест для AudioContext сохранён) + dismiss + переход; «Let's go» = прежний dismiss. Счётчики реюзают state нав-бейджей (0 новых запросов), AR — через `GET /api/tasks/count?parent_type=timeline` (additive-проброс в route, no-param SQL байт-в-байт + drift-guard-тест, role-scoping цел). Загрузка → «—», ошибки fail-silent. Owner-tweak: без блока-в-блоке — столбцы прямо на поверхности окна.
+- **DEV-превью:** `?warmup=preview` (statically dead в prod-билде) — модалку можно смотреть без реального Twilio Device.
+- **Проверка:** jest **87/87** (+4 кейса /count с байтовым drift-guard), build зелёный, sabotage 2/2 кусается, null-аудит бейджей чист (NaN-вектора нет), live-preview: рендер + клик столбца → /leads + срез параметра. Мобильная половина — code-review (iOS-эмуляции в харнессе нет): rAF/coarse-таймлайн выверен построчно; финальное подтверждение — владельцем на реальном iPhone после деплоя. Без миграции.
+- **Ещё НЕ задеплоено** (commit c72e545).
+
+---
+
 ## 2026-07-10 — REPAIR-ADVISOR-001 Этап 1: Marketplace-приложение «AI Repair Advisor» (диагностическая заметка при создании работы)
 
 Новое Marketplace-приложение: компания включает/отключает агента-консультанта по ремонту одной кнопкой (плитка рендерится сама из seed — своей страницы нет). Когда работу создаёт **человек** — вручную (`POST /api/jobs` → `createDirectJob`) или конвертацией из лида (`convertLead`) — агент **асинхронно и best-effort** читает описание+заметки, зовёт KB-RAG и дописывает в работу **одну** диагностическую заметку: вероятные причины (с %), шаги диагностики, как войти в диагностический режим модели (если он есть) + дисклеймер «AI-generated, проверь на месте». Полный 9-агентный оркестрационный прогон (требования→архитектура→спека→тест-кейсы→план из 8 задач→реализация→ревью). Бэкенд-онли; `src/server.js`/`eventBus.js` не тронуты. **НЕ задеплоено** (ждёт «да» владельца).

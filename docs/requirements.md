@@ -4629,7 +4629,6 @@ explicitly non-critical. Surface: `backend/src/services/mailAgentClassifier.js` 
 **Затронутые интеграции:** VAPI (payload fields already sent, currently discarded; serverMessages config), Twilio (read-only reconcile of the re-keyed leg). Zenbooker/Front — нет.
 
 **Защищённые части кода (НЕЛЬЗЯ ломать):** `inboxWorker.processVoiceEvent`/`upsertCall` conflict semantics (`callsQueries.js:15-63` — extend call sites only, not the query); softphone path `routes/voice.js:344-385`; Sara inbound `callFlowRuntime.renderVapiNode`; OPC1 webhook auth + anti-spoof + idempotence (`vapiCallStatus.js:51-63,106-144`); `outbound_call_attempts` schema/state machine; `authedFetch.ts`; `useRealtimeEvents.ts`; `src/server.js` core (no new mounts needed).
-<<<<<<< HEAD
 ## GMAIL-PUSH-FIX-001 — Restore real-time Gmail push ingest (single email in seconds, not ~10 min) (2026-07-10)
 
 **Status:** Requirements (Product/Agent-01). Backend-only **bug fix** that REPAIRS the push path of **EMAIL-TIMELINE-001** (§ line 1955, "near real-time Gmail `users.watch` → Pub/Sub push"). Dedup checked: `grep -i gmail-push docs/requirements.md` = none. Owner-approved brief, confirmed on prod 2026-07-10. **NO migration; NO Google Cloud / Pub/Sub / topic / subscription / OIDC / DNS / Caddy change** — `gmail-inbound-push` sub, `gmail-inbound` topic, push endpoint + token are all verified correct. Bug is 100% app code.
@@ -4836,7 +4835,6 @@ App is connected; the job has an empty or very thin description. The advisor sti
 - Zenbooker job-sync and scheduler-created job paths — no advisor coupling (must remain note-free).
 - `frontend/src/lib/authedFetch.ts`, `src/server.js` (mount-only if ever needed) — untouched.
 - Existing migrations — not modified; changes only via the new seed migration.
-=======
 
 ---
 
@@ -4910,4 +4908,70 @@ App is connected; the job has an empty or very thin description. The advisor sti
 **Затронутые интеграции:** Stripe — visual/copy layer only (no API-shape change). Twilio / Front / Zenbooker / VAPI — нет.
 
 **Защищённые части кода (НЕЛЬЗЯ ломать):** `JobFinancialsTab` gating logic (`canCollect` perm-gate, `stripeReady`, `showCta` condition, readiness→variant branching, navigate to `/settings/integrations/stripe-payments`); `stripePaymentsService.js` readiness computation (`computeReadiness`, `canCollect`, checklist `key`/`done`/`deferred` semantics — labels only); the Collect-payment button + `CollectPaymentModal` path (STRIPE-ADHOC-PAY-001); Stripe connect/onboard routes and `publicStatus` response shape; invoice-anchored collect surfaces (SEND-DOC-001); `authedFetch.ts`.
->>>>>>> 0aaa219 (docs(STRIPE-CONNECT-UX-001): requirements/architecture/spec/test-cases/tasks + changelog + project-spec)
+
+## SOFTPHONE-WARMUP-SUMMARY-001 — mobile-proof the SoftPhone warm-up modal + turn it into a "Today at a glance" day-start summary (2026-07-11)
+
+**Relationship:** hardens **MOBILE-NO-SOFTPHONE-001** (browser softphone is DESKTOP-ONLY — this feature closes the one leak in that gate) and evolves the **intentional warm-up modal** canon (softphone-warmup-modal — the modal exists because `AudioContext` needs a user gesture; it MUST stay on desktop, only its content changes). Reuses **AR-TASK-UNIFY-001** (Action-Required = open tasks with `parent_type='timeline'`), **TASKS-COUNT-BADGE-001** (`GET /api/tasks/count`), **LEADS-NEW-BADGE-001** (`GET /api/leads/new-count`) and the Pulse unread badge (`GET /api/pulse/unread-count`). **Not a duplicate** — no existing requirement covers the warm-up modal's content or its mobile leak. Root cause (owner-confirmed): iOS PWA **standalone cold start** — `useIsMobile` (`frontend/src/hooks/useIsMobile.ts`) is width-only (`innerWidth < 768`, `useState` initializer + `resize` listener); at standalone launch the early `innerWidth` can read wrong (>768) with no `resize` event following → `isMobile=false` sticks long enough for softphone groups to load → Twilio Device registers → `deviceReady` → `showWarmUp` latched and never reset. Width-only also misses iPhone landscape (932px). Softphone files did NOT change between prod builds — not a code regression.
+
+**Краткое описание:** (A) belt-and-suspenders mobile gate so the "SoftPhone Ready" modal is mathematically impossible on mobile (three independent belts: hardened `useIsMobile`, explicit `!isMobile` in arming AND render, reset-on-flip); (B) the desktop modal's content becomes a useful day-at-a-glance summary — three clickable stat columns (Pulse inbox / New leads / Open tasks) backed by counters AppLayout already fetches for the nav badges, with a single additive backend tweak (`parent_type` pass-through on `GET /api/tasks/count`) for the AR component of column 1. `warmUpAudio()` semantics identical — every dismiss path runs inside a user gesture.
+
+**Пользовательские сценарии:**
+1. **Dispatcher starting the day (desktop):** she logs in on desktop; once the Device registers, the modal appears — "Today at a glance", subtext "Enabling sound for incoming calls", three columns with live counts: Pulse inbox **7** (unread + action-required), New leads **3**, Open tasks **5**. She clicks the "New leads" column → the ringtone is enabled (warm-up ran on that click), the modal closes, and she lands on `/leads`.
+2. **Dispatcher with nothing pending:** all three counts are 0; she clicks the primary button "Let's go" → audio warmed, modal dismissed, she stays where she is. Exactly today's behavior, new copy.
+3. **Technician on iOS PWA (standalone cold start):** he taps the Home-Screen icon; even if the first `innerWidth` momentarily reads >768, the hardened `useIsMobile` corrects and the explicit `!isMobile` belts in arming + render + the reset-on-flip effect guarantee the modal never appears and no softphone artifacts load. Same guarantee in iPhone landscape (932px wide).
+4. **Slow/failing counters (desktop):** the backend is slow or a counter request fails — the modal still appears immediately with "—" (or a skeleton) in the affected columns; clicks still navigate + warm up. Counters never delay or block the modal; errors are fail-silent.
+
+**FRs:**
+
+- **FR-MOBILE-FIX (belt-and-suspenders, three independent belts):**
+  - **(a) harden `useIsMobile`** — replace the width-only check with a robust formula the Architect pins (options: `matchMedia('(max-width: 767px)')` with a `change` listener, OR combined with a coarse-pointer/touch heuristic such as `(pointer: coarse)`). Constraints: the hook stays a drop-in — same name/signature (optional `breakpoint` param, default 768, must keep working), same "reactive boolean" contract; **all existing consumers must keep working** (call-site audit below — all 26 call sites use the default breakpoint, none pass an argument).
+  - **(b) explicit `!isMobile`** in BOTH the arming effect (`useEffect` at `AppLayout.tsx:73`: `softPhoneEnabled && voice.phoneAllowed && voice.deviceReady`) AND the Dialog `open` expression (`AppLayout.tsx:~192`: currently `showWarmUp && !location.pathname.startsWith('/schedule')` — no mobile gate today). Defense-in-depth: even though `softPhoneEnabled` already embeds `!isMobile`, the belt must not rely on that indirection.
+  - **(c) reset on flip:** an effect that sets `showWarmUp` to `false` whenever `isMobile` flips to `true` — un-latches a modal armed during a transient wrong-width window.
+  - **D1:** on mobile there is NO modal and NO softphone artifacts at all — nothing extra loads (the existing `softPhoneEnabled = !isMobile && …` gate on `useTwilioDevice` stays as-is).
+  - **`useIsMobile` call-site audit (26 calls, all no-arg / default breakpoint):** `components/layout/AppLayout.tsx:39`, `components/softphone/ClickToCallButton.tsx:28`, `components/ui/dialog.tsx:87`, `components/ui/popover.tsx:58`, `components/ui/dropdown-menu.tsx:62`, `components/ui/select.tsx:106`, `components/schedule/DayView.tsx:53`, `components/schedule/SlotContextMenu.tsx:36`, `components/tasks/TaskActionButtons.tsx:55`, `components/auth/TwoFactorGate.tsx:48`, `components/telephony/TelephonyNav.tsx:37`, `components/telephony/TelephonyLayout.tsx:18`, `components/jobs/JobTechnicianControl.tsx:37`, `hooks/useJobsData.ts:50`, `hooks/useOverlayDismiss.ts:158`, `hooks/useScheduleData.ts:79`, `pages/JobsPage.tsx:22`, `pages/LeadsPage.tsx:47`, `pages/PulsePage.tsx:54`, `pages/RolesAccessPage.tsx:336`, `pages/SchedulePage.tsx:38`, `pages/TasksPage.tsx:65`, `pages/telephony/RouteManagerOverviewPage.tsx:23`, `pages/telephony/UserGroupsPage.tsx:40` + `:107`. (Comment-only mentions, no calls: `MobileListPage.tsx`, `MobileScheduleBar.tsx`, `Leads/Jobs` mobile list/bar/card files.) Overlay-critical consumers (`dialog.tsx`, `select.tsx`, `popover.tsx`, `dropdown-menu.tsx`, `useOverlayDismiss.ts`) drive the mobile BottomSheet swap (OVERLAY-CANON-002) — the hardened hook must not change their desktop/mobile classification on real devices.
+
+- **FR-SUMMARY (desktop day-at-a-glance modal content):**
+  - The modal (same `Dialog`, same open/dismiss lifecycle) replaces its current content (Phone icon / "SoftPhone Ready" / "Enable incoming call ringtone…" / "Enable Ringtone") with: title **"Today at a glance"**, small subtext **"Enabling sound for incoming calls"**, three clickable stat columns, and primary button **"Let's go"**.
+  - **Columns (D2):** (1) **"Pulse inbox"** = `pulseUnreadCount` + AR count (open tasks with `parent_type='timeline'`) → click navigates to `/pulse`; (2) **"New leads"** = `leadsNewCount` → `/leads`; (3) **"Open tasks"** = `openTasksCount` → `/tasks`.
+  - **Click behavior:** column click = navigate + dismiss (`setShowWarmUp(false)`) + `warmUpAudio()` — all within the same user gesture (the gesture is what unlocks the AudioContext; it MUST be preserved on every interactive element). "Let's go" = `warmUpAudio()` + dismiss, no navigation — byte-identical semantics to today's `handleWarmUpDismiss`.
+  - **Counters reuse (zero new requests except AR):** columns 2–3 reuse the existing AppLayout badge state (`pulseUnreadCount` ← `GET /api/pulse/unread-count`; `leadsNewCount` ← `GET /api/leads/new-count`; `openTasksCount` ← `GET /api/tasks/count`, role-scoped: manage = company-wide, else own). Column 1 additionally needs the AR count via `GET /api/tasks/count?parent_type=timeline` (FR-COUNT-API).
+  - **D5 states:** counter still loading → "—" or skeleton in that column — the modal NEVER waits for counters; counter fetch error → fail-silent "—" (no toast, no console spam beyond existing patterns). Clicks work regardless of counter state.
+  - **D1:** the summary is DESKTOP-ONLY (it lives inside the warm-up modal, which the belts make impossible on mobile).
+  - **Design:** `--blanc-*` tokens only; the reusable `ui/CloudBanner` (violet cloud from STRIPE-CONNECT-UX-001) MAY back the summary surface per the owner's juicy-banner canon — Architect/implementer's call; counts large (heading font), labels as `.blanc-eyebrow`-style captions; no `<hr>`/Separator; no decorative icon soup.
+
+- **FR-COUNT-API (additive `parent_type` pass-through):** `GET /api/tasks/count` (`backend/src/routes/tasks.js:70-80`) currently hardcodes `filters={status:'open'}` and ignores `parent_type`, though `tasksQueries` `buildConditions` already supports it (`tasksQueries.js:141` — validated via `isValidParentType`, invalid values silently ignored). Change: pass `req.query.parent_type` into `filters`. **Additive and backward-compatible:** no param → behavior byte-identical to today (nav badge unchanged); role-scoping branch (`canManage` → company-wide / else `scopeOwnerId`) untouched and applies to the filtered count too. No changes to `tasksQueries`.
+
+- **FR-COPY (D4 — English defaults, pipeline may polish in this spirit):** title "Today at a glance"; subtext "Enabling sound for incoming calls"; column labels "Pulse inbox" / "New leads" / "Open tasks"; primary button "Let's go". "Blanc" never ships in UI (product = Albusto).
+
+**ACs:**
+- **AC-1:** the modal is mathematically impossible on mobile — three independent belts (hardened `useIsMobile`, explicit `!isMobile` in arming AND `Dialog open`, reset-on-flip effect); any single belt failing still leaves the other two blocking.
+- **AC-2:** on desktop the modal shows the "Today at a glance" summary with live counts in all three columns (values match the nav badges + AR count).
+- **AC-3:** clicking a column navigates to its route AND dismisses the modal AND runs `warmUpAudio()` within the click gesture; "Let's go" warms + dismisses without navigating.
+- **AC-4:** `GET /api/tasks/count?parent_type=timeline` returns the open-AR count; the same call WITHOUT the param returns exactly today's number (backward-compat — nav badge unchanged); role-scoping preserved in both cases.
+- **AC-5:** `npm run build` (tsc -b) green + backend jest green.
+- **AC-6:** D5 states verified — counters loading show "—"/skeleton without delaying the modal; a failed counter request degrades to "—" silently.
+
+**Ограничения и нефункциональные требования:**
+- **NO migrations.** Frontend + ONE additive backend route tweak (`tasks.js` count route); no new endpoints, no SSE changes.
+- `useTwilioDevice`, `SoftPhoneWidget`, presence, and the `softPhoneEnabled` computation are UNTOUCHED except the explicit belts described in FR-MOBILE-FIX.
+- Nav badges (Pulse / Leads / Tasks counts in `AppNavTabs` / `BottomNavBar`) untouched — the summary only reads the same state.
+- All 26 `useIsMobile` call sites must keep working (list in FR-MOBILE-FIX); the hook's public signature is preserved.
+- The warm-up modal stays DELIBERATE on desktop (AudioContext user-gesture canon) — do not remove it, do not auto-dismiss without a gesture.
+- English UI; design tokens only; no new dependencies.
+
+**Потенциально вовлечённые модули:**
+- `frontend/src/hooks/useIsMobile.ts` — hardened detection formula (Architect pins it).
+- `frontend/src/components/layout/AppLayout.tsx` — belts (b)/(c), modal content swap, AR-count fetch, click handlers.
+- `backend/src/routes/tasks.js` — `parent_type` pass-through on `GET /count` (route layer only).
+- Optionally `frontend/src/components/ui/CloudBanner.tsx` / design-system CSS — if the cloud surface backs the summary.
+
+**Затронутые интеграции:** Twilio — indirectly protected (mobile must never register a WebRTC Device; desktop warm-up gesture preserved). Front / Zenbooker / Stripe / VAPI / Google Places — нет.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `useTwilioDevice` hook and its `enabled` gating; `SoftPhoneWidget`; incoming-call auto-open logic; presence.
+- `softPhoneEnabled = !isMobile && softPhoneGroupsLoaded && groups.length > 0` (`AppLayout.tsx:44`) — semantics unchanged.
+- `warmUpAudio()` user-gesture contract (softphone-warmup canon) — every dismiss path keeps the gesture.
+- Nav badge fetch/poll/SSE plumbing (`fetchUnreadCount`, `fetchLeadsNewCount`, `fetchOpenTasksCount`, `onGenericEvent`) — reused, not modified.
+- `GET /api/tasks/count` default behavior + role-scoping branch (`canManage`/`scopeOwnerId`); `tasksQueries.buildConditions`/`countTasks` (no changes there).
+- All 26 `useIsMobile` consumers, especially the overlay canon swap in `ui/dialog.tsx` / `ui/select.tsx` / `ui/popover.tsx` / `ui/dropdown-menu.tsx` / `useOverlayDismiss.ts` (OVERLAY-CANON-002) and the mobile list shells (`JobsPage`/`LeadsPage`/`PulsePage`/`TasksPage`/`SchedulePage`).
+- The `/schedule` suppression in the Dialog `open` expression (`!location.pathname.startsWith('/schedule')`) — keep it.
