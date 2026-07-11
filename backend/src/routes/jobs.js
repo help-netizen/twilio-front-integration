@@ -639,6 +639,18 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
         const zbJobId = rows[0].zenbooker_job_id;
         const currentTechs = rows[0].assigned_techs || [];
 
+        // SCHED-ROUTE-VIS-001 (FR-1, S-8): capture the tech-day pairs this job
+        // occupies BEFORE the reschedule (and before the ZB-assign block below
+        // rewrites assigned_provider_user_ids) so the vacated day repairs too.
+        let beforeTechDays = [];
+        if (companyId) {
+            try {
+                const routeQueries = require('../db/routeQueries');
+                const tz = await routeQueries.getCompanyTimezone(companyId);
+                beforeTechDays = await routeQueries.getTechDaysForJob(companyId, jobId, tz);
+            } catch { /* non-fatal */ }
+        }
+
         // 2. Reschedule in Zenbooker (if ZB job exists)
         if (zbJobId) {
             try {
@@ -695,6 +707,14 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
             `UPDATE jobs SET start_date = $1, end_date = $2, zb_rescheduled = true, updated_at = NOW() WHERE id = $3`,
             [start_date, endDate, jobId]
         );
+
+        // SCHED-ROUTE-VIS-001 (FR-1, S-8): best-effort route recalc after the
+        // local UPDATE — fire-and-forget, the HTTP response never waits.
+        if (companyId) {
+            require('../services/routeSegmentService')
+                .recalcForJob(companyId, jobId, { beforeTechDays })
+                .catch(e => console.error('[Jobs API] reschedule recalc failed (non-fatal):', e.message));
+        }
 
         // 5. Return updated job immediately (frontend gets instant response)
         const updated = await jobsService.getJobById(jobId);

@@ -88,6 +88,61 @@ async function getSeedTechDays(companyId, tz) {
     return rows.map(r => ({ technicianId: r.technician_id, scheduleDate: r.schedule_date }));
 }
 
+// ── Lazy-on-read seed detection (SCHED-ROUTE-VIS-001 FR-2) ───────────────────
+/**
+ * Tech-day pairs in [from, to] that need reconciling: ≥2 participating jobs
+ * (same rules as getParticipatingJobsForTechDay — start_date set, non-excluded
+ * status, company-local day) AND either no active segments at all (never
+ * routed) OR at least one active 'pending' segment (a stuck pair whose
+ * route_calc task was lost — self-heal, S-14). Detection reads ONLY jobs (E-2).
+ * Optional technicianId narrows to one tech (provider assigned_only scope).
+ * Returns [{ technicianId, scheduleDate }] with scheduleDate as 'YYYY-MM-DD'
+ * text so downstream enqueue/dedup compare apples to apples.
+ */
+async function getMissingTechDaysInRange(companyId, { from, to, technicianId } = {}, tz, cap = 10) {
+    const params = [companyId, tz, from, to, EXCLUDED_STATUSES, cap];
+    let techCond = '';
+    if (technicianId) {
+        params.push(technicianId);
+        techCond = `\n           AND td.technician_id = $${params.length}`;
+    }
+    const { rows } = await db.query(
+        `SELECT technician_id, schedule_date::text AS schedule_date
+         FROM (
+             SELECT elem AS technician_id,
+                    (start_date AT TIME ZONE $2)::date AS schedule_date
+             FROM jobs, jsonb_array_elements_text(assigned_provider_user_ids) elem
+             WHERE company_id = $1
+               AND start_date IS NOT NULL
+               AND blanc_status <> ALL($5)
+               AND (start_date AT TIME ZONE $2)::date >= $3::date
+               AND (start_date AT TIME ZONE $2)::date <= $4::date
+             GROUP BY elem, (start_date AT TIME ZONE $2)::date
+             HAVING COUNT(*) >= 2
+         ) td
+         WHERE (
+               NOT EXISTS (
+                   SELECT 1 FROM schedule_route_segments s
+                   WHERE s.company_id = $1
+                     AND s.technician_id::text = td.technician_id
+                     AND s.schedule_date = td.schedule_date
+                     AND s.status <> 'stale'
+               )
+               OR EXISTS (
+                   SELECT 1 FROM schedule_route_segments s
+                   WHERE s.company_id = $1
+                     AND s.technician_id::text = td.technician_id
+                     AND s.schedule_date = td.schedule_date
+                     AND s.status = 'pending'
+               )
+           )${techCond}
+         ORDER BY schedule_date
+         LIMIT $6`,
+        params
+    );
+    return rows.map(r => ({ technicianId: r.technician_id, scheduleDate: r.schedule_date }));
+}
+
 // ── Segment reads ─────────────────────────────────────────────────────────────
 async function getActiveSegments(companyId, technicianId, scheduleDate) {
     const { rows } = await db.query(
@@ -239,6 +294,7 @@ module.exports = {
     getCompanyTimezone,
     getCompaniesWithTimezone,
     getSeedTechDays,
+    getMissingTechDaysInRange,
     purgeStaleSegments,
     pruneRouteCache,
     getParticipatingJobsForTechDay,

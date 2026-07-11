@@ -141,7 +141,7 @@ export const STATIC_COLUMNS: Record<string, ColumnDef> = {
         key: 'customer_name', label: 'Customer', sortKey: 'customer_name', width: 'w-48 max-w-[12rem]',
         render: (j) => (
             <div className="max-w-[12rem]">
-                <div className="font-medium truncate">{j.customer_name || '—'}</div>
+                <div className="font-medium truncate">{[j.customer_name, j.city].filter(Boolean).join(', ') || '—'}</div>
                 {j.customer_phone && <div className="text-xs text-muted-foreground">{j.customer_phone}</div>}
             </div>
         ),

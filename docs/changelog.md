@@ -2263,3 +2263,17 @@ Marketplace-gated integration of the standalone `slot-engine` (Phase 1) into the
   `Recommended` tech-bar pill + clickable timeline overlay bands; graceful when disabled/engine-down.
 
 `SLOT_ENGINE_URL` added to `.env.example`. Verified: 34 + 48 backend tests, frontend build green, engine 18/18.
+
+## 2026-07-11 — SCHED-ROUTE-VIS-001: drive-time видимость + "Customer, City" на карточках
+
+**Проблема:** SCHED-ROUTE-001 (drive-time легсы) задеплоен, но данные почти не создавались — recalc-хуки стояли только на drag-действиях в расписании; создание job, назначение техника и смена даты из карточки Job сегментов не порождали, бэкфилла не было (прод: 50 сегментов при 236 jobs/30д). Плюс город не отображался: rowToScheduleItem не мапил city.
+
+**Изменения:**
+- FR-1 recalc-хуки (best-effort): createDirectJob (обе ветки), syncFromZenbooker (existing с coords-дельтой против webhook-эха / create / delayed auto-assign), POST /api/jobs/:id/reschedule (capture beforeTechDays до ZB-assign, recalc после UPDATE) — backend/src/services/jobsService.js, backend/src/routes/jobs.js.
+- FR-2 lazy-on-read досев: routeQueries.getMissingTechDaysInRange (tech-days ≥2 jobs без активных сегментов OR с зависшим pending, cap 10) + routeSegmentService.seedMissingForRange / enqueueRouteCalcDeduped (NOT EXISTS по queued) + setImmediate fire-and-forget в scheduleService.getRouteSegments (provider techFilter scope). Google только через route_calculation_cache-first agentWorker route_calc.
+- FR-3 city: rowToScheduleItem мапит city; ScheduleItemCard classic-ветка = "Customer, City" (subtitleCity); agenda nameCity работал и раньше — теперь получает данные.
+- FR-4: desktop-таблица Jobs, колонка Customer = "Customer, City" (jobHelpers.tsx).
+- Поправка Wave 1: getSeedTechDays/getCompaniesWithTimezone СОХРАНЕНЫ (их использует scripts/backfill-route-segments.js) — арх-решение «удалить» отменено оркестратором.
+- Фикс Tester-бага: hoisted require + Promise.resolve в setImmediate-hunk (teardown-race в jest).
+
+**Тесты:** +2 сьюта (schedRouteRecalcHooks 20, schedRouteLazySeed 17); 6/6 route-suites 61/61; широкая регрессия 17 suites / 228 tests; frontend build зелёный; sabotage-контроль ×2 (Reviewer APPROVED). Без миграций и изменений пермишенов. НЕ задеплоено (deploy-consent).

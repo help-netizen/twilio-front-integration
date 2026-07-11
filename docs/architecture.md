@@ -6161,3 +6161,85 @@ Standalone-скрипт (напр. `backend/scripts/yelp_timeline_dedup_cleanup.
 6. **Cleanup необратим** — snapshot-first, не в миграции, `mergeContacts` НЕ подходит (нужен survivor-контакт); un-groupable-residue остаётся контактлесс/нетронутым.
 7. **Возможны две реализации Pulse-списка** (inline `calls.js:294` vs `getUnifiedTimelinePage`) — Implementer должен закрепить живую и править её.
 8. **Миграция 165** — дрейф от параллельных worktree; recheck `ls backend/db/migrations` при билде.
+
+## SCHED-ROUTE-VIS-001 — recalc-хуки + lazy-on-read досев route-сегментов, "Customer, City" в Schedule/Jobs (2026-07-11)
+
+**Контекст.** SCHED-ROUTE-001 живёт, но пересчёт легсов триггерится только drag-путями расписания (`scheduleService.js:486,501`), `updateJobLocation` (`jobsService.js:1570`) и геокодом (`agentHandlers.js:78`). Создание job с датой+техником (человеком и ZB-sync), смена техника/даты из карточки Job пересчёт не запускают; бэкфилла нет. Плюс `rowToScheduleItem` не мапит `city`, хотя SQL его уже селектит. Никаких новых миграций, никаких изменений пермишенов, весь SQL company_id-scoped.
+
+### Существующий функционал (расширяется, НЕ дублируется)
+
+- `routeSegmentService.recalcForJob(companyId, jobId, {beforeTechDays, coordsChanged})` (`backend/src/services/routeSegmentService.js:83`) — идемпотентная реконсиляция всех tech-day пар джоба (before ∪ after). **Единственный механизм пересчёта — все новые хуки зовут только его.**
+- `routeSegmentService.reconcileTechDay(...)` (`:45`) — реконсиляция ОДНОЙ tech-day пары: DB-only (создаёт pending-строки, помечает stale), сама enqueue'ит `route_calc` при появлении новых calculable-пар. Основа lazy-досева.
+- `routeSegmentService.enqueueRouteCalc` (`:26`) — plain INSERT задачи `kind='agent', agent_type='route_calc'` в `tasks`. НЕ дедуплицирован — для lazy-пути добавляется deduped-вариант (ниже).
+- `agentHandlers.route_calc` (`backend/src/services/agentHandlers.js:84`) — вычисляет УЖЕ существующие pending-сегменты: `getCalculableSegments` → `routeDistanceService.computePair` (cache-first `route_calculation_cache`, Google Distance Matrix только на miss, ключ `GOOGLE_GEOCODING_KEY||GOOGLE_PLACES_KEY`) → `setSegmentResult`. **Не меняется.**
+- `scheduleService.reassignItem` (`scheduleService.js:333`) и `rescheduleItem` (`:170`) — УЖЕ содержат capture `beforeTechDays` (`captureJobTechDays:320`) + `recalcAfterJobChange` (`:426`, `:254`). Drag-пути покрыты — **не трогать**.
+- Паттерн best-effort capture-before-update: `jobsService.updateJobLocation:1536-1540` (`getCompanyTimezone` → `getTechDaysForJob` в try/catch → recalc с `.catch` non-fatal). Все новые хуки копируют его.
+- `routeQueries.getSegmentsForRange` (`routeQueries.js:103`), endpoint `GET /api/schedule/route-segments` (`backend/src/routes/schedule.js:136`, `requirePermission('schedule.view')`) → `scheduleService.getRouteSegments` (`:512`). Контракт ответа не меняется.
+- Фронт-рендер легсов (`routeByPair` в TimelineView/TimelineWeekView/ListView, agenda DayView) — готов, данные "просто появятся". `ScheduleItem.city?: string|null` уже типизирован (`frontend/src/services/scheduleApi.ts:21`), `LocalJob.city` уже типизирован (`frontend/src/services/jobsApi.ts:41`), `listJobs = SELECT j.*` город уже отдаёт.
+
+### Решение 1 — Recalc-хуки (FR-1)
+
+Все хуки: fire-and-forget `.catch(e => console.error(..., e.message))`, non-fatal, по образцу `jobsService.js:1570`. `beforeTechDays` — по паттерну `:1536-1540`.
+
+**1a. Человеческое создание job — `jobsService.createDirectJob` (`jobsService.js:404`).** Одна точка вставки ПОСЛЕ разрешения `localJob` в обеих ветках (ZB-success через `createJob:524` и локальный fallback `:540-552`) — рядом с eventBus-emit (~`:577`): `routeSeg.recalcForJob(companyId, localJob.id, { coordsChanged: true }).catch(...)`; плюс, если у `localJob` есть address но нет lat/lng — `routeSeg.enqueueGeocode(companyId, localJob.id).catch(...)` (геокод-хендлер после успеха сам делает recalc — `agentHandlers.js:78`). `beforeTechDays` не нужен — job новый. Путь `createManualJob`/from-slot уже покрыт `scheduleService.triggerJobRouteSideEffects:482` — не дублировать.
+
+**1b. ZB-sync upsert — `jobsService.syncFromZenbooker` (`jobsService.js:1124`), ЕДИНАЯ точка всего ZB-ингеста** (webhooks `integrations-zenbooker.js`, `POST /api/jobs/sync`, background re-fetch из `jobs.js:711`):
+- **Ветка existing (`:1145`):** capture `beforeTechDays` ДО `UPDATE :1181` (try/catch → `[]`); после UPDATE — `recalcForJob(effectiveCompanyId, existing.id, { beforeTechDays, coordsChanged })`, где `coordsChanged = cols.lat != null && cols.lng != null && (Number(cols.lat) !== Number(existing.lat) || Number(cols.lng) !== Number(existing.lng))` — иначе каждый webhook-эхо будет стейлить/пересоздавать выжившие пары (DB-churn; Google не пострадает — cache hit, но churn незачем). При «ничего не изменилось» `recalcForJob` — дешёвый идемпотентный no-op (desired == active).
+- **Ветка create (`:1234-1236`):** после `createJob` — `recalcForJob(companyId || job.company_id, job.id, { coordsChanged: true })` + `enqueueGeocode` если address без coords.
+- **Delayed auto-assign re-fetch (`setImmediate`-блок `:1241`, UPDATE `:1250`):** после UPDATE mirror'а — `recalcForJob(companyId || job.company_id, job.id, {})` (чистое добавление техников — vacated-дней нет, `beforeTechDays` не нужен).
+
+**1c. Карточка Job: смена даты И смена/назначение техника — `POST /api/jobs/:id/reschedule` (`backend/src/routes/jobs.js:616`).** Верифицировано: Job-card reassign идёт ИМЕННО этим маршрутом (`JobInfoSections.tsx:96-112` шлёт `start_date` + опциональный `tech_id`; JOB-TECH-ASSIGN-001 REPLACES), а НЕ через `scheduleService.reassignItem` (тот — drag-путь, уже хукнут). Вставка: capture `beforeTechDays` сразу после чтения текущего джоба (`:637-640`, до ZB-assign-блока `:659` — тот обновляет `assigned_provider_user_ids` на `:677-680`); recalc-вызов после локального `UPDATE start_date/end_date` (`:694-697`), рядом с `res.json`: `recalcForJob(companyId, jobId, { beforeTechDays }).catch(...)` с гвардом `if (companyId)`. Фоновый ZB re-sync (`:706`) через 3 сек дёрнет `syncFromZenbooker` → второй recalc (хук 1b) — идемпотентно, допустимо.
+
+Хук в `createJob` (`:265`) НЕ ставим: это UPSERT-примитив двух вызывающих (`createDirectJob:524`, `syncFromZenbooker:1236`), оба хукаются снаружи — хук внутри дал бы double-fire и не имел бы доступа к beforeTechDays при конфликтном апдейте.
+
+### Решение 2 — Lazy-on-read досев (FR-2)
+
+**Принцип:** `route_calc`-хендлер вычисляет только УЖЕ существующие pending-строки, поэтому досев = синхронная DB-only реконсиляция (`reconcileTechDay` создаёт pending) + постановка вычисления в очередь. Всё — в фоне, ответ читателя не ждёт (вернёт что есть; фронт покажет "Calculating…", success придёт при следующем чтении/refetch).
+
+**2a. Новое в `routeQueries.js`: `getMissingTechDaysInRange(companyId, { from, to, technicianId }, tz, cap)`** — одна SQL-выборка кандидатов: distinct (technician_id, company-local day) из `jobs` + `jsonb_array_elements_text(assigned_provider_user_ids)` с `COUNT(*) >= 2` участвующих джобов (те же правила участия, что `getParticipatingJobsForTechDay`: `start_date IS NOT NULL`, `blanc_status <> ALL(EXCLUDED_STATUSES)`, день в company tz) в диапазоне `[from,to]`, у которых **(нет ни одного активного сегмента) OR (есть активный `status='pending'` сегмент)** — вторая ветка самолечит зависшие pending (упавшая/потерянная задача). Опциональный фильтр `technicianId` (provider scope). `ORDER BY schedule_date LIMIT cap`. Company_id-scoped, параметризовано. **ПОПРАВКА (Wave 1, оркестратор):** `getSeedTechDays` и `getCompaniesWithTimezone` НЕ мёртвые — их использует `scripts/backfill-route-segments.js` (ручной бэкфилл-инструмент, покрыт `tests/schedRouteBackfill.test.js`). Решение: СОХРАНИТЬ обе функции байт-в-байт; скрипт остаётся рабочим.
+
+**2b. Новое в `routeSegmentService.js`:**
+- `enqueueRouteCalcDeduped(companyId, technicianId, scheduleDate)` — `INSERT INTO tasks ... SELECT ... WHERE NOT EXISTS (SELECT 1 FROM tasks WHERE company_id=$1 AND kind='agent' AND agent_type='route_calc' AND agent_status='queued' AND agent_input->>'technician_id'=$2 AND agent_input->>'schedule_date'=$3)`. Гвардим только `'queued'` (не `'running'`): queued-задача отработает ПОСЛЕ наших insert'ов — дубль не нужен; параллельно с running вставить дубль допустимо (закрывает гонку "воркер уже прочитал сегменты"), лишняя задача — no-op. Существующий plain `enqueueRouteCalc` НЕ меняется (event-driven хуки — низкочастотные).
+- `seedMissingForRange(companyId, { from, to, technicianId }, { cap = 10 })`: guard `if (!from || !to) return`; `tz = getCompanyTimezone`; `getMissingTechDaysInRange(...)`; для каждого кандидата — `reconcileTechDay(companyId, td.technicianId, td.scheduleDate, { tz })` (сам enqueue'ит при создании новых pending); если `!r.enqueuedCalc` и `getCalculableSegments(...).length > 0` → `enqueueRouteCalcDeduped(...)` (кейс зависших pending). Весь метод в try/catch, лог non-fatal.
+
+**2c. Wiring — `scheduleService.getRouteSegments` (`scheduleService.js:512`):** перед `return { segments }` — `setImmediate(() => routeSeg.seedMissingForRange(companyId, { from, to, technicianId: techFilter }).catch(e => console.error('[Schedule] lazy route seed failed (non-fatal):', e.message)))`. HTTP-ответ не ждёт ни реконсиляции, ни тем более вычислений. `techFilter` уже учитывает provider scope (`assignedOnly` → только свой tech). `routes/schedule.js` не меняется — контракт, пермишен `schedule.view` и формат ответа нетронуты.
+
+**Объём/стоимость чтения:** 1 SQL детекции + ≤cap(10) реконсиляций (каждая 3-4 DB-запроса) в фоне; Google — 0 в HTTP-пути всегда, и только на cache-miss в воркере. Повторные чтения того же диапазона: реконсилированные tech-days выпадают из детекции (есть активные не-pending сегменты — включая `missing_address`/`address_needs_review`, они не пере-churn'ятся), дубли задач срезает dedup.
+
+### Решение 3 — City (FR-3/FR-4)
+
+- **Backend (единственная строка):** `scheduleService.rowToScheduleItem` (`scheduleService.js:29-63`) — добавить `city: row.city || null` (SQL уже селектит: `scheduleQueries.js:118` `j.city`, `:173` `l.city`, `:236` `NULL` для tasks). `subtitle` в API НЕ трогаем (owner-направление: композиция на фронте) — subtitle остаётся `customer_name`.
+- **Classic-layout:** `frontend/src/components/schedule/ScheduleItemCard.tsx` — в classic-ветке subtitle-абзац (`:283-286`, рендер `item.subtitle`) заменить на `[item.subtitle, item.city].filter(Boolean).join(', ')` — джобы и лиды получают "Customer, City", tasks (`city=NULL`, `subtitle=''`) не рендерятся как раньше; города нет → только имя, никаких хвостов-запятых. Agenda-ветка (`:86` `nameCity`) уже корректна — **не трогать**, заработает от появления поля.
+- **Desktop-таблица Jobs:** `frontend/src/components/jobs/jobHelpers.tsx`, колонка `customer_name` (`STATIC_COLUMNS`, `:140-144`) — `{j.customer_name || '—'}` → `{[j.customer_name, j.city].filter(Boolean).join(', ') || '—'}`; phone-подстрока без изменений. Данные уже в API (`listJobs = SELECT j.*`), тип уже есть (`LocalJob.city`, `jobsApi.ts:41`). `JobMobileCard` — уже "Name, City", **побайтово не трогать**.
+
+### Файлы к изменению
+
+| Файл | Роль |
+|---|---|
+| `backend/src/db/routeQueries.js` | + `getMissingTechDaysInRange`; `getSeedTechDays`/`getCompaniesWithTimezone` сохранены (используются scripts/backfill-route-segments.js) |
+| `backend/src/services/routeSegmentService.js` | + `enqueueRouteCalcDeduped`, + `seedMissingForRange` (+ экспорты) |
+| `backend/src/services/scheduleService.js` | `rowToScheduleItem` + `city`; `getRouteSegments` + fire-and-forget seed |
+| `backend/src/services/jobsService.js` | хуки: `createDirectJob` (recalc+geocode), `syncFromZenbooker` (existing/create/delayed-refetch) |
+| `backend/src/routes/jobs.js` | `POST /:id/reschedule`: capture `beforeTechDays` + post-update recalc |
+| `frontend/src/components/schedule/ScheduleItemCard.tsx` | classic-ветка: subtitle → "Customer, City" |
+| `frontend/src/components/jobs/jobHelpers.tsx` | колонка Customer → "Customer, City" |
+| `tests/schedRouteRecalc.test.js` / новый `tests/schedRouteLazySeed.test.js` | юнит-покрытие хуков и досева (детекция, dedup, cap, provider scope) |
+
+**НЕ изменяются (защищено):** `backend/src/routes/schedule.js` (контракт route-segments, `schedule.view`); `agentHandlers.js` (`route_calc`/`job_geocode` хендлеры, включая recalc на `:78`); `routeDistanceService` / семантика `route_calculation_cache` (driving no-traffic, cache-first, `NO_KEY` fail-soft); существующие recalc-вызовы `scheduleService.js:486,501` + `captureJobTechDays`/`recalcAfterJobChange`; `reassignItem` ZB write-through diff; `scheduleQueries.js` (city уже селектится); agentWorker и task-lifecycle; `frontend/src/components/jobs/JobMobileCard*`; agenda-ветка `ScheduleItemCard`; `frontend/src/services/scheduleApi.ts` (тип уже есть); никакие миграции/пермишены/`server.js`.
+
+### Отвергнутые альтернативы
+
+- **Cron/one-shot бэкфилл-сидер** — отвергнут владельцем: требует scheduler-инфры, жжёт Google-квоту на дни, которые никто не откроет, и продолжает дрейфовать без event-хуков; lazy-on-read самолечит ровно то, на что смотрят (`getSeedTechDays` остаётся как часть ручного бэкфилл-скрипта scripts/backfill-route-segments.js — он опционален и owner-triggered, это не cron).
+- **Синхронный досев в HTTP-запросе** — деградация времени ответа route-segments (реконсиляция ×N tech-days) и NFR-запрет; `setImmediate` + очередь воркера.
+- **Хук внутри `createJob`-upsert'а** — double-fire с хуками `createDirectJob`/`syncFromZenbooker` и невозможность честного `beforeTechDays` на conflict-update.
+- **Композиция "Customer, City" в API-`subtitle`** — меняет разделяемый контракт (`getScheduleItems` читают и не-карточные потребители, напр. слот-логика `getAvailableSlots`); фронт-композиция локальна и обратима (owner-направление).
+- **Дедуп через UNIQUE-индекс на tasks** — потребовал бы миграцию (запрещено); `WHERE NOT EXISTS`-INSERT достаточен при низкой конкуренции.
+
+### Риски
+
+- **Google-квота:** досев ограничен диапазоном запроса + cap 10 tech-days/чтение + только пары с ≥2 джобами; вычисление всегда cache-first (`route_calculation_cache` глобальный), Distance Matrix только на miss. Прод-масштаб (~236 jobs/30д) — единицы реальных вызовов.
+- **Дубль-задачи:** dedup-гвард по `agent_status='queued'`; остаточная гонка (двойное параллельное чтение / running-воркер) даёт лишь no-op задачу (`getCalculableSegments` пусто). Плодить бесконечно не может — реконсилированный tech-day выпадает из детекции.
+- **N+1 / нагрузка на чтении:** детекция = 1 SQL; реконсиляции — в `setImmediate`-фоне, cap'ированы; время ответа `GET /route-segments` не деградирует.
+- **Webhook-эхо ZB (`syncFromZenbooker`)** — самый частый путь: recalc там дешёвый идемпотентный no-op при отсутствии изменений, `coordsChanged` только при реальной дельте координат (иначе stale/recreate-churn выживших пар на каждом эхе).
+- **`POST /:id/reschedule` double-recalc** (локальный хук + фоновый ZB-sync через 3с) — идемпотентно по построению `recalcForJob`; допустимо.
+- **Classic-subtitle у лидов** тоже станет "Name, City" — консистентно с agenda и требованием, отдельного гварда по entity_type не нужно (tasks: city NULL → рендер без изменений).

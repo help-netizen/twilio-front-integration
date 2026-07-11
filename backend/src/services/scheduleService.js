@@ -36,6 +36,10 @@ function rowToScheduleItem(row) {
         start_at: row.start_at ? row.start_at.toISOString ? row.start_at.toISOString() : row.start_at : null,
         end_at: row.end_at ? row.end_at.toISOString ? row.end_at.toISOString() : row.end_at : null,
         address_summary: row.address_summary || '',
+        // SCHED-ROUTE-VIS-001 (FR-3): city as its own field (jobs/leads from the
+        // DB, tasks select NULL). "Customer, City" is composed on the frontend —
+        // subtitle stays untouched (INV-10, shared contract).
+        city: row.city || null,
         // SCHED-ROUTE-001 (FR-002): geocoding state so the UI can show
         // pending / needs-review / failed without any Google call on read.
         lat: row.lat != null ? Number(row.lat) : null,
@@ -511,12 +515,20 @@ async function recalcAfterJobChange(companyId, jobId, beforeTechDays) {
  */
 async function getRouteSegments(companyId, { from, to, technicianId } = {}, providerScope = null) {
     const routeQueries = require('../db/routeQueries');
+    const routeSeg = require('./routeSegmentService');
     let techFilter = technicianId || null;
     if (providerScope?.assignedOnly) {
         if (!providerScope.userId) return { segments: [] };  // unresolved provider → nothing
         techFilter = providerScope.userId;                   // force own scope
     }
     const segments = await routeQueries.getSegmentsForRange(companyId, { from, to, technicianId: techFilter });
+    // SCHED-ROUTE-VIS-001 (FR-2): lazy-on-read self-heal. Fire-and-forget on
+    // setImmediate — the response never waits for it and stays structurally
+    // identical. techFilter already carries the provider assigned_only scope
+    // (PF007), so a provider only seeds their own tech-day pairs (S-10, INV-3).
+    setImmediate(() => Promise.resolve(
+        routeSeg.seedMissingForRange(companyId, { from, to, technicianId: techFilter })
+    ).catch(e => console.error('[Schedule] lazy route seed failed (non-fatal):', e.message)));
     return { segments };
 }
 

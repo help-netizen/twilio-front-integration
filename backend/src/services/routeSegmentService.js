@@ -28,6 +28,35 @@ const enqueueRouteCalc = (companyId, technicianId, scheduleDate) =>
         { technician_id: technicianId, schedule_date: scheduleDate },
         `Route calc ${technicianId} ${scheduleDate}`);
 
+/**
+ * SCHED-ROUTE-VIS-001 (FR-2): dedup-guarded route_calc enqueue for the
+ * lazy-on-read seeder. Skips the INSERT when a task with agent_status='queued'
+ * already exists for the same (company, technician, day) — a queued task will
+ * run AFTER our inserts, so a duplicate buys nothing. Deliberately does NOT
+ * guard against 'running' (E-7): the worker may have already read the segments,
+ * so a duplicate beside a running task closes that race; the extra task is a
+ * no-op (getCalculableSegments comes back empty). Plain enqueueRouteCalc stays
+ * as-is for the low-frequency event-driven hooks.
+ */
+async function enqueueRouteCalcDeduped(companyId, technicianId, scheduleDate) {
+    await db.query(
+        `INSERT INTO tasks (company_id, kind, agent_type, agent_status, agent_input, status, title, created_by)
+         SELECT $1, 'agent', 'route_calc', 'queued', $4::jsonb, 'open', $5, 'system'
+         WHERE NOT EXISTS (
+             SELECT 1 FROM tasks
+             WHERE company_id = $1
+               AND kind = 'agent'
+               AND agent_type = 'route_calc'
+               AND agent_status = 'queued'
+               AND agent_input->>'technician_id' = $2
+               AND agent_input->>'schedule_date' = $3
+         )`,
+        [companyId, technicianId, scheduleDate,
+         JSON.stringify({ technician_id: technicianId, schedule_date: scheduleDate }),
+         `Route calc ${technicianId} ${scheduleDate}`]
+    );
+}
+
 // ── initial segment status from a pair's coordinates ─────────────────────────
 function pairInitialStatus(fromJob, toJob) {
     const usable = (j) => j && j.lat != null && j.lng != null;
@@ -100,11 +129,44 @@ async function recalcForJob(companyId, jobId, { beforeTechDays = [], coordsChang
     return { techDays: all.length, results };
 }
 
+/**
+ * SCHED-ROUTE-VIS-001 (FR-2): lazy-on-read self-heal for a schedule read range.
+ * Fired via setImmediate from scheduleService.getRouteSegments — NEVER awaited
+ * by the HTTP path. Finds up to `cap` missing/stuck tech-day pairs in [from,to]
+ * (ORDER BY schedule_date; later reads advance the tail, S-13) and reconciles
+ * each; reconcileTechDay itself enqueues route_calc when it creates new pending
+ * pairs. When it didn't (stuck pending, desired == active, S-14) but calculable
+ * pending segments exist, enqueue through the deduped path. DB-only + enqueue —
+ * no Google here (INV-1). Errors are non-fatal by design.
+ */
+async function seedMissingForRange(companyId, { from, to, technicianId } = {}, { cap = 10 } = {}) {
+    if (!from || !to) return;                                   // E-6 guard
+    try {
+        const tz = await routeQueries.getCompanyTimezone(companyId);
+        const candidates = await routeQueries.getMissingTechDaysInRange(
+            companyId, { from, to, technicianId }, tz, cap);
+        for (const td of candidates) {
+            const r = await reconcileTechDay(companyId, td.technicianId, td.scheduleDate, { tz });
+            if (!r.enqueuedCalc) {
+                const calculable = await routeQueries.getCalculableSegments(
+                    companyId, td.technicianId, td.scheduleDate);
+                if (calculable.length > 0) {
+                    await enqueueRouteCalcDeduped(companyId, td.technicianId, td.scheduleDate);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('[Schedule] lazy route seed failed (non-fatal):', e.message);
+    }
+}
+
 module.exports = {
     reconcileTechDay,
     recalcForJob,
+    seedMissingForRange,
     enqueueGeocode,
     enqueueRouteCalc,
+    enqueueRouteCalcDeduped,
     enqueueAgentTask,
     pairInitialStatus,
 };

@@ -197,6 +197,10 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
         );
     }
 
+    // SCHED-ROUTE-VIS-001 S-15: classic subtitle line = "Customer, City".
+    // Empty city → just the subtitle (no trailing comma); both empty → not rendered (E-3/E-4).
+    const subtitleCity = [item.subtitle, item.city].filter(Boolean).join(', ');
+
     return (
         <div
             role="button"
@@ -279,10 +283,10 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
                     </p>
                 )}
 
-                {/* Subtitle (only in non-compact and if there's space) */}
-                {!compact && item.subtitle && (
+                {/* Subtitle — "Customer, City" (only in non-compact and if there's space) */}
+                {!compact && subtitleCity && (
                     <p className="text-[13px] truncate mb-1" style={{ color: 'var(--sched-ink-2)', lineHeight: 1.4, margin: 0 }}>
-                        {item.subtitle}
+                        {subtitleCity}
                     </p>
                 )}
 

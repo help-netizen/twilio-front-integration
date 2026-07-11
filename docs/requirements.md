@@ -5753,3 +5753,60 @@ a contact only when we have enough info to create a LEAD."*
   survivor is a CONTACTLESS conv-id timeline and the contacts are deleted). Keep it a separate,
   owner-run, snapshot-first, irreversible, default-company one-shot — not wired into ingest, not part of
   the additive schema migration.
+
+## SCHED-ROUTE-VIS-001 — drive-time легсы в расписании без ручных drag-действий (recalc-хуки + lazy-on-read досев) + "Customer, City" на карточках расписания и в таблице Jobs (2026-07-11)
+
+**Краткое описание:** SCHED-ROUTE-001 задеплоен, но легсы drive-time между последовательными работами техника почти никогда не видны — пересчёт маршрутов запускается ТОЛЬКО на drag reschedule/reassign в расписании, смену адреса и геокод; создание job с датой+техником, назначение/смена техника и смена даты из карточки Job пересчёт НЕ триггерят, бэкфилла нет (прод: 50 строк `schedule_route_segments` при 236 jobs/30д). Вторая проблема — карточки расписания не показывают город клиента: SQL селектит `j.city`, но `rowToScheduleItem` его не мапит, хотя фронт (`ScheduleItemCard` agenda-layout) уже готов рендерить "Customer, City". Диагноз верифицирован по коду и прод-БД — ground truth, не переоткрывать.
+
+**Пользовательские сценарии:**
+1. **Диспетчер планирует день:** создаёт job из карточки (или job приходит из ZB-sync) сразу с датой и техником, потом меняет техника через карточку Job — открывает Schedule и между соседними работами техника СРАЗУ видит drive-time легсы, без единого drag'а.
+2. **Диспетчер открывает старую неделю:** легсов для этих дней никогда не считали — при чтении route-segments недостающие tech-day пары самозалечиваются (ставятся в очередь пересчёта), при следующем обновлении легсы на месте. Никакого крона, Google-квота не горит (кэш `route_calculation_cache`).
+3. **Техник (мобильная agenda):** видит на карточке "Customer, City" и между работами — время в пути; сразу понимает географию дня.
+4. **Диспетчер в desktop-таблице Jobs:** ячейка Customer показывает "Customer, City" одной строкой — видно географию без открытия карточки.
+
+**FRs:**
+
+- **FR-1 (recalc-хуки — легсы без drag'ов):** `recalcForJob` (существующий механизм SCHED-ROUTE-001) должен вызываться дополнительно при: (a) **создании job с датой+техником** — и человеком, и ZB-sync'ом; (b) **назначении/смене техника из карточки Job** (`reassignItem`); (c) **смене даты из карточки Job**. Сегодня он зовётся только из drag-путей расписания (`scheduleService.js:486,501`), `updateJobLocation` (`jobsService.js:1570`) и геокода (`agentHandlers.js:78`) — эти вызовы сохраняются как есть.
+- **FR-2 (lazy-on-read досев, self-healing):** при `GET /api/schedule/route-segments` для видимого диапазона недостающие tech-day пары (день+техник, для которых сегментов нет, а ≥2 назначенных работ есть) ставятся в очередь пересчёта через **существующий** `agentWorker` (task kind `route_calc`) — НЕ синхронно в запросе. Пересчёт идёт через `route_calculation_cache` (Google Distance Matrix только на cache-miss). Ответ route-segments не ждёт пересчёта: отдаёт что есть, досеянное появится при следующем чтении. Дедупликация: одна и та же tech-day пара не плодит дубли задач в очереди. Cron-бэкфилл отвергнут владельцем — не предлагать.
+- **FR-3 (город на карточках расписания):** `rowToScheduleItem` (scheduleService.js) мапит `row.city` → `city` в ScheduleItem (SQL уже селектит `j.city`). Карточки расписания показывают **"Customer, City"** в agenda-layout (фронт уже строит `nameCity=[customer_name, city].join(', ')` — заработает от одного поля) И в classic-layout (добавить тот же формат). Города нет → показывается только имя, никаких "—"/пустых хвостов с запятой.
+- **FR-4 (desktop-таблица Jobs):** колонка Customer (`jobHelpers.tsx`) показывает "Customer, City" одной строкой; города нет → только имя.
+
+**ACs:**
+- **AC-1:** создание job с датой+техником (вручную и через ZB-sync), смена/назначение техника из карточки Job, смена даты из карточки Job — каждый путь приводит к появлению актуальных route-segments для затронутых tech-day пар (старый и новый день/техник при переносе).
+- **AC-2:** открытие расписания на диапазон без сегментов ставит недостающие tech-day пары в очередь `route_calc`; повторное чтение возвращает легсы; повторные открытия того же диапазона НЕ создают дублей задач и не бьют Google на закэшированных парах.
+- **AC-3:** drag reschedule/reassign, смена адреса и геокод продолжают триггерить пересчёт как раньше (регрессий SCHED-ROUTE-001 нет).
+- **AC-4:** карточка расписания (agenda и classic) показывает "Customer, City"; job без города — только имя; `GET /api/schedule` отдаёт `city` в items.
+- **AC-5:** desktop-таблица Jobs: ячейка Customer = "Customer, City" одной строкой; без города — только имя. Мобильная `JobMobileCard` побайтово не изменена.
+- **AC-6:** при выборе нескольких техников легсы допустимо не показывать (текущее поведение пар сохраняется, не регрессия).
+- **AC-7:** `npm run build` (tsc -b) green + backend jest green; НИКАКИХ новых миграций.
+
+**Out-of-scope:**
+- Cron/one-shot бэкфилл-сидер (отвергнут владельцем — self-healing через lazy-on-read достаточно).
+- Traffic-aware ETA (`departure_time`) — остаётся driving-no-traffic как в SCHED-ROUTE-001.
+- Мобильная `JobMobileCard` — уже корректна, НЕ трогать.
+- Легсы при мульти-выборе техников; прод-деплой.
+
+**Ограничения и нефункциональные требования:**
+- **NO migrations** — таблицы `schedule_route_segments` / `route_calculation_cache` (миграции 119/120) уже существуют.
+- Google-квоту не жечь: любой пересчёт идёт cache-first через `route_calculation_cache`; lazy-досев — только через очередь agentWorker, не синхронно в HTTP-запросе.
+- `GET /api/schedule/route-segments` остаётся за пермишеном `schedule.view`; время ответа не деградирует (enqueue — fire-and-forget).
+- Рендер-цепочка фронта (DayView mobile agenda, `routeByPair` в TimelineView/TimelineWeekView/ListView) уже работает — данные должны просто появиться; фронт-изменения только косметика "Customer, City".
+- Мёртвый экспорт `routeQueries.getSeedTechDays` — можно использовать как основу досева или удалить, но не оставлять полу-живым.
+
+**Потенциально вовлечённые модули:**
+- `backend/src/services/scheduleService.js` — `rowToScheduleItem` (мапинг city), точки recalc.
+- `backend/src/services/jobsService.js` — хуки на create-with-date+tech, `reassignItem`, смену даты.
+- `backend/src/routes/schedule.js` (route-segments endpoint) — lazy-on-read enqueue.
+- `backend/src/agent/…` (agentWorker, task kind `route_calc`) + `routeQueries` — досев tech-day пар.
+- Zenbooker sync (job create/update path) — тот же recalc-хук, что и у человеческого создания.
+- `frontend/src/components/schedule/ScheduleItemCard.tsx` (classic layout), `frontend/src/pages/jobs/jobHelpers.tsx` (колонка Customer).
+
+**Затронутые интеграции:** Google (Distance Matrix — только cache-miss, ключ/поведение SCHED-ROUTE-001 без изменений); Zenbooker (job-sync получает recalc-хук, сам sync не меняется). Twilio / Front / Stripe / VAPI — нет.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- Существующие recalc-вызовы SCHED-ROUTE-001: `scheduleService.js:486,501` (drag reschedule/reassign), `jobsService.js:1570` (`updateJobLocation`), `agentHandlers.js:78` (геокод).
+- `routeDistanceService` / `route_calculation_cache` семантика (driving, no traffic, cache-first, `NO_KEY` → fail-soft).
+- `reassignItem` ZB write-through (assign/unassign diff в Zenbooker) — recalc-хук добавляется рядом, не внутрь диффа.
+- agentWorker и существующие task kinds (`route_calc` очередь расширяется данными, не переписывается).
+- Мобильная `JobMobileCard` и agenda-рендер `nameCity` в `ScheduleItemCard` — фронт agenda уже корректен.
+- Пермишен-гейт `schedule.view` на route-segments; формат ответа route-segments (только досев, без ломки контракта).

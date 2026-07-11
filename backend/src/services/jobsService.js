@@ -597,6 +597,22 @@ async function createDirectJob(companyId, input = {}) {
         }
     }
 
+    // SCHED-ROUTE-VIS-001 (FR-1, S-1..S-3): best-effort route recalc for the
+    // direct-create path — single point covering BOTH branches (ZB-success and
+    // local fallback; localJob is resolved either way). Job is new, so no
+    // beforeTechDays. Fire-and-forget: a failing recalc never breaks the create.
+    {
+        const routeSeg = require('./routeSegmentService');
+        routeSeg.recalcForJob(companyId, localJob.id, { coordsChanged: true })
+            .catch(e => console.error('[CreateDirectJob] route recalc failed (non-fatal):', e.message));
+        // Address present without coords → async geocode; the job_geocode handler
+        // re-runs recalc itself once coordinates land (agentHandlers, existing).
+        if (localJob.address && String(localJob.address).trim() && (localJob.lat == null || localJob.lng == null)) {
+            routeSeg.enqueueGeocode(companyId, localJob.id)
+                .catch(e => console.error('[CreateDirectJob] geocode enqueue failed (non-fatal):', e.message));
+        }
+    }
+
     return { job_id: localJob.id, zenbooker_job_id: zenbookerJobId, zb_warning: zbWarning };
 }
 
@@ -1209,6 +1225,20 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
         const effectiveCompanyId = companyId || existing.company_id || null;
         const assignedProviderUserIds = await resolveAssignedProviderUserIds(effectiveCompanyId, effectiveTechs);
 
+        // SCHED-ROUTE-VIS-001 (FR-1, S-5/S-6): capture the tech-day pairs this
+        // job occupies BEFORE the UPDATE so a moved job repairs the day it left.
+        const routeSeg = require('./routeSegmentService');
+        let beforeTechDays = [];
+        try {
+            const routeQueries = require('../db/routeQueries');
+            const tz = await routeQueries.getCompanyTimezone(effectiveCompanyId);
+            beforeTechDays = await routeQueries.getTechDaysForJob(effectiveCompanyId, existing.id, tz);
+        } catch { /* non-fatal */ }
+        // coordsChanged ONLY on a real numeric delta — webhook echoes (S-6) and
+        // null-coords partial payloads (E-11) must NOT churn surviving pairs.
+        const coordsChanged = cols.lat != null && cols.lng != null &&
+            (Number(cols.lat) !== Number(existing.lat) || Number(cols.lng) !== Number(existing.lng));
+
         // Update existing job + link contact if not already linked
         await db.query(`
             UPDATE jobs SET
@@ -1262,11 +1292,27 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
         } else {
             console.log(`[JobsService] Synced job ${zbJobId}: blanc_status ${existing.blanc_status} → ${effectiveBlancStatus}`);
         }
+
+        // SCHED-ROUTE-VIS-001 (FR-1, S-5/S-6): best-effort recalc after the
+        // UPDATE — fire-and-forget, never blocks/fails the sync.
+        routeSeg.recalcForJob(effectiveCompanyId, existing.id, { beforeTechDays, coordsChanged })
+            .catch(e => console.error('[JobsService] zb-sync recalc failed (non-fatal):', e.message));
+
         return { updated: true, job_id: existing.id, blanc_status: effectiveBlancStatus };
     } else {
         // Create new job linked to contact
         const job = await createJob({ zenbookerJobId: zbJobId, zbData, companyId, contactId });
         console.log(`[JobsService] Created local job for zb_id=${zbJobId}, id=${job.id}, contact=${contactId}`);
+
+        // SCHED-ROUTE-VIS-001 (FR-1, S-4): ZB-ingested new job → best-effort
+        // recalc; async geocode when the address arrived without coordinates.
+        const routeSeg = require('./routeSegmentService');
+        routeSeg.recalcForJob(companyId || job.company_id, job.id, { coordsChanged: true })
+            .catch(e => console.error('[JobsService] zb-create recalc failed (non-fatal):', e.message));
+        if (job.address && String(job.address).trim() && (job.lat == null || job.lng == null)) {
+            routeSeg.enqueueGeocode(companyId || job.company_id, job.id)
+                .catch(e => console.error('[JobsService] zb-create geocode enqueue failed (non-fatal):', e.message));
+        }
 
         // ZB auto-assigns providers asynchronously — re-fetch after delay to catch it
         if ((!zbData.assigned_providers || zbData.assigned_providers.length === 0) && !zbData.unable_to_auto_assign) {
@@ -1284,6 +1330,11 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                             [JSON.stringify(zbRefresh.assigned_providers), JSON.stringify(zbRefresh), refreshedMirror, zbJobId]
                         );
                         console.log(`[JobsService] Delayed re-fetch: auto-assigned ${zbRefresh.assigned_providers.length} provider(s) for job ${job.id}`);
+                        // SCHED-ROUTE-VIS-001 (FR-1, S-7): techs just landed via the
+                        // delayed auto-assign — recalc. Pure addition of techs, so no
+                        // beforeTechDays/coordsChanged needed.
+                        routeSeg.recalcForJob(companyId || job.company_id, job.id, {})
+                            .catch(e => console.error('[JobsService] delayed-assign recalc failed (non-fatal):', e.message));
                     }
                 } catch (err) {
                     console.warn(`[JobsService] Delayed re-fetch error for ${zbJobId}:`, err.message);
