@@ -29,6 +29,8 @@
 'use strict';
 
 const yelpLeadQueries = require('../db/yelpLeadQueries');
+const yelpConversationQueries = require('../db/yelpConversationQueries');
+const { parseConversationId } = require('./yelpConversationId');
 const db = require('../db/connection');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
@@ -45,6 +47,17 @@ const REQUESTED_QUOTE_HEADER_RE = /requested a quote[\s\S]{0,120}?for a\b/i;
 
 function isEnabled() {
     const v = String(process.env.YELP_AUTORESPONDER_ENABLED || '').trim().toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+/**
+ * YELP-CONVO-BOOKING-001 (Phase B) greeter switch — is the multi-turn BRAIN enabled?
+ * When ON, the FIRST Yelp message is greeted by a `yelp_convo` turn-0 task (the brain
+ * greets + collects) instead of the `yelp_lead` greeter. Default OFF (dark launch).
+ * Independent of YELP_AUTORESPONDER_ENABLED (which gates the plumbing above).
+ */
+function isConvoEnabled() {
+    const v = String(process.env.YELP_CONVO_ENABLED || '').trim().toLowerCase();
     return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
@@ -247,24 +260,57 @@ async function maybeHandleYelpLead(companyId, msg) {
             console.error('[YelpLead] attachLead failed (continuing to enqueue):', e && e.message);
         }
 
-        // (6) ENQUEUE the durable greeting task (REPLACES the old synchronous
-        //     greet+send). The yelp_lead handler builds + sends the greeting on the
-        //     shared agentWorker — retryable, Pulse-visible when stuck.
+        // (5b) YELP-CONVO-BOOKING-001 (Phase A) — upsert the durable conversation row
+        //      keyed on the STABLE body conv-id (message_to_business_conversation/<id>).
+        //      Best-effort: a failure here must NOT break the greeting (which stays on
+        //      the yelp_lead task below). lead_uuid drives the Phase-B booking sidestep;
+        //      phase='greet' is the entry state. No conv-id in the body → skip (the
+        //      greeting still fires; only the multi-turn thread store is unavailable).
+        let convId = null;
         try {
-            const taskId = await enqueueYelpGreetingTask(companyId, {
-                claimId, leadId, parsed, providerMessageId: msg.provider_message_id,
-            });
-            console.log('[YelpLead] enqueued company=%s msg=%s lead=%s task=%s',
-                companyId, msg.provider_message_id, leadId, taskId);
+            convId = parseConversationId(msg);
+            if (convId) {
+                await yelpConversationQueries.upsertConversation(companyId, convId, {
+                    lead_id: leadId,
+                    lead_uuid: (lead && lead.UUID) || null,
+                    phase: 'greet',
+                    last_reply_to: parsed.reply_to,
+                    last_thread_token: parsed.thread_token,
+                    last_inbound_message_id: msg.provider_message_id,
+                });
+            }
+        } catch (e) {
+            console.error('[YelpConvo] upsertConversation (first-message) failed (non-fatal):', e && e.message);
+        }
+
+        // (6) ENQUEUE the greeter (REPLACES the old synchronous greet+send). GREETER
+        //     SWITCH (Phase B): when YELP_CONVO_ENABLED is ON and we have a conversation
+        //     to thread, the first message is greeted by a `yelp_convo` TURN-0 task (the
+        //     brain greets + collects) instead of `yelp_lead` — exactly ONE greeter runs,
+        //     never a double-greet. When OFF (or no conv-id to thread), `yelp_lead`
+        //     greets exactly as today (Phase A unbroken). The shared agentWorker runs
+        //     either — retryable, Pulse-visible when stuck.
+        const useConvoGreeter = isConvoEnabled() && !!convId;
+        const enqueuedType = useConvoGreeter ? 'yelp_convo' : 'yelp_lead';
+        try {
+            const taskId = useConvoGreeter
+                ? await enqueueYelpConvoGreetingTask(companyId, {
+                    claimId, convId, msg, parsed, leadId, leadUuid: (lead && lead.UUID) || null,
+                })
+                : await enqueueYelpGreetingTask(companyId, {
+                    claimId, leadId, parsed, providerMessageId: msg.provider_message_id,
+                });
+            console.log('[YelpLead] enqueued %s company=%s msg=%s lead=%s task=%s',
+                enqueuedType, companyId, msg.provider_message_id, leadId, taskId);
         } catch (e) {
             // Enqueue failed AFTER the lead exists → HOLD the claim (do NOT
             // releaseClaim — the lead already exists; releasing would duplicate it on
             // the next poll). task_id stays NULL → a future reconcile re-enqueues.
             console.error('[YelpLead] enqueue failed after lead created (holding claim for reconcile):', e && e.message);
-            return { handled: true, skipped: 'yelp_lead', reason: 'enqueue_failed', leadId };
+            return { handled: true, skipped: enqueuedType, reason: 'enqueue_failed', leadId };
         }
 
-        return { handled: true, skipped: 'yelp_lead', leadId };
+        return { handled: true, skipped: enqueuedType, leadId };
     } catch (e) {
         // Fail-open: an unexpected error must NOT crash ingest; let the normal
         // pipeline continue by reporting not-handled.
@@ -308,6 +354,48 @@ async function enqueueYelpGreetingTask(companyId, { claimId, leadId, parsed, pro
 }
 
 /**
+ * YELP-CONVO-BOOKING-001 (Phase B greeter switch) — enqueue the FIRST-message greeting
+ * as a `yelp_convo` TURN-0 task (the brain greets + starts collecting) instead of the
+ * `yelp_lead` greeter. Mirrors enqueueYelpGreetingTask's durable shape (kind='agent',
+ * max_attempts=3 opt-in retry, subject_type='lead', created_by='automation') and stamps
+ * the task id on the LEAD claim so a reconcile skips. The convo handler's per-inbound
+ * claim KEY is the first message's pmid with a ':greet0' suffix, so it does NOT collide
+ * with the lead claim already held on the bare pmid — the handler's own
+ * claimYelpLead(inbound_pmid) then makes the greeting at-most-once / retry-safe exactly
+ * like a reply turn.
+ * @returns {Promise<number|null>} the new task id
+ */
+async function enqueueYelpConvoGreetingTask(companyId, { claimId, convId, msg, parsed, leadId, leadUuid }) {
+    const agentInput = {
+        conversation_id: convId,
+        inbound_provider_message_id: `${msg.provider_message_id}:greet0`,
+        inbound_body_text: (msg && msg.body_text) || null,
+        reply_to: parsed.reply_to,
+        thread_token: parsed.thread_token,
+        lead_id: leadId,
+        lead_uuid: leadUuid,
+        greeting: true,
+    };
+    const title = `Yelp greeting — ${parsed.name || 'new lead'}`;
+    const { rows } = await db.query(
+        `INSERT INTO tasks (company_id, kind, agent_type, agent_input, agent_status,
+                            max_attempts, title, status, created_by, lead_id, subject_type)
+         VALUES ($1, 'agent', 'yelp_convo', $2::jsonb, 'queued', 3,
+                 $3, 'open', 'automation', $4, 'lead')
+         RETURNING id`,
+        [companyId, JSON.stringify(agentInput), title, leadId]
+    );
+    const taskId = rows && rows[0] ? rows[0].id : null;
+    // Stamp the task id on the LEAD claim row → a reconcile sees "enqueued" and skips.
+    try {
+        await yelpLeadQueries.attachTask(claimId, taskId);
+    } catch (e) {
+        console.error('[YelpConvo] attachTask (greeting) failed (non-fatal):', e && e.message);
+    }
+    return taskId;
+}
+
+/**
  * B1 reconcile: a re-ingest lost the claim (already claimed). If the claim row is
  * `task_id IS NULL AND greeted_at IS NULL` the greeting task was lost between
  * createLead and enqueue → re-enqueue it (idempotent). Otherwise (enqueued or
@@ -323,6 +411,38 @@ async function reconcileLostTask(companyId, msg) {
         if (lostTask) {
             const parsed = parseYelpLead(msg);
             const leadId = existing.lead_id != null ? parseInt(existing.lead_id, 10) : null;
+
+            // Defense-in-depth (never double-greet): if THIS Yelp thread was already
+            // greeted — e.g. the turn-0 `yelp_convo` greeter already sent and stamped the
+            // shared thread_token marker (see agentHandlers.yelp_convo) — do NOT enqueue
+            // ANY greeter. This unifies the dedup namespace across the greeter's
+            // `<pmid>:greet0` claim and this lost lead claim, so a re-ingest can never
+            // produce a second greeting.
+            if (parsed.thread_token
+                && await yelpLeadQueries.threadAlreadyGreeted(companyId, parsed.thread_token)) {
+                console.log('[YelpLead] reconcile skipped — thread already greeted company=%s msg=%s lead=%s',
+                    companyId, msg.provider_message_id, leadId);
+                return { handled: true, skipped: 'noop', reason: 'already_greeted_thread', leadId };
+            }
+
+            // Flag-aware greeter switch — MIRRORS maybeHandleYelpLead step (6): when the
+            // convo BRAIN owns the first greeting (YELP_CONVO_ENABLED ON + a stable conv-id
+            // to thread), re-enqueue the `yelp_convo` TURN-0 greeter (its per-inbound
+            // `<pmid>:greet0` claim de-dupes a duplicate) instead of `yelp_lead` — whose
+            // INDEPENDENT thread_token dedup namespace could otherwise double-greet. When
+            // OFF (or no conv-id) → `yelp_lead` exactly as before (Phase A unbroken).
+            if (isConvoEnabled()) {
+                const convId = parseConversationId(msg);
+                if (convId) {
+                    const taskId = await enqueueYelpConvoGreetingTask(companyId, {
+                        claimId: existing.id, convId, msg, parsed, leadId, leadUuid: null,
+                    });
+                    console.log('[YelpConvo] reconcile re-enqueued lost convo greeter company=%s msg=%s lead=%s task=%s',
+                        companyId, msg.provider_message_id, leadId, taskId);
+                    return { handled: true, skipped: 'yelp_convo', reason: 'reconciled_enqueue', leadId };
+                }
+            }
+
             const taskId = await enqueueYelpGreetingTask(companyId, {
                 claimId: existing.id, leadId, parsed, providerMessageId: msg.provider_message_id,
             });
@@ -336,10 +456,142 @@ async function reconcileLostTask(companyId, msg) {
     return { handled: true, skipped: 'yelp_lead', reason: 'already_claimed' };
 }
 
+// ── YELP-CONVO-BOOKING-001 (Phase A) — respondable-reply intercept ────────────
+
+/**
+ * Is this inbound a RESPONDABLE Yelp customer reply (an in-thread new message we
+ * should thread into an existing conversation)? Both required:
+ *   (1) from_email is the @messaging.yelp.com relay, AND
+ *   (2) a new-message signal (utm request_a_quote_new_message[_respondable]) WITHOUT
+ *       the first-message utm.
+ * The first-message case (detectYelpLead) and no-reply@…yelp.com confirmations
+ * (wrong domain) must NOT match — this is the complement of a NEW lead.
+ * @param {import('../mail/MailProvider').NormalizedInboundMessage} msg
+ * @returns {boolean}
+ */
+function detectYelpReply(msg) {
+    if (!msg || !msg.from_email) return false;
+    const from = String(msg.from_email).trim().toLowerCase();
+    if (!YELP_RELAY_DOMAIN_RE.test(from)) return false;
+
+    const body = String(msg.body_text || '');
+    const isReplyUtm = NEW_MESSAGE_UTM_RE.test(body);
+    const isFirstUtm = FIRST_MESSAGE_UTM_RE.test(body);
+    // A respondable reply carries the new-message utm and is NOT a first message.
+    return isReplyUtm && !isFirstUtm;
+}
+
+/**
+ * Enqueue ONE durable `yelp_convo` turn task on the shared agentWorker for a
+ * respondable reply. Mirrors the yelp_lead enqueue shape (kind='agent',
+ * max_attempts=3 opt-in retry, subject_type='lead', created_by='automation'). The
+ * handler claims the inbound provider_message_id → duplicate enqueues (poll re-scan)
+ * are de-duplicated there (at-most-once per inbound), so no claim is needed here.
+ * @returns {Promise<number|null>} the new task id
+ */
+async function enqueueYelpConvoTurnTask(companyId, { conv, convId, msg, replyTo, threadToken }) {
+    const leadId = conv && conv.lead_id != null ? parseInt(conv.lead_id, 10) : null;
+    const agentInput = {
+        conversation_id: convId,
+        inbound_provider_message_id: msg.provider_message_id,
+        inbound_body_text: (msg && msg.body_text) || null,
+        reply_to: replyTo,
+        thread_token: threadToken,
+        lead_id: leadId,
+        lead_uuid: (conv && conv.lead_uuid) || null,
+    };
+    const title = `Yelp reply — ${convId}`;
+    const { rows } = await db.query(
+        `INSERT INTO tasks (company_id, kind, agent_type, agent_input, agent_status,
+                            max_attempts, title, status, created_by, lead_id, subject_type)
+         VALUES ($1, 'agent', 'yelp_convo', $2::jsonb, 'queued', 3,
+                 $3, 'open', 'automation', $4, 'lead')
+         RETURNING id`,
+        [companyId, JSON.stringify(agentInput), title, leadId]
+    );
+    return rows && rows[0] ? rows[0].id : null;
+}
+
+/**
+ * Route a respondable Yelp reply to its existing conversation. NEVER throws
+ * (fail-open). Behavior:
+ *   • gate OFF / non-default company / not a respondable reply → {handled:false}
+ *   • no stable conv-id in the body → {handled:false} (fall through)
+ *   • conv-id matches NO active (status='open') conversation → {handled:false}
+ *     (FALL THROUGH — do NOT create a lead, do NOT enqueue, do NOT write another row)
+ *   • known active conversation → refresh last_reply_to to this turn's fresh relay
+ *     address + enqueue ONE `yelp_convo` turn task → {handled:true, skipped:'yelp_convo'}
+ * @param {string} companyId
+ * @param {import('../mail/MailProvider').NormalizedInboundMessage} msg
+ * @returns {Promise<{handled:boolean, skipped?:string, conversationId?:string, leadId?:(number|null)}>}
+ */
+async function maybeHandleYelpReply(companyId, msg) {
+    try {
+        // (0) env + company scope gate — Phase 1a is the default company only.
+        if (!isEnabled() || companyId !== DEFAULT_COMPANY_ID) {
+            return { handled: false };
+        }
+
+        // (1) detect — relay domain AND respondable new-message signal.
+        if (!detectYelpReply(msg)) {
+            return { handled: false };
+        }
+
+        // (2) parse the STABLE conv-id from the body. No id → routing signal to fall
+        //     through (never a partial/garbage key).
+        const convId = parseConversationId(msg);
+        if (!convId) {
+            return { handled: false };
+        }
+
+        // (3) look up an ACTIVE conversation. Unknown / terminal → FALL THROUGH: a
+        //     stray or late reply is left to the normal pipeline; never mis-attached,
+        //     never a new lead, never a write to a non-matching row.
+        const conv = await yelpConversationQueries.getByConvId(companyId, convId);
+        if (!conv || conv.status !== 'open') {
+            return { handled: false };
+        }
+
+        // (4) the relay address rotates per message → capture THIS turn's fresh
+        //     reply+<hex>@ as where the reply goes (fallback to the stored one).
+        const relay = String((msg && msg.from_email) || '').match(YELP_RELAY_ADDR_RE);
+        const replyTo = relay ? relay[1] : (conv.last_reply_to || null);
+        const threadToken = relay ? relay[2] : (conv.last_thread_token || null);
+
+        // (5) point the conversation at the fresh relay address (best-effort — Phase B
+        //     sends to conv.last_reply_to; the enqueue below also carries reply_to).
+        try {
+            await yelpConversationQueries.updateState(companyId, convId, {
+                last_reply_to: replyTo,
+                last_thread_token: threadToken,
+            });
+        } catch (e) {
+            console.error('[YelpConvo] updateState(last_reply_to) failed (non-fatal):', e && e.message);
+        }
+
+        // (6) enqueue exactly ONE durable turn task (handler de-dupes per inbound).
+        const taskId = await enqueueYelpConvoTurnTask(companyId, { conv, convId, msg, replyTo, threadToken });
+        console.log('[YelpConvo] enqueued turn company=%s conv=%s msg=%s task=%s',
+            companyId, convId, msg.provider_message_id, taskId);
+
+        return { handled: true, skipped: 'yelp_convo', conversationId: convId, leadId: conv.lead_id };
+    } catch (e) {
+        // Fail-open: an unexpected error must NOT crash ingest; report not-handled so
+        // the normal pipeline continues.
+        console.error('[YelpConvo] maybeHandleYelpReply unexpected error (fail-open):', e && e.message);
+        return { handled: false };
+    }
+}
+
 module.exports = {
     detectYelpLead,
+    detectYelpReply,
     parseYelpLead,
     maybeHandleYelpLead,
+    maybeHandleYelpReply,
     enqueueYelpGreetingTask,
+    enqueueYelpConvoTurnTask,
+    enqueueYelpConvoGreetingTask,
+    isConvoEnabled,
     DEFAULT_COMPANY_ID,
 };

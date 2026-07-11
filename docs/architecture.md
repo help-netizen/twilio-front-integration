@@ -5830,3 +5830,190 @@ The worker's failure branch **leaves `status='open'`** (it only writes `agent_st
 3. **Enqueue-after-lead failure** — lead exists but no task/greeting; handled by holding the claim (no dup lead) + a future reconcile of `status='claimed', greeted_at IS NULL` rows.
 4. **Migration-number drift** — 163 may be taken by a parallel worktree at build; recheck `ls` and re-pair the rollback.
 5. **First-response latency** — greeting now waits up to one 5s worker tick (vs inline); negligible for Yelp lead SLA and bought back by retryability.
+
+---
+
+## Архитектурное решение для фичи YELP-CONVO-BOOKING-001
+
+**Что строим:** эволюция LIVE one-shot Yelp-автоответчика (YELP-002) в **многоходового разговорного booking-агента**. Каждый Yelp-лид ведётся к одному из двух исходов — **BOOKING** (hold на существующем лиде) или **CALL** (тёплый хэндофф диспетчеру). Агент переиспользует scheduling-инструменты голосового агента (`agentSkills`) и durable agentWorker.
+
+**Стержневой инсайт (проверено по коду):** `recommendSlots` / `validateAddress` / `checkServiceArea` — все `requiredLevel:'L0'` (`registry.js:81-84`) ⇒ verificationGate НИКОГДА их не блокирует, поэтому `runSkill('recommendSlots', DEFAULT_COMPANY_ID, {source:'yelp_convo'}, input)` работает БЕЗ верифицированного контакта. А `bookOnLead` — `L1` (`registry.js:69`) ⇒ на e-mail-лиде без verified contact gate бросит `verification_required` и `runSkill` вернёт `needsVerification()`, а НЕ реальную бронь. **Отсюда booking-sidestep:** зовём `leadsService.updateLead(uuid,…)` напрямую (см. D), инструмент `bookOnLead` НЕ используем.
+
+### Существующий функционал (переиспользуем — НЕ дублируем)
+
+- **`agentSkills.runSkill(name, companyId, rawContext, input)`** (`agentSkills/index.js:104`) — единый choke-point, agent-agnostic, никогда не бросает (guard → `SAFE_FALLBACK`). L0-скиллы `validateAddress` (`skills/validateAddress.js:73` → `{valid,standardized,correctedZip,lat,lng}`), `checkServiceArea` (`skills/checkServiceArea.js:41` zip→`{inServiceArea,area,city,state,zip}`), `recommendSlots` (`skills/recommendSlots.js:135`; `targetDay+targetTime`⇒единственный ближайший через `pickNearestSlot:86`; safe-fail→`{available:false,slots:[],fallback:true}`).
+- **Booking-sidestep:** `leadsService.updateLead(uuid, {LeadDateTime,LeadEndDateTime,Latitude,Longitude}, companyId)` (`leadsService.js:370`) на СУЩЕСТВУЮЩИЙ Yelp-лид. Форму hold строим как `bookOnLead.js:97-103`: `resolveTimezone`+`tzCombine` (`slotEngineService.js:75,81`), coords — оба-или-ничего. `createLead(chosenSlot)` НЕ зовём (дублирует лид + хардкодит `JobSource='AI Phone'`).
+- **Durable worker:** `agentWorker.processBatch` (`agentWorker.js:32`, `FOR UPDATE SKIP LOCKED`, opt-in retry через `max_attempts>1`, `next_attempt_at` backoff, никогда не крашит луп). Реестр `agentHandlers.HANDLERS` (`agentHandlers.js:10`) — новый тип = одна запись.
+- **Yelp-пламбинг (YELP-002, live):** `yelpLeadService.js` (detect/parse/claim/createLead/enqueue), `yelpLeadQueries.js` (claim-lock паттерн через `UNIQUE(company_id,provider_message_id)`), ingest-хук в `emailTimelineService.linkInboundMessage:120`, `emailService.sendEmail(companyId,{to,subject,body})` (`emailService.js:68` → `{provider_message_id,provider_thread_id}`), `yelpGreetingService.js` (Gemini v1beta + статичный fallback).
+- **Gemini-транспорт:** форма из `mailAgentClassifier.classifyViaGemini` (`mailAgentClassifier.js:92-162`) — v1beta `generateContent`, `responseMimeType:'application/json'`, two-model fallback, bounded retries, hard timeout. **Копируем форму, НЕ импортируем** (класс триажа не про booking).
+- **Lead-scoped диспетчерская задача:** `tasksQueries.createTask(companyId,payload,client)` (`tasksQueries.js:221`); `lead_id` — first-class parent (`tasksQueries.js:24,66`) ⇒ открытая задача с `lead_id` всплывает в Pulse как «lead»-задача. `leadsService.getLeadById(id,companyId)` (`leadsService.js:284`) — резолв UUID из целочисленного `lead_id`, если не сохранён.
+
+**Нельзя дублировать:** второй greeter (см. C), собственный slot-engine вызов (только через `recommendSlots`), собственный booking-путь (только `updateLead`-sidestep), собственный per-message idempotency (только `yelp_lead_events` claim).
+
+---
+
+### A) Модель состояния разговора + phase-машина + threading по стабильному conv-id
+
+**Решение: НОВАЯ таблица `yelp_conversations`** (НЕ tasks.jsonb). Обоснование: стабильный `conversation_id` — естественный ключ, сшивающий первое письмо и ВСЕ ответы в ОДНУ строку; задача же — per-turn (эфемерна) и не индексируется по conv-id для матчинга ответов. Durable-разговор ⟂ ephemeral-turn: строка разговора живёт между ходами, `yelp_convo`-задача — один ход. `yelp_lead_events` (mig 162) остаётся per-inbound claim-леджером (тот же паттерн), расширяется на reply-сообщения.
+
+```
+yelp_conversations (
+  id              BIGSERIAL PK,
+  company_id      UUID NOT NULL,
+  conversation_id TEXT NOT NULL,               -- стабильный Yelp conv-id (из URL тела)
+  lead_id         BIGINT,                       -- leads.id (int)
+  lead_uuid       UUID,                         -- для updateLead-sidestep (D)
+  phase           TEXT NOT NULL DEFAULT 'greet',-- greet|collect|offer_slot|await_pick|booked|handoff_call|stalled
+  status          TEXT NOT NULL DEFAULT 'open', -- open|book|call|closed
+  collected       JSONB NOT NULL DEFAULT '{}',  -- {phone,street,apt,city,state,zip,lat,lng,service,problem,service_confirmed}
+  offered_slots   JSONB,                        -- последний оффер [{key,date,start,end,label}] (для book-валидации)
+  chosen_slot     JSONB,                        -- принятый слот
+  last_reply_to   TEXT,                         -- САМЫЙ свежий respondable reply+<hex>@messaging.yelp.com
+  last_thread_token TEXT,
+  turn_count      INT NOT NULL DEFAULT 0,
+  last_inbound_message_id TEXT,                 -- provider_message_id последнего обработанного inbound
+  created_at, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (company_id, conversation_id)
+)
+```
+
+**Стабильный conv-id threading.** В fixtures (`tests/yelpFixtures.js`) reply переиспользует тот же `reply+<hex>` — но задача явно фиксирует, что в бою **reply-адрес МЕНЯЕТСЯ** от хода к ходу (тот самый «varying reply address» dedup-gap). Поэтому ключ разговора — НЕ `reply+<hex>` и НЕ Gmail `provider_thread_id`, а **стабильный Yelp `conversation_id` из URL тела**:
+- первое письмо: `message_to_business_conversation/<id>`;
+- ответы: `%2Fthread%2F<id>` (URL-encoded).
+Парсер `parseConversationId(msg)` (обе формы, fail-safe→null) сшивает первое письмо и все ответы в одну `yelp_conversations`-строку. `reply+<hex>` при этом сохраняется как **`last_reply_to` этого хода** (куда слать ИМЕННО этот ответ). Это и закрывает dedup-gap: idempotency теперь per-inbound-`provider_message_id` (стабилен для конкретного письма) + threading per-`conversation_id` (стабилен для диалога), а меняющийся reply-адрес больше ни на что не влияет.
+
+**Phase-машина** (persisted как coarse-state + guardrail; «мозг» — LLM-луч каждый ход читает `collected`+история):
+```
+greet ──▶ collect(address+phone+confirm service) ──▶ offer_slot ──▶ await_pick ──┬─▶ booked   (status=book)
+                    │                                     │                        └─▶ handoff_call (status=call)
+                    └──────────── stall / opt-out / engine-down / N ходов ─────────────▶ handoff_call
+```
+`phase` — телеметрия + предохранитель (например `turn_count`/фаза-бюджет превышен ⇒ форсим `handoff_call`), финальные `booked/handoff_call` терминальны (`status` book/call).
+
+---
+
+### B) Обработчик `yelp_convo` на общем agentWorker
+
+Новая запись в `agentHandlers.HANDLERS` (`agentHandlers.js`), `max_attempts=3` (opt-in retry). Порядок ЖЁСТКИЙ (зеркалит `yelp_lead` handler `agentHandlers.js:200` — guard ПЕРВЫМ):
+
+1. **Load state:** `SELECT … FROM yelp_conversations WHERE company_id=$1 AND conversation_id=$2`. Нет строки (гонка) → мягкий no-op, задача done.
+2. **Per-inbound claim (idempotency + one-reply-per-message):** `yelpLeadQueries.claimYelpLead(companyId, inbound_provider_message_id)` (переиспользуем `yelpLeadQueries.js:33`, `ON CONFLICT DO NOTHING`). Не заклеймили → уже отвечено на ЭТОТ inbound → skip (retry-safe). Claim = **durable pre-send маркер ДО отправки**.
+3. **Build LLM-контекст:** system-prompt (цель, см. §LLM) + сериализованный `collected`+`phase` + компактная история (последние ходы) + **текущий inbound как ДАННЫЕ** (в разделителях, помечен «untrusted customer text»).
+4. **Run bounded tool-loop** (§1 net-new) → либо серия tool-вызовов через `runSkill`, либо финальное действие: `reply` | `book` | `handoff`.
+5. **Send ОДНОГО письма:** `emailService.sendEmail(companyId, {to: conv.last_reply_to, subject:'Re: …', body})`. **Единственный throw, доходящий до воркера** (ещё ничего не отправлено) → драйвит retry.
+6. **Persist state:** UPDATE `collected/phase/offered_slots/chosen_slot/turn_count++/last_inbound_message_id`; `markReplied`(claim) — **post-send маркер** (best-effort, throw ПОСЛЕ успешной отправки глотаем — как `agentHandlers.js:223-232`, письмо = источник истины).
+7. **On accept → book** (D): `updateLead` hold + диспетчерская confirm-задача; `phase=booked,status=book`.
+8. **On stall/opt-out/engine-down → call fallback** (D): reply с нашим номером + просьба их номера/времени; открыть диспетчерскую задачу на лиде; `phase=handoff_call,status=call`.
+9. task done. Retryable (`max_attempts=3`), никогда не double-send (durable per-inbound claim + «already replied to this inbound» guard первым).
+
+**Payload задачи** (`agent_input`): `{conversation_id, inbound_provider_message_id, inbound_body_text, reply_to, thread_token, lead_id, lead_uuid}`. Задача parented к лиду (`subject_type='lead', lead_id`) — как YELP-002.
+
+---
+
+### C) Как меняется FIRST-message flow — `yelp_convo` СУБСУМИРУЕТ `yelp_lead` (один greeter)
+
+**Рекомендация: greeting = ход 0 разговора.** Чтобы избежать двух greeter'ов, детектор перестаёт слать `yelp_lead` и начинает: (а) upsert `yelp_conversations` (conv-id из первого письма, `phase='greet'`), (б) enqueue `yelp_convo` (turn 0). Первый ответ производит convo-агент (фаза `collect`). Старый `yelp_lead` handler ОСТАЁТСЯ в реестре для дренажа in-flight задач, но для НОВЫХ лидов не enqueue-ится.
+
+**НО** для независимой поставки Phase A (пламбинг без «мозга») first-greeting не должен сломаться. Поэтому переключение greeter'а происходит в **Phase B** (когда «мозг» готов). До этого (Phase A) first-greeting остаётся на живом `yelp_lead`, а `yelp_convo` заводится только для reply-ходов. Итог по фазам — §F.
+
+---
+
+### D) Book-vs-call + точный updateLead + всплытие диспетчеру
+
+**BOOK когда:** клиент явно принял один из `offered_slots` И есть геокодируемый адрес (lat/lng из `validateAddress`, либо zip в зоне). Точный вызов (зеркало `bookOnLead.js:95-103`, sidestep самого `bookOnLead`):
+```js
+const tz = await slotEngineService.resolveTimezone(companyId);
+const hold = {
+  LeadDateTime:    slotEngineService.tzCombine(slot.date, slot.start, tz),
+  LeadEndDateTime: slotEngineService.tzCombine(slot.date, slot.end,   tz),
+  ...(Number.isFinite(lat) && Number.isFinite(lng) ? { Latitude: lat, Longitude: lng } : {}),
+};
+await leadsService.updateLead(conv.lead_uuid, hold, companyId);   // leadsService.js:370
+```
+Double-book guard: `book` только на явный accept; если `status='book'` и `chosen_slot` не изменился → skip повторной записи (идемпотентно).
+
+**CALL когда:** клиент застопорился (N ходов без прогресса), просит человека/«just call me», slot-engine down (`recommendSlots.fallback:true`), фаза-бюджет исчерпан, или LLM safe-fail. Reply даёт наш номер + просит их номер/время.
+
+**Всплытие диспетчеру (оба исхода):** открытая **lead-scoped** задача через `tasksQueries.createTask(companyId, {leadId: conv.lead_id, subjectType:'lead', title, priority, createdBy:'automation', status:'open'})` — тот же паттерн, что YELP-002 parented-to-lead task; `lead_id` как parent (`tasksQueries.js:24,66`) ⇒ видна в Pulse tasks/AR. Заголовки: BOOK → «Confirm Yelp booking — <name> <window>»; CALL → «Call Yelp lead — <name>».
+
+---
+
+### E) Миграции + env-gate + scope
+
+**Миграция 164** (`164_yelp_conversations.sql` + `rollback_164_*`): `CREATE TABLE yelp_conversations` (§A) + `ALTER TABLE yelp_lead_events ADD COLUMN IF NOT EXISTS conversation_id TEXT` (линкует per-inbound claim к разговору; расширяет status-словарь значением `'replied'`). **Номер: max на диске = 163 ⇒ next free = 164. RECHECK при билде** (`ls backend/db/migrations/`) — параллельные worktree дрейфят (161 уже был так съеден); если 164 занят — берём следующий и пересобираем rollback. Additive, `IF NOT EXISTS`, existing-данные не трогает.
+
+**Env-gate:** master-переключатель — переиспользуем **`YELP_AUTORESPONDER_ENABLED`** (Phase A пламбинг + first-greeting остаются на нём). **Новый `YELP_CONVO_ENABLED`** (default off) гейтит ТОЛЬКО многоходовой «мозг» (Phase B) ⇒ dark-launch. Scope — прежний: `companyId === DEFAULT_COMPANY_ID` (`yelpLeadService.js:34,195`). LLM-ручки зеркалят `yelpGreetingService`: `YELP_CONVO_MODEL`/`_FALLBACK_MODEL`/`_TIMEOUT_MS`/`_RETRY_MAX`/`_MAX_TOOLCALLS` (напр. 4)/`_MAX_TURNS`.
+
+---
+
+### F) Фазировка (A/B — что независимо поставляемо)
+
+**Phase A — threading + reply-intercept + conv-store + enqueue (пламбинг, БЕЗ «мозга»). Независимо поставляемо:** ценность = hardening conv-id dedup (закрывает «varying reply address» gap) + захват reply-ходов, ещё до brain.
+- Файлы: миграция 164; `conversationIdParser` + `yelp_conversations`-queries; в `emailTimelineService.linkInboundMessage:120` расширить intercept — сейчас `detectYelpLead` false для reply (`yelpLeadService.js:73`); добавить ветку «respondable reply, matching known conversation» → enqueue `yelp_convo`; first-message по-прежнему заводит `yelp_lead` (greeting жив) + теперь ещё upsert-ит `yelp_conversations`. Короткое замыкание: reply НЕ должен double-post-иться в таймлайн как un-agented (тот же `{skipped:'yelp_convo'}`-паттерн, что `{skipped:'yelp_lead'}` `emailTimelineService.js:124`).
+- Handler `yelp_convo` в Phase A может быть тонким ack (пометить обработанным / не слать) — очередь ходов копится, brain включат позже.
+
+**Phase B — LLM tool-loop + slot-offer + booking + call-fallback («мозг»).**
+- Файлы: `yelpConvoAgentService.js` (LLM-луп, §1), booking-sidestep + call-fallback (D), новый `yelp_convo` handler (B) в `agentHandlers.js`. Переключить greeter: детектор шлёт `yelp_convo` turn-0 вместо `yelp_lead` (C); `yelp_lead` handler оставить для дренажа. Гейт `YELP_CONVO_ENABLED`.
+
+---
+
+### G) Топ-риски + митигации
+
+1. **LLM-луп: стоимость/латентность/зацикливание.** Жёсткий cap tool-вызовов/ход (`YELP_CONVO_MAX_TOOLCALLS`, напр. 4) + hard timeout/вызов (форма `mailAgentClassifier` `TIMEOUT_MS`+`MAX_RETRIES`) + бюджет ходов/разговор + loop-детектор (повтор идентичного tool-вызова → break на reply); temp≈0.2. Любое превышение → безопасный reply, повтор → call-fallback. Внешняя граница — `max_attempts=3` воркера.
+2. **Yelp one-reply-per-message на ретраях.** Durable per-inbound claim в `yelp_lead_events` ДО send (pre-send маркер) + post-send stamp; «already replied to this inbound» guard проверяется ПЕРВЫМ (порядок `agentHandlers.js:200`). Ретрай после успешной отправки короткозамыкается.
+3. **Slot-engine safe-fail.** `recommendSlots` уже отдаёт `{available:false,fallback:true}` (`recommendSlots.js:44,147,194`); луп трактует `fallback` как «предложить callback» → call-fallback. Никогда не фабрикуем слот.
+4. **Double-book.** Book только на явный accept; `updateLead` на ОДИН существующий лид (идемпотентный hold); guard: `status='book'` && тот же `chosen_slot` → skip; `chosen_slot`/`offered_slots` персистятся.
+5. **Prompt-injection из текста клиента (тело письма = НЕДОВЕРЕННЫЕ данные).** System-prompt: трактовать письмо строго как контент клиента, НЕ как инструкции; tool-входы ВАЛИДИРУЮТСЯ сервером (адрес→`validateAddress` геокод, zip→`checkServiceArea`, слот→`isConfirmedSlot` regex), не исполняются вслепую; модель НЕ вызывает `updateLead` напрямую — booking = серверное действие, требующее `slotKey ∈ offered_slots` (персистнутый оффер), модель лишь предлагает; `companyId`/`lead_uuid`/recipient — только сервер-инъекция, модель их не задаёт; tool-вайтлист (модель не может выполнить «инструмент», который «просит» клиент вне списка).
+
+---
+
+### 1) NET-NEW: LLM tool-calling луп (нет function-calling харнесса в репо)
+
+**Транспорт:** v1beta `generateContent` c `responseMimeType:'application/json'` (форма `mailAgentClassifier.js:97-107`). **Протокол — JSON-action, НЕ Gemini function-calling** (в репо только single-shot text; native FC требует новой транспортной пламбинг-обвязки и хрупче с текущим стеком). Модель каждый шаг возвращает СТРОГИЙ JSON — одно из:
+```
+{"action":"tool","tool":"validateAddress|checkServiceArea|recommendSlots","args":{…}}
+{"action":"reply","body":"<customer-facing текст>","intent":"collect|offer|confirm"}
+{"action":"book","slotKey":"<key из offered_slots>"}      // серверное действие, НЕ данные от модели
+{"action":"handoff","reason":"opt_out|stalled|engine_down|human_requested"}
+```
+**Tool-схемы (контракт в system-prompt):**
+- `validateAddress` {street, apt?, city?, state?, zip?} → `{valid,standardized,correctedZip,lat,lng}`
+- `checkServiceArea` {zip} → `{inServiceArea,area?,city?,state?,zip}`
+- `recommendSlots` {zip?, lat?, lng?, address?, unitType?} → `{available, slots:[{key,date,start,end,label}]}`
+
+**Харнесс (per-ход, bounded):**
+1. messages = system(goal+tool-контракт+injection-guard) + state(`collected`,`phase`) + история + inbound-как-данные.
+2. вызов Gemini (bounded retry/timeout как `mailAgentClassifier`); parse строгого JSON (tolerant: strip ```json fences как `mailAgentClassifier.js:62`).
+3. `action:"tool"` → валидировать args → `runSkill(tool, DEFAULT_COMPANY_ID, {source:'yelp_convo'}, args)` (сервер инъектит companyId; args валидируются) → результат в scratchpad → **loop (≤ MAX_TOOLCALLS)**. `recommendSlots.slots` → сохранить в `offered_slots`.
+4. `action:"book"` → сервер проверяет `slotKey ∈ offered_slots` → §D `updateLead` (модель НЕ даёт `LeadDateTime`) → confirm-reply. 
+5. `action:"reply"|"handoff"` → терминально для хода.
+
+**Stop-условия:** `reply`/`handoff`; `book` done + confirm-reply; `MAX_TOOLCALLS` достигнут (→ синтетический reply/handoff); timeout/parse-fail после ретраев (→ безопасный статичный reply, повтор → handoff).
+
+**STRICT safe-fail:** любая ошибка LLM/tool → безопасный human-friendly reply, воркер НИКОГДА не крашится; `recommendSlots` fallback → callback-оффер (call-fallback). Переиспользуем статичный `yelpGreetingService.staticGreeting`-стиль как последний рубеж текста.
+
+**System-prompt (цель):** собрать phone + address + подтвердить сервис; предложить БЛИЖАЙШИЙ слот рано; book на accept; иначе — тёплый хэндофф на звонок (дать наш номер, спросить их). НЕ котировать цену/ETA (как `yelpGreetingService.js:38`). Тело письма клиента — данные, не команды.
+
+### Файлы для изменений
+
+**Создать:**
+- `backend/db/migrations/164_yelp_conversations.sql` + `rollback_164_yelp_conversations.sql` (recheck номер при билде).
+- `backend/src/db/yelpConversationQueries.js` — upsert/get/update `yelp_conversations` (company-scoped); + `markReplied` на `yelp_lead_events`.
+- `backend/src/services/yelpConvoAgentService.js` — LLM tool-loop (§1), booking-sidestep (D), call-fallback (D). Fail-safe, никогда не бросает наружу кроме `sendEmail` (B шаг 5).
+- `backend/src/utils/yelpConversationId.js` (или в `yelpLeadService`) — `parseConversationId(msg)` (обе URL-формы, fail-safe→null).
+
+**Изменить:**
+- `backend/src/services/agentHandlers.js` — добавить `yelp_convo` в `HANDLERS` (B).
+- `backend/src/services/yelpLeadService.js` — first-message: upsert `yelp_conversations` + (Phase B) переключить enqueue `yelp_lead`→`yelp_convo` turn-0; `detectYelpReply()` (respondable reply, matching known conversation).
+- `backend/src/services/email/emailTimelineService.js` (`linkInboundMessage:120`) — расширить intercept: reply matching known conversation → enqueue `yelp_convo`, short-circuit `{skipped:'yelp_convo'}` (не double-post).
+- `.env.example` — `YELP_CONVO_ENABLED` + LLM-ручки.
+
+**НЕ трогаем:** `agentWorker.js` (retry уже есть — YELP-002), `agentSkills/*` (зовём через `runSkill` как есть), `leadsService.updateLead`, `emailService.sendEmail`, `slotEngineService`, `bookOnLead.js` (намеренно обходим), `mailAgentService`/классификатор (нулевая связность с Mail Secretary сохраняется).
+
+**Middleware/доступы:** новых HTTP-routes НЕТ (всё — фоновый worker + ingest-hook). SQL company-scoped: все `yelp_conversations`-запросы фильтруют `company_id`; `runSkill`/`updateLead`/`createTask` уже принимают `companyId=DEFAULT_COMPANY_ID`. Изоляция тенантов сохранена.
+
+### Deviations / флаги
+- **Conv-id URL-паттерны** (`message_to_business_conversation/<id>`, `%2Fthread%2F<id>`) — из знания реального Yelp, в текущих `tests/yelpFixtures.js` их НЕТ (fixtures упрощены, reply переиспользует тот же hex). **На билде добавить реалистичные conv-id-URL в fixtures** и подтвердить парсер на реальном письме.
+- **`created_by='automation'`** — YELP-002 так пишет (`yelpLeadService.js:300`), значит значение разрешено (mig 038 CHECK был `('system','user')` — позже ослаблен). На билде подтвердить перед `createTask`.
+- **Миграция 164** — возможен дрейф от параллельных worktree; recheck `ls` при билде.
+- **`YELP_CONVO_ENABLED` default off** — Phase B тёмный запуск; PROD-деплой только по явному «да» владельца (per deploy-consent).

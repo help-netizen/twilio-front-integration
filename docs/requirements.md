@@ -5197,3 +5197,287 @@ off the hot path onto the AUTO-001 queue.
   is toggled off after enqueue.
 - **B6 — Old synchronous path removal.** 001's in-hook greet+send must be fully removed (not
   left dormant) so a greeting can never be sent twice (once synchronously, once by the task).
+
+## YELP-CONVO-BOOKING-001 — turn the one-shot Yelp autoresponder into a robust MULTI-TURN conversational booking agent that drives every lead to a BOOKING or a CALL, reusing the voice agent's scheduling tools (2026-07-11)
+
+**Status:** Requirements · **Priority:** P1 · **Backend-only** · **Date:** 2026-07-11
+**Foundation:** YELP-LEAD-AUTORESPONDER-002 (`d584997`, deployed 2026-07-11) — durable
+detector→`kind='agent'`/`agent_type='yelp_lead'` task→`agentWorker`→handler pipeline +
+`yelp_lead_events` idempotency ledger (mig 162) + opt-in retry (mig 163). Reuses the
+AGENT-AGNOSTIC skills choke-point `agentSkills.runSkill(name, companyId, rawContext, input)`
+(`backend/src/services/agentSkills/index.js:104`) that the VOICE agent (Sara, VAPI adapter)
+and MCP already call — the email agent is a **third in-process caller**, no new plumbing.
+
+### Context (what 002 is, why 001-CONVO)
+002 (LIVE) is **one-shot**: detect a Yelp new-lead email → create a `JobSource='Yelp'` lead
+→ enqueue one `yelp_lead` task → the handler sends **exactly ONE** templated/Gemini greeting
+and closes `done`. No tools, no follow-ups, and — critically — `detectYelpLead` returns
+**false** for customer replies (`utm_source=request_a_quote_new_message`,
+`backend/src/services/yelpLeadService.js:74`), so **replies reach no agent at all**. Owner's
+goal (verbatim): «агент должен устойчиво вести разговор и доводить до бука или звонка нам» —
+robustly conduct the conversation and drive **each** Yelp lead to **a booking OR a call to
+us**, reusing the **same** scheduling/slot/booking tools the voice agent uses. This feature
+adds a multi-turn conversational driver on top of 002's durable task model: it intercepts
+both the first message AND respondable replies, keeps durable conversation state, runs an
+LLM tool-calling loop over the reusable `agentSkills` L0 tools, proactively offers the
+nearest slot, autonomously holds an accepted slot on the existing lead, and — when booking
+isn't reachable — hands off to a phone call. A warm phone handoff is a **success**, not a
+failure. **Prereqs confirmed LIVE on prod:** slot-engine container healthy,
+`SLOT_ENGINE_URL=http://slot-engine:4500`, `smart-slot-engine` marketplace app CONNECTED for
+the default company ⇒ `recommendSlots` returns real slots.
+
+### Owner-approved product decisions (binding)
+1. **Book OR call — both are success.** The terminal goal of every conversation is a real
+   slot hold on the lead **or** a warm phone handoff (our number given + their callback
+   number captured + a dispatcher flagged). Neither is a failure.
+2. **Reuse the voice agent's tools verbatim.** Scheduling/slot logic goes through the SAME
+   `agentSkills.runSkill(...)` choke-point the voice agent uses — no forked slot logic.
+3. **Offer the nearest available slot EARLY** («лучше давать самый ближайший доступный слот
+   сразу») rather than open-ended back-and-forth.
+4. **Ask for the data we lack, don't scrape it.** Email leads carry no phone — ask directly
+   for phone + full address + appliance/problem + preferred time in-conversation. This
+   obviates browser phone-scraping (explicitly out of scope).
+5. **Hold the slot by updating the EXISTING lead**, never by `createLead` (which hardcodes
+   `JobSource='AI Phone'`) and never through the phone-gated `bookOnLead` — the task already
+   carries `lead_id`, so book via a direct `leadsService.updateLead(...)` on that lead.
+6. **Bounded, one-reply-per-message, never double-book.** One outbound reply per respondable
+   inbound message; ≤~6 turns then hand off to a human; no price quoted unless a tool returns
+   one; never double-book.
+
+### Functional requirements
+
+- **R1 — `R-intercept-first-AND-replies-by-conv-id` (multi-turn intercept keyed by the stable conversation id).**
+  The Yelp intercept catches BOTH the first new-lead email (as 002 does) AND subsequent
+  customer replies (`request_a_quote_new_message`, marked `…_RESPONDABLE` — Yelp supports
+  replying to follow-ups), which 002 today drops. Replies are routed to the SAME conversation
+  by the **stable conversation id** embedded in the body (`message_to_business_conversation/<convId>`
+  in the first email = `%2Fthread%2F<convId>` in replies), **NOT** by the per-message-varying
+  `reply+<hex>@messaging.yelp.com` address. First message ⇒ create lead + start a conversation;
+  a reply ⇒ resume the existing conversation for that conv-id. `no-reply@*yelp.com`
+  confirmations are still never intercepted.
+
+- **R2 — `R-durable-conversation-state` (persisted state + phase machine).**
+  A durable per-conversation record keyed by (`company_id`, `conv_id`) holds: `phase`, gathered
+  data (best `phone`, full `address`, appliance/`problem`, preferred `time`), the currently
+  offered/held slot, `turn_count`, the message/transcript history the LLM loop needs, the last
+  handled inbound `provider_message_id`, and the terminal `outcome`. It survives process
+  restarts (persisted, not in-memory) so a reply days later resumes mid-conversation. Phases
+  (indicative): `greeting → gathering → slot_offered → booked | call_handoff | stuck`.
+
+- **R3 — `R-llm-tool-loop-over-agentSkills` (net-new conversational driver calling the reusable tools).**
+  A NEW conversational driver runs a bounded **LLM tool-calling loop** (net-new — the repo has
+  NO Gemini function-calling harness; all current LLM use is single-shot text). Per inbound
+  turn it may invoke the reusable, agent-agnostic L0 read tools THROUGH the in-process
+  `agentSkills.runSkill(name, companyId, rawContext, input)` choke-point: `validateAddress`
+  (→lat/lng), `checkServiceArea` (zip→in-area), `recommendSlots` (engine-ranked;
+  `targetDay`+`targetTime` ⇒ the single NEAREST window), with `checkAvailability` as fallback.
+  These are the EXACT tools the voice agent calls — no new adapter, no duplicated slot logic.
+  The loop's objective is to drive the conversation toward a booking (R6) or a call (R7).
+
+- **R4 — `R-gather-missing-data-in-conversation` (ask, don't scrape).**
+  Because an email lead has no phone, the agent explicitly asks, conversationally, for: best
+  callback **phone**, full service **address** (for geocode + slot), **appliance/problem**
+  confirmation, and preferred **time** — gathering whatever is still missing, one coherent
+  question-set per reply. This is what obviates the parked browser/phone-scrape track.
+
+- **R5 — `R-proactive-nearest-slot` (offer the nearest window early).**
+  As soon as the address validates and is confirmed in-area, the agent PROACTIVELY offers the
+  nearest available slot (`recommendSlots` with `targetDay`+`targetTime` ⇒ the single nearest
+  window) rather than an open-ended "when works for you?" loop.
+
+- **R6 — `R-autonomous-hold-via-updateLead` (book on accept, on the existing lead).**
+  On customer slot-accept the agent autonomously HOLDS the slot on the EXISTING Yelp lead by
+  calling `leadsService.updateLead(lead_id, {LeadDateTime, LeadEndDateTime, Latitude, Longitude},
+  companyId)` directly (the task carries `lead_id`; JobSource stays `'Yelp'`). It does NOT
+  `createLead` (would orphan a second `'AI Phone'` lead) and does NOT route through the
+  phone-identity-gated `bookOnLead`. The hold is dispatcher-visible AND is counted by the slot
+  engine as occupancy (double-book mitigation), reusing the same tz/window→`LeadDateTime`
+  mapping (`slotEngineService.tzCombine`) that `bookOnLead` uses for voice holds.
+
+- **R7 — `R-book-or-call-terminal` (fall back to a warm phone handoff).**
+  Every conversation ends in one of two SUCCESS terminals: a slot hold (R6) OR a warm phone
+  handoff — give our number, ask for the customer's callback number, and flag the dispatcher
+  (open a task on the lead for a human call). The agent falls back to CALL when: the slot
+  engine / a required tool is unavailable, the customer prefers phone or opts out, critical
+  data is still missing after the bounded turns, or the customer explicitly asks to talk to a
+  person. A call handoff is recorded as a successful outcome, not an error.
+
+- **R8 — `R-one-reply-per-message-bounded-turns` (Yelp reply budget + turn cap).**
+  Exactly ONE outbound email-reply per respondable inbound message (Yelp permits one reply per
+  respondable message). The conversation is bounded to ≤~6 turns (env-tunable); on exhaustion
+  it terminates in the human/phone handoff (R7). No price is quoted unless a tool returns one.
+  Never double-book.
+
+- **R9 — `R-idempotent-retryable-safe-fail` (at-most-once per message; never crash the loop).**
+  Each inbound message is processed at-most-once (idempotency keyed on `provider_message_id`,
+  extending 002's `yelp_lead_events` ledger). Each conversational turn runs as a retryable
+  task on the shared `agentWorker` (reusing 002's opt-in retry/backoff/stuck). Any LLM / tool /
+  send fault is caught per-task and NEVER crashes the worker loop or sibling tasks; the loop is
+  safe-fail. A crash mid-turn re-runs the turn idempotently — at-most-one outbound reply AND
+  at-most-one slot hold, even across a retry.
+
+- **R10 — `R-decoupled-from-Mail-Secretary` (replies too).**
+  Both the first-message AND the reply interception short-circuit the Mail Secretary (no
+  duplicate review/AR task) and share no code path, queue, or ordering dependency with it;
+  all NON-Yelp mail reaches the Secretary exactly as before. (Extends 002's R5 to replies.)
+
+### Non-functional requirements
+
+- **N1 — Reuse-first; minimal net-new.** Reuse the in-process `runSkill` choke-point (the email
+  agent is the 3rd caller after VAPI + MCP — no new adapter plumbing), the L0 read tools,
+  `leadsService.updateLead`, the `agentWorker`+`agentHandlers` task model, and the
+  `yelp_lead_events` idempotency ledger. **Net-new is only:** (a) the LLM tool-calling loop
+  driver; (b) the durable conversation-state store + the reply intercept.
+- **N2 — Company-scoped; default-company rollout.** Default company only
+  (`00000000-0000-0000-0000-000000000001`); every query, task, state row, and tool call is
+  tenant-isolated (`company_id NOT NULL`).
+- **N3 — Env-gated.** Reuses/extends `YELP_AUTORESPONDER_ENABLED` (default OFF) to gate the
+  multi-turn behavior; the turn cap and per-turn tool-call cap are env-tunable; worker cadence
+  reuses `AGENT_WORKER_INTERVAL_MS`.
+- **N4 — Prereqs already LIVE (no infra work).** slot-engine healthy,
+  `SLOT_ENGINE_URL=http://slot-engine:4500`, `smart-slot-engine` app CONNECTED for the default
+  company ⇒ `recommendSlots` returns real slots. No DNS/GCP/browser/infra work in scope.
+- **N5 — Safe-fail / graceful slot-engine-unavailable.** If the slot engine or any tool is
+  unavailable or refuses, the loop degrades to the CALL fallback (R7) — it never crashes and
+  never leaves the customer silently stranded.
+- **N6 — Backend-only; no new scheduling UI.** No net-new scheduling UI; dispatcher visibility
+  (the held slot, the call-handoff flag, the stuck state) reuses existing Pulse lead/task
+  surfaces.
+- **N7 — Observable.** Structured per-turn logs (tool calls, decisions, outcome); conversation
+  state + terminal outcome are greppable and dispatcher-visible in Pulse.
+
+### Acceptance criteria
+
+- **AC1 (R1):** A customer reply on an existing Yelp thread is intercepted and routed to the
+  SAME conversation via the stable conv-id (not the varying `reply+<hex>@` address); a first
+  new-lead email starts a new conversation; a `no-reply@` confirmation is ignored.
+- **AC2 (R2):** Conversation state (phase, gathered data, offered/held slot, turn count,
+  history, last `provider_message_id`) persists across a backend restart; a reply after the
+  restart resumes the conversation mid-flight, not from scratch.
+- **AC3 (R3):** During a turn the driver invokes `validateAddress` / `checkServiceArea` /
+  `recommendSlots` via `agentSkills.runSkill(...)` — the SAME entrypoint the voice agent uses,
+  with no new HTTP plumbing; a tool refusal/`SAFE_FALLBACK` is handled, not fatal.
+- **AC4 (R4/R5):** Given an email lead with no phone, the agent asks for phone + full address;
+  once the address geocodes and is confirmed in-area, it proactively offers the single nearest
+  available slot without an open-ended availability loop.
+- **AC5 (R6):** On accept, the EXISTING lead's `LeadDateTime`/`LeadEndDateTime`/`Latitude`/
+  `Longitude` are set via `updateLead` (JobSource stays `'Yelp'`, no second lead, `bookOnLead`
+  not invoked); the hold is dispatcher-visible and occupies the slot in the engine.
+- **AC6 (R7):** When the slot engine is down, the customer opts out / prefers phone, critical
+  data is still missing after the bounded turns, or the customer explicitly asks for a person →
+  the agent gives our number, asks for theirs, opens a dispatcher call-task on the lead, and
+  records the outcome as a (successful) call-handoff.
+- **AC7 (R8):** Exactly one outbound reply is sent per respondable inbound message; after ≤~6
+  turns without a booking the conversation terminates in a human handoff; no double-book occurs;
+  no price is quoted unless a tool returned one.
+- **AC8 (R9):** Re-delivering the same inbound `provider_message_id` (push+poll overlap)
+  produces no second reply and no second hold; a forced mid-turn crash re-runs the turn
+  idempotently (at-most-one send, at-most-one hold); a thrown LLM/tool never crashes the worker
+  loop or the sibling tasks in the batch.
+- **AC9 (R10):** With the Mail Secretary disabled/erroring, BOTH a first Yelp message and a
+  reply are still handled end-to-end; neither creates a duplicate Secretary review/AR task; a
+  non-Yelp inbound email reaches the Secretary exactly as before.
+
+### Out of scope
+- Browser / headless Yelp-Business login and phone-behind-the-button scraping — obviated by
+  asking the customer for their phone in-conversation (R4); stays a separate parked track.
+- The voice channel (Sara / VAPI) — this feature only reuses her tools, it does not change her.
+- Non-default companies — default-company rollout only.
+- Any net-new scheduling UI — dispatcher visibility reuses existing Pulse surfaces.
+- A general slot-hold-release/TTL framework beyond what B6 resolves for this feature.
+
+### Involved modules (summary)
+- **backend/src/services/yelpLeadService.js** — extend detection to route respondable replies
+  (today `detectYelpLead` drops them, line 74); parse/extract the stable conv-id from both the
+  first-email and reply body forms.
+- **backend/src/services/email/emailTimelineService.js** — the Yelp intercept (step a.4) now
+  also catches replies and enqueues a conversational **turn** task, still short-circuiting the
+  Mail Secretary (`{skipped:'yelp_lead'}`); stays fail-open, BEFORE the mute/Secretary branch.
+- **backend/src/services/agentHandlers.js** — a `yelp_lead` (or new `yelp_convo`) handler that
+  runs one turn of the LLM tool-loop and emits at most one reply.
+- **NEW conversational-driver module** — the LLM tool-calling loop + tolerant tool-JSON parsing
+  + the book-vs-call decision (net-new; no harness exists to reuse).
+- **backend/src/services/agentSkills/index.js** (`runSkill`, line 104) + **agentSkills/registry.js**
+  — reused unchanged as the tool entrypoint (`validateAddress`/`checkServiceArea`/`recommendSlots`/
+  `checkAvailability`); the email agent is a new in-process caller only.
+- **backend/src/services/leadsService.js** (`updateLead`, line 370) — the booking primitive for
+  the autonomous slot hold; reuse `slotEngineService.tzCombine` for the window→`LeadDateTime` map.
+- **backend/src/services/agentWorker.js** — reuse 002's opt-in retry/backoff/stuck for turn tasks
+  (additive; no change to non-opt-in agent types).
+- **backend/src/db/** + **backend/db/migrations/** — NEW additive migration(s): the durable
+  conversation-state store (keyed `company_id`+`conv_id`) + reply-turn idempotency, building on
+  `yelp_lead_events` (mig 162) and the retry columns (mig 163).
+- **Pulse lead/task/AR projection** — surface the held slot, the call-handoff dispatcher task,
+  and the stuck state (reuse 002's stuck-visibility work).
+
+### Affected integrations
+- **Gemini** (the conversational LLM + tool-calling loop) and the **Yelp email relay**
+  (bidirectional replies) — reused/extended. **Slot engine** (`smart-slot-engine` marketplace
+  app, already CONNECTED) via `recommendSlots`/`checkAvailability`. **Twilio/Front:** none.
+  **Zenbooker:** none directly (the lead hold is a CRM `updateLead`, not a ZB write).
+
+### Protected code (MUST NOT break)
+- The `agentSkills.runSkill` choke-point and the L0 tool contracts — the email agent is an
+  ADDITIVE in-process caller; the VAPI/voice and MCP adapters and the tool signatures stay
+  byte-for-byte unchanged. No forked slot logic.
+- The voice `bookOnLead` path and its phone-identity resolution — untouched; the email hold
+  goes around it via `updateLead`, it does not modify or re-gate `bookOnLead`.
+- `leadsService.updateLead` and `createLead` semantics — reused as-is; the email agent never
+  re-`createLead`s a Yelp lead (JobSource must stay `'Yelp'`).
+- 002's `yelp_lead_events` (mig 162) idempotency invariants, the `agentWorker` claim
+  (`FOR UPDATE SKIP LOCKED RETURNING *`) + `agent_task.succeeded`/`.failed` event contracts, and
+  the mig-163 opt-in retry semantics (non-opt-in agent types unchanged).
+- `emailTimelineService.linkInboundMessage` ordering — the Yelp intercept (now incl. replies)
+  stays BEFORE the mute guard and the no-contact Mail-Secretary branch, fail-open,
+  `!opts.skipAgent`.
+- The single-reply-per-thread rule — 002's at-most-one-greeting guard must not regress; the
+  multi-turn agent still sends **at most one reply per respondable inbound message**.
+
+### ⚑ Boundaries / edge-cases for the Architect + Implementer to resolve
+- **B1 — Conversation-state model + conv-id keying (the core new entity).** Decide where durable
+  state lives: a NEW table keyed (`company_id`,`conv_id`) that owns phase/data/history/outcome,
+  vs. hanging state off the existing lead + a chain of turn-tasks. Make conv-id extraction robust
+  across BOTH body forms (`message_to_business_conversation/<convId>` in the first email,
+  `%2Fthread%2F<convId>` in replies) and independent of the varying `reply+<hex>@` address.
+  Resolve the mapping conv_id ↔ lead_id ↔ turn-task, and how a reply enqueues a NEW turn-task
+  onto the SAME conversation without re-running the first-message lead-create path.
+- **B2 — Reply-intercept placement + the `detectYelpLead` gate change.** Today `detectYelpLead`
+  returns false for `request_a_quote_new_message` (line 74), so replies reach no agent. Resolve
+  where the reply intercept sits inside `linkInboundMessage` (must stay BEFORE the mute +
+  Secretary branch, fail-open) and how a reply is disambiguated as "belongs to an ACTIVE Yelp
+  conversation" (match on conv-id → existing state) vs. a stray relay email — WITHOUT the reply
+  accidentally tripping the first-message `createLead` path.
+- **B3 — LLM tool-loop: turn/stop conditions (net-new; no harness exists).** Define the per-turn
+  loop precisely: the system prompt/goal, which tools are exposed, the INNER bound (max tool
+  calls per turn) AND the OUTER bound (max conversation turns, ≤~6), how the model signals its
+  intent (ask-a-question / offer-slot / accept / hand-off), how malformed tool-JSON is tolerated
+  (reuse the tolerant-LLM-JSON-parser lesson), and the stop condition that guarantees EXACTLY
+  ONE outbound reply is emitted per inbound message (R8). Pick the provider harness (Gemini
+  function-calling vs. a hand-rolled JSON tool protocol) — none exists to reuse.
+- **B4 — Book-vs-call decision logic (the crux).** Specify exactly WHEN the loop chooses to HOLD
+  a slot vs. HAND OFF to a call: the free-text accept-detection (customer agreeing to an offered
+  window in prose email), the required-data threshold for a valid hold (address geocoded +
+  in-area + a chosen window + a callback phone), and the precise fallback triggers (engine
+  unavailable, opt-out/prefers-phone, missing-data-after-N-turns, explicit ask). Make "call" a
+  first-class SUCCESS branch with its own dispatcher artifact, not an error/`stuck`.
+- **B5 — Double-send / double-hold across retries (extend 002's B3 to every turn).** Yelp permits
+  one reply per respondable message and a retried turn must re-send NEITHER the email NOR the
+  slot hold. Resolve durable "reply-sent" and "slot-held" markers recorded BEFORE the side-effect
+  so recovery defaults to not-repeating — at-most-once on BOTH the outbound reply AND the
+  `updateLead` hold, even across a crash between side-effect and mark.
+- **B6 — Held-slot occupancy vs. abandonment.** A hold counts as slot-engine occupancy (the
+  double-book mitigation) — but a customer who never confirms / goes cold would sterilize a real
+  window indefinitely. Resolve whether/when an unconfirmed hold is released (TTL? dispatcher
+  action? on turn-cap handoff?) so held-then-abandoned leads don't starve availability, and how
+  release interacts with the dispatcher-visible state.
+- **B7 — Bypassing `bookOnLead` while staying consistent with voice holds.** `bookOnLead` is
+  phone-identity-gated and re-`createLead` hardcodes `JobSource='AI Phone'`; the workaround
+  `updateLead`s the existing `lead_id` directly. Resolve reusing `bookOnLead`'s window→
+  `LeadDateTime` mapping (`slotEngineService.tzCombine`, tz handling) WITHOUT its identity
+  resolution, so an email-booked hold is indistinguishable from a voice-booked hold to the slot
+  engine and to the dispatcher (same occupancy + timeline semantics).
+- **B8 — Post-terminal replies (re-open vs. stay closed).** Decide how a reply AFTER a terminal
+  state is handled: a "thanks!" after a booking (stay closed, no new turn) vs. "can we move it?"
+  (must NOT silently re-drive the booking loop into a double-book — route to a dispatcher
+  reschedule). Define the terminal re-open rules and the turn-cap/`stuck` interaction so a
+  chatty customer can't loop the agent indefinitely.

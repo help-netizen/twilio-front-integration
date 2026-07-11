@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-07-11 — YELP-CONVO-BOOKING-001 (Phase A + B): многоходовой Yelp-booking-агент — LIVE-плумбинг + LLM-«мозг» (dark-launch `YELP_CONVO_ENABLED`)
+
+Надстройка над LIVE Phase-A-плумбингом (threading по conv-id + reply-intercept + `yelp_conversations` mig 164 + тонкий `yelp_convo` ack). Добавляет bounded JSON-action LLM tool-loop, который ведёт каждый Yelp-лид к терминалу **BOOK** (hold на существующем лиде) или **CALL** (тёплый телефонный хэндофф). Backend-only, за новым гейтом `YELP_CONVO_ENABLED` (default OFF), scope = `DEFAULT_COMPANY_ID`. Не задеплоено.
+
+- **`backend/src/services/yelpConvoAgentService.js` (NEW)** — `runTurn(companyId, conv, inbound[, deps])`: композиция промпта (goal + tool-контракт + injection-guard, тело письма = UNTRUSTED DATA), Gemini v1beta transport (копия формы `mailAgentClassifier`/`yelpGreetingService`, `responseMimeType:'application/json'`, two-model fallback, bounded retry + hard timeout, temp≈0.2; инъекция через `deps.generate` в тестах), tolerant-parse (strip ```json``` + recover первого объекта). Dispatch: `tool`→ whitelist + server-sanitize args (strip companyId/lead_uuid/LeadDateTime/…) → `runSkill(name, DEFAULT_COMPANY_ID, {source:'yelp_convo'}, args)` → scratchpad round-trip; `reply`→ РОВНО ОДИН `sendEmail`; `book`→ server-guard `slotKey ∈ offered_slots` → `leadsService.updateLead` sidestep (tzCombine hold как `bookOnLead.js:95-103`, coords both-or-nothing, БЕЗ `Status`→JobSource остаётся `'Yelp'`; НИКОГДА `createLead`/`bookOnLead`) + confirm + dispatcher-task + double-book guard; `handoff`→ call-fallback (наш номер + захват callback-телефона + `Call Yelp lead` task, `status='call'` = SUCCESS). Bounds: `MAX_TOOLCALLS`/ход + `MAX_TURNS`/разговор + hard timeout + loop-detector. runTurn НЕ throws наружу, кроме sendEmail-fault.
+- **`agentHandlers.js`** — `yelp_convo` гейтится на `YELP_CONVO_ENABLED`: OFF → Phase-A тонкий ack (без изменений); ON → claim-first (at-most-once) → `runTurn` → `markReplied` (POST-SEND, best-effort). Единственный throw до воркера = sendEmail-fault (драйвит opt-in retry).
+- **`yelpLeadService.js`** — GREETER SWITCH: при `YELP_CONVO_ENABLED` первое письмо приветствует `yelp_convo` turn-0 (claim-key = `<pmid>:greet0`, не коллизит с lead-claim) вместо `yelp_lead`; ровно ОДИН приветственный агент. OFF → `yelp_lead` как раньше. `yelp_lead` handler остаётся зарегистрирован для дренажа.
+- **`emailTimelineService.js`** — 1 строка: intercept возвращает фактический greeter (`{skipped:'yelp_convo'}` при switch, иначе `'yelp_lead'`).
+- **`.env.example`** — `YELP_CONVO_MODEL`/`_FALLBACK_MODEL`/`_TIMEOUT_MS`/`_RETRY_MAX`/`_MAX_TOOLCALLS`(5)/`_MAX_TURNS`(6)/`_OUR_PHONE`.
+- **Резолвы open-questions:** held-slot abandonment — БЕЗ speculative hold, без нового TTL v1 (hold пишется только на явный accept); unknown-conv-id reply — fall-through (не мистредится, не создаёт лид). Оба зафиксированы в коде/комментах.
+- **Тесты (mocked):** `tests/yelpConvoAgentLoop.test.js` (23) — loop/book/injection/call-fallback/proactive-slot/safe-fail + sabotage-контроли `SAB-LOOP-REMOVE-CAP`/`SAB-BOOK-VIA-CREATELEAD`/`SAB-BOOK-DROP-OFFERED-CHECK` (подтверждены load-bearing); `tests/yelpConvoHandler.test.js` (12, +Phase-B); `tests/yelpConvoIntercept.test.js` (13, +greeter-switch). Phase-A + YELP-002 регрессия зелёная.
+- **Phase A (едет на уже-LIVE `YELP_AUTORESPONDER_ENABLED`, НЕ dark):** conv-id парсер (`yelpConversationId.js`, обе формы URL) + `yelp_conversations` (mig 164, UNIQUE(company_id, conversation_id)) + `yelpConversationQueries` + reply-intercept — сшивает переписку по СТАБИЛЬНОМУ conv-id (`message_to_business_conversation/<id>` / `%2Fthread%2F<id>`), **закрывая течь с плавающим per-message `reply+<hex>@`-адресом**; `yelp_lead` приветствие сохранено; unknown-conv reply → fall-through.
+- **Greeter-dedup fix (reviewer must-fix, blocker-before-enable):** turn-0 приветствие теперь пишет тот же `thread_token`-маркер, что читает `threadAlreadyGreeted`, + `reconcileLostTask` стал флаг-aware (no-op при already-greeted / ре-энкьюит `yelp_convo` при `YELP_CONVO_ENABLED`) → двойного письма нет даже если best-effort `attachTask`-штамп упал и первое письмо пере-ингестится (`tests/yelpConvoGreeterDedup.test.js`, red-without-fix подтверждён). Reviewer APPROVE после фикса; финальный прогон 15 сьютов / 134 теста зелёный.
+
+**LIVE-runbook (НЕ выполнять без явного «да» владельца — deploy-consent):**
+1. Prod-деплой по стандартной процедуре (`pg_dump` → rsync → build/up app); mig 164 уже на диске (recheck при drift).
+2. Предусловия флипа: `smart-slot-engine` CONNECTED для default-компании; `GEMINI_API_KEY` установлен; `YELP_AUTORESPONDER_ENABLED=true`; `FEATURE_AGENT_WORKER` ≠ false; `YELP_CONVO_OUR_PHONE` = реальный входящий номер компании.
+3. Флип `YELP_CONVO_ENABLED=true` → рестарт app.
+4. Smoke: owner-controlled ВТОРОЙ Yelp-аккаунт (НЕ реальный клиент — no-spam), наблюдать БД (не «ощущение инбокса», gmail-push-урок): `JobSource='Yelp'` лид + `yelp_conversations` строка → приветствие → ответ с адресом+телефоном → оффер ближайшего слота → «да» → `LeadDateTime`/coords на СУЩЕСТВУЮЩЕМ лиде (без 2-го лида, без `bookOnLead`), dispatcher-task `Confirm Yelp booking`, occupancy в slot-engine. Fallback-путь: «just call me» → наш номер + `Call Yelp lead` task, `status='call'`.
+5. Rollback: `YELP_CONVO_ENABLED=false` (мгновенно возвращает Phase-A greeting; плумбинг остаётся).
+
+---
+
 ## 2026-07-11 — YELP-LEAD-AUTORESPONDER-002 (task-based рефактор): Yelp-лид через durable agent-задачу + opt-in retry
 
 Рефактор синхронного Phase 1a (YELP-001, ещё не задеплоен) на durable-модель задач AUTO-001 — надёжность + полная развязка от Mail Secretary. Заменяет синхронный путь -001.

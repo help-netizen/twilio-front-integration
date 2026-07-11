@@ -84,7 +84,7 @@ function toEmailItem(row) {
  * @param {string} companyId
  * @param {import('../mail/MailProvider').NormalizedInboundMessage} msg
  * @returns {Promise<object>} one of:
- *   {skipped:'outbound'|'draft_or_sent'|'yelp_lead'|'muted_sender'|'no_contact'|'no_message'} |
+ *   {skipped:'outbound'|'draft_or_sent'|'yelp_lead'|'yelp_convo'|'muted_sender'|'no_contact'|'no_message'} |
  *   {linked:true, contactId, timelineId, alreadyLinked?:boolean} |
  *   {error:string}
  */
@@ -121,10 +121,33 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
             try {
                 const yelp = await require('../yelpLeadService').maybeHandleYelpLead(companyId, msg);
                 if (yelp && yelp.handled) {
-                    return { skipped: 'yelp_lead' };
+                    // Pass through the greeter the detector chose: 'yelp_lead' (Phase A),
+                    // or 'yelp_convo' when the Phase-B greeter switch (YELP_CONVO_ENABLED)
+                    // subsumes the first-message greeting into a yelp_convo turn-0. Both
+                    // short-circuit identically (no link/unread/SSE/Mail-Secretary review).
+                    return { skipped: yelp.skipped || 'yelp_lead' };
                 }
             } catch (e) {
                 console.error('[EmailTimeline] maybeHandleYelpLead failed (fail-open):', e.message);
+            }
+
+            // (a.4b) YELP-CONVO-BOOKING-001 (Phase A) — a RESPONDABLE Yelp reply that
+            //     matches a KNOWN active conversation (by the stable body conv-id, not
+            //     the varying reply+<hex> relay) → enqueue a `yelp_convo` turn task and
+            //     short-circuit {skipped:'yelp_convo'} (no link, no unread, no SSE, no
+            //     Mail-Secretary review — mirrors the yelp_lead short-circuit above). A
+            //     reply to an UNKNOWN conversation returns not-handled and falls through
+            //     to the normal pipeline unchanged. Same !opts.skipAgent gate, same
+            //     fail-open try/catch (a handler problem must NOT early-return wrongly
+            //     and must NOT throw out of the pipeline). Placed AFTER the first-message
+            //     hook and BEFORE the mute + no-contact Mail-Secretary branch below.
+            try {
+                const yr = await require('../yelpLeadService').maybeHandleYelpReply(companyId, msg);
+                if (yr && yr.handled) {
+                    return { skipped: 'yelp_convo' };
+                }
+            } catch (e) {
+                console.error('[EmailTimeline] maybeHandleYelpReply failed (fail-open):', e.message);
             }
         }
 

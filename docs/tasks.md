@@ -8859,3 +8859,169 @@ Critical path: CUX-01 → CUX-02 → CUX-04 (CUX-02 is the largest task; CUX-03 
 **Wave 2:** WS-04 (`AppLayout.tsx` — единственный файл) — после WS-01 (хук) и WS-03 (компонент); WS-02 — мягкая зависимость (превью-счётчик AR; «—» fail-silent терпит).
 **Wave 3:** WS-05 (BUILD + jest + STATIC + PREVIEW + REVIEW) — после всего кода.
 Critical path: **WS-01/WS-03 → WS-04 → WS-05** (WS-04 — самая крупная задача; WS-02 едет параллельно в Wave 1 и к Wave 3 обязан быть готов). **NO migration, no new endpoints/SSE; один additive route-line — deploy-safe; prod deploy owner-gated.**
+
+---
+
+## YELP-CONVO-BOOKING-001 — многоходовой Yelp-email booking-агент (LLM tool-loop над `agentSkills`, каждый лид → BOOK или CALL)
+
+**Status:** planned · **Priority:** P1 · **Backend-only** · **Date:** 2026-07-11
+**Docs:** requirements `docs/requirements.md › YELP-CONVO-BOOKING-001` (R1–R10 / AC1–AC9) · architecture `docs/architecture.md › …YELP-CONVO-BOOKING-001` (§A–§G + §1) · spec `docs/specs/YELP-CONVO-BOOKING-001.md` (S1–S12) · test-cases `docs/test-cases/YELP-CONVO-BOOKING-001.md` (41 кейсов YCB-*, теги **[A]**/**[B]**)
+**Builds on:** YELP-LEAD-AUTORESPONDER-002 (`d584997`, LIVE) — detector→`kind='agent'` task→`agentWorker`→handler + `yelp_lead_events` claim-ledger (mig 162) + opt-in retry (mig 163). Reuses `agentSkills.runSkill(name, companyId, rawContext, input)` (email-агент = 3-й in-process caller).
+
+**LOCKED DESIGN (не пере-обсуждать):** threading по СТАБИЛЬНОМУ Yelp conv-id (`message_to_business_conversation/<id>` в первом письме = `%2Fthread%2F<id>` в ответах), НЕ по varying `reply+<hex>@`; новая таблица `yelp_conversations` UNIQUE(company_id, conversation_id); intercept в `linkInboundMessage` (после `draft_or_sent` l.106, ДО mute l.131, `!opts.skipAgent`, fail-open); **unknown-conv-id reply → FALL-THROUGH в обычный пайплайн (НЕ агентится);** book = `leadsService.updateLead(lead_uuid,…)` sidestep (НЕ createLead/bookOnLead), hold только на явный accept, **без speculative hold и без нового TTL в v1** (заброшенные holds едут на существующем lead-lifecycle); book+call всплывают как lead-scoped `createTask(createdBy:'automation')`; gate Phase A = `YELP_AUTORESPONDER_ENABLED` (LIVE), gate Phase B = НОВЫЙ `YELP_CONVO_ENABLED` (default OFF, dark-launch); scope = `DEFAULT_COMPANY_ID`.
+
+**Build-time факты (проверено при планировании):** миграции на диске max = **163** ⇒ next-free = **164** (recheck `ls backend/db/migrations/` перед созданием файла — параллельные worktree дрейфят); `tasks.created_by='automation'` РАЗРЕШЁН (CHECK ослаблен mig 106 `106_tasks_created_by_automation.sql`); текущий `tests/yelpFixtures.js` — БЕЗ conv-id-URL и с ОДНИМ hex `reply+8160b36a1c2d3e4f@` на `yNew`/`yReply` ⇒ fixtures-first (T-YCB-A1) обязателен, иначе [A]-threading-тесты тавтологичны; intercept-блок `!opts.skipAgent` c `maybeHandleYelpLead` → `{skipped:'yelp_lead'}` уже стоит на нужном месте (`emailTimelineService.js:~120`); YELP-002 enqueue-ит задачу RAW `INSERT INTO tasks (… 'automation' …)` (`yelpLeadService.js:296-303`) — reply-enqueue зеркалит это с `agent_type='yelp_convo'`.
+
+### Рекомендация по Implementer-split
+- **Implementer #1 — Phase A (independently shippable).** Задачи **T-YCB-A1..A8**. Ценность и без Phase B: закрывает varying-reply-address dedup-gap (threading по conv-id) + захватывает reply-ходы; first-greeting остаётся на живом `yelp_lead`; `yelp_convo` handler — тонкий ack. Гейт — уже-LIVE `YELP_AUTORESPONDER_ENABLED`. Может деплоиться отдельно (owner-gated).
+- **Implementer #2 — Phase B (за `YELP_CONVO_ENABLED`, default OFF).** Задачи **T-YCB-B1..B6**. «Мозг»: LLM tool-loop + slot-offer + booking-sidestep + call-fallback; greeter субсумируется (`yelp_convo` turn-0). Стартует после A2/A4/A5/A7 (parser, queries, reply-routing, handler-skeleton); большая часть B — один новый файл `yelpConvoAgentService.js`, поэтому B2→B3→B4 идут ПОСЛЕДОВАТЕЛЬНО по одному файлу.
+
+### Residual risks (Implementer обязан следить)
+1. **LLM-loop bounds** — ДВЕ независимые границы: `MAX_TOOLCALLS`/ход И `MAX_TURNS`/разговор (≤~6) + hard timeout/вызов + loop-detector (повтор идентичного (tool,args) → break на reply). Off-by-one в любой = стоимость/латентность или бесконечный разговор. Внешний рубеж — `max_attempts=3` воркера, но на него НЕ полагаться (YCB-LOOP-03/-05/-06).
+2. **Injection guard** — тело письма = НЕДОВЕРЕННЫЕ данные (в разделителях): `book` требует `slotKey ∈ persisted offered_slots` (модель НЕ даёт `LeadDateTime`); `companyId`/`lead_uuid`/recipient — только сервер-инъекция; tool-args валидируются сервером; off-whitelist «tool» игнорируется (YCB-INJ-01/-02/-03).
+3. **At-most-once markers** — `claimYelpLead(pmid)` = durable PRE-SEND маркер, проверяется ПЕРВЫМ (одна claim на BOTH reply и hold); `markReplied`/persist — POST-SEND best-effort (throw после send глотаем, письмо = источник истины). `sendEmail` — ЕДИНСТВЕННЫЙ throw, доходящий до воркера (YCB-IDEM-01/-02/-03).
+4. **offered_slots persistence timing** — book-guard имеет силу ТОЛЬКО если `recommendSlots.slots` реально записаны в `offered_slots` на ПРЕДЫДУЩЕМ ходу; проверить cross-turn round-trip (YCB-SLOT-01 пишет, YCB-INJ-01/BOOK-01 читают).
+5. **Mig-164 drift** — recheck `ls` перед созданием; если 164 занят — renumber + пересобрать rollback + обновить YCB-MIG-01/02 имена.
+6. **Fixtures-first** — T-YCB-A1 ПЕРВОЙ; подтвердить обе URL-формы на РЕАЛЬНОМ Yelp-письме (owner has access), иначе parser/threading-кейсы фиктивны.
+7. **Transport-выбор** — протокол = JSON-action (НЕ native Gemini function-calling); если Implementer возьмёт native FC — mocks группы C переписываются на `functionCall`-parts, YCB-LOOP-04 меняет природу. Зафиксировать ДО написания группы C.
+8. **Voice-hold parity** — email-hold обязан быть байт-идентичен voice-hold для engine/dispatcher (тот же `tzCombine` window→`LeadDateTime` + coords both-or-nothing), но БЕЗ identity-gate `bookOnLead` (YCB-BOOK-02).
+
+---
+
+## PHASE A — плумбинг (threading + reply-intercept + conv-store), БЕЗ «мозга» · gate `YELP_AUTORESPONDER_ENABLED`
+
+### T-YCB-A1: fixtures-first — реальные conv-id-URL + varying reply-hex (КРИТИЧЕСКИЙ ПЕРВЫЙ ШАГ)
+**Цель:** снять тавтологичность всех [A]-threading-тестов. Расширить fixtures реальными conv-id-URL и РАЗНЫМИ reply-hex; подтвердить обе формы на реальном Yelp-письме.
+**Файлы (менять):** `tests/yelpFixtures.js`
+**Трогать нельзя:** production-код; существующие `yConfirm`/`nonYelp` (оставить as-is).
+**Ожидаемый результат:** добавлены `CONV_ID='9Xk2mZ7bQ1'`; `yNew` тело несёт `…/message_to_business_conversation/9Xk2mZ7bQ1?…`; новый `yReplyRespondable(overrides)` (utm `request_a_quote_new_message`, помечен RESPONDABLE, тело `…%2Fthread%2F9Xk2mZ7bQ1…`, `from_email: reply+aa11bb22cc33dd44@messaging.yelp.com` — ДРУГОЙ hex); `yReply2` (ещё один hex `ee55ff66aa77bb88@`, ТОТ ЖЕ `%2Fthread%2F9Xk2mZ7bQ1`); helpers `convRow(overrides)` + `convTask(overrides)` (форма из test-cases §Fixtures). Обе URL-формы сверены с одним реальным письмом.
+**YCB-кейсы (prereq):** YCB-CID-01/02/03/04/05, YCB-INT-02, YCB-IDEM-05.
+**Зависимости:** нет (ПЕРВАЯ). **Статус:** pending
+
+### T-YCB-A2: conv-id parser `parseConversationId(msg)`
+**Цель:** чистый парсер обеих URL-форм, fail-safe→null, никогда не throws.
+**Файлы (менять):** `backend/src/services/yelpConversationId.js` (NEW), `tests/yelpConversationId.test.js` (NEW)
+**Трогать нельзя:** `yelpLeadService.js` (парсер — отдельный модуль); fixtures (потребляет A1).
+**Ожидаемый результат:** `parseConversationId(msg)` извлекает `<id>` из `message_to_business_conversation/<id>` (первое письмо, verbatim, query отрезан) И из `%2Fthread%2F<id>` (reply, декодит `%2F`→`/`); нет URL / malformed / adversarial → `null` (не throw, не partial/garbage-ключ, который мог бы cross-thread-нуть). Ничего НЕ читает из `from_email`/`reply+<hex>`.
+**YCB-кейсы:** YCB-CID-01, -02, -03 (+ sabotage `SAB-CID-USE-REPLY-HEX`), -04, -05.
+**Зависимости:** после A1. **Статус:** pending
+
+### T-YCB-A3: миграция 164 — `yelp_conversations` + `yelp_lead_events.conversation_id`
+**Цель:** durable conv-таблица + линковка claim-леджера к разговору.
+**Файлы (менять):** `backend/db/migrations/164_yelp_conversations.sql` (NEW), `backend/db/migrations/rollback_164_yelp_conversations.sql` (NEW)
+**Трогать нельзя:** существующие миграции; данные существующих таблиц.
+**Ожидаемый результат:** `CREATE TABLE IF NOT EXISTS yelp_conversations` (полная схема §A: `company_id UUID NOT NULL`, `conversation_id TEXT NOT NULL`, `lead_id BIGINT`, `lead_uuid UUID`, `phase TEXT NOT NULL DEFAULT 'greet'`, `status TEXT NOT NULL DEFAULT 'open'`, `collected JSONB NOT NULL DEFAULT '{}'`, `offered_slots JSONB`, `chosen_slot JSONB`, `last_reply_to TEXT`, `last_thread_token TEXT`, `turn_count INT NOT NULL DEFAULT 0`, `last_inbound_message_id TEXT`, timestamps, **`UNIQUE (company_id, conversation_id)`**) + `ALTER TABLE yelp_lead_events ADD COLUMN IF NOT EXISTS conversation_id TEXT` (+ status-словарь терпит `'replied'`). Additive, идемпотентно; rollback = `DROP TABLE IF EXISTS` + `DROP COLUMN IF EXISTS`, re-apply up чистый. **RECHECK номер `ls backend/db/migrations/` ПЕРЕД созданием** (занят → renumber + обновить YCB-MIG-01/02).
+**YCB-кейсы:** YCB-MIG-01, -02, -03.
+**Зависимости:** нет (параллельна A1/A2). **Статус:** pending
+
+### T-YCB-A4: `yelpConversationQueries` (company-scoped) + `markReplied`
+**Цель:** доступ к `yelp_conversations` + post-send маркер.
+**Файлы (менять):** `backend/src/db/yelpConversationQueries.js` (NEW)
+**Трогать нельзя:** `yelpLeadQueries.js` (`claimYelpLead` переиспользуется as-is; `markReplied` можно добавить сюда ИЛИ в этот новый модуль — зафиксировать в одном месте).
+**Ожидаемый результат:** `upsertConversation`, `getByConvId(companyId, convId)`, `updateState(companyId, convId, patch)` — ВСЕ фильтруют `company_id` (тенант-изоляция; чужой conv → нет строки); `markReplied(companyId, providerMessageId)` — POST-SEND stamp на `yelp_lead_events`. Никаких HTTP-routes.
+**YCB-кейсы (feeds):** YCB-INT-01/02, YCB-IDEM-04/05, YCB-MIG-01.
+**Зависимости:** после A3. **Статус:** pending
+
+### T-YCB-A5: intercept-логика — first-message upsert + reply-routing (`yelpLeadService`)
+**Цель:** first-message ещё и upsert-ит conversation; respondable reply к ИЗВЕСТНОМУ conv-id → enqueue `yelp_convo` turn; unknown → fall-through.
+**Файлы (менять):** `backend/src/services/yelpLeadService.js`
+**Трогать нельзя:** `agentWorker.js`; `emailService.sendEmail`; `mailAgentService`.
+**Ожидаемый результат:** (a) в `maybeHandleYelpLead` first-message-путь после `createLead` ЕЩЁ и `upsertConversation(company, convId, {lead_id, lead_uuid, phase:'greet'})` (conv-id из тела через `parseConversationId`) — в Phase A по-прежнему enqueue-ит `yelp_lead` greeting; (b) новые `detectYelpReply(msg)` (respondable `request_a_quote_new_message`) + `maybeHandleYelpReply(companyId, msg)`: parse conv-id → `getByConvId` → ИЗВЕСТНАЯ активная строка → `updateState(last_reply_to = свежий hex этого msg)` + enqueue `yelp_convo` (RAW `INSERT … agent_type='yelp_convo', max_attempts=3, created_by='automation', lead_id, subject_type='lead'`, `agent_input={conversation_id, inbound_provider_message_id, inbound_body_text, reply_to, thread_token, lead_id, lead_uuid}`) → `{handled:true}`; **unknown conv-id / `null` → `{handled:false}` (FALL-THROUGH, НЕ enqueue, НЕ createLead, НЕ write в чужую строку).** Scope `DEFAULT_COMPANY_ID`.
+**YCB-кейсы:** YCB-INT-01, -02 (+ sabotage `SAB-INT-DROP-REPLY-BRANCH`), -03, -04, YCB-DEC-02.
+**Зависимости:** после A2, A4. **Статус:** pending
+
+### T-YCB-A6: подключить reply-intercept в `linkInboundMessage` + intercept-тесты
+**Цель:** прокинуть reply-ветку в ingest-хук со short-circuit, БЕЗ double-post и БЕЗ Mail-Secretary.
+**Файлы (менять):** `backend/src/services/email/emailTimelineService.js`, `tests/yelpConvoIntercept.test.js` (NEW)
+**Трогать нельзя:** порядок `draft_or_sent`(l.106)→Yelp→mute(l.131)→no-contact Mail-Secretary; `authedFetch`/SSE-слой; `mailAgentService.isSenderMuted` вызов.
+**Ожидаемый результат:** в существующем `!opts.skipAgent`-Yelp-блоке (~l.120) ПОСЛЕ `maybeHandleYelpLead` добавлена reply-ветка: `maybeHandleYelpReply(companyId, msg)`; `handled` → `return {skipped:'yelp_convo'}` (нет link/unread/SSE/review). Fail-open try/catch сохранён (handler-проблема НЕ early-return-ит ошибочно и НЕ throws наружу). Тесты: first→lead+upsert(+`{skipped:'yelp_lead'}`); reply→one `yelp_convo` task + НЕ `createLead` + `{skipped:'yelp_convo'}`; unknown conv-id→fall-through (no throw, no misthread); `no-reply@*yelp.com`→ignored; non-Yelp→Mail-Secretary reached.
+**YCB-кейсы:** YCB-INT-01, -02, -03, -04, -05, YCB-DEC-04.
+**Зависимости:** после A5. **Статус:** pending
+
+### T-YCB-A7: тонкий `yelp_convo` handler (ack/thread, БЕЗ brain) + idempotency
+**Цель:** зарегистрировать `yelp_convo` в реестре; claim-first at-most-once; Phase A — только пометить обработанным.
+**Файлы (менять):** `backend/src/services/agentHandlers.js`, `tests/yelpConvoHandler.test.js` (NEW), `tests/yelpConvoHandler.db.test.js` (NEW)
+**Трогать нельзя:** `agentWorker.js` (retry/SKIP-LOCKED уже есть); `yelp_lead` handler (`:179`, drain intact).
+**Ожидаемый результат:** новая `HANDLERS.yelp_convo` запись (`max_attempts=3`): load state (`getByConvId`) → **`claimYelpLead(companyId, inbound_pmid)` ПЕРВЫМ** (не заклеймили → `{skipped:'already_handled_inbound'}`, НЕ throw) → Phase A: `updateState(turn_count++, last_inbound_message_id)` без send/LLM → done. `agentHandlers.run({agent_type:'nope'})` по-прежнему `/Unknown agent_type/`; `yelp_lead` зарегистрирован. Real-DB: два прогона того же pmid → одна `yelp_lead_events`-строка, turn_count +1 (не +2); две reply-fixture с разными hex + один conv-id → `count(*) yelp_conversations = 1`, `last_reply_to` = самый свежий hex.
+**YCB-кейсы:** YCB-IDEM-01 (claim-half + sabotage `SAB-IDEM-DROP-CLAIM`), -04, -05, YCB-DEC-03.
+**Зависимости:** после A4 (queries). **Статус:** pending
+
+### T-YCB-A8: Phase A verify + decoupling + migration up/down (тесты, БЕЗ prod-кода)
+**Цель:** закрыть [A]-матрицу и доказать, что плумбинг не ломает YELP-002 greeting.
+**Файлы (менять):** нет production-кода (verification only; правки существующих asserts запрещены).
+**Трогать нельзя:** production-код; существующие 002 test-asserts.
+**Ожидаемый результат:** прогон worktree-командой (`node …/jest.js tests/<file> --rootDir . --testPathIgnorePatterns "/node_modules/" --forceExit`): все [A]-кейсы зелёные; grep-decoupling — `yelpConversationId.js`/`yelpConversationQueries.js`/`yelp_convo`-handler НЕ `require('./mailAgentService'|'mailAgentClassifier')`; rerun 002 (`tests/yelpLeadEnqueue.test.js` B-01, `tests/yelpLeadHandler.test.js` C-01, `tests/agentWorkerRetry.test.js` A-01/A-02b) без правок и зелёные; mig up/down на реальном psql (или self-skip). Phase A готова к owner-gated деплою.
+**YCB-кейсы:** YCB-DEC-01, -02, -03, YCB-MIG-01/02/03.
+**Зависимости:** после A1–A7. **Статус:** pending
+
+---
+
+## PHASE B — «мозг»: LLM tool-loop + booking + call-fallback · gate `YELP_CONVO_ENABLED` (default OFF, dark-launch)
+
+### T-YCB-B1: env-knobs `YELP_CONVO_*`
+**Цель:** конфиг для brain (default OFF).
+**Файлы (менять):** `.env.example`
+**Трогать нельзя:** `YELP_AUTORESPONDER_ENABLED` семантику; прочие env.
+**Ожидаемый результат:** добавлены `YELP_CONVO_ENABLED` (default OFF, комментарий = Phase-B dark-launch, scope `DEFAULT_COMPANY_ID`) + `YELP_CONVO_MODEL`/`_FALLBACK_MODEL`/`_TIMEOUT_MS`/`_RETRY_MAX`/`_MAX_TOOLCALLS` (≈4)/`_MAX_TURNS` (≤~6). Worker-каденс переиспользует `AGENT_WORKER_INTERVAL_MS`.
+**YCB-кейсы (config для):** YCB-LOOP-03/-06, YCB-DEC-02 ([B]-вариант).
+**Зависимости:** нет (логически Phase B). **Статус:** done — `.env.example` расширен knobs `YELP_CONVO_MODEL/_FALLBACK_MODEL/_TIMEOUT_MS/_RETRY_MAX/_MAX_TOOLCALLS/_MAX_TURNS/_OUR_PHONE`.
+
+### T-YCB-B2: LLM tool-loop core `yelpConvoAgentService.runTurn` (loop + reply/send + bounds + safe-fail)
+**Цель:** net-new bounded JSON-action драйвер; `tool`/`reply`/`handoff`; ОДИН send; никогда не throws наружу (кроме send).
+**Файлы (менять):** `backend/src/services/yelpConvoAgentService.js` (NEW), `tests/yelpConvoAgentLoop.test.js` (NEW)
+**Трогать нельзя:** `agentSkills/*` (зов через `runSkill`); `mailAgentClassifier.js` (копируем ФОРМУ транспорта :92 + fence-strip :62, НЕ импортируем); `emailService.sendEmail`.
+**Ожидаемый результат:** `runTurn(conv, inbound, ctx)`: v1beta `generateContent` (`responseMimeType:'application/json'`, two-model fallback, bounded retry+timeout, temp≈0.2); system-prompt (goal + tool-контракт + injection-guard, тело=untrusted data, НЕ цитировать цену/ETA); tolerant-parse (strip ```json fences); dispatch — `tool` → server-validate args → `runSkill(name, DEFAULT_COMPANY_ID, {source:'yelp_convo'}, args)` (companyId — сервер-константа, off-whitelist tool игнор) → scratchpad round-trip в следующий prompt → **loop ≤ `MAX_TOOLCALLS`** + loop-detector (идентичный (tool,args) → break); `recommendSlots.slots` → `offered_slots` (persist); `reply` → РОВНО ОДИН `sendEmail(DEFAULT_COMPANY_ID,{to:conv.last_reply_to, subject:'Re: …', body})`; `handoff` → терминал хода. Bounds: `MAX_TOOLCALLS`/ход + `MAX_TURNS`/разговор + hard timeout + loop-detector. Safe-fail: LLM/tool/parse-fail после ретраев → детерминированный статичный reply (стиль `yelpGreetingService.staticGreeting`), повтор → handoff. Резолвится, не висит.
+**YCB-кейсы:** YCB-LOOP-01, -02, -03 (+ sabotage `SAB-LOOP-REMOVE-CAP`), -04, -05, -06; YCB-SAFE-01; YCB-INJ-02 (scope сервер-инъекция), -03 (whitelist); YCB-SLOT-01 (offered_slots persist).
+**Зависимости:** после A2, A4, B1. **Статус:** done — `yelpConvoAgentService.runTurn` (loop + reply/send + bounds + safe-fail); `tests/yelpConvoAgentLoop.test.js` 23/23 (LOOP-01..06, SLOT-01, SAFE-01, INJ-02/-03).
+
+### T-YCB-B3: book-path — `updateLead` sidestep + slotKey-guard + double-book guard
+**Цель:** `action:"book"` = серверное действие; hold байт-идентичен voice-hold; НИКОГДА createLead/bookOnLead.
+**Файлы (менять):** `backend/src/services/yelpConvoAgentService.js`, `tests/yelpConvoAgentLoop.test.js`
+**Трогать нельзя:** `bookOnLead.js` (намеренно обходим); `leadsService.updateLead`/`createLead` сигнатуры; `slotEngineService`.
+**Ожидаемый результат:** `book` → server-guard `slotKey ∈ offered_slots` (иначе reject → safe reply/re-offer, `phase` НЕ `booked`); hold = `resolveTimezone`+`tzCombine(slot.date,slot.start|end,tz)` ТОЧНО как `bookOnLead.js:95-103`, coords both-or-nothing; `leadsService.updateLead(conv.lead_uuid, {LeadDateTime,LeadEndDateTime,[Latitude,Longitude]}, DEFAULT_COMPANY_ID)` — БЕЗ `Status` (нет FSM, JobSource остаётся `'Yelp'`); `createLead`/`bookOnLead`/`runSkill('bookOnLead')` НЕ вызываются; confirm-reply + lead-scoped `createTask(DEFAULT_COMPANY_ID,{leadId, subjectType:'lead', createdBy:'automation', status:'open', title:'Confirm Yelp booking — …'})`; persist `phase='booked', status='book', chosen_slot`; double-book guard: `status='book'` && тот же `chosen_slot.key` → skip повторного `updateLead`.
+**YCB-кейсы:** YCB-BOOK-01 (+ sabotage `SAB-BOOK-VIA-CREATELEAD`), -02, -03; YCB-INJ-01 (+ sabotage `SAB-BOOK-DROP-OFFERED-CHECK`), -02 (book→conv.lead_uuid).
+**Зависимости:** после B2. **Статус:** done — book-path в `yelpConvoAgentService`: `updateLead` sidestep + `slotKey ∈ offered_slots` guard + double-book guard; BOOK-01/-02/-03, INJ-01/-02 зелёные; sabotage `SAB-BOOK-VIA-CREATELEAD` + `SAB-BOOK-DROP-OFFERED-CHECK` подтверждены RED→restore.
+
+### T-YCB-B4: call-fallback (= SUCCESS) + proactive nearest-slot
+**Цель:** каждый fallback-триггер → тёплый CALL-хэндофф как успех; ранний оффер ближайшего слота.
+**Файлы (менять):** `backend/src/services/yelpConvoAgentService.js`, `tests/yelpConvoAgentLoop.test.js`
+**Трогать нельзя:** `recommendSlots`-скилл; booking-guard из B3.
+**Ожидаемый результат:** триггеры (engine `fallback:true` / opt-out / «just call me»/prefers-phone / critical data missing после `MAX_TURNS` / explicit-human / LLM-error) → НЕТ booking; ОДИН fallback-email на `last_reply_to` с НАШИМ номером + запрос их callback-номера/времени (никакого fabricated-слота), callback-phone из тела → `collected.phone`; lead-scoped `createTask('Call Yelp lead — …', createdBy:'automation')`; persist `phase='handoff_call', status='call'` — записано как **SUCCESS**, не `stalled`/error. Proactive: как только `validateAddress` геокодит in-area → `recommendSlots(targetDay+targetTime)` (единственный ближайший `pickNearestSlot`) → оффер рано, `offered_slots` persisted, `phase→offer_slot/await_pick`.
+**YCB-кейсы:** YCB-CALL-01, -02; YCB-SLOT-01.
+**Зависимости:** после B2 (shared persist с B3). **Статус:** done — call-fallback (= SUCCESS, `status='call'`) для всех триггеров + proactive nearest-slot; CALL-01/-02, SLOT-01 зелёные.
+
+### T-YCB-B5: реальный `yelp_convo` handler + переключение greeter (turn-0)
+**Цель:** заменить тонкий ack на боевой порядок; first-message greeter → `yelp_convo` turn-0 за гейтом.
+**Файлы (менять):** `backend/src/services/agentHandlers.js`, `backend/src/services/yelpLeadService.js`, `tests/yelpConvoHandler.test.js`
+**Трогать нельзя:** `agentWorker.js`; `yelp_lead` handler (остаётся для дренажа in-flight).
+**Ожидаемый результат:** `HANDLERS.yelp_convo` = боевой порядок (зеркалит `yelp_lead` guard-first): load state → **claim ПЕРВЫМ** → build LLM-контекст (inbound = untrusted data в разделителях) → `yelpConvoAgentService.runTurn` (сам шлёт/букает/зовёт) → persist state + `markReplied` (POST-SEND, best-effort, throw ПОСЛЕ send глотаем) → done; ЕДИНСТВЕННЫЙ throw до воркера = `sendEmail`-fault (драйвит retry, inbound НЕ `markReplied` ⇒ ретрай реально пере-шлёт). В `yelpLeadService`: при `YELP_CONVO_ENABLED` first-message enqueue-ит `yelp_convo` turn-0 (greeting = ход 0) вместо `yelp_lead`; `yelp_lead` enqueue отключён для НОВЫХ, handler зарегистрирован. Crash-safety: pre-send claim durable ⇒ ретрай короткозамыкается (≤1 send, ≤1 hold).
+**YCB-кейсы:** YCB-IDEM-01, -02, -03; YCB-SAFE-02; YCB-INT-01 ([B]-вариант `{skipped:'yelp_convo'}`), YCB-DEC-03.
+**Зависимости:** после B2, B3, B4, A5, A7. **Статус:** done — боевой `yelp_convo` handler за `YELP_CONVO_ENABLED` (claim-first → runTurn → markReplied POST-SEND) + greeter-switch в `yelpLeadService` (first-message → `yelp_convo` turn-0, claim-key `<pmid>:greet0`); 1-строчный pass-through в `emailTimelineService` (return фактического greeter). IDEM-01/-02/-03, SAFE-02, INT-01[B] зелёные.
+
+### T-YCB-B6: Phase B verify + LIVE-runbook + резолв открытых вопросов
+**Цель:** закрыть [B]-матрицу, зафиксировать оставшиеся design-развилки, подготовить owner-gated LIVE.
+**Файлы (менять):** нет production-кода (verify + runbook).
+**Трогать нельзя:** production-код; существующие asserts.
+**Ожидаемый результат:** все [B]-кейсы зелёные (mocked LLM+runSkill queue) + rerun [A]/002 регрессия; full grep-decoupling (YCB-DEC-01, включая `yelpConvoAgentService.js`); зафиксированы резолвы LOCKED-DESIGN в коде/комментах — held-slot abandonment = **без speculative hold и без нового TTL v1** (§10.6 → решено), unknown-conv-id reply = **fall-through** (YCB-INT-03 → решено). LIVE-runbook YCB-LIVE-01/02: owner-controlled второй Yelp-аккаунт (no-spam), наблюдать БД не inbox; prod-деплой + флип `YELP_CONVO_ENABLED=true` — ТОЛЬКО по явному «да» владельца (deploy-consent).
+**YCB-кейсы:** YCB-LIVE-01, -02; YCB-DEC-01; полная [B] run-matrix.
+**Зависимости:** после B1–B5. **Статус:** done — [B]-матрица зелёная (mocked LLM+runSkill), Phase-A + YELP-002 регрессия зелёная, grep-decoupling incl. `yelpConvoAgentService.js`; open-questions зафиксированы (held-slot = без speculative hold/TTL; unknown-conv-id = fall-through); LIVE-runbook в `docs/changelog.md` (deploy по «да» владельца, не выполнено).
+
+---
+
+## YELP-CONVO-BOOKING-001 — порядок выполнения и параллелизм
+
+**Phase A (Implementer #1):**
+- **Wave A0 (параллельно, disjoint):** T-YCB-A1 (fixtures — ПЕРВОЙ, разблокирует всё) ∥ T-YCB-A3 (mig 164).
+- **Wave A1:** T-YCB-A2 (parser, после A1) ∥ T-YCB-A4 (queries, после A3).
+- **Wave A2:** T-YCB-A5 (reply-routing, после A2+A4) → T-YCB-A6 (intercept-wire, после A5); T-YCB-A7 (thin handler, после A4) параллельно A5/A6.
+- **Wave A3:** T-YCB-A8 (verify, после A1–A7).
+- Critical path A: **A1 → A2 → A5 → A6 → A8**.
+
+**Phase B (Implementer #2, стартует после A2/A4/A5/A7):**
+- **Wave B0:** T-YCB-B1 (env).
+- **Wave B1 (ПОСЛЕДОВАТЕЛЬНО — один файл `yelpConvoAgentService.js`):** T-YCB-B2 → T-YCB-B3 → T-YCB-B4.
+- **Wave B2:** T-YCB-B5 (handler + greeter-switch, после B2–B4 + A5/A7).
+- **Wave B3:** T-YCB-B6 (verify + LIVE).
+- Critical path B: **B2 → B3 → B4 → B5 → B6**.
+
+**Deploy:** Phase A — owner-gated (закрывает dedup-gap, greeting не трогает); Phase B — dark-launch за `YELP_CONVO_ENABLED=false`, флип в true + prod-деплой ТОЛЬКО по явному «да» владельца (deploy-consent). Migration 164 — recheck номер при билде.

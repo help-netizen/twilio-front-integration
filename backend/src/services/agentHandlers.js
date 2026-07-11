@@ -239,6 +239,103 @@ const HANDLERS = {
         };
     },
 
+    // YELP-CONVO-BOOKING-001 — `yelp_convo` turn handler. Order MIRRORS yelp_lead:
+    // guard (per-inbound claim) FIRST → at-most-once per inbound message (a poll
+    // re-scan or a worker retry of the SAME inbound never double-runs).
+    //   • YELP_CONVO_ENABLED OFF (Phase A) → a thin durable ACK: record the turn on the
+    //     conversation (no LLM, no send). No sendEmail throw-surface → never retried.
+    //   • YELP_CONVO_ENABLED ON (Phase B) → the real brain: yelpConvoAgentService.runTurn
+    //     runs the bounded JSON-action loop, sends the ONE email, and books/hands-off +
+    //     persists conversation state itself. The ONLY throw that reaches the worker is a
+    //     sendEmail fault (drives the opt-in retry; the inbound is NOT markReplied so the
+    //     retry actually re-attempts the send). markReplied is the POST-SEND best-effort
+    //     marker (a throw after the email is out is swallowed — the email is the truth).
+    async yelp_convo(task) {
+        const input = task.agent_input || {};
+        const companyId = task.company_id;
+        const convId = input.conversation_id;
+        const pmid = input.inbound_provider_message_id;
+        const yelpLeadQueries = require('../db/yelpLeadQueries');
+        const yelpConversationQueries = require('../db/yelpConversationQueries');
+
+        // (1) Load state. No row (a race, or a conversation gone) → soft no-op, done.
+        let conv = null;
+        try {
+            conv = await yelpConversationQueries.getByConvId(companyId, convId);
+        } catch (e) {
+            console.error('[yelp_convo] getByConvId failed (non-fatal):', e && e.message);
+        }
+        if (!conv) {
+            return { skipped: 'no_conversation', conversation_id: convId };
+        }
+
+        // (2) Per-inbound claim FIRST — the durable at-most-once gate (reuses the
+        //     yelp_lead_events ledger). Not claimed ⇒ this inbound was already handled
+        //     (push+poll overlap, or a retry) ⇒ skip WITHOUT throwing (a throw would
+        //     re-queue and loop). This is what SAB-IDEM-DROP-CLAIM removes.
+        let claim;
+        try {
+            claim = await yelpLeadQueries.claimYelpLead(companyId, pmid);
+        } catch (e) {
+            console.error('[yelp_convo] claim failed (non-fatal, no double-ack):', e && e.message);
+            return { skipped: 'claim_error', conversation_id: convId };
+        }
+        if (!claim || !claim.claimed) {
+            return { skipped: 'already_handled_inbound', conversation_id: convId };
+        }
+
+        // (3a) Phase A (brain OFF): record the turn (bump turn_count, stamp inbound).
+        //      No LLM, no send. Best-effort — a post-claim persist failure is non-fatal.
+        const convoEnabled = /^(1|true|yes|on)$/i.test(String(process.env.YELP_CONVO_ENABLED || '').trim());
+        if (!convoEnabled) {
+            const nextTurn = (conv.turn_count || 0) + 1;
+            try {
+                await yelpConversationQueries.updateState(companyId, convId, {
+                    turn_count: nextTurn,
+                    last_inbound_message_id: pmid,
+                });
+            } catch (e) {
+                console.error('[yelp_convo] updateState failed (non-fatal):', e && e.message);
+            }
+            return { acked: true, phase_a: true, conversation_id: convId, turn_count: nextTurn };
+        }
+
+        // (3b) Phase B (brain ON): run the bounded tool-loop. runTurn sends the one email
+        //      and persists conversation state; it throws ONLY on a sendEmail fault, which
+        //      we deliberately let propagate (worker retry re-attempts the send).
+        const inbound = { provider_message_id: pmid, body_text: input.inbound_body_text };
+        const result = await require('./yelpConvoAgentService').runTurn(companyId, conv, inbound);
+
+        // (4) POST-SEND marker (best-effort; swallowed — the email is already out, so a
+        //     throw here must NOT re-queue/double-send). Mirrors yelp_lead markGreeted.
+        //     TURN-0 GREETING (input.greeting): stamp the SAME thread_token greeted-marker
+        //     that threadAlreadyGreeted() reads — via markGreeted on THIS inbound's claim
+        //     row — so a later lost-lead-claim reconcile that falls to the yelp_lead greeter
+        //     sees threadAlreadyGreeted(thread_token)===true and SUPPRESSES (unified dedup
+        //     namespace; never a double customer greeting). A reply turn keeps the lighter
+        //     markReplied status marker.
+        try {
+            if (input.greeting && claim && claim.id != null) {
+                await yelpLeadQueries.markGreeted(claim.id, {
+                    leadId: input.lead_id,
+                    threadToken: input.thread_token,
+                    status: 'greeted',
+                });
+            } else {
+                await yelpLeadQueries.markReplied(companyId, pmid);
+            }
+        } catch (e) {
+            console.error('[yelp_convo] post-send marker failed (non-fatal, not re-sent):', e && e.message);
+        }
+        try {
+            await yelpConversationQueries.updateState(companyId, convId, { last_inbound_message_id: pmid });
+        } catch (e) {
+            console.error('[yelp_convo] updateState(last_inbound) failed (non-fatal):', e && e.message);
+        }
+
+        return { handled: true, conversation_id: convId, outcome: result && result.outcome };
+    },
+
     // Summarize a conversation thread (heuristic; LLM provider optional).
     async summarize_thread(task) {
         const input = task.agent_input || {};

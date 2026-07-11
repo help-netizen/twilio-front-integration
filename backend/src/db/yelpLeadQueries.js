@@ -155,10 +155,28 @@ async function attachTask(id, taskId) {
     );
 }
 
+/**
+ * YELP-CONVO-BOOKING-001 (T-YCB-A4): POST-SEND marker for a per-inbound turn claim.
+ * After a `yelp_convo` turn sends its one reply, stamp the inbound's claim row
+ * status='replied' (the claim was inserted by the reused claimYelpLead(pmid); this is
+ * the best-effort post-send counterpart to markGreeted). Company-scoped. Idempotent.
+ * @param {string} companyId
+ * @param {string} providerMessageId  the INBOUND message id (the claim key)
+ */
+async function markReplied(companyId, providerMessageId) {
+    await db.query(
+        `UPDATE yelp_lead_events
+            SET status = 'replied'
+          WHERE company_id = $1 AND provider_message_id = $2`,
+        [companyId, providerMessageId]
+    );
+}
+
 module.exports = {
     claimYelpLead,
     releaseClaim,
     markGreeted,
+    markReplied,
     threadAlreadyGreeted,
     getClaimByMessage,
     attachLead,
