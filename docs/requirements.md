@@ -4629,6 +4629,7 @@ explicitly non-critical. Surface: `backend/src/services/mailAgentClassifier.js` 
 **Затронутые интеграции:** VAPI (payload fields already sent, currently discarded; serverMessages config), Twilio (read-only reconcile of the re-keyed leg). Zenbooker/Front — нет.
 
 **Защищённые части кода (НЕЛЬЗЯ ломать):** `inboxWorker.processVoiceEvent`/`upsertCall` conflict semantics (`callsQueries.js:15-63` — extend call sites only, not the query); softphone path `routes/voice.js:344-385`; Sara inbound `callFlowRuntime.renderVapiNode`; OPC1 webhook auth + anti-spoof + idempotence (`vapiCallStatus.js:51-63,106-144`); `outbound_call_attempts` schema/state machine; `authedFetch.ts`; `useRealtimeEvents.ts`; `src/server.js` core (no new mounts needed).
+<<<<<<< HEAD
 ## GMAIL-PUSH-FIX-001 — Restore real-time Gmail push ingest (single email in seconds, not ~10 min) (2026-07-10)
 
 **Status:** Requirements (Product/Agent-01). Backend-only **bug fix** that REPAIRS the push path of **EMAIL-TIMELINE-001** (§ line 1955, "near real-time Gmail `users.watch` → Pub/Sub push"). Dedup checked: `grep -i gmail-push docs/requirements.md` = none. Owner-approved brief, confirmed on prod 2026-07-10. **NO migration; NO Google Cloud / Pub/Sub / topic / subscription / OIDC / DNS / Caddy change** — `gmail-inbound-push` sub, `gmail-inbound` topic, push endpoint + token are all verified correct. Bug is 100% app code.
@@ -4835,3 +4836,78 @@ App is connected; the job has an empty or very thin description. The advisor sti
 - Zenbooker job-sync and scheduler-created job paths — no advisor coupling (must remain note-free).
 - `frontend/src/lib/authedFetch.ts`, `src/server.js` (mount-only if ever needed) — untouched.
 - Existing migrations — not modified; changes only via the new seed migration.
+=======
+
+---
+
+## STRIPE-CONNECT-UX-001 — redesign of the in-app Stripe connect flow: violet-cloud banners, pricing/terms in-product, copy fixes (2026-07-10)
+
+**Relationship:** presentation-layer follow-up to STRIPE-PAY-001 (settings page + readiness/checklist) and STRIPE-ADHOC-PAY-001 (Job → Finance CTA card). **Not a duplicate** — no existing requirement covers the *sell/onboard* surface: today the settings page has broken-english description ("Accept customer payments by Stripe"), a misleading `not_connected` badge ("Available"), env-speak ("Stripe is not configured on this environment yet…"), opens straight into "Setup checklist", and carries NO value prop, NO pricing, NO trust signals, NO time expectation; the Job Finance CTA (`JobFinancialsTab.tsx` ~128–176) is a flat gray `bg-[var(--blanc-surface-muted)]` card that reads like a disclaimer. **FRONTEND-ONLY** (plus pure label strings in the backend checklist builder). Mockups APPROVED by the owner (variant A light cloud for the job banner; light hero in Settings). **All quoted copy below is FINAL — reproduce verbatim.**
+
+**Краткое описание:** the Stripe connect flow becomes a product surface that sells the feature: a reusable violet-"cloud" CSS pattern powers a mobile-first hero on the Settings page (value prop, 3 benefits, pricing chips, big violet "Connect Stripe" CTA, trust row) plus a hardcoded "What it costs" rate card; the Job Finance CTA becomes the same light-cloud banner; all env-speak/broken copy is fixed. Gating logic, APIs, and readiness computation are untouched — presentation only.
+
+**Пользовательские сценарии:**
+1. **Admin connecting from a phone:** an account admin opens Settings → Integrations → Stripe payments on a 375px phone. Above the fold she sees the cloud hero — "Get paid on the spot", the three benefits, the pricing chips, and the violet "Connect Stripe" button with "Takes about 5 minutes…" underneath. She understands what it costs (2.9% + 30¢, $0 monthly, 0% Albusto fee) and that card data never touches Albusto — and taps Connect without leaving the app to research pricing.
+2. **Admin mid-onboarding:** she returns after an interrupted Stripe onboarding; the hero is replaced by a compact cloud "Almost there — finish your Stripe setup" with a [Finish setup] button; the "Setup steps" list below shows human labels ("Connect your Stripe account", "Add your business details", "Turn on card payments").
+3. **Tech/dispatcher on a job (manage perm):** a user with `tenant.integrations.manage` opens a job's Finance tab in a not-connected company → sees the light-cloud banner "Get paid for this job today" with a violet [Connect Stripe] and "One-time setup · ~5 min" — same states, new presentation.
+4. **Tech without manage perm:** a provider opens Finance on the same job → the same cloud banner with a lock icon and "Your company isn't set up for payments yet. Ask an account admin to connect Stripe in Settings → Integrations." — no button.
+5. **Connected company:** readiness `connected_ready` → NO hero anywhere; the Settings readiness block + action buttons stay as today (one primary only); the job banner never renders (unchanged `showCta` logic).
+
+**FRs:**
+
+- **FR-CLOUD (reusable cloud pattern):** one shared, pure-CSS "violet cloud" surface (NO image assets): white base + layered radial-gradients + two blurred pseudo-element circles; border `1px solid rgba(127,66,225,.16)`; radius 22px. Exact background layers: `radial-gradient(58% 90% at 12% 18%, rgba(127,66,225,.16), transparent 62%), radial-gradient(48% 74% at 88% 8%, rgba(231,219,253,.95), transparent 66%), radial-gradient(70% 100% at 78% 96%, rgba(127,66,225,.12), transparent 58%), radial-gradient(36% 52% at 40% 78%, rgba(231,219,253,.7), transparent 70%), #FFFFFF`. Used by the Settings hero, the Settings partially-connected compact cloud, and all three JobFinancialsTab banner states.
+
+- **FR-HERO (Settings not-connected hero):** on readiness `not_connected`/`disconnected`, the page opens with the cloud hero (mobile-first, content above the fold at 375px), containing verbatim:
+  - eyebrow: "PAYMENTS"
+  - heading: "Get paid on the spot"
+  - sub: "Charge a card at the job, text a payment link, or key it in over the phone. Money lands in your bank in about 2 business days."
+  - 3 benefits: "Every way to pay — Card on site, payment link by text or email" / "Fast payouts — Free, to your bank in ~2 business days" / "No monthly fees — Pay only when you get paid"
+  - pricing chips: "2.9% + 30¢ per card payment" · "$0 monthly" · "0% added by Albusto"
+  - big violet CTA "Connect Stripe" + micro-copy "Takes about 5 minutes. Have your business details and bank account handy."
+  - trust row: lock icon + "Powered by Stripe · Card data never touches Albusto".
+  Partially-connected readiness (onboarding started but not `connected_ready`): the hero is replaced by a compact cloud — "Almost there — finish your Stripe setup" + "Stripe needs a few more business details before you can take payments." + [Finish setup]. `connected_ready`: NO hero; current readiness block + post-connect buttons stay (one primary button only).
+
+- **FR-COST (Settings "What it costs" card-table):** desktop — to the right of the hero (grid `1.15fr/.85fr`); mobile — below the hero. Rows (rates HARDCODED, no API):
+  - Card payment — link or keyed-in (sub: Visa, Mastercard, Amex, Apple Pay, Google Pay) → 2.9% + 30¢
+  - Tap to Pay in person (sub: on the technician's phone) → "2.7% + 5¢ · soon" (gray)
+  - Monthly or setup fees → $0 (green)
+  - Payouts to your bank (sub: about 2 business days) → Free (green)
+  - Instant payouts — optional → 1.5%
+  - Albusto fee on top → 0% (green)
+  Footer: "Stripe's standard US rates, charged by Stripe. International cards +1.5%. Full details at stripe.com/pricing."
+
+- **FR-COPY (copy fixes):**
+  - Settings page description ("Accept customer payments by Stripe") → "Take card payments on the job, by link, or over the phone"
+  - badge for `not_connected` ("Available") → "Not connected"
+  - not-configured env copy → "Stripe isn't set up for this workspace yet. Once platform keys are added, you can connect your account here."
+  - backend checklist labels (`backend/src/services/stripePaymentsService.js:67-71`, pure label strings): "Connect Stripe account" → "Connect your Stripe account"; "Complete business onboarding" → "Add your business details"; "Enable card payments" → "Turn on card payments"; the other two labels unchanged
+  - checklist section title "Setup checklist" → "Setup steps"; the checklist moves BELOW the hero.
+
+- **FR-JOB (JobFinancialsTab cloud banner, variant A):** the flat gray CTA card (~lines 128–176) becomes the light-cloud banner. Three states, gating UNCHANGED:
+  - connect state (`not_connected`/`disconnected`, user has `tenant.integrations.manage`): "Get paid for this job today" · "Charge the card on the spot or text a secure payment link. No invoice needed — money hits your bank in days." · violet [Connect Stripe] + micro "One-time setup · ~5 min"
+  - finish-setup state (setup-incomplete readiness, manage user): same cloud, "Almost there — finish your Stripe setup" + "Stripe needs a few more business details before you can take payments." + [Finish setup]
+  - no-`tenant.integrations.manage` state: same cloud, lock icon + "Your company isn't set up for payments yet. Ask an account admin to connect Stripe in Settings → Integrations." — no button.
+  The `showCta` condition, perm-gate → `can_collect` → CTA-variant branching, and navigate target stay byte-identical in behavior.
+
+- **FR-MOBILE (mobile-first, mandatory):** hero content (eyebrow → CTA) above the fold at 375px; the hero/cost grid and pricing chips collapse to a single column on mobile; all tap targets ≥ 44px; visual verification in the browser preview at mobile 375px AND desktop widths is part of acceptance.
+
+**ACs:**
+- **AC-1:** `npm run build` (tsc -b) green (prod Docker is stricter — no unused locals).
+- **AC-2:** backend jest green. NOTE: `tests/stripePayments.test.js` currently asserts readiness states only, NOT checklist label strings — verify after the label change and update assertions if any test pins the old labels.
+- **AC-3:** visual verification in browser preview at 375px and desktop: hero above the fold on mobile, grids collapse, cost table readable, cloud renders correctly on both surfaces.
+- **AC-4:** gating behavior identical — for every combination of (permissions × readiness × configured) the SAME states render as before the change (connect / finish-setup / no-perm / nothing / connected); only presentation and copy differ.
+- **AC-5:** all copy from FR-HERO / FR-COST / FR-COPY / FR-JOB appears verbatim (character-for-character, including "·", "¢", "~", "%").
+- **AC-6:** the cloud is pure CSS — zero image/SVG-file assets added for the gradient pattern.
+
+**Ограничения и нефункциональные требования:**
+- **FRONTEND-ONLY** + the pure label strings in `stripePaymentsService.js` `buildChecklist` — NO gating, API, readiness-computation, or route changes; NO migration; the invoice/estimate send-and-pay flow untouched.
+- Rates are HARDCODED strings (no pricing API); "Blanc" never ships in UI — product name is Albusto.
+- Design tokens only (`--blanc-accent` #7F42E1, `--blanc-accent-soft` #E7DBFD, Manrope headings) except the cloud's specified rgba layers; primary buttons stay violet; no `<hr>`/Separator.
+- English UI; no new dependencies.
+
+**Потенциально вовлечённые модули:** frontend `pages/StripePaymentsSettingsPage.tsx` (hero + cost card + copy + badge + section title/order), `components/jobs/JobFinancialsTab.tsx` (CTA card → cloud banner, presentation only), a small shared cloud style (component or CSS class — implementer's choice); backend `src/services/stripePaymentsService.js:67-71` (three label strings). Tests: `tests/stripePayments.test.js` (only if label assertions appear).
+
+**Затронутые интеграции:** Stripe — visual/copy layer only (no API-shape change). Twilio / Front / Zenbooker / VAPI — нет.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):** `JobFinancialsTab` gating logic (`canCollect` perm-gate, `stripeReady`, `showCta` condition, readiness→variant branching, navigate to `/settings/integrations/stripe-payments`); `stripePaymentsService.js` readiness computation (`computeReadiness`, `canCollect`, checklist `key`/`done`/`deferred` semantics — labels only); the Collect-payment button + `CollectPaymentModal` path (STRIPE-ADHOC-PAY-001); Stripe connect/onboard routes and `publicStatus` response shape; invoice-anchored collect surfaces (SEND-DOC-001); `authedFetch.ts`.
+>>>>>>> 0aaa219 (docs(STRIPE-CONNECT-UX-001): requirements/architecture/spec/test-cases/tasks + changelog + project-spec)

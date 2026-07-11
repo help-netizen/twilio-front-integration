@@ -91,6 +91,19 @@ webhook resolves `job_id` from session metadata — no ledger/webhook change). R
 replaced by a Connect-Stripe CTA (or "ask an admin" for non-`tenant.integrations.manage`
 users). No migration.
 
+**Connect-flow UX (STRIPE-CONNECT-UX-001, 2026-07-10):** frontend-only redesign of the
+connect journey. The not-connected settings page leads with a violet-cloud hero ("Get paid
+on the spot") plus in-product pricing and trust signals: rate chips (2.9% + 30¢ · $0 monthly
+· 0% added by Albusto), a **What it costs** table (hardcoded Stripe US rates, footnoted to
+stripe.com/pricing), and "Powered by Stripe · Card data never touches Albusto"; a partial
+connection shows a compact "Almost there" cloud that absorbs Resume onboarding, and
+checklist/env copy was softened from Stripe-speak to plain labels. The Job → Finance
+Connect-Stripe CTA (from STRIPE-ADHOC-PAY-001) is now a light cloud banner with three
+states — connect / finish-setup / ask-admin (locked). The cloud itself is a reusable
+pure-CSS pattern (`.blanc-cloud` + `ui/CloudBanner`, layered radial gradients, no images)
+shared by both call-sites. Collection gating and payment logic are byte-identical —
+`connected_ready` still gates everything exactly as above.
+
 **Storage:** `stripe_connected_accounts` (one per company), `stripe_payment_sessions`,
 `stripe_webhook_events`. Idempotency is enforced at two layers: per Stripe event id
 (`stripe_webhook_events` unique) and per payment (`payment_transactions(company_id,

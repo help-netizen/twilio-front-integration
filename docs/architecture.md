@@ -5528,3 +5528,80 @@ Probable causes come from `likely_causes[{cause,probability}]` (probability rend
 - **`isAppConnected` gate**: generic path returns `true` when a `connected` installation exists for the company, `false` otherwise; company-scoped.
 - **Security**: no new HTTP route is introduced — connect/disconnect reuses the already-guarded `/api/marketplace/*` (401/403 + `tenant.integrations.manage` covered by existing marketplace tests). The new surface is event-internal; the mandatory tenant-isolation test asserts the note attaches only to the originating company's job and the gate uses the event's `companyId`.
 
+
+---
+
+## STRIPE-CONNECT-UX-001 — violet-cloud connect surfaces: shared `.blanc-cloud` + `CloudBanner`, Settings hero/cost card, Job Finance banner, copy fixes
+
+**Requirements:** `## STRIPE-CONNECT-UX-001` in `Docs/requirements.md` (FR-CLOUD/HERO/COST/COPY/JOB/MOBILE, AC-1..6; **all copy verbatim, background layers exact**). Presentation-layer follow-up to STRIPE-PAY-001 (settings page) and STRIPE-ADHOC-PAY-001 (Job Finance CTA). **FRONTEND-ONLY + 3 pure label strings in the backend checklist builder.** No gating/API/readiness/route change; NO migration.
+
+### §0 — Существующий функционал (расширяем, НЕ дублируем)
+- `frontend/src/pages/StripePaymentsSettingsPage.tsx` — THE settings surface: `READINESS_LABEL` badge map (`:18-26`), `configured===false` env copy (`:95-100`), "Setup checklist" `SettingsSection` (`:103-110`), Account-readiness block (`:112-124`), actions row (`:126-153`), connect/resume/refresh/disconnect mutations (`:53-72`), disconnect Dialog. All mutations REUSED as-is — the hero/compact-cloud CTAs call the SAME `connectMut`/`resumeMut`.
+- `frontend/src/components/jobs/JobFinancialsTab.tsx` `:79-139` gating (STRIPE-ADHOC-PAY-001): `canCollect` perm-gate → `stripeStatus` query (`['stripe-payments-status']`, `enabled: canCollect`) → `stripeReady`/`isConnectState`/`showCta` → CTA card `:160-178`. **Conditions byte-identical; only the JSX inside `{showCta && …}` changes.**
+- `frontend/src/components/settings/SettingsPageShell.tsx` — flex-col `gap-8` wrapper; `title`/`description`/`actions` slots; children render straight after the title row → **the hero can simply be the first child** (no shell change).
+- `frontend/src/components/settings/SettingsSection.tsx` — left-label/right-card grid; REUSED for "Setup steps" and Account readiness; NOT used for the hero/cost card (they are cloud/card surfaces of their own).
+- `frontend/src/styles/design-system.css` — the shared-pattern home (`.blanc-eyebrow` `:801`, `.blanc-heading` `:813`); tokens `--blanc-accent #7F42E1` (`:69`), `--blanc-accent-soft #E7DBFD` (`:70`), `--blanc-font-heading` Manrope (weights 400–800 loaded, `:26`).
+- `frontend/src/lib/utils.ts` `cn()` — class merge for the new component.
+- `backend/src/services/stripePaymentsService.js` `buildChecklist` (`:66-73`) — labels live here; `computeReadiness`/`canCollect`/`publicStatus` UNTOUCHED.
+
+### §1 — Decision A: cloud pattern = `.blanc-cloud` CSS class + thin `CloudBanner` component (both, single gradient source)
+The codebase idiom is split: **shared visual patterns live as `.blanc-*` classes in `design-system.css`** (`.blanc-eyebrow`, `.blanc-heading`, `.blanc-table-tiles`), **reusable structure lives as `ui/` components** (BottomSheet, FloatingDetailPanel — Tailwind classes + token inline-styles). FR-CLOUD needs `::before`/`::after` blurred circles → impossible with inline styles → the gradient stack gets ONE home in CSS; a component guarantees both call-sites share it without class-string copy-paste.
+- **`design-system.css` — new `.blanc-cloud` block** (append near `.blanc-eyebrow`):
+  - base: `position:relative; overflow:hidden; border:1px solid rgba(127,66,225,.16); border-radius:22px;` background = the EXACT 4 radial-gradient layers + `#FFFFFF` from FR-CLOUD (verbatim, single `background:` declaration).
+  - `.blanc-cloud::before` / `::after`: `content:''; position:absolute; border-radius:50%; pointer-events:none;` — ::before ≈ 240px circle, `rgba(127,66,225,.10)`, `filter:blur(42px)`, top:-60px right:-40px; ::after ≈ 280px circle, `rgba(231,219,253,.8)`, `filter:blur(48px)`, bottom:-80px left:-30px. (Circle geometry is the only non-verbatim part of FR-CLOUD — these values are canonical for both surfaces.)
+- **`frontend/src/components/ui/CloudBanner.tsx` — NEW (the only new file):**
+  ```tsx
+  export interface CloudBannerProps { variant?: 'hero' | 'compact'; className?: string; children: ReactNode }
+  export function CloudBanner({ variant = 'compact', className, children }: CloudBannerProps)
+  ```
+  Renders `<div className={cn('blanc-cloud', variant === 'hero' ? 'p-6 sm:p-8' : 'p-5', className)}><div className="relative">{children}</div></div>`. The inner `relative` div lifts content above the pseudo-circles (no z-index rules forced onto children). No logic, no state — pure surface.
+
+### §2 — Decision B: Settings page structure (`StripePaymentsSettingsPage.tsx`) — state→render
+Hero and cost card are plain children of `SettingsPageShell` (before the sections). State table (`readiness`/`connected`/`configured` computed exactly as today):
+
+| State | Render (top → bottom) |
+|---|---|
+| `isLoading` | Loader row — UNCHANGED |
+| `configured === false` | `SettingsSection` with NEW env copy: "Stripe isn't set up for this workspace yet. Once platform keys are added, you can connect your account here." |
+| `!connected` (readiness `not_connected`/`disconnected`) | `div.grid.grid-cols-1.md:grid-cols-[1.15fr_.85fr].gap-5` → **left `CloudBanner variant="hero"`** (eyebrow `.blanc-eyebrow` "PAYMENTS" → h3 "Get paid on the spot" → sub → 3 benefit rows → pricing chips → violet CTA button wired to `connectMut` w/ `Loader2` pending → micro-copy → trust row `Lock`); **right = "What it costs" card** (see §3); then `SettingsSection title="Setup steps"` (checklist, moved BELOW). Actions row: the `!connected` Connect button is **removed — absorbed by the hero CTA** (one primary). |
+| `connected && readiness !== 'connected_ready'` | `CloudBanner variant="compact"` — "Almost there — finish your Stripe setup" + "Stripe needs a few more business details before you can take payments." + **[Finish setup]** wired to `resumeMut` (absorbs the "Resume onboarding" primary — one primary); then "Setup steps", Account readiness, actions row (Refresh / Open Dashboard / Disconnect — outline/ghost only). |
+| `connected_ready` | **NO cloud anywhere.** Current view: "Setup steps" checklist + Account readiness + actions (Refresh/Dashboard/Disconnect) — as today. |
+
+Copy edits in the same file: `description` prop → "Take card payments on the job, by link, or over the phone"; `READINESS_LABEL.not_connected.text` `'Available'` → `'Not connected'` (cls stays `STATUS_NEUTRAL`); checklist section title → "Setup steps". Mutations, query, disconnect Dialog, `StatusBadge`, `ReadinessRow` — UNTOUCHED.
+
+### §3 — "What it costs" card (local subcomponent, same page file)
+`WhatItCostsCard` — module-level function component in `StripePaymentsSettingsPage.tsx` (single call-site → NOT a shared file). Surface = the SettingsSection card values (`background: rgba(25,25,25,0.03); border-radius:16px; padding 20px 22px`) — NOT a cloud. Rows = `flex items-start justify-between gap-3` with label (+ optional `text-xs` `--blanc-ink-3` sub) left, rate right (`font-medium`, `text-[var(--blanc-success)]` for the three green values, `--blanc-ink-3` for "· soon"); the 6 rows + footer line verbatim from FR-COST, HARDCODED (no API). `space-y-3` between rows; no `<hr>`.
+
+### §4 — Decision C: `JobFinancialsTab.tsx` — presentation-only swap (`:160-178`)
+`{showCta && …}` keeps its condition; the gray `div.rounded-2xl.bg-[var(--blanc-surface-muted)]` becomes `<CloudBanner variant="compact">`. Branching maps 1:1 onto EXISTING variables — no new state, no logic edits:
+| Existing condition | New presentation (copy verbatim FR-JOB) |
+|---|---|
+| `canManageIntegrations && isConnectState` | "Get paid for this job today" + body + violet **[Connect Stripe]** (`navigate('/settings/integrations/stripe-payments')` — unchanged) + micro "One-time setup · ~5 min" |
+| `canManageIntegrations && !isConnectState` | "Almost there — finish your Stripe setup" + "Stripe needs a few more business details before you can take payments." + **[Finish setup]** (same navigate) |
+| `!canManageIntegrations` | `Lock` icon + "Your company isn't set up for payments yet. Ask an account admin to connect Stripe in Settings → Integrations." — NO button |
+The old `ctaTitle/ctaBody/ctaButtonLabel` consts are replaced by the new copy (the no-perm branch no longer shows a readiness-specific title — spec'd by FR-JOB); `showCta`, `canCollect`, `stripeReady`, `isConnectState`, the query, and the Collect-payment button (`:153-159`) are byte-identical.
+
+### §5 — Backend: 3 label strings (`stripePaymentsService.js` `buildChecklist` `:67-69`)
+`'Connect Stripe account'`→`'Connect your Stripe account'`; `'Complete business onboarding'`→`'Add your business details'`; `'Enable card payments'`→`'Turn on card payments'`. Keys/`done`/`deferred` semantics untouched; rows 4–5 unchanged. **Verified:** `tests/stripePayments.test.js` asserts readiness states only (TC-01…), ZERO label/checklist string assertions → no test edit needed.
+
+### §6 — Typography & icons
+- Headings: codebase mechanism = inline `style={{ fontFamily: 'var(--blanc-font-heading)' }}` on the element (SettingsPageShell `:61` precedent; `.blanc-heading` is w700). Hero heading = `<h3 className="text-2xl sm:text-[28px]" style={{ fontFamily:'var(--blanc-font-heading)', fontWeight:800, color:'var(--blanc-ink-1)' }}>` — Manrope 800 IS loaded (`design-system.css:26`).
+- lucide-react (already a direct import in both files): benefits = `CreditCard` (Every way to pay), `Banknote` (Fast payouts), `ShieldCheck` (No monthly fees); trust row + no-perm state = `Lock`. Icon style per CLAUDE.md: `size-4`, `color: var(--blanc-accent)` in the hero benefit rows, no circles/backgrounds.
+- Pricing chips: `flex flex-wrap gap-2` pills — `rounded-full border border-[rgba(127,66,225,.2)] bg-white/70 px-3 py-1 text-[13px]`; wrap to column naturally at 375px.
+
+### §7 — Риски / guardrails
+- **Dark mode: NONE in the app** (Tailwind v4 CSS-first, no `.dark`/`prefers-color-scheme` rules anywhere in `design-system.css`/`index.css`) → white cloud cannot glare; no dark variant needed.
+- **noUnusedLocals (prod tsc):** absorbing Connect/Resume into the clouds must not orphan imports — `Loader2` stays used (pending spinners inside cloud CTAs); re-check `CheckCircle2`/`AlertCircle` (still used by `ReadinessRow`) before build (AC-1).
+- **320–375px overflow:** chips/benefits wrap (`flex-wrap`/stacked rows), cost-card rows `min-w-0` + `justify-between`; the hero/cost grid is `grid-cols-1` below `md`. Tap targets: default `Button` (h-9) OK; cloud CTA uses `size="lg"`-equivalent `h-11` for the ≥44px rule.
+- **One-primary rule:** per state at most one violet button (hero CTA ∨ compact [Finish setup] ∨ ready-state none-beyond-existing).
+- **Verbatim copy (AC-5):** "·", "¢", "~", "%" characters exact — copy from requirements block, not retyped.
+
+### §8 — Файлы для изменений
+- `frontend/src/components/ui/CloudBanner.tsx` — **NEW** (thin wrapper; only new file).
+- `frontend/src/styles/design-system.css` — append `.blanc-cloud` (+`::before`/`::after`).
+- `frontend/src/pages/StripePaymentsSettingsPage.tsx` — hero + compact cloud + `WhatItCostsCard` + badge/description/env-copy/section-title edits + actions-row absorption.
+- `frontend/src/components/jobs/JobFinancialsTab.tsx` — CTA card JSX → `CloudBanner` (3 states; conditions untouched).
+- `backend/src/services/stripePaymentsService.js` — 3 label strings (`:67-69`).
+- Tests: none required (`tests/stripePayments.test.js` has no label asserts); AC = `npm run build` + backend jest + browser preview @375px/desktop.
+
+**Protected / unchanged:** `JobFinancialsTab` gating (`canCollect`, `stripeReady`, `showCta`, readiness→variant branching, navigate target), `stripePaymentsService` `computeReadiness`/`canCollect`/`publicStatus` + checklist keys/semantics, connect/onboard routes, Collect-payment button + `CollectPaymentDialog` path, invoice/estimate send-and-pay (SEND-DOC-001), `SettingsPageShell`/`SettingsSection` APIs, `authedFetch.ts`, `useRealtimeEvents.ts`. No new API endpoints, no new routes, no migration → middleware/company-scope checklist N/A.

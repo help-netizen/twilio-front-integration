@@ -44,6 +44,17 @@
 - **CC-07 (reviewer fix, gating)**: confirmPartsVisit терминализирует СВОЮ попытку (`dialing`→`booked`) ДО перевода «Part arrived→Rescheduled» — успешное бронирование роботом больше не порождает ложную заметку «canceled» на happy path.
 - Тесты: 199 зелёных по 8 сьютам (red→green negative-controls; Reviewer воспроизвёл + саботаж ×3, вкл. «смертельную петлю» — собственный звонок робота не отменяет свой план архитектурно + защита в глубину). Без миграции (`status` TEXT, 'canceled' в словаре). НЕ задеплоено.
 
+## 2026-07-10 — STRIPE-CONNECT-UX-001: флоу подключения Stripe — «сочные» баннеры на фиолетовых облаках + тарифы в продукте (orchestrate-пайплайн)
+
+Дизайн-критика показала: страница подключения Stripe была технической (чек-лист вместо ценности, ни слова о тарифах, ноль trust-сигналов, env-speak), а CTA на джобе читался как дисклеймер. Редизайн по утверждённым владельцем макетам (вариант A — светлое облако). **Frontend-only + 3 label-строки backend; без миграции; гейтинг/логика байт-в-байт нетронуты (diff-proven).**
+
+- **`.blanc-cloud` + `ui/CloudBanner`** — переиспользуемое «облако»: чисто CSS (5-слойные radial-gradient из #7F42E1/#E7DBFD + два blur-круга ::before/::after), без картинок; один источник градиента на оба call-site.
+- **Settings → Stripe Payments (не подключено):** hero-облако — «Get paid on the spot», 3 выгоды, чипы тарифов (2.9% + 30¢ · $0 monthly · **0% added by Albusto**), CTA «Connect Stripe» + ожидание «~5 minutes», trust-строка «Powered by Stripe · Card data never touches Albusto»; справа (на мобиле — ниже) таблица **What it costs** (Stripe US rates хардкодом + сноска stripe.com/pricing). Копирайт-фиксы: бейдж «Available»→«Not connected», описание страницы, env-copy, labels чек-листа («Add your business details»…), секция «Setup steps». Частично подключено → компакт-облако «Almost there…» (+поглотило Resume onboarding). connected_ready → без облака.
+- **Job → Finance CTA** → светлое облако «Get paid for this job today» (3 состояния: connect / finish-setup / ask-admin с замочком), навигация та же.
+- **Live-preview ПОЙМАЛ реальный баг:** blur-круги облака рисовались ПОВЕРХ контента (CTA/микро/trust молочно-полупрозрачные) — контент-обёртке нужен `z-[1]`; спека §1.2 исправлена. Урок: спека предписывала plain `relative`, имплементер ей следовал — вживую вскрылось только в браузере.
+- **Проверка:** копирайт **38/38** строк дословно (·/¢/~/— проверены), гейтинг-дифф пуст (sabotage 2/2 кусается), `npm run build` зелёный, backend jest 28/28, live-preview R3-hero (desktop; mobile-раскладка — детерминированный Tailwind-брейкпоинт, авто-браузер без KC-сессии не покрывает авторизованные состояния — они code-review). Reviewer: mockup-fidelity исключение задокументировано (hairline + #635bff Stripe-бренд внутри облака).
+- **Ещё НЕ задеплоено** (commit 2419506).
+
 ---
 
 ## 2026-07-09 — OUTBOUND-CALL-TIMELINE-001: робо-звонки (VAPI outbound) видны в ленте Pulse вживую, как звонки софтфона
