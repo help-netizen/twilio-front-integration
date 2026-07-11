@@ -65,7 +65,7 @@ function buildMimeMessage({ from, to, cc, subject, body, inReplyTo, references, 
 
 // ─── Send new email ──────────────────────────────────────────────────────
 
-async function sendEmail(companyId, { to, cc, subject, body, files, userId, userEmail }) {
+async function sendEmail(companyId, { to, cc, subject, body, files, userId, userEmail, inReplyTo, references, threadId }) {
     const accessToken = await emailMailboxService.getValidAccessToken(companyId);
     const mailboxData = await emailQueries.getMailboxWithTokens(companyId);
 
@@ -86,11 +86,16 @@ async function sendEmail(companyId, { to, cc, subject, body, files, userId, user
         subject,
         body,
         files,
+        inReplyTo,
+        references,
     });
 
     const sendRes = await gmail.users.messages.send({
         userId: 'me',
-        requestBody: { raw },
+        // When threadId is supplied (e.g. a Yelp relay reply), send INSIDE the
+        // original Gmail thread; combined with In-Reply-To/References this makes
+        // the reply a proper MIME reply that Yelp's reply-by-email can parse.
+        requestBody: threadId ? { raw, threadId } : { raw },
     });
 
     const sentMessageId = sendRes.data.id;

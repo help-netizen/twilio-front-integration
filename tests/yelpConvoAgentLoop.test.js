@@ -59,6 +59,11 @@ jest.mock('../backend/src/db/yelpConversationQueries', () => ({
     setPhaseStatus: jest.fn(),
 }));
 
+// Reply-threading lookup (In-Reply-To/References + Gmail thread) — mocked so the loop
+// stays DB-free; a canned row lets us assert every send is properly threaded.
+const mockGetThreading = jest.fn();
+jest.mock('../backend/src/db/emailQueries', () => ({ getThreadingByProviderMessageId: mockGetThreading }));
+
 const svc = require('../backend/src/services/yelpConvoAgentService');
 const { convRow, CONV_ID, DEFAULT_COMPANY_ID } = require('./yelpFixtures');
 
@@ -87,6 +92,11 @@ beforeEach(() => {
     mockSendEmail.mockResolvedValue({ provider_message_id: 'sent-1' });
     mockUpdateLead.mockResolvedValue({ UUID: 'lead-uuid' });
     mockCreateTask.mockResolvedValue({ id: 1 });
+    mockGetThreading.mockResolvedValue({
+        message_id_header: '<in-1@messaging.yelp.com>',
+        provider_thread_id: 'gt-1',
+        subject: 'Re: your request',
+    });
     jest.spyOn(console, 'error').mockImplementation(() => {});
 });
 afterEach(() => { jest.restoreAllMocks(); });
@@ -129,6 +139,12 @@ describe('YCB-LOOP-02 · reply → exactly ONE sendEmail to conv.last_reply_to',
         expect(payload.to).toBe('reply+aa11bb22cc33dd44@messaging.yelp.com');
         expect(payload.body).toEqual(expect.stringContaining('best phone'));
         expect(payload.subject).toBeTruthy();
+        // YELP reply-threading — resolved from the inbound provider_message_id and
+        // carried on the send so Yelp's reply-by-email accepts it (else it bounces).
+        expect(mockGetThreading).toHaveBeenCalledWith('ymsg-REPLY-1', DEFAULT_COMPANY_ID);
+        expect(payload.inReplyTo).toBe('<in-1@messaging.yelp.com>');
+        expect(payload.references).toBe('<in-1@messaging.yelp.com>');
+        expect(payload.threadId).toBe('gt-1');
         expect(mockUpdateLead).not.toHaveBeenCalled();
         expect(mockCreateTask).not.toHaveBeenCalled();
     });

@@ -25,8 +25,10 @@ jest.mock('../backend/src/db/yelpLeadQueries', () => ({
 
 const mockBuildGreeting = jest.fn();
 const mockSendEmail = jest.fn();
+const mockGetThreading = jest.fn();
 jest.mock('../backend/src/services/yelpGreetingService', () => ({ buildGreeting: mockBuildGreeting }));
 jest.mock('../backend/src/services/emailService', () => ({ sendEmail: mockSendEmail }));
+jest.mock('../backend/src/db/emailQueries', () => ({ getThreadingByProviderMessageId: mockGetThreading }));
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 
 const agentHandlers = require('../backend/src/services/agentHandlers');
@@ -40,6 +42,11 @@ beforeEach(() => {
     mockThreadAlreadyGreeted.mockResolvedValue(false);
     mockBuildGreeting.mockResolvedValue('Hi Kim, ...');
     mockSendEmail.mockResolvedValue({ provider_message_id: '<sent-x>' });
+    mockGetThreading.mockResolvedValue({
+        message_id_header: '<20260711.abc@messaging.yelp.com>',
+        provider_thread_id: 'gmail-thread-99',
+        subject: 'You have a new dishwasher repair request',
+    });
 });
 
 // ── C-01 · HANDLER-sends-once (P0, req #5) ────────────────────────────────────
@@ -63,6 +70,13 @@ describe('C-01 · HANDLER-sends-once (SAB-HANDLER-SKIP-SEND)', () => {
         expect(args.to).toBe('reply+8160b36a1c2d3e4f@messaging.yelp.com');
         expect(args.body).toBe('Hi Kim, ...');
         expect(String(args.subject || '')).not.toHaveLength(0);
+        // (2b) YELP reply-threading — the reply carries In-Reply-To/References (the
+        //      inbound Message-ID) + the Gmail thread, else Yelp bounces it. The
+        //      threading is looked up by the inbound provider_message_id + company.
+        expect(mockGetThreading).toHaveBeenCalledWith('ymsg-NEW-1', DEFAULT_COMPANY_ID);
+        expect(args.inReplyTo).toBe('<20260711.abc@messaging.yelp.com>');
+        expect(args.references).toBe('<20260711.abc@messaging.yelp.com>');
+        expect(args.threadId).toBe('gmail-thread-99');
         // (3) markGreeted stamps the ledger
         expect(mockMarkGreeted).toHaveBeenCalledTimes(1);
         expect(mockMarkGreeted).toHaveBeenCalledWith(7, expect.objectContaining({

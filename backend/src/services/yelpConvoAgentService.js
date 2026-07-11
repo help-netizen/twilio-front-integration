@@ -34,6 +34,7 @@ const agentSkills = require('./agentSkills');
 const leadsService = require('./leadsService');
 const slotEngineService = require('./slotEngineService');
 const emailService = require('./emailService');
+const emailQueries = require('../db/emailQueries');
 const tasksQueries = require('../db/tasksQueries');
 const yelpConversationQueries = require('../db/yelpConversationQueries');
 
@@ -218,13 +219,54 @@ function sanitizeToolArgs(args) {
     return out;
 }
 
-/** Send exactly one email; tag a fault so ONLY a send fault escapes runTurn. */
-async function sendOnce(companyId, to, body) {
+/**
+ * Send exactly one email to the conversation's reply address; tag a fault so ONLY a
+ * send fault escapes runTurn. Carries the MIME threading headers resolved for THIS
+ * turn (conv.__threading) so Yelp's reply-by-email accepts the reply — an unthreaded
+ * reply is bounced with "email client we do not yet support".
+ */
+async function sendOnce(companyId, conv, body) {
+    const to = conv && conv.last_reply_to;
+    const t = (conv && conv.__threading) || null;
     try {
-        return await emailService.sendEmail(companyId, { to, subject: REPLY_SUBJECT, body });
+        return await emailService.sendEmail(companyId, {
+            to,
+            subject: (t && t.subject) || REPLY_SUBJECT,
+            body,
+            ...(t ? { inReplyTo: t.inReplyTo, references: t.references, threadId: t.threadId } : {}),
+        });
     } catch (err) {
         if (err && typeof err === 'object') err.__sendFault = true;
         throw err;
+    }
+}
+
+/**
+ * The MIME threading headers a Yelp reply MUST carry (In-Reply-To/References = the
+ * inbound Message-ID, + the Gmail thread to reply INSIDE) so Yelp's reply-by-email
+ * accepts it. Resolved ONCE per turn from the message we're answering (the live
+ * inbound, else conv.last_inbound_message_id). Best-effort: a miss returns null and
+ * the send degrades to unthreaded (a late reply beats none). Subject echoes the
+ * original ("Re: …") so the relay stitches the reply into the same conversation.
+ */
+async function resolveThreading(companyId, conv, inbound) {
+    const pmid = (inbound && inbound.provider_message_id) || (conv && conv.last_inbound_message_id);
+    if (!pmid) return null;
+    try {
+        const row = await emailQueries.getThreadingByProviderMessageId(pmid, companyId);
+        if (!row || !row.message_id_header) return null;
+        const subj = row.subject
+            ? (/^\s*re:/i.test(row.subject) ? row.subject : `Re: ${row.subject}`)
+            : REPLY_SUBJECT;
+        return {
+            inReplyTo: row.message_id_header,
+            references: row.message_id_header,
+            threadId: row.provider_thread_id || undefined,
+            subject: subj,
+        };
+    } catch (err) {
+        console.error('[YelpConvo] threading lookup failed (send unthreaded):', err && err.message);
+        return null;
     }
 }
 
@@ -295,7 +337,7 @@ async function doBook(companyId, conv, slotKey, offeredSlots, collected, patch) 
     // Double-book guard: already held THIS slot → do not re-write; just re-confirm.
     const already = conv.status === 'book' && conv.chosen_slot && conv.chosen_slot.key === slotKey;
     if (already) {
-        await sendOnce(companyId, conv.last_reply_to,
+        await sendOnce(companyId, conv,
             `You're all set — we've got you down${conv.chosen_slot.label ? ` for ${conv.chosen_slot.label}` : ''}. A dispatcher will confirm shortly.`);
         patch.phase = 'booked';
         patch.status = 'book';
@@ -341,7 +383,7 @@ async function doBook(companyId, conv, slotKey, offeredSlots, collected, patch) 
     await createDispatcherTask(companyId, conv.lead_id, `Confirm Yelp booking — ${leadName(conv)} ${slot.label || ''}`.trim());
 
     // The ONE send for a book turn.
-    await sendOnce(companyId, conv.last_reply_to,
+    await sendOnce(companyId, conv,
         `You're all set — I've got you down for ${slot.label || `${slot.date} ${slot.start}`}. A dispatcher will confirm shortly. If anything changes, just reply here.`);
 
     return { outcome: 'book', slot };
@@ -362,7 +404,7 @@ async function doCallFallback(companyId, conv, inbound, reason, collected, patch
     patch.collected = collected;
 
     // The ONE send for a handoff turn.
-    await sendOnce(companyId, conv.last_reply_to, callFallbackBody());
+    await sendOnce(companyId, conv, callFallbackBody());
     return { outcome: 'handoff', reason: reason || 'missing_data' };
 }
 
@@ -430,7 +472,7 @@ async function runTurnInner(companyId, conv, inbound, deps) {
             if (parseFailures <= RETRY) continue;      // ask the model again (bounded)
             // Unrecoverable garbage → deterministic safe reply (ONE send). A conversation
             // that keeps failing burns MAX_TURNS and then hands off.
-            await sendOnce(companyId, conv.last_reply_to, staticSafeReply());
+            await sendOnce(companyId, conv, staticSafeReply());
             patch.phase = conv.phase || 'collect';
             return finish({ outcome: 'reply', safe: true });
         }
@@ -454,7 +496,7 @@ async function runTurnInner(companyId, conv, inbound, deps) {
             // Loop-detector: an identical (tool,args) repeat → break to a safe reply.
             const sig = `${tool}:${JSON.stringify(args)}`;
             if (seenSigs.has(sig)) {
-                await sendOnce(companyId, conv.last_reply_to, staticSafeReply());
+                await sendOnce(companyId, conv, staticSafeReply());
                 patch.phase = conv.phase || 'collect';
                 return finish({ outcome: 'reply', safe: true, loopBreak: true });
             }
@@ -494,7 +536,7 @@ async function runTurnInner(companyId, conv, inbound, deps) {
         }
 
         if (kind === 'reply') {
-            await sendOnce(companyId, conv.last_reply_to, String(action.body || '').trim() || staticSafeReply());
+            await sendOnce(companyId, conv, String(action.body || '').trim() || staticSafeReply());
             const intent = action.intent;
             patch.phase = offeredThisTurn || intent === 'offer' || intent === 'confirm' ? 'await_pick' : 'collect';
             return finish({ outcome: 'reply', intent });
@@ -507,7 +549,7 @@ async function runTurnInner(companyId, conv, inbound, deps) {
             const reoffer = offeredSlots && offeredSlots[0]
                 ? `Let's lock in a time — the earliest I have is ${offeredSlots[0].label || `${offeredSlots[0].date} ${offeredSlots[0].start}`}. Does that work?`
                 : staticSafeReply();
-            await sendOnce(companyId, conv.last_reply_to, reoffer);
+            await sendOnce(companyId, conv, reoffer);
             patch.phase = offeredSlots && offeredSlots.length ? 'await_pick' : (conv.phase || 'collect');
             return finish({ outcome: 'reply', rejectedSlot: action.slotKey });
         }
@@ -537,6 +579,10 @@ async function runTurnInner(companyId, conv, inbound, deps) {
  * @returns {Promise<{outcome:'reply'|'book'|'handoff', ...}>}
  */
 async function runTurn(companyId, conv, inbound, deps = {}) {
+    // Resolve the MIME threading headers ONCE for this turn and stash them on conv so
+    // EVERY sendOnce (happy path AND the catch-block call-fallback below) threads the
+    // reply — otherwise Yelp bounces it as an unsupported email client.
+    if (conv) conv.__threading = await resolveThreading(companyId, conv, inbound);
     try {
         return await runTurnInner(companyId, conv, inbound, deps);
     } catch (err) {

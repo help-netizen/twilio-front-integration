@@ -30,6 +30,7 @@ jest.mock('../backend/src/db/yelpLeadQueries', () => ({
 
 const mockSendEmail = jest.fn();
 jest.mock('../backend/src/services/emailService', () => ({ sendEmail: mockSendEmail }));
+jest.mock('../backend/src/db/emailQueries', () => ({ getThreadingByProviderMessageId: jest.fn().mockResolvedValue(null) }));
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 
 // yelpGreetingService is REAL here → the static fallback is genuinely exercised.

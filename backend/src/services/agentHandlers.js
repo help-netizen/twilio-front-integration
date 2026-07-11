@@ -210,11 +210,30 @@ const HANDLERS = {
 
         // (4) Send via the company mailbox back through the Yelp relay. THE ONLY
         //     throw that reaches the worker → drives the retry (nothing sent yet).
+        //     Thread the reply (In-Reply-To/References + the Gmail thread) against the
+        //     inbound new-lead email — an unthreaded reply is bounced by Yelp with
+        //     "email client we do not yet support". Best-effort: a lookup miss degrades
+        //     to an unthreaded send (a late greeting beats none).
         const subject = `Re: ${input.service_type || 'your'} request`;
+        let threading = {};
+        try {
+            const row = await require('../db/emailQueries')
+                .getThreadingByProviderMessageId(input.provider_message_id, task.company_id);
+            if (row && row.message_id_header) {
+                threading = {
+                    inReplyTo: row.message_id_header,
+                    references: row.message_id_header,
+                    threadId: row.provider_thread_id || undefined,
+                };
+            }
+        } catch (e) {
+            console.error('[yelp_lead] threading lookup failed (send unthreaded):', e && e.message);
+        }
         const sent = await require('./emailService').sendEmail(task.company_id, {
             to: input.reply_to,
             subject,
             body,
+            ...threading,
         });
 
         // (5) Finalize the ledger — best-effort ONLY. A throw here AFTER a successful

@@ -525,6 +525,24 @@ async function getMessageLinkState(providerMessageId, companyId) {
 }
 
 /**
+ * YELP reply-threading: the RFC headers to send a proper MIME reply to an inbound
+ * message — In-Reply-To/References = its Message-ID + the Gmail thread to reply
+ * INSIDE. Company-scoped. (Yelp reply-by-email rejects a non-threaded reply with
+ * "email client we do not yet support".) Returns null if the message is unknown.
+ */
+async function getThreadingByProviderMessageId(providerMessageId, companyId) {
+    if (!providerMessageId) return null;
+    const result = await db.query(
+        `SELECT message_id_header, provider_thread_id, subject
+         FROM email_messages
+         WHERE company_id = $1 AND provider_message_id = $2
+         LIMIT 1`,
+        [companyId, providerMessageId]
+    );
+    return result.rows[0] || null;
+}
+
+/**
  * Poll-path scan (TASK-ET-4): a company's recently-imported INBOUND email_messages
  * rows that are not yet linked onto a timeline. The `direction='inbound'` filter
  * IS the draft/sent exclusion for the poll path (SENT/DRAFT rows are 'outbound').
@@ -776,6 +794,7 @@ module.exports = {
     linkMessageToContact,
     listMessageIdsForAddress, // CONTACT-EMAIL-MERGE-001
     getMessageLinkState,
+    getThreadingByProviderMessageId, // YELP reply-threading (In-Reply-To/References + Gmail thread)
     listUnlinkedInboundForTimeline,
     listUnlinkedOutboundForTimeline,
     listConnectedMailboxes,
