@@ -80,6 +80,21 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     // §6.3 DEV-only preview: dead code in prod (Vite statically replaces
     // import.meta.env.DEV with false). Belts still gate the preview.
     const warmUpPreview = import.meta.env.DEV && new URLSearchParams(location.search).get('warmup') === 'preview';
+    // Iteration #3: optional &counts=a,b,c overrides the trio in preview mode
+    // (first value = pulseInbox directly, no AR summing; 'x' or missing → null).
+    // Same DEV-gated expression scope → statically dead in prod.
+    const warmUpPreviewCounts = import.meta.env.DEV && warmUpPreview
+        ? (() => {
+            const raw = new URLSearchParams(location.search).get('counts');
+            if (raw === null) return null;
+            const parts = raw.split(',');
+            const num = (s: string | undefined) => {
+                const n = Number(s);
+                return s !== undefined && s !== '' && Number.isFinite(n) ? n : null;
+            };
+            return { pulseInbox: num(parts[0]), newLeads: num(parts[1]), openTasks: num(parts[2]) };
+        })()
+        : null;
     const handleWarmUpDismiss = useCallback(() => {
         warmUpAudio(); // gesture canon: FIRST synchronous statement on every dismiss path
         setShowWarmUp(false);
@@ -225,7 +240,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                     {children}
                 </main>
                 {/* SOFTPHONE-WARMUP-SUMMARY-001 belt 2b: render gate — /schedule term kept verbatim. */}
-                <WarmUpSummaryDialog open={(showWarmUp || warmUpPreview) && !isMobile && !isMobileDevice && !location.pathname.startsWith('/schedule')} counts={{ pulseInbox: pulseUnreadCount === null || arCount === null ? null : pulseUnreadCount + arCount, newLeads: leadsNewCount, openTasks: openTasksCount }} onNavigate={handleSummaryNavigate} onDismiss={handleWarmUpDismiss} />
+                <WarmUpSummaryDialog open={(showWarmUp || warmUpPreview) && !isMobile && !isMobileDevice && !location.pathname.startsWith('/schedule')} counts={warmUpPreviewCounts ?? { pulseInbox: pulseUnreadCount === null || arCount === null ? null : pulseUnreadCount + arCount, newLeads: leadsNewCount, openTasks: openTasksCount }} onNavigate={handleSummaryNavigate} onDismiss={handleWarmUpDismiss} />
                 {!isMobile && !isMobileDevice && <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} disabledReason={!softPhoneEnabled && softPhoneGroupsLoaded ? 'You are not assigned to any group. Ask your administrator.' : undefined} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />}
                 <AutonomousModeBanner visible={autonomous.autonomousMode} />
             </div>

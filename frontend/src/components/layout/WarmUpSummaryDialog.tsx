@@ -13,6 +13,10 @@ import { Button } from '../ui/button';
 // rhythm, plain stat phrases written as literal strings — "in Pulse inbox" keeps
 // its capital P (product section name; no text-transform) — centered
 // auto-width button, tiny footnote explaining the sound gesture.
+//
+// Owner iteration #3: a LOADED ZERO hides its column (remaining ones
+// re-center); all three loaded zeros → one human "all clear" line instead of
+// the grid. null (loading/error) is NOT a zero — it keeps its "—" column.
 export interface WarmUpSummaryDialogProps {
     open: boolean;
     counts: {
@@ -38,6 +42,8 @@ function timeOfDayGreeting(): string {
 }
 
 export function WarmUpSummaryDialog({ open, counts, onNavigate, onDismiss }: WarmUpSummaryDialogProps) {
+    // Iteration #3 zero-hiding: only a confirmed 0 hides; null stays as "—".
+    const visible = COLUMNS.filter(({ key }) => counts[key] !== 0);
     return (
         <Dialog open={open} onOpenChange={o => { if (!o) onDismiss(); }}>
             {/* Backdrop click must NOT dismiss (pinned §2.7 row 5) — Escape and the corner × still do. */}
@@ -54,9 +60,15 @@ export function WarmUpSummaryDialog({ open, counts, onNavigate, onDismiss }: War
                     </DialogDescription>
                 </DialogHeader>
                 {/* Visually plain stat columns — no plates, no borders, no uppercase.
-                    Still real buttons (a11y + click-to-navigate); hover tints the number. */}
-                <div className="mt-8 grid grid-cols-3 gap-6 sm:gap-8">
-                    {COLUMNS.map(({ key, label, phrase, path }) => {
+                    Still real buttons (a11y + click-to-navigate); hover tints the number.
+                    Flex + justify-center so 1-2 surviving columns sit centered. */}
+                {visible.length === 0 ? (
+                    <p className="mt-8 text-center text-[15px]" style={{ color: 'var(--blanc-ink-2)' }}>
+                        All clear — nothing urgent right now.
+                    </p>
+                ) : (
+                <div className="mt-8 flex justify-center gap-8 sm:gap-10">
+                    {visible.map(({ key, label, phrase, path }) => {
                         const value = counts[key];
                         return (
                             <button
@@ -83,6 +95,7 @@ export function WarmUpSummaryDialog({ open, counts, onNavigate, onDismiss }: War
                         );
                     })}
                 </div>
+                )}
                 <div className="mt-9 flex justify-center">
                     <Button size="lg" className="px-10" onClick={onDismiss}>Let's go</Button>
                 </div>

@@ -268,9 +268,20 @@ Design constraints: `--blanc-*` tokens only; no `<hr>`/Separator; no decorative 
 
 ### §3.3 Count states
 
-- `number` (incl. `0`) → render the number. `0` is a real value — no special-casing, scenario "nothing pending" shows three zeros.
+*(Owner iteration #3, 2026-07-10: zero-hiding. A column whose count is a LOADED ZERO is HIDDEN — the stat row is `visible = COLUMNS.filter(c => counts[c.key] !== 0)` rendered as `flex justify-center gap-8 sm:gap-10`, so 1-2 surviving columns re-center. Only a confirmed `0` hides; `null` (loading/error) keeps its "—" column. When ALL three are loaded zeros (`visible.length === 0`), the grid is replaced by one centered human line — **"All clear — nothing urgent right now."** — 15px, `var(--blanc-ink-2)`, same `mt-8` rhythm slot as the stats. This supersedes the iteration-#2 "three zeros" scenario below.)*
+
+| Count value | Rendering |
+|---|---|
+| `null` (loading/error) | column visible with "—" (ink-3, no hover tint) |
+| `0` (loaded zero) | column HIDDEN; remaining columns re-center |
+| `> 0` | column visible with the number |
+| all three `=== 0` | no columns — "All clear — nothing urgent right now." |
+
+- `number > 0` → render the number.
 - `null` → "—" (never a spinner that blocks; a lightweight skeleton pulse on the count element is permitted but "—" is the default). Clicks work identically in both states.
 - The modal NEVER waits for counts — `open` is driven solely by the belted warm-up expression.
+
+DEV preview param grammar (extends §6.3 `?warmup=preview`): optional `&counts=a,b,c` overrides the trio passed to the dialog — positional `pulseInbox,newLeads,openTasks`; each slot is a number, or `x`/missing → `null`; in override mode the first value IS `pulseInbox` directly (no AR summing). Examples: `?warmup=preview&counts=0,0,0` (all-clear line), `?warmup=preview&counts=2,x,5` (leads column shows "—"), `?warmup=preview&counts=2,0,5` (leads column hidden, two columns centered). DEV-gated — statically dead in prod.
 
 ### §3.4 Accessibility
 
