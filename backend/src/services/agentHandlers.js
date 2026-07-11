@@ -172,6 +172,73 @@ const HANDLERS = {
         }
     },
 
+    // YELP-LEAD-AUTORESPONDER-002: send the single Yelp new-lead greeting for a
+    // detector-enqueued task. Idempotent / retry-safe: threadAlreadyGreeted is
+    // checked FIRST (a re-run never double-sends — Yelp rejects a 2nd reply), and
+    // ONLY sendEmail throwing propagates (drives the worker's opt-in retry).
+    async yelp_lead(task) {
+        const input = task.agent_input || {};
+        const yelpLeadQueries = require('../db/yelpLeadQueries');
+
+        // (1) Nothing to reply to → close as handled_no_send (NOT a retryable error;
+        //     must not loop into a stuck task). Lead stays for manual follow-up.
+        if (!input.reply_to) {
+            try {
+                await yelpLeadQueries.markGreeted(input.claim_id, {
+                    leadId: input.lead_id,
+                    threadToken: input.thread_token,
+                    status: 'handled_no_send',
+                });
+            } catch (e) {
+                console.error('[yelp_lead] markGreeted(handled_no_send) failed (non-fatal):', e && e.message);
+            }
+            return { skipped: 'no_reply_to', lead_id: input.lead_id };
+        }
+
+        // (2) One-reply-per-thread guard FIRST → a retry after a prior successful send
+        //     short-circuits here (no 2nd send). This is what makes retry safe.
+        if (await yelpLeadQueries.threadAlreadyGreeted(task.company_id, input.thread_token)) {
+            return { skipped: 'already_greeted', lead_id: input.lead_id };
+        }
+
+        // (3) Build the greeting (never throws; Gemini + static fallback).
+        const body = await require('./yelpGreetingService').buildGreeting({
+            name: input.customer_name,
+            service: input.service_type,
+            problem: input.problem_text,
+        });
+
+        // (4) Send via the company mailbox back through the Yelp relay. THE ONLY
+        //     throw that reaches the worker → drives the retry (nothing sent yet).
+        const subject = `Re: ${input.service_type || 'your'} request`;
+        const sent = await require('./emailService').sendEmail(task.company_id, {
+            to: input.reply_to,
+            subject,
+            body,
+        });
+
+        // (5) Finalize the ledger — best-effort ONLY. A throw here AFTER a successful
+        //     send would make the worker retry and double-send, so we swallow it (the
+        //     email is the source of truth).
+        try {
+            await yelpLeadQueries.markGreeted(input.claim_id, {
+                leadId: input.lead_id,
+                threadToken: input.thread_token,
+                greetingProviderMessageId: (sent && sent.provider_message_id) || null,
+                status: 'greeted',
+            });
+        } catch (e) {
+            console.error('[yelp_lead] markGreeted failed (non-fatal, not re-sent):', e && e.message);
+        }
+
+        return {
+            greeted: true,
+            to: input.reply_to,
+            lead_id: input.lead_id,
+            provider_message_id: (sent && sent.provider_message_id) || null,
+        };
+    },
+
     // Summarize a conversation thread (heuristic; LLM provider optional).
     async summarize_thread(task) {
         const input = task.agent_input || {};

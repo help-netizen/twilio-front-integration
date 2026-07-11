@@ -1,9 +1,13 @@
 /**
- * yelpLeadService — YELP-LEAD-AUTORESPONDER-001 (Phase 1a, TASK-YLA-004).
+ * yelpLeadService — YELP-LEAD-AUTORESPONDER-002 (durable task+agent refactor).
  *
  * Purely additive to the Mail Secretary. When a Yelp *new-lead* email is ingested,
  * detect it, atomically claim it, parse the labeled Q&A, create a JobSource='Yelp'
- * lead, and send exactly ONE personalized greeting back through the Yelp relay.
+ * lead, and ENQUEUE ONE durable `agent_type='yelp_lead'` task. The greeting is no
+ * longer built/sent inline here — the shared agentWorker claims the task and the
+ * `yelp_lead` handler (agentHandlers.js) builds + sends the single greeting, then
+ * closes the task. Moving the send off the mail-ingest hot path makes it retryable
+ * (≤3, backoff), Pulse-visible when stuck, and free of Mail-Secretary coupling.
  *
  * Public helpers (all pure except the orchestrator):
  *   detectYelpLead(msg)              → boolean. Both required: relay domain AND a
@@ -14,14 +18,18 @@
  *   maybeHandleYelpLead(companyId,msg) → orchestrator. NEVER throws (fail-open).
  *
  * LOCKED order in maybeHandleYelpLead:
- *   env/scope gate → detect → CLAIM → parse → createLead → greet+send → markGreeted.
+ *   env/scope gate → detect → CLAIM → parse → createLead → attachLead → ENQUEUE.
  * CLAIM is a releasable lock: released ONLY when createLead throws (→ next poll
- * re-attempts the lead). Held after the lead exists → greeting at-most-once; a send
- * failure after the lead exists is logged, NOT retried (Yelp = one reply per thread).
+ * re-attempts the lead — lead at-least-once). Once the lead exists the claim is HELD
+ * (greeting at-most-once). If the enqueue INSERT fails after the lead exists we HOLD
+ * the claim (never releaseClaim → no dup lead); the claim then sits task_id IS NULL
+ * AND greeted_at IS NULL and a re-ingest reconcile (B1) re-enqueues the lost task.
+ * greet/buildGreeting/sendEmail/markGreeted/threadAlreadyGreeted moved to the handler.
  */
 'use strict';
 
 const yelpLeadQueries = require('../db/yelpLeadQueries');
+const db = require('../db/connection');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -203,7 +211,12 @@ async function maybeHandleYelpLead(companyId, msg) {
             return { handled: false };
         }
         if (!claim || !claim.claimed) {
-            return { handled: true, skipped: 'yelp_lead', reason: 'already_claimed' };
+            // A re-ingest of an already-claimed message. Normally already handled —
+            // BUT if a prior cycle crashed between createLead and enqueue, the claim
+            // row sits task_id IS NULL AND greeted_at IS NULL: the greeting task was
+            // LOST. Re-enqueue it (idempotent) so the existing poll re-scan recovers
+            // it with no new cron (B1 reconcile).
+            return await reconcileLostTask(companyId, msg);
         }
         const claimId = claim.id;
 
@@ -226,59 +239,32 @@ async function maybeHandleYelpLead(companyId, msg) {
         }
         const leadId = lead && lead.ClientId != null ? parseInt(lead.ClientId, 10) : null;
 
-        // (5) greeting + send — best-effort; bail the send if there is no relay to
-        //     reply to (never misroute). A send failure after the lead exists is
-        //     logged and NOT retried.
-        let greeted = false;
-        let greetingProviderMessageId = null;
-        if (parsed.reply_to) {
-            let alreadyGreeted = false;
-            try {
-                alreadyGreeted = await yelpLeadQueries.threadAlreadyGreeted(companyId, parsed.thread_token);
-            } catch (e) {
-                console.error('[YelpLead] threadAlreadyGreeted check failed (proceeding):', e && e.message);
-            }
-            if (!alreadyGreeted) {
-                try {
-                    const body = await require('./yelpGreetingService').buildGreeting({
-                        name: parsed.name,
-                        service: parsed.service,
-                        problem: parsed.problem,
-                    });
-                    const subject = `Re: ${parsed.service || 'your'} request`;
-                    const sent = await require('./emailService').sendEmail(companyId, {
-                        to: parsed.reply_to,
-                        subject,
-                        body,
-                    });
-                    greeted = true;
-                    greetingProviderMessageId = (sent && sent.provider_message_id) || null;
-                } catch (e) {
-                    console.error('[YelpLead] greeting send failed (not retried):', e && e.message);
-                }
-            }
-        }
-
-        // (6) markGreeted — finalize the claim (records lead_id, thread token,
-        //     greeting id). Claim is HELD (never released after the lead exists).
+        // (5) record the lead on the claim row BEFORE the fallible enqueue, so a
+        //     reconcile can recover the lead id even if the task INSERT fails.
         try {
-            await yelpLeadQueries.markGreeted(claimId, {
-                leadId,
-                threadToken: parsed.thread_token,
-                greetingProviderMessageId,
-                status: greeted ? 'greeted' : 'handled_no_send',
-            });
+            await yelpLeadQueries.attachLead(claimId, leadId);
         } catch (e) {
-            console.error('[YelpLead] markGreeted failed:', e && e.message);
+            console.error('[YelpLead] attachLead failed (continuing to enqueue):', e && e.message);
         }
 
-        // (7) one structured log line.
-        console.log(
-            '[YelpLead] handled company=%s msg=%s lead=%s greeted=%s',
-            companyId, msg.provider_message_id, leadId, greeted
-        );
+        // (6) ENQUEUE the durable greeting task (REPLACES the old synchronous
+        //     greet+send). The yelp_lead handler builds + sends the greeting on the
+        //     shared agentWorker — retryable, Pulse-visible when stuck.
+        try {
+            const taskId = await enqueueYelpGreetingTask(companyId, {
+                claimId, leadId, parsed, providerMessageId: msg.provider_message_id,
+            });
+            console.log('[YelpLead] enqueued company=%s msg=%s lead=%s task=%s',
+                companyId, msg.provider_message_id, leadId, taskId);
+        } catch (e) {
+            // Enqueue failed AFTER the lead exists → HOLD the claim (do NOT
+            // releaseClaim — the lead already exists; releasing would duplicate it on
+            // the next poll). task_id stays NULL → a future reconcile re-enqueues.
+            console.error('[YelpLead] enqueue failed after lead created (holding claim for reconcile):', e && e.message);
+            return { handled: true, skipped: 'yelp_lead', reason: 'enqueue_failed', leadId };
+        }
 
-        return { handled: true, skipped: 'yelp_lead', leadId, greeted };
+        return { handled: true, skipped: 'yelp_lead', leadId };
     } catch (e) {
         // Fail-open: an unexpected error must NOT crash ingest; let the normal
         // pipeline continue by reporting not-handled.
@@ -287,9 +273,73 @@ async function maybeHandleYelpLead(companyId, msg) {
     }
 }
 
+/**
+ * Enqueue the single durable greeting task on the shared agentWorker. INSERTs a
+ * `kind='agent', agent_type='yelp_lead', max_attempts=3` task parented to the lead,
+ * then stamps its id back on the claim row (so a reconcile knows it was enqueued).
+ * `max_attempts=3` opts THIS type (and only this type) into the worker's retry.
+ * @returns {Promise<number|null>} the new task id
+ */
+async function enqueueYelpGreetingTask(companyId, { claimId, leadId, parsed, providerMessageId }) {
+    const agentInput = {
+        claim_id: claimId,
+        provider_message_id: providerMessageId,
+        thread_token: parsed.thread_token,
+        reply_to: parsed.reply_to,
+        lead_id: leadId,
+        customer_name: parsed.name,
+        service_type: parsed.service,
+        problem_text: parsed.problem,
+        zip: parsed.zip,
+    };
+    const title = `Yelp greeting — ${parsed.name || 'new lead'}`;
+    const { rows } = await db.query(
+        `INSERT INTO tasks (company_id, kind, agent_type, agent_input, agent_status,
+                            max_attempts, title, status, created_by, lead_id, subject_type)
+         VALUES ($1, 'agent', 'yelp_lead', $2::jsonb, 'queued', 3,
+                 $3, 'open', 'automation', $4, 'lead')
+         RETURNING id`,
+        [companyId, JSON.stringify(agentInput), title, leadId]
+    );
+    const taskId = rows && rows[0] ? rows[0].id : null;
+    // Stamp the task id on the claim row → a reconcile sees "enqueued" and skips.
+    await yelpLeadQueries.attachTask(claimId, taskId);
+    return taskId;
+}
+
+/**
+ * B1 reconcile: a re-ingest lost the claim (already claimed). If the claim row is
+ * `task_id IS NULL AND greeted_at IS NULL` the greeting task was lost between
+ * createLead and enqueue → re-enqueue it (idempotent). Otherwise (enqueued or
+ * greeted) it is a genuine already-handled no-op. Never creates a second lead.
+ */
+async function reconcileLostTask(companyId, msg) {
+    try {
+        const existing = await yelpLeadQueries.getClaimByMessage(companyId, msg.provider_message_id);
+        const lostTask = existing
+            && existing.greeted_at == null
+            && existing.task_id == null
+            && existing.lead_id != null;
+        if (lostTask) {
+            const parsed = parseYelpLead(msg);
+            const leadId = existing.lead_id != null ? parseInt(existing.lead_id, 10) : null;
+            const taskId = await enqueueYelpGreetingTask(companyId, {
+                claimId: existing.id, leadId, parsed, providerMessageId: msg.provider_message_id,
+            });
+            console.log('[YelpLead] reconcile re-enqueued lost greeting task company=%s msg=%s lead=%s task=%s',
+                companyId, msg.provider_message_id, leadId, taskId);
+            return { handled: true, skipped: 'yelp_lead', reason: 'reconciled_enqueue', leadId };
+        }
+    } catch (e) {
+        console.error('[YelpLead] reconcile re-enqueue failed (holding claim):', e && e.message);
+    }
+    return { handled: true, skipped: 'yelp_lead', reason: 'already_claimed' };
+}
+
 module.exports = {
     detectYelpLead,
     parseYelpLead,
     maybeHandleYelpLead,
+    enqueueYelpGreetingTask,
     DEFAULT_COMPANY_ID,
 };

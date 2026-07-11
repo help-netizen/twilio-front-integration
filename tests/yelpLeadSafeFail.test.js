@@ -1,46 +1,55 @@
 'use strict';
 
 /**
- * YELP-LEAD-AUTORESPONDER-001 — SAFE-FAIL (YLA-S-01..05). maybeHandleYelpLead
- * NEVER throws; LLM/DB/relay failures never lose the lead or crash ingest.
+ * YELP-LEAD-AUTORESPONDER-002 — greeting SAFE-FAIL, re-homed onto the yelp_lead
+ * HANDLER. The 001 inline-send safe-fail cases (YLA-S-01/02) are retired — the send
+ * moved out of maybeHandleYelpLead into agentHandlers.HANDLERS.yelp_lead. Here
+ * yelpGreetingService is REAL (so the deterministic static-fallback path is genuinely
+ * exercised — the mocked handler suite mocks buildGreeting, so this is the ONLY place
+ * the fallback is proven end-to-end), while the mailbox + ledger are mocked.
  *
- * yelpGreetingService is REAL here (so the static-fallback path is genuinely
- * exercised); leadsService + emailService are spies; the DB seam is mocked.
+ * The DETECTOR safe-fail (createLead throws → releaseClaim; enqueue throws → hold
+ * claim; env/scope gate) is re-homed to tests/yelpLeadEnqueue.test.js (B-02..B-04).
  *
  * Run:
  *   node <repo>/node_modules/jest/bin/jest.js tests/yelpLeadSafeFail.test.js \
  *     --rootDir . --testPathIgnorePatterns "/node_modules/" --forceExit
  */
 
-const mockQuery = jest.fn();
-jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
+const mockThreadAlreadyGreeted = jest.fn();
+const mockMarkGreeted = jest.fn();
+jest.mock('../backend/src/db/yelpLeadQueries', () => ({
+    threadAlreadyGreeted: mockThreadAlreadyGreeted,
+    markGreeted: mockMarkGreeted,
+    claimYelpLead: jest.fn(),
+    releaseClaim: jest.fn(),
+    getClaimByMessage: jest.fn(),
+    attachLead: jest.fn(),
+    attachTask: jest.fn(),
+}));
 
-const mockCreateLead = jest.fn();
 const mockSendEmail = jest.fn();
-jest.mock('../backend/src/services/leadsService', () => ({ createLead: mockCreateLead }));
 jest.mock('../backend/src/services/emailService', () => ({ sendEmail: mockSendEmail }));
+jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 
+// yelpGreetingService is REAL here → the static fallback is genuinely exercised.
 const yelpGreetingService = require('../backend/src/services/yelpGreetingService');
-const { maybeHandleYelpLead, DEFAULT_COMPANY_ID } = require('../backend/src/services/yelpLeadService');
-const { yNew } = require('./yelpFixtures');
+const agentHandlers = require('../backend/src/services/agentHandlers');
+const { taskRow, yelpInput, DEFAULT_COMPANY_ID } = require('./yelpFixtures');
+
+const yelpTask = () =>
+    taskRow({ agent_type: 'yelp_lead', company_id: DEFAULT_COMPANY_ID, agent_input: yelpInput() });
 
 beforeEach(() => {
     jest.clearAllMocks();
-    process.env.YELP_AUTORESPONDER_ENABLED = 'true';
-    delete process.env.GEMINI_API_KEY; // force the Gemini path to be skipped → static
-    // Default: claim wins; threadAlreadyGreeted / markGreeted / releaseClaim → empty.
-    mockQuery.mockImplementation(async (sql) =>
-        /insert into yelp_lead_events/i.test(sql) ? { rows: [{ id: 9 }] } : { rows: [] }
-    );
-    mockCreateLead.mockResolvedValue({ UUID: 'u', SerialId: 1, ClientId: '55' });
+    delete process.env.GEMINI_API_KEY; // force the static fallback (no live Gemini)
+    mockThreadAlreadyGreeted.mockResolvedValue(false);
     mockSendEmail.mockResolvedValue({ provider_message_id: 'sent-1' });
 });
 
-afterEach(() => {
-    jest.restoreAllMocks(); // restore any spyOn(yelpGreetingService, ...)
-});
+afterEach(() => jest.restoreAllMocks());
 
-describe('YLA-S-01: Gemini unavailable → STATIC greeting still sent + lead created (P1)', () => {
+describe('YLA-S-01 (re-homed): Gemini unavailable → STATIC greeting still sent by the handler', () => {
     it('(a) buildGreeting resolves to a non-empty static string naming the customer + service', async () => {
         const text = await yelpGreetingService.buildGreeting({ name: 'Kim', service: 'dishwasher repair' });
         expect(typeof text).toBe('string');
@@ -49,70 +58,31 @@ describe('YLA-S-01: Gemini unavailable → STATIC greeting still sent + lead cre
         expect(text.toLowerCase()).toEqual(expect.stringContaining('dishwasher'));
     });
 
-    it('(b) integration: lead created once + static greeting sent once', async () => {
-        await maybeHandleYelpLead(DEFAULT_COMPANY_ID, yNew());
-        expect(mockCreateLead).toHaveBeenCalledTimes(1);
+    it('(b) handler end-to-end: the static greeting is sent exactly once to the relay', async () => {
+        const out = await agentHandlers.run(yelpTask());
+
         expect(mockSendEmail).toHaveBeenCalledTimes(1);
-        const [, sendArgs] = mockSendEmail.mock.calls[0];
-        expect(sendArgs.body).toEqual(expect.stringContaining('Kim'));
+        const [company, args] = mockSendEmail.mock.calls[0];
+        expect(company).toBe(DEFAULT_COMPANY_ID);
+        expect(args.to).toBe('reply+8160b36a1c2d3e4f@messaging.yelp.com');
+        expect(args.body).toEqual(expect.stringContaining('Kim')); // real static body
+        expect(mockMarkGreeted).toHaveBeenCalledWith(7, expect.objectContaining({ status: 'greeted' }));
+        expect(out).toMatchObject({ greeted: true, lead_id: 55 });
     });
 });
 
-describe('YLA-S-02: greeting builder throws entirely → never-throws, lead still created (P1)', () => {
-    it('maybeHandleYelpLead resolves; createLead still called once', async () => {
-        jest.spyOn(yelpGreetingService, 'buildGreeting').mockRejectedValue(new Error('both paths dead'));
-        await expect(maybeHandleYelpLead(DEFAULT_COMPANY_ID, yNew())).resolves.toBeTruthy();
-        expect(mockCreateLead).toHaveBeenCalledTimes(1);
-    });
-});
-
-describe('YLA-S-03: createLead throws → logged, claim released, ingest not crashed (P1, GAP#2)', () => {
-    it('resolves to a handled sentinel; releaseClaim (DELETE) fired; no sendEmail', async () => {
-        mockCreateLead.mockRejectedValue(new Error('DB down'));
-
-        const res = await maybeHandleYelpLead(DEFAULT_COMPANY_ID, yNew());
-
-        // committed to the Yelp branch this cycle (does not fall through mid-way)…
-        expect(res).toEqual({ handled: true, skipped: 'yelp_lead', reason: 'lead_create_failed' });
-        // …but the claim was RELEASED so the next poll re-attempts (lead at-least-once).
-        const deleteCall = mockQuery.mock.calls.find(([sql]) => /delete from yelp_lead_events/i.test(sql));
-        expect(deleteCall).toBeTruthy();
-        expect(deleteCall[1]).toEqual([9]);
-        // nothing was sent.
-        expect(mockSendEmail).not.toHaveBeenCalled();
-    });
-});
-
-describe('YLA-S-04: absent/mangled relay From → BAIL, NO sendEmail (P1)', () => {
-    it('lead created, but no send to a null relay; never throws', async () => {
-        // messaging.yelp.com (still DETECTED) but no reply+<hex> → reply_to null.
-        const msg = yNew({ from_email: 'noreply@messaging.yelp.com' });
-
-        const res = await maybeHandleYelpLead(DEFAULT_COMPANY_ID, msg);
-
-        expect(mockSendEmail).not.toHaveBeenCalled();
-        expect(mockCreateLead).toHaveBeenCalledTimes(1);
-        expect(res).toMatchObject({ handled: true, skipped: 'yelp_lead', greeted: false });
-    });
-});
-
-describe('YLA-S-05: env gate OFF → no-op; email flows to the normal pipeline (P1)', () => {
-    it('returns not-handled without claiming/creating/sending', async () => {
-        process.env.YELP_AUTORESPONDER_ENABLED = 'false';
-
-        const res = await maybeHandleYelpLead(DEFAULT_COMPANY_ID, yNew());
-
-        expect(res).toEqual({ handled: false });
-        expect(mockQuery).not.toHaveBeenCalled();   // no claim attempted
-        expect(mockCreateLead).not.toHaveBeenCalled();
-        expect(mockSendEmail).not.toHaveBeenCalled();
-    });
-
-    it('non-default company → no-op even with the gate ON', async () => {
-        process.env.YELP_AUTORESPONDER_ENABLED = 'true';
-        const res = await maybeHandleYelpLead('00000000-0000-0000-0000-0000000000ff', yNew());
-        expect(res).toEqual({ handled: false });
-        expect(mockQuery).not.toHaveBeenCalled();
-        expect(mockCreateLead).not.toHaveBeenCalled();
+describe('YLA-S-02 (re-homed): Gemini transport error → buildGreeting falls back, never throws', () => {
+    it('a dead Gemini fetch still yields the static template (the handler never sees a throw from buildGreeting)', async () => {
+        process.env.GEMINI_API_KEY = 'test-key'; // take the Gemini path…
+        const origFetch = global.fetch;
+        global.fetch = jest.fn().mockRejectedValue(new Error('network dead')); // …then kill it
+        try {
+            const text = await yelpGreetingService.buildGreeting({ name: 'Kim', service: 'dishwasher repair' });
+            expect(text).toEqual(expect.stringContaining('Kim'));
+            expect(text.toLowerCase()).toEqual(expect.stringContaining('dishwasher'));
+        } finally {
+            global.fetch = origFetch;
+            delete process.env.GEMINI_API_KEY;
+        }
     });
 });

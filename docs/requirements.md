@@ -4975,3 +4975,225 @@ App is connected; the job has an empty or very thin description. The advisor sti
 - `GET /api/tasks/count` default behavior + role-scoping branch (`canManage`/`scopeOwnerId`); `tasksQueries.buildConditions`/`countTasks` (no changes there).
 - All 26 `useIsMobile` consumers, especially the overlay canon swap in `ui/dialog.tsx` / `ui/select.tsx` / `ui/popover.tsx` / `ui/dropdown-menu.tsx` / `useOverlayDismiss.ts` (OVERLAY-CANON-002) and the mobile list shells (`JobsPage`/`LeadsPage`/`PulsePage`/`TasksPage`/`SchedulePage`).
 - The `/schedule` suppression in the Dialog `open` expression (`!location.pathname.startsWith('/schedule')`) — keep it.
+
+---
+
+## YELP-LEAD-AUTORESPONDER-002 — refactor the synchronous in-hook autoresponder onto the durable task+agent model (AUTO-001) (2026-07-10)
+
+**Status:** Requirements · **Priority:** P1 · **Backend-only** · **Date:** 2026-07-10
+**Foundation:** YELP-LEAD-AUTORESPONDER-001 (commit `ca02db7`, committed **NOT deployed**) +
+AUTO-001 (agentWorker / agentHandlers / `tasks.kind='agent'`, migration `100`).
+
+### Context (what 001 built, why 002)
+Phase 1a (001) does everything **synchronously inside the ingest path**:
+`emailTimelineService.linkInboundMessage` step (a.4) calls
+`yelpLeadService.maybeHandleYelpLead`, which in ONE call does detect → claim
+(`yelp_lead_events`, mig 162) → parse → `createLead` → build+send greeting →
+`markGreeted`. This couples the greeting (Gemini + email send, seconds of latency,
+external failure surface) to the mail-ingest tick and sits logically adjacent to the
+Mail-Secretary branch. 002 keeps 001's proven idempotency ledger but **splits the flow**:
+a deterministic detector creates the lead + enqueues a durable `kind='agent'`,
+`agent_type='yelp_lead'` task; the shared `agentWorker` claims it; a new `yelp_lead`
+handler generates + sends the greeting and closes the task `done`. Robust, retryable,
+observable, and independent of the Mail Secretary. **No new customer-visible surface,
+no new external integration** — same Gemini greeting + same Yelp email relay, just moved
+off the hot path onto the AUTO-001 queue.
+
+### Owner-approved product decisions (binding)
+1. **Lead in the detector, greeting in the agent task.** The lead is created
+   synchronously by the detector for instant Pulse visibility; the greeting is sent
+   asynchronously by the `yelp_lead` handler.
+2. **Retry = max 3 attempts + backoff, then a dispatcher-VISIBLE "stuck" state** — never
+   a silent terminal failure.
+3. **Reuse the shared `agentWorker`, but the retry change is ADDITIVE + OPT-IN.** Existing
+   agent types (`job_geocode`/`route_calc`/`zb_job_sync`, and `noop`/`mcp_tool`/
+   `summarize_thread`) keep today's exact single-attempt, terminal-`failed` behavior.
+
+### Functional requirements
+
+- **R1 — `R-detector-enqueues-not-greets` (detector = deterministic, lead + enqueue, no greeting).**
+  An INDEPENDENT, no-LLM detector runs on inbound-email ingest. On a Yelp *new-lead* email
+  (unchanged 001 gate: `@messaging.yelp.com` relay **AND** a first-message signal) it, in
+  order: atomically claims the message (`yelp_lead_events`, mig 162) → parses (fail-safe)
+  → creates the `JobSource='Yelp'` lead → enqueues ONE `kind='agent'`, `agent_type='yelp_lead'`,
+  `agent_status='queued'`, `status='open'` task carrying the parsed context (name, service,
+  problem, `reply_to`, `thread_token`, `lead_id`, `provider_message_id`, `company_id`) in
+  `agent_input`. The detector itself NEVER builds or sends a greeting. Customer replies
+  (`request_a_quote_new_message`) and `no-reply@*yelp.com` confirmations are never claimed.
+
+- **R2 — `R-yelp_lead-handler-greets-then-closes` (handler = greet then close done).**
+  A new `yelp_lead` entry in the `agentHandlers` registry: reads `agent_input`, builds the
+  greeting via `yelpGreetingService` (unchanged Gemini transport + deterministic static
+  fallback; no price quoted), sends exactly one email-reply to `reply_to` through the Yelp
+  relay, records the greeting on the claim (`markGreeted`), and returns an output object so
+  the worker marks the task `agent_status='succeeded'`, `status='done'`. A missing `reply_to`
+  → close as handled-no-send (never misroute), not a retryable error.
+
+- **R3 — `R-retry-3-backoff-then-visible-stuck` (opt-in retry).**
+  For agent types that OPT IN (only `yelp_lead` in this feature), a failed handler run is
+  re-queued with backoff up to a max of **3 attempts** (env-tunable). After the 3rd failure
+  the task lands in a **dispatcher-VISIBLE "stuck" state** (surfaced in Pulse, distinct from
+  a pending task), NOT a silent `failed`. Attempt count + last error are recorded on the task
+  for the dispatcher.
+
+- **R4 — `R-idempotency` (one lead + one task per email; handler retry-safe; at-most-one greeting).**
+  (a) The `yelp_lead_events` UNIQUE(`company_id`,`provider_message_id`) claim guarantees
+  **exactly one lead and exactly one enqueued task** per inbound Yelp email across the
+  push+poll re-scan race. (b) The handler is **retry-safe**: each attempt (including retries
+  from R3) results in **at most one greeting per thread** — it checks `threadAlreadyGreeted`
+  (mig 162 defense-in-depth, keyed on `company_id`+`thread_token`) and NEVER double-sends;
+  a re-run after a greeting already went out closes the task without re-sending. This is
+  hard-required because **Yelp permits only one email-reply per thread** — a double-send is
+  both wrong and externally rejected.
+
+- **R5 — `R-decoupled-from-Mail-Secretary` (zero dependency on the Mail Secretary).**
+  The detector runs and succeeds regardless of whether the Mail Secretary
+  (`mailAgentService`) is enabled, healthy, or reachable; it shares no code path, no queue,
+  and no ordering dependency with it. For a Yelp new-lead the ingest still short-circuits
+  with `{skipped:'yelp_lead'}` so the Secretary creates **no** duplicate review/AR task; for
+  all NON-Yelp mail the Secretary path is **untouched**.
+
+- **R6 — `R-existing-agent-types-unaffected-by-retry` (additive/opt-in retry).**
+  Because R3 is opt-in, `job_geocode`, `route_calc`, `zb_job_sync`, `noop`, `mcp_tool`, and
+  `summarize_thread` retain byte-for-byte today's behavior: single attempt, on failure
+  `agent_status='failed'` (terminal), one `agent_task.failed` event, no re-queue, no backoff,
+  no stuck state. `agent_task.succeeded`/`agent_task.failed` event contracts are preserved.
+
+- **R7 — `R-safe-fail` (a Yelp failure never crashes the pipeline OR the worker loop).**
+  Any detect/parse/greet/send failure is contained: a detector fault is fail-open (mirrors
+  001's step-(a.4) try/catch) and the email falls through the normal ingest path — it never
+  crashes the push route or poll tick; a handler fault is caught per-task by the worker
+  (`processBatch` try/catch + `processBatch().catch`) and never crashes the worker loop or
+  the sibling tasks in the same batch. The new retry/backoff/stuck logic is itself wrapped so
+  it cannot throw out of the loop.
+
+- **R8 — `R-lead-at-least-once` (releaseClaim on createLead failure).**
+  If `createLead` throws, the detector releases the claim (`releaseClaim`) so the next poll
+  re-scan re-attempts the lead (**lead at-least-once**). The claim is HELD once the lead
+  exists so the greeting stays **at-most-once**. (See boundary B1: the claim must equally
+  guarantee the *task* is enqueued once the lead exists — a claimed-but-taskless email must
+  not become a silent no-greeting.)
+
+### Non-functional requirements
+
+- **N1 — Additive / backend-only.** No frontend, no new external integration, no DNS/GCP/
+  browser automation. New agent_type is a single registry entry; new columns/states are
+  additive migrations; the detector reuses 001's `yelpGreetingService`, `yelpLeadQueries`,
+  and `leadsService.createLead`. `yelp_lead` is enqueued directly by the detector (like
+  `job_geocode`/`zb_job_sync`), so it need NOT be added to the rules `AGENT_TYPES` catalog
+  and does NOT appear as a user-selectable rule action.
+- **N2 — Company-scoped.** Every query, the claim, the task (`company_id NOT NULL`), and the
+  handler stay tenant-isolated; the worker only claims `company_id IS NOT NULL` agent tasks.
+- **N3 — Env-gated, default OFF, default-company rollout.** `YELP_AUTORESPONDER_ENABLED`
+  (default OFF) gates the detector; Phase-1a scope stays the default company
+  (`00000000-0000-0000-0000-000000000001`). Retry bound tunable via env (e.g.
+  `YELP_LEAD_MAX_ATTEMPTS`, default 3), reusing `AGENT_WORKER_INTERVAL_MS` for cadence.
+- **N4 — Observable / low-latency.** The task is visible to the dispatcher in Pulse; on the
+  happy path the greeting is sent within **≤ one worker tick (~5s, `AGENT_WORKER_INTERVAL_MS`
+  default 5000)** of enqueue. Exactly one structured success log line per handled lead; a
+  stuck task is greppable and Pulse-visible.
+- **N5 — Retry is a widening, not a rewrite.** The `agent_status` CHECK constraint (mig 100:
+  `queued|running|succeeded|failed`) and any new attempt/stuck columns are added via an
+  **additive** migration (widen the CHECK / `ADD COLUMN IF NOT EXISTS` with safe defaults);
+  no existing row or agent type changes meaning.
+
+### Acceptance criteria
+
+- **AC1 (R1):** A gated Yelp new-lead email produces exactly one Pulse-visible lead AND one
+  `kind='agent'`/`agent_type='yelp_lead'`/`agent_status='queued'` task; no greeting is sent by
+  the ingest tick itself. A customer reply / `no-reply@` confirmation produces neither.
+- **AC2 (R2):** The worker claims the queued task on the next tick; the handler sends exactly
+  one relay greeting to `reply_to` and the task ends `agent_status='succeeded'`,`status='done'`.
+  A task with no `reply_to` ends closed-no-send, not errored.
+- **AC3 (R3):** A handler forced to fail is re-queued with backoff and retried up to 3 attempts;
+  on the 3rd failure it enters the dispatcher-visible stuck state (not silent `failed`), with
+  attempt count + last error recorded.
+- **AC4 (R4):** Re-ingesting the same `provider_message_id` (push+poll overlap) creates no
+  second lead and no second task. Running the handler twice on one thread (natural retry OR a
+  crash between send and mark) sends **at most one** greeting; the second run closes without
+  re-sending.
+- **AC5 (R5):** With `mailAgentService` disabled/erroring, a Yelp new-lead is still detected,
+  lead created, task enqueued, greeting sent; the Secretary logs no duplicate review/AR task
+  for it. A non-Yelp inbound email reaches the Secretary exactly as before.
+- **AC6 (R6):** A forced `job_geocode`/`route_calc`/`zb_job_sync` failure still goes terminal
+  `failed` with one `agent_task.failed` event — no re-queue, no backoff, no stuck state.
+- **AC7 (R7):** A thrown detector (e.g. parse/claim fault) leaves the ingest pipeline running
+  (email flows through normally); a thrown handler leaves the worker loop and the other tasks
+  in the batch running.
+- **AC8 (R8):** A `createLead` failure releases the claim and the next poll re-creates the
+  lead (lead at-least-once); once the lead exists the claim is held so no duplicate lead and
+  no duplicate greeting occur.
+
+### Out of scope
+- Phase 1b headless Yelp Business login / phone-behind-the-button reveal (separate later
+  track that enriches the lead created here).
+- SMS / voice channels; any browser automation, DNS, or GCP work.
+- A general-purpose retry framework for all agent types (retry stays opt-in, `yelp_lead`-only).
+- A rules-editor entry for `yelp_lead` (enqueued by the detector, not user-configurable).
+
+### Involved modules (summary)
+- **backend/src/services/agentWorker.js** — add opt-in retry/backoff + stuck transition to the
+  failure branch (additive; default path unchanged).
+- **backend/src/services/agentHandlers.js** — register the new `yelp_lead` handler.
+- **backend/src/services/yelpLeadService.js** — split: keep detect/parse/claim/createLead as
+  the detector; move greet+send into (or called by) the handler; drop the synchronous greet.
+- **backend/src/db/yelpLeadQueries.js** — reuse `claimYelpLead`/`releaseClaim`/`markGreeted`/
+  `threadAlreadyGreeted`; add task linkage if B1 needs it.
+- **backend/src/services/yelpGreetingService.js** — reused unchanged by the handler.
+- **backend/src/services/email/emailTimelineService.js** — step (a.4) now invokes the detector
+  (lead+enqueue) and still returns `{skipped:'yelp_lead'}`.
+- **backend/db/migrations/** — new additive migration: attempt/stuck columns + widened
+  `agent_status` CHECK (builds on mig 100 + mig 162).
+- **Pulse tasks/AR projection** — surface the stuck agent task to the dispatcher (see B2).
+
+### Affected integrations
+- **Gemini** (greeting generation) and the **Yelp email relay** (outbound reply) — reused
+  unchanged, just moved onto the agent task. **Zenbooker/Twilio/Front:** none.
+
+### Protected code (MUST NOT break)
+- The `agentWorker` claim (`UPDATE … FOR UPDATE SKIP LOCKED RETURNING *`) and the
+  `agent_task.succeeded`/`.failed` event contracts — retry is additive to the failure branch
+  only; the success branch and the default (non-opt-in) failure branch stay identical.
+- Existing handlers `job_geocode`/`route_calc`/`zb_job_sync`/`noop`/`mcp_tool`/
+  `summarize_thread` — unchanged behavior.
+- The 001 idempotency ledger `yelp_lead_events` (mig 162) invariants: UNIQUE claim,
+  release-only-on-createLead-failure, greeting at-most-once, `threadAlreadyGreeted` guard.
+- `emailTimelineService.linkInboundMessage` ordering: the Yelp intercept stays BEFORE the
+  mute guard and BEFORE the no-contact Mail-Secretary branch, fail-open, `!opts.skipAgent`.
+- `tasks` mig-100 schema semantics for user tasks and other agent types (additive columns
+  only; existing CHECK values keep their meaning).
+
+### ⚑ Boundaries / edge-cases for the Architect + Implementer to resolve
+- **B1 — Detector atomicity (lead ↔ task).** Owner splits "lead in detector, greeting in
+  task," but the `yelp_lead_events` claim is held once the lead exists (R8) — so if the
+  process dies AFTER `createLead` but BEFORE the task is enqueued, the message is claimed,
+  the lead exists, yet **no task and no greeting ever follow** (a silent gap). Resolve:
+  (a) enqueue the task in the SAME transaction that creates the lead / finalizes the claim;
+  or (b) stamp `task_id` on the claim row and have the detector treat "claimed row with a
+  `lead_id` but no `task_id`" as re-enqueue-only (idempotent on the lead, safe on re-scan);
+  or (c) a small reconciler. Do NOT release-after-lead (would duplicate the lead).
+- **B2 — How the stuck task is dispatcher-visible in Pulse.** Agent tasks may have
+  `thread_id = NULL` (AUTO-001 dropped the NOT NULL); Pulse Action-Required today = *has an
+  open task on a thread* (AR→Tasks unify). A `yelp_lead` task is `status='open'` but by
+  default unattached — so a "stuck" one may not surface anywhere a dispatcher looks. Resolve
+  how it appears: attach the task to the created lead's timeline/subject, and/or set
+  action-required, and/or a dedicated stuck view — and pick the "stuck" representation
+  (widen `agent_status` CHECK to add `stuck`, vs. `status`+attempts-exhausted flag), since the
+  mig-100 CHECK currently forbids any value beyond `queued|running|succeeded|failed`.
+- **B3 — Send-then-crash double-send window.** The handler checks `threadAlreadyGreeted`
+  → `sendEmail` → `markGreeted`; a crash BETWEEN send and mark, now that R3 makes the task
+  retryable, would re-send on the next attempt — which Yelp rejects (one reply per thread).
+  Resolve the ordering so a greeting is **at-most-once** even across a crash (e.g. record a
+  durable "send attempted" marker BEFORE the send so recovery defaults to not-resending,
+  trading a rare lost greeting for never double-sending — aligned with the one-reply rule).
+- **B4 — Backoff claim predicate.** The current claim query has no time gate; honoring R3
+  backoff needs an additive predicate (e.g. `AND (next_attempt_at IS NULL OR next_attempt_at
+  <= now())`) that must NOT change scheduling for non-opt-in agent types (they never set it,
+  so `NULL` → claim-immediately as today). Confirm the `idx_tasks_agent_queue` index still
+  covers the widened claim.
+- **B5 — Env-flag flip mid-flight.** Decide whether `YELP_AUTORESPONDER_ENABLED` gates only
+  the detector (a task already enqueued still runs to completion) or is re-checked in the
+  handler. Recommended: gate at detect only, so a queued greeting is not stranded if the flag
+  is toggled off after enqueue.
+- **B6 — Old synchronous path removal.** 001's in-hook greet+send must be fully removed (not
+  left dormant) so a greeting can never be sent twice (once synchronously, once by the task).

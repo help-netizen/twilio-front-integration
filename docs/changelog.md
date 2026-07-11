@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-11 — YELP-LEAD-AUTORESPONDER-002 (task-based рефактор): Yelp-лид через durable agent-задачу + opt-in retry
+
+Рефактор синхронного Phase 1a (YELP-001, ещё не задеплоен) на durable-модель задач AUTO-001 — надёжность + полная развязка от Mail Secretary. Заменяет синхронный путь -001.
+
+- **Детектор** (`maybeHandleYelpLead`, ingest): распознал Yelp new-lead → claim → parse → `createLead` (лид сразу виден в Pulse) → **кладёт `kind='agent'`, `agent_type='yelp_lead'`, `max_attempts=3` задачу** → `{skipped:'yelp_lead'}`. Синхронная отправка удалена целиком (не dormant).
+- **Агент-обработчик `yelp_lead`** (`agentHandlers`): `agentWorker` атомарно берёт задачу (`FOR UPDATE SKIP LOCKED`) → `threadAlreadyGreeted` (retry-safe, без повторной отправки) → `buildGreeting` (Gemini + статик-фолбэк) → `sendEmail` на relay → `markGreeted` (non-fatal) → задача закрывается `done`. Одно приветствие на тред; задержка ≤ один тик воркера (~5с).
+- **Opt-in retry на ОБЩЕМ `agentWorker`** (migration 163: `tasks.attempt_count/max_attempts/next_attempt_at`): падение handler'а → перепостановка с backoff `min(60·2^n,300)s ±20%` до 3 попыток, потом терминальный `failed` + **видимый диспетчеру «завис»** (открытая задача на лиде через `GET /api/tasks/entity/lead/:id`, без нового UI). **АДДИТИВНО и OPT-IN: типы с `max_attempts=1` (geocode/route/zb-sync/mcp_tool) терминальны с первого падения — байт-в-байт как раньше** (`0+1>=1`; доказано регресс-тестом). Биллинг не задваивается (re-queue не эмитит событий).
+- **B1-реконсайл**: `lead_id` штампуется на claim ДО постановки задачи, `task_id` — ПОСЛЕ; при потере задачи (краш между createLead и enqueue) следующий 5-мин полл её переставляет (`yelp_lead_events.task_id`). Дубля лида не бывает никогда; худший край — один лишний no-op task (гасится `threadAlreadyGreeted`).
+- **Развязка**: детектор + обработчик не требуют `mailAgentService`; `yelp_lead` не в `eventCatalog.AGENT_TYPES` (не в UI-правилах). Надёжность Yelp не висит на секретаре.
+- Тесты: **75 mocked jest зелёных (10 сьютов)**; 6 саботаж-контролей нагружены; существующие `rulesEngine`+`automationE2E` зелёные (общий воркер не задет); Reviewer APPROVED (0 must-fix, воспроизвёл + флипнул контроль). Real-PG (claim/migration) + live — при деплое. **НЕ задеплоено.**
+
+---
+
 ## 2026-07-11 — SOFTPHONE-WARMUP-SUMMARY-001: модалка SoftPhone Ready убрана с мобилы навсегда + стала «Today at a glance» на десктопе (orchestrate-пайплайн)
 
 Регрессия: «SoftPhone Ready» снова всплывала на мобиле — в **iOS PWA standalone** (после PWA-FIX-001). Софтфон-код не менялся: причина — `useIsMobile` ширино-only (innerWidth<768), а ранний innerWidth в standalone может отдать >768 без последующего resize → гейт мигал false → Device регистрировался → модалка залипала. Ширина также не покрывала iPhone-landscape (932px). Других софтфон-артефактов на мобиле не было (widget/header/Device — за гейтами).

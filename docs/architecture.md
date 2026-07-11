@@ -5713,3 +5713,120 @@ Everything else in the handler unchanged: `requirePermission('tasks.view')`, rol
 - `tests/routes/tasks.test.js` — 4 new /count cases (§5).
 
 **Protected / unchanged:** `useTwilioDevice` internals + `enabled` gating; `SoftPhoneWidget`; presence; incoming-call auto-open; `warmUpAudio()` gesture contract; badge fetch/poll/SSE callbacks (`fetchUnreadCount`/`fetchLeadsNewCount`/`fetchOpenTasksCount`, `onGenericEvent`); `AppNavTabs`/`BottomNavBar` components; `GET /api/tasks/count` no-param behavior + role-scoping; `tasksQueries.buildTaskListFilters`/`countTasks`; all 26 `useIsMobile` layout call-sites (esp. OVERLAY-CANON-002 swap in `ui/dialog|select|popover|dropdown-menu` + `useOverlayDismiss`); the `/schedule` suppression; `authedFetch.ts`, `useRealtimeEvents.ts`. No migration, no new endpoints → middleware checklist satisfied by the existing mount (`authenticate, requireCompanyAccess` + `requirePermission('tasks.view')`, company scope `req.companyFilter?.company_id`).
+
+---
+
+## Архитектурное решение для фичи YELP-LEAD-AUTORESPONDER-002 (durable task+agent refactor)
+
+**Goal.** Move Phase 1a's *synchronous* greet-inside-the-ingest-hook onto the durable AUTO-001 task+agent model. Inbound Yelp email → the detector creates the lead + **enqueues** a `kind='agent'` task → the shared `agentWorker` claims it → a new `yelp_lead` handler sends the greeting → task closes `done`. Retryable (≤3 attempts, backoff), Pulse-visible when stuck, and with **zero** dependency on the Mail Secretary / its LLM path. Backend-only; ONE additive migration; NO frontend, API, or `server.js` change.
+
+**Existing infra reused (verified in this worktree):**
+- `agentWorker.js` (`processBatch` atomic `FOR UPDATE SKIP LOCKED` claim of `kind='agent' AND agent_status='queued'`; success→`succeeded/done/completed_at`; failure→`failed`; emits `agent_task.succeeded|failed`; never crashes) — **extended additively** for retry (see C).
+- `agentHandlers.js` registry (`agent_type → handler`) — **one new entry** `yelp_lead` (B). Existing handlers untouched.
+- `ruleActions.run_agent_task` INSERT pattern (`tasks(company_id, kind='agent', agent_type, agent_input, agent_status='queued', title, status='open', created_by='automation', …)`) — the enqueue template (A).
+- `billingService.js:189` `agent_task.succeeded → agent_runs (qty 1)` via `eventSubscribers` `billing-meter`; `recordUsage` UPSERT-increments. **Metering constraint honored:** success emits exactly once (terminal), so a Yelp greeting = 1 `agent_run`; retries emit no `agent_task.*`.
+- `yelpGreetingService.buildGreeting` (never throws), `yelpLeadQueries` (`markGreeted` / `threadAlreadyGreeted`), `emailService.sendEmail(companyId,{to,subject,body})`, `leadsService.createLead` (returns `{ClientId}`) — reused **as-is** (no signature change). `markGreeted` + `threadAlreadyGreeted` **move** from the service to the handler.
+- `tasksQueries.listEntityTasks` (`WHERE t.<parentCol>=$ AND status='open'`, **no `kind` filter**; projection already selects `t.kind, t.agent_type, t.agent_output`) — the "stuck" surface (below).
+
+### A) Detector refactor — `maybeHandleYelpLead(companyId, msg)`
+**KEPT (unchanged):** env/scope gate → `detectYelpLead` → `claimYelpLead` (the `yelp_lead_events` UNIQUE(company_id, provider_message_id) still guarantees **one lead + one task per email**) → `parseYelpLead` → `buildLeadFields` → `createLead`, with **`releaseClaim` ONLY when `createLead` throws** (lead at-least-once) and the whole function fail-open (never throws out of the ingest hook). The hook in `emailTimelineService.linkInboundMessage` (:120-130, `!opts.skipAgent`, returns `{skipped:'yelp_lead'}`) is **unchanged**.
+
+**REMOVED from the synchronous path** (steps 5–6 of Phase 1a): `threadAlreadyGreeted` check, `buildGreeting`, `emailService.sendEmail`, and `markGreeted` — all move into the `yelp_lead` handler.
+
+**ADDED — enqueue (replaces greet+send):** after a successful `createLead`, INSERT the agent task and return `{handled:true, skipped:'yelp_lead'}`:
+```
+INSERT INTO tasks (company_id, kind, agent_type, agent_input, agent_status,
+                   max_attempts, title, status, created_by, lead_id, subject_type)
+VALUES ($1,'agent','yelp_lead',$2::jsonb,'queued', 3,
+        $3,'open','automation',$4,'lead')
+```
+- `agent_input` (JSON): `{ claim_id, provider_message_id, thread_token, reply_to, lead_id, customer_name, service_type, problem_text, zip }`.
+  - **Deviation from brief's field list:** `claim_id` (= `yelp_lead_events.id` returned by `claimYelpLead`) is added — the handler needs it to call `markGreeted(claimId,…)`. (`customer_name`←`parsed.name`, `service_type`←`parsed.service`, `problem_text`←`parsed.problem`.)
+- `lead_id = <created lead id>` is **load-bearing**: it parents the task to the lead so a stuck task surfaces in the lead's task stack (see "Stuck").
+- `max_attempts = 3` opts this type (and only this type) into retry.
+- Enqueue is best-effort: if the INSERT itself throws (rare — same DB), **log and HOLD the claim** (do NOT `releaseClaim` — the lead already exists; releasing would duplicate it on the next poll). The `yelp_lead_events` row then sits `status='claimed', greeted_at IS NULL` — a detectable "claimed-but-never-enqueued" state a future reconcile can re-enqueue. This preserves *lead at-least-once + greeting at-most-once*.
+
+### B) New handler `yelp_lead` in `agentHandlers.HANDLERS`
+Contract (idempotent, re-run-safe):
+```
+async yelp_lead(task):
+  i = task.agent_input || {}
+  if (!i.reply_to):                                   // nothing to reply to
+      markGreeted(i.claim_id,{leadId:i.lead_id, threadToken:i.thread_token, status:'handled_no_send'})  // best-effort
+      return { skipped:'no_reply_to', lead_id:i.lead_id }
+  if (await threadAlreadyGreeted(company_id, i.thread_token)):
+      return { skipped:'already_greeted', lead_id:i.lead_id }   // ← retry-safe no-op: NEVER double-send
+  body = await buildGreeting({name:i.customer_name, service:i.service_type, problem:i.problem_text})  // never throws
+  sent = await emailService.sendEmail(company_id, {to:i.reply_to, subject:`Re: ${i.service_type||'your'} request`, body})  // MAY throw → drives retry
+  try { markGreeted(i.claim_id,{leadId:i.lead_id, threadToken:i.thread_token,
+                                greetingProviderMessageId: sent?.provider_message_id||null, status:'greeted'}) }
+  catch(e) { log }                                    // best-effort: a ledger hiccup must NOT rethrow (see below)
+  return { greeted:true, lead_id:i.lead_id, provider_message_id: sent?.provider_message_id||null }
+```
+**Idempotency argument.** The ONLY throw that reaches the worker is `sendEmail` (before any greeting left). If it throws, nothing was sent and `markGreeted` was not reached → on retry `threadAlreadyGreeted` is still false → safe re-send. On success, `markGreeted` stamps `greeted_at`; a later duplicate run short-circuits at `threadAlreadyGreeted`. **`markGreeted` is deliberately non-fatal** inside the handler: if it threw *after* a successful send, the worker would retry and double-send — so we swallow its error and let the task succeed (the email is the source of truth). Residual (accepted, rare): `sendEmail` throws *after* the provider actually accepted the message → one retry could double-post; inherent to at-least-once email, matches Phase 1a's exposure.
+
+### C) Retry on the SHARED `agentWorker` — additive + opt-in (the critical change)
+**Migration 163 adds to `tasks`:** `attempt_count int NOT NULL default 0`, `max_attempts int NOT NULL default 1`, `next_attempt_at timestamptz`.
+
+**Claim SELECT** gets one added predicate: `AND (next_attempt_at IS NULL OR next_attempt_at <= now())`.
+
+**Failure branch** of `processBatch` (the claimed row already carries the new columns via `RETURNING *`):
+```
+next = (task.attempt_count ?? 0) + 1
+if (next < task.max_attempts):          // retry
+    UPDATE tasks SET agent_status='queued', attempt_count=next,
+                     next_attempt_at = now() + backoff(next),
+                     agent_output=$err, updated_at=now() WHERE id=$1
+    // NO event emitted (log only)
+else:                                    // terminal
+    UPDATE tasks SET agent_status='failed', attempt_count=next,
+                     next_attempt_at=NULL, agent_output=$err, updated_at=now() WHERE id=$1
+    emit 'agent_task.failed'             // once, terminal only
+```
+Success branch unchanged (`succeeded/done/completed_at` + `agent_task.succeeded` once).
+
+**Opt-in safety proof (geocode/route/zb_sync UNAFFECTED):** existing enqueuers never set `max_attempts` → default **1**. Then `next (=1) < 1` is false → **terminal on first failure**, `agent_status='failed'`, **one** `agent_task.failed` emit — byte-for-byte today's behavior. `next_attempt_at` defaults NULL → the added claim predicate `IS NULL` is always true → those tasks are claimed exactly as before. Retry is reachable **only** by a row that explicitly set `max_attempts>1`, i.e. `yelp_lead`.
+
+**Backoff.** `backoff(n) = min(BASE·2^(n-1), CAP)`, `BASE=60s`, `CAP=300s`, ±20% jitter; env-overridable (`AGENT_TASK_RETRY_BASE_SEC` / `_CAP_SEC`). For `max_attempts=3`: attempt-1 immediate, retry after ~1m, retry after ~2m, terminal by ~3m. (Precedent: `outbound_call_settings` mig 159 already ships `max_attempts int default 3` + `backoff_schedule jsonb` — retry-with-backoff is an established pattern; here it lives per-task on the row, the right grain for a generic worker.)
+
+**No `agent_status` enum change.** "Stuck" is **derived**, not a 5th state: `kind='agent' AND agent_status='failed' AND status='open' AND attempt_count>=max_attempts`. Avoids touching the migration-100 CHECK.
+
+**Existing-handler idempotency finding (so a future opt-in is safe):** `noop` pure; `job_geocode` guarded (`already` = coords present + status success/needs_review → skip); `route_calc` recomputes only *calculable* segments (upsert per segment) → idempotent; `zb_job_sync` dedupes on `zenbooker_job_id` AND catches its own errors (returns `status:'failed'` without throwing — never even hits the worker's retry path); `summarize_thread` read-only. **Only `mcp_tool` is tool-dependent (not universally idempotent)** — it stays at default `max_attempts=1`, so it never retries. Conclusion: retry is safe to add because it is opt-in AND the sole opt-in type (`yelp_lead`) is idempotent via `threadAlreadyGreeted`.
+
+**Billing/emit correctness under retry:** `agent_task.succeeded` (the only billed event) fires once, terminally; intermediate retries emit nothing to the bus (the rules-engine `*` subscriber + `billing-meter` never see them) → no rule storms, no double-bill. `agent_task.failed` fires once, on terminal failure only.
+
+### "Stuck" surfacing in Pulse (no new UI)
+The worker's failure branch **leaves `status='open'`** (it only writes `agent_status`) — this is already true today. So a terminally-failed `yelp_lead` task is, by construction, an **open task parented to the lead** (`lead_id`). `GET /api/tasks/entity/lead/:id` → `listEntityTasks` returns it (no `kind` filter; projection exposes `kind='agent'` + `agent_output.error`), so it renders in that lead's open-task stack in the CRM — dispatcher-visible, with the failure reason and the customer's `reply_to` (in the lead notes) for a manual reply. `agent_status='failed'` excludes it from the `queued` claim scan, and it drops out of the stack the moment a dispatcher marks it `done`. (No `thread_id`/timeline exists for a phone-less Yelp lead, so `set_action_required` — which needs a timeline — is N/A; the lead parent is the correct surface.)
+
+### D) Migration
+- **`163_tasks_agent_retry.sql`** (+ `rollback_163_tasks_agent_retry.sql`) — additive, idempotent, style-matched to `105`/`106`/`157`:
+  ```sql
+  ALTER TABLE tasks
+      ADD COLUMN IF NOT EXISTS attempt_count   INTEGER     NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS max_attempts    INTEGER     NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+  ```
+  Rollback: `ALTER TABLE tasks DROP COLUMN IF EXISTS next_attempt_at, DROP COLUMN IF EXISTS max_attempts, DROP COLUMN IF EXISTS attempt_count;`
+  No new index required — the existing `idx_tasks_agent_queue (company_id, agent_status) WHERE kind='agent' AND status='open'` still fronts the claim; the tiny candidate set makes the `next_attempt_at` filter free.
+- **Next free integer = 163** (max on disk = 162; 161 was consumed by a parallel worktree). **RECHECK at build** (`ls backend/db/migrations/`) — siblings drift; if 163 is taken, take the next free and keep the rollback paired.
+
+### E) Decoupling from the Mail Secretary — confirmed
+`yelpLeadService`, `yelpGreetingService`, `yelpLeadQueries` require **only** `yelpLeadQueries`, `leadsService`, `yelpGreetingService`, `emailService`, `connection` — **no `mailAgentService` / `mailAgentClassifier` / `reviewInboundEmail`**. (`yelpGreetingService`'s "mirrors mailAgentClassifier" is a *comment* only; it runs its own Gemini transport.) The new handler adds requires to `yelpGreetingService`, `emailService`, `yelpLeadQueries` — same closure, still zero Secretary coupling. The ingest hook runs `maybeHandleYelpLead` **before** the mute/Mail-Secretary branch and short-circuits, so the Secretary's LLM path can never gate Yelp reliability. `agent_type='yelp_lead'` is intentionally **NOT** added to `eventCatalog.AGENT_TYPES` (keeps an internal type out of the rules UI; the detector enqueues it directly, not via a rule).
+
+### Files to create / edit
+**Create:**
+- `backend/db/migrations/163_tasks_agent_retry.sql` + `backend/db/migrations/rollback_163_tasks_agent_retry.sql` (recheck the integer at build).
+
+**Edit:**
+- `backend/src/services/yelpLeadService.js` — drop the greet/send/markGreeted/threadAlreadyGreeted block; after `createLead`, enqueue the `yelp_lead` task (small helper, e.g. `enqueueYelpGreetingTask(companyId,{claimId,leadId,parsed})`). Keep detect/claim/parse/createLead/`releaseClaim`-on-createLead-throw/`buildLeadFields`/fail-open.
+- `backend/src/services/agentHandlers.js` — add the `yelp_lead` handler to `HANDLERS` (B).
+- `backend/src/services/agentWorker.js` — retry-aware failure branch + `next_attempt_at` claim predicate (C). **The only shared-surface change; additive + default-safe.**
+
+**Unchanged:** `yelpGreetingService.js`, `yelpLeadQueries.js` (reused as-is), `emailTimelineService.js` hook, `emailService.js`, `leadsService.js`, `eventCatalog.js`, `ruleActions.js`, all other agent handlers.
+
+### Top risks
+1. **Shared-worker regression** — the retry branch touches the one code path every agent type runs. Mitigated by the `max_attempts` default-1 equivalence proof (byte-for-byte today for non-opted types); needs a worker unit test asserting default-1 → terminal-on-first-failure + single `agent_task.failed`.
+2. **Double-send under retry** — bounded by `threadAlreadyGreeted` (checked before send) + non-fatal `markGreeted`; only residual is a provider-accepted-then-threw blip (rare, accepted).
+3. **Enqueue-after-lead failure** — lead exists but no task/greeting; handled by holding the claim (no dup lead) + a future reconcile of `status='claimed', greeted_at IS NULL` rows.
+4. **Migration-number drift** — 163 may be taken by a parallel worktree at build; recheck `ls` and re-pair the rollback.
+5. **First-response latency** — greeting now waits up to one 5s worker tick (vs inline); negligible for Yelp lead SLA and bought back by retryability.

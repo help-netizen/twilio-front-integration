@@ -101,9 +101,66 @@ async function threadAlreadyGreeted(companyId, threadToken) {
     return !!(rows && rows.length > 0);
 }
 
+/**
+ * YELP-LEAD-AUTORESPONDER-002 (B1 reconcile): fetch the existing claim row for a
+ * (company, provider_message_id). Used when a re-ingest loses the claim (already
+ * claimed) — if the row is `task_id IS NULL AND greeted_at IS NULL` the greeting
+ * task was lost (a crash between createLead and enqueue) and must be re-enqueued.
+ * @param {string} companyId
+ * @param {string} providerMessageId
+ * @returns {Promise<{id:number, lead_id:(number|null), task_id:(number|null),
+ *   greeted_at:(string|null), status:(string|null), thread_token:(string|null)}|null>}
+ */
+async function getClaimByMessage(companyId, providerMessageId) {
+    const { rows } = await db.query(
+        `SELECT id, lead_id, task_id, greeted_at, status, thread_token
+           FROM yelp_lead_events
+          WHERE company_id = $1
+            AND provider_message_id = $2
+          LIMIT 1`,
+        [companyId, providerMessageId]
+    );
+    return (rows && rows[0]) || null;
+}
+
+/**
+ * YELP-LEAD-AUTORESPONDER-002: record the created lead on the claim row BEFORE the
+ * (fallible) task enqueue, so a B1 reconcile can recover the lead id even if the
+ * task INSERT later fails. Idempotent (COALESCE keeps a prior value). The handler's
+ * markGreeted writes the same lead_id later.
+ * @param {number} id  yelp_lead_events.id (claim id)
+ * @param {number|null} leadId
+ */
+async function attachLead(id, leadId) {
+    await db.query(
+        `UPDATE yelp_lead_events
+            SET lead_id = COALESCE(lead_id, $2)
+          WHERE id = $1`,
+        [id, leadId]
+    );
+}
+
+/**
+ * YELP-LEAD-AUTORESPONDER-002: stamp the enqueued greeting task id on the claim row.
+ * A set task_id means "enqueued" — a reconcile then skips (never a duplicate task).
+ * @param {number} id  yelp_lead_events.id (claim id)
+ * @param {number|null} taskId
+ */
+async function attachTask(id, taskId) {
+    await db.query(
+        `UPDATE yelp_lead_events
+            SET task_id = $2
+          WHERE id = $1`,
+        [id, taskId]
+    );
+}
+
 module.exports = {
     claimYelpLead,
     releaseClaim,
     markGreeted,
     threadAlreadyGreeted,
+    getClaimByMessage,
+    attachLead,
+    attachTask,
 };

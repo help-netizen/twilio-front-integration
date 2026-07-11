@@ -136,3 +136,24 @@ describe('linkInboundMessage — Yelp additivity (P0/P1)', () => {
         expect(mockMaybeHandleYelpLead).not.toHaveBeenCalled();
     });
 });
+
+// YELP-LEAD-AUTORESPONDER-002 · E-03 — the Yelp path is structurally decoupled from
+// the Mail Secretary: neither the detector nor the yelp_lead handler closure imports
+// mailAgentService / mailAgentClassifier / reviewInboundEmail. The two are independent
+// consumers of the ingest seam; removing the Secretary must not break Yelp.
+describe('E-03 · module decoupling from the Mail Secretary (structural)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const read = (rel) => fs.readFileSync(path.join(__dirname, rel), 'utf8');
+
+    it('yelpLeadService.js requires no mailAgentService / mailAgentClassifier / reviewInboundEmail', () => {
+        const src = read('../backend/src/services/yelpLeadService.js');
+        expect(src).not.toMatch(/mailAgentService|mailAgentClassifier|reviewInboundEmail/);
+    });
+
+    it('agentHandlers.js (host of the yelp_lead handler) requires no mailAgentService / reviewInboundEmail', () => {
+        const src = read('../backend/src/services/agentHandlers.js');
+        expect(src).toMatch(/yelp_lead/);                 // handler present…
+        expect(src).not.toMatch(/mailAgentService|reviewInboundEmail/); // …with no Secretary coupling
+    });
+});

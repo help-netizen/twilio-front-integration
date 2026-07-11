@@ -110,6 +110,52 @@ function nonYelp(overrides = {}) {
     };
 }
 
+// ── YELP-LEAD-AUTORESPONDER-002 fixtures (durable task+agent refactor) ────────
+
+/**
+ * A claimed kind='agent' task row as the worker sees it after the claim UPDATE …
+ * RETURNING *. Defaults model a NON-opted task (max_attempts=1) so the retry
+ * regression guard (A-01) is the zero-config case. Override agent_type / attempt_count
+ * / max_attempts / agent_input per case.
+ */
+function taskRow(overrides = {}) {
+    return {
+        id: 1,
+        company_id: DEFAULT_COMPANY_ID,
+        kind: 'agent',
+        agent_type: 'yelp_lead',
+        agent_status: 'running',
+        status: 'open',
+        attempt_count: 0,
+        max_attempts: 1,
+        next_attempt_at: null,
+        agent_input: {},
+        lead_id: 55,
+        created_at: '2026-07-10T12:00:00.000Z',
+        ...overrides,
+    };
+}
+
+/**
+ * The agent_input JSON a real detector enqueue writes (spec §2 contract). Keys are
+ * customer_name / service_type / problem_text (the handler maps them to buildGreeting's
+ * name / service / problem).
+ */
+function yelpInput(overrides = {}) {
+    return {
+        claim_id: 7,
+        provider_message_id: 'ymsg-NEW-1',
+        lead_id: 55,
+        reply_to: 'reply+8160b36a1c2d3e4f@messaging.yelp.com',
+        thread_token: '8160b36a1c2d3e4f',
+        customer_name: 'Kim',
+        service_type: 'dishwasher repair',
+        problem_text: "My Maytag dishwasher is stuck in mid cycle and won't drain.",
+        zip: '02467',
+        ...overrides,
+    };
+}
+
 module.exports = {
     DEFAULT_COMPANY_ID,
     Y_NEW_BODY,
@@ -118,4 +164,6 @@ module.exports = {
     yReply,
     yConfirm,
     nonYelp,
+    taskRow,
+    yelpInput,
 };
