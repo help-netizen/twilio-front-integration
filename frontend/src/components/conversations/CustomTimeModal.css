@@ -576,45 +576,126 @@
     line-height: 1.35;
 }
 
-/* ── Responsive ── */
-@media (max-width: 767px) {
-    .ctm-dialog {
-        padding: 16px 12px !important;
-    }
-    .ctm-body {
-        grid-template-columns: 1fr;
-        grid-template-rows: 1fr 320px;
-        gap: 8px;
-    }
-    .ctm-body--with-recs {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr 320px;
-    }
-    .ctm-recs {
-        max-height: 180px;
-    }
-    .ctm-recs__list {
-        flex-direction: row;
-        overflow-x: auto;
-    }
-    .ctm-rec-card {
-        min-width: 160px;
-        flex-shrink: 0;
-    }
-    .ctm-footer {
-        padding-top: 8px;
-    }
-    .ctm-footer button {
-        min-height: 44px;
-        font-size: 15px;
-    }
-    .ctm-tech-bar__arrow {
-        width: 36px;
-        height: 36px;
-        min-width: 36px;
-    }
-    .ctm-date-nav__arrow {
-        width: 44px;
-        height: 44px;
-    }
+/* ── Mobile bottom sheet (JOB-SLOT-SHEET-001) ─────────────────────────────────
+   On phones the picker renders inside the canonical BottomSheet (size="full"),
+   not the desktop dialog. Layout is a fixed column: date nav → recommendations
+   strip (horizontal swipe) → hour grid taking ALL remaining height. The map is
+   the second pane of the Times ⇄ Map toggle instead of a permanent 320px block. */
+
+/* The sheet body must not scroll itself — the hour grid owns its scroll.
+   (!important because BottomSheet sets overflow-y via an inline style.) */
+.ctm-sheet-scroll {
+    overflow: hidden !important;
+}
+.ctm-sheet {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0 14px;
+}
+.ctm-sheet .ctm-date-nav {
+    flex-shrink: 0;
+    margin-bottom: 8px;
+    gap: 2px;
+}
+/* Keep 44px touch targets, but let the row fit a 375px phone:
+   arrows 40px + flexible trigger + compact toggle. */
+.ctm-sheet .ctm-date-nav__arrow {
+    width: 40px;
+    height: 44px;
+}
+.ctm-sheet .ctm-date-nav__trigger {
+    min-width: 0;
+    flex: 1 1 auto;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+.ctm-sheet .ctm-date-nav__trigger .ctm-date-nav__text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Recommendations: compact horizontal strip — swipe sideways, grid keeps the height */
+.ctm-sheet .ctm-recs {
+    flex-shrink: 0;
+    margin-bottom: 8px;
+    padding: 10px 10px 8px;
+}
+.ctm-sheet .ctm-recs__list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+}
+.ctm-sheet .ctm-rec-card {
+    min-width: 150px;
+    max-width: 176px;
+    flex-shrink: 0;
+}
+/* The one-line "why" fits desktop cards; on a phone strip it is noise —
+   the choice signal stays (temperature bar, date, time, tech). */
+.ctm-sheet .ctm-rec-card__sub {
+    display: none;
+}
+.ctm-sheet .ctm-timelines {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+.ctm-sheet .ctm-tech-bar__arrow {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+}
+/* Map pane fills the same area the grid does */
+.ctm-sheet .ctm-map {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* Times ⇄ Map segmented toggle (mobile only) */
+.ctm-pane-toggle {
+    margin-left: auto;
+    display: inline-flex;
+    background: rgba(25, 25, 25, 0.05);
+    border-radius: 999px;
+    padding: 2px;
+    flex-shrink: 0;
+}
+.ctm-pane-toggle__btn {
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1;
+    padding: 8px 10px;
+    border-radius: 999px;
+    color: var(--blanc-ink-2, #5b5346);
+    cursor: pointer;
+}
+.ctm-pane-toggle__btn--active {
+    background: var(--blanc-surface-strong, #fffdf9);
+    color: var(--blanc-ink-1, #191919);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(40, 33, 22, 0.12);
+}
+
+/* Sheet footer: warning line above a full-width action row */
+.ctm-footer--sheet {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 14px;
+}
+.ctm-footer--sheet .ctm-footer__territory-warn {
+    margin-right: 0;
+}
+.ctm-footer__actions {
+    display: flex;
+    gap: 10px;
+}
+.ctm-footer__actions button {
+    min-height: 44px;
+    font-size: 15px;
 }

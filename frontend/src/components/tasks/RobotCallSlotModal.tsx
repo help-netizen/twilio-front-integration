@@ -152,7 +152,7 @@ export function RobotCallSlotModal({ open, onClose, taskId, jobId, onQueued }: R
             territoryId={territoryId}
             excludeJobId={Number(jobId)}
             title="Schedule the robot call"
-            confirmLabel="Queue robot call"
+            confirmLabel="Schedule robot call"
             // TECHSLOT-001 req 2/3 — scope the recs column to the job's single
             // assigned tech (zero-tech → undefined → legacy all-tech recs). The
             // timelines still show ALL techs; 2+ techs never reach this render.
