@@ -71,7 +71,7 @@ router.get('/', requirePermission('tasks.view'), async (req, res) => {
 // a future GET /:id can never swallow it. Count == GET /?status=open row count.
 router.get('/count', requirePermission('tasks.view'), async (req, res) => {
     try {
-        const filters = { status: 'open' };
+        const filters = { status: 'open', parent_type: req.query.parent_type || undefined };
         // Same visibility branch as GET /: managers count all; everyone else own.
         if (canManage(req)) {
             if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id;

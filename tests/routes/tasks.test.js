@@ -173,6 +173,64 @@ describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
         expect(res.status).toBe(500);
         expect(res.body).toEqual({ ok: false, error: { code: 'INTERNAL', message: 'Failed to count tasks' } });
     });
+
+    // ── SOFTPHONE-WARMUP-SUMMARY-001 — parent_type pass-through (spec §5.3) ──
+    test('?parent_type=timeline adds thread_id predicate, params unchanged (TC-WS-01)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 5 }] });
+        const res = await request(makeApp()).get('/api/tasks/count?parent_type=timeline');
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true, data: { count: 5 } });
+        const [sql, params] = mockQuery.mock.calls[0];
+        // The standalone predicate is APPENDED after status (HAS_ENTITY_PARENT already
+        // holds one t.thread_id occurrence inside its OR-group — hence the AND-anchor).
+        expect(sql).toMatch(/t\.status = \$2 AND t\.thread_id IS NOT NULL/);
+        // No new $n: predicate is param-less; manager branch intact (no owner scoping).
+        expect(params).toEqual([COMPANY, 'open']);
+        expect(sql).not.toMatch(/t\.owner_user_id = \$/);
+        // Tenant scoping: the filtered count stays company-scoped.
+        expect(sql).toMatch(/t\.company_id = \$1/);
+    });
+
+    test('no parent_type param → SQL byte-identical to today (TC-WS-02 drift guard)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+        await request(makeApp()).get('/api/tasks/count');
+        const [sql, params] = mockQuery.mock.calls[0];
+        // Pinned byte-for-byte to the pre-change (TASKS-COUNT-BADGE-001) manager SQL.
+        expect(sql).toBe(
+            "SELECT COUNT(*)::int AS count FROM tasks t WHERE t.company_id = $1 AND " +
+            "(t.job_id IS NOT NULL OR t.lead_id IS NOT NULL OR t.estimate_id IS NOT NULL OR " +
+            "t.invoice_id IS NOT NULL OR t.contact_id IS NOT NULL OR " +
+            "(t.thread_id IS NOT NULL AND t.created_by IN ('user', 'agent'))) AND t.status = $2"
+        );
+        expect(params).toEqual([COMPANY, 'open']);
+    });
+
+    test('?parent_type=bogus silently ignored — SQL byte-equal to no-param (TC-WS-03)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+        await request(makeApp()).get('/api/tasks/count');
+        const [baseSql, baseParams] = mockQuery.mock.calls[0];
+        mockQuery.mockClear();
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+        const res = await request(makeApp()).get('/api/tasks/count?parent_type=bogus');
+        expect(res.status).toBe(200);
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toBe(baseSql);
+        expect(params).toEqual(baseParams);
+    });
+
+    test('provider + ?parent_type=timeline → owner scope AND thread predicate (TC-WS-04)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+        const res = await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] }))
+            .get('/api/tasks/count?parent_type=timeline');
+        expect(res.status).toBe(200);
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toMatch(/t\.owner_user_id = \$2/);
+        expect(sql).toMatch(/t\.status = \$3 AND t\.thread_id IS NOT NULL/); // appended predicate
+        // Full params: tenant $1, owner $2 = crmUser.id (never the Keycloak sub), status $3 = 'open'.
+        expect(params).toEqual([COMPANY, ME, 'open']);
+        expect(params).not.toContain('kc');
+        expect(sql).toMatch(/t\.company_id = \$1/); // cross-tenant probe can only count own rows
+    });
 });
 
 describe('GET /assignees', () => {
