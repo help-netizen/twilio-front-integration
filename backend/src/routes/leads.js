@@ -314,6 +314,20 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                 } catch { /* non-blocking */ }
             }
 
+            // JOB-CONTACT-SYNC-001: "attach" means "don't OVERWRITE the contact" —
+            // but filling an EMPTY phone/email slot loses nothing and keeps
+            // inbound calls/SMS matching this contact (orphan-timeline bug).
+            if (body.Phone || body.Email) {
+                try {
+                    const { propagateContactDetails } = require('../services/contactPropagationService');
+                    await propagateContactDetails(companyId, selectedContactId,
+                        { phone: body.Phone || null, email: body.Email || null },
+                        { source: 'lead_attach' });
+                } catch (e) {
+                    console.error(`[LeadsAPI][${reqId}] contact propagation failed (non-blocking):`, e.message);
+                }
+            }
+
         } else if (contactUpdateMode === 'only_lead') {
             // Mode: create new contact (detach from selected), lead gets new contact
             contactResolution = await contactDedupeService.resolveContact({

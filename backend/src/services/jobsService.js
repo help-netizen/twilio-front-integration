@@ -582,6 +582,21 @@ async function createDirectJob(companyId, input = {}) {
     ).catch(() => {});
     // [CHANGE END]
 
+    // JOB-CONTACT-SYNC-001: the form's phone/email must also land on the linked
+    // contact (dedupe can match by name alone; the picked contact may be a bare
+    // ZB import) — otherwise inbound calls/SMS never match and the Pulse
+    // timeline stays orphaned. Fill-empty-only; never blocks the create.
+    if (contactId && (contactInput.phone || contactInput.email)) {
+        try {
+            const { propagateContactDetails } = require('./contactPropagationService');
+            await propagateContactDetails(companyId, contactId,
+                { phone: contactInput.phone || null, email: contactInput.email || null },
+                { source: 'job_create' });
+        } catch (e) {
+            console.error('[CreateDirectJob] contact propagation failed (non-fatal):', e.message);
+        }
+    }
+
     return { job_id: localJob.id, zenbooker_job_id: zenbookerJobId, zb_warning: zbWarning };
 }
 
@@ -1141,6 +1156,23 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 
     // Check if job exists
     const existing = await getJobByZbId(zbJobId);
+
+    // JOB-CONTACT-SYNC-001: ZB imports routinely create bare contacts (no
+    // phone/email) while the ZB job carries them — then inbound calls never
+    // match and Pulse timelines stay orphaned (prod case: job 1359 / timeline
+    // 2911). Enrich the matched contact from the ZB customer data.
+    // Fill-empty-only + never-steal; cheap no-op guard for the bulk-sync path.
+    const propagationCompanyId = companyId || existing?.company_id || null;
+    if (contactId && propagationCompanyId && (cols.customer_phone || cols.customer_email)) {
+        try {
+            const { propagateContactDetails } = require('./contactPropagationService');
+            await propagateContactDetails(propagationCompanyId, contactId,
+                { phone: cols.customer_phone || null, email: cols.customer_email || null },
+                { source: 'zb_sync' });
+        } catch (e) {
+            console.error('[JobsService] contact propagation failed (non-fatal):', e.message);
+        }
+    }
 
     if (existing) {
         // Preserve manually-set blanc_status (e.g. "Waiting for parts", "Follow Up with Client")
