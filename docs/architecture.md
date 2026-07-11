@@ -6017,3 +6017,147 @@ Double-book guard: `book` только на явный accept; если `status=
 - **`created_by='automation'`** — YELP-002 так пишет (`yelpLeadService.js:300`), значит значение разрешено (mig 038 CHECK был `('system','user')` — позже ослаблен). На билде подтвердить перед `createTask`.
 - **Миграция 164** — возможен дрейф от параллельных worktree; recheck `ls` при билде.
 - **`YELP_CONVO_ENABLED` default off** — Phase B тёмный запуск; PROD-деплой только по явному «да» владельца (per deploy-consent).
+
+---
+
+## Архитектурное решение для фичи YELP-TIMELINE-DEDUP-001
+
+**Единица дедупликации — ТАЙМЛАЙН, а не контакт.** Yelp-relay `reply+<hex>@messaging.yelp.com` меняется от письма к письму → нормальный пайплайн плодит по контакту+таймлайну на каждый адрес (на проде 8 мусорных контактов «Yelp»/«Yelp Inbox»). Цель: ВСЕ письма ОДНОГО Yelp-разговора попадают в ОДИН таймлайн, ключ = стабильный Yelp `conversation_id`. Таймлайн может быть БЕЗКОНТАКТНЫМ. Контакт из Yelp-письма/relay НЕ создаётся вообще.
+
+### Ключевые находки по коду (verified)
+
+- **Junk-контакт создаётся Mail-Secretary'ом, не Yelp-путём.** `createEmailContact` (`mailAgentQueries.js:163`) вызывается ТОЛЬКО из `mailAgentService.js:197` внутри `reviewInboundEmail`. Fall-through Yelp-письмо: `linkInboundMessage` → `findEmailContact` none (`emailTimelineService.js:182-189`) → `reviewInboundEmail({noContact:true})` → `createEmailContact` → мусорный контакт. **Значит: если Yelp-ветка ВСЕГДА возвращается ДО `findEmailContact`, `createEmailContact` для Yelp структурно недостижим** (флаг не нужен).
+- **CHECK-констрейнт — БЛОКЕР.** `029_revise_timelines.sql:20-21`: `chk_timelines_identity CHECK (contact_id IS NOT NULL OR phone_e164 IS NOT NULL)`. Безконтактный+безтелефонный Yelp-таймлайн его НАРУШАЕТ → INSERT падает. Мигр. 165 ОБЯЗАНА ослабить констрейнт.
+- **Контактлесс-таймлайны сегодня НЕ показывают email в Pulse.** LIST `getUnifiedTimelinePage` (`timelinesQueries.js:381`): email-нога `email_by_contact` (CTE :425) join'ится `ON eml.contact_id = tl.contact_id` (:571) → при `tl.contact_id IS NULL` email не всплывает; коммент :340 «Contactless email threads are NOT surfaced». Ряд всплывёт лишь по `has_unread`/`open_task` (:611-613), но БЕЗ имени/preview/recency. DETAIL `buildTimeline` (`pulse.js:130`) проецирует email только `if (contact?.id)` через `getTimelineEmailByContact(companyId, contact.id)` (:299-303); сам вход — `GET /timeline/:contactId` (:117), контакт-ключ. → **раздел E требует реальных изменений read-пути.**
+- **`linkMessageToContact` (`emailQueries.js:466`)** ставит `contact_id=$3` без null-guard → `{contact_id:null, timeline_id, on_timeline:true}` привязывает письмо к контактлесс-таймлайну (колонка nullable, `129:23`). Годится как есть.
+- **Yelp lead-путь контакт НЕ создаёт** (`yelpLeadService.js` → `leadsService.createLead`, не `createEmailContact`; Phase-1a lead без телефона — коммент `emailTimelineService.js:112`). → таймлайн остаётся контактлесс; идентичность клиента несёт `display_name`, а НЕ контакт.
+- **Merge-примитивы не подходят под контактлесс-цель.** `mergeContacts(survivorId,dupId,…)` (`contactEmailMergeService.js:530`) сливает dup В контакт-survivor (нам нужно контакт УДАЛИТЬ). `mergeOrphanTimelines(contactId,phones,…)` (`timelineMergeService.js:18`) — по телефону (у Yelp нет). → cleanup = таргетный re-point, НЕ merge-примитив.
+- **Следующая свободная миграция = 165** (164 = `yelp_conversations`).
+
+### A) Схема — миграция `165_yelp_timeline_dedup.sql` (+ rollback)
+
+```sql
+-- 1. Стабильный conv-id ключ на ТАЙМЛАЙНЕ + метка идентичности контактлесс-разговора.
+ALTER TABLE timelines
+  ADD COLUMN IF NOT EXISTS yelp_conversation_id TEXT,
+  ADD COLUMN IF NOT EXISTS display_name         TEXT,   -- имя клиента из parseYelpLead (fallback: subject/'Yelp lead')
+  ADD COLUMN IF NOT EXISTS external_source      TEXT;   -- 'yelp' — бейдж + таргет list-ноги/cleanup
+
+-- 2. Один таймлайн на conv-id в компании (upsert-ключ резолвера).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_timelines_yelp_convo
+  ON timelines(company_id, yelp_conversation_id) WHERE yelp_conversation_id IS NOT NULL;
+
+-- 3. КРИТИЧНО: расширить identity-констрейнт третьим ключом (иначе контактлесс INSERT падает).
+ALTER TABLE timelines DROP CONSTRAINT IF EXISTS chk_timelines_identity;
+ALTER TABLE timelines ADD  CONSTRAINT chk_timelines_identity
+  CHECK (contact_id IS NOT NULL OR phone_e164 IS NOT NULL OR yelp_conversation_id IS NOT NULL);
+
+-- 4. Read-путь Pulse для контактлесс email (раздел E): email по timeline_id.
+CREATE INDEX IF NOT EXISTS idx_email_messages_timeline
+  ON email_messages (company_id, timeline_id, gmail_internal_at) WHERE timeline_id IS NOT NULL;
+
+-- 5. (опц.) связать сущность разговора с таймлайном.
+ALTER TABLE yelp_conversations ADD COLUMN IF NOT EXISTS timeline_id BIGINT REFERENCES timelines(id) ON DELETE SET NULL;
+```
+
+`display_name` — колонка обязательна, не опциональна: у Yelp-лида нет телефона, поэтому существующие механизмы имени Pulse (`co.full_name`, lead-by-phone, `sms.friendly_name`) имя НЕ дадут.
+
+### B) Резолвер + размещение
+
+**`resolveYelpTimeline(companyId, convId, msg, client=db)`** в `timelinesQueries.js` (рядом с `findOrCreateTimelineByContact:242`, но ОТДЕЛЬНАЯ функция — та контакт-центрична, переиспользовать нельзя):
+
+```sql
+INSERT INTO timelines (company_id, yelp_conversation_id, external_source, display_name)
+VALUES ($1,$2,'yelp',$3)
+ON CONFLICT (company_id, yelp_conversation_id) WHERE yelp_conversation_id IS NOT NULL
+DO UPDATE SET updated_at = now(),
+              display_name = COALESCE(timelines.display_name, EXCLUDED.display_name)  -- не затирать хорошее имя
+RETURNING *;
+```
+
+`display_name` = `parseYelpLead(msg)` имя, если есть; иначе оставить NULL (later-письмо с именем дозаполнит через COALESCE). Race-safe через partial-unique-инференс в `ON CONFLICT`.
+
+**Размещение (единая Yelp-ветка НА ВЕРХУ `linkInboundMessage`)** — ПОСЛЕ outbound/draft-гардов (`emailTimelineService.js:102-107`) и ПЕРЕД существующими yelp_lead/yelp_convo short-circuit'ами (:120,:144). Ветка перестраивает текущие два short-circuit'а в один узел:
+
+```
+if (!opts.skipAgent && isYelpRelay(msg)) {          // reuse relay-gate yelpLeadService.js:38
+    const convId = require('../yelpConversationId').parseConversationId(msg);
+    if (!convId) return { skipped: 'yelp_no_convo' };        // раздел D: ноль таймлайна/контакта
+    try {
+        const tl = await timelinesQueries.resolveYelpTimeline(companyId, convId, msg);
+        await emailQueries.linkMessageToContact(msg.provider_message_id, companyId,
+              { contact_id: null, timeline_id: tl.id, on_timeline: true });   // контакт NULL
+        await timelinesQueries.markTimelineUnread(tl.id);                     // всплытие в Pulse
+        realtimeService.publishMessageAdded(toEmailItem(linked), { id:null }, tl.id);
+    } catch (e) { console.error('[EmailTimeline] resolveYelpTimeline fail-open:', e.message); }
+    // greeting/lead side-effects — существующие хендлеры, best-effort, наружу НЕ бросают
+    try { await require('../yelpLeadService').maybeHandleYelpLead(companyId, msg); }  catch (e) {…}
+    try { await require('../yelpLeadService').maybeHandleYelpReply(companyId, msg); } catch (e) {…}
+    return { linked: true, timelineId: tl.id, skipped: 'yelp_convo' };  // ВСЕГДА выход ДО findEmailContact
+}
+```
+
+Ключ: ветка **всегда возвращается** — ни одно `@messaging.yelp.com`-письмо не доходит до `findEmailContact`/`createEmailContact`. Timeline-resolve+link идёт ПЕРЕД greeting'ом, поэтому и handled-, и fall-through-письма садятся на ОДИН conv-id-таймлайн без double-link (link идемпотентен по `(company_id, provider_message_id)`). Fail-open: любая ошибка резолва логируется, но письмо всё равно НЕ утекает в контакт-путь (ветка уже вернулась). Покрывает push И poll (poll даёт `body_text`, `emailTimelineService.js:526`, парсеру этого достаточно).
+
+### C) Никакого контакта из email
+
+Структурная гарантия из (B): Yelp-ветка возвращается до `findEmailContact` → `reviewInboundEmail({noContact})` → `createEmailContact` (`mailAgentService.js:197`) для Yelp-relay недостижим. Существующий `maybeHandleYelpLead`-путь и так контакт не создаёт. Таймлайн остаётся контактлесс; имя несёт `display_name`. Если в будущем lead-путь начнёт создавать контакт — `resolveYelpTimeline` сможет усыновить его (`SET contact_id`), но это ВНЕ scope (owner: «контакты не создавать — ещё лучше»).
+
+### D) Политика no-conv-id (suppress)
+
+Yelp-relay БЕЗ conv-id (`no-reply@*yelp.com`, эхо «New message from ABC Homes», welcome/confirmation) → `return { skipped: 'yelp_no_convo' }`: НОЛЬ таймлайна, НОЛЬ контакта. Обоснование: реальные клиентские сообщения ВСЕГДА несут conv-id (first-form `message_to_business_conversation/<id>` ИЛИ reply-form `%2Fthread%2F<id>` — обе в `parseConversationId`, `yelpConversationId.js:27-29`). Безопасно: suppress срабатывает ТОЛЬКО при (Yelp-домен И нет conv-id); не-Yelp письма ветку не трогают. **Флаг: подтвердить на реальном прод-Yelp-письме** (фикстуры упрощены — deviation YELP-CONVO); никогда не дропать при неуверенности — только no-timeline, нормальный пайплайн для не-Yelp нетронут.
+
+### E) Видимость в Pulse (реальные изменения read-пути)
+
+Контактлесс-таймлайн сегодня не всплывает с email — минимальный, но реальный набор:
+
+1. **LIST `getUnifiedTimelinePage` (`timelinesQueries.js:381`)** — добавить пре-агрегированную CTE-ногу `email_by_timeline` (зеркало `email_by_contact`, но `GROUP BY em.timeline_id` из `email_messages WHERE timeline_id IS NOT NULL AND on_timeline`, обслуживается новым индексом idx_email_messages_timeline) и `LEFT JOIN … ON eml_tl.timeline_id = tl.id`. Влить её в surfacing-предикат (:604-613), в `last_interaction_at`/`GREATEST` (:519,:663) и в SELECT. Экспонировать `tl.display_name AS display_name`. Дисциплина PULSE-PERF-001: одна пред-агрегация, индекс-only, без корреляции по строке.
+2. **DETAIL** — (a) новый вход по timeline_id (напр. `GET /api/pulse/timeline/by-id/:timelineId`, тенант-scoped) → `buildTimeline(req,res,null,timeline)`; (b) в `buildTimeline` (`pulse.js:294-325`) проецировать email ещё и когда `timeline?.id` есть, через новый `getTimelineEmailByTimeline(companyId, timelineId)` (`WHERE company_id=$1 AND timeline_id=$2 AND on_timeline=true` — зеркало `getTimelineEmailByContact:605`); для контактлесс работает только timeline-нога.
+3. **Frontend `PulseContactItem.tsx:116-120`** — добавить `call.display_name` в цепочку fallback имени: `company || leadName || contactName || call.display_name || phone`. Единственная FE-правка; всё прочее — backend read-проекция.
+
+Junk-контакт НЕ создаём — идентичность несёт `display_name`+`external_source='yelp'` (бейдж «Yelp»).
+
+### F) Cleanup (one-time, snapshot-first, НЕ в миграции, по «да» владельца)
+
+Standalone-скрипт (напр. `backend/scripts/yelp_timeline_dedup_cleanup.js`), НЕ миграция:
+
+1. **Snapshot** `pg_dump` затрагиваемых таблиц (timelines, contacts, email_messages) ПЕРЕД любой записью.
+2. Найти 8 junk-контактов (`full_name IN ('Yelp','Yelp Inbox')` + created_by-эвристика createEmailContact, company=DEFAULT).
+3. Для каждого их `email_messages`: `parseConversationId(body_text)` → сгруппировать по conv-id. Для группы: `resolveYelpTimeline` (создать/найти conv-таймлайн, проставить `yelp_conversation_id`+`display_name` из parseYelpLead subject).
+4. **Re-point** (таргетно, НЕ mergeContacts): `UPDATE email_messages SET contact_id=NULL, timeline_id=<convTl>, on_timeline=true WHERE contact_id=<junk>`.
+5. Удалить junk-контакты (FK `ON DELETE SET NULL` на timelines/email_messages уже развяжет) + их ставшие пустыми таймлайны.
+6. Транзакция на компанию; лог diff; идемпотентно-повторяемо.
+
+**Необратимость:** re-point+delete деструктивны — только snapshot-first + явное «да». **Un-groupable residue:** письма без parseable conv-id (эхо/welcome) остаются без conv-таймлайна — оставить контактлесс-таймлайн с `display_name` из subject ЛИБО не трогать (дисп. решит); НЕ угадывать conv-id. `mergeContacts` НЕ использовать (нужен survivor-контакт — у нас цель контактлесс).
+
+### G) Performance / scope / safe-fail
+
+- **Write-time indexed resolve, ноль read-compute:** conv-id резолвится на приёме через `uq_timelines_yelp_convo` (indexed upsert); read-путь Pulse получает indexed `email_by_timeline` (idx_email_messages_timeline). `getById`-паттерн контакта не деградирует.
+- **Default-company scope:** Yelp-путь = `DEFAULT_COMPANY_ID` (как YELP-002); `resolveYelpTimeline`/`getTimelineEmailByTimeline`/list-нога фильтруют `company_id`. Тенант-изоляция сохранена (закрытый ранее cross-tenant SMS-leak в списке не регрессирует — все ноги `= tl.company_id`).
+- **Safe-fail:** вся Yelp-ветка в try/catch, fail-open — `linkInboundMessage` НИКОГДА не крашит push/poll. `parseConversationId` уже null-safe (`yelpConversationId.js:77`).
+
+### Файлы для изменений
+
+**Создать:**
+- `backend/db/migrations/165_yelp_timeline_dedup.sql` + `rollback_165_…` (recheck № при билде).
+- `backend/scripts/yelp_timeline_dedup_cleanup.js` — one-time re-point (раздел F).
+
+**Изменить:**
+- `backend/src/db/timelinesQueries.js` — `resolveYelpTimeline` (B); `email_by_timeline`-нога + `display_name` в `getUnifiedTimelinePage` (E1).
+- `backend/src/db/emailQueries.js` — `getTimelineEmailByTimeline` (E2b).
+- `backend/src/services/email/emailTimelineService.js` — Yelp-ветка на верху `linkInboundMessage` (B), поглощает текущие short-circuit'ы :120/:144, всегда return до `findEmailContact`.
+- `backend/src/routes/pulse.js` — вход по timeline_id + email-проекция по timeline в `buildTimeline` (E2).
+- `frontend/src/components/pulse/PulseContactItem.tsx` — `display_name` в fallback имени (E3).
+
+**НЕ трогаем:** `mailAgentService`/`createEmailContact` (для Yelp просто недостижимы — structural); `yelpLeadService` greeting/lead-логику (переиспользуем `maybeHandleYelpLead`/`maybeHandleYelpReply` как есть); `findOrCreateTimelineByContact` (контакт-путь SMS/email нетронут); merge-сервисы.
+
+### Deviations / риски (top)
+
+1. **[BLOCKER] `chk_timelines_identity`** (`029:20`) обязана быть ослаблена в 165 — иначе контактлесс INSERT падает и фича мертва.
+2. **[BIGGEST SURFACE] Pulse read-путь контакт-центричен** — видимость требует list-CTE `email_by_timeline` + timeline-id detail-входа + `getTimelineEmailByTimeline` + FE-fallback имени. Это и есть суть «видно диспетчеру».
+3. **Yelp-ветка ОБЯЗАНА возвращаться до `findEmailContact`** — иначе fall-through Yelp-relay создаёт junk через `reviewInboundEmail(noContact)→createEmailContact`.
+4. **no-conv-id suppress** зависит от инварианта «клиентские сообщения всегда несут conv-id» — **подтвердить на реальном прод-письме** (фикстуры упрощены); при неуверенности только no-timeline, не блокировать не-Yelp.
+5. **ON CONFLICT partial-index** — указать предикат в инференсе; COALESCE `display_name`, чтобы позднее письмо без имени не занулило хорошее.
+6. **Cleanup необратим** — snapshot-first, не в миграции, `mergeContacts` НЕ подходит (нужен survivor-контакт); un-groupable-residue остаётся контактлесс/нетронутым.
+7. **Возможны две реализации Pulse-списка** (inline `calls.js:294` vs `getUnifiedTimelinePage`) — Implementer должен закрепить живую и править её.
+8. **Миграция 165** — дрейф от параллельных worktree; recheck `ls backend/db/migrations` при билде.

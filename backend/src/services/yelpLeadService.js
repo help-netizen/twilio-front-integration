@@ -40,6 +40,41 @@ const YELP_RELAY_DOMAIN_RE = /@messaging\.yelp\.com$/i;
 // Relay local-part → full reply address + hex thread token.
 const YELP_RELAY_ADDR_RE = /(reply\+([0-9a-f]+)@messaging\.yelp\.com)/i;
 
+// YELP-TIMELINE-DEDUP-001 — Yelp SYSTEM-notification senders (welcome/confirmation
+// echoes, "New message from ABC Homes" notices). These are NOT the customer relay
+// and carry no conv-id; they must NEVER create a junk contact. A no-reply@notify.
+// yelp.com confirmation does NOT match YELP_RELAY_DOMAIN_RE, so BOTH gates are
+// needed to guarantee no junk contact from any Yelp sender (spec §S5 / G-2).
+const YELP_NOTIFY_DOMAIN_RE = /@(?:[a-z0-9-]+\.)*notify\.yelp\.com$/i;
+const YELP_NOREPLY_RE = /^no-?reply@(?:[a-z0-9-]+\.)*yelp\.com$/i;
+
+/**
+ * Is this inbound from the Yelp customer RELAY (reply+<hex>@messaging.yelp.com)?
+ * The one gate the subsuming timeline branch (emailTimelineService) keys on. Reads
+ * only from_email; pure and null-safe.
+ * @param {object} msg
+ * @returns {boolean}
+ */
+function isYelpRelay(msg) {
+    const from = String((msg && msg.from_email) || '').trim().toLowerCase();
+    return !!from && YELP_RELAY_DOMAIN_RE.test(from);
+}
+
+/**
+ * Is this inbound a Yelp SYSTEM notification (no-reply@*yelp.com / *@notify.yelp.com)
+ * that is NOT the customer relay? Used to suppress junk-contact creation from Yelp
+ * senders that do not enter the relay branch. Pure and null-safe; never overlaps a
+ * relay message (a relay is checked first by the caller).
+ * @param {object} msg
+ * @returns {boolean}
+ */
+function isYelpNoise(msg) {
+    const from = String((msg && msg.from_email) || '').trim().toLowerCase();
+    if (!from) return false;
+    if (YELP_RELAY_DOMAIN_RE.test(from)) return false; // the relay is handled by isYelpRelay, not here
+    return YELP_NOREPLY_RE.test(from) || YELP_NOTIFY_DOMAIN_RE.test(from);
+}
+
 // First-message signals (either satisfies the second half of the AND-gate).
 const FIRST_MESSAGE_UTM_RE = /utm_source=request_a_quote_first_message/i;
 const NEW_MESSAGE_UTM_RE = /utm_source=request_a_quote_new_message/i;
@@ -586,6 +621,8 @@ async function maybeHandleYelpReply(companyId, msg) {
 module.exports = {
     detectYelpLead,
     detectYelpReply,
+    isYelpRelay,
+    isYelpNoise,
     parseYelpLead,
     maybeHandleYelpLead,
     maybeHandleYelpReply,

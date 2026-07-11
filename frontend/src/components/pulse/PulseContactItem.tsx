@@ -112,7 +112,9 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
         ? call.contact.full_name : null;
     const primaryText = isAnon
         ? 'Anonymous'
-        : (company || leadName || contactName || formatPhoneNumber(displayPhone));
+        // YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline has no company/
+        // lead/contact — fall back to its denormalized display_name before the phone.
+        : (company || leadName || contactName || (call as any).display_name || formatPhoneNumber(displayPhone));
     const showSecondaryPhone = !isAnon && !!(company || leadName || contactName);
 
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);

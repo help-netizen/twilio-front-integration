@@ -623,6 +623,33 @@ async function getTimelineEmailByContact(companyId, contactId, { limit } = {}) {
 }
 
 /**
+ * YELP-TIMELINE-DEDUP-001: a CONTACTLESS timeline's email, oldest→newest. Mirror of
+ * getTimelineEmailByContact but keyed on `timeline_id` (contact_id is NULL for a
+ * Yelp conv-id timeline). Tenant + timeline scoped, only projected rows
+ * (`on_timeline = true`), served by idx_email_messages_timeline (mig 165). Same row
+ * shape as getTimelineEmailByContact so buildTimeline projects both identically.
+ */
+async function getTimelineEmailByTimeline(companyId, timelineId, { limit } = {}) {
+    const params = [companyId, timelineId];
+    let limitClause = '';
+    if (limit != null) {
+        params.push(limit);
+        limitClause = ` LIMIT $${params.length}`;
+    }
+    const result = await db.query(
+        `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                sent_by_user_email,
+                (direction = 'outbound') AS is_outbound
+         FROM email_messages
+         WHERE company_id = $1 AND timeline_id = $2 AND on_timeline = true
+         ORDER BY gmail_internal_at ASC, id ASC${limitClause}`,
+        params
+    );
+    return result.rows;
+}
+
+/**
  * Newest email thread (local `email_messages.thread_id`) linked to the contact,
  * any direction, on or off timeline — drives the outbound reply-vs-initiate
  * decision (§5/TASK-ET-8). Returns the thread_id (BIGINT) or null when the
@@ -753,6 +780,7 @@ module.exports = {
     listUnlinkedOutboundForTimeline,
     listConnectedMailboxes,
     getTimelineEmailByContact,
+    getTimelineEmailByTimeline, // YELP-TIMELINE-DEDUP-001
     getNewestThreadIdForContact,
     getMailboxByEmail,
     updateWatchState,

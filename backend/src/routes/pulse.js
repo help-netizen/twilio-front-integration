@@ -291,36 +291,37 @@ async function buildTimeline(req, res, contact, timeline) {
         }
     }
 
-    // Email messages projected onto this contact's timeline (EMAIL-TIMELINE-001 §6).
-    // Only fires when there is a resolved contact (BIGINT id) — orphan/contact-less
-    // timelines have no linked email, so email_messages stays []. The query itself
-    // is company- + contact-scoped and filters on on_timeline = true.
+    // Email messages projected onto this timeline. A contact-linked timeline reads
+    // by contact_id (EMAIL-TIMELINE-001 §6). A CONTACTLESS conv-id timeline
+    // (YELP-TIMELINE-DEDUP-001) has no contact, so it reads by timeline_id — its
+    // email_messages carry contact_id NULL, timeline_id set. Both queries are
+    // company-scoped and filter on on_timeline = true; the row shape is identical.
     let emailMessages = [];
-    if (contact?.id) {
-        const companyId = tenantCompanyId(req);
-        if (companyId) {
-            try {
-                const emailRows = await emailQueries.getTimelineEmailByContact(companyId, contact.id);
-                emailMessages = emailRows.map(row => ({
-                    id: row.id,
-                    type: 'email',
-                    direction: row.direction,
-                    is_outbound: row.is_outbound,
-                    from_email: row.from_email,
-                    from_name: row.from_name,
-                    to_email: row.to_recipients_json,
-                    subject: row.subject,
-                    // Quote-strip the STORED body for display only (storage untouched).
-                    body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
-                    // RAW HTML body (un-quote-stripped, un-sanitized) — sanitized client-side.
-                    body_html: row.body_html || null,
-                    sent_at: row.gmail_internal_at,
-                    thread_id: row.thread_id,
-                    sent_by_user_email: row.sent_by_user_email,
-                }));
-            } catch (err) {
-                console.error('[Pulse] timeline email query error:', err.message);
-            }
+    const emailCompanyId = tenantCompanyId(req);
+    if (emailCompanyId && (contact?.id || timeline?.id)) {
+        try {
+            const emailRows = contact?.id
+                ? await emailQueries.getTimelineEmailByContact(emailCompanyId, contact.id)
+                : await emailQueries.getTimelineEmailByTimeline(emailCompanyId, timeline.id);
+            emailMessages = emailRows.map(row => ({
+                id: row.id,
+                type: 'email',
+                direction: row.direction,
+                is_outbound: row.is_outbound,
+                from_email: row.from_email,
+                from_name: row.from_name,
+                to_email: row.to_recipients_json,
+                subject: row.subject,
+                // Quote-strip the STORED body for display only (storage untouched).
+                body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
+                // RAW HTML body (un-quote-stripped, un-sanitized) — sanitized client-side.
+                body_html: row.body_html || null,
+                sent_at: row.gmail_internal_at,
+                thread_id: row.thread_id,
+                sent_by_user_email: row.sent_by_user_email,
+            }));
+        } catch (err) {
+            console.error('[Pulse] timeline email query error:', err.message);
         }
     }
 
@@ -342,6 +343,10 @@ async function buildTimeline(req, res, contact, timeline) {
         email_messages: emailMessages,
         financial_events: financialEvents,
         timeline_id: timeline?.id || null,
+        // YELP-TIMELINE-DEDUP-001: label + badge for a contactless conv-id timeline
+        // (contact is NULL, so the header falls back to these).
+        display_name: timeline?.display_name || null,
+        external_source: timeline?.external_source || null,
         contact: contactOut,
     });
 }

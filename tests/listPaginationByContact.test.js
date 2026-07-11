@@ -76,8 +76,11 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         const [sql] = await run();
         // MAIL-MUTE-001 wraps ONLY the email term in `CASE WHEN NOT em.email_muted …`
         // so a muted email no longer bumps ordering; call/SMS terms are unchanged.
+        // YELP-TIMELINE-DEDUP-001 appends the contactless timeline-email leg
+        // (eml_tl.last_message_at) as a 4th GREATEST arg so a Yelp conv-id timeline
+        // orders by its latest message; call/SMS/contact-email terms are unchanged.
         expect(sql).toContain(
-            'GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END)'
+            'GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END, eml_tl.last_message_at)'
         );
         // Call & SMS remain the first two GREATEST args, byte-for-byte.
         expect(sql).toContain('GREATEST(latest_call.started_at, sms.last_message_at,');
@@ -109,8 +112,10 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         // Band 3: recency — the ORDER-BY GREATEST mirrors the SELECT exactly, so the
         // email term is likewise gated by MAIL-MUTE-001 (ranking must not desync from
         // the reported last_interaction_at); call/SMS terms unchanged.
+        // YELP-TIMELINE-DEDUP-001: the ORDER-BY GREATEST likewise gains the
+        // eml_tl.last_message_at leg so ranking stays in sync with the SELECT value.
         expect(order).toContain(
-            'GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END) DESC'
+            'GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END, eml_tl.last_message_at) DESC'
         );
         // Deterministic final tiebreak
         expect(order.trimEnd().endsWith('tl.id DESC') || order.includes('tl.id DESC\n')).toBe(true);
@@ -265,11 +270,15 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         expect(cte).toMatch(
             /SELECT DISTINCT ON \(contact_id\)\s+contact_id,\s+email_thread_id,\s+email_subject,\s+last_message_at,\s+last_message_direction,\s+unread_count\s+FROM \(/
         );
-        // Outside the CTE nothing moved: join, surfacing predicate, outer aliases.
+        // Outside the CTE the contact leg is unchanged; YELP-TIMELINE-DEDUP-001 adds a
+        // SIBLING email_by_timeline leg (eml_tl) and COALESCEs the two email columns so
+        // a contactless conv-id timeline surfaces its email. The contact-email CTE shape
+        // and the unread_count alias are untouched.
         expect(sql).toContain('LEFT JOIN email_by_contact eml ON eml.contact_id = tl.contact_id');
+        expect(sql).toContain('LEFT JOIN email_by_timeline eml_tl ON eml_tl.timeline_id = tl.id');
         expect(sql).toContain('eml.email_thread_id IS NOT NULL');
-        expect(sql).toContain('eml.last_message_at as email_last_message_at');
-        expect(sql).toContain('eml.last_message_direction as email_last_message_direction');
+        expect(sql).toContain('COALESCE(eml.last_message_at, eml_tl.last_message_at) as email_last_message_at');
+        expect(sql).toContain('COALESCE(eml.last_message_direction, eml_tl.last_message_direction) as email_last_message_direction');
         expect(sql).toContain('eml.unread_count as email_unread_count');
     });
 

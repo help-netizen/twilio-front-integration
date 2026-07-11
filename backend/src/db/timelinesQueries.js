@@ -316,6 +316,50 @@ async function findOrCreateTimelineByContact(contactId, companyId = null, client
 }
 
 /**
+ * YELP-TIMELINE-DEDUP-001 — upsert the ONE contactless timeline for a Yelp
+ * conversation, keyed on the STABLE conv-id (never the per-message-varying
+ * reply+<hex> relay). SEPARATE from findOrCreateTimelineByContact, which is
+ * contact-centric — this row is deliberately contactless + phoneless, admitted by
+ * the mig-165 widened chk_timelines_identity (yelp_conversation_id IS NOT NULL).
+ *
+ * Idempotent on the partial-unique index uq_timelines_yelp_convo
+ * (company_id, yelp_conversation_id): every turn of a conversation (first message +
+ * N replies from different relay hexes) collapses onto ONE row. COALESCE keeps a
+ * good display_name from being nulled by a later name-less message. Company-scoped.
+ *
+ * @param {string} companyId
+ * @param {string} convId    the stable Yelp conv-id (parseConversationId)
+ * @param {object} msg       NormalizedInboundMessage — parsed for display_name
+ * @param {{query: Function}} [client=db]
+ * @returns {Promise<object|null>} the upserted timeline row
+ */
+async function resolveYelpTimeline(companyId, convId, msg, client = db) {
+    const cid = companyId || DEFAULT_COMPANY_ID;
+
+    // display_name from the parsed customer name if present; else NULL (a later
+    // email that DOES carry a name back-fills it via the COALESCE below). Lazy
+    // require avoids a service↔query load cycle; parseYelpLead is fail-safe.
+    let displayName = null;
+    try {
+        const parsed = require('../services/yelpLeadService').parseYelpLead(msg);
+        displayName = (parsed && parsed.name) || null;
+    } catch (e) {
+        displayName = null;
+    }
+
+    const result = await client.query(
+        `INSERT INTO timelines (company_id, yelp_conversation_id, external_source, display_name)
+         VALUES ($1, $2, 'yelp', $3)
+         ON CONFLICT (company_id, yelp_conversation_id) WHERE yelp_conversation_id IS NOT NULL
+         DO UPDATE SET updated_at = now(),
+                       display_name = COALESCE(timelines.display_name, EXCLUDED.display_name)
+         RETURNING *`,
+        [cid, convId, displayName]
+    );
+    return result.rows[0] || null;
+}
+
+/**
  * LIST-PAGINATION-001 — the ONE timeline-rooted, SQL-ordered, offset/limit
  * page that backs the Pulse sidebar (`GET /api/calls/by-contact`).
  *
@@ -468,10 +512,46 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              -- deterministic (previously plan-dependent). Non-semantic ordering
              -- fix, not a behavior change.
              ORDER BY contact_id, last_message_at DESC NULLS LAST, email_thread_id DESC
+         ),
+         email_by_timeline AS (
+             -- YELP-TIMELINE-DEDUP-001: a CONTACTLESS timeline (Yelp conv-id) has no
+             -- contact, so email_by_contact (keyed contact_id) never surfaces its
+             -- email. This leg keys on timeline_id instead — one pre-aggregation over
+             -- email_messages, served by idx_email_messages_timeline (mig 165), no
+             -- per-row correlation (PULSE-PERF-001 discipline). Company-scoped ($1).
+             SELECT em.timeline_id,
+                    MAX(em.gmail_internal_at) AS last_message_at,
+                    (ARRAY_AGG(em.thread_id ORDER BY em.gmail_internal_at DESC NULLS LAST, em.id DESC))[1] AS email_thread_id,
+                    (ARRAY_AGG(em.subject   ORDER BY em.gmail_internal_at DESC NULLS LAST, em.id DESC))[1] AS email_subject,
+                    (ARRAY_AGG(em.direction ORDER BY em.gmail_internal_at DESC NULLS LAST, em.id DESC))[1] AS last_message_direction
+             FROM email_messages em
+             WHERE em.company_id = $1
+               AND em.timeline_id IS NOT NULL
+               AND em.on_timeline = true
+               -- MAIL-MUTE-001 regression guard: scope this timeline-keyed leg to
+               -- GENUINELY-CONTACTLESS emails. linkMessageToContact stamps
+               -- timeline_id + on_timeline=true on NORMAL contact-keyed emails too
+               -- (emailTimelineService contact path), so WITHOUT this predicate a
+               -- MUTED contact's email would re-enter via eml_tl and drive both the
+               -- surfacing predicate (eml_tl.email_thread_id IS NOT NULL, ~:685+13)
+               -- and the last_interaction_at GREATEST terms (SELECT + ORDER BY) —
+               -- bypassing the NOT em.email_muted filter that ONLY the
+               -- email_by_contact leg applies. Yelp/contactless links set
+               -- contact_id=NULL (emailTimelineService contactless path; TC-11
+               -- confirms it stays NULL after lead adoption), so contactless
+               -- timelines STILL surface through this leg; contact-keyed emails
+               -- (muted or not) are served solely by the mute-respecting
+               -- email_by_contact leg.
+               AND em.contact_id IS NULL
+             GROUP BY em.timeline_id
          )
          SELECT
              latest_call.*,
              to_json(co) as contact,
+             -- YELP-TIMELINE-DEDUP-001: denormalized label + origin badge for a
+             -- contactless timeline (co is NULL, so its name comes from here).
+             tl.display_name AS display_name,
+             tl.external_source AS external_source,
              tl.id as tl_id,
              tl.id as timeline_id,
              tl.has_unread as tl_has_unread,
@@ -504,10 +584,12 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              sms.friendly_name as sms_friendly_name,
              sms.has_unread as sms_has_unread,
              sms.sms_conversation_id,
-             eml.email_thread_id,
-             eml.email_subject,
-             eml.last_message_at as email_last_message_at,
-             eml.last_message_direction as email_last_message_direction,
+             -- YELP-TIMELINE-DEDUP-001: prefer the contact leg (contact-linked
+             -- timelines), fall back to the timeline leg (contactless Yelp rows).
+             COALESCE(eml.email_thread_id, eml_tl.email_thread_id) as email_thread_id,
+             COALESCE(eml.email_subject, eml_tl.email_subject) as email_subject,
+             COALESCE(eml.last_message_at, eml_tl.last_message_at) as email_last_message_at,
+             COALESCE(eml.last_message_direction, eml_tl.last_message_direction) as email_last_message_direction,
              eml.unread_count as email_unread_count,
              -- MAIL-MUTE-001: expose the per-row mute flag (computed once in the
              -- em LATERAL below) so consumers can inspect it; also referenced by
@@ -516,7 +598,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              em.email_muted AS email_muted,
              -- MAIL-MUTE-001: a muted email must not bump ordering — drop its
              -- last_message_at from the GREATEST when email_muted.
-             GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END) AS last_interaction_at,
+             GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END, eml_tl.last_message_at) AS last_interaction_at,
              (tl.has_unread OR COALESCE(sms.has_unread, false)
               OR (COALESCE(eml.unread_count, 0) > 0 AND NOT em.email_muted) OR COALESCE(co.has_unread, false)) AS any_unread,
              COUNT(*) OVER() AS total_count
@@ -569,6 +651,10 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              LIMIT 1
          ) sms ON true
          LEFT JOIN email_by_contact eml ON eml.contact_id = tl.contact_id
+         -- YELP-TIMELINE-DEDUP-001: the timeline-keyed email leg surfaces a
+         -- CONTACTLESS conv-id timeline (eml above is NULL for it). Company scope is
+         -- inside the CTE (em.company_id = $1); the join is a bare timeline_id match.
+         LEFT JOIN email_by_timeline eml_tl ON eml_tl.timeline_id = tl.id
          -- MAIL-MUTE-001: compute the per-row email_muted scalar ONCE here so it
          -- can be referenced by name in the SELECT, the surfacing WHERE, and the
          -- ORDER BY (a SELECT-list alias is not visible in WHERE/ORDER BY). The
@@ -609,6 +695,9 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
                 -- never enters the COUNT(*) OVER() window either (page stays
                 -- <= limit; pagination integrity — FR-5).
                 OR (eml.email_thread_id IS NOT NULL AND NOT em.email_muted)
+                -- YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline surfaces on
+                -- its timeline-keyed email signal (no contact/call/SMS to lean on).
+                OR eml_tl.email_thread_id IS NOT NULL
                 OR open_task.id IS NOT NULL
                 OR tl.is_action_required = true OR tl.has_unread = true)
            -- Orphan-shadow dedup (done in SQL, BEFORE the LIMIT, so the page stays
@@ -660,7 +749,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
            -- MAIL-MUTE-001: mirror the SELECT last_interaction_at exactly (drop a
            -- muted email's last_message_at) -- otherwise the recency rank would
            -- desync from the value the row reports.
-           GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END) DESC NULLS LAST,
+           GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END, eml_tl.last_message_at) DESC NULLS LAST,
            tl.id DESC
          LIMIT $2 OFFSET $3`,
         params
@@ -847,6 +936,7 @@ module.exports = {
     markTimelineRead,
     findOrCreateTimeline,
     findOrCreateTimelineByContact,
+    resolveYelpTimeline,
     findOrCreateAnonymousTimeline,
     reassignShadowOrphanOpenTasks,
     ANONYMOUS_PHONE_SENTINEL,

@@ -106,48 +106,105 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
             return { skipped: 'draft_or_sent' };
         }
 
-        // (a.4) YELP-LEAD-AUTORESPONDER-001 — intercept a Yelp *new-lead* email
-        //     BEFORE the mute guard and (crucially) BEFORE the no-contact
-        //     Mail-Secretary branch below (l.~141). A Phase-1a Yelp lead has no
-        //     phone → no contact, so without this early intercept it would hit
-        //     reviewInboundEmail({noContact:true}) and generate a mail-agent
-        //     review/AR task. When the autoresponder handles it, we short-circuit
-        //     with {skipped:'yelp_lead'} — no link, no unread, no SSE, no review.
-        //     Gated on !opts.skipAgent (same gate the agent paths use) and fully
-        //     fail-open (mirrors the isSenderMuted try/catch below): a handler
-        //     problem must NEVER early-return wrongly and must NEVER throw out of
-        //     the pipeline — the email then just flows through the normal path.
+        // (a.4) YELP-TIMELINE-DEDUP-001 — the ONE subsuming Yelp node. A Yelp relay
+        //     message (reply+<hex>@messaging.yelp.com, whose hex VARIES per message)
+        //     keys ONE CONTACTLESS timeline off the STABLE conv-id parsed from the
+        //     body (never the relay), links EVERY message of the conversation onto it,
+        //     marks it unread + SSEs (so Pulse surfaces it labeled by display_name),
+        //     then runs the existing greeter handlers best-effort. It SUBSUMES the
+        //     former yelp_lead / yelp_convo short-circuits: the link+surface happens
+        //     FIRST, the greeting after, and the branch ALWAYS returns before
+        //     findEmailContact → reviewInboundEmail → createEmailContact — which is
+        //     therefore STRUCTURALLY unreachable for ANY Yelp sender (spec §C: no junk
+        //     contact, ever). Gated on !opts.skipAgent; every step is fail-open (a
+        //     fault never re-enables the junk-contact path — the branch has already
+        //     committed to Yelp and returns).
         if (!opts.skipAgent) {
-            try {
-                const yelp = await require('../yelpLeadService').maybeHandleYelpLead(companyId, msg);
-                if (yelp && yelp.handled) {
-                    // Pass through the greeter the detector chose: 'yelp_lead' (Phase A),
-                    // or 'yelp_convo' when the Phase-B greeter switch (YELP_CONVO_ENABLED)
-                    // subsumes the first-message greeting into a yelp_convo turn-0. Both
-                    // short-circuit identically (no link/unread/SSE/Mail-Secretary review).
-                    return { skipped: yelp.skipped || 'yelp_lead' };
+            const yelpLeadService = require('../yelpLeadService');
+
+            if (yelpLeadService.isYelpRelay(msg)) {
+                // The stable conv-id is the timeline key. NO conv-id (echo / welcome /
+                // notification) → suppress entirely: zero timeline, zero contact, no
+                // link, no SSE. Real customer messages ALWAYS carry a conv-id.
+                const convId = require('../yelpConversationId').parseConversationId(msg);
+                if (!convId) {
+                    return { skipped: 'yelp_no_convo' };
                 }
-            } catch (e) {
-                console.error('[EmailTimeline] maybeHandleYelpLead failed (fail-open):', e.message);
+
+                let timelineId = null;
+                let linked = false;
+                let alreadyLinked = false;
+                try {
+                    const tl = await timelinesQueries.resolveYelpTimeline(companyId, convId, msg);
+                    timelineId = tl && tl.id != null ? tl.id : null;
+                    if (timelineId != null) {
+                        // IDEMPOTENCY: key on the timeline link (on_timeline +
+                        // timeline_id), NOT contact_id — a contactless link has
+                        // contact_id NULL, which the legacy `contact_id != null` guard
+                        // (:204) misreads as "never linked" and re-unreads / re-SSEs on
+                        // every push+poll redelivery (spec §S7).
+                        const existing = await emailQueries.getMessageLinkState(msg.provider_message_id, companyId);
+                        alreadyLinked = !!(existing && existing.on_timeline && existing.timeline_id === timelineId);
+
+                        const linkedRow = await emailQueries.linkMessageToContact(
+                            msg.provider_message_id,
+                            companyId,
+                            { contact_id: null, timeline_id: timelineId, on_timeline: true }
+                        );
+                        linked = !!linkedRow;
+
+                        if (linkedRow && !alreadyLinked) {
+                            await timelinesQueries.markTimelineUnread(timelineId);
+                            try {
+                                realtimeService.publishMessageAdded(toEmailItem(linkedRow), { id: null }, timelineId);
+                            } catch (e) {
+                                console.error('[EmailTimeline] Yelp publishMessageAdded failed:', e.message);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Fail-open: a resolve/link fault must not crash push/poll AND must
+                    // not fall through to the contact path (we still return below).
+                    console.error('[EmailTimeline] resolveYelpTimeline fail-open:', e.message);
+                }
+
+                // Greeting / lead side-effects — the EXISTING handlers, reused as-is,
+                // each independently fail-open. Lead first; if it did not handle, the
+                // respondable-reply router. Runs AFTER the link so handled- AND
+                // fall-through emails all sit on the SAME conv-id timeline.
+                let skipped = 'yelp_convo';
+                let handledByLead = false;
+                try {
+                    const yl = await yelpLeadService.maybeHandleYelpLead(companyId, msg);
+                    if (yl && yl.handled) {
+                        handledByLead = true;
+                        skipped = yl.skipped || 'yelp_lead';
+                    }
+                } catch (e) {
+                    console.error('[EmailTimeline] maybeHandleYelpLead failed (fail-open):', e.message);
+                }
+                if (!handledByLead) {
+                    try {
+                        const yr = await yelpLeadService.maybeHandleYelpReply(companyId, msg);
+                        if (yr && yr.handled) {
+                            skipped = yr.skipped || 'yelp_convo';
+                        }
+                    } catch (e) {
+                        console.error('[EmailTimeline] maybeHandleYelpReply failed (fail-open):', e.message);
+                    }
+                }
+
+                // ALWAYS return here — the branch NEVER reaches findEmailContact, so no
+                // @messaging.yelp.com email can create a contact (spec §C / deviation #3).
+                const out = { linked, timelineId, skipped };
+                if (alreadyLinked) out.alreadyLinked = true;
+                return out;
             }
 
-            // (a.4b) YELP-CONVO-BOOKING-001 (Phase A) — a RESPONDABLE Yelp reply that
-            //     matches a KNOWN active conversation (by the stable body conv-id, not
-            //     the varying reply+<hex> relay) → enqueue a `yelp_convo` turn task and
-            //     short-circuit {skipped:'yelp_convo'} (no link, no unread, no SSE, no
-            //     Mail-Secretary review — mirrors the yelp_lead short-circuit above). A
-            //     reply to an UNKNOWN conversation returns not-handled and falls through
-            //     to the normal pipeline unchanged. Same !opts.skipAgent gate, same
-            //     fail-open try/catch (a handler problem must NOT early-return wrongly
-            //     and must NOT throw out of the pipeline). Placed AFTER the first-message
-            //     hook and BEFORE the mute + no-contact Mail-Secretary branch below.
-            try {
-                const yr = await require('../yelpLeadService').maybeHandleYelpReply(companyId, msg);
-                if (yr && yr.handled) {
-                    return { skipped: 'yelp_convo' };
-                }
-            } catch (e) {
-                console.error('[EmailTimeline] maybeHandleYelpReply failed (fail-open):', e.message);
+            // Yelp SYSTEM noise (no-reply@*yelp.com / *@notify.yelp.com) never enters
+            // the relay branch above yet must ALSO never create a contact → suppress.
+            if (yelpLeadService.isYelpNoise(msg)) {
+                return { skipped: 'yelp_no_convo' };
             }
         }
 

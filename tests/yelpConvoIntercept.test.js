@@ -65,6 +65,7 @@ jest.mock('../backend/src/db/emailQueries', () => ({
 }));
 jest.mock('../backend/src/db/timelinesQueries', () => ({
     findOrCreateTimelineByContact: jest.fn(),
+    resolveYelpTimeline: jest.fn(), // YELP-TIMELINE-DEDUP-001
     markTimelineUnread: jest.fn(),
     setActionRequired: jest.fn(),
     createTask: jest.fn(),
@@ -120,6 +121,12 @@ beforeEach(() => {
     mockUpdateState.mockResolvedValue(convRow());
     mailAgentService.isSenderMuted.mockResolvedValue(false);
     emailQueries.findEmailContact.mockResolvedValue(null);
+    // YELP-TIMELINE-DEDUP-001 subsuming-branch defaults: every Yelp relay message
+    // now ALSO links to its conv-id timeline (contactless) before the greeter runs.
+    timelinesQueries.resolveYelpTimeline.mockImplementation((co, cid) =>
+        Promise.resolve({ id: 7001, yelp_conversation_id: cid, display_name: 'Kim L.', external_source: 'yelp' }));
+    emailQueries.getMessageLinkState.mockResolvedValue(null);
+    emailQueries.linkMessageToContact.mockResolvedValue({ id: 1, direction: 'inbound', thread_id: 'ythr-NEW-1' });
 });
 
 // ── YCB-INT-01 · first-message → lead + conversation upsert (+ greet) ──────────
@@ -127,7 +134,9 @@ describe('YCB-INT-01 · first message → lead + conversation upsert + greet (Ph
     it('createLead once, upsert (company, convId), yelp_lead enqueued, {skipped:yelp_lead}', async () => {
         const res = await svc.linkInboundMessage(COMPANY, yNew());
 
-        expect(res).toEqual({ skipped: 'yelp_lead' });
+        // MIGRATED (YELP-TIMELINE-DEDUP-001): the subsuming branch links the contactless
+        // timeline + SSEs, then STILL greets → a hybrid {linked,timelineId,skipped} shape.
+        expect(res).toMatchObject({ linked: true, timelineId: 7001, skipped: 'yelp_lead' });
 
         // (1) exactly one lead, JobSource Yelp
         expect(mockCreateLead).toHaveBeenCalledTimes(1);
@@ -144,10 +153,14 @@ describe('YCB-INT-01 · first message → lead + conversation upsert + greet (Ph
         expect(taskInsertsOfType('yelp_lead')).toHaveLength(1);
         expect(taskInsertsOfType('yelp_convo')).toHaveLength(0);
 
-        // (4) short-circuit — no review / unread / SSE; contact lookup never reached
+        // (4) NEW: the message links to the conv-id timeline (contactless) + SSEs.
+        expect(emailQueries.linkMessageToContact).toHaveBeenCalledWith(
+            'ymsg-NEW-1', COMPANY, { contact_id: null, timeline_id: 7001, on_timeline: true });
+        expect(realtimeService.publishMessageAdded).toHaveBeenCalledTimes(1);
+        // INVARIANTS THAT STAY: no Mail-Secretary review, no CONTACT unread, no junk
+        // contact lookup (contactless → markTimelineUnread, not markContactUnread).
         expect(mailAgentService.reviewInboundEmail).not.toHaveBeenCalled();
         expect(queries.markContactUnread).not.toHaveBeenCalled();
-        expect(realtimeService.publishMessageAdded).not.toHaveBeenCalled();
         expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
     });
 });
@@ -174,8 +187,8 @@ describe('YCB-INT-01 [B] · GREETER-SWITCH — YELP_CONVO_ENABLED ON → yelp_co
             // turn-0 claim key is suffixed so it never collides with the lead claim on the bare pmid
             expect(input.inbound_provider_message_id).toBe('ymsg-NEW-1:greet0');
 
-            // still short-circuits the Mail Secretary, now as yelp_convo
-            expect(res).toEqual({ skipped: 'yelp_convo' });
+            // still short-circuits the Mail Secretary, now as yelp_convo (+ linked)
+            expect(res).toMatchObject({ linked: true, timelineId: 7001, skipped: 'yelp_convo' });
             expect(mailAgentService.reviewInboundEmail).not.toHaveBeenCalled();
         } finally {
             delete process.env.YELP_CONVO_ENABLED;
@@ -187,7 +200,7 @@ describe('YCB-INT-01 [B] · GREETER-SWITCH — YELP_CONVO_ENABLED ON → yelp_co
         const res = await svc.linkInboundMessage(COMPANY, yNew());
         expect(taskInsertsOfType('yelp_lead')).toHaveLength(1);
         expect(taskInsertsOfType('yelp_convo')).toHaveLength(0);
-        expect(res).toEqual({ skipped: 'yelp_lead' });
+        expect(res).toMatchObject({ linked: true, skipped: 'yelp_lead' });
     });
 });
 
@@ -223,8 +236,9 @@ describe('YCB-INT-02 · INT-reply-to-convo-not-lead (SAB-INT-DROP-REPLY-BRANCH)'
             expect.objectContaining({ last_reply_to: 'reply+aa11bb22cc33dd44@messaging.yelp.com' })
         );
 
-        // (4) short-circuit
-        expect(res).toEqual({ skipped: 'yelp_convo' });
+        // (4) short-circuit — now ALSO links the contactless conv-id timeline + SSEs
+        expect(res).toMatchObject({ linked: true, timelineId: 7001, skipped: 'yelp_convo' });
+        expect(realtimeService.publishMessageAdded).toHaveBeenCalledTimes(1);
         expect(mailAgentService.reviewInboundEmail).not.toHaveBeenCalled();
         expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
     });
@@ -241,23 +255,32 @@ describe('YCB-INT-03 · unknown / null conv-id reply → fall-through, not misth
         const res = await svc.linkInboundMessage(COMPANY, msg);
 
         expect(mockGetByConvId).toHaveBeenCalledWith(COMPANY, 'UNKNOWNxyz');
+        // MIGRATED: an unknown conv-id is NOT misthreaded (no convo task, no lead, no
+        // cross-thread write) — but it DOES key its own contactless timeline (every
+        // conv-id message is visible), so the result is the hybrid link shape, not
+        // {skipped:'no_contact'}. It never reaches the junk-contact path.
         expect(taskInsertsOfType('yelp_convo')).toHaveLength(0);
         expect(mockCreateLead).not.toHaveBeenCalled();
         expect(mockUpdateState).not.toHaveBeenCalled();     // no cross-thread write
-        expect(res).toEqual({ skipped: 'no_contact' });     // normal pipeline (no contact)
+        expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
+        expect(res).toMatchObject({ linked: true, timelineId: 7001, skipped: 'yelp_convo' });
     });
 
-    it('no conv-id in a respondable body → parser null → fall-through, no throw', async () => {
+    it('no conv-id in a respondable body → parser null → suppressed, no throw', async () => {
         const msg = yReplyRespondable({
             body_text: 'Kim replied. View: https://www.yelp.com/messaging?utm_source=request_a_quote_new_message_respondable',
         });
 
         const res = await svc.linkInboundMessage(COMPANY, msg);
 
+        // MIGRATED: a Yelp relay with NO parseable conv-id is suppressed at the TOP of
+        // the branch (before the greeters) — zero timeline, zero contact.
+        expect(timelinesQueries.resolveYelpTimeline).not.toHaveBeenCalled();
         expect(mockGetByConvId).not.toHaveBeenCalled();     // never looked up a garbage key
         expect(taskInsertsOfType('yelp_convo')).toHaveLength(0);
         expect(mockCreateLead).not.toHaveBeenCalled();
-        expect(res).toEqual({ skipped: 'no_contact' });
+        expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
+        expect(res).toEqual({ skipped: 'yelp_no_convo' });
     });
 });
 
@@ -271,7 +294,11 @@ describe('YCB-INT-04 · no-reply@notify.yelp.com → ignored by both branches', 
         expect(mockGetByConvId).not.toHaveBeenCalled();
         expect(taskInsertsOfType('yelp_lead')).toHaveLength(0);
         expect(taskInsertsOfType('yelp_convo')).toHaveLength(0);
-        expect(res).toEqual({ skipped: 'no_contact' }); // continues the normal pipeline
+        // MIGRATED: a Yelp SYSTEM sender (no-reply@notify.yelp.com) is now suppressed by
+        // the isYelpNoise gate → {skipped:'yelp_no_convo'}, guaranteeing no junk contact
+        // (previously it fell to the Secretary's no-contact path). Either way: no contact.
+        expect(mailAgentService.reviewInboundEmail).not.toHaveBeenCalled();
+        expect(res).toEqual({ skipped: 'yelp_no_convo' });
     });
 });
 
@@ -297,11 +324,13 @@ describe('YCB-DEC-04 · reply short-circuits the Mail Secretary (no duplicate re
 
         const res = await svc.linkInboundMessage(COMPANY, yReplyRespondable());
 
-        expect(res).toEqual({ skipped: 'yelp_convo' });
+        // MIGRATED: the reply short-circuits the Mail Secretary AND links the contactless
+        // conv-id timeline (SSE now fires; contact unread does NOT — it's contactless).
+        expect(res).toMatchObject({ linked: true, timelineId: 7001, skipped: 'yelp_convo' });
         expect(mailAgentService.reviewInboundEmail).not.toHaveBeenCalled();
         expect(timelinesQueries.createTask).not.toHaveBeenCalled();
         expect(queries.markContactUnread).not.toHaveBeenCalled();
-        expect(realtimeService.publishMessageAdded).not.toHaveBeenCalled();
+        expect(realtimeService.publishMessageAdded).toHaveBeenCalledTimes(1);
         expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
         expect(taskInsertsOfType('yelp_convo')).toHaveLength(1);
     });

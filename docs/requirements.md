@@ -5481,3 +5481,275 @@ the default company ⇒ `recommendSlots` returns real slots.
   (must NOT silently re-drive the booking loop into a double-book — route to a dispatcher
   reschedule). Define the terminal re-open rules and the turn-cap/`stuck` interaction so a
   chatty customer can't loop the agent indefinitely.
+
+## YELP-TIMELINE-DEDUP-001 — one Yelp conversation → ONE timeline (keyed by the stable conv-id), suppress the junk relay contact, materialize a contact only via the lead path (2026-07-11)
+
+**Status:** Requirements · **Priority:** P1 · **Backend (+ a small Pulse-render tweak)** · **Date:** 2026-07-11
+**Foundation:** YELP-LEAD-AUTORESPONDER-002 (`d584997`, deployed 2026-07-11) + YELP-CONVO-BOOKING-001
+(above, Requirements) — reuses the stable-conv-id extractor `parseConversationId(msg)` and the durable
+per-conversation store `yelp_conversations` (upserted by `yelpConversationQueries.upsertConversation(companyId, convId, …)`,
+keyed `(company_id, conv_id)`) that CONVO-BOOKING introduces. The ingest seam is
+`emailTimelineService.linkInboundMessage` (covers BOTH the push and poll legs). Cleanup reuses the
+existing merge/relink primitives (`contactEmailMergeService.mergeContacts`/`linkInboxMessages`,
+`timelineMergeService.mergeOrphanTimelines`).
+
+> **Supersedes the abandoned YELP-CONTACT-IDENTITY-001 draft.** An earlier draft under that name
+> modeled the fix as a stable *contact identity* for the Yelp relay. That model was ABANDONED —
+> the owner's clarified intent is the opposite: do NOT create a contact from the Yelp email at all.
+> The deliverable is a unified **timeline** keyed by the conversation id; a contact is materialized
+> only later, via the lead path, with the real customer name. This section replaces it in full.
+
+### Context (what is broken, why)
+A single Yelp customer conversation reaches us as a series of inbound emails whose relay `From`
+address **varies per message** (`reply+<hex>@messaging.yelp.com`), while the customer-facing
+conversation is stable. In the normal ingest path (`linkInboundMessage` step (b)) each new relay
+address is an unseen sender → `findEmailContact` misses → the no-contact branch hands the mail to
+the Mail Secretary (`reviewInboundEmail({noContact:true})`), which may decide "this is a lead" and
+call `createEmailContact`. Because the address is different every message, this fabricates a **new
+junk contact and (via `findOrCreateTimelineByContact`) a new junk timeline per message** — one
+conversation is shredded across N contacts + N timelines. Prod currently carries **8** such junk
+contacts/timelines. Separately, even once the YELP autoresponder intercepts these emails, its
+short-circuit returns `{skipped:'yelp_lead'}` / `{skipped:'yelp_convo'}` with **no link and no
+timeline at all**, so the dispatcher cannot SEE the Yelp conversation in Pulse. Owner's clarified
+intent (verbatim gist): *"if contacts aren't created now, don't create them — even better; the MAIN
+thing is that timelines are unified — one timeline per correspondent; don't create a contact; create
+a contact only when we have enough info to create a LEAD."*
+
+### Owner-approved product decisions (binding)
+1. **One timeline per conversation, keyed by the stable conv-id.** All messages of one Yelp
+   conversation land on ONE timeline, regardless of the per-message-varying `reply+<hex>@` relay.
+   The timeline may be **contactless** — that is fine and preferred.
+2. **Never create a contact from the Yelp email/relay.** The junk relay contact is suppressed; the
+   Yelp path must never reach `createEmailContact`/`findEmailContact`.
+3. **A contact is materialized ONLY via the lead path** (the autoresponder's `createLead`, which
+   carries the real customer name) — and even that is **secondary**: the unified timeline is the
+   deliverable. When a contact is created it **attaches to the same conv-id timeline** (no second
+   timeline).
+4. **No junk for notifications.** A Yelp email with no parseable conv-id creates no timeline and no
+   contact.
+5. **Visible to the dispatcher.** The unified, contactless conv-id timeline must appear in Pulse,
+   **labeled with the customer name**, without a junk contact.
+6. **Zero per-request compute at serve time.** Resolution happens at write (ingest) time via an
+   indexed find-or-create; serving a timeline stays a keyed read (no scan, no per-request grouping).
+7. **Clean up the existing 8** junk contacts/timelines once — snapshot first, owner-confirmed
+   mapping, consolidate each conversation's messages onto one timeline, delete the junk contacts.
+   Irreversible; a separate owner-run operation, never auto-run.
+
+### Functional requirements
+
+- **R1 — `R-one-timeline-per-conversation` (keyed by conv-id, indexed-unique per company).**
+  Each Yelp conversation resolves to exactly ONE timeline, identified by the stable
+  `yelp_conversation_id` (from `parseConversationId(msg)`), unique per company. The mapping
+  conv-id → timeline is materialized and indexed so that resolution is an indexed lookup, and a
+  second conversation never collides onto the first's timeline.
+
+- **R2 — `R-messages-into-one-timeline` (varying relay collapses to the one timeline).**
+  EVERY inbound message of a conversation — the first new-lead email AND every subsequent reply,
+  each arriving from a DIFFERENT `reply+<hex>@messaging.yelp.com` address — is linked to that single
+  conv-id timeline. The varying relay address is NEVER used as the conversation key.
+
+- **R3 — `R-no-contact-from-email` (the Yelp relay never creates a contact).**
+  A Yelp inbound email NEVER causes a contact to be created and NEVER reaches
+  `createEmailContact`/`findEmailContact`, nor the no-contact Mail-Secretary branch that would
+  fabricate one. The junk relay contact is suppressed at the source.
+
+- **R4 — `R-contact-only-via-lead` (a contact, if any, comes only from the lead path, and attaches
+  to the conv-id timeline).** A contact is materialized ONLY by the autoresponder lead path
+  (`createLead`, real customer name). When it is, it attaches to the EXISTING conv-id timeline
+  (that one timeline gains a `contact_id`); it MUST NOT spawn a second, contact-keyed timeline for
+  the same conversation. Absent a lead, the conversation stays a valid contactless timeline.
+
+- **R5 — `R-no-junk-for-notifications` (no conv-id ⇒ no timeline, no contact).**
+  A Yelp email with no parseable conv-id (and Yelp `no-reply@*yelp.com` confirmations) creates no
+  timeline and no contact — it produces no new Pulse surface and, critically, never reaches
+  `createEmailContact`.
+
+- **R6 — `R-pulse-visible` (contactless conv-id timeline surfaces, labeled with the customer name).**
+  The unified contactless timeline appears in the Pulse unified list (`getUnifiedTimelinePage`) and
+  is labeled with the **customer name** (parsed from the Yelp lead), WITHOUT a junk contact — i.e.
+  the display name is NOT sourced from a `contacts` row. It surfaces on its own signal (see B3) and
+  orders sensibly by its own last-message recency.
+
+- **R7 — `R-resolve-at-write-time` (indexed find-or-create at ingest; ZERO per-request compute at
+  serve).** The conv-id → timeline resolution and all message-linking happen at ingest (write) time
+  through an indexed find-or-create keyed on `(company_id, yelp_conversation_id)`. The serve path
+  performs no grouping, no relay-address parsing, and no per-request compute; it reads the already-
+  resolved, indexed timeline.
+
+- **R8 — `R-cleanup-existing` (one-time, snapshot-first, owner-confirmed, irreversible).**
+  A separate one-time operation consolidates the existing **8** junk conversations: it snapshots the
+  affected contacts/timelines/message-links first, uses an owner-confirmed conv-id ↔ messages
+  mapping, moves every message of a conversation onto that conversation's single timeline, and
+  DELETES the junk contacts. It is irreversible, default-company scoped, owner-run — NEVER
+  auto-executed by ingest or a migration.
+
+- **R9 — `R-idempotent` (re-ingest ⇒ same timeline, one link).**
+  Re-delivering the same `provider_message_id` (push + poll overlap, or a retry) resolves to the
+  SAME conv-id timeline and produces no duplicate link, no duplicate unread bump, and no duplicate
+  SSE — even though the message is contactless (`contact_id` NULL). Idempotency for a contactless
+  link does NOT depend on a non-null `contact_id`.
+
+- **R10 — `R-safe-fail` (a resolver fault never breaks ingest).**
+  Any failure in conv-id parsing, timeline resolution, or contactless linking is contained and
+  fail-open: the email falls through the normal ingest path (it must not crash the push route or the
+  poll tick, and must not throw out of `linkInboundMessage`). A resolver fault must never
+  accidentally re-enable the junk-contact path.
+
+### Non-functional requirements
+- **N1 — Default-company scoped.** Yelp is `DEFAULT_COMPANY_ID` (`00000000-0000-0000-0000-000000000001`)
+  scoped; every query, the conv-id→timeline resolver, the link, and the cleanup are tenant-isolated
+  (`company_id NOT NULL`).
+- **N2 — Backend, plus a small Pulse-render tweak.** The core change is backend (ingest resolver +
+  schema). A minimal Pulse-render change is expected ONLY to label/surface a contactless timeline
+  (R6); no net-new Pulse screen.
+- **N3 — No per-request compute (write-time resolution, keyed serve).** Enforces R7: the unified-list
+  and single-timeline reads stay keyed lookups; no scan, no per-request relay parsing or grouping.
+- **N4 — Additive migration.** Any schema change (the conv-id anchor on the timeline / the widened
+  identity CHECK / a denormalized label column / index) is additive (`ADD COLUMN IF NOT EXISTS`,
+  widen-CHECK, new partial unique index) — no existing row or timeline changes meaning; builds on
+  mig 028/029 (timelines) and CONVO-BOOKING's `yelp_conversations`.
+- **N5 — Cleanup is a separate, owner-confirmed, non-auto operation.** R8 runs only on explicit owner
+  action (script/one-shot), snapshot-first; it is not wired into ingest and not part of the additive
+  schema migration.
+- **N6 — Reuse-first.** Reuse `parseConversationId`, the `yelp_conversations` store, the existing
+  `linkMessageToContact`/`getMessageLinkState` link plumbing (adapted for `contact_id` NULL), and the
+  merge/relink primitives for cleanup. Net-new is only: the conv-id→timeline resolver, the contactless
+  identity/label on `timelines`, and the Pulse label/surface tweak.
+
+### Acceptance criteria
+- **AC1 (R1/R2):** Three inbound emails of ONE Yelp conversation arriving from three DIFFERENT
+  `reply+<hex>@messaging.yelp.com` addresses all link to a SINGLE timeline (one row), resolved by the
+  stable conv-id; a second conversation resolves to a DIFFERENT timeline.
+- **AC2 (R3/R5):** Across those messages, no `contacts` row is created, `createEmailContact` is never
+  called, and the no-contact Mail-Secretary branch never fabricates a contact. A Yelp email with no
+  parseable conv-id (and a `no-reply@*yelp.com` confirmation) creates neither a timeline nor a contact.
+- **AC3 (R4):** When the autoresponder lead path creates the lead (real name), a contact is created
+  and the EXISTING conv-id timeline gains that `contact_id` — no second timeline appears for the
+  conversation, and the total timeline count for that conversation stays 1.
+- **AC4 (R6):** The contactless conv-id timeline appears in the Pulse unified list, labeled with the
+  parsed customer name (not from a `contacts` row), and is openable; its ordering recency reflects its
+  latest Yelp message.
+- **AC5 (R7/N3):** Serving the Pulse list and the single timeline issues no relay-address parsing and
+  no per-request grouping — the conv-id→timeline mapping is read by an indexed key; an `EXPLAIN` of the
+  serve path shows the indexed lookup, not a scan/aggregate over messages.
+- **AC6 (R9):** Re-ingesting an already-seen `provider_message_id` (push+poll overlap) adds no second
+  link to the conv-id timeline and re-emits no unread/SSE, despite `contact_id` being NULL.
+- **AC7 (R10):** A forced fault in conv-id parsing / timeline resolution leaves `linkInboundMessage`
+  and the ingest pipeline running (the email flows through normally) and does NOT create a junk contact.
+- **AC8 (R8):** Running the one-time cleanup on the 8 junk conversations consolidates each
+  conversation's messages onto one timeline and deletes the junk contacts; a snapshot exists before the
+  operation; the operation is confirmed by the owner and is not triggered by ingest.
+
+### Out of scope
+- The conversational booking agent itself (the LLM tool-loop, slot holds, phone handoff) — that is
+  YELP-CONVO-BOOKING-001; this feature only unifies the timeline + suppresses the contact and does not
+  change the agent's behavior.
+- Non-default companies; SMS/voice channels; any browser automation, DNS, or GCP work.
+- A general contact-dedupe/identity overhaul — this is Yelp-relay-scoped only.
+- Backfilling historical Yelp messages beyond the one-time 8-conversation cleanup (R8).
+
+### Involved modules (summary)
+- **backend/src/services/email/emailTimelineService.js** — `linkInboundMessage`: the Yelp intercept
+  (steps a.4/a.4b) must now LINK each Yelp message onto the conv-id timeline (contactless) instead of
+  returning a bare `{skipped}` with no timeline, while STILL suppressing the contact + the
+  Mail-Secretary review. Adapt the `alreadyLinked` idempotency read for a contactless link.
+- **backend/src/services/yelpLeadService.js** — reuse `parseConversationId`; on the lead path, attach
+  the created contact to the conv-id timeline (do not spin a new contact-keyed timeline).
+- **backend/src/db/timelinesQueries.js** — new write-time resolver
+  `findOrCreateTimelineBy…(convId, companyId)` (conv-id analogue of `findOrCreateTimelineByContact`/
+  `findOrCreateAnonymousTimeline`); label/surface the contactless conv-id timeline in
+  `getUnifiedTimelinePage`.
+- **backend/src/db/emailQueries.js** — `linkMessageToContact`/`getMessageLinkState` used with
+  `contact_id` NULL (contactless link) — idempotency keyed on timeline/message, not on a contact.
+- **backend/db/migrations/** — additive migration: the conv-id anchor on `timelines` + widened
+  identity CHECK + partial unique index `(company_id, yelp_conversation_id)` + any denormalized
+  display-name column for the label (see B1/B3).
+- **backend/src/db/yelpConversationQueries.js / `yelp_conversations`** — the existing conv-id store;
+  candidate home for the conv-id ↔ timeline_id link (B1).
+- **Pulse unified-list renderer** — render the customer-name label + surface for a contact-less row (B3).
+- **backend/src/services/contactEmailMergeService.js / timelineMergeService.js** — reused by the
+  one-time cleanup (R8) message-relink; the cleanup itself is a separate one-shot (script/migration-off).
+
+### Affected integrations
+- **Yelp email relay** (inbound only, the varying `reply+<hex>@` address is the thing being
+  de-duplicated). **Gemini / greeting / slot engine:** untouched by this feature. **Twilio / Front /
+  Zenbooker:** none.
+
+### Protected code (MUST NOT break)
+- `emailTimelineService.linkInboundMessage` ordering + fail-open contract — the Yelp intercept stays
+  BEFORE the mute guard and BEFORE the no-contact Mail-Secretary branch; adding the contactless link
+  must not change behavior for NON-Yelp mail (contact match, mute, Mail-Secretary, unread/AR/SSE all
+  byte-for-byte unchanged).
+- The normal per-contact timeline model — `findOrCreateTimelineByContact`, the `uq_timelines_contact`
+  one-timeline-per-contact invariant, and the `getUnifiedTimelinePage` contact/SMS/call/email
+  projections for existing rows stay unchanged; the conv-id path is additive.
+- The `chk_timelines_identity` CHECK and the orphan-phone dedup (mig 029) — must remain valid for
+  every existing row; any widening is additive (see B1).
+- CONVO-BOOKING-001's `yelp_conversations` invariants and `parseConversationId` — reused, not
+  re-shaped; the 002 `yelp_lead_events` idempotency ledger and the autoresponder short-circuit
+  semantics for NON-timeline concerns stay intact.
+- The single-reply-per-thread / at-most-one-greeting guards — untouched (this feature is inbound
+  timeline unification, it sends nothing).
+
+### ⚑ Boundaries / edge-cases for the Architect + Implementer to resolve
+- **B1 — Timeline identity for a contactless conversation vs. the `chk_timelines_identity` CHECK.**
+  Mig 029 constrains `CHECK (contact_id IS NOT NULL OR phone_e164 IS NOT NULL)` — a truly
+  contact-less AND phone-less conv-id timeline VIOLATES it today; and `findOrCreateAnonymousTimeline`
+  satisfies the CHECK only via a single shared `ANONYMOUS_PHONE_SENTINEL` bucket (one row for ALL
+  anonymous activity — the wrong granularity, one-per-conversation is required). Resolve where the
+  conv-id lives and how identity is satisfied: (a) add a `yelp_conversation_id` column on `timelines`
+  + widen the CHECK to allow it as a third anchor + a partial UNIQUE `(company_id, yelp_conversation_id)`;
+  vs. (b) hang `timeline_id` off the existing `yelp_conversations` row and keep `timelines` unaware;
+  vs. (c) a per-conversation synthetic phone sentinel (DISCOURAGED — collides with phone semantics and
+  the orphan-phone dedup). Pick the one that keeps resolution an indexed find-or-create (R7) and every
+  existing row CHECK-valid (N4).
+- **B2 — Resolver placement vs. the autoresponder short-circuit (the inversion).** TODAY the Yelp
+  intercept returns `{skipped:'yelp_lead'}` / `{skipped:'yelp_convo'}` with NO link and NO timeline;
+  this feature must turn that into "link this message onto the shared conv-id timeline (contactless) +
+  STILL suppress the contact and the Mail-Secretary review." Resolve: does the contactless linker live
+  inside `maybeHandleYelpLead`/`maybeHandleYelpReply`, or as a distinct linking step in
+  `linkInboundMessage` that runs for any Yelp message the intercept recognizes? It must fire for BOTH
+  the first message AND every reply, and — per the owner (the timeline is the deliverable, the greeting
+  is secondary) — the unification must hold **even when the autoresponder greeting is disabled or
+  failing** (`YELP_AUTORESPONDER_ENABLED` off / a handler fault). Decouple "unify the timeline" from
+  "send the greeting."
+- **B3 — Pulse visibility + label for a contact-less timeline (the hard one).**
+  `getUnifiedTimelinePage` is contact-keyed in two ways: the display label is `to_json(co)` (NULL for a
+  contactless row) and the email signal comes from the `email_by_contact` CTE joined on
+  `contact_emails.contact_id` (contactless ⇒ no email signal); the surfacing WHERE requires one of
+  call / SMS / email / `open_task.id` / `is_action_required` / `has_unread`; and the recency ORDER BY is
+  `GREATEST(call, sms, email last_message_at)` → NULL for a contactless Yelp row. Resolve, at WRITE time
+  (R7): (a) a customer-name label source that is NOT a `contacts` row — e.g. a denormalized
+  `display_name`/`title` on `timelines` set from the parsed Yelp name (or a lead-name join); (b) a
+  surfacing signal — set `has_unread`/`is_action_required` on the conv-id timeline and/or attach the
+  `yelp_lead` task via `tasks.thread_id = timeline_id`; (c) a recency value so the row orders sanely;
+  (d) confirm the orphan-shadow dedup (drops a `contact_id IS NULL` row only on a real phone-digit
+  match) and the frontend timeline renderer both tolerate a contact-less, phone-less row.
+- **B4 — No-conv-id / notification policy (R5).** Decide the exact treatment of a Yelp email with no
+  parseable conv-id, and of `no-reply@*yelp.com` confirmations: drop as skipped-noise (no surface) vs. a
+  single dedicated fallback bucket — but in NEITHER case create a contact or a per-message timeline.
+  Confirm the confirmation mails (which are never intercepted and fall to the no-contact branch today)
+  do not `createEmailContact`, and specify how conv-id parse-failure interacts with R10 fail-open
+  WITHOUT re-enabling the junk-contact path.
+- **B5 — Contactless-link idempotency (R9).** The current `alreadyLinked` guard in `linkInboundMessage`
+  is `existing.on_timeline && existing.contact_id != null` — a contactless link has `contact_id` NULL,
+  so the guard MISFIRES and the message re-processes (re-unread/re-SSE) on every re-delivery. Adapt the
+  idempotency read to key on `timeline_id`/`on_timeline` (or `provider_message_id`) rather than a
+  non-null contact, so push+poll overlap and retries stay exactly-once for a contactless conv-id link.
+- **B6 — Contact-adopts-conv-id-timeline (R4) without a second timeline.** When the lead path later
+  creates the real contact, attaching it must set `contact_id` on the EXISTING conv-id timeline, NOT
+  route through `findOrCreateTimelineByContact` (which would mint a fresh contact-keyed row and re-split
+  the conversation). Resolve the adopt/merge semantics so the conv-id timeline remains THE single
+  timeline (now both conv-id AND contact anchored — check the CHECK + `uq_timelines_contact` still hold),
+  the label flips to the contact name, and any already-linked messages stay put. Define what happens if
+  a conv-id timeline and a pre-existing contact timeline for the same person must be merged (reuse
+  `mergeOrphanTimelines`/`mergeContacts` relink).
+- **B7 — One-time cleanup design (R8).** The 8 existing junk conversations were ingested BEFORE this
+  fix, so their messages carry no conv-id link. Resolve: recover each message's conv-id (re-parse the
+  stored bodies), snapshot the affected contacts + timelines + message-links first, produce an
+  owner-confirmable conv-id ↔ messages mapping, then consolidate onto one timeline per conversation
+  (reusing `linkInboxMessages`/`mergeOrphanTimelines` relink logic) and DELETE the junk contacts —
+  noting this shape differs from `mergeContacts` (which merges a dup INTO a survivor contact; here the
+  survivor is a CONTACTLESS conv-id timeline and the contacts are deleted). Keep it a separate,
+  owner-run, snapshot-first, irreversible, default-company one-shot — not wired into ingest, not part of
+  the additive schema migration.

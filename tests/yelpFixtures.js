@@ -52,6 +52,65 @@ function yNew(overrides = {}) {
     };
 }
 
+// YELP-TIMELINE-DEDUP-001 — a SECOND, DISTINCT conversation id (base64url-ish,
+// different from CONV_ID). Proves "a 2nd conversation resolves to a DISTINCT
+// timeline" (AC1) independent of the relay hex.
+const CONV_ID_2 = '7Yr4nP2wT9';
+
+// A Yelp new-lead message carrying CONV_ID_2 in FIRST-form
+// (message_to_business_conversation/<CONV_ID_2>) from YET ANOTHER relay hex — so a
+// distinct conversation is keyed on its own conv-id, never the sender.
+const Y_NEW_OTHER_BODY = [
+    'Dana P. sent you a new quote request on Yelp.',
+    '',
+    'Dana requested a quote from ABC Homes for a dryer repair.',
+    '',
+    'What can we help you with?',
+    'My dryer stopped heating last night.',
+    '',
+    'In what area do you need this service?',
+    'Quincy, MA 02169',
+    '',
+    'Respond to Dana by replying directly to this email.',
+    'View the request: https://www.yelp.com/message_to_business_conversation/7Yr4nP2wT9?utm_source=request_a_quote_first_message&utm_medium=email',
+].join('\n');
+
+function yNewOtherConvo(overrides = {}) {
+    return {
+        provider_message_id: 'ymsg-NEW-2',
+        provider_thread_id: 'ythr-NEW-2',
+        from_email: 'reply+1122334455667788@messaging.yelp.com',
+        from_name: 'Dana P.',
+        subject: 'New quote request from Dana',
+        body_text: Y_NEW_OTHER_BODY,
+        snippet: 'Dana requested a quote',
+        internal_at: '2026-07-10T12:20:00.000Z',
+        labelIds: ['INBOX'],
+        is_outbound: false,
+        ...overrides,
+    };
+}
+
+// A @messaging.yelp.com relay message whose body carries NO parseable conv-id
+// (utm_source=request_a_quote_new_message but no message_to_business_conversation/
+// and no %2Fthread%2F). parseConversationId(yNoConvo()) MUST return null → the
+// subsuming branch suppresses it ({skipped:'yelp_no_convo'}), zero timeline/contact.
+function yNoConvo(overrides = {}) {
+    return {
+        provider_message_id: 'ymsg-NOCONV-1',
+        provider_thread_id: 'ythr-NEW-1',
+        from_email: 'reply+9900aabbccddeeff@messaging.yelp.com',
+        from_name: 'Kim L.',
+        subject: 'Re: New quote request from Kim',
+        body_text: Y_REPLY_BODY,
+        snippet: 'no conv id in this body',
+        internal_at: '2026-07-10T13:30:00.000Z',
+        labelIds: ['INBOX'],
+        is_outbound: false,
+        ...overrides,
+    };
+}
+
 // A customer follow-up inside an existing thread → NOT a new lead.
 const Y_REPLY_BODY = [
     'Kim sent you a message in response to your message.',
@@ -272,10 +331,14 @@ function convTask(overrides = {}) {
 module.exports = {
     DEFAULT_COMPANY_ID,
     CONV_ID,
+    CONV_ID_2,
     Y_NEW_BODY,
+    Y_NEW_OTHER_BODY,
     Y_REPLY_BODY,
     Y_REPLY_RESPONDABLE_BODY,
     yNew,
+    yNewOtherConvo,
+    yNoConvo,
     yReply,
     yReplyRespondable,
     yReply2,

@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-11 — YELP-TIMELINE-DEDUP-001: одна Yelp-переписка = один таймлайн по conv-id (без junk-контактов)
+
+Плавающий relay-адрес Yelp (`reply+<hex>@messaging.yelp.com` меняется на КАЖДОЕ сообщение) плодил дубли контактов+таймлайнов (8 «Yelp»/«Yelp Inbox» junk-контактов на проде). Теперь Yelp-письма НЕ создают контакт вовсе, а вся переписка одного разговора сводится в ОДИН таймлайн, ключ = стабильный conv-id; контакт материализуется только через lead-путь (реальное имя). Backend + 1 строка фронта. НЕ задеплоено.
+
+- **Миграция 165:** `timelines.yelp_conversation_id/display_name/external_source` + partial-unique `uq_timelines_yelp_convo(company_id, yelp_conversation_id)` + `idx_email_messages_timeline`; **ослаблен `chk_timelines_identity`** (3-й дизъюнкт `OR yelp_conversation_id IS NOT NULL` — иначе бесконтактный+бестелефонный таймлайн падает на INSERT). Rollback восстанавливает 2-дизъюнктный CHECK.
+- **Поглощающая ветка** в `emailTimelineService.linkInboundMessage` на самом верху (перед yelp_lead/yelp_convo короткозамыканиями, которые она поглощает): `isYelpRelay` + conv-id → `resolveYelpTimeline` (upsert по conv-id, COALESCE display_name) → `linkMessageToContact(contact_id:null, timeline_id, on_timeline)` → unread+SSE → greeting/lead-хендлеры → return. Всегда возвращает ДО `findEmailContact` → `createEmailContact` структурно недостижим для Yelp (нет junk-контактов). Идемпотентность перекючена на `on_timeline`+`timeline_id` (старый `contact_id!=null` гард промахивался на бесконтактном). Fail-open. Нет conv-id / `no-reply@*yelp.com`-уведомления → `{skipped:'yelp_no_convo'}` (ничего не создаём).
+- **Pulse-видимость бесконтактного таймлайна:** `email_by_timeline` CTE-плечо (ключ timeline_id) в `getUnifiedTimelinePage` + `display_name` как лейбл; detail через существующий `/timeline-by-id/:id` + `getTimelineEmailByTimeline`; фронт `PulseContactItem` — display_name в fallback имени. **Гард mail-mute:** плечо ограничено `AND em.contact_id IS NULL` (иначе замьюченные контакт-письма всплывали — reviewer must-fix, red-without-fix на живом PG подтверждён).
+- **Cleanup 8 дублей:** отдельный owner-run скрипт `backend/scripts/yelp_timeline_dedup_cleanup.js` (snapshot-first, `--apply --yes`): группировка по conv-id → re-point → удаление junk-контактов. НЕ миграция, необратим. Пока НЕ запускался (ждёт owner-confirmed маппинга).
+- Тесты: **18 сьютов зелёных** (197 mocked + DB-сьюты на живом PG); вся YELP-002/CONVO + agentWorker/rulesEngine/automationE2E регрессия зелёная; 10 саботаж-контролей нагружены; Reviewer APPROVED после mail-mute must-fix; existing intercept-тесты мигрированы под новую форму ответа; FE `tsc -b` зелёный.
+
+---
+
 ## 2026-07-11 — YELP-CONVO-BOOKING-001 (Phase A + B): многоходовой Yelp-booking-агент — LIVE-плумбинг + LLM-«мозг» (dark-launch `YELP_CONVO_ENABLED`)
 
 Надстройка над LIVE Phase-A-плумбингом (threading по conv-id + reply-intercept + `yelp_conversations` mig 164 + тонкий `yelp_convo` ack). Добавляет bounded JSON-action LLM tool-loop, который ведёт каждый Yelp-лид к терминалу **BOOK** (hold на существующем лиде) или **CALL** (тёплый телефонный хэндофф). Backend-only, за новым гейтом `YELP_CONVO_ENABLED` (default OFF), scope = `DEFAULT_COMPANY_ID`. Не задеплоено.
