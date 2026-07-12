@@ -186,9 +186,44 @@ Read and follow instructions in: `docs/agents/agent-05-planner.md`
 
 ---
 
-## Step 6: Implementation Loop (per task)
+## Step 6: Implementation Loop (per task) — DELEGATED TO GPT
+
+**Implementation and unit tests are written by GPT (Codex, gpt-5.6-sol, reasoning xhigh), not by Claude.**
+Read and follow the full protocol: `.claude/skills/orchestrate/gpt-implementer.md`.
+Claude acts as architect/reviewer only — this keeps quality high while saving Claude tokens.
 
 For **each task** from the plan in `Docs/tasks.md`, execute this cycle:
+
+### 6-GPT: Implementer session (code + tests)
+
+Per `gpt-implementer.md`:
+- Compose a SHORT brief (pointers to spec/files, scope, acceptance criteria, verify commands).
+- For M/L tasks: plan-first turn (GPT replies with a plan, you approve/adjust), then implement.
+- Invoke `codex exec` (workspace-write, `-C` this worktree); capture the `session id`.
+- GPT writes the code AND the Jest tests (the 6a/6b agent roles below collapse into GPT's session),
+  runs build/tests itself, and reports in the fixed format.
+
+### 6-Review: Claude Reviewer
+
+Per the review procedure in `gpt-implementer.md`:
+- `git status`/`git diff` review + independent build/test gates (exit codes).
+- Checklist priority: tenant scoping → correctness vs spec → security → design canon → test realness → scope.
+- Verdict **ACCEPT** → mark task done in `Docs/tasks.md`, commit, next task.
+- Verdict **FIX** → `codex exec resume <SID>` with a numbered fix list. Max 3 fix rounds,
+  then Claude finishes the remainder itself and notes why.
+- **Teaching:** any generalizable mistake → append to `docs/agents/gpt-lessons.md`; second
+  occurrence → tighten `AGENTS.md`.
+
+### 6-Hygiene (mandatory, owner directive)
+
+After each task: kill orphaned codex processes, stop preview/dev servers started for
+verification, clean scratchpad artifacts (commands in `gpt-implementer.md`).
+
+**If step-by-step:** Confirm with user after each task completes.
+
+---
+
+### Legacy single-model loop (fallback ONLY if Codex is unavailable)
 
 ### 6a: Implementer Agent (06)
 
@@ -295,7 +330,8 @@ If tests fail during implementation:
 ## Rules
 
 **Prohibited:**
-- Writing code directly (delegate to Implementer)
+- Writing code directly (delegate to the GPT Implementer via `gpt-implementer.md`; exceptions in its
+  "When NOT to delegate" section: trivial 1-3 line fixes, prod emergencies, live-preview UI iteration)
 - Making architecture decisions (delegate to Architect)
 - Changing requirements without Product agent
 - Combining multiple tasks into one
