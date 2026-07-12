@@ -2290,3 +2290,14 @@ Marketplace-gated integration of the standalone `slot-engine` (Phase 1) into the
 - Warning-only (без блокировок): DnD-перенос на day-off → confirm-модалка; NewJobDialog — inline-предупреждение; reschedule из карточки Job — confirm. Save нигде не дизейблится.
 
 **Тесты:** +3 сьюта (timeOffRoutes 32, slotEngineDayOffFilter 14, timeOffMigration 12) = 58; drift-guard 22 suites / 358 tests без правок; frontend build зелёный; sabotage ×2 (Reviewer APPROVED). Владелец: manual-смоук + деплой (миграция 167) — owner-gated.
+
+## 2026-07-12 — ONBOARDING-UX-001: человечный онбординг новых компаний + hub /welcome + redesign connect-форм
+
+**Первый прогон GPT-implementer-режима: код писал Codex gpt-5.6-sol (reasoning xhigh), Claude — архитектор/ревьюер. 7/7 задач ACCEPT без fix-раундов.**
+
+- T1 backend (85ef17d): CHECKLIST_ITEMS 1→4 шага (company_profile=logo_storage_key, connect_telephony, connect_email=gmail connected, stripe_payments=connected_ready), деривации per-company без внешних API; GET /api/onboarding/checklist аддитивно + progress{done,total} + trial{active,days_left,trial_ends_at}|null (fail-soft: billing-ошибка → null); POST /api/onboarding redirect '/pulse'→'/welcome'. Write-once completed_at байт-в-байт (ветераны не ресурфейсятся). tests/onboardingChecklist.test.js → 39 тестов (TC-OBX-001..018, включая tenant-isolation и 401/403-матрицу).
+- T2 (0143563): NEW /welcome hub (WelcomePage.tsx): CloudBanner hero «Let's get you set up» + «about 3 minutes», прогресс-бар N of 4, карточки шагов (done→done_note, pending→описание+~N min+Set up), trial-информер (CTA /settings/billing), completion-экран «You're all set!», не-админ → Navigate /pulse.
+- T3 (17beb7e): карточка /pulse → компактный трекер «Finish setting up» + mini-progress + N of 4 done → /welcome; collapse/localStorage удалены.
+- T4-T7 (cad7f3c, a6ba39d, 649611a + T5): redesign connect-форм к уровню Stripe-эталона — GoogleEmail (hero «Every customer email, one timeline» + value-буллеты), Telephony wizard (hero «You're 3 minutes away from your first call», тёплые подписи шагов; derivedStep-логика не тронута), VAPI + MailSecretary (activation hero), MarketplaceConnectDialog (value-first + «What Albusto will do»; покрывает Smart Slot Engine/AI Repair Advisor).
+
+**Верификация:** независимые build+jest на каждую задачу; полный jest — 14 падений идентичны базе 24449b3 (pre-existing) → 0 регрессий; preview-смоук desktop+mobile 375 (hub, трекер, wizard, диалог) — всё живое на реальных дериациях (2 of 4 done в dev). Без миграций (mig-134 колонка уже на проде; локальная dev-БД была отставшей — долита вручную). GOTCHA: launch.json backend на 3100 → frontend-конфигу добавлен VITE_PROXY_TARGET. НЕ задеплоено (deploy-consent).
