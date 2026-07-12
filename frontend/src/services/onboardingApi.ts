@@ -18,11 +18,26 @@ export interface OnboardingChecklistItem {
     description: string;
     done: boolean;
     cta: OnboardingChecklistCta;
+    est_minutes: number;
+    done_note: string;
+}
+
+export interface OnboardingChecklistProgress {
+    done: number;
+    total: number;
+}
+
+export interface OnboardingChecklistTrial {
+    active: true;
+    days_left: number;
+    trial_ends_at: string;
 }
 
 export interface OnboardingChecklist {
     visible: boolean;
     completed_at: string | null;
+    progress: OnboardingChecklistProgress;
+    trial: OnboardingChecklistTrial | null;
     items: OnboardingChecklistItem[];
 }
 

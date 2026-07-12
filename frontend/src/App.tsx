@@ -31,6 +31,7 @@ import { ConversationPage } from './pages/ConversationPage';
 import { LeadsPage } from './pages/LeadsPage';
 import { ContactsPage } from './pages/ContactsPage';
 import { PulsePage } from './pages/PulsePage';
+import WelcomePage from './pages/WelcomePage';
 import { MessagesPage } from './pages/MessagesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import CompanySettingsPage from './pages/CompanySettingsPage';
@@ -112,6 +113,7 @@ function App() {
               <Route path="/onboarding" element={<OnboardingPage />} />
               <Route path="/" element={<Navigate to="/pulse" replace />} />
               <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
+              <Route path="/welcome" element={<ProtectedRoute permissions={['pulse.view']}><WelcomePage /></ProtectedRoute>} />
               <Route path="/pulse/contact/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
               <Route path="/pulse/timeline/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
               <Route path="/calls" element={<ProtectedRoute permissions={['messages.view_internal']}><HomePage /></ProtectedRoute>} />
