@@ -272,3 +272,15 @@ Separate from the native app, the **web SPA** (`app.albusto.com`) is installable
 ## Browser softphone & warm-up summary (SOFTPHONE-WARMUP-SUMMARY-001)
 
 The browser softphone is **desktop-only**, enforced by TWO independent checks: the hardened viewport hook `useIsMobile` (matchMedia ≤767.98px + change/resize listeners + a one-shot post-paint rAF re-check, closing the iOS-PWA-standalone early-innerWidth race) and a new `useIsMobileDevice` hook (`(max-width: 767.98px), (pointer: coarse)`) used ONLY by the softphone gate — so any touch device, including iPad and phone-landscape, never registers the Twilio Device, while the 26 layout consumers of `useIsMobile` keep treating iPad as desktop. The check is belted at every softphone surface: `softPhoneEnabled`, the Device-arming effect, the dialog `open`, a reset-on-flip teardown, and the widget render. On desktop, the warm-up gesture dialog (still deliberate — Twilio needs a user gesture for the AudioContext, see the long-standing note) is no longer a bare "SoftPhone Ready" modal but a **"Today at a glance"** summary: three clickable stat columns — Pulse inbox (unread + action-required timelines), New leads, Open tasks — where a click warms the audio, dismisses, and navigates (the plain "Let's go" dismiss remains); counters reuse the existing nav-badge state (zero new requests) except the AR count, served by `GET /api/tasks/count?parent_type=timeline` — an **additive optional `parent_type` param** on the tasks-count route (no-param SQL byte-identical, drift-guard-tested, role scoping intact). Loading shows "—" and count errors fail silent; a dev-only `?warmup=preview` flag (statically dead in prod builds) renders the dialog without a real Device. Frontend + one additive route param; no migration.
+
+## Onboarding hub + 4-step checklist + connect-form redesign (ONBOARDING-UX-001)
+
+New tenant-admin onboarding surface. `/welcome` hub (CloudBanner hero, «about 3 minutes» promise,
+progress bar) renders the derived 4-step checklist — Add your logo (companies.logo_storage_key),
+Connect telephony (phone_number_settings), Connect your email (gmail mailbox connected), Get paid
+with Stripe (connected_ready) — plus a trial informer (billing_subscriptions trialing → days left,
+CTA /settings/billing; fail-soft null) and a completion state. New-company signup redirects to
+/welcome; the /pulse card is a compact «Finish setting up» tracker linking there. completed_at
+stays write-once (veteran companies never resurface). Connect/setup pages (Google Email, Telephony
+wizard, VAPI, Mail Secretary, marketplace connect dialog) share the Stripe-etalon warm hero style.
+First feature implemented via the GPT-implementer mode (Codex gpt-5.6-sol; Claude architect/reviewer).
