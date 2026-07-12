@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle } from 'lucide-react';
+import { CheckCircle2, CreditCard, Mail, Phone, Receipt, Sparkles } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
 
 import { CloudBanner } from '../components/ui/CloudBanner';
@@ -7,6 +7,13 @@ import { Skeleton } from '../components/ui/skeleton';
 import { useAuthz } from '../hooks/useAuthz';
 import { useOnboardingChecklist } from '../hooks/useOnboardingChecklist';
 import type { OnboardingChecklistTrial } from '../services/onboardingApi';
+
+const stepIcons = {
+    company_profile: Receipt,
+    connect_telephony: Phone,
+    connect_email: Mail,
+    stripe_payments: CreditCard,
+};
 
 function WelcomePageSkeleton() {
     return (
@@ -145,40 +152,50 @@ export default function WelcomePage() {
                         </CloudBanner>
 
                         <section aria-label="Setup steps" className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
-                            {checklist.items.map(item => (
-                                <article
-                                    key={item.key}
-                                    className="flex items-start gap-3.5 rounded-xl border bg-[var(--blanc-surface-strong)] p-5"
-                                    style={{ borderColor: 'var(--blanc-line)' }}
-                                >
-                                    {item.done ? (
-                                        <CheckCircle2 className="mt-0.5 size-4 shrink-0" style={{ color: 'var(--blanc-success)' }} />
-                                    ) : (
-                                        <Circle className="mt-0.5 size-4 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                                    )}
-                                    <div className="flex min-w-0 flex-1 flex-col items-start">
-                                        <h3
-                                            className="text-base font-semibold"
-                                            style={{ color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}
+                            {checklist.items.map(item => {
+                                const StepIcon = stepIcons[item.key as keyof typeof stepIcons] ?? Sparkles;
+
+                                return (
+                                    <article
+                                        key={item.key}
+                                        className="flex items-start gap-3.5 rounded-xl border bg-[var(--blanc-surface-strong)] p-5"
+                                        style={{ borderColor: 'var(--blanc-line)' }}
+                                    >
+                                        <div
+                                            className="flex size-10 shrink-0 items-center justify-center rounded-xl"
+                                            style={{ background: 'var(--blanc-accent-soft)' }}
                                         >
-                                            {item.title}
-                                        </h3>
-                                        <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                                            {item.done ? item.done_note : item.description}
-                                        </p>
-                                        {!item.done && (
-                                            <>
-                                                <p className="mt-3 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                                                    ~{item.est_minutes} min
-                                                </p>
-                                                <Button className="mt-3" onClick={() => navigate(item.cta.path)}>
-                                                    {item.cta.label}
-                                                </Button>
-                                            </>
-                                        )}
-                                    </div>
-                                </article>
-                            ))}
+                                            <StepIcon className="size-5" style={{ color: 'var(--blanc-accent)' }} />
+                                        </div>
+                                        <div className="flex min-w-0 flex-1 flex-col items-start">
+                                            <div className="flex items-center gap-1.5">
+                                                <h3
+                                                    className="text-base font-semibold"
+                                                    style={{ color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}
+                                                >
+                                                    {item.title}
+                                                </h3>
+                                                {item.done && (
+                                                    <CheckCircle2 className="size-4 shrink-0" style={{ color: 'var(--blanc-success)' }} />
+                                                )}
+                                            </div>
+                                            <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
+                                                {item.done ? item.done_note : item.description}
+                                            </p>
+                                            {!item.done && (
+                                                <>
+                                                    <p className="mt-3 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                                        ~{item.est_minutes} min
+                                                    </p>
+                                                    <Button className="mt-3" onClick={() => navigate(item.cta.path)}>
+                                                        {item.cta.label}
+                                                    </Button>
+                                                </>
+                                            )}
+                                        </div>
+                                    </article>
+                                );
+                            })}
                         </section>
                     </>
                 )}
