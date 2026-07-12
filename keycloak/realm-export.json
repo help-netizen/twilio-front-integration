@@ -242,7 +242,7 @@
       "authenticateByDefault": false,
       "linkOnly": false,
       "hideOnLoginPage": false,
-      "firstBrokerLoginFlowAlias": "first broker login auto link",
+      "firstBrokerLoginFlowAlias": "first broker login",
       "config": {
         "clientId": "${GOOGLE_IDP_CLIENT_ID:}",
         "clientSecret": "${GOOGLE_IDP_CLIENT_SECRET:}",
@@ -275,7 +275,7 @@
   "authenticationFlows": [
     {
       "alias": "first broker login auto link",
-      "description": "GOOGLE-SSO-FIX-001: first broker login that auto-links a social identity to an existing account when the email is verified (trustEmail), skipping the profile-review and manual-link prompts.",
+      "description": "DEPRECATED by AUTH-IDP-LINK-001. Silent auto-link (no password) is NO LONGER used — the google IdP now binds the built-in 'first broker login' flow so an email match routes to Confirm-link + password. Kept only for reference; do not re-bind.",
       "providerId": "basic-flow",
       "topLevel": true,
       "builtIn": false,

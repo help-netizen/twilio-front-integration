@@ -1,5 +1,6 @@
 #!/bin/bash
-# GOOGLE-SSO-FIX-001 — apply/refresh the Google identity provider on a RUNNING Keycloak.
+# GOOGLE-SSO-FIX-001 + AUTH-IDP-LINK-001 — apply/refresh the Google identity
+# provider on a RUNNING Keycloak.
 #
 # WHY THIS EXISTS
 #   `--import-realm` only configures a realm on its FIRST import. Prod already has
@@ -8,8 +9,20 @@
 #   (create-or-update), so it can be run against prod to (re)provision:
 #     • the `google` OIDC identity provider (trustEmail, PKCE-friendly),
 #     • given_name→firstName / family_name→lastName / email attribute mappers,
-#     • a "first broker login auto link" flow that auto-links a Google identity to
-#       an existing account when the email is verified (no manual-link prompt).
+#     • the first-broker-login behavior for AUTH-IDP-LINK-001.
+#
+# AUTH-IDP-LINK-001 — link, never duplicate. When a Google sign-in's email matches
+#   an existing account, the user must CONFIRM with their password (link), not get
+#   a second account. This is exactly what the built-in "first broker login" flow
+#   already does (Handle Existing Account → Confirm link → Username Password Form),
+#   so the IdP binds THAT flow — NOT the old silent "auto link" flow (which linked
+#   with no password and is now deprecated).
+#   The one hole was the leading Review-Profile step: it showed an EDITABLE email,
+#   so a user could change one digit to dodge the match and mint a duplicate
+#   (prod: a5085140320 vs a5085150320). Fix = turn Review Profile OFF
+#   (update.profile.on.first.login=off) so the trusted Google email is used as-is;
+#   and make lastName OPTIONAL so an account without a family name still creates
+#   without the review screen. firstName/email stay required.
 #
 # USAGE
 #   KC_URL=https://auth.albusto.com \
@@ -30,8 +43,9 @@ KC_ADMIN="${KEYCLOAK_ADMIN_USER:-admin}"
 KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
 CLIENT_ID="${GOOGLE_IDP_CLIENT_ID:-}"
 CLIENT_SECRET="${GOOGLE_IDP_CLIENT_SECRET:-}"
-FLOW_ALIAS="first broker login auto link"
-FLOW_ENC="first%20broker%20login%20auto%20link"
+# AUTH-IDP-LINK-001: bind the BUILT-IN first-broker-login flow (password on email
+# match), not a custom silent auto-link flow.
+FLOW_ALIAS="first broker login"
 
 if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
   echo "❌ GOOGLE_IDP_CLIENT_ID and GOOGLE_IDP_CLIENT_SECRET are required." >&2
@@ -58,53 +72,44 @@ TOKEN=$(curl -s -X POST "${KC_URL}/realms/master/protocol/openid-connect/token" 
 [ -n "$TOKEN" ] || { echo "❌ admin auth failed" >&2; exit 1; }
 echo "✅ Got admin token"
 
-# ── 1. First-broker-login auto-link flow ────────────────────────────────────
+# ── 1. First-broker-login behavior (AUTH-IDP-LINK-001) ──────────────────────
+# We do NOT create a custom flow. The built-in "first broker login" already links
+# on email match with a password confirmation. We only need to (a) turn OFF the
+# Review-Profile screen (so the trusted Google email is used as-is — no editable
+# field to dodge the match with), and (b) make lastName optional so a no-family-name
+# Google account still creates without a review screen.
 echo ""
-echo "🔗 Ensuring auth flow '${FLOW_ALIAS}' ..."
-FLOWS=$(curl -s -H "Authorization: Bearer ${TOKEN}" "${KC_URL}/admin/realms/${REALM}/authentication/flows")
-FLOW_EXISTS=$(echo "$FLOWS" | python3 -c "import sys,json; print(any(f.get('alias')=='${FLOW_ALIAS}' for f in json.load(sys.stdin)))")
-
-if [ "$FLOW_EXISTS" = "True" ]; then
-  echo "   ⏭️  flow already exists"
-else
-  curl -s -X POST "${KC_URL}/admin/realms/${REALM}/authentication/flows" \
+echo "🔧 Configuring built-in 'first broker login' → Review Profile OFF ..."
+RP_CFG_ID=$(curl -s -H "Authorization: Bearer ${TOKEN}" \
+  "${KC_URL}/admin/realms/${REALM}/authentication/flows/first%20broker%20login/executions" \
+  | python3 -c "import sys,json; print(next((e.get('authenticationConfig','') for e in json.load(sys.stdin) if e.get('providerId')=='idp-review-profile'), ''))")
+if [ -n "$RP_CFG_ID" ]; then
+  curl -s -X PUT "${KC_URL}/admin/realms/${REALM}/authentication/config/${RP_CFG_ID}" \
     -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-    -d '{"alias":"'"${FLOW_ALIAS}"'","description":"GOOGLE-SSO-FIX-001 auto-link on verified email","providerId":"basic-flow","topLevel":true,"builtIn":false}' \
-    -o /dev/null -w '   create flow → %{http_code}\n'
-
-  # Append executions (they land as REQUIRED/DISABLED; we set requirements next).
-  for PROVIDER in idp-review-profile idp-create-user-if-unique idp-auto-link; do
-    curl -s -X POST "${KC_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ENC}/executions/execution" \
-      -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      -d '{"provider":"'"${PROVIDER}"'"}' \
-      -o /dev/null -w "   + ${PROVIDER} → %{http_code}\n"
-  done
-
-  # Set requirements: review-profile DISABLED, the other two ALTERNATIVE.
-  EXECS=$(curl -s -H "Authorization: Bearer ${TOKEN}" \
-    "${KC_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ENC}/executions")
-  echo "$EXECS" | python3 - "$KC_URL" "$REALM" "$TOKEN" "$FLOW_ENC" <<'PY'
-import sys, json, urllib.request
-execs = json.load(sys.stdin)
-kc, realm, token, flow_enc = sys.argv[1:5]
-want = {"idp-review-profile": "DISABLED",
-        "idp-create-user-if-unique": "ALTERNATIVE",
-        "idp-auto-link": "ALTERNATIVE"}
-for e in execs:
-    req = want.get(e.get("providerId"))
-    if not req:
-        continue
-    e["requirement"] = req
-    body = json.dumps(e).encode()
-    r = urllib.request.Request(
-        f"{kc}/admin/realms/{realm}/authentication/flows/{flow_enc}/executions",
-        data=body, method="PUT",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    urllib.request.urlopen(r)
-    print(f"   set {e['providerId']} → {req}")
-PY
-  echo "   ✅ flow configured"
+    -d '{"id":"'"${RP_CFG_ID}"'","alias":"review profile config","config":{"update.profile.on.first.login":"off"}}' \
+    -o /dev/null -w '   review-profile config → %{http_code}\n'
+else
+  echo "   ⚠️  idp-review-profile has no config resource; set update.profile.on.first.login=off in the console"
 fi
+
+echo "👤 Making lastName optional (Realm → User profile) ..."
+curl -s -H "Authorization: Bearer ${TOKEN}" "${KC_URL}/admin/realms/${REALM}/users/profile" \
+  | python3 - "$KC_URL" "$REALM" "$TOKEN" <<'PY'
+import sys, json, urllib.request
+prof = json.load(sys.stdin)
+kc, realm, token = sys.argv[1:4]
+changed = False
+for a in prof.get("attributes", []):
+    if a.get("name") == "lastName" and "required" in a:
+        del a["required"]; changed = True
+if changed:
+    r = urllib.request.Request(f"{kc}/admin/realms/{realm}/users/profile",
+        data=json.dumps(prof).encode(), method="PUT",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    urllib.request.urlopen(r); print("   lastName → optional")
+else:
+    print("   lastName already optional")
+PY
 
 # ── 2. Google identity provider (create or update) ──────────────────────────
 echo ""
