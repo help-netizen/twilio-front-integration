@@ -9252,7 +9252,7 @@ Critical path: **DO-01 → DO-02 → DO-06 → DO-07**. Конфликт-реш�
 **Файлы:** frontend/src/pages/GoogleEmailSettingsPage.tsx.
 **Цель/acceptance:** not-connected → CloudBanner hero (спека §2.2-8: «Every customer email, one timeline», CTA Connect Gmail, «Takes about a minute»); OAuth-flow/статусы/mutations не тронуты; SettingsPageShell остаётся.
 **Verify:** `cd frontend && npm run build` + preview.
-**Зависимости:** нет (файл независим; исполнение последовательное — один Codex-таск за раз). **Статус:** pending
+**Зависимости:** нет. **Статус:** done (2026-07-12, GPT, ревью ACCEPT)
 
 ### Задача T5: redesign — TelephonyTwilioSettingsPage (полировка hero/копии степпера)
 
