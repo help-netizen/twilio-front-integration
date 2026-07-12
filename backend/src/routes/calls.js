@@ -187,6 +187,13 @@ router.get('/by-contact', async (req, res) => {
             return {
                 ...formatted,
                 timeline_id: c.tl_id || c.timeline_id || null,
+                // YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline has no contact,
+                // so formatCall (call-fields only) leaves the row with no name. The unified
+                // query denormalizes tl.display_name / tl.external_source for exactly this
+                // case; carry them through so PulseContactItem can label the row ("Jenna")
+                // + badge its Yelp origin instead of rendering a blank title.
+                display_name: c.display_name || null,
+                external_source: c.external_source || null,
                 tl_phone: tlPhone,
                 tl_has_unread: c.tl_has_unread || false,
                 has_unread: !!c.any_unread,

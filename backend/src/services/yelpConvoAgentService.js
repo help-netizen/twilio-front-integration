@@ -250,7 +250,14 @@ async function sendOnce(companyId, conv, body) {
  * original ("Re: …") so the relay stitches the reply into the same conversation.
  */
 async function resolveThreading(companyId, conv, inbound) {
-    const pmid = (inbound && inbound.provider_message_id) || (conv && conv.last_inbound_message_id);
+    const rawPmid = (inbound && inbound.provider_message_id) || (conv && conv.last_inbound_message_id);
+    if (!rawPmid) return null;
+    // TURN-0 greeting tasks namespace the claim id as `<gmailId>:greet0` (idempotency,
+    // enqueueYelpConvoGreetingTask) — but the email_messages row is keyed by the BARE
+    // gmail id (no colon). Strip any `:<suffix>` before the lookup, else the FIRST reply
+    // (the greeting) sends UNTHREADED and Yelp bounces it ("email client we do not yet
+    // support"). Reply-turn pmids are already bare, so this is a no-op for them.
+    const pmid = String(rawPmid).split(':')[0];
     if (!pmid) return null;
     try {
         const row = await emailQueries.getThreadingByProviderMessageId(pmid, companyId);

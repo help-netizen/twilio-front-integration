@@ -11,6 +11,7 @@ import { ScheduleItemCard } from './ScheduleItemCard';
 import { RouteConnector } from './RouteConnector';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import { overlapsTimeOff } from '../../services/scheduleApi';
+import { filterTimeOffByProviders } from '../../services/scheduleFilters';
 import type { ScheduleItem, DispatchSettings, RouteSegment, TimeOffBlock } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../../utils/companyTime';
@@ -40,6 +41,8 @@ interface TimelineWeekViewProps {
     routeByPair?: Map<string, RouteSegment>;
     /** TECH-DAYOFF-001: day-off blocks for the visible range (grey cell strips + DnD warning). */
     timeOff?: TimeOffBlock[];
+    /** TECH-DAYOFF-002: active provider filter — rendered time-off strips honor it (DnD warnings don't). */
+    providerFilterIds?: string[];
 }
 
 interface ProviderGroup {
@@ -49,7 +52,7 @@ interface ProviderGroup {
 }
 
 export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, onCreateFromSlot, routeByPair, timeOff,
+    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, onCreateFromSlot, routeByPair, timeOff, providerFilterIds,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -317,7 +320,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                 >
                                     {/* Time-off strips (TECH-DAYOFF-001 S-9, INV-10) — grey,
                                         non-interactive; a multi-day period shows this day's slice. */}
-                                    {group.id !== '__unassigned' && (timeOff ?? [])
+                                    {group.id !== '__unassigned' && filterTimeOffByProviders(timeOff ?? [], providerFilterIds)
                                         .filter(b => b.technician_id === group.id
                                             && new Date(b.starts_at) < dayEndUtc
                                             && dayStartUtc < new Date(b.ends_at))

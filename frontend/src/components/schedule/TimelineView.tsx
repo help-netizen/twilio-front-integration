@@ -10,6 +10,7 @@ import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import { overlapsTimeOff } from '../../services/scheduleApi';
+import { filterTimeOffByProviders } from '../../services/scheduleFilters';
 import type { ScheduleItem, DispatchSettings, RouteSegment, TimeOffBlock } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { routeSegmentLabel, routeSegmentTone } from '../../utils/routeFormat';
@@ -39,6 +40,8 @@ interface TimelineViewProps {
     routeByPair?: Map<string, RouteSegment>;
     /** TECH-DAYOFF-001: day-off blocks for the visible range (grey lane overlay + DnD warning). */
     timeOff?: TimeOffBlock[];
+    /** TECH-DAYOFF-002: active provider filter — rendered time-off lanes honor it (DnD warnings don't). */
+    providerFilterIds?: string[];
 }
 
 // TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
@@ -123,7 +126,7 @@ function layoutItems(items: ScheduleItem[], tz: string, startHour: number): Posi
 }
 
 export const TimelineView: React.FC<TimelineViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReschedule, onReassign, onCreateFromSlot, routeByPair, timeOff,
+    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReschedule, onReassign, onCreateFromSlot, routeByPair, timeOff, providerFilterIds,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -432,7 +435,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                             {/* Time-off blocks (TECH-DAYOFF-001 S-9, INV-10) — a grey layer
                                 UNDER the job cards; pointer-events:none so click/DnD pass
                                 straight through to the grid (the protected DnD chain). */}
-                            {group.id !== '__unassigned' && (timeOff ?? [])
+                            {group.id !== '__unassigned' && filterTimeOffByProviders(timeOff ?? [], providerFilterIds)
                                 .filter(b => b.technician_id === group.id
                                     && new Date(b.starts_at) < gridEndUtc
                                     && gridStartUtc < new Date(b.ends_at))

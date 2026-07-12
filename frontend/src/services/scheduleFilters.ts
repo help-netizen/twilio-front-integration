@@ -7,7 +7,7 @@
  * count under each day must equal what the agenda shows when that day is tapped.
  */
 
-import type { ScheduleItem, ScheduleFilters } from './scheduleApi';
+import type { ScheduleItem, ScheduleFilters, TimeOffBlock } from './scheduleApi';
 
 const UNASSIGNED = '__unassigned__';
 
@@ -40,4 +40,22 @@ export function filterItemsByProviderTags(
     }
 
     return result;
+}
+
+/**
+ * TECH-DAYOFF-002: time-off blocks RENDERED on the schedule respect the
+ * provider filter — with a tech filter active, colleagues' time off (its note
+ * can carry a private reason) must not appear. Matches by id OR name,
+ * mirroring filterItemsByProviderTags. Empty/absent filter is a passthrough.
+ * DnD conflict checks (overlapsTimeOff) keep the UNFILTERED list — dropping a
+ * job onto a filtered-out tech must still warn about their day off.
+ */
+export function filterTimeOffByProviders(
+    blocks: TimeOffBlock[],
+    providerIds?: string[],
+): TimeOffBlock[] {
+    if (!providerIds?.length) return blocks;
+    return blocks.filter(
+        (b) => providerIds.includes(b.technician_id) || providerIds.includes(b.technician_name),
+    );
 }
