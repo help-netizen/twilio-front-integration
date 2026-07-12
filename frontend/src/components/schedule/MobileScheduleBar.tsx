@@ -16,7 +16,7 @@
  */
 
 import React, { useState } from 'react';
-import { Settings2, Sparkles, Plus, X, RotateCcw, Map, List } from 'lucide-react';
+import { Settings2, Sparkles, Plus, X, RotateCcw, Map, List, CalendarOff } from 'lucide-react';
 import { format } from 'date-fns';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import type { ScheduleFilters } from '../../services/scheduleApi';
@@ -46,6 +46,9 @@ interface MobileScheduleBarProps {
     onNewJob?: () => void;
     onToggleAIAssistant?: () => void;
     onOpenSettings?: () => void;
+    // TECH-DAYOFF-001 (owner iteration): "Time off" lives inside this sheet on
+    // mobile instead of a standalone chip above the calendar.
+    onTimeOff?: () => void;
 }
 
 const controlBtn: React.CSSProperties = {
@@ -79,11 +82,11 @@ const SheetAction: React.FC<{ onClick: () => void; icon: React.ReactNode; label:
 
 export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
     currentDate, timezone, filters, providers, allTags,
-    onNavigateDate, onSelectDate, onFiltersChange, mapOpen, onToggleMap, onNewJob, onToggleAIAssistant, onOpenSettings,
+    onNavigateDate, onSelectDate, onFiltersChange, mapOpen, onToggleMap, onNewJob, onToggleAIAssistant, onOpenSettings, onTimeOff,
 }) => {
     const [sheetOpen, setSheetOpen] = useState(false);
     const activeFilterCount = getActiveFilterCount(filters);
-    const hasDispatchActions = !!(onNewJob || onToggleAIAssistant || onOpenSettings);
+    const hasDispatchActions = !!(onNewJob || onToggleAIAssistant || onOpenSettings || onTimeOff);
     const isOnToday = format(currentDate, 'yyyy-MM-dd') === todayInTZ(timezone);
 
     const close = () => setSheetOpen(false);
@@ -229,6 +232,9 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                             )}
                             {onToggleAIAssistant && (
                                 <SheetAction onClick={() => { close(); onToggleAIAssistant(); }} icon={<Sparkles className="size-5" />} label="AI Assistant" />
+                            )}
+                            {onTimeOff && (
+                                <SheetAction onClick={() => { close(); onTimeOff(); }} icon={<CalendarOff className="size-5" />} label="Time off" />
                             )}
                             {onOpenSettings && (
                                 <SheetAction onClick={() => { close(); onOpenSettings(); }} icon={<Settings2 className="size-5" />} label="Settings" />

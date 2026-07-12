@@ -187,6 +187,7 @@ export function SchedulePage() {
                         onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
                         onToggleAIAssistant={() => setShowAIAssistant(true)}
                         onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
+                        onTimeOff={canDispatch ? () => setTimeOffOpen(true) : undefined}
                     />
                 ) : (
                     /* Toolbar: title + AI Assistant button */
@@ -237,21 +238,6 @@ export function SchedulePage() {
                                     <CalendarOff className="size-4" /> Time off
                                 </button>
                             )}
-                        </div>
-                    )}
-
-                    {/* Mobile: the dispatch-only "Time off" chip lives above the calendar
-                        (the mobile sheet's controls are prop-fixed, so the chip stands alone). */}
-                    {isMobile && canDispatch && (
-                        <div className="flex justify-end">
-                            <button
-                                type="button"
-                                onClick={() => setTimeOffOpen(true)}
-                                className="blanc-control-chip"
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-                            >
-                                <CalendarOff className="size-4" /> Time off
-                            </button>
                         </div>
                     )}
 
