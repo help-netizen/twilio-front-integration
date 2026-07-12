@@ -150,6 +150,21 @@ describe('YCB-LOOP-02 · reply → exactly ONE sendEmail to conv.last_reply_to',
     });
 });
 
+describe('YCB-THREAD-01 · turn-0 greeting (:greet0 claim id) threads on the BARE gmail id', () => {
+    it('strips the :greet0 claim-namespace suffix before the threading lookup (else the greeting bounces)', async () => {
+        const gen = scriptedGenerate(['{"action":"reply","body":"Hi! What\'s the best phone and full address?","intent":"collect"}']);
+        const conv = convRow({ last_reply_to: 'reply+bb22cc33@messaging.yelp.com' });
+        // turn-0 tasks pass `<gmailId>:greet0` (enqueueYelpConvoGreetingTask) as the inbound id.
+        await svc.runTurn(DEFAULT_COMPANY_ID, conv, inbound('hi', 'ymsg-NEW-9:greet0'), { generate: gen });
+        // SAB-GREET0-NO-STRIP: the email lookup MUST use the BARE id, not the :greet0 namespace
+        // (with the suffix the row is never found → unthreaded send → Yelp bounce).
+        expect(mockGetThreading).toHaveBeenCalledWith('ymsg-NEW-9', DEFAULT_COMPANY_ID);
+        const [, payload] = mockSendEmail.mock.calls[0];
+        expect(payload.inReplyTo).toBe('<in-1@messaging.yelp.com>');
+        expect(payload.references).toBe('<in-1@messaging.yelp.com>');
+    });
+});
+
 describe('YCB-LOOP-03 · LOOP-bounded — never-stopping model → bounded + safe terminal (SAB-LOOP-REMOVE-CAP)', () => {
     it('always-tool model → runSkill ≤ MAX_TOOLCALLS; a terminal is emitted; runTurn resolves (no hang)', async () => {
         const gen = scriptedGenerate(['{"action":"tool","tool":"recommendSlots","args":{"zip":"02467"}}']); // infinite tool-caller
