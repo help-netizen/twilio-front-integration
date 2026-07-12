@@ -27,6 +27,8 @@ import { getJob } from '../services/jobsApi';
 import { SidebarStack } from '../components/schedule/SidebarStack';
 import { UnscheduledPanel } from '../components/schedule/UnscheduledPanel';
 import { DispatchSettingsDialog } from '../components/schedule/DispatchSettingsDialog';
+import { TimeOffDialog } from '../components/schedule/TimeOffDialog';
+import { CalendarOff } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { JobDetailPanel } from '../components/jobs/JobDetailPanel';
 import { Skeleton } from '../components/ui/skeleton';
@@ -37,6 +39,8 @@ export function SchedulePage() {
     const navigate = useNavigate();
     const isMobile = useIsMobile();
     const [settingsOpen, setSettingsOpen] = useState(false);
+    // TECH-DAYOFF-001: day-off management panel (dispatch-only, like settings).
+    const [timeOffOpen, setTimeOffOpen] = useState(false);
     // Dispatch-only controls hidden for providers without schedule.dispatch (PF007)
     const canDispatch = schedule.canDispatch;
     const [showAIAssistant, setShowAIAssistant] = useState(false);
@@ -140,13 +144,13 @@ export function SchedulePage() {
                 if (isMobile && mobileMapOpen) {
                     return <ScheduleJobsMap jobs={schedule.scheduledItems} companyTz={schedule.settings.timezone} selectedProviderIds={schedule.filters.providerIds} />;
                 }
-                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} />;
+                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} timeOff={schedule.timeOff} />;
             case 'month':
                 return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
             case 'timeline':
-                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} timeOff={schedule.timeOff} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'timeline-week':
-                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} timeOff={schedule.timeOff} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'list':
                 return <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             default:
@@ -203,21 +207,52 @@ export function SchedulePage() {
                         />
                     )}
 
-                    {/* Calendar Controls — desktop only; on mobile every control lives in the sheet above */}
+                    {/* Calendar Controls — desktop only; on mobile every control lives in the sheet above.
+                        TECH-DAYOFF-001: the "Time off" chip sits beside the controls row (next to the
+                        settings gear), dispatch-only like the other management controls. */}
                     {!isMobile && (
-                        <CalendarControls
-                            viewMode={schedule.viewMode}
-                            currentDate={schedule.currentDate}
-                            filters={schedule.filters}
-                            itemCounts={schedule.itemCounts}
-                            loading={schedule.loading}
-                            providers={schedule.providers}
-                            allTags={schedule.allTags}
-                            onViewModeChange={schedule.setViewMode}
-                            onNavigateDate={schedule.navigateDate}
-                            onFiltersChange={schedule.setFilters}
-                            onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
-                        />
+                        <div className="flex items-start gap-2">
+                            <div className="min-w-0 flex-1">
+                                <CalendarControls
+                                    viewMode={schedule.viewMode}
+                                    currentDate={schedule.currentDate}
+                                    filters={schedule.filters}
+                                    itemCounts={schedule.itemCounts}
+                                    loading={schedule.loading}
+                                    providers={schedule.providers}
+                                    allTags={schedule.allTags}
+                                    onViewModeChange={schedule.setViewMode}
+                                    onNavigateDate={schedule.navigateDate}
+                                    onFiltersChange={schedule.setFilters}
+                                    onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
+                                />
+                            </div>
+                            {canDispatch && (
+                                <button
+                                    type="button"
+                                    onClick={() => setTimeOffOpen(true)}
+                                    className="blanc-control-chip"
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}
+                                >
+                                    <CalendarOff className="size-4" /> Time off
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Mobile: the dispatch-only "Time off" chip lives above the calendar
+                        (the mobile sheet's controls are prop-fixed, so the chip stands alone). */}
+                    {isMobile && canDispatch && (
+                        <div className="flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => setTimeOffOpen(true)}
+                                className="blanc-control-chip"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                            >
+                                <CalendarOff className="size-4" /> Time off
+                            </button>
+                        </div>
                     )}
 
                     {/* Calendar view */}
@@ -276,6 +311,15 @@ export function SchedulePage() {
                 onClose={() => setSettingsOpen(false)}
                 settings={schedule.settings}
                 onSave={schedule.handleUpdateSettings}
+            />
+
+            {/* Time off management panel (TECH-DAYOFF-001) */}
+            <TimeOffDialog
+                open={timeOffOpen}
+                onOpenChange={setTimeOffOpen}
+                providers={schedule.providers}
+                timezone={schedule.settings.timezone}
+                onChanged={schedule.reloadTimeOff}
             />
 
             {/* Calendar slot → the full New Job form with the slot + technician pre-set */}

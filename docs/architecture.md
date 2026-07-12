@@ -6243,3 +6243,140 @@ Standalone-скрипт (напр. `backend/scripts/yelp_timeline_dedup_cleanup.
 - **Webhook-эхо ZB (`syncFromZenbooker`)** — самый частый путь: recalc там дешёвый идемпотентный no-op при отсутствии изменений, `coordsChanged` только при реальной дельте координат (иначе stale/recreate-churn выживших пар на каждом эхе).
 - **`POST /:id/reschedule` double-recalc** (локальный хук + фоновый ZB-sync через 3с) — идемпотентно по построению `recalcForJob`; допустимо.
 - **Classic-subtitle у лидов** тоже станет "Name, City" — консистентно с agenda и требованием, отдельного гварда по entity_type не нужно (tasks: city NULL → рендер без изменений).
+
+## TECH-DAYOFF-001 — day-off периоды техников: seam-фильтр recommendSlots + миграция 167 + серые блоки в расписании (2026-07-11)
+
+**Контекст.** Слот-движок (`slot-engine/` — ОТДЕЛЬНЫЙ контейнер, отдельный деплой) видит пустой день как «свободно», поэтому Sara/VAPI, outbound parts-visit, Yelp convo-агент и слот-пикер UI бронируют на нерабочие дни. Все потребители идут через ЕДИНЫЙ seam `slotEngineService.getRecommendations` (верифицировано: `backend/src/routes/schedule.js:200` UI-прокси, `agentSkills/skills/recommendSlots.js` + `createLead.js` + `bookOnLead.js` (Sara/vapi-tools), `partsCallService.js` (TECHSLOT), `yelpConvoAgentService.js` — все импортируют `slotEngineService`). Фильтр day-off живёт в этом seam — ни один потребитель не патчится (FR-4/AC-3).
+
+### Ключевой верифицированный факт: identity техника = Zenbooker team-member id (TEXT), НЕ crm_users.id
+
+- Roster движка: `slotEngineService.buildTechnicians` (`slotEngineService.js:108`) ← `zenbookerClient.getTeamMembers({service_provider:true, deactivated:false})` → `id = String(m.id)` (ZB id). Это же — «активные техники» для company-wide материализации.
+- Occupancy: `jobs.assigned_techs[].id` — ZB id (`scheduleQueries.js:97`, `reassignJob:396`).
+- Timeline-лейны фронта группируются по этому же id (`TimelineView.tsx:168-180` providerGroups ← `useProviders` ← `/api/zenbooker/team-members`).
+- Прецедент хранения: `technician_base_locations.tech_id TEXT` (миграция 125: «tech_id mirrors jobs.assigned_techs[].id (the Zenbooker team-member id)»).
+- Мост к crm_users (UUID, мигр. 009) существует ТОЛЬКО через `company_user_profiles.zenbooker_team_member_id` → `company_memberships.user_id` (`membershipQueries.resolveProviderUserIds:168`, `jobsService.resolveAssignedProviderUserIds:210`). Нужен он только для provider-scope «свои блоки».
+
+**Решение:** `technician_time_off.technician_id TEXT` = ZB team-member id (+ `technician_name` snapshot для рендера без ZB-запроса). `created_by UUID` = `req.user.crmUser.id` (НЕ sub — created_by-FK gotcha). FR-1 говорит «technician(crm_user)» — уточняем требование фактом кода: везде, где day-off потребляется (движок, лейны, warning), ходит ZB id; crm_users.id у техника вообще не участвует в scheduling-плоскости.
+
+### Главное решение — точка врезки в слот-движок: вариант A′ «post-filter в seam» (не псевдо-job, не расширение протокола)
+
+**Выбрано: A′ — фильтрация целиком внутри `slotEngineService.getRecommendations`, БЕЗ изменения snapshot-а и БЕЗ изменения контейнера:**
+
+1. `timeOffQueries.listOverlappingRange(companyId, horizonStartUtc, horizonEndUtc)` — один индексированный SELECT по `(company_id, technician_id, starts_at)`; горизонт = `[tzCombine(earliest,'00:00',tz), tzCombine(latest+1d,'00:00',tz))` (уже существующие `tzCombine`/`addDaysLocal`).
+2. **0 строк → ранний выход: запрос к движку и ответ БАЙТ-В-БАЙТ прежние** (AC-2, protected-инвариант). Единственная дельта — один SELECT.
+3. **Pre-shaping** (по прецеденту TECHSLOT-фильтра `technicians`): техник, у которого ОДНА запись day-off целиком накрывает весь горизонт (отпуск), выбрасывается из `technicians[]` до вызова — движок не тратит на него ranking-слоты. Мульти-записи не склеиваем (v1, консервативно: не выкинули — добьёт post-filter).
+4. **Headroom:** при непустом day-off-списке `configOverride.ranking.top_n += 5` (константа `TIMEOFF_TOPN_HEADROOM`, компонуется ПОСЛЕ singleTech-виджининга, per-tech/per-timeframe caps не трогаем — best-effort добор).
+5. **Post-filter:** из `recommendations` выбрасывается каждая rec, у которой хоть один `technicians[].id` имеет day-off, пересекающийся с `[tzCombine(rec.date, time_frame.start, tz), tzCombine(rec.date, time_frame.end, tz))` (строгое `aStart < bEnd && bStart < aEnd`; многодневные/через-полночь периоды работают без всякой per-date нарезки — сравнение чистых timestamptz-интервалов). Затем `slice(0, исходный top_n)` и перенумерация `rank` 1..n.
+
+**Почему НЕ вариант (a) псевдо-job (`timeoff:<id>`, assigned_technicians:[techId])** — проверено по `slot-engine/src/engine.js`, найдены 4 дыры:
+
+- **(a-1) Движок моделирует job как (arrival-window, duration), НЕ фиксированный интервал.** `checkFeasibility` (engine.js:279) даёт псевдо-job скользить: L[k]=min(b, shiftEnd−dur−travel). При per-company `overlap_minutes` до **240** (`slotEngineSettingsService` DEFAULTS/validate: 0..240 → `overlap.max_timeframe_overlap_minutes`) окно-кандидат, целиком лежащее внутри day-off, проходит overlap-гейт, а псевдо-job «уезжает» в хвост дня → **слот предлагается ВНУТРИ day-off**. При дефолте overlap=0 дыры нет, но конфиг — владельческая ручка.
+- **(a-2) Вечерний day-off глушит ВЕСЬ день.** Кусок, упирающийся в конец смены (напр. 16:00→24:00), не помещается в `[shiftStart, shiftEnd]` c return-travel-буфером (adjustedTravelMinutes(base,base)=+10 мин) → сам псевдо-job route_infeasible → ВСЕ кандидаты даты отвергаются (он в `existing` каждого маршрута) — over-block свободного утра. Лечение = зеркалировать CRM-стороной workday (08:00/18:00) и operational_buffer движка и клиппить куски — хрупкая связка констант.
+- **(a-3) Техник без base-location.** Координаты обязательны не потому, что движок «скипнет» (buildSnapshot не проверяет), а хуже: NaN-координаты **тихо отравляют** E/L-математику (`Math.max(a, NaN)=NaN`, все NaN-сравнения false → кандидат ПРОХОДИТ с NaN-score, ранжирование недетерминировано). Fallback-координаты (точка нового job) создают обратный артефакт: у base-less техника пустой день с partial day-off становится «непустым рядом с новым job» (nearest=0) → появляются слоты, которых раньше НЕ БЫЛО (empty-day без base = reject).
+- **(a-4) Нарезка через полночь по дням company-tz** требует спецкейса `'24:00'` (localHHMM конца куска в полночь даёт '00:00' → b<a → overlap=0 → кусок исчезает).
+
+Post-filter обходит все четыре: гарантия AC-2 «ни одного окна с пересечением» — по построению, без координат, без нарезки, без зеркалирования конфига. Осознанная плата (документировано): (i) day-off не участвует в route-feasibility соседних слотов — job из окна 14–16 может фактически затянуться в day-off 17:00 (окна-обещания и так не гарантируют конец работ; v1 принимаем); (ii) движок ранжирует «мёртвых» кандидатов до фильтра — компенсируется pre-shaping (п.3) + headroom (п.4), при недоборе UI/роботы уже умеют «мало/ноль слотов».
+
+**Почему НЕ вариант (b) `unavailability[]` в контракте движка:** `slot-engine/src/server.js:11-24` валидирует ТОЛЬКО `new_request.lat/lng`, лишние поля игнорируются — протокольно расширение back-compat, НО прод-контейнер деплоится отдельно, и старый движок **молча проигнорирует** поле → day-off тихо не работает до деплоя контейнера (запрещённый по условию side-effect). Плюс тесты/логика в чужом деплой-юните ради одного потребителя. Остаётся путём v2, если когда-нибудь понадобится честная route-feasibility вокруг day-off — тогда post-filter в seam остаётся страховочным belt-ом.
+
+### Хранение — миграция 167 (номер свободен: последняя 166_yelp_conversations_lead_uuid_text.sql)
+
+`backend/db/migrations/167_technician_time_off.sql` + `rollback_167_technician_time_off.sql`:
+
+```sql
+CREATE TABLE IF NOT EXISTS technician_time_off (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    technician_id   TEXT NOT NULL,            -- ZB team-member id (= jobs.assigned_techs[].id, technician_base_locations.tech_id)
+    technician_name TEXT,                     -- display snapshot на момент создания
+    starts_at       TIMESTAMPTZ NOT NULL,
+    ends_at         TIMESTAMPTZ NOT NULL CHECK (ends_at > starts_at),
+    note            TEXT,
+    source          TEXT NOT NULL DEFAULT 'individual' CHECK (source IN ('individual','company')),
+    batch_id        UUID,                     -- группирует company-wide материализацию (аудит; удаление ВСЕГДА поштучное)
+    created_by      UUID REFERENCES crm_users(id),   -- req.user.crmUser.id, НЕ sub
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tech_time_off_lookup
+    ON technician_time_off (company_id, technician_id, starts_at);
+```
+
+Хранение — UTC timestamptz; company-tz только при вводе (UI) и при сравнении с company-local окнами (tzCombine). Пересечение полуночи/нескольких дней = просто длинный интервал, нигде не режется.
+
+**Company-wide материализация (FR-2):** roster = ровно `zenbookerClient.getTeamMembers({service_provider:true, deactivated:false}, companyId)` — тот же источник, что `buildTechnicians` (движок) и `useProviders` (лейны): «активен» = тот, кому вообще могут предлагаться слоты. Ошибка ZB-запроса → 502, ноль вставок (INSERT N строк одним statement'ом, общий `batch_id`, `source='company'`). Техник, добавленный позже, записей задним числом не получает (FR-2 as-is).
+
+### API — внутри существующего `backend/src/routes/schedule.js` (src/server.js НЕ трогаем)
+
+Mount-точки роутов живут только в `src/server.js` (protected). `/api/schedule` уже смонтирован строкой `src/server.js:221`: `app.use('/api/schedule', authenticate, requireCompanyAccess, scheduleRouter)` — day-off-роуты добавляются в `routes/schedule.js` и наследуют цепочку `authenticate → requireCompanyAccess` + per-route `requirePermission`. `company_id` — ТОЛЬКО `req.companyFilter?.company_id`; каждый SQL фильтрует по company_id.
+
+- **`GET /api/schedule/time-off?from&to[&technician_id]`** — `requirePermission('schedule.view')` + `getProviderScope(req)`: `assigned_only` → отдаются только записи СВОЕГО ZB id (резолв через новый `membershipQueries.getZenbookerTeamMemberIdForUser(companyId, userId)` — обратный ход того же моста `company_user_profiles.zenbooker_team_member_id`; моста нет → пустой список, deny-by-default как в providerScope). Прошедшие периоды не режем на сервере (диапазон задаёт клиент); management-UI сам запрашивает from=now.
+- **`POST /api/schedule/time-off`** — `requirePermission('schedule.dispatch')`; body `{ target: <technician_id>|'company', technician_name?, starts_at, ends_at, note? }`; валидация `ends_at > starts_at`; `created_by = req.user.crmUser?.id || null`. `target='company'` → материализация (выше). Ответ — созданные записи.
+- **`DELETE /api/schedule/time-off/:id`** — `requirePermission('schedule.dispatch')`; `DELETE ... WHERE id=$1 AND company_id=$2`; 0 строк → 404 (company-scoped, чужой tenant неотличим от несуществующего). Только поштучно (FR-3), редактирования нет (v1).
+
+RBAC-каталог НЕ меняется: `schedule.view` / `schedule.dispatch` уже существуют (`permissionCatalog.js:69-70`), новые ключи не нужны (FR-8 закрывается ими).
+
+### Расписание-рендер: отдельный GET + фронт-слой, НЕ 4-й UNION в scheduleQueries.js
+
+Отвергнут 4-й UNION: `ScheduleItem.entity_type` ('job'|'lead'|'task') — несущий контракт (клик → entity-панель, DnD → `PATCH /items/:entityType/:entityId/reschedule`, фильтры/лейауты); day-off — не entity, не кликается, не таскается. Отдельный `GET /time-off` = один индексированный запрос на видимый диапазон (NFR), items-запрос не деградирует, `getScheduleItems`/`rowToScheduleItem` нетронуты.
+
+Фронт: `scheduleApi.ts` + тип `TimeOffBlock { id, technician_id, technician_name, starts_at, ends_at, note, source }` + `fetchTimeOff/createTimeOff/deleteTimeOff`; `useScheduleData` — параллельный fetch time-off на тот же `dateRange` (refetch при смене диапазона и после мутаций диалога). Рендер серых блоков «Time off»: `TimelineView.tsx` + `TimelineWeekView.tsx` (desktop, лейн техника по `technician_id` == provider id лейна) и `DayView.tsx` (он же мобильная agenda — `useIsMobile` внутри; упрощённая серая полоса допустима по FR-7). Блоки — отдельный слой ПОД items: `pointer-events: none`, фон на базе `--blanc-ink-3`/`--blanc-line` (штриховка/тонировка), подпись «Time off»; клик/DnD не перехватывают (protected: DnD-цепочка и agenda-рендер items не меняются). Provider assigned_only получает только свои блоки уже с сервера — фронту фильтровать нечего.
+
+### UI управления (FR-6): кнопка «Time off» на Schedule + FORM-CANON панель
+
+`SchedulePage.tsx` / `ScheduleToolbar` — кнопка «Time off» рядом с Dispatch settings, гейт по `schedule.dispatch` (`useAuthz`, как у DispatchSettingsDialog). Новый `frontend/src/components/schedule/TimeOffDialog.tsx` — строго FORM-CANON: `<Dialog><DialogContent variant="panel">` + `DialogPanelHeader` + `DialogBody` (внутри `max-w-[740px] space-y-6`) + `DialogPanelFooter` (ghost Cancel + primary Save); поля — `FloatingSelect` (техник | «Whole company»; roster из `useProviders`), from/to = date+time пары (`FloatingField type="date"/"time"`, две короткие пары `grid sm:grid-cols-2 gap-3.5`), `FloatingField` note. Ниже — список текущих/будущих записей (from=now) c поштучным удалением; прошедшие не показываются. На мобиле панель сама становится bottom-sheet. Ввод в company-tz (`settings.timezone`), конверсия в UTC ISO перед POST (`dateInTZ`/companyTime.ts — тот же канон, что tzCombine на бэке).
+
+### Warning диспетчеру (FR-5) — фронт-проверка, никаких серверных блокировок
+
+Общая утилита `overlapsTimeOff(blocks, techIds, startIso, endIso)` (в `scheduleApi.ts` или `utils/`), данные — уже загруженный `timeOff` из `useScheduleData` либо точечный `fetchTimeOff({from,to,technician_id})`. v1 — три точки:
+
+1. **Schedule DnD-перенос** (`TimelineView`/`DayView`/`TimelineWeekView` handleDrop): блоки уже в памяти → пересечение лейна-цели → центр-модалка подтверждения (`variant="dialog"` — канонично для confirm) «У {name} time off {период}. Всё равно перенести?» → продолжить/отмена. Дёшево (0 запросов), включаем в v1.
+2. **`NewJobModal.tsx`** (create-from-slot: знает `providerId`+`startAt/endAt`): инлайн-предупреждение в форме (не блокирует Save) — блоки прокидываются из SchedulePage-контекста.
+3. **Карточка Job — смена даты**: точка врезки `JobInfoSections.tsx` (именно он открывает shared `CustomTimeModal` и знает `job.assigned_techs`): перед подтверждением reschedule — точечный `fetchTimeOff` на выбранный день по technician_id → confirm-модалка как в (1). Сам `CustomTimeModal` НЕ трогаем (shared: NewJobDialog/ConvertToJobSteps/WizardStep3/RobotCallSlotModal/TaskActionButtons; его engine-слоты уже отфильтрованы через seam).
+
+**Отложено (задокументировано, не в v1):** warning при смене ТЕХНИКА (`JobTechnicianControl`) и в Month/Week/List-видах — FR-5 покрывает создание/перенос; тех-свап добавится тем же `overlapsTimeOff` позже.
+
+### Файлы
+
+| Файл | Действие |
+|---|---|
+| `backend/db/migrations/167_technician_time_off.sql` + `rollback_167_technician_time_off.sql` | **создать** — таблица + индекс (DDL выше) |
+| `backend/src/db/timeOffQueries.js` | **создать** — `listRange`, `listOverlappingRange`, `insertMany` (одним statement), `deleteById`; всё company_id-scoped |
+| `backend/src/services/timeOffService.js` | **создать** — list (provider scope), create (company-wide материализация через `zenbookerClient.getTeamMembers`), delete; используется routes + slotEngineService |
+| `backend/src/db/membershipQueries.js` | + `getZenbookerTeamMemberIdForUser(companyId, userId)` (обратный мост; `resolveProviderUserIds` не трогаем) |
+| `backend/src/routes/schedule.js` | + `GET/POST /time-off`, `DELETE /time-off/:id` (requirePermission + getProviderScope; server.js НЕ трогаем) |
+| `backend/src/services/slotEngineService.js` | `getRecommendations`: fetch day-off → ранний no-op выход → pre-shaping technicians → top_n headroom → post-filter + re-rank. `buildTechnicians`/`buildScheduledJobs` байт-в-байт |
+| `frontend/src/services/scheduleApi.ts` | + `TimeOffBlock`, fetch/create/delete, `overlapsTimeOff` |
+| `frontend/src/hooks/useScheduleData.ts` | + timeOff state (fetch на dateRange, refetch-callback) |
+| `frontend/src/pages/SchedulePage.tsx` (+ ScheduleToolbar) | кнопка «Time off» (dispatch-гейт), прокидка timeOff в виды |
+| `frontend/src/components/schedule/TimeOffDialog.tsx` | **создать** — FORM-CANON панель: форма + список + delete |
+| `frontend/src/components/schedule/TimelineView.tsx`, `TimelineWeekView.tsx`, `DayView.tsx` | слой серых блоков (pointer-events:none) + DnD-drop warning |
+| `frontend/src/components/schedule/NewJobModal.tsx` | инлайн-warning о конфликте |
+| `frontend/src/components/jobs/JobInfoSections.tsx` | confirm-warning при reschedule из карточки |
+| `tests/techDayoff.test.js` (или пара: seam + routes) | seam-фильтр (пересечения: частичное/полное/через-полночь/многодневное, 0-строк = байт-идентичный запрос, pre-shaping, headroom+slice), материализация K записей / delete K-1, RBAC 403, provider scope |
+
+### НЕ изменяются (защищено)
+
+- **`slot-engine/` контейнер — ноль изменений, прод-деплой контейнера НЕ нужен** (главный плюс выбранного варианта).
+- `src/server.js` (mount уже существует), `authedFetch.ts`, `useRealtimeEvents.ts`.
+- Поведение `getRecommendations` без day-off — байт-в-байт (ранний выход): Tier-1/Tier-2 fallback, TECHSLOT one-tech, slot-persist path vapi-tools, safe-failure semantics.
+- Потребители seam: `vapi-tools.js`, `agentSkills/*`, `partsCallService.js`, `yelpConvoAgentService.js`, `slotRecommendationsApi.ts`, `CustomTimeModal.tsx` (internals).
+- `scheduleQueries.getScheduleItems` (UNION), `reassignItem`/ZB write-through, recalc-хуки SCHED-ROUTE-001/VIS-001, FSM, task-механика CANCEL-001, permissionCatalog (ключи), DnD-цепочка и agenda-рендер items.
+- Zenbooker availability — day-off никуда не пушится (out-of-scope).
+
+### Отвергнутые альтернативы
+
+- **(a) Псевдо-job `timeoff:<id>` в snapshot** — 4 верифицированные дыры (скольжение при overlap>0 до 240, вечерний over-block всего дня из-за return-buffer, NaN-отравление/артефакты без base-location, '24:00'-нарезка); лечение требует зеркалирования workday/buffer-констант движка в CRM — хрупко. Отклонено.
+- **(b) `unavailability[]` в протоколе движка** — сервер не строг (лишние поля игнорируются), но старый прод-контейнер молча проигнорирует поле → фича тихо мертва до отдельного деплоя контейнера, который по условию нежелателен. Путь v2 при потребности в route-feasibility вокруг day-off.
+- **4-й UNION в `getScheduleItems`** — ломает несущий entity_type-контракт (клики/DnD/reschedule-PATCH), тащит не-entity в items-пагинацию.
+- **`technician_id UUID → crm_users.id`** — вся scheduling-плоскость (движок, лейны, assigned_techs, base-locations) ходит на ZB id; UUID потребовал бы мост на КАЖДОМ чтении и ломался бы для техников без company_user_profiles-связки.
+- **Серверная 4xx-блокировка конфликтных ручных действий** — прямо запрещена FR-5 (warning, не блок).
+- **SSE-событие на изменение day-off** — v1 не нужно (мутации только из диалога → локальный refetch); добавится при необходимости как named event.
+
+### Риски
+
+- **Недобор слотов после post-filter:** ranking-квоты движка расходуются на отфильтрованных кандидатов. Смягчено pre-shaping'ом (отпускники выкинуты из roster) + top_n headroom (+5) со slice-обрезкой; per-tech caps не расширяем → возможен недобор при точечных day-off у топ-техника — деградация в «меньше слотов», все потребители это уже переживают (safe-fail пустого списка).
+- **Роботы у «пустой» компании:** company-wide day-off на день → recommendSlots вернёт 0 → Sara/parts-robot/Yelp скажут «нет слотов» — желаемое поведение (сценарий 4), но объём предложений падает до нуля; предупреждение диспетчеру об этом — в UI создания (текст в панели).
+- **ZB-roster в момент company-wide create** — источник внешний: недоступен → 502 без частичной записи; состав ростера меняется со временем (новый техник записей не получает — принятое FR-2).
+- **Мост provider→ZB id** (`company_user_profiles.zenbooker_team_member_id`) может отсутствовать у конкретного провайдера → он не увидит своих блоков (deny-by-default, консистентно с providerScope-философией); лечится настройкой bridge-маппинга (существующий admin-механизм).
+- **Смещение окон vs day-off по DST:** сравнение через `tzCombine` (DST-aware, канон companyTime) — окна rec конвертируются той же функцией, что использует slot-persist path; расхождений с хранением UTC нет.
+- **Затягивание работы в day-off из соседнего окна** (пост-фильтр не считает route-feasibility) — принятая v1-плата, см. выбор A′; при боли — v2 = вариант (b) с деплоем контейнера, post-filter остаётся страховкой.

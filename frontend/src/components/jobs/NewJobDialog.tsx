@@ -9,7 +9,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Check, X, Clock, Loader2 } from 'lucide-react';
+import { Check, X, Clock, Loader2, TriangleAlert } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
@@ -25,6 +25,8 @@ import { CustomTimeModal } from '../conversations/CustomTimeModal';
 import { useZipCheck } from '../../hooks/useZipCheck';
 import * as contactsApi from '../../services/contactsApi';
 import { createJob, type CreateJobBody } from '../../services/jobsApi';
+import { fetchTimeOff, overlapsTimeOff } from '../../services/scheduleApi';
+import { getCompanyTimezone, formatTimeOffPeriod } from './timeOffWarning';
 import type { CopyJobData } from './copyJobData';
 import type { DedupeCandidate } from '../../types/contact';
 import '../leads/CreateLeadDialog.css';
@@ -126,6 +128,36 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
             setSlot({ start: presetSlot.start, end: presetSlot.end, techId: presetSlot.techId, formatted: presetSlot.formatted || '' });
         }
     }, [open, presetSlot]);
+
+    // TECH-DAYOFF-001 S-12 (warning-only): when the chosen slot carries a
+    // technician, lazily run ONE targeted time-off check for that tech on the
+    // slot interval (covers every mount point — SchedulePage from-slot AND the
+    // plain JobsPage "New job"; the picked slot may also land outside the
+    // schedule's loaded range, so a targeted fetch beats a threaded prop).
+    // Best-effort: a failed fetch just means no hint. Save is NEVER disabled.
+    const [timeOffWarning, setTimeOffWarning] = useState<{ techName: string; period: string } | null>(null);
+    const slotStart = slot?.start, slotEnd = slot?.end, slotTechId = slot?.techId;
+    useEffect(() => {
+        if (!open || !slotStart || !slotEnd || !slotTechId) { setTimeOffWarning(null); return; }
+        let cancelled = false;
+        (async () => {
+            try {
+                const [blocks, tz] = await Promise.all([
+                    fetchTimeOff({ from: slotStart, to: slotEnd, technician_id: slotTechId }),
+                    getCompanyTimezone(),
+                ]);
+                if (cancelled) return;
+                const conflicts = overlapsTimeOff(blocks, [slotTechId], slotStart, slotEnd);
+                setTimeOffWarning(conflicts.length > 0
+                    ? { techName: conflicts[0].technician_name, period: formatTimeOffPeriod(conflicts[0], tz) }
+                    : null);
+            } catch (err) {
+                if (!cancelled) setTimeOffWarning(null);
+                console.warn('[NewJobDialog] time-off warning check failed (skipped)', err);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [open, slotStart, slotEnd, slotTechId]);
 
     // Debounced broad contact search (name, phone, email, address — backend `q`)
     const runSearch = useCallback(async (q: string) => {
@@ -323,22 +355,32 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                         />
 
                         {/* Time & technician */}
-                        {slot ? (
-                            <button
-                                type="button"
-                                onClick={() => setTimeOpen(true)}
-                                className="w-full text-left rounded-xl px-4 h-[50px] flex items-center gap-3 transition-colors hover:bg-[rgba(25,25,25,0.03)]"
-                                style={{ border: '1.5px solid var(--blanc-line)' }}
-                            >
-                                <Clock style={{ width: 18, height: 18, color: 'var(--blanc-ink-3)', flexShrink: 0 }} />
-                                <span className="text-[15px]" style={{ color: 'var(--blanc-ink-1)' }}>{slot.formatted}</span>
-                                <span className="ml-auto text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>Change</span>
-                            </button>
-                        ) : (
-                            <Button type="button" variant="secondary" className="w-full justify-center h-[50px] text-[15px] rounded-xl" onClick={() => setTimeOpen(true)}>
-                                <Clock className="size-4 mr-2" /> Pick time &amp; provider
-                            </Button>
-                        )}
+                        <div className="space-y-2">
+                            {slot ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setTimeOpen(true)}
+                                    className="w-full text-left rounded-xl px-4 h-[50px] flex items-center gap-3 transition-colors hover:bg-[rgba(25,25,25,0.03)]"
+                                    style={{ border: '1.5px solid var(--blanc-line)' }}
+                                >
+                                    <Clock style={{ width: 18, height: 18, color: 'var(--blanc-ink-3)', flexShrink: 0 }} />
+                                    <span className="text-[15px]" style={{ color: 'var(--blanc-ink-1)' }}>{slot.formatted}</span>
+                                    <span className="ml-auto text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>Change</span>
+                                </button>
+                            ) : (
+                                <Button type="button" variant="secondary" className="w-full justify-center h-[50px] text-[15px] rounded-xl" onClick={() => setTimeOpen(true)}>
+                                    <Clock className="size-4 mr-2" /> Pick time &amp; provider
+                                </Button>
+                            )}
+                            {/* TECH-DAYOFF-001 S-12: warning-only conflict hint — the
+                                job can still be booked, Save stays enabled. */}
+                            {slot && timeOffWarning && (
+                                <div className="flex items-start gap-2 px-1 text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-2)' }}>
+                                    <TriangleAlert className="size-3.5 flex-shrink-0" style={{ color: 'var(--blanc-warning)', marginTop: 2 }} />
+                                    <span>{timeOffWarning.techName} has time off {timeOffWarning.period}. You can still book it.</span>
+                                </div>
+                            )}
+                        </div>
 
                         {/* Work — Job type + Lead source are the same shared data as New Lead */}
                         <div className="space-y-3.5">

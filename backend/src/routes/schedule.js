@@ -7,6 +7,7 @@ const router = express.Router();
 const scheduleService = require('../services/scheduleService');
 const slotEngineService = require('../services/slotEngineService');
 const marketplaceService = require('../services/marketplaceService');
+const timeOffService = require('../services/timeOffService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -214,6 +215,59 @@ router.post('/slot-recommendations', requirePermission('schedule.dispatch'), asy
             ok: false,
             error: { code: err.code || 'INTERNAL', message: err.message },
         });
+    }
+});
+
+// =============================================================================
+// Technician time off — TECH-DAYOFF-001
+// =============================================================================
+
+// GET /api/schedule/time-off?from&to[&technician_id] — records overlapping
+// [from, to). Provider (assigned_only) scope: forced onto the caller's own
+// bridged ZB id; no bridge mapping → empty list (deny-by-default).
+router.get('/time-off', requirePermission('schedule.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const { from, to, technician_id } = req.query;
+        const items = await timeOffService.listTimeOff(
+            companyId,
+            { from, to, technicianId: technician_id },
+            getProviderScope(req)
+        );
+        res.json({ ok: true, data: { time_off: items } });
+    } catch (err) {
+        console.error('[Schedule] GET /time-off error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/schedule/time-off — create day-off: target 'technician' → 1 row,
+// target 'company' → materialized K rows (one atomic multi-row INSERT).
+router.post('/time-off', requirePermission('schedule.dispatch'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const createdBy = req.user?.crmUser?.id || null; // crm_users.id, NOT the Keycloak sub
+        const created = await timeOffService.createTimeOff(companyId, req.body || {}, createdBy);
+        res.status(201).json({ ok: true, data: { created } });
+    } catch (err) {
+        console.error('[Schedule] POST /time-off error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// DELETE /api/schedule/time-off/:id — always per-row (batch_id is audit-only);
+// missing id and a foreign tenant's id are the same 404.
+router.delete('/time-off/:id', requirePermission('schedule.dispatch'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const result = await timeOffService.deleteTimeOff(companyId, req.params.id);
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Schedule] DELETE /time-off error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }
 });
 

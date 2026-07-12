@@ -9,6 +9,10 @@ import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '../ui/dialog';
+import { Button } from '../ui/button';
+import { fetchTimeOff, overlapsTimeOff } from '../../services/scheduleApi';
+import { getCompanyTimezone, formatTimeOffPeriod } from './timeOffWarning';
 import { JobTechnicianControl } from './JobTechnicianControl';
 import { useNavigate } from 'react-router-dom';
 import { googleMapsUrl } from '../../utils/routeFormat';
@@ -20,6 +24,10 @@ interface JobInfoSectionsProps {
     contactInfo: { id: number; name: string; phone?: string; email?: string } | null;
     onJobUpdated?: (updatedJob: LocalJob) => void;
 }
+
+// The slot shape CustomTimeModal confirms with (unchanged — named here so the
+// TECH-DAYOFF-001 pending-confirm state can hold it).
+type RescheduleSlot = { type: 'arrival_window'; start: string; end: string; formatted: string; techId?: string };
 
 // ─── Shared tile styles (mirrors ScheduleSidebar) ────────────────────────────
 
@@ -93,8 +101,39 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
 
     const territoryId = job.zb_raw?.territory?.id || job.zb_raw?.service_territory?.id || undefined;
 
-    const handleRescheduleConfirm = async (slot: { type: 'arrival_window'; start: string; end: string; formatted: string; techId?: string }) => {
+    // TECH-DAYOFF-001 S-13 (warning-only): after the time is picked and BEFORE
+    // the existing reschedule call, run a targeted time-off check for each of
+    // the job's CURRENT assigned techs on the chosen interval. A conflict opens
+    // a confirm modal (center dialog canon); confirming runs the untouched
+    // reschedule path. A failed fetch skips the warning (best-effort) and
+    // reschedules as before — never blocks.
+    const [pendingReschedule, setPendingReschedule] = useState<{ techName: string; period: string; slot: RescheduleSlot } | null>(null);
+
+    const handleRescheduleConfirm = async (slot: RescheduleSlot) => {
         setShowReschedule(false);
+        const techs = job.assigned_techs || [];
+        if (techs.length > 0) {
+            try {
+                const [perTech, tz] = await Promise.all([
+                    Promise.all(techs.map(t => fetchTimeOff({ from: slot.start, to: slot.end, technician_id: t.id }))),
+                    getCompanyTimezone(),
+                ]);
+                const conflicts = overlapsTimeOff(perTech.flat(), techs.map(t => t.id), slot.start, slot.end);
+                if (conflicts.length > 0) {
+                    const c = conflicts[0];
+                    setPendingReschedule({ techName: c.technician_name, period: formatTimeOffPeriod(c, tz), slot });
+                    return;
+                }
+            } catch (err) {
+                console.warn('[JobInfoSections] time-off warning check failed (skipped)', err);
+            }
+        }
+        await performReschedule(slot);
+    };
+
+    // The pre-existing reschedule path, byte-for-byte — runs either directly
+    // (no day-off conflict) or after the dispatcher confirms in the modal.
+    const performReschedule = async (slot: RescheduleSlot) => {
         setRescheduling(true);
         try {
             const arrivalMinutes = Math.round((new Date(slot.end).getTime() - new Date(slot.start).getTime()) / 60000);
@@ -309,6 +348,28 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                     end: job.end_date,
                 } : undefined}
             />
+
+            {/* TECH-DAYOFF-001 S-13: reschedule-onto-time-off confirmation — center
+                modal (canon for short confirmations). Cancel = nothing mutates;
+                Reschedule = the untouched reschedule path proceeds. */}
+            <Dialog open={!!pendingReschedule} onOpenChange={v => { if (!v) setPendingReschedule(null); }}>
+                <DialogContent variant="dialog" size="sm">
+                    <DialogHeader>
+                        <DialogTitle>Blocked by time off</DialogTitle>
+                        <DialogDescription>
+                            {pendingReschedule && `${pendingReschedule.techName} has time off ${pendingReschedule.period}. Reschedule anyway?`}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setPendingReschedule(null)}>Cancel</Button>
+                        <Button onClick={() => {
+                            const p = pendingReschedule;
+                            setPendingReschedule(null);
+                            if (p) void performReschedule(p.slot);
+                        }}>Reschedule</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

@@ -15,6 +15,7 @@ const googlePlacesService = require('./googlePlacesService');
 const jobsService = require('./jobsService');
 const scheduleService = require('./scheduleService');
 const slotEngineSettingsService = require('./slotEngineSettingsService');
+const timeOffQueries = require('../db/timeOffQueries');
 const { dateInTZ } = require('../utils/companyTime');
 
 const DEFAULT_TZ = 'America/New_York';
@@ -26,6 +27,11 @@ const ENGINE_TIMEOUT_MS = 4000;
 // widen the per-tech ranking caps on single-technician queries so a one-day query
 // can return ALL of that day's windows (the engine defaults cap at 2 per tech).
 const SINGLE_TECH_TIMEFRAME_COUNT = 5;
+
+// TECH-DAYOFF-001 §S-5: extra ranking.top_n headroom requested from the engine when
+// day-off records exist on the horizon — post-filtered rejects would otherwise burn
+// the ranking quota and under-fill the response (E-11). Sliced back after filtering.
+const TIMEOFF_TOPN_HEADROOM = 5;
 
 function isFiniteNum(n) {
     return typeof n === 'number' && Number.isFinite(n);
@@ -203,6 +209,63 @@ async function buildScheduledJobs(companyId, startDate, endDate, tz, excludeJobI
     return out;
 }
 
+// ─── Day-off helpers (TECH-DAYOFF-001, DO-02) ───────────────────────────────────
+// All comparisons run on UTC-instant milliseconds with STRICT half-open interval
+// overlap (aStart < bEnd && bStart < aEnd) — records merely touching a boundary do
+// NOT overlap (INV-8). Multi-day / cross-midnight day-off stays ONE interval; there
+// is never any per-date slicing.
+
+/** technician_time_off rows → Map<technician_id, [{start, end}]> (epoch ms, half-open). */
+function groupTimeOffByTech(rows) {
+    const byTech = new Map();
+    for (const r of rows) {
+        const key = String(r.technician_id);
+        if (!byTech.has(key)) byTech.set(key, []);
+        byTech.get(key).push({
+            start: new Date(r.starts_at).getTime(),
+            end: new Date(r.ends_at).getTime(),
+        });
+    }
+    return byTech;
+}
+
+/**
+ * Pre-shaping (S-5 step 1): drop technicians having ONE day-off record that covers
+ * the entire [horizonStartMs, horizonEndMs). Multi-records are deliberately NOT
+ * merged (E-2, v1 conservative) — a tech covered only by the union of several
+ * records stays in the roster and the post-filter kills their dead windows. Pure
+ * input-shaping AFTER buildTechnicians (INV-4), same precedent as the TECHSLOT
+ * one-tech filter in getRecommendations.
+ */
+function dropFullHorizonTimeOffTechs(technicians, timeOffByTech, horizonStartMs, horizonEndMs) {
+    return technicians.filter(t => {
+        const offs = timeOffByTech.get(String(t.id));
+        if (!offs) return true;
+        return !offs.some(o => o.start <= horizonStartMs && o.end >= horizonEndMs);
+    });
+}
+
+/**
+ * Post-filter (S-5 steps 3-4): drop every rec whose arrival window overlaps ANY
+ * day-off of ANY of its technicians, then slice back to the pre-headroom top_n
+ * and renumber rank 1..n. Window instants are built with the SAME tzCombine as
+ * the vapi slot-persist path (E-8: DST-safe by construction — a switch-day
+ * 08:00–10:00 window lands on the exact instants bookings use).
+ */
+function applyDayOffPostFilter(recommendations, timeOffByTech, tz, topN) {
+    const kept = recommendations.filter(rec => {
+        const tf = rec?.time_frame || {};
+        const winStart = Date.parse(tzCombine(rec.date, tf.start, tz));
+        const winEnd = Date.parse(tzCombine(rec.date, tf.end, tz));
+        const techs = Array.isArray(rec?.technicians) ? rec.technicians : [];
+        return !techs.some(t => {
+            const offs = timeOffByTech.get(String(t?.id));
+            return offs != null && offs.some(o => winStart < o.end && o.start < winEnd);
+        });
+    });
+    return kept.slice(0, topN).map((rec, i) => ({ ...rec, rank: i + 1 }));
+}
+
 // ─── Public entrypoint ──────────────────────────────────────────────────────────
 
 /**
@@ -230,6 +293,18 @@ async function getRecommendations(companyId, input = {}) {
     const earliest = newJob.earliest_allowed_date || today;
     const latest = newJob.latest_allowed_date || addDaysLocal(today, settings.horizon_days);
 
+    // TECH-DAYOFF-001 (DO-02): ONE horizon-wide day-off SELECT [start 00:00 ..
+    // end+1d 00:00 company tz). A DB error here PROPAGATES exactly like a
+    // buildTechnicians failure (E-15 — swallowing it into "0 rows" would silently
+    // re-open dead slots). 0 rows → hasTimeOff=false → every day-off branch below
+    // is a no-op: the engine request body and the response stay byte-identical to
+    // the pre-feature path (INV-2; the SELECT is the feature's only delta).
+    const horizonStartUtc = tzCombine(earliest, '00:00', tz);
+    const horizonEndUtc = tzCombine(addDaysLocal(latest, 1), '00:00', tz);
+    const timeOffRows = await timeOffQueries.listOverlappingRange(companyId, horizonStartUtc, horizonEndUtc);
+    const hasTimeOff = Array.isArray(timeOffRows) && timeOffRows.length > 0;
+    const timeOffByTech = hasTimeOff ? groupTimeOffByTech(timeOffRows) : null;
+
     // 2 + 3. Technicians and scheduled jobs.
     const [allTechnicians, scheduledJobs] = await Promise.all([
         buildTechnicians(companyId),
@@ -247,10 +322,26 @@ async function getRecommendations(companyId, input = {}) {
         ? allTechnicians.filter(t => String(t.id) === String(technicianId))
         : allTechnicians;
 
+    // TECH-DAYOFF-001 pre-shaping (S-5/S-6): a tech whose single day-off record
+    // covers the whole horizon leaves the roster before the engine sees it, so
+    // ranking quota isn't wasted on all-dead candidates. Zero-path hands through
+    // the SAME array reference — no day-off rows, no delta (INV-2). TECHSLOT
+    // one-tech fully covered → [] → engine yields 0 recs (E-9, existing
+    // safe-fail semantics of every consumer).
+    const engineTechnicians = hasTimeOff
+        ? dropFullHorizonTimeOffTechs(
+              technicians,
+              timeOffByTech,
+              Date.parse(horizonStartUtc),
+              Date.parse(horizonEndUtc)
+          )
+        : technicians;
+
     // Base coverage — surfaced to the UI so the dispatcher knows recommendations may
     // be incomplete when some technicians have no base set (the engine can't place a
-    // based-less technician on a day they have no other jobs).
-    const activeTechs = technicians.filter(t => t.active);
+    // based-less technician on a day they have no other jobs). TECH-DAYOFF-001:
+    // counted on the pre-shaped roster — it describes the techs actually ranked (S-5).
+    const activeTechs = engineTechnicians.filter(t => t.active);
     const coverage = {
         technicians_total: activeTechs.length,
         technicians_with_base: activeTechs.filter(t => t.base).length,
@@ -278,6 +369,22 @@ async function getRecommendations(companyId, input = {}) {
         };
     }
 
+    // TECH-DAYOFF-001 headroom (S-5 step 2): remember the pre-headroom top_n for
+    // the final slice, then ask the engine for +TIMEOFF_TOPN_HEADROOM more so
+    // post-filter rejects don't under-fill the answer (E-11). Composed AFTER the
+    // singleTech widening above; the per-tech / per-timeframe caps are NOT
+    // touched. Zero-path: configOverride is left completely untouched.
+    const preHeadroomTopN = Number(configOverride.ranking?.top_n) || 3; // 3 = engine DEFAULT_CONFIG top_n
+    if (hasTimeOff) {
+        configOverride = {
+            ...configOverride,
+            ranking: {
+                ...configOverride.ranking,
+                top_n: preHeadroomTopN + TIMEOFF_TOPN_HEADROOM,
+            },
+        };
+    }
+
     // 4. Engine request body (per slot-engine/README.md contract).
     const requestId = `alb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const body = {
@@ -293,7 +400,8 @@ async function getRecommendations(companyId, input = {}) {
             earliest_allowed_date: earliest,
             latest_allowed_date: latest,
         },
-        technicians,
+        // TECH-DAYOFF-001: pre-shaped roster (=== `technicians` when no day-off).
+        technicians: engineTechnicians,
         scheduled_jobs: scheduledJobs,
         config_override: configOverride,
     };
@@ -318,9 +426,16 @@ async function getRecommendations(companyId, input = {}) {
             return { recommendations: [], summary: null, engine_status: 'unavailable', coverage };
         }
         const json = await res.json();
-        // 6. Success.
+        // 6. Success. TECH-DAYOFF-001 post-filter (S-5 steps 3-4) runs ONLY when
+        // day-off rows exist; zero-path returns the engine's array untouched
+        // (INV-2). Response shape {recommendations, summary, engine_status,
+        // coverage} is structurally unchanged (INV-3).
+        let recommendations = Array.isArray(json?.recommendations) ? json.recommendations : [];
+        if (hasTimeOff) {
+            recommendations = applyDayOffPostFilter(recommendations, timeOffByTech, tz, preHeadroomTopN);
+        }
         return {
-            recommendations: Array.isArray(json?.recommendations) ? json.recommendations : [],
+            recommendations,
             summary: json?.summary ?? null,
             engine_status: 'ok',
             coverage,

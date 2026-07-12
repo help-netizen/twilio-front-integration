@@ -2277,3 +2277,16 @@ Marketplace-gated integration of the standalone `slot-engine` (Phase 1) into the
 - Фикс Tester-бага: hoisted require + Promise.resolve в setImmediate-hunk (teardown-race в jest).
 
 **Тесты:** +2 сьюта (schedRouteRecalcHooks 20, schedRouteLazySeed 17); 6/6 route-suites 61/61; широкая регрессия 17 suites / 228 tests; frontend build зелёный; sabotage-контроль ×2 (Reviewer APPROVED). Без миграций и изменений пермишенов. НЕ задеплоено (deploy-consent).
+
+## 2026-07-11 — TECH-DAYOFF-001: day-off периоды техников (слоты не предлагаются на нерабочее время)
+
+**Проблема:** пустое расписание выглядит для слот-движка как свободное — Sara/VAPI, outbound-робот и Yelp-агент бронировали клиентов на дни, когда никто не работает.
+
+**Изменения:**
+- Миграция 167 technician_time_off (technician_id = ZB team-member TEXT id, starts_at/ends_at timestamptz — период через полночь/дни, source individual|company, batch_id, created_by crm_users.id).
+- CRUD /api/schedule/time-off (routes/schedule.js): GET за schedule.view (provider assigned_only → только свои через bridge company_user_profiles, deny-by-default), POST/DELETE за schedule.dispatch. Company-wide материализуется в K записей по активному ZB-ростеру одним INSERT (общий batch_id, атомарно: ZB-fail → 502 и ноль вставок); удаление всегда поштучное.
+- A′ post-filter в slotEngineService.getRecommendations (единый seam — закрывает Sara/VAPI, outbound, Yelp-агента и слот-пикер UI): один SELECT на горизонт → 0 строк = байт-в-байт прежнее поведение; pre-shaping (техник, полностью накрытый одной записью, выкидывается из ростера), top_n headroom +5, выброс rec'ов с пересечением (UTC, полуоткрытые интервалы), slice+re-rank. Контейнер slot-engine НЕ изменён — деплой контейнера не нужен.
+- UI: кнопка «Time off» на Schedule (dispatch-only) → FORM-CANON панель TimeOffDialog (создание техник|вся компания, from/to date+time, note ≤500; список текущих/будущих с поштучным удалением). Серые заштрихованные блоки в TimelineView/TimelineWeekView/DayView (pointer-events:none; mobile agenda — карточка «Time off · имя · период»/All day).
+- Warning-only (без блокировок): DnD-перенос на day-off → confirm-модалка; NewJobDialog — inline-предупреждение; reschedule из карточки Job — confirm. Save нигде не дизейблится.
+
+**Тесты:** +3 сьюта (timeOffRoutes 32, slotEngineDayOffFilter 14, timeOffMigration 12) = 58; drift-guard 22 suites / 358 tests без правок; frontend build зелёный; sabotage ×2 (Reviewer APPROVED). Владелец: manual-смоук + деплой (миграция 167) — owner-gated.

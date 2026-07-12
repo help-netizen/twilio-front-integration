@@ -53,6 +53,25 @@ export interface RouteSegment {
     calculated_at: string | null;
 }
 
+// TECH-DAYOFF-001 — a technician day-off period. `technician_id` is the ZB
+// team-member TEXT id (same id space as lanes/providers — INV-7); the interval
+// is half-open UTC `[starts_at, ends_at)` and may span midnight / several days.
+export interface TimeOffBlock {
+    id: string;
+    technician_id: string;
+    technician_name: string;
+    starts_at: string;              // UTC ISO
+    ends_at: string;                // UTC ISO
+    note?: string | null;
+    source: 'individual' | 'company';
+    batch_id?: string | null;       // shared by rows of one company-wide create
+    created_at?: string;
+}
+
+export type CreateTimeOffPayload =
+    | { target: 'technician'; technician_id: string; technician_name: string; starts_at: string; ends_at: string; note?: string }
+    | { target: 'company'; starts_at: string; ends_at: string; note?: string };
+
 export interface DispatchSettings {
     timezone: string;
     work_start_time: string; // "08:00"
@@ -241,4 +260,69 @@ export async function createFromSlot(payload: CreateFromSlotPayload): Promise<Sc
         method: 'POST',
         body: JSON.stringify(payload),
     });
+}
+
+// ── Time off (TECH-DAYOFF-001) ───────────────────────────────────────────────
+
+interface TimeOffListResponse {
+    time_off: TimeOffBlock[];
+}
+
+/**
+ * Day-off blocks overlapping `[from, to)` (UTC ISO, both required). Optional
+ * `technician_id` narrows to one technician (used by the targeted reschedule
+ * warning check). Provider scope is enforced server-side (assigned_only sees
+ * only own blocks).
+ */
+export async function fetchTimeOff(
+    params: { from: string; to: string; technician_id?: string },
+): Promise<TimeOffBlock[]> {
+    const qs = new URLSearchParams();
+    qs.set('from', params.from);
+    qs.set('to', params.to);
+    if (params.technician_id) qs.set('technician_id', params.technician_id);
+    const result = await scheduleRequest<TimeOffListResponse>(`${SCHEDULE_BASE}/time-off?${qs.toString()}`);
+    return result.time_off;
+}
+
+/**
+ * Create a day-off period. `target:'technician'` inserts one row;
+ * `target:'company'` is materialized server-side into one row per active
+ * technician (shared batch_id). Returns the created rows.
+ */
+export async function createTimeOff(payload: CreateTimeOffPayload): Promise<TimeOffBlock[]> {
+    const result = await scheduleRequest<{ created: TimeOffBlock[] }>(`${SCHEDULE_BASE}/time-off`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+    return result.created;
+}
+
+/** Delete ONE day-off row (company batches are deleted row by row). */
+export async function deleteTimeOff(id: string): Promise<void> {
+    await scheduleRequest<{ deleted: boolean }>(`${SCHEDULE_BASE}/time-off/${id}`, {
+        method: 'DELETE',
+    });
+}
+
+/**
+ * THE single front-end overlap definition (TECH-DAYOFF-001): returns the
+ * day-off blocks of the given technicians that overlap the half-open interval
+ * `[startIso, endIso)`. Strict half-open semantics — touching boundaries
+ * (`ends_at === startIso`) are NOT an overlap. Empty array ⇒ no conflict.
+ */
+export function overlapsTimeOff(
+    blocks: TimeOffBlock[],
+    techIds: string[],
+    startIso: string,
+    endIso: string,
+): TimeOffBlock[] {
+    const start = Date.parse(startIso);
+    const end = Date.parse(endIso);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+    return blocks.filter(b =>
+        techIds.includes(b.technician_id) &&
+        Date.parse(b.starts_at) < end &&
+        start < Date.parse(b.ends_at),
+    );
 }
