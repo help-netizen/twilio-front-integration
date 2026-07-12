@@ -9,6 +9,7 @@ import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import { overlapsTimeOff } from '../../services/scheduleApi';
+import { filterTimeOffByProviders } from '../../services/scheduleFilters';
 import type { ScheduleItem, DispatchSettings, RouteSegment, TimeOffBlock } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
@@ -35,6 +36,8 @@ interface DayViewProps {
     routeByPair?: Map<string, RouteSegment>;
     /** TECH-DAYOFF-001: day-off blocks for the visible range (mobile agenda cards + DnD warning). */
     timeOff?: TimeOffBlock[];
+    /** TECH-DAYOFF-002: active provider filter — rendered time-off cards honor it (DnD warnings don't). */
+    providerFilterIds?: string[];
 }
 
 // TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
@@ -56,7 +59,7 @@ function buildHourSlots(startTime: string, endTime: string): number[] {
 
 const HOUR_HEIGHT = 86; // px per hour — Sprint 7 design refresh
 
-export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot, routeByPair, timeOff }) => {
+export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot, routeByPair, timeOff, providerFilterIds }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
     const isMobile = useIsMobile();
@@ -208,7 +211,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         const dayStartUtc = dateInTZ(dy, dm, dd, 0, 0, tz);
         const nextUtcDay = new Date(Date.UTC(dy, dm - 1, dd + 1));
         const dayEndUtc = dateInTZ(nextUtcDay.getUTCFullYear(), nextUtcDay.getUTCMonth() + 1, nextUtcDay.getUTCDate(), 0, 0, tz);
-        const dayBlocks = (timeOff ?? [])
+        const dayBlocks = filterTimeOffByProviders(timeOff ?? [], providerFilterIds)
             .filter(b => new Date(b.starts_at) < dayEndUtc && dayStartUtc < new Date(b.ends_at))
             .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
         const allDayBlocks = dayBlocks.filter(b => new Date(b.starts_at) <= dayStartUtc && new Date(b.ends_at) >= dayEndUtc);
