@@ -9266,7 +9266,7 @@ Critical path: **DO-01 → DO-02 → DO-06 → DO-07**. Конфликт-реш�
 **Файлы:** frontend/src/pages/VapiSettingsPage.tsx, frontend/src/pages/MailSecretarySettingsPage.tsx.
 **Цель/acceptance:** not-connected hero по Stripe-эталону + тёплая копия; connected — полировка; requires_connected_gmail-подсказка Mail Secretary остаётся.
 **Verify:** `cd frontend && npm run build` + preview.
-**Зависимости:** нет (независимые файлы). **Статус:** pending
+**Зависимости:** нет. **Статус:** done (2026-07-12, GPT, ревью ACCEPT)
 
 ### Задача T7: redesign — MarketplaceConnectDialog (IntegrationsPage)
 

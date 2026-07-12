@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, AlertCircle, Loader2, Eye, EyeOff, Unplug } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Loader2, Eye, EyeOff, Unplug, PhoneCall, Clock3, Workflow } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import {
@@ -16,6 +16,7 @@ import {
 import { FloatingField } from '../components/ui/floating-field';
 import { FloatingSelect } from '../components/ui/floating-select';
 import { SelectItem } from '../components/ui/select';
+import { CloudBanner } from '../components/ui/CloudBanner';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { SettingsSection } from '../components/settings/SettingsSection';
 import { vapiApi, type VapiConnection, type VapiResource } from '../services/vapiApi';
@@ -51,7 +52,10 @@ function ConnectionSection({
 
     if (connection && connection.status === 'active') {
         return (
-            <SettingsSection title="API Connection">
+            <SettingsSection
+                title="Voice agent connection"
+                description="Your VAPI workspace is securely connected to Albusto."
+            >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <CheckCircle2 size={16} style={{ color: 'var(--blanc-success)', flexShrink: 0 }} />
                     <div>
@@ -69,20 +73,41 @@ function ConnectionSection({
     }
 
     return (
-        <SettingsSection
-            title="API Connection"
-            footer={
-                <Button
-                    onClick={() => mutation.mutate()}
-                    disabled={!apiKey.trim() || mutation.isPending}
-                    size="sm"
-                >
-                    {mutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                    Verify & Connect
-                </Button>
-            }
-        >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <CloudBanner variant="hero">
+            <p className="blanc-eyebrow">VOICE AI</p>
+            <h3
+                className="mt-2 text-2xl sm:text-[28px]"
+                style={{ fontFamily: 'var(--blanc-font-heading)', fontWeight: 800, color: 'var(--blanc-ink-1)' }}
+            >
+                Never let a call go unanswered
+            </h3>
+            <p className="mt-2 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
+                Give every caller a helpful first response, even when your team is busy or the office is closed.
+            </p>
+            <div className="mt-4 space-y-2.5">
+                <div className="flex items-start gap-2.5">
+                    <PhoneCall className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                    <p className="text-sm">
+                        <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Answer around the clock</span>
+                        <span style={{ color: 'var(--blanc-ink-2)' }}> — Your AI voice agent is ready when customers call</span>
+                    </p>
+                </div>
+                <div className="flex items-start gap-2.5">
+                    <Clock3 className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                    <p className="text-sm">
+                        <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Keep callers moving</span>
+                        <span style={{ color: 'var(--blanc-ink-2)' }}> — Handle routine questions and gather the details your team needs</span>
+                    </p>
+                </div>
+                <div className="flex items-start gap-2.5">
+                    <Workflow className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                    <p className="text-sm">
+                        <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Fit your call flow</span>
+                        <span style={{ color: 'var(--blanc-ink-2)' }}> — Route callers to VAPI exactly where a voice agent helps most</span>
+                    </p>
+                </div>
+            </div>
+            <div className="mt-5 space-y-3.5">
                 <div>
                     <div style={{ position: 'relative' }}>
                         <FloatingField
@@ -122,7 +147,18 @@ function ConnectionSection({
                     </FloatingSelect>
                 </div>
             </div>
-        </SettingsSection>
+            <Button
+                className="mt-5 h-11 px-6"
+                onClick={() => mutation.mutate()}
+                disabled={!apiKey.trim() || mutation.isPending}
+            >
+                {mutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
+                Connect VAPI
+            </Button>
+            <p className="mt-2.5 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                Takes about 5 minutes. Have your VAPI API key and SIP URI handy.
+            </p>
+        </CloudBanner>
     );
 }
 
@@ -155,7 +191,10 @@ function ResourceSection({
 
     if (resource) {
         return (
-            <SettingsSection title="SIP Resource">
+            <SettingsSection
+                title="Call routing"
+                description="Albusto sends calls to this VAPI destination."
+            >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div>
                         <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', marginBottom: 3 }}>SIP URI</div>
@@ -178,7 +217,8 @@ function ResourceSection({
 
     return (
         <SettingsSection
-            title="SIP Resource"
+            title="Call routing"
+            description="Tell Albusto where to send calls for your VAPI voice agent."
             footer={
                 <Button
                     onClick={() => mutation.mutate()}
@@ -186,7 +226,7 @@ function ResourceSection({
                     size="sm"
                 >
                     {mutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                    Save SIP Resource
+                    Save call routing
                 </Button>
             }
         >
@@ -279,7 +319,7 @@ export default function VapiSettingsPage() {
             backTo="/settings/integrations"
             backLabel="Back to Integrations"
             title="VAPI AI"
-            description="Route inbound calls to an AI voice agent"
+            description="Let an AI voice agent answer calls and pass the right context to your team."
             actions={isFullyConnected ? (
                 <Badge className="bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)]" style={{ border: 'none', fontSize: 12 }}>
                     Connected
@@ -317,10 +357,10 @@ export default function VapiSettingsPage() {
                                     disabled={installMutation.isPending}
                                 >
                                     {installMutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                                    Finish Setup
+                                    Finish setup
                                 </Button>
                                 <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', marginTop: 8 }}>
-                                    After finishing, the VAPI AI node will be available in your Call Flow Builder.
+                                    Once enabled, you can add your VAPI voice agent anywhere in the Call Flow Builder.
                                 </div>
                             </div>
                         </div>
@@ -351,7 +391,7 @@ export default function VapiSettingsPage() {
                     <DialogHeader>
                         <DialogTitle>Disconnect VAPI AI?</DialogTitle>
                         <DialogDescription>
-                            Routing to VAPI AI nodes in your call flows will stop working. Your API key and SIP configuration will be retained.
+                            Your call flows will stop routing callers to the voice agent. Your API key and call routing details will stay saved for next time.
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>

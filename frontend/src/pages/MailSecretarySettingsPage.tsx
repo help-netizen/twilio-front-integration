@@ -7,10 +7,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Sparkles, Play } from 'lucide-react';
+import { Loader2, Sparkles, Play, Mail, ListChecks, SlidersHorizontal } from 'lucide-react';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { SettingsSection } from '../components/settings/SettingsSection';
 import { Button } from '../components/ui/button';
+import { CloudBanner } from '../components/ui/CloudBanner';
 import { Checkbox } from '../components/ui/checkbox';
 import { FloatingSelect } from '../components/ui/floating-select';
 import { FloatingField } from '../components/ui/floating-field';
@@ -196,40 +197,73 @@ export default function MailSecretarySettingsPage() {
             backTo="/settings/integrations"
             backLabel="Integrations"
             title="Mail Secretary"
-            description="AI agent that reads every inbound email and creates a dispatcher task when a letter needs attention."
+            description="Find the emails that need a person and turn them into clear dispatcher tasks."
             actions={installed ? (
                 <Button onClick={handleSave} disabled={saving}>
                     {saving ? <Loader2 className="size-4 animate-spin" /> : null} Save
                 </Button>
             ) : undefined}
         >
-            {/* ── Status ── */}
-            <SettingsSection
-                title="Status"
-                description="The agent needs a connected Gmail mailbox and the marketplace app enabled."
-            >
-                <div className="space-y-3.5">
+            {!installed ? (
+                <CloudBanner variant="hero">
+                    <p className="blanc-eyebrow">EMAIL AI</p>
+                    <h3
+                        className="mt-2 text-2xl sm:text-[28px]"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', fontWeight: 800, color: 'var(--blanc-ink-1)' }}
+                    >
+                        Let the important emails find you
+                    </h3>
+                    <p className="mt-2 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
+                        Mail Secretary reviews incoming mail, spots what needs attention, and gives your team a clear next step.
+                    </p>
+                    <div className="mt-4 space-y-2.5">
+                        <div className="flex items-start gap-2.5">
+                            <Mail className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                            <p className="text-sm">
+                                <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Catch what needs a reply</span>
+                                <span style={{ color: 'var(--blanc-ink-2)' }}> — Separate customer requests from routine inbox noise</span>
+                            </p>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                            <ListChecks className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                            <p className="text-sm">
+                                <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Turn attention into action</span>
+                                <span style={{ color: 'var(--blanc-ink-2)' }}> — Create a dispatcher task when an email needs a person</span>
+                            </p>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                            <SlidersHorizontal className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                            <p className="text-sm">
+                                <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Stay in control</span>
+                                <span style={{ color: 'var(--blanc-ink-2)' }}> — Tune sensitivity, exclusions, and task ownership for your team</span>
+                            </p>
+                        </div>
+                    </div>
                     {!gmailConnected && (
-                        <p className="text-sm" style={{ color: 'var(--blanc-warning)' }}>
+                        <p className="mt-4 text-sm" style={{ color: 'var(--blanc-warning)' }}>
                             Gmail is not connected. Connect a mailbox in Settings → Integrations → Google Email first.
                         </p>
                     )}
-                    {!installed ? (
-                        <div className="flex items-center gap-3">
-                            <Button onClick={handleInstall} disabled={installing || !gmailConnected}>
-                                {installing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                                Enable Mail Secretary
-                            </Button>
-                            <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
-                                Reads the connected mailbox and stores only triage results.
-                            </span>
-                        </div>
-                    ) : (
-                        <>
+                    <Button className="mt-5 h-11 px-6" onClick={handleInstall} disabled={installing || !gmailConnected}>
+                        {installing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                        Enable Mail Secretary
+                    </Button>
+                    <p className="mt-2.5 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                        Takes less than a minute. Mail Secretary stores triage results, not a second copy of your mailbox.
+                    </p>
+                </CloudBanner>
+            ) : (
+                <SettingsSection
+                    title="Mail triage"
+                    description="Keep Mail Secretary working, or pause new reviews whenever your team needs to."
+                >
+                    <div className="space-y-3.5">
                             <label className="flex items-center gap-2.5 cursor-pointer">
                                 <Checkbox checked={enabled} onCheckedChange={v => setEnabled(v === true)} />
                                 <span className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
-                                    Agent is {enabled ? 'active' : 'paused'} — review every new inbound email
+                                    {enabled
+                                        ? 'Mail Secretary is on — reviewing every new inbound email'
+                                        : 'Mail Secretary is paused — new email will wait for your team'}
                                 </span>
                             </label>
                             {stats && (
@@ -240,17 +274,16 @@ export default function MailSecretarySettingsPage() {
                                     <StatChip label="Errors" value={stats.errors_30d} />
                                 </div>
                             )}
-                        </>
-                    )}
-                </div>
-            </SettingsSection>
+                    </div>
+                </SettingsSection>
+            )}
 
             {installed && (
                 <>
                     {/* ── Behaviour ── */}
                     <SettingsSection
                         title="Behaviour"
-                        description="How eagerly the agent flags mail and what it does with unknown senders."
+                        description="Choose how readily Mail Secretary flags messages and handles new senders."
                     >
                         <div className="space-y-3.5">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -276,7 +309,7 @@ export default function MailSecretarySettingsPage() {
                     {/* ── Exclusion rules ── */}
                     <SettingsSection
                         title="Exclusion rules"
-                        description="Emails matching ANY line are never reviewed. Everything else is always analyzed."
+                        description="Keep newsletters, notifications, and other routine mail out of triage."
                     >
                         <div className="space-y-3.5">
                             <textarea
@@ -315,7 +348,7 @@ export default function MailSecretarySettingsPage() {
                     {/* ── Dry run ── */}
                     <SettingsSection
                         title="Dry run"
-                        description="Preview what the agent would decide for the last 10 inbound emails — no tasks are created."
+                        description="See how Mail Secretary would handle the last 10 emails without creating tasks."
                     >
                         <div className="space-y-3.5">
                             <Button variant="ghost" onClick={handleDryRun} disabled={dryRunning}>
@@ -351,7 +384,7 @@ export default function MailSecretarySettingsPage() {
                     {/* ── Recent decisions ── */}
                     <SettingsSection
                         title="Recent decisions"
-                        description="Every reviewed email and what the agent decided."
+                        description="A clear record of each reviewed email and what Mail Secretary decided."
                     >
                         {reviews.length === 0 ? (
                             <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No decisions yet — they appear as new email arrives.</p>
