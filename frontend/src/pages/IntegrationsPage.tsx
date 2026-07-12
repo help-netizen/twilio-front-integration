@@ -34,11 +34,6 @@ function marketplaceStatusBadge(app: MarketplaceApp) {
     return <Badge variant="outline">Available</Badge>;
 }
 
-function accessText(app: MarketplaceApp) {
-    const items = app.access_summary.length ? app.access_summary : app.requested_scopes;
-    return items.join(', ');
-}
-
 function MarketplaceConnectDialog({
     app,
     open,
@@ -57,26 +52,31 @@ function MarketplaceConnectDialog({
     const requiresGmail = !!app?.metadata?.requires_connected_gmail;
     const canConnect = !requiresGmail || gmailConnected;
     const settingsPath = app?.metadata?.dependency_cta?.path || '/settings/integrations/google-email';
-    const credentialCopy = app?.provisioning_mode === 'none'
-        ? 'Albusto will enable this module for your company. No external API credentials will be issued.'
-        : 'Albusto will create tenant-scoped credentials for this app. Secrets are handled under the hood.';
+    const accessItems = app
+        ? (app.access_summary.length ? app.access_summary : app.requested_scopes)
+        : [];
+    const valueCopy = app?.app_key === 'smart-slot-engine'
+        ? 'Help dispatchers choose the best arrival window and technician for every job, so scheduling is faster and routes make more sense.'
+        : app?.app_key === 'ai-repair-advisor'
+            ? 'Give technicians a practical head start with likely causes and diagnostic steps added to every new job.'
+            : app?.short_description;
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-xl">
                 <DialogHeader>
                     <DialogTitle>Enable {app?.name}</DialogTitle>
-                    <DialogDescription>
-                        {credentialCopy}
-                    </DialogDescription>
+                    <DialogDescription>{valueCopy}</DialogDescription>
                 </DialogHeader>
                 {app && (
                     <div className="space-y-5 py-1">
-                        <p className="text-sm text-[var(--blanc-ink-1)]">{app.short_description}</p>
-
-                        <div className="space-y-1">
-                            <div className="text-sm font-medium text-[var(--blanc-ink-1)]">Access</div>
-                            <p className="text-sm text-[var(--blanc-ink-2)]">{accessText(app)}</p>
+                        <div className="space-y-2.5">
+                            <div className="text-sm font-medium text-[var(--blanc-ink-1)]">What Albusto will do</div>
+                            <ul className="space-y-2 pl-5 text-sm text-[var(--blanc-ink-2)] list-disc">
+                                {accessItems.map((item) => (
+                                    <li key={item}>{item}</li>
+                                ))}
+                            </ul>
                         </div>
 
                         {requiresGmail && (
@@ -100,7 +100,7 @@ function MarketplaceConnectDialog({
                 <DialogFooter>
                     <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
                     {canConnect ? (
-                        <Button onClick={onConfirm} disabled={isPending}>{isPending ? 'Enabling…' : 'Enable'}</Button>
+                        <Button onClick={onConfirm} disabled={isPending}>{isPending ? 'Enabling…' : `Enable ${app?.name}`}</Button>
                     ) : (
                         <Button onClick={() => { window.location.href = settingsPath; }}>
                             Connect Gmail
