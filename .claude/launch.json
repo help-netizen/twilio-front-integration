@@ -13,6 +13,21 @@
       "runtimeArgs": ["vite", "--port", "3001"],
       "port": 3001,
       "cwd": "frontend"
+    },
+    {
+      "name": "abchomes-site",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "/Users/rgareev91/Downloads/webABCHOMES"],
+      "port": 3000,
+      "autoPort": true
+    },
+    {
+      "name": "slot-harness",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite"],
+      "port": 5173,
+      "autoPort": true,
+      "cwd": "frontend"
     }
   ]
 }
