@@ -26,6 +26,7 @@ import { Button } from '../components/ui/button';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { Badge } from '../components/ui/badge';
 import { Checkbox } from '../components/ui/checkbox';
+import { CloudBanner } from '../components/ui/CloudBanner';
 import { FloatingField } from '../components/ui/floating-field';
 import { authedFetch } from '../services/apiClient';
 import type { BillingOverview, Plan } from '../services/billingApi';
@@ -338,9 +339,9 @@ export default function TelephonyTwilioSettingsPage() {
     const plansLocked = (awaitingPayment && !pollTimedOut) || planBusy != null;
 
     const stepsMeta = [
-        { n: 1, label: 'Connect', done: done1 },
-        { n: 2, label: 'Choose your plan', done: done2 },
-        { n: 3, label: 'Get a number', done: done3 },
+        { n: 1, label: 'Set up your line', description: 'Create your secure calling workspace.', done: done1 },
+        { n: 2, label: 'Pick your plan', description: 'Choose what fits the way your team works.', done: done2 },
+        { n: 3, label: 'Choose your number', description: 'Find a number your customers will recognize.', done: done3 },
     ];
 
     return (
@@ -386,12 +387,17 @@ export default function TelephonyTwilioSettingsPage() {
                                         }}>
                                             {s.done ? <Check size={14} /> : s.n}
                                         </span>
-                                        <span style={{
-                                            fontSize: 13.5,
-                                            fontWeight: isActive ? 600 : 500,
-                                            color: isActive ? 'var(--blanc-ink-1)' : s.done ? 'var(--blanc-ink-2)' : 'var(--blanc-ink-3)',
-                                        }}>
-                                            {s.label}
+                                        <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', textAlign: 'left' }}>
+                                            <span style={{
+                                                fontSize: 13.5,
+                                                fontWeight: isActive ? 600 : 500,
+                                                color: isActive ? 'var(--blanc-ink-1)' : s.done ? 'var(--blanc-ink-2)' : 'var(--blanc-ink-3)',
+                                            }}>
+                                                {s.label}
+                                            </span>
+                                            <span style={{ fontSize: 11.5, color: 'var(--blanc-ink-3)', marginTop: 1 }}>
+                                                {s.description}
+                                            </span>
                                         </span>
                                     </button>
                                 </div>
@@ -401,21 +407,33 @@ export default function TelephonyTwilioSettingsPage() {
 
                     {/* Step 1 — Connect */}
                     {activeStep === 1 && (
-                        <div style={sectionCard}>
-                            <p style={{ fontSize: 14, color: 'var(--blanc-ink-2)', margin: '0 0 16px', lineHeight: 1.55, maxWidth: 560 }}>
-                                Albusto will create a dedicated Twilio workspace (subaccount) for your company.
-                                Your numbers, calls and texts stay isolated.
+                        <CloudBanner variant="hero">
+                            <p className="blanc-eyebrow">TELEPHONY</p>
+                            <h3
+                                className="mt-2 text-2xl sm:text-[28px]"
+                                style={{ fontFamily: 'var(--blanc-font-heading)', fontWeight: 800, color: 'var(--blanc-ink-1)' }}
+                            >
+                                Your business phone line
+                            </h3>
+                            <p className="mt-2 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
+                                You're 3 minutes away from your first call.
+                            </p>
+                            <p className="mt-4 max-w-xl text-sm leading-relaxed" style={{ color: 'var(--blanc-ink-2)' }}>
+                                Albusto creates a dedicated Twilio workspace for your company, so your numbers, calls, and texts stay secure and together.
                             </p>
                             {connectError && (
-                                <div style={{ marginBottom: 12 }}>
+                                <div className="mt-4">
                                     <InlineError text={connectError} />
                                 </div>
                             )}
-                            <Button onClick={connectTelephony} disabled={connecting}>
+                            <Button className="mt-5 h-11 px-6" onClick={connectTelephony} disabled={connecting}>
                                 {connecting && <Loader2 size={14} className="mr-1.5 animate-spin" />}
                                 Connect telephony
                             </Button>
-                        </div>
+                            <p className="mt-2.5 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                Next, you'll pick a plan and choose your phone number.
+                            </p>
+                        </CloudBanner>
                     )}
 
                     {/* Step 2 — Choose your plan */}
