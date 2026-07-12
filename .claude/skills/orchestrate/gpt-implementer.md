@@ -28,8 +28,10 @@ $CODEX exec -s workspace-write -m gpt-5.6-sol -c model_reasoning_effort=xhigh \
 ```
 
 - Capture the `session id:` from the banner — fix rounds continue the SAME session:
-  `$CODEX exec resume <SESSION_ID> -s workspace-write "<fix list>" </dev/null`
-  (do NOT use `resume --last` — parallel sessions may exist).
+  `$CODEX exec resume -c 'sandbox_mode="workspace-write"' <SESSION_ID> "<fix list>" </dev/null 2>&1 | tee <log>`
+  ⚠️ `resume` does NOT accept `-s`/`-o` (verified v0.144): sandbox only via the `-c sandbox_mode` config
+  override, and the final message must be taken from stdout (tail of the log), not `-o`.
+  Do NOT use `resume --last` — parallel sessions may exist.
 - GPT auto-reads repo `AGENTS.md` + `~/.codex/AGENTS.md`; the brief does not need to repeat canon.
 - Sandbox has no network. If deps must be installed, Claude installs them before invoking.
 - Long tasks: codex exec has no hard timeout, but keep tasks ≤ ~1 significant module; split bigger work.

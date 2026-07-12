@@ -82,7 +82,7 @@ router.post('/', async (req, res) => {
         res.status(201).json({
             ok: true,
             company: { id: company.id, name: company.name, timezone: company.timezone },
-            redirect: '/pulse',
+            redirect: '/welcome',
         });
     } catch (err) {
         console.error('[Onboarding] error:', err.message);

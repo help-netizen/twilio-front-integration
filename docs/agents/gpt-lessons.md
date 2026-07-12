@@ -8,6 +8,11 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-012 (2026-07-12)** — Worktrees have NO local `node_modules`. Run jest via the main checkout:
+  `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath <file> --testPathIgnorePatterns "/node_modules/"`. Do not create node_modules symlinks (or remove them before finishing).
+- **L-011 (2026-07-12)** — In "How I verified", report the EXACT command you executed, byte-for-byte.
+  Never substitute the canonical/equivalent command (e.g. reporting `npm test` when you actually ran a
+  direct jest path). The reviewer re-runs your command; a mismatch reads as a false report.
 - **L-010 (2026-07-12)** — Timezone: all user-facing dates/times normalize to `company.timezone`
   (default `America/New_York`). Never use server-local `new Date()` semantics for scheduling logic.
 - **L-009 (2026-07-12)** — Technician identifiers in scheduling code are Zenbooker TEXT ids, not

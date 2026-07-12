@@ -1,7 +1,7 @@
 /**
- * Onboarding Checklist — ONBTEL-001 Part A.
+ * Onboarding Checklist — ONBTEL-001 Part A + ONBOARDING-UX-001.
  *
- * Data-driven catalog of onboarding items for the tenant_admin card on /pulse
+ * Data-driven catalog of onboarding items for tenant_admin setup surfaces
  * (precedent for the registry style: permissionCatalog.js). Adding a future
  * item = one more entry in CHECKLIST_ITEMS — the API shape stays the same and
  * the frontend renders items[] without knowing the composition.
@@ -22,19 +22,41 @@
 'use strict';
 
 const db = require('../db/connection');
+const emailMailboxService = require('./emailMailboxService');
+const stripePaymentsService = require('./stripePaymentsService');
+const billingService = require('./billingService');
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Registry of checklist items. Strings are the normative copies from
- * Docs/specs/ONBTEL-001.md §1.3 (product name is Albusto — never "Blanc").
+ * Docs/specs/ONBOARDING-UX-001.md §1.1-1.2 (product name is Albusto — never "Blanc").
  * `isComplete(companyId)` derives the item state; every query MUST filter
  * by company_id (tenant isolation).
  */
 const CHECKLIST_ITEMS = [
     {
+        key: 'company_profile',
+        title: 'Add your logo',
+        description: 'Put your brand on every estimate, invoice, and email your customers see.',
+        cta: { label: 'Set up', path: '/settings/company' },
+        est_minutes: 1,
+        done_note: 'Looking sharp — your brand is on your documents.',
+        async isComplete(companyId) {
+            const { rows } = await db.query(
+                'SELECT logo_storage_key IS NOT NULL AS done FROM companies WHERE id = $1',
+                [companyId]
+            );
+            return rows[0]?.done === true;
+        },
+    },
+    {
         key: 'connect_telephony',
         title: 'Connect telephony',
         description: 'Get a business phone number to make and receive calls and texts in Albusto.',
         cta: { label: 'Set up', path: '/settings/integrations/telephony-twilio' },
+        est_minutes: 2,
+        done_note: 'Nice — your phone line is live!',
         async isComplete(companyId) {
             const { rows } = await db.query(
                 'SELECT EXISTS(SELECT 1 FROM phone_number_settings WHERE company_id = $1) AS done',
@@ -43,7 +65,55 @@ const CHECKLIST_ITEMS = [
             return rows[0]?.done === true;
         },
     },
+    {
+        key: 'connect_email',
+        title: 'Connect your email',
+        description: 'Bring your Gmail into Albusto so every customer email lands in one timeline.',
+        cta: { label: 'Set up', path: '/settings/integrations/google-email' },
+        est_minutes: 1,
+        done_note: 'Great — your email flows into Albusto now.',
+        async isComplete(companyId) {
+            const mailbox = await emailMailboxService.getMailboxStatus(companyId);
+            return mailbox !== null
+                && mailbox.provider === 'gmail'
+                && mailbox.status === 'connected';
+        },
+    },
+    {
+        key: 'stripe_payments',
+        title: 'Get paid with Stripe',
+        description: 'Take card payments on the job, by link, or over the phone.',
+        cta: { label: 'Set up', path: '/settings/integrations/stripe-payments' },
+        est_minutes: 5,
+        done_note: "You're ready to get paid on the spot.",
+        async isComplete(companyId) {
+            const status = await stripePaymentsService.getStatus(companyId);
+            return status.readiness === 'connected_ready';
+        },
+    },
 ];
+
+async function getTrial(companyId) {
+    try {
+        const subscription = await billingService.getSubscription(companyId);
+        if (!subscription || subscription.status !== 'trialing' || !subscription.trial_ends_at) {
+            return null;
+        }
+
+        const trialEnd = new Date(subscription.trial_ends_at);
+        const remainingMs = trialEnd.getTime() - Date.now();
+        if (remainingMs <= 0) return null;
+
+        return {
+            active: true,
+            days_left: Math.max(0, Math.ceil(remainingMs / DAY_MS)),
+            trial_ends_at: trialEnd.toISOString(),
+        };
+    } catch (err) {
+        console.warn(`[OnboardingChecklist] failed to read trial for company ${companyId}:`, err.message);
+        return null;
+    }
+}
 
 /** Read companies.settings#>>'{onboarding_checklist,completed_at}' (null if unset / no row). */
 async function readCompletedAt(companyId) {
@@ -107,9 +177,15 @@ async function getChecklist(companyId) {
             description: item.description,
             done,
             cta: item.cta,
+            est_minutes: item.est_minutes,
+            done_note: item.done_note,
         });
     }
     const allDone = items.length > 0 && items.every(item => item.done);
+    const progress = {
+        done: items.filter(item => item.done).length,
+        total: items.length,
+    };
 
     if (allDone && !completedAt) {
         try {
@@ -125,9 +201,13 @@ async function getChecklist(companyId) {
         }
     }
 
+    const trial = await getTrial(companyId);
+
     return {
         visible: !(completedAt || allDone),
         completed_at: completedAt,
+        progress,
+        trial,
         items,
     };
 }

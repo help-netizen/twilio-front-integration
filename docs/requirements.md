@@ -5871,3 +5871,52 @@ a contact only when we have enough info to create a LEAD."*
 - FSM job/lead переходов и task-механика outbound parts-visit (CANCEL-001) — не трогаем.
 - RBAC-каталог: существующие ключи пермишенов не переименовываются; `schedule.view` продолжает гейтить чтение расписания.
 - Drag-DnD расписания и мобильная agenda-рендер-цепочка — day-off блоки добавляются как отдельный слой данных, не ломая items.
+
+## ONBOARDING-UX-001 — человечный онбординг новых компаний: hub-страница /welcome, чеклист из 4 шагов, trial-информер, redesign connect-форм маркетплейса (2026-07-12)
+
+**Краткое описание:** Расширение ONBTEL-001 Part A. Новая компания после signup попадает не на пустой /pulse, а на тёплую hub-страницу `/welcome` (tenant_admin only) с прогрессом «N of M», обещанием «about 3 minutes» и карточками шагов. Чеклист расширяется с 1 до 4 derived-шагов (company_profile, connect_telephony, connect_email, stripe_payments), появляется trial-информер (не шаг), а все setup-страницы маркетплейса подтягиваются к эталону Stripe (STRIPE-CONNECT-UX-001): CloudBanner hero + человечная английская копия.
+
+**Решения заказчика (БИНДИНГ, не менять):**
+1. Hub `/welcome` — новый route, tenant_admin only; hero на `CloudBanner` (violet-cloud, эталон `StripePaymentsSettingsPage.tsx:142`); прогресс «N of M»; обещание «about 3 minutes»; карточки шагов с time-estimate; тёплый completion-экран при 100% БЕЗ конфетти-перегруза (канон запрещает декоративный шум).
+2. Первый вход новой компании после `bootstrapCompany` редиректит на `/welcome` вместо `/pulse` (`onboarding.js:85` redirect + фронт).
+3. Карточка на /pulse (`OnboardingChecklistCard.tsx`) становится КОМПАКТНЫМ трекером прогресса и ведёт на `/welcome`.
+4. Шаги чеклиста — расширить data-driven реестр `CHECKLIST_ITEMS`; статусы derived, `completed_at` write-once — семантику НЕ менять:
+   - `company_profile` — done ⇔ профиль компании заполнен (деривация выбирается архитектором по факту хранения);
+   - `connect_telephony` — существующий (`phone_number_settings` ≥ 1);
+   - `connect_email` — done ⇔ gmail mailbox `provider='gmail' AND status='connected'`;
+   - `stripe_payments` — done ⇔ Stripe integration `connected_ready`.
+5. Trial-информер — НЕ шаг: «X days left on trial» из `billing_subscriptions` (`status='trialing'`, `trial_ends_at`) с CTA на `/settings/billing`; в прогрессе не участвует. `GET /api/onboarding/checklist` расширяется аддитивно, НЕ ломая существующий контракт.
+6. Redesign ВСЕХ setup-страниц к уровню эталона Stripe: GoogleEmailSettingsPage, TelephonyTwilioSettingsPage (степпер уже есть — полировка копии/hero), Vapi AI, Mail Secretary, а также generic `MarketplaceConnectDialog` (IntegrationsPage) — через него подключаются Smart Slot Engine и AI Repair Advisor (отдельных setup-страниц у них НЕТ — установлено при обследовании кода).
+7. Копия UI — английская, тёплая, человечная («You're 3 minutes away from your first call», «Nice — your phone line is live!»). Слово «Blanc» в UI запрещено (продукт = Albusto).
+8. Существующие компании с уже установленным `completed_at` НЕ ресурфейсим (write-once остаётся). Не-админ ничего из этого не видит (существующий gate `isTenantAdmin` + `checklist.visible`).
+9. Mobile: канон (panel→bottom-sheet автоматически, hub-страница адаптивная).
+
+**Пользовательские сценарии:**
+1. Владелец только что создал компанию (signup → OTP → company) → попадает на `/welcome`: hero «Welcome to Albusto», «0 of 4 done», четыре карточки шагов с оценкой времени, блок «14 days left on your trial». Жмёт карточку Telephony → уходит в существующий Twilio-визард → возвращается → шаг отмечен done, прогресс «1 of 4».
+2. Tenant_admin заходит на /pulse с незавершённым чеклистом → видит компактный трекер прогресса («Finish setting up · 2 of 4 done») → клик ведёт на `/welcome`.
+3. Все 4 шага выполнены → `completed_at` фиксируется write-once (существующая семантика) → карточка на /pulse исчезает навсегда; прямой заход на `/welcome` показывает тёплый completion-экран с CTA «Go to Pulse».
+4. Диспетчер/провайдер (не tenant_admin) — не видит ни карточку, ни данных чеклиста; прямой заход на `/welcome` уводит на /pulse; API отвечает 403.
+5. Компания в trial видит на `/welcome` информер «X days left on your trial» с CTA «View plans» → /settings/billing; компания на платном плане/без подписки информера не видит.
+6. Владелец открывает любую setup-страницу маркетплейса (Google Email, Vapi AI, Mail Secretary, Stripe, Telephony) в неподключённом состоянии → видит CloudBanner hero с человечным объяснением ценности и понятным CTA, а не сухую техническую форму.
+
+**Ограничения и нефункциональные требования:**
+- Семантика `completed_at` (write-once, только внутри GET, guarded UPDATE «only if NULL») — НЕ меняется; новые шаги у уже «завершённых» компаний карточку не воскрешают.
+- Контракт `GET /api/onboarding/checklist` расширяется строго аддитивно (`visible`, `completed_at`, `items[]` с прежними полями сохраняются байт-в-байт).
+- Ошибка чтения trial-данных не валит чеклист (информер опционален — деградация в `trial: null`).
+- Никаких новых миграций: все деривации читают существующие таблицы; `companies.settings` JSONB уже есть.
+- Никаких мутационных endpoints у чеклиста (по-прежнему GET-only).
+- Копия — только английская; строка «Blanc» в UI-строках запрещена.
+- Derived-статусы не должны звать внешние API (Stripe/Google) — только локальные таблицы.
+
+**Потенциально вовлечённые модули/части системы:**
+- Backend: `backend/src/services/onboardingChecklistService.js` (реестр + деривации), `backend/src/routes/onboarding.js` (redirect + ответ), `backend/src/services/billingService.js` (getSubscription — читаем, не меняем), `backend/src/services/emailMailboxService.js`, `backend/src/services/stripePaymentsService.js` (читаем).
+- Frontend: `frontend/src/pages/WelcomePage.tsx` (NEW), `frontend/src/App.tsx` (route), `frontend/src/components/onboarding/OnboardingChecklistCard.tsx`, `frontend/src/hooks/useOnboardingChecklist.ts`, `frontend/src/services/onboardingApi.ts`, `frontend/src/pages/{GoogleEmailSettingsPage,TelephonyTwilioSettingsPage,VapiSettingsPage,MailSecretarySettingsPage,IntegrationsPage}.tsx`, `frontend/src/components/ui/CloudBanner.tsx` (реюз, не менять).
+- Затронутые интеграции: Twilio (косвенно — существующий шаг), Gmail/Google OAuth (derived-статус), Stripe (derived-статус). Front/Zenbooker — нет.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- Write-once `markCompleted` и visibility-машина `getChecklist` (onboardingChecklistService.js:65-133) — семантика неизменна, только аддитивные поля.
+- `POST /api/onboarding` (создание компании, OTP, trust-device) — меняется ТОЛЬКО значение поля `redirect`.
+- Middleware-цепочка `/checklist` (requireCompanyAccess + inline requireTenantAdmin) и company_id ТОЛЬКО из `req.companyFilter`.
+- `src/server.js`, `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/db/` — не трогать.
+- `CloudBanner.tsx` / `.blanc-cloud` (design-system.css:826-857) — реюз как есть.
+- Функциональность существующих setup-страниц (mutations, статусы, wizard-логика TelephonyTwilio) — redesign только представления и копии.

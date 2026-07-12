@@ -1,38 +1,15 @@
 'use strict';
 
 /**
- * ONBTEL-001 Part A (ONBTEL-T11) — GET /api/onboarding/checklist + onboardingChecklistService.
+ * ONBOARDING-UX-001 T1 — GET /api/onboarding/checklist and onboarding redirect.
  *
- * Covers TC-A-01…TC-A-16 (Docs/test-cases/ONBTEL-001.md §1):
- *   - 401 matrix via the REAL authenticate middleware (precedent: tests/keycloakAuth.test.js);
- *   - 403 matrix: PLATFORM_SCOPE_ONLY / TENANT_CONTEXT_REQUIRED via the REAL
- *     requireCompanyAccess + TENANT_ADMIN_ONLY via the route's inline requireTenantAdmin
- *     (parametrized over manager/dispatcher/provider) — all with ZERO checklist db calls;
- *   - dev-mode (_devMode) bypass of the admin gate;
- *   - happy path (visible:true) with the exact normative payload;
- *   - write-once completed_at: first all-done GET runs EXACTLY ONE guarded UPDATE
- *     (jsonb_set + "IS NULL" guard + WHERE id=$1) and answers visible:false;
- *   - already-completed → NO UPDATE at all; released-number cases E-A3/E-A4;
- *   - concurrent guard-UPDATE rowCount:0 tolerated (re-read wins); UPDATE failure → still
- *     visible:false, not 500 (E-A8);
- *   - tenant isolation: payload/query company_id injection ignored — every SQL gets
- *     req.companyFilter.company_id;
- *   - normative catalog strings verbatim (title/description/cta; "Albusto", never "Blanc");
- *   - EXISTS-query error → 500 INTERNAL_ERROR shape.
- *
- * Strategy (test-cases §1 «Стратегия моков»): jest-mocked pg (`db.query`), REAL
- * onboardingChecklistService + REAL routes/onboarding.js router, mini-express + supertest.
- * The production mount is `app.use('/api/onboarding', authenticate, onboardingRouter)` —
- * mirrored here with either the real authenticate (401 cases) or a controllable auth stub.
- *
- * Run:
- *   npx jest --runTestsByPath tests/onboardingChecklist.test.js \
- *     --testPathIgnorePatterns "/node_modules/"
+ * Covers TC-OBX-001…018 from Docs/test-cases/ONBOARDING-UX-001.md with the real
+ * checklist service, real onboarding router, and real auth middleware for 401s.
  */
 
-// keycloakAuth reads FEATURE_AUTH_ENABLED at module load — set BEFORE any require.
 const ORIGINAL_ENV = {
     FEATURE_AUTH_ENABLED: process.env.FEATURE_AUTH_ENABLED,
+    FEATURE_SELF_SIGNUP: process.env.FEATURE_SELF_SIGNUP,
     KEYCLOAK_REALM_URL: process.env.KEYCLOAK_REALM_URL,
 };
 process.env.FEATURE_AUTH_ENABLED = 'true';
@@ -46,9 +23,12 @@ afterAll(() => {
 });
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+jest.mock('../backend/src/services/emailMailboxService', () => ({ getMailboxStatus: jest.fn() }));
+jest.mock('../backend/src/services/stripePaymentsService', () => ({ getStatus: jest.fn() }));
+jest.mock('../backend/src/services/billingService', () => ({ getSubscription: jest.fn() }));
 
-// keycloakAuth deps (precedent: tests/keycloakAuth.test.js). auditService.log fires on the
-// 403 paths and must not touch a real DB.
+// keycloakAuth dependencies. auditService.log fires on 403 paths and must not
+// touch a real database.
 jest.mock('../backend/src/services/userService', () => ({ findOrCreateUser: jest.fn() }));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('../backend/src/services/authorizationService', () => ({
@@ -57,7 +37,7 @@ jest.mock('../backend/src/services/authorizationService', () => ({
 }));
 jest.mock('jwks-rsa', () => jest.fn().mockReturnValue({ getSigningKey: jest.fn() }));
 
-// routes/onboarding.js top-level requires irrelevant to /checklist — stubbed for isolation.
+// POST /onboarding collaborators and routes irrelevant to /checklist.
 jest.mock('../backend/src/services/otpService', () => ({ validateOtpToken: jest.fn(), trustDevice: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ resolve: jest.fn() }));
 jest.mock('../backend/src/services/platformCompanyService', () => ({ bootstrapCompany: jest.fn() }));
@@ -67,18 +47,70 @@ const express = require('express');
 const request = require('supertest');
 
 const db = require('../backend/src/db/connection');
+const emailMailboxService = require('../backend/src/services/emailMailboxService');
+const stripePaymentsService = require('../backend/src/services/stripePaymentsService');
+const billingService = require('../backend/src/services/billingService');
+const otpService = require('../backend/src/services/otpService');
+const googlePlacesService = require('../backend/src/services/googlePlacesService');
+const platformCompanyService = require('../backend/src/services/platformCompanyService');
+const membershipQueries = require('../backend/src/db/membershipQueries');
 const { authenticate } = require('../backend/src/middleware/keycloakAuth');
 const onboardingRouter = require('../backend/src/routes/onboarding');
 const checklistService = require('../backend/src/services/onboardingChecklistService');
 
 const COMPANY_A = '11111111-1111-1111-1111-111111111111';
 const COMPANY_B = '22222222-2222-2222-2222-222222222222';
+const NOW_MS = Date.parse('2026-07-12T12:00:00.000Z');
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const CATALOG = [
+    {
+        key: 'company_profile',
+        title: 'Add your logo',
+        description: 'Put your brand on every estimate, invoice, and email your customers see.',
+        cta: { label: 'Set up', path: '/settings/company' },
+        est_minutes: 1,
+        done_note: 'Looking sharp — your brand is on your documents.',
+    },
+    {
+        key: 'connect_telephony',
+        title: 'Connect telephony',
+        description: 'Get a business phone number to make and receive calls and texts in Albusto.',
+        cta: { label: 'Set up', path: '/settings/integrations/telephony-twilio' },
+        est_minutes: 2,
+        done_note: 'Nice — your phone line is live!',
+    },
+    {
+        key: 'connect_email',
+        title: 'Connect your email',
+        description: 'Bring your Gmail into Albusto so every customer email lands in one timeline.',
+        cta: { label: 'Set up', path: '/settings/integrations/google-email' },
+        est_minutes: 1,
+        done_note: 'Great — your email flows into Albusto now.',
+    },
+    {
+        key: 'stripe_payments',
+        title: 'Get paid with Stripe',
+        description: 'Take card payments on the job, by link, or over the phone.',
+        cta: { label: 'Set up', path: '/settings/integrations/stripe-payments' },
+        est_minutes: 5,
+        done_note: "You're ready to get paid on the spot.",
+    },
+];
 
 beforeEach(() => {
+    process.env.FEATURE_SELF_SIGNUP = 'false';
     db.query.mockReset();
+    emailMailboxService.getMailboxStatus.mockReset().mockResolvedValue(null);
+    stripePaymentsService.getStatus.mockReset().mockResolvedValue({ readiness: 'not_connected' });
+    billingService.getSubscription.mockReset().mockResolvedValue(null);
+    otpService.validateOtpToken.mockReset();
+    otpService.trustDevice.mockReset();
+    googlePlacesService.resolve.mockReset();
+    platformCompanyService.bootstrapCompany.mockReset();
+    membershipQueries.getActiveMembership.mockReset();
 });
 
-// Mirrors the production mount: app.use('/api/onboarding', authenticate, onboardingRouter).
 function realAuthApp() {
     const app = express();
     app.use(express.json());
@@ -86,8 +118,6 @@ function realAuthApp() {
     return app;
 }
 
-// Authenticated app with a fully controllable authz context (the token layer is stubbed;
-// requireCompanyAccess + requireTenantAdmin inside the router stay REAL).
 function appWith({ user, authz } = {}) {
     const app = express();
     app.use(express.json());
@@ -108,163 +138,91 @@ const tenantAdminAuthz = (companyId = COMPANY_A) => ({
     permissions: [],
 });
 
-// db.query sequences for the service: [0] readCompletedAt, [1] EXISTS, ([2] guarded UPDATE…).
-const completedAtRow = (value) => ({ rows: [{ completed_at: value }] });
-const existsRow = (done) => ({ rows: [{ done }] });
+const completedAtRow = value => ({ rows: [{ completed_at: value }] });
+const doneRow = done => ({ rows: [{ done }] });
 
-// ─── 401 — real authenticate (TC-A-01, TC-A-02) ───────────────────────────────
+function mockChecklistDb({ completedAt = null, profileDone = false, telephonyDone = false } = {}) {
+    db.query
+        .mockResolvedValueOnce(completedAtRow(completedAt))
+        .mockResolvedValueOnce(doneRow(profileDone))
+        .mockResolvedValueOnce(doneRow(telephonyDone));
+}
 
-describe('GET /api/onboarding/checklist — 401 via real authenticate', () => {
-    test('TC-A-01: no Authorization header → 401 AUTH_REQUIRED, handler/db never reached', async () => {
-        const res = await request(realAuthApp()).get('/api/onboarding/checklist');
+function expectedItems(done) {
+    return CATALOG.map((item, index) => ({ ...item, done: done[index] }));
+}
 
-        expect(res.status).toBe(401);
-        expect(res.body).toEqual({
-            code: 'AUTH_REQUIRED',
-            message: 'Bearer token required',
-            trace_id: expect.any(String),
-        });
-        expect(db.query).not.toHaveBeenCalled();
-    });
+function expectNoChecklistWork() {
+    expect(db.query).not.toHaveBeenCalled();
+    expect(emailMailboxService.getMailboxStatus).not.toHaveBeenCalled();
+    expect(stripePaymentsService.getStatus).not.toHaveBeenCalled();
+    expect(billingService.getSubscription).not.toHaveBeenCalled();
+}
 
-    test('TC-A-02: invalid/expired token → 401 AUTH_INVALID', async () => {
-        const res = await request(realAuthApp())
-            .get('/api/onboarding/checklist')
-            .set('Authorization', 'Bearer not-a-jwt');
+describe('GET /api/onboarding/checklist — catalog, progress, and write-once state', () => {
+    test('TC-OBX-001: new company returns exact 0-of-4 payload and active trial without UPDATE', async () => {
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+        try {
+            mockChecklistDb();
+            const trialEnd = new Date(NOW_MS + 14 * DAY_MS).toISOString();
+            billingService.getSubscription.mockResolvedValue({ status: 'trialing', trial_ends_at: trialEnd });
 
-        expect(res.status).toBe(401);
-        expect(res.body).toEqual(expect.objectContaining({ code: 'AUTH_INVALID' }));
-        expect(db.query).not.toHaveBeenCalled();
-    });
-});
+            const res = await request(appWith({ authz: tenantAdminAuthz() })).get('/api/onboarding/checklist');
 
-// ─── 403 matrix — requireCompanyAccess + inline tenant_admin gate ─────────────
-
-describe('GET /api/onboarding/checklist — 403 matrix (zero checklist db calls)', () => {
-    test('TC-A-03: platform-only user (super_admin, no tenant scope) → 403 PLATFORM_SCOPE_ONLY before any read/write', async () => {
-        const app = appWith({
-            authz: { scope: 'platform', platform_role: 'super_admin', company: null, membership: null },
-        });
-        const res = await request(app).get('/api/onboarding/checklist');
-
-        expect(res.status).toBe(403);
-        expect(res.body).toEqual(expect.objectContaining({
-            code: 'PLATFORM_SCOPE_ONLY',
-            message: 'Platform admins cannot access tenant resources.',
-        }));
-        expect(db.query).not.toHaveBeenCalled();
-    });
-
-    test('TC-A-04: authenticated but no membership (authz.company=null) → 403 TENANT_CONTEXT_REQUIRED', async () => {
-        const app = appWith({
-            authz: { scope: null, platform_role: 'none', company: null, membership: null },
-        });
-        const res = await request(app).get('/api/onboarding/checklist');
-
-        expect(res.status).toBe(403);
-        expect(res.body).toEqual(expect.objectContaining({
-            code: 'TENANT_CONTEXT_REQUIRED',
-            message: 'No company association found',
-        }));
-        expect(db.query).not.toHaveBeenCalled();
-    });
-
-    test.each(['manager', 'dispatcher', 'provider'])(
-        'TC-A-05 (%s): active non-admin membership → 403 TENANT_ADMIN_ONLY, no reads and no write-once UPDATE',
-        async (roleKey) => {
-            const app = appWith({
-                authz: {
-                    scope: 'tenant',
-                    platform_role: 'none',
-                    company: { id: COMPANY_A },
-                    membership: { role_key: roleKey },
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                ok: true,
+                checklist: {
+                    visible: true,
+                    completed_at: null,
+                    progress: { done: 0, total: 4 },
+                    trial: { active: true, days_left: 14, trial_ends_at: trialEnd },
+                    items: expectedItems([false, false, false, false]),
                 },
             });
-            const res = await request(app).get('/api/onboarding/checklist');
-
-            expect(res.status).toBe(403);
-            expect(res.body).toEqual(expect.objectContaining({
-                code: 'TENANT_ADMIN_ONLY',
-                message: 'Tenant admin role required',
-            }));
-            // The gate is the inline role_key === 'tenant_admin' check, NOT
-            // requireRole('company_admin') (which would let `manager` through).
-            expect(db.query).not.toHaveBeenCalled();
+            expect(JSON.stringify(res.body)).not.toContain('Blanc');
+            expect(checklistService.CHECKLIST_ITEMS).toHaveLength(4);
+            expect(db.query.mock.calls.some(([sql]) => sql.includes('UPDATE companies'))).toBe(false);
+        } finally {
+            nowSpy.mockRestore();
         }
-    );
-
-    test('TC-A-06: dev-mode (_devMode) bypasses the admin gate → 200', async () => {
-        db.query
-            .mockResolvedValueOnce(completedAtRow(null)) // readCompletedAt
-            .mockResolvedValueOnce(existsRow(false));    // connect_telephony EXISTS
-        const app = appWith({
-            user: { sub: 'dev-user', email: 'dev@localhost', _devMode: true, company_id: COMPANY_A },
-            authz: undefined,
-        });
-        const res = await request(app).get('/api/onboarding/checklist');
-
-        expect(res.status).toBe(200);
-        expect(res.body.ok).toBe(true);
-        expect(res.body.checklist.visible).toBe(true);
     });
-});
 
-// ─── Happy path + write-once semantics ────────────────────────────────────────
-
-describe('GET /api/onboarding/checklist — derived items + write-once completed_at', () => {
-    test('TC-A-07: tenant_admin, no numbers, no completed_at → 200 visible:true with the exact normative item', async () => {
-        db.query
-            .mockResolvedValueOnce(completedAtRow(null))
-            .mockResolvedValueOnce(existsRow(false));
+    test('TC-OBX-002: partial completion returns 2-of-4 and remains visible', async () => {
+        mockChecklistDb({ profileDone: true, telephonyDone: true });
+        stripePaymentsService.getStatus.mockResolvedValue({ readiness: 'onboarding_incomplete' });
 
         const res = await request(appWith({ authz: tenantAdminAuthz() })).get('/api/onboarding/checklist');
 
         expect(res.status).toBe(200);
-        expect(res.body).toEqual({
-            ok: true,
-            checklist: {
-                visible: true,
-                completed_at: null,
-                items: [{
-                    key: 'connect_telephony',
-                    title: 'Connect telephony',
-                    description: 'Get a business phone number to make and receive calls and texts in Albusto.',
-                    done: false,
-                    cta: { label: 'Set up', path: '/settings/integrations/telephony-twilio' },
-                }],
-            },
-        });
-        // Both reads are company-scoped to the caller.
-        expect(db.query).toHaveBeenCalledTimes(2);
-        expect(db.query.mock.calls[0][1]).toEqual([COMPANY_A]);
-        expect(db.query.mock.calls[1][0]).toContain('EXISTS(SELECT 1 FROM phone_number_settings WHERE company_id = $1)');
-        expect(db.query.mock.calls[1][1]).toEqual([COMPANY_A]);
+        expect(res.body.checklist).toEqual(expect.objectContaining({
+            visible: true,
+            completed_at: null,
+            progress: { done: 2, total: 4 },
+            items: expectedItems([true, true, false, false]),
+        }));
+        expect(db.query.mock.calls.some(([sql]) => sql.includes('UPDATE companies'))).toBe(false);
     });
 
-    test('TC-A-08: first GET after all-done → EXACTLY ONE guarded UPDATE (write-once) and visible:false', async () => {
-        const FIXED = '2026-07-02T12:00:00+00';
-        db.query
-            .mockResolvedValueOnce(completedAtRow(null))                       // readCompletedAt → not fixed yet
-            .mockResolvedValueOnce(existsRow(true))                            // number exists → item done
-            .mockResolvedValueOnce({ rowCount: 1, rows: [{ completed_at: FIXED }] }); // guarded UPDATE wins
+    test('TC-OBX-003: all four done performs exactly one guarded write-once UPDATE', async () => {
+        const fixed = '2026-07-12T12:30:00+00';
+        mockChecklistDb({ profileDone: true, telephonyDone: true });
+        emailMailboxService.getMailboxStatus.mockResolvedValue({ provider: 'gmail', status: 'connected' });
+        stripePaymentsService.getStatus.mockResolvedValue({ readiness: 'connected_ready' });
+        db.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ completed_at: fixed }] });
 
         const res = await request(appWith({ authz: tenantAdminAuthz() })).get('/api/onboarding/checklist');
 
         expect(res.status).toBe(200);
-        expect(res.body.checklist.visible).toBe(false);
-        expect(res.body.checklist.completed_at).toBe(FIXED);
-        expect(res.body.checklist.items[0]).toEqual(expect.objectContaining({ key: 'connect_telephony', done: true }));
-
-        // Exactly one UPDATE, guarded ("only while NULL") and company-scoped.
-        expect(db.query).toHaveBeenCalledTimes(3);
+        expect(res.body.checklist).toEqual(expect.objectContaining({
+            visible: false,
+            completed_at: fixed,
+            progress: { done: 4, total: 4 },
+            items: expectedItems([true, true, true, true]),
+        }));
         const updates = db.query.mock.calls.filter(([sql]) => sql.includes('UPDATE companies'));
         expect(updates).toHaveLength(1);
         const [updateSql, updateParams] = updates[0];
-        // Write-once must deep-MERGE (|| + jsonb_build_object), NOT jsonb_set: a 2-level
-        // jsonb_set path no-ops when 'onboarding_checklist' doesn't exist yet (fresh
-        // company settings '{}'), so completed_at would never persist. This is a real-DB
-        // behavior mocked jest can't execute — verified live in QA — but we pin the SQL
-        // SHAPE here so a regression back to jsonb_set is caught structurally.
         expect(updateSql).not.toContain('jsonb_set');
         expect(updateSql).toContain('jsonb_build_object');
         expect(updateSql).toContain("'onboarding_checklist'");
@@ -274,146 +232,154 @@ describe('GET /api/onboarding/checklist — derived items + write-once completed
         expect(updateParams).toEqual([COMPANY_A]);
     });
 
-    test('TC-A-09: completed_at already set → visible:false, existing value kept, UPDATE never issued', async () => {
-        const EXISTING = '2026-07-01T09:30:00+00';
-        db.query
-            .mockResolvedValueOnce(completedAtRow(EXISTING))
-            .mockResolvedValueOnce(existsRow(true));
+    test('TC-OBX-004: existing completed_at never resurfaces despite incomplete new catalog items', async () => {
+        const existing = '2026-07-01T09:30:00+00';
+        mockChecklistDb({ completedAt: existing, profileDone: false, telephonyDone: true });
 
         const checklist = await checklistService.getChecklist(COMPANY_A);
 
-        expect(checklist.visible).toBe(false);
-        expect(checklist.completed_at).toBe(EXISTING); // write-once — never overwritten
-        expect(db.query).toHaveBeenCalledTimes(2);
-        for (const [sql] of db.query.mock.calls) {
-            expect(sql).not.toContain('UPDATE');
-        }
+        expect(checklist).toEqual(expect.objectContaining({
+            visible: false,
+            completed_at: existing,
+            progress: { done: 1, total: 4 },
+            items: expectedItems([false, true, false, false]),
+        }));
+        expect(db.query.mock.calls.some(([sql]) => sql.includes('UPDATE companies'))).toBe(false);
+    });
+});
+
+describe('individual checklist derivations', () => {
+    test.each([
+        ['logo exists', true, true],
+        ['logo is null', false, false],
+    ])('TC-OBX-005: company_profile — %s', async (_label, queryDone, expected) => {
+        db.query.mockResolvedValueOnce(doneRow(queryDone));
+        const item = checklistService.CHECKLIST_ITEMS.find(candidate => candidate.key === 'company_profile');
+
+        await expect(item.isComplete(COMPANY_A)).resolves.toBe(expected);
+
+        expect(db.query).toHaveBeenCalledWith(
+            expect.stringContaining('SELECT logo_storage_key IS NOT NULL AS done FROM companies WHERE id = $1'),
+            [COMPANY_A]
+        );
     });
 
-    test('TC-A-10: company_id injected via query AND body is ignored — every SQL is scoped to req.companyFilter', async () => {
-        db.query
-            .mockResolvedValueOnce(completedAtRow(null))
-            .mockResolvedValueOnce(existsRow(false)); // COMPANY_A has no numbers (B "has" them — irrelevant)
+    test.each([
+        ['no mailbox', null, false],
+        ['connected Gmail', { provider: 'gmail', status: 'connected' }, true],
+        ['Gmail reconnect required', { provider: 'gmail', status: 'reconnect_required' }, false],
+        ['connected non-Gmail', { provider: 'imap', status: 'connected' }, false],
+    ])('TC-OBX-006: connect_email — %s', async (_label, mailbox, expected) => {
+        emailMailboxService.getMailboxStatus.mockResolvedValueOnce(mailbox);
+        const item = checklistService.CHECKLIST_ITEMS.find(candidate => candidate.key === 'connect_email');
 
-        const res = await request(appWith({ authz: tenantAdminAuthz(COMPANY_A) }))
-            .get(`/api/onboarding/checklist?company_id=${COMPANY_B}`)
-            .send({ company_id: COMPANY_B });
-
-        expect(res.status).toBe(200);
-        // COMPANY_B data (it has numbers) must not flip A's answer.
-        expect(res.body.checklist.visible).toBe(true);
-        expect(db.query.mock.calls.length).toBeGreaterThan(0);
-        for (const [, params] of db.query.mock.calls) {
-            expect(params).toEqual([COMPANY_A]);
-        }
-        const allParams = db.query.mock.calls.flatMap(([, params]) => params || []);
-        expect(allParams).not.toContain(COMPANY_B);
+        await expect(item.isComplete(COMPANY_A)).resolves.toBe(expected);
+        expect(emailMailboxService.getMailboxStatus).toHaveBeenCalledWith(COMPANY_A);
     });
 
-    test('TC-A-11 (E-A3/E-A11): completed_at set but item derives done:false (number released later) → stays hidden, no reset, no UPDATE', async () => {
-        const EXISTING = '2026-07-01T09:30:00+00';
-        db.query
-            .mockResolvedValueOnce(completedAtRow(EXISTING))
-            .mockResolvedValueOnce(existsRow(false)); // number released AFTER fixation
+    test.each([
+        ['not_connected', false],
+        ['onboarding_incomplete', false],
+        ['payouts_disabled', false],
+        ['connected_ready', true],
+        ['disconnected', false],
+    ])('TC-OBX-007: stripe_payments readiness %s → %s', async (readiness, expected) => {
+        stripePaymentsService.getStatus.mockResolvedValueOnce({ readiness });
+        const item = checklistService.CHECKLIST_ITEMS.find(candidate => candidate.key === 'stripe_payments');
 
-        const checklist = await checklistService.getChecklist(COMPANY_A);
-
-        expect(checklist.visible).toBe(false); // gone forever
-        expect(checklist.completed_at).toBe(EXISTING);
-        expect(checklist.items[0].done).toBe(false);
-        expect(db.query).toHaveBeenCalledTimes(2);
-        for (const [sql] of db.query.mock.calls) {
-            expect(sql).not.toContain('UPDATE');
-        }
+        await expect(item.isComplete(COMPANY_A)).resolves.toBe(expected);
+        expect(stripePaymentsService.getStatus).toHaveBeenCalledWith(COMPANY_A);
     });
 
-    test('TC-A-12 (E-A4): number bought and released BEFORE any GET → visible:true, nothing was fixed', async () => {
-        db.query
-            .mockResolvedValueOnce(completedAtRow(null))
-            .mockResolvedValueOnce(existsRow(false));
+    test.each([
+        ['active number exists', true, true],
+        ['released number has no row', false, false],
+    ])('TC-OBX-008: connect_telephony regression — %s', async (_label, queryDone, expected) => {
+        db.query.mockResolvedValueOnce(doneRow(queryDone));
+        const item = checklistService.CHECKLIST_ITEMS.find(candidate => candidate.key === 'connect_telephony');
 
-        const checklist = await checklistService.getChecklist(COMPANY_A);
+        await expect(item.isComplete(COMPANY_A)).resolves.toBe(expected);
 
-        expect(checklist).toEqual({
-            visible: true,
-            completed_at: null,
-            items: [expect.objectContaining({ key: 'connect_telephony', done: false })],
-        });
-        expect(db.query).toHaveBeenCalledTimes(2); // no UPDATE attempted
+        expect(db.query).toHaveBeenCalledWith(
+            'SELECT EXISTS(SELECT 1 FROM phone_number_settings WHERE company_id = $1) AS done',
+            [COMPANY_A]
+        );
     });
+});
 
-    test('TC-A-13 (E-A2): concurrent GET — guard-UPDATE rowCount:0 → no error, winner value re-read, visible:false', async () => {
-        const WINNER = '2026-07-02T10:00:00+00';
-        db.query
-            .mockResolvedValueOnce(completedAtRow(null))
-            .mockResolvedValueOnce(existsRow(true))
-            .mockResolvedValueOnce({ rowCount: 0, rows: [] })       // another GET won the write
-            .mockResolvedValueOnce(completedAtRow(WINNER));          // re-read the winner's value
-
-        const checklist = await checklistService.getChecklist(COMPANY_A);
-
-        expect(checklist.visible).toBe(false);
-        expect(checklist.completed_at).toBe(WINNER);
-        expect(db.query).toHaveBeenCalledTimes(4);
-    });
-
-    test('TC-A-14 (E-A8): guard-UPDATE throws → still 200 visible:false (derived from allDone), retried next GET', async () => {
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+describe('trial projection', () => {
+    test.each([
+        ['14 days', 14 * DAY_MS, 14],
+        ['25 hours', 25 * 60 * 60 * 1000, 2],
+        ['1 hour', 60 * 60 * 1000, 1],
+        ['exactly now', 0, null],
+        ['one second ago', -1000, null],
+    ])('TC-OBX-009: %s', async (_label, offsetMs, expectedDays) => {
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
         try {
-            // Service level: the write failure must not reject.
-            db.query
-                .mockResolvedValueOnce(completedAtRow(null))
-                .mockResolvedValueOnce(existsRow(true))
-                .mockRejectedValueOnce(new Error('deadlock detected'));
+            mockChecklistDb();
+            const trialEnd = new Date(NOW_MS + offsetMs).toISOString();
+            billingService.getSubscription.mockResolvedValue({ status: 'trialing', trial_ends_at: trialEnd });
 
             const checklist = await checklistService.getChecklist(COMPANY_A);
-            expect(checklist.visible).toBe(false);
-            expect(checklist.completed_at).toBeNull();
 
-            // Route level: the response is 200, NOT 500.
-            db.query.mockReset();
-            db.query
-                .mockResolvedValueOnce(completedAtRow(null))
-                .mockResolvedValueOnce(existsRow(true))
-                .mockRejectedValueOnce(new Error('deadlock detected'));
+            if (expectedDays === null) {
+                expect(checklist.trial).toBeNull();
+            } else {
+                expect(checklist.trial).toEqual({ active: true, days_left: expectedDays, trial_ends_at: trialEnd });
+            }
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    test.each([
+        ['missing subscription', null],
+        ['active subscription', { status: 'active', trial_ends_at: null }],
+        ['past-due subscription', { status: 'past_due', trial_ends_at: null }],
+    ])('TC-OBX-010: %s produces trial:null', async (_label, subscription) => {
+        mockChecklistDb();
+        billingService.getSubscription.mockResolvedValue(subscription);
+
+        const checklist = await checklistService.getChecklist(COMPANY_A);
+
+        expect(checklist.trial).toBeNull();
+        expect(checklist.visible).toBe(true);
+        expect(checklist.items).toHaveLength(4);
+    });
+
+    test('TC-OBX-011: billing read failure warns and returns a complete 200 response with trial:null', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            mockChecklistDb();
+            billingService.getSubscription.mockRejectedValue(new Error('db down'));
 
             const res = await request(appWith({ authz: tenantAdminAuthz() })).get('/api/onboarding/checklist');
+
             expect(res.status).toBe(200);
-            expect(res.body).toEqual(expect.objectContaining({
-                ok: true,
-                checklist: expect.objectContaining({ visible: false, completed_at: null }),
+            expect(res.body.checklist).toEqual(expect.objectContaining({
+                visible: true,
+                progress: { done: 0, total: 4 },
+                trial: null,
+                items: expectedItems([false, false, false, false]),
             }));
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining(`failed to read trial for company ${COMPANY_A}`),
+                'db down'
+            );
         } finally {
             warnSpy.mockRestore();
         }
     });
+});
 
-    test('TC-A-15: data-driven catalog — items come from the registry, normative strings verbatim (Albusto, never Blanc)', async () => {
-        // The registry itself carries the normative §1.3 strings…
-        expect(checklistService.CHECKLIST_ITEMS).toHaveLength(1);
-        const item = checklistService.CHECKLIST_ITEMS[0];
-        expect(item.key).toBe('connect_telephony');
-        expect(item.title).toBe('Connect telephony');
-        expect(item.description).toBe('Get a business phone number to make and receive calls and texts in Albusto.');
-        expect(item.cta).toEqual({ label: 'Set up', path: '/settings/integrations/telephony-twilio' });
-        expect(item.description).toContain('Albusto');
-        expect(item.description).not.toContain('Blanc');
-
-        // …and the response items[] are built exactly from that registry.
-        db.query
-            .mockResolvedValueOnce(completedAtRow(null))
-            .mockResolvedValueOnce(existsRow(false));
-        const checklist = await checklistService.getChecklist(COMPANY_A);
-        expect(checklist.items).toEqual(checklistService.CHECKLIST_ITEMS.map(({ key, title, description, cta }) => ({
-            key, title, description, cta, done: false,
-        })));
-    });
-
-    test('TC-A-16: EXISTS query throws → 500 { ok:false, code:INTERNAL_ERROR, error:"Failed to load onboarding checklist" }', async () => {
+describe('errors, authentication, authorization, and tenant isolation', () => {
+    test('TC-OBX-012: item derivation error bubbles to 500 INTERNAL_ERROR', async () => {
         const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         try {
             db.query
                 .mockResolvedValueOnce(completedAtRow(null))
+                .mockResolvedValueOnce(doneRow(false))
                 .mockRejectedValueOnce(new Error('relation lost'));
 
             const res = await request(appWith({ authz: tenantAdminAuthz() })).get('/api/onboarding/checklist');
@@ -424,8 +390,195 @@ describe('GET /api/onboarding/checklist — derived items + write-once completed
                 code: 'INTERNAL_ERROR',
                 error: 'Failed to load onboarding checklist',
             });
+            expect(billingService.getSubscription).not.toHaveBeenCalled();
         } finally {
             errorSpy.mockRestore();
         }
+    });
+
+    test('TC-OBX-013a: no Authorization header returns 401 before checklist work', async () => {
+        const res = await request(realAuthApp()).get('/api/onboarding/checklist');
+
+        expect(res.status).toBe(401);
+        expect(res.body).toEqual({
+            code: 'AUTH_REQUIRED',
+            message: 'Bearer token required',
+            trace_id: expect.any(String),
+        });
+        expectNoChecklistWork();
+    });
+
+    test('TC-OBX-013b: malformed bearer token returns 401 before checklist work', async () => {
+        const res = await request(realAuthApp())
+            .get('/api/onboarding/checklist')
+            .set('Authorization', 'Bearer not-a-jwt');
+
+        expect(res.status).toBe(401);
+        expect(res.body).toEqual(expect.objectContaining({ code: 'AUTH_INVALID' }));
+        expectNoChecklistWork();
+    });
+
+    test('TC-OBX-014a: platform-only user is rejected before checklist work', async () => {
+        const res = await request(appWith({
+            authz: { scope: 'platform', platform_role: 'super_admin', company: null, membership: null },
+        })).get('/api/onboarding/checklist');
+
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual(expect.objectContaining({ code: 'PLATFORM_SCOPE_ONLY' }));
+        expectNoChecklistWork();
+    });
+
+    test('TC-OBX-014b: missing company membership returns TENANT_CONTEXT_REQUIRED', async () => {
+        const res = await request(appWith({
+            authz: { scope: null, platform_role: 'none', company: null, membership: null },
+        })).get('/api/onboarding/checklist');
+
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual(expect.objectContaining({ code: 'TENANT_CONTEXT_REQUIRED' }));
+        expectNoChecklistWork();
+    });
+
+    test.each(['manager', 'dispatcher', 'provider'])(
+        'TC-OBX-014c: %s receives TENANT_ADMIN_ONLY before checklist work',
+        async roleKey => {
+            const res = await request(appWith({
+                authz: {
+                    scope: 'tenant',
+                    platform_role: 'none',
+                    company: { id: COMPANY_A },
+                    membership: { role_key: roleKey },
+                },
+            })).get('/api/onboarding/checklist');
+
+            expect(res.status).toBe(403);
+            expect(res.body).toEqual(expect.objectContaining({ code: 'TENANT_ADMIN_ONLY' }));
+            expectNoChecklistWork();
+        }
+    );
+
+    test('TC-OBX-014d: dev mode bypasses admin gate', async () => {
+        mockChecklistDb();
+        const res = await request(appWith({
+            user: { sub: 'dev-user', email: 'dev@localhost', _devMode: true, company_id: COMPANY_A },
+            authz: undefined,
+        })).get('/api/onboarding/checklist');
+
+        expect(res.status).toBe(200);
+        expect(res.body.checklist.progress).toEqual({ done: 0, total: 4 });
+        expect(emailMailboxService.getMailboxStatus).toHaveBeenCalledWith(COMPANY_A);
+        expect(stripePaymentsService.getStatus).toHaveBeenCalledWith(COMPANY_A);
+        expect(billingService.getSubscription).toHaveBeenCalledWith(COMPANY_A);
+    });
+
+    test('TC-OBX-015: query/body company injection is ignored by every derivation and trial read', async () => {
+        mockChecklistDb();
+
+        const res = await request(appWith({ authz: tenantAdminAuthz(COMPANY_A) }))
+            .get(`/api/onboarding/checklist?company_id=${COMPANY_B}`)
+            .send({ company_id: COMPANY_B });
+
+        expect(res.status).toBe(200);
+        for (const [, params] of db.query.mock.calls) {
+            expect(params).toEqual([COMPANY_A]);
+        }
+        expect(emailMailboxService.getMailboxStatus).toHaveBeenCalledWith(COMPANY_A);
+        expect(stripePaymentsService.getStatus).toHaveBeenCalledWith(COMPANY_A);
+        expect(billingService.getSubscription).toHaveBeenCalledWith(COMPANY_A);
+        expect(JSON.stringify(res.body)).not.toContain(COMPANY_B);
+    });
+});
+
+describe('write-once edge cases and onboarding redirect', () => {
+    test('TC-OBX-016: concurrent guarded UPDATE loser re-reads winner value', async () => {
+        const winner = '2026-07-12T13:00:00+00';
+        mockChecklistDb({ profileDone: true, telephonyDone: true });
+        emailMailboxService.getMailboxStatus.mockResolvedValue({ provider: 'gmail', status: 'connected' });
+        stripePaymentsService.getStatus.mockResolvedValue({ readiness: 'connected_ready' });
+        db.query
+            .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+            .mockResolvedValueOnce(completedAtRow(winner));
+
+        const checklist = await checklistService.getChecklist(COMPANY_A);
+
+        expect(checklist.visible).toBe(false);
+        expect(checklist.completed_at).toBe(winner);
+        expect(checklist.progress).toEqual({ done: 4, total: 4 });
+        expect(db.query).toHaveBeenCalledTimes(5);
+    });
+
+    test('TC-OBX-017: completed_at write failure still returns 200 visible:false', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            mockChecklistDb({ profileDone: true, telephonyDone: true });
+            emailMailboxService.getMailboxStatus.mockResolvedValue({ provider: 'gmail', status: 'connected' });
+            stripePaymentsService.getStatus.mockResolvedValue({ readiness: 'connected_ready' });
+            db.query.mockRejectedValueOnce(new Error('deadlock detected'));
+
+            const res = await request(appWith({ authz: tenantAdminAuthz() })).get('/api/onboarding/checklist');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual(expect.objectContaining({
+                ok: true,
+                checklist: expect.objectContaining({
+                    visible: false,
+                    completed_at: null,
+                    progress: { done: 4, total: 4 },
+                }),
+            }));
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining(`failed to persist completed_at for company ${COMPANY_A}`),
+                'deadlock detected'
+            );
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
+    test('TC-OBX-018: successful onboarding redirects to /welcome and preserves payload/cookie', async () => {
+        process.env.FEATURE_SELF_SIGNUP = 'true';
+        membershipQueries.getActiveMembership.mockResolvedValue(null);
+        otpService.validateOtpToken.mockReturnValue({ phone: '+12125550123', purpose: 'signup' });
+        platformCompanyService.bootstrapCompany.mockResolvedValue({
+            company: {
+                id: COMPANY_A,
+                name: 'Acme Field Services',
+                timezone: 'America/New_York',
+            },
+        });
+        otpService.trustDevice.mockResolvedValue({ deviceId: 'trusted-device-123', maxAgeSec: 3600 });
+
+        const res = await request(appWith())
+            .post('/api/onboarding')
+            .set('User-Agent', 'onboarding-test')
+            .send({
+                company_name: ' Acme Field Services ',
+                manual: { city: 'New York', state: 'NY', zip: '10001', timezone: 'America/New_York' },
+                otp_token: 'valid-otp-token',
+            });
+
+        expect(res.status).toBe(201);
+        expect(res.body).toEqual({
+            ok: true,
+            company: {
+                id: COMPANY_A,
+                name: 'Acme Field Services',
+                timezone: 'America/New_York',
+            },
+            redirect: '/welcome',
+        });
+        expect(platformCompanyService.bootstrapCompany).toHaveBeenCalledWith({
+            userId: 'u1',
+            name: 'Acme Field Services',
+            geo: { city: 'New York', state: 'NY', zip: '10001', timezone: 'America/New_York' },
+            phone: '+12125550123',
+            email: 'admin@a.com',
+        });
+        expect(otpService.trustDevice).toHaveBeenCalledWith('u1', expect.objectContaining({ label: 'onboarding-test' }));
+        const cookie = res.headers['set-cookie']?.[0] || '';
+        expect(cookie).toContain('albusto_td=trusted-device-123');
+        expect(cookie).toContain('HttpOnly');
+        expect(cookie).toContain('Secure');
+        expect(cookie).toContain('SameSite=Lax');
+        expect(cookie).toContain('Path=/');
     });
 });
