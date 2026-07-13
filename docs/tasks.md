@@ -9350,7 +9350,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js tests/serviceTerritoriesConfig.test.js tests/serviceTerritoryZip.test.js --testPathIgnorePatterns "/node_modules/"`.
 
-**Зависимости:** после T1.2. **Статус:** pending
+**Зависимости:** после T1.2. **Статус:** done (2026-07-13, GPT, ревью ACCEPT, 15/15)
 
 ### Задача T2.1: frontend — TerritoryCoverageMap (read-only карта)
 
