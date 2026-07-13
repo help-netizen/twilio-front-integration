@@ -9336,7 +9336,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js tests/territoryService.test.js --testPathIgnorePatterns "/node_modules/"`.
 
-**Зависимости:** после T1.1. **Статус:** pending
+**Зависимости:** после T1.1. **Статус:** done (2026-07-13, GPT plan-first, ревью ACCEPT, 93/93 jest вкл. golden)
 
 ### Задача T1.3: endpoints config/mode/radii + перевод потребителей на seam + integration-тесты
 
