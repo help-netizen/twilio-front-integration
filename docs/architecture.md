@@ -7213,3 +7213,274 @@ Order is FK-forced (`marketplace_installations.app_id` is ON DELETE RESTRICT): (
 6. **Fresh/dev DBs without a connected lead-generator installation** → no auto-connect seeds; five tiles show Available — intended (US-4 semantics), not a defect.
 7. **Boot-cost of replaying the seed** — three statements over single-digit-row tables inside the existing advisory-lock txn; negligible.
 8. **Copy drift** — descriptions are drafts by design (FR-1); any future copy edit lands in 169 itself (self-heals every boot), not in a data patch.
+
+## RELY-LEADS-SETTINGS-001 — architecture: settings in installation.metadata + app-key settings API (GET/PUT), relyLeadFilterService on the Rely ingest branch (fail-open), non-FSM rejected marker `leads.metadata.rely_filter` + reserved-key injection guard, badge exclusion, FE panel/chip/filter — NO new migration (2026-07-13)
+
+**Requirements:** `Docs/requirements.md` §RELY-LEADS-SETTINGS-001 (FR-1..11, NFR-1..8, US-1..6, A1-A4; [OWNER]/[PRODUCT] markers binding). Builds on MARKETPLACE-LEADGEN-SPLIT-001 (mig 169) and reuses the SERVICE-TERR-002 containment seam. **Migration verdict: NO migration 170 — zero schema change.** Settings live in existing `marketplace_installations.metadata` JSONB (083:58), the rejected marker in existing `leads.metadata` JSONB (007, `DEFAULT '{}'`), catalogs are code constants, and the FE Settings-button gate is an app_key check (IntegrationsPage already special-cases four app_keys — precedent, no `metadata.has_settings` seed needed).
+
+### A1-A4 resolutions (binding for downstream agents)
+
+- **A1 (addressing + hook placement):** settings routes are **app-key-based** — `GET/PUT /api/marketplace/apps/:appKey/settings` inside `backend/src/routes/marketplace.js` (install is already `POST /apps/:appKey/install`; the FE tile knows `app_key`, not the per-env installation id). Whitelist `SETTINGS_ENABLED_APP_KEYS = new Set(['rely-leads'])`; any other key → 404. The ingest hook is a **dedicated service** `backend/src/services/relyLeadFilterService.js` called from `integrations-leads.js` ONLY inside an `isRelyLead(payload)` branch — `isRelyLead` is a pure string check (`String(payload?.JobSource ?? '').trim().toLowerCase() === 'rely'`), so the non-Rely path provably adds zero queries and zero log lines (NFR-2).
+- **A2 (marker key + DTO path + guard):** marker key = **`leads.metadata.rely_filter`** (shape below). It reaches list, detail AND mobile DTOs automatically via the existing `rowToLead` metadata spread (`leadsService.js:100` — `listLeads`, `getLeadByUUID`, `getLeadById` all map through `rowToLead`; verified, no DTO wiring needed). Guard = **reserved-namespace strip inside `extractCustomMetadata`** (the single seam where external `Metadata` objects AND registered flat keys enter, used by BOTH `createLead` and `updateLead` for every caller) + the marker is injected via a new server-only `createLead` options argument merged AFTER extraction — external payloads can never preset, overwrite, or clear it.
+- **A3 (single-source catalogs):** one backend constant module `backend/src/services/relyLeadsCatalog.js` (precedent: `permissionCatalog.js` lives in services/). The FE has **no mirror**: the settings GET response carries `catalogs` and the dialog renders its checkbox grids from that payload. No codegen, no drift test — the endpoint is the transport.
+- **A4 (rejected filter UI):** client-side `rejectedOnly` toggle in `LeadsFilterBody`, rendered as a 4th `FilterColumn` (title "FLAGS", single item "Rejected") — exactly the semantics of the existing client-side source/jobType filters. `only_open` untouched: rejected leads are status `Submitted`, hence already inside the default list; the toggle narrows the loaded pages. No `listLeads` param, no server change.
+
+### Existing functionality (extend, don't duplicate)
+
+- **Extend:** `backend/src/routes/marketplace.js` (2 routes), `marketplaceService.js` (settings read/validate/write), `marketplaceQueries.js` (2 query fns), `leadsService.js` (`createLead` opts + `extractCustomMetadata` strip + `countNewLeads` predicate), `frontend/src/pages/IntegrationsPage.tsx` (generic-branch button), `frontend/src/services/marketplaceApi.ts`, `LeadsFilterBody`/`LeadsFilters`/`LeadsMobileBar`/`LeadsPage` (filter plumbing).
+- **Reuse as-is (do NOT duplicate, do NOT edit):** `territoryService.isZipInTerritory` (THE containment seam — never bypass it with direct `serviceTerritoryQueries.search` calls), `territoryRadiusQueries.getSettings/countListZips/listRadii` (activity guard), `normalizeZip` (`backend/src/utils/zip.js`), `MarketplaceServiceError` + `handleError` (marketplace.js:13), `companyId(req)` helper (marketplace.js:5 — `req.companyFilter?.company_id`), `rowToLead`, `FilterColumn`, FORM-CANON primitives (`DialogContent variant="panel"`, `FloatingField`, `Checkbox`).
+- **Protected/untouched:** `src/server.js` (mount at :268 already carries `authenticate + requirePermission('tenant.integrations.manage') + requireCompanyAccess` — new routes inherit it), `integrationsAuth.js`/`integrationScopes.js`/rate limiter, `api_integrations` row 1, mig 169 + its boot-list line, FSM subsystem, `NEW_LEAD_STATUSES`, `markLost`/`activateLead`/`convertLead`, POST /leads response envelope (FR-11).
+
+### D1. Settings storage (FR-1) — `marketplace_installations.metadata.settings`
+
+```json
+{
+  "seeded_by": "MARKETPLACE-LEADGEN-SPLIT-001",
+  "shared_credential": true,
+  "settings": {
+    "zone": { "mode": "company", "custom_zips": [] },
+    "unit_types": ["Dishwasher"],
+    "brands": [],
+    "updated_at": "2026-07-13T00:00:00.000Z",
+    "updated_by": "<crm_users.id|null>"
+  }
+}
+```
+
+`updated_at`/`updated_by` are server-set on PUT (audit convenience), never client-supplied. **Defaults resolution** — pure fn `resolveRelySettings(metadata)` in `marketplaceService.js`: absent/malformed `settings` ⇒ `{zone:{mode:'company',custom_zips:[]},unit_types:[],brands:[]}`; per-key deep-defaulting (unknown `zone.mode` → `'company'`, non-array lists → `[]`); values no longer present in the current catalogs are dropped at read time (catalog shrink = code change, settings self-heal on next read). **Merge-write** (avoids the jsonb_set-missing-parent no-op, L-003 / ONBTEL-001 gotcha, by never writing a deep path — always the whole `settings` object via top-level `||`):
+
+```sql
+UPDATE marketplace_installations
+   SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('settings', $3::jsonb),
+       updated_at = NOW()
+ WHERE company_id = $1 AND id = $2
+ RETURNING *
+```
+
+Seeded keys `seeded_by`/`shared_credential` survive every write (FR-1). New query fn: `marketplaceQueries.setInstallationSettings(companyId, installationId, settingsObject, client = null)` (follows module conventions incl. `ensureMarketplaceSchema` — this one is NOT on the ingest hot path).
+
+### D2. Catalogs — `backend/src/services/relyLeadsCatalog.js` (NEW)
+
+```js
+const RELY_UNIT_TYPES = Object.freeze(['Washer','Dryer','Refrigerator','Freezer','Dishwasher','Range','Oven','Cooktop','Microwave','Ice Maker','Garbage Disposal','Vent Hood']); // 12, owner-binding
+const RELY_BRANDS = Object.freeze(['Whirlpool','GE','Samsung','LG','Maytag','Kenmore','KitchenAid','Frigidaire','Bosch','Electrolux','Amana','Sub-Zero','Viking','Thermador','Speed Queen']); // 15, owner-binding
+module.exports = { RELY_UNIT_TYPES, RELY_BRANDS };
+```
+
+Array order = display order = matcher precedence (first catalog entry that matches a multi-appliance Description wins — deterministic). Stored settings values are the EXACT catalog strings (FR-3); all matching is case-insensitive on normalized token sequences (D4).
+
+### D3. Settings API (FR-2) — inside the existing `/api/marketplace` mount
+
+Routes (marketplace.js, delegating like every existing route; errors through the existing `handleError`):
+
+- `router.get('/apps/:appKey/settings')` → `marketplaceService.getAppSettings(companyId(req), req.params.appKey)`
+- `router.put('/apps/:appKey/settings')` → `marketplaceService.updateAppSettings(companyId(req), actorId(req), req.params.appKey, req.body, { requestId: req.requestId })`
+
+Service resolution (both verbs): appKey ∉ `SETTINGS_ENABLED_APP_KEYS` → 404 `SETTINGS_NOT_SUPPORTED`; `getPublishedAppByKey(appKey)` null → 404 `APP_NOT_FOUND`; `findActiveInstallation(companyId, app.id)` null or `status !== 'connected'` → 404 `APP_NOT_INSTALLED`. Tenancy: addressing is app-key + OWN company — there is no cross-tenant id to probe at all; the installation lookup is company-scoped by construction (US-5). 403 comes from the mount's `requirePermission` before the router runs.
+
+**Response shape (GET and PUT 200 identical):**
+
+```json
+{ "success": true, "app_key": "rely-leads", "installation_id": 7,
+  "settings": { "zone": {"mode":"company","custom_zips":[]}, "unit_types": [], "brands": [] },
+  "catalogs": { "unit_types": ["Washer", "…12"], "brands": ["Whirlpool", "…15"] },
+  "territory": { "active_mode": "list", "has_data": true },
+  "request_id": "…" }
+```
+
+`settings` is always effective/defaults-applied (FR-2); `territory` (2 cheap queries: `radiusQueries.getSettings` + `countListZips` or `listRadii().length` per mode) lets the dialog explain what "Same as company settings" currently means and warn when `has_data:false` (the [PRODUCT] zero-territory guard made visible).
+
+**PUT validation** (`validateRelySettingsInput(body)` in marketplaceService; throw `MarketplaceServiceError(…, code, 400)`):
+- shape: `zone`/`unit_types`/`brands` present-or-defaulted; anything non-object → `INVALID_SETTINGS`.
+- `zone.mode` ∈ {`company`,`custom`} → else `INVALID_ZONE_MODE`.
+- `zone.custom_zips`: accepts `string[]` OR one free-form string; `parseZipList(input)` (exported by the filter service, shared with tests) splits `/[\s,;]+/`, `normalizeZip`s each token, requires `/^\d{5}$/` after normalization → else `INVALID_ZIPS` (message lists up to 10 offending raw tokens); dedupe preserving order; > 500 entries → `ZIP_LIST_TOO_LARGE`. `mode:'custom'` with empty list is ALLOWED (zone filter simply inactive per FR-6 activity).
+- `unit_types`/`brands`: each entry case-insensitively matched to its catalog and CANONICALIZED to the exact catalog string; unknown → `INVALID_UNIT_TYPES` / `INVALID_BRANDS`.
+- Write via `setInstallationSettings`, then ONE audit event `writeEvent({eventType:'settings_updated', payload:{app_key, zone_mode, custom_zip_count, unit_type_count, brand_count}})` — counts only, never the ZIP list (decision: settings changes ARE evented — rare, human-initiated, consistent with the install/disconnect audit stream; ingest rejects are NOT evented, see D7).
+
+### D4. Filter service — `backend/src/services/relyLeadFilterService.js` (NEW)
+
+Exports and exact signatures:
+
+```js
+isRelyLead(payload) → boolean                       // pure; JobSource case-insensitive trim === 'rely' (FR-5)
+parseZipList(input) → { zips: string[], invalid: string[] }   // shared with PUT validation
+parseDescription(text) → { unit_raw: string|null, brand_raw: string|null }
+matchCatalogEntry(raw, catalog) → string|null       // canonical catalog string or null
+evaluateRelyLead(payload, companyId) → Promise<verdict>       // NEVER throws (outer try/catch → accept)
+buildMarker(verdict) → object                        // the metadata marker for rejected verdicts
+```
+
+- `parseDescription`: scan `payload.Description` line-by-line; unit = capture of the FIRST line matching `/^\s*issue\s*:\s*(.+)$/i`, brand = FIRST `/^\s*brand\s*:\s*(.+)$/i`, both trimmed. `Issue 2:` never matches (the digit breaks the pattern) — deliberate, FR-5 binds to the first `Issue:` line; secondary units are out of scope v1.
+- `matchCatalogEntry`: `norm(s) = s.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()`; entry matches iff ` ${norm(raw)} `.includes(` ${norm(entry)} `) (token-sequence containment). Handles `Issue: Dishwasher - not draining` → Dishwasher; `Sub-Zero`↔`sub zero`; word-boundary safety for `GE`/`LG` (`ridge` does NOT match `ge`). First catalog entry in array order wins. A present-but-unmatched value ⇒ treated as MISSING (FR-5).
+- **Settings read (hot path):** new `marketplaceQueries.getConnectedRelySettings(companyId)` — ONE query, and deliberately WITHOUT `ensureMarketplaceSchema`/`reconcileRevokedInstallations` (those are the expensive parts of the marketplace query layer; a missing table on a fresh DB throws → fail-open accept ≡ NFR-8 semantics). Documented deviation from the module's ensure-everywhere convention:
+
+```sql
+SELECT mi.metadata
+FROM marketplace_installations mi
+JOIN marketplace_apps ma ON ma.id = mi.app_id
+WHERE mi.company_id = $1 AND ma.app_key = 'rely-leads' AND mi.status = 'connected'
+ORDER BY mi.created_at DESC LIMIT 1
+```
+
+No row ⇒ `{accepted:true}` with all filters inactive (NFR-8 accept-all).
+
+**Evaluation algorithm** (FR-6: zone → unit → brand, first fail supplies the single reason; each filter inactive ⇒ pass):
+
+1. `settings = resolveRelySettings(row.metadata)`; `zip = normalizeZip(payload.PostalCode) || null`.
+2. **Zone / custom mode:** active iff `custom_zips.length > 0`. Active + no zip → reject `out_of_area` [OWNER]. Active + zip ∉ set → reject. Else pass. (0 extra queries.)
+3. **Zone / company mode (cheap-accept-first ordering):** if zip present → `territoryService.isZipInTerritory(companyId, zip)`; `inside:true` → pass (containment implies territory data exists — no activity query on the common path). `inside:false` OR zip missing → activity guard: `radiusQueries.getSettings(companyId)` then `countListZips` (list mode) / `listRadii().length` (radius mode); **no territory data ⇒ zone filter INACTIVE ⇒ pass** ([PRODUCT] guard — a territory-less company never rejects on day one); has data ⇒ reject `out_of_area`. `inside:false` is a decision, not an error.
+4. **Unit:** active iff `unit_types.length > 0`; `unit = matchCatalogEntry(parseDescription(...).unit_raw, RELY_UNIT_TYPES)`; missing/unrecognized → PASS (fail-open [OWNER]); recognized ∉ selection → reject `unit_not_serviced`; else pass. (0 queries.)
+5. **Brand:** symmetric with `brand_not_serviced`. Missing `Brand:` line (the common case) → pass (US-4). (0 queries.)
+6. **Any thrown exception anywhere** (settings read, parse, territory lookup, geocode transport) → caught inside `evaluateRelyLead`, `console.error('[RelyLeadFilter] fail-open', err)` with stack, return `{accepted:true, error: err.message}` — the lead is created exactly as today (FR-6 internal-error row).
+
+```js
+// verdict shape
+{ accepted: boolean,
+  reason: 'out_of_area'|'unit_not_serviced'|'brand_not_serviced'|null,
+  extracted: { zip: string|null, unit: string|null, brand: string|null },   // canonical values
+  active: { zone: boolean, unit_types: boolean, brands: boolean },
+  error: string|null }
+```
+
+**Query-count honesty (NFR-5 deviation, flagged):** custom zone = 1 query; company zone accept path = 3 (settings + isZipInTerritory's internal getSettings+search); company zone reject/missing-zip path ≤ 5 (adds the activity-guard pair, one `getSettings` being a knowing duplicate of the seam's internal read — accepted, the seam is reused as-is per requirements). Above NFR-5's literal "≤1-2", but every query is a PK/index lookup, the guard pair runs only on the reject path, and Rely volume ≈ 57/90 days ≈ 0.6/day. Radius-mode geocode is `zip_geocache`-first; a Google call happens only for a never-seen ZIP and a transport failure fail-opens.
+
+### D5. Ingest hook — `backend/src/routes/integrations-leads.js` (the ONLY ingest-path touch)
+
+Inserted between the contact-dedup block and the `createLead` call (`:66`); everything else in the handler byte-unchanged (FR-11 — the 201 envelope literally isn't touched):
+
+```js
+// RELY-LEADS-SETTINGS-001: acceptance filter, Rely payloads only. Non-Rely:
+// isRelyLead is a pure string check — zero queries, zero logs (NFR-2).
+let relyVerdict = null;
+if (relyLeadFilterService.isRelyLead(payload)) {
+    relyVerdict = await relyLeadFilterService.evaluateRelyLead(payload, req.integrationCompanyId); // never throws
+}
+
+const result = await leadsService.createLead(
+    payload,
+    req.integrationCompanyId,
+    relyVerdict && !relyVerdict.accepted
+        ? { systemMetadata: { rely_filter: relyLeadFilterService.buildMarker(relyVerdict) } }
+        : undefined
+);
+
+if (relyVerdict) {
+    // FR-10: exactly ONE structured line per evaluated Rely lead, after create so uuid/serial exist.
+    console.log('[RelyLeadFilter]', JSON.stringify({
+        decision: relyVerdict.accepted ? 'accept' : 'reject',
+        reason: relyVerdict.reason, extracted: relyVerdict.extracted, active: relyVerdict.active,
+        fail_open_error: relyVerdict.error || undefined,
+        company_id: req.integrationCompanyId, lead_uuid: result.UUID, serial_id: result.SerialId,
+    }));
+}
+```
+
+Accepted leads get NO marker at all (US-4). UI/manual, Yelp, VAPI creation paths never see this code (NFR-2: the filter exists only here).
+
+### D6. Rejected marker + injection guard — `backend/src/services/leadsService.js`
+
+**Marker shape** (server-written, FR-7):
+
+```json
+"rely_filter": { "rejected": true, "reason": "out_of_area",
+                 "evaluated_at": "2026-07-13T00:00:00.000Z",
+                 "zip": "02888", "unit": "Dishwasher", "brand": null }
+```
+
+**Mechanism decision — `createLead` options arg, marker in the SAME INSERT (not a post-create UPDATE).** Decisive reason: `emitLeadChange('lead.created')` fires right after the INSERT (`:358`) and the SSE client refetches `/new-count` immediately; a post-create UPDATE would leave a window where the rejected lead is counted and NOTHING re-fires after a metadata UPDATE — the badge would stay wrong until the next unrelated lead event. Single INSERT ⇒ no race, one write.
+
+```js
+async function createLead(fields, companyId = null, { systemMetadata = null } = {}) {
+    ...
+    const meta = await extractCustomMetadata(fields);                 // external input, reserved keys stripped
+    const merged = { ...(meta || {}), ...(systemMetadata || {}) };    // server marker wins, same INSERT
+    if (Object.keys(merged).length > 0) columns.metadata = JSON.stringify(merged);
+    ...
+}
+```
+
+Default `{}` third arg ⇒ every existing caller byte-identical. `updateLead` is NOT extended (marker is create-time-only; NFR-7 prospective-only; no un-reject affordance in scope).
+
+**Injection guard** — in `extractCustomMetadata` (`:108-127`), the single seam where external `Metadata` objects and registered flat keys enter `leads.metadata`, used by BOTH `createLead` and `updateLead` for EVERY caller:
+
+```js
+// RELY-LEADS-SETTINGS-001: server-owned metadata namespaces. External payloads
+// (Metadata object OR a registered flat api_name) can never preset/overwrite them.
+const RESERVED_METADATA_KEYS = ['rely_filter'];   // exported for tests
+...
+for (const key of RESERVED_METADATA_KEYS) delete meta[key];   // last step before return
+```
+
+Clearing is already impossible by construction (`updateLead` merges `{...existingMeta, ...meta}` — merge never deletes keys); with the strip, preset/overwrite are impossible too. Guard is global across all lead write paths — accepted: the namespace is server-owned, no `lead_custom_fields.api_name = 'rely_filter'` exists (grep-verified), and the strip also makes the DTO's top-level `lead.rely_filter` trustworthy despite `rowToLead`'s metadata spread being last.
+
+### D7. Badge exclusion (FR-9) — `countNewLeads` (`leadsService.js:1288-1296`)
+
+```sql
+SELECT COUNT(*)::int AS count FROM leads
+WHERE company_id = $1 AND lead_lost = false AND status = ANY($2::text[])
+  AND NOT COALESCE(metadata @> '{"rely_filter":{"rejected":true}}'::jsonb, false)
+```
+
+`COALESCE(…, false)` is load-bearing: `NULL @> x` yields NULL and bare `NOT NULL` would silently DROP legacy NULL-metadata rows from the count (007 added the column with `DEFAULT '{}'` but NULLs are possible). `NEW_LEAD_STATUSES` unchanged; `lead.created` SSE contract unchanged (event stays in BOTH genericEventTypes AND namedEvents; `/new-count` stays above `/:uuid`). No new index (the count scans the small new-status slice; Rely ≈ 0.6/day). **No marketplace event per rejected lead** (decision): the audit stream is for install lifecycle; the structured log line + the marker on the lead row ARE the record.
+
+### D8. Frontend — Settings entry + panel
+
+- **Gate (IntegrationsPage.tsx, generic branch `:294-316`):** render before the Disconnect button:
+  `{app.app_key === 'rely-leads' && app.installation?.status === 'connected' && (<Button variant="outline" size="sm" onClick={() => setRelySettingsOpen(true)}>Settings</Button>)}` + `const [relySettingsOpen, setRelySettingsOpen] = useState(false)` + dialog mounted next to the other dialogs. App_key hardcode follows the existing vapi-ai/stripe-payments/google-email/telephony-twilio precedent; NO migration, NO metadata seed.
+- **`frontend/src/pages/RelyLeadsSettingsDialog.tsx` (NEW,** sibling of `IntegrationDialogs.tsx`): FORM-CANON panel verbatim (`DialogContent variant="panel"` → `DialogPanelHeader` "Rely Leads settings" → `DialogBody className="md:px-8 md:py-7"` with `max-w-[740px] space-y-6` → `DialogPanelFooter` ghost Cancel + primary Save; auto bottom-sheet on mobile). Groups:
+  1. **Service area** — `.blanc-eyebrow` label; two native `<input type="radio">` rows (no RadioGroup primitive exists; radios are non-floated controls per FORM-CANON rule 7, label beside): "Same as company settings" with a hint line from `territory` (`list` → "Currently: ZIP list", `radius` → "Currently: radius areas"; `has_data:false` → warning "Your company has no service territory data yet — leads are accepted everywhere until you add some"), and "Custom ZIP list" revealing `<FloatingField textarea rows={4} label="ZIP codes" …/>` + live count `text-xs text-[var(--blanc-ink-3)]`: "N ZIP codes recognized" (client-side `/[\s,;]+/` split + 5-digit preview; the server stays the authority and re-parses on PUT).
+  2. **Unit types** — eyebrow + `grid grid-cols-2 sm:grid-cols-3 gap-2` of `Checkbox` + label rows built from `catalogs.unit_types`; empty selection renders the literal hint "No filter — all leads accepted".
+  3. **Brands** — same grid from `catalogs.brands`, same empty hint.
+- **Data:** `useQuery({ queryKey: ['rely-leads-settings'], queryFn: fetchRelyLeadsSettings, enabled: open })`; `useMutation(saveRelyLeadsSettings)` → onSuccess invalidate `['rely-leads-settings']` + `toast.success('Settings saved')` + close; onError `toast.error(message)` (400 messages name the offending ZIP tokens).
+- **`marketplaceApi.ts` additions:**
+
+```ts
+export interface RelyLeadsSettings { zone: { mode: 'company' | 'custom'; custom_zips: string[] }; unit_types: string[]; brands: string[] }
+export interface RelyLeadsSettingsResponse { settings: RelyLeadsSettings; catalogs: { unit_types: string[]; brands: string[] }; territory: { active_mode: 'list' | 'radius'; has_data: boolean } }
+export async function fetchRelyLeadsSettings(): Promise<RelyLeadsSettingsResponse>          // GET  /api/marketplace/apps/rely-leads/settings
+export async function saveRelyLeadsSettings(s: RelyLeadsSettings): Promise<RelyLeadsSettingsResponse>  // PUT, body = s
+```
+
+### D9. Frontend — rejected marker surfacing (FR-8 + A4)
+
+- **`types/lead.ts`:** add to `Lead`: `rely_filter?: { rejected?: boolean; reason?: 'out_of_area' | 'unit_not_serviced' | 'brand_not_serviced'; evaluated_at?: string; zip?: string | null; unit?: string | null; brand?: string | null } | null;` (arrives via the `rowToLead` top-level metadata spread — the typed contract; also visible under `Metadata.rely_filter`).
+- **Reason copy** (single constant in `components/leads/leadConstants.ts`): `REJECTED_REASON_COPY = { out_of_area: 'Rejected — out of service area', unit_not_serviced: 'Rejected — unit type not serviced', brand_not_serviced: 'Rejected — brand not serviced' }`.
+- **Chips:** `leadsTableHelpers.tsx` status cell (`:22-29`) and `LeadMobileCard.tsx` status-pill row (`:73`) — when `lead.rely_filter?.rejected`, append a small "Rejected" pill (10% tint of `#DC2626`, the Lost hue, via the existing `hexToRgba`; `title` = full reason copy). `LeadDetailPanel.tsx` `LeadHeader` (`:221` pills row) — chip + the literal reason line (`text-[13px]`, `#DC2626`) under the pills. Blanc tokens/tints only, no new styles files.
+- **Filter (A4):** `LeadsPage.tsx` — `const [rejectedOnly, setRejectedOnly] = useState(false)`; in `filteredLeads`: `if (rejectedOnly) result = result.filter(l => l.rely_filter?.rejected === true)`. Plumb `rejectedOnly/onToggleRejected` through `LeadsFilters.tsx` and `LeadsMobileBar.tsx` into `LeadsFilterBody.tsx`, rendered as a 4th `FilterColumn` (title "FLAGS", `items={['Rejected']}`, selected `rejectedOnly ? ['Rejected'] : []`) — `FilterColumn` itself untouched; the active-chip row and `onClearAll` include it. Client-side narrowing of loaded pages (100/page) — same limitation as the existing source/jobType filters, acceptable at Rely volume; "count" = visible row count while toggled.
+
+### Ingest data flow (rejected Rely lead)
+
+```
+Vultr poster → POST /api/v1/integrations/leads (auth chain untouched)
+  → isRelyLead(payload)  [pure check]
+  → evaluateRelyLead(payload, companyId)
+       → getConnectedRelySettings (1 query; none ⇒ accept-all)
+       → zone (custom set | isZipInTerritory seam + activity guard) → unit → brand   [fail-open on ANY throw]
+  → createLead(payload, companyId, { systemMetadata: { rely_filter: marker } })
+       → extractCustomMetadata (external meta, reserved keys STRIPPED)
+       → merged meta, ONE INSERT (status 'Submitted', FSM-valid)
+       → emitLeadChange('lead.created') → SSE → client refetches /new-count (already excludes marker)
+  → ONE '[RelyLeadFilter]' log line (decision+reason+extracted+active+uuid/serial)
+  → 201 {success, lead_id, serial_id, contact_id, request_id}   ← byte-identical envelope (FR-11)
+```
+
+### Files (complete list)
+
+**New:** `backend/src/services/relyLeadsCatalog.js` · `backend/src/services/relyLeadFilterService.js` · `frontend/src/pages/RelyLeadsSettingsDialog.tsx` · `tests/relyLeadFilter.test.js` · `tests/relyLeadsSettings.test.js`.
+**Changed:** `backend/src/db/marketplaceQueries.js` (+`getConnectedRelySettings` hot-path fn, +`setInstallationSettings`, exports) · `backend/src/services/marketplaceService.js` (+`SETTINGS_ENABLED_APP_KEYS`, `resolveRelySettings`, `validateRelySettingsInput`, `getAppSettings`, `updateAppSettings`, exports) · `backend/src/routes/marketplace.js` (+2 routes) · `backend/src/routes/integrations-leads.js` (D5 block only) · `backend/src/services/leadsService.js` (createLead opts + `RESERVED_METADATA_KEYS` strip + countNewLeads predicate) · `frontend/src/services/marketplaceApi.ts` · `frontend/src/pages/IntegrationsPage.tsx` · `frontend/src/types/lead.ts` · `frontend/src/components/leads/leadConstants.ts` · `leadsTableHelpers.tsx` · `LeadMobileCard.tsx` · `LeadDetailPanel.tsx` · `LeadsFilterBody.tsx` · `LeadsFilters.tsx` · `LeadsMobileBar.tsx` · `frontend/src/pages/LeadsPage.tsx` · `Docs/*`.
+**Explicitly untouched:** `src/server.js`, `integrationsAuth.js`/`integrationScopes.js`/`rateLimiter.js`, `territoryService.js` + territory queries, `fsmService.js`, mig 169 + boot list, `NEW_LEAD_STATUSES`, `markLost`/`activateLead`/`convertLead`, `authedFetch.ts`, `useRealtimeEvents.ts`, `backend/db/` (no migration).
+
+### Test seams (for TestCases/Planner)
+
+`tests/relyLeadFilter.test.js`: mock `db/connection`, `marketplaceQueries` (`getConnectedRelySettings`), `territoryService`, `territoryRadiusQueries` (marketplaceLeadgenSplit.test.js:6-29 pattern); table-driven fail-open matrix (FR-6 rows incl. missing-zip reject, zero-territory pass, unrecognized-value pass, thrown-error accept), parser cases (`Issue 2:` skipped, `Brand:` absent, containment `GE`/`Sub-Zero`/`Ice maker leaking`). `tests/relyLeadsSettings.test.js`: real `marketplaceService` over mocked queries — validation taxonomy (each 400 code), 404 trio, canonicalization, merge-SQL invocation shape (seeded-keys survival pinned by asserting the `||`-based query fn is used with the whole settings object), settings_updated event payload. leadsService additions: injection-guard (payload `Metadata.rely_filter` stripped; `systemMetadata` wins; flat registered key stripped) + countNewLeads predicate incl. `metadata = NULL` row. Route-level: non-Rely payload ⇒ `evaluateRelyLead` not called, createLead third arg undefined (NFR-2 pin); rejected ⇒ 201 envelope byte-identical (FR-11 pin).
+
+### Risks
+
+1. **Geocode on the ingest path (radius mode)** — bounded: `zip_geocache`-first, Google only on a never-seen ZIP, transport failure fail-opens, volume ≈ 0.6 Rely leads/day. No extra caching layer added (unwarranted complexity).
+2. **NFR-5 literal budget exceeded on company-zone paths (3-5 queries, see D4)** — documented deviation; all PK/index lookups, guard pair only on the reject path. Product should ack.
+3. **Global reserved-key strip** — a future custom field literally named `rely_filter` would silently stop persisting; accepted (server-owned namespace, none registered today).
+4. **Multi-appliance Descriptions** ("Issue: Washer and Dryer") — catalog-order-first single match may reject when the second appliance is serviced; owner-approved v1 semantics (first `Issue:` line, single value), documented.
+5. **Client-side Rejected filter** narrows only loaded pages — consistent with existing source/jobType filters; fine at Rely volume.
+6. **Settings last-write-wins** (whole `settings` object) on concurrent edits — accepted, few admins per tenant.
+7. **Disconnect → reinstall creates a NEW installation row** ⇒ settings reset to defaults (settings live on the installation) — expected semantics; note for support.
+8. **`rowToLead` spreads metadata last** (pre-existing) — external keys could shadow DTO fields in general; for `rely_filter` specifically the reserved-key strip closes it, making the top-level DTO field trustworthy.
