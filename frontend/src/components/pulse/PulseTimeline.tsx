@@ -44,7 +44,6 @@ export function PulseTimeline({
 }: PulseTimelineProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
-    const feedRef = useRef<HTMLDivElement>(null);
     const sentinelRef = useRef<HTMLDivElement>(null);
     const endRef = useRef<HTMLDivElement>(null);
     const anchoredRef = useRef(false);
@@ -73,9 +72,30 @@ export function PulseTimeline({
         return mapped;
     }, [items]);
 
-    const getScrollContainer = useCallback(() => (
-        endRef.current?.closest('.pulse-right-column') as HTMLElement | null
-    ), []);
+    const getScrollContainer = useCallback(() => {
+        const end = endRef.current;
+        if (!end) return null;
+
+        let ancestor = end.parentElement;
+        while (ancestor) {
+            const overflowY = getComputedStyle(ancestor).overflowY;
+            const canScroll = overflowY === 'auto' || overflowY === 'scroll';
+            if (canScroll && ancestor.scrollHeight > ancestor.clientHeight + 1) return ancestor;
+            ancestor = ancestor.parentElement;
+        }
+
+        return (end.closest('.pulse-right-column') as HTMLElement | null)
+            ?? (document.scrollingElement as HTMLElement | null);
+    }, []);
+
+    const updateNearBottom = useCallback((container = getScrollContainer()) => {
+        if (!container) return false;
+        const nextNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 120;
+        nearBottomRef.current = nextNearBottom;
+        setNearBottom(current => current === nextNearBottom ? current : nextNearBottom);
+        if (nextNearBottom) setHasNewActivity(false);
+        return nextNearBottom;
+    }, [getScrollContainer]);
 
     const scrollToBottom = useCallback(() => {
         const container = getScrollContainer();
@@ -99,6 +119,17 @@ export function PulseTimeline({
         compensationRafRef.current = null;
         resizeRafRef.current = null;
     }, [timelineKey]);
+
+    // Mobile Pulse scrolls .app-main; disable native anchoring there while this feed is mounted.
+    useLayoutEffect(() => {
+        if (!hasItems) return;
+        const container = getScrollContainer();
+        if (!container || container.classList.contains('pulse-right-column')) return;
+
+        const previousOverflowAnchor = container.style.overflowAnchor;
+        container.style.overflowAnchor = 'none';
+        return () => { container.style.overflowAnchor = previousOverflowAnchor; };
+    }, [timelineKey, hasItems, getScrollContainer]);
 
     // Initial bottom anchor happens after DOM commit but before paint.
     useLayoutEffect(() => {
@@ -150,42 +181,70 @@ export function PulseTimeline({
         const container = getScrollContainer();
         if (!container) return;
 
-        const updateNearBottom = () => {
-            const nextNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 120;
-            nearBottomRef.current = nextNearBottom;
-            setNearBottom(current => current === nextNearBottom ? current : nextNearBottom);
-            if (nextNearBottom) setHasNewActivity(false);
-        };
+        const handleScroll = () => updateNearBottom(container);
 
-        updateNearBottom();
-        container.addEventListener('scroll', updateNearBottom, { passive: true });
-        return () => container.removeEventListener('scroll', updateNearBottom);
-    }, [timelineKey, hasItems, hasOlder, getScrollContainer]);
+        handleScroll();
+        container.addEventListener('scroll', handleScroll, { passive: true });
+        return () => container.removeEventListener('scroll', handleScroll);
+    }, [timelineKey, hasItems, hasOlder, getScrollContainer, updateNearBottom]);
 
-    // Keep async content growth pinned while the user remains near the bottom.
+    // Observe every column section so async cards above the feed cannot break the bottom pin.
     useEffect(() => {
-        const feed = feedRef.current;
         const container = getScrollContainer();
-        if (!hasItems || !feed || !container) return;
+        if (!hasItems || !container) return;
 
-        const observer = new ResizeObserver(() => {
-            if (!nearBottomRef.current) return;
+        const handleObservedLayoutChange = () => {
+            if (!nearBottomRef.current) {
+                updateNearBottom(container);
+                return;
+            }
             if (resizeRafRef.current !== null) cancelAnimationFrame(resizeRafRef.current);
             resizeRafRef.current = requestAnimationFrame(() => {
                 resizeRafRef.current = null;
-                if (!nearBottomRef.current) return;
-                const currentContainer = getScrollContainer();
-                if (currentContainer) currentContainer.scrollTop = currentContainer.scrollHeight;
+                if (!nearBottomRef.current) {
+                    updateNearBottom(container);
+                    return;
+                }
+                container.scrollTop = container.scrollHeight;
+                updateNearBottom(container);
             });
+        };
+
+        const resizeObserver = new ResizeObserver(handleObservedLayoutChange);
+        const observedChildren = new Set<Element>();
+        const syncObservedChildren = () => {
+            const currentChildren = new Set(Array.from(container.children));
+            for (const child of observedChildren) {
+                if (currentChildren.has(child)) continue;
+                resizeObserver.unobserve(child);
+                observedChildren.delete(child);
+            }
+            for (const child of currentChildren) {
+                if (observedChildren.has(child)) continue;
+                resizeObserver.observe(child);
+                observedChildren.add(child);
+            }
+        };
+
+        const mutationObserver = new MutationObserver(() => {
+            syncObservedChildren();
+            handleObservedLayoutChange();
         });
 
-        observer.observe(feed);
+        syncObservedChildren();
+        // The container itself can SHRINK without any child resizing (e.g. a
+        // banner mounting below steals layout height) — observe it too, or the
+        // bottom pin silently drifts by exactly that delta.
+        resizeObserver.observe(container);
+        mutationObserver.observe(container, { childList: true });
         return () => {
-            observer.disconnect();
+            mutationObserver.disconnect();
+            resizeObserver.disconnect();
+            observedChildren.clear();
             if (resizeRafRef.current !== null) cancelAnimationFrame(resizeRafRef.current);
             resizeRafRef.current = null;
         };
-    }, [timelineKey, hasItems, getScrollContainer]);
+    }, [timelineKey, hasItems, getScrollContainer, updateNearBottom]);
 
     // A changed tail key means new activity; prepends leave this key unchanged.
     useEffect(() => {
@@ -308,7 +367,7 @@ export function PulseTimeline({
     }
 
     return (
-        <div ref={feedRef} style={{ padding: '12px 0' }}>
+        <div style={{ padding: '12px 0' }}>
             {hasOlder && (
                 <div ref={sentinelRef} className="pulse-feed-spinner-row">
                     {isFetchingOlder && (
