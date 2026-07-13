@@ -69,5 +69,101 @@
   },
   "e6c2b57": {
     "hide": true
+  },
+  "696eeca": {
+    "tag": "Fix",
+    "text": "Schedule: the technician filter now hides other techs' time off"
+  },
+  "a2a711e": {
+    "hide": true
+  },
+  "b063142": {
+    "tag": "Fix",
+    "text": "Yelp conversations show the sender's name in the inbox"
+  },
+  "7ca0c5c": {
+    "hide": true
+  },
+  "24449b3": {
+    "tag": "Polish",
+    "text": "Mobile Schedule: Time off lives in the View options sheet"
+  },
+  "736fb4d": {
+    "tag": "Feature",
+    "text": "Schedule shows drive time between jobs + Customer, City on cards"
+  },
+  "84898fa": {
+    "tag": "Feature",
+    "text": "One Yelp conversation = one timeline — no more junk contacts"
+  },
+  "737a6eb": {
+    "hide": true
+  },
+  "da80aae": {
+    "tag": "Fix",
+    "text": "Old call & text history attaches to the right contact"
+  },
+  "84884bc": {
+    "tag": "Feature",
+    "text": "Job & lead contact info syncs to the linked contact"
+  },
+  "f568d25": {
+    "tag": "Feature",
+    "text": "Yelp email agent books appointments end-to-end"
+  },
+  "d584997": {
+    "hide": true
+  },
+  "ba71774": {
+    "hide": true
+  },
+  "67650c0": {
+    "hide": true
+  },
+  "c72e545": {
+    "tag": "Feature",
+    "text": "Day-at-a-glance summary when you open the app"
+  },
+  "f187faf": {
+    "tag": "Feature",
+    "text": "Stripe Connect: clearer setup flow with pricing up front"
+  },
+  "385a8be": {
+    "tag": "Feature",
+    "text": "AI Repair Advisor — diagnostic hints on new jobs"
+  },
+  "ca02db7": {
+    "tag": "Feature",
+    "text": "Yelp leads get an instant reply and a lead card"
+  },
+  "85ef17d": {
+    "tag": "Feature",
+    "text": "Welcome hub — guided 4-step setup for new companies"
+  },
+  "0143563": {
+    "hide": true
+  },
+  "17beb7e": {
+    "tag": "Polish",
+    "text": "Pulse setup card is now a compact progress tracker"
+  },
+  "cad7f3c": {
+    "hide": true
+  },
+  "d691279": {
+    "hide": true
+  },
+  "a6ba39d": {
+    "tag": "Polish",
+    "text": "Settings pages got a warmer, clearer redesign"
+  },
+  "649611a": {
+    "hide": true
+  },
+  "9bfb10a": {
+    "hide": true
+  },
+  "e1e6e25": {
+    "hide": true
   }
 }
