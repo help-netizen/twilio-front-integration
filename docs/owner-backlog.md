@@ -51,3 +51,7 @@
 Страница Stripe Payments (not-connected): показываются ДВА дублирующих блока — красивый hero «Get paid on the spot» и системный «What it costs». **Убрать второй («What it costs»)** — ценовая информация при необходимости живёт внутри hero (STRIPE-CONNECT-UX-001 вводил in-product pricing; теперь владелец решил: один блок). Файл: frontend/src/pages/StripePaymentsSettingsPage.tsx.
 
 Там же: блок **«Setup steps» не очеловечен** — переписать тёплым тоном; **последний пункт «run a test payment» убрать** и заменить на посыл «начинайте принимать платежи» (например «Start getting paid — collect your first payment right from a job»).
+
+## OB-8 (2026-07-13) — /pulse: вместо строки «Finish setting up» показывать этапы онбординга сразу — **открыт**
+
+Скриншот владельца (мобильный /pulse): компактный трекер «Finish setting up + прогресс-бар + N of 4» скрывает суть за кликом. Показать прямо в карточке ЭТАПЫ онбординга (список шагов со статусами done/pending, как на /welcome, компактно): пользователь сразу видит, что осталось. Тап по шагу → его CTA; вся карточка → /welcome. Файл: frontend/src/components/onboarding/OnboardingChecklistCard.tsx (вернуть отображение items, но в новой компактной эстетике; gate/fail-quiet сохранить).
