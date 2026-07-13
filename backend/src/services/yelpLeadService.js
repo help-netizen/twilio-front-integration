@@ -318,6 +318,18 @@ async function maybeHandleYelpLead(companyId, msg) {
             console.error('[YelpConvo] upsertConversation (first-message) failed (non-fatal):', e && e.message);
         }
 
+        // (5c) YELP-CALL-TASK-001 — dispatcher "call the customer" task on the lead's
+        //      Pulse timeline. Phone extraction from Yelp is not automated (Phase 1b
+        //      parked), so every NEW lead (first message ONLY — replies never re-enter
+        //      this function) gets an Action-Required task: check Yelp Business for the
+        //      customer's number and call if it's there. Best-effort: a task fault must
+        //      not break the lead/greeting; the claim above makes it at-most-once.
+        try {
+            await createYelpCallTask(companyId, { convId, leadId, parsed });
+        } catch (e) {
+            console.error('[YelpLead] call-task create failed (non-fatal):', e && e.message);
+        }
+
         // (6) ENQUEUE the greeter (REPLACES the old synchronous greet+send). GREETER
         //     SWITCH (Phase B): when YELP_CONVO_ENABLED is ON and we have a conversation
         //     to thread, the first message is greeted by a `yelp_convo` TURN-0 task (the
@@ -428,6 +440,49 @@ async function enqueueYelpConvoGreetingTask(companyId, { claimId, convId, msg, p
         console.error('[YelpConvo] attachTask (greeting) failed (non-fatal):', e && e.message);
     }
     return taskId;
+}
+
+/**
+ * YELP-CALL-TASK-001 — the "call the customer" dispatcher task for a NEW Yelp lead.
+ * The Yelp relay email never carries the customer's phone number and Phase-1b
+ * extraction is parked, so the human touchpoint is: open the lead in Yelp Business
+ * and CALL if a number shows (speed wins Yelp leads; the email agent runs in
+ * parallel). Attached to the conv-id Pulse timeline (thread_id → the AR bar,
+ * AR-TASK-UNIFY) with the lead as subject. `created_by='agent'` + NO agent_status
+ * → Pulse-visible + badge-counted, and the agentWorker (which claims only
+ * agent_status='queued') never picks it up. Skips silently when the conv-id or its
+ * timeline is unavailable (the upstream resolve is fail-open).
+ */
+async function createYelpCallTask(companyId, { convId, leadId, parsed }) {
+    if (!convId) return null;
+    const { rows } = await db.query(
+        `SELECT id FROM timelines
+          WHERE company_id = $1 AND yelp_conversation_id = $2
+          LIMIT 1`,
+        [companyId, convId]
+    );
+    const timelineId = rows && rows[0] && rows[0].id;
+    if (!timelineId) return null;
+
+    const name = (parsed && parsed.name) || 'the customer';
+    const service = parsed && parsed.service ? ` (${parsed.service})` : '';
+    const timelinesQueries = require('../db/timelinesQueries');
+    const task = await timelinesQueries.createTask({
+        companyId,
+        threadId: timelineId,
+        subjectType: 'lead',
+        subjectId: leadId || null,
+        title: `Call ${name} if a phone number is available — new Yelp lead${service}`,
+        description: 'The Yelp email does not include the customer\'s phone number. '
+            + 'Open this lead in Yelp Business — if their number is shown, call right away. '
+            + 'The email agent is following up in the thread in parallel.',
+        priority: 'p1',
+        createdBy: 'agent',
+        agentType: 'yelp_lead',
+    });
+    console.log('[YelpLead] call-task created company=%s conv=%s timeline=%s task=%s',
+        companyId, convId, timelineId, task && task.id);
+    return task;
 }
 
 /**
@@ -629,6 +684,7 @@ module.exports = {
     enqueueYelpGreetingTask,
     enqueueYelpConvoTurnTask,
     enqueueYelpConvoGreetingTask,
+    createYelpCallTask, // YELP-CALL-TASK-001 (exported for targeted unit tests)
     isConvoEnabled,
     DEFAULT_COMPANY_ID,
 };
