@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import Keycloak from 'keycloak-js';
 import { classifyRefreshFailure, REFRESH_RETRY_BACKOFF_MS } from './refreshPolicy';
+import { loginRedirectAllowed, clearLoginRedirects } from './loginLoopBreaker';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -157,7 +158,7 @@ async function refreshTokenOrLogin(
         });
         if (kind === 'dead' || attempt >= REFRESH_RETRY_BACKOFF_MS.length) {
             console.warn('[Auth] Token refresh failed, redirecting to login');
-            kc.login();
+            loginOrBreak(() => notifyFatalAuthError());
             return;
         }
         await sleep(REFRESH_RETRY_BACKOFF_MS[attempt]);
@@ -192,6 +193,22 @@ function isPublicAuthPath() {
     return PUBLIC_AUTH_PATHS.some(p => window.location.pathname.startsWith(p));
 }
 
+// BUG-22b: cross-reload login-redirect loop breaker — see auth/loginLoopBreaker.ts.
+/** Route ALL forced re-login navigations through the loop breaker. */
+function loginOrBreak(onBreak: () => void): void {
+    if (loginRedirectAllowed()) {
+        getKeycloak().login();
+    } else {
+        console.error('[Auth] login-redirect loop detected — halting redirects (BUG-22b)');
+        onBreak();
+    }
+}
+
+// The provider registers its setState here so module-level helpers
+// (refreshTokenOrLogin) can surface the fatal screen without prop drilling.
+let fatalAuthErrorListener: (() => void) | null = null;
+function notifyFatalAuthError() { fatalAuthErrorListener?.(); }
+
 export function AuthProvider({ children }: { children: ReactNode }) {
     const publicPage = isPublicAuthPath();
     const [authenticated, setAuthenticated] = useState(!FEATURE_AUTH);
@@ -201,6 +218,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [token, setToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(FEATURE_AUTH && !publicPage);
     const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
+    // BUG-22b: set when the loop breaker halts a redirect storm — renders a
+    // human error screen instead of the infinite reload/SMS loop.
+    const [fatalAuthError, setFatalAuthError] = useState(false);
+    useEffect(() => {
+        fatalAuthErrorListener = () => setFatalAuthError(true);
+        return () => { fatalAuthErrorListener = null; };
+    }, []);
 
     // PF007 Extended Profile state
     const [platformRole, setPlatformRole] = useState<string>('none');
@@ -215,7 +239,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const handleSessionExpired = () => {
             if (FEATURE_AUTH && !loginPending) {
                 loginPending = true;
-                getKeycloak().login();
+                // BUG-22b: cross-reload loop breaker (loginPending alone resets
+                // on every reload, so a reload-loop sails right through it).
+                loginOrBreak(() => { loginPending = false; setFatalAuthError(true); });
             }
         };
         const handleAccessDenied = (e: Event) => {
@@ -289,6 +315,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
             .then(async (auth) => {
                 if (auth) {
+                    clearLoginRedirects(); // BUG-22b: healthy init resets the loop-breaker ledger
                     const roles = extractRoles(kc);
                     setUser({
                         sub: kc.tokenParsed?.sub || '',
@@ -334,10 +361,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // set loading=false), we must not fall through to rendering {children} — the
     // AppLayout chrome would leak to a logged-out user. Force the login redirect.
     useEffect(() => {
-        if (FEATURE_AUTH && !publicPage && !loading && !authenticated) {
-            getKeycloak().login();
+        if (FEATURE_AUTH && !publicPage && !loading && !authenticated && !fatalAuthError) {
+            // BUG-22b: THE loop engine lived here — kc.init failed (e.g. the
+            // code→token exchange dying on iOS), authenticated stayed false, this
+            // fallback redirected to Keycloak, the live SSO bounced straight back,
+            // init failed again… forever. The breaker halts after 2 redirects/30s.
+            loginOrBreak(() => setFatalAuthError(true));
         }
-    }, [loading, authenticated, publicPage]);
+    }, [loading, authenticated, publicPage, fatalAuthError]);
 
     // AUTH-SESSION-001: when a backgrounded (mobile) tab becomes visible again, the
     // 30s refresh interval was suspended and the access token may have expired —
@@ -374,6 +405,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const clearAccessDenied = useCallback(() => setAccessDeniedMessage(null), []);
+
+    // BUG-22b: the loop breaker tripped — show a human dead-end instead of the
+    // infinite reload/SMS storm. "Try again" clears the ledger and retries once.
+    if (fatalAuthError) {
+        return (
+            <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                height: '100vh', background: 'var(--blanc-bg, #F1F1F0)', padding: 20,
+                fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
+            }}>
+                <div style={{ textAlign: 'center', maxWidth: 360 }}>
+                    <h2 style={{ margin: '0 0 8px', fontFamily: 'Manrope, sans-serif', fontSize: 20, fontWeight: 600, color: 'var(--blanc-ink-1, #2c2722)' }}>
+                        We couldn't sign you in
+                    </h2>
+                    <p style={{ color: 'var(--blanc-ink-2, #6E6E6E)', fontSize: 14, lineHeight: 1.6, margin: '0 0 18px' }}>
+                        Something keeps interrupting the sign-in on this device. Give it another try —
+                        if it repeats, close this tab and open the app again.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={() => { clearLoginRedirects(); setFatalAuthError(false); getKeycloak().login(); }}
+                        style={{
+                            height: 44, padding: '0 22px', borderRadius: 12, border: 'none', cursor: 'pointer',
+                            background: 'var(--blanc-accent, #7F42E1)', color: '#fff', fontSize: 14, fontWeight: 600,
+                        }}
+                    >
+                        Try again
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     if (loading) {
         return (
