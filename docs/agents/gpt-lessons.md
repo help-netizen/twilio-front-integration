@@ -44,3 +44,8 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 - **L-013 (2026-07-13)** — Inside the codex sandbox, bare `node …/jest.js` can crash with macOS
   `SecItemCopyMatching failed -50` (Keychain). The fix is `node --use-bundled-ca …/jest.js` — use it
   for every jest invocation run from a codex session; outside the sandbox the flag is harmless.
+
+- **L-014 (2026-07-13)** — Real-PG suites that rebuild shared objects (CREATE OR REPLACE FUNCTION,
+  migration replays) MUST NOT run in parallel jest workers against the shared dev DB — you get
+  `tuple concurrently updated` / `deadlock detected`. Any verify command combining two or more
+  *.db.test.js files needs `--runInBand`.

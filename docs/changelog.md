@@ -2345,3 +2345,10 @@ GPT-implementer: 4 волны ACCEPT (T2/T3 plan-first). T1: $5 welcome-кред
 - **Guard:** `disconnectInstallation` отзывает credential ТОЛЬКО когда других активных инсталляций на нём нет (`countOtherActiveInstallationsOnCredential`, company-scoped) — иначе один Disconnect убил бы общий токен всех 5 источников и каскадом перевёл плитки в revoked.
 - Поведение создания лидов/внешний Vultr-сервис/FE — не тронуты. Тесты: 27 TC, 4 саботажа red→revert; ревьюер прогнал db-кейсы на живой dev-БД (50/50); полный гейт 13 suites / 162 tests.
 - Коммиты: docs + T1 (169) + T2 (guard). **НЕ задеплоено** — накат миграции 169 на прод owner-gated.
+
+## 2026-07-13 — RELY-LEADS-SETTINGS-001: настройки Rely Leads (зона/типы/бренды) + фильтрация приёма на инжесте
+
+- **Settings:** кнопка на подключённой плитке rely-leads → FORM-CANON панель: зона (радио «как в настройках компании» с учётом list/radius-режима SERVICE-TERR-002 / «свой список ZIP» с live-превью парсинга), чекбокс-гриды типов юнитов и брендов (каталоги отдаёт сервер — GET /api/marketplace/apps/rely-leads/settings, PUT с 400-таксономией). Хранение в installation.metadata.settings (top-level || merge) — без миграций.
+- **Ingest-фильтр:** POST /integrations/leads для JobSource='Rely' — evaluateRelyLead (zone→unit→brand, AND, fail-open по отсутствующим полям и любым исключениям); отклонённые лиды СОЗДАЮТСЯ с server-owned маркером leads.metadata.rely_filter{rejected,reason,…} в том же INSERT (без FSM-изменений); reserved-key guard: внешний постер не может подделать/снять маркер; countNewLeads исключает отклонённые (badge чистый); дефолт = зона компании активна сразу.
+- **Leads UI:** Rejected-пилюля (таблица/мобайл/деталь + текст причины), клиентский FLAGS-фильтр «Rejected».
+- Пайплайн: 6 задач GPT/Codex (plan-first ×3), 51 TC, 6 саботажей red→revert, финальный гейт 21 suites / 264 tests + FE build. **НЕ задеплоено** (owner-gated; деплой = код + FE-ребилд + logout-all; миграций нет).
