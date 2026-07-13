@@ -37,14 +37,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const CHECKLIST_ITEMS = [
     {
         key: 'company_profile',
-        title: 'Add your logo',
-        description: 'Put your brand on every estimate, invoice, and email your customers see.',
+        title: 'Complete your company profile',
+        description: 'Your company name, address, and logo appear on every estimate and invoice your customers see.',
         cta: { label: 'Set up', path: '/settings/company' },
-        est_minutes: 1,
-        done_note: 'Looking sharp — your brand is on your documents.',
+        est_minutes: 2,
+        done_note: 'Looking sharp — your profile is on your documents.',
         async isComplete(companyId) {
             const { rows } = await db.query(
-                'SELECT logo_storage_key IS NOT NULL AS done FROM companies WHERE id = $1',
+                'SELECT logo_storage_key IS NOT NULL AND city IS NOT NULL AND state IS NOT NULL AND zip IS NOT NULL AS done FROM companies WHERE id = $1',
                 [companyId]
             );
             return rows[0]?.done === true;

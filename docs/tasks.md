@@ -9295,3 +9295,10 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 **Файлы:** frontend/src/pages/WelcomePage.tsx.
 **Verify:** cd frontend && npm run build + preview.
 **Статус:** done (2026-07-12, GPT, ревью ACCEPT, preview mobile проверен)
+
+### Задача T10 (owner-итерация 2026-07-13): шаг company_profile → «Complete your company profile»
+
+**Цель (посыл владельца):** CTA «Add your logo» неверен — шаг должен просить ЗАПОЛНИТЬ ПРОФИЛЬ, потому что имя/адрес/лого показываются в эстимейтах и инвойсах. Нормативные строки — спека §1.2 (обновлена). Деривация done ⇔ `logo_storage_key IS NOT NULL AND city IS NOT NULL AND state IS NOT NULL AND zip IS NOT NULL` (один запрос по companies, tenant-scoped). est_minutes: 1→2.
+**Файлы:** backend/src/services/onboardingChecklistService.js, tests/onboardingChecklist.test.js (нормативный payload + деривация-кейсы: лого есть/адрес нет → false; всё есть → true).
+**Verify:** jest onboardingChecklist (worktree-путь из L-012).
+**Статус:** done (2026-07-13, GPT, ревью ACCEPT, 39/39 jest, стенд-прогон по амендменту 9)

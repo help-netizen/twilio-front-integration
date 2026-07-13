@@ -30,7 +30,7 @@
 
 | key | title | description | cta.label | done_note |
 |-----|-------|-------------|-----------|-----------|
-| company_profile | `Add your logo` | `Put your brand on every estimate, invoice, and email your customers see.` | `Set up` | `Looking sharp — your brand is on your documents.` |
+| company_profile | `Complete your company profile` | `Your company name, address, and logo appear on every estimate and invoice your customers see.` | `Set up` | `Looking sharp — your profile is on your documents.` |
 | connect_telephony | `Connect telephony` | `Get a business phone number to make and receive calls and texts in Albusto.` (существующая нормативная строка ONBTEL-001 — не менять) | `Set up` | `Nice — your phone line is live!` |
 | connect_email | `Connect your email` | `Bring your Gmail into Albusto so every customer email lands in one timeline.` | `Set up` | `Great — your email flows into Albusto now.` |
 | stripe_payments | `Get paid with Stripe` | `Take card payments on the job, by link, or over the phone.` | `Set up` | `You're ready to get paid on the spot.` |

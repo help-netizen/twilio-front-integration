@@ -66,11 +66,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const CATALOG = [
     {
         key: 'company_profile',
-        title: 'Add your logo',
-        description: 'Put your brand on every estimate, invoice, and email your customers see.',
+        title: 'Complete your company profile',
+        description: 'Your company name, address, and logo appear on every estimate and invoice your customers see.',
         cta: { label: 'Set up', path: '/settings/company' },
-        est_minutes: 1,
-        done_note: 'Looking sharp — your brand is on your documents.',
+        est_minutes: 2,
+        done_note: 'Looking sharp — your profile is on your documents.',
     },
     {
         key: 'connect_telephony',
@@ -250,8 +250,8 @@ describe('GET /api/onboarding/checklist — catalog, progress, and write-once st
 
 describe('individual checklist derivations', () => {
     test.each([
-        ['logo exists', true, true],
-        ['logo is null', false, false],
+        ['logo exists but address is incomplete', false, false],
+        ['logo and full address exist', true, true],
     ])('TC-OBX-005: company_profile — %s', async (_label, queryDone, expected) => {
         db.query.mockResolvedValueOnce(doneRow(queryDone));
         const item = checklistService.CHECKLIST_ITEMS.find(candidate => candidate.key === 'company_profile');
@@ -259,7 +259,7 @@ describe('individual checklist derivations', () => {
         await expect(item.isComplete(COMPANY_A)).resolves.toBe(expected);
 
         expect(db.query).toHaveBeenCalledWith(
-            expect.stringContaining('SELECT logo_storage_key IS NOT NULL AS done FROM companies WHERE id = $1'),
+            'SELECT logo_storage_key IS NOT NULL AND city IS NOT NULL AND state IS NOT NULL AND zip IS NOT NULL AS done FROM companies WHERE id = $1',
             [COMPANY_A]
         );
     });
