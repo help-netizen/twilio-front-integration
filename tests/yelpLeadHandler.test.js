@@ -26,9 +26,13 @@ jest.mock('../backend/src/db/yelpLeadQueries', () => ({
 const mockBuildGreeting = jest.fn();
 const mockSendEmail = jest.fn();
 const mockGetThreading = jest.fn();
+const mockLinkYelpAgentSend = jest.fn();
 jest.mock('../backend/src/services/yelpGreetingService', () => ({ buildGreeting: mockBuildGreeting }));
 jest.mock('../backend/src/services/emailService', () => ({ sendEmail: mockSendEmail }));
 jest.mock('../backend/src/db/emailQueries', () => ({ getThreadingByProviderMessageId: mockGetThreading }));
+jest.mock('../backend/src/services/email/emailTimelineService', () => ({
+    linkYelpAgentSend: mockLinkYelpAgentSend,
+}));
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 
 const agentHandlers = require('../backend/src/services/agentHandlers');
@@ -41,7 +45,10 @@ beforeEach(() => {
     jest.clearAllMocks();
     mockThreadAlreadyGreeted.mockResolvedValue(false);
     mockBuildGreeting.mockResolvedValue('Hi Kim, ...');
-    mockSendEmail.mockResolvedValue({ provider_message_id: '<sent-x>' });
+    mockSendEmail.mockResolvedValue({
+        provider_message_id: '<sent-x>',
+        provider_thread_id: 'gmail-thread-99',
+    });
     mockGetThreading.mockResolvedValue({
         message_id_header: '<20260711.abc@messaging.yelp.com>',
         provider_thread_id: 'gmail-thread-99',
@@ -52,7 +59,14 @@ beforeEach(() => {
         from_email: 'reply+8160b36a1c2d3e4f@messaging.yelp.com',
         from_name: 'Yelp Inbox',
         gmail_internal_at: '2026-07-11T21:39:23.000Z',
+        timeline_id: 3208,
     });
+    mockLinkYelpAgentSend.mockResolvedValue({ linked: true, outcome: 'linked', timelineId: 3208 });
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+});
+
+afterEach(() => {
+    jest.restoreAllMocks();
 });
 
 // ── C-01 · HANDLER-sends-once (P0, req #5) ────────────────────────────────────
@@ -147,5 +161,93 @@ describe('C-05 · registry', () => {
         expect(typeof agentHandlers.HANDLERS.yelp_lead).toBe('function');
         await expect(agentHandlers.run({ agent_type: 'nope', agent_input: {} }))
             .rejects.toThrow(/Unknown agent_type/);
+    });
+});
+
+// ── YELP-CONVO-CONTEXT-002 · greeter send-link step 5b ───────────────────────
+const formattedSendLinkLogs = () => console.log.mock.calls
+    .map((args) => require('util').format(...args))
+    .filter((line) => line.includes('[yelp_lead] send-link'));
+
+describe('TC-B2-02 · greeting sent → link via quote.timeline_id after markGreeted', () => {
+    it('links exactly once with the sent ids, in ledger-first order, and logs linked', async () => {
+        const out = await agentHandlers.run(yelpTask());
+
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledTimes(1);
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledWith(DEFAULT_COMPANY_ID, {
+            providerMessageId: '<sent-x>',
+            providerThreadId: 'gmail-thread-99',
+            timelineId: 3208,
+        });
+        expect(Object.keys(mockLinkYelpAgentSend.mock.calls[0][1])).not.toContain('contact_id');
+        expect(mockMarkGreeted.mock.invocationCallOrder[0])
+            .toBeLessThan(mockLinkYelpAgentSend.mock.invocationCallOrder[0]);
+        expect(out).toMatchObject({ greeted: true, lead_id: 55 });
+        expect(formattedSendLinkLogs()).toEqual([
+            '[yelp_lead] send-link company=00000000-0000-0000-0000-000000000001 ' +
+            'msg=<sent-x> timeline=3208 outcome=linked',
+        ]);
+    });
+});
+
+describe('TC-B6-02 · missing greeter timeline → resolve_miss without linking', () => {
+    it('keeps both no-timeline greeting variants unchanged and logs one skip per send', async () => {
+        mockGetThreading.mockResolvedValueOnce({
+            message_id_header: '<20260711.abc@messaging.yelp.com>',
+            provider_thread_id: 'gmail-thread-99',
+            subject: 'You have a new dishwasher repair request',
+            body_text: 'Kim requested a quote from ABC Homes for a dishwasher repair.',
+            body_html: null,
+            from_email: 'reply+8160b36a1c2d3e4f@messaging.yelp.com',
+            from_name: 'Yelp Inbox',
+            gmail_internal_at: '2026-07-11T21:39:23.000Z',
+            timeline_id: null,
+        });
+        const withoutTimeline = await agentHandlers.run(yelpTask());
+
+        mockGetThreading.mockResolvedValueOnce(null);
+        const withoutThreading = await agentHandlers.run(yelpTask());
+
+        expect(mockLinkYelpAgentSend).not.toHaveBeenCalled();
+        expect(mockSendEmail).toHaveBeenCalledTimes(2);
+        expect(mockMarkGreeted).toHaveBeenCalledTimes(2);
+        expect(withoutTimeline).toMatchObject({ greeted: true, lead_id: 55 });
+        expect(withoutThreading).toMatchObject({ greeted: true, lead_id: 55 });
+        expect(formattedSendLinkLogs()).toEqual([
+            '[yelp_lead] send-link company=00000000-0000-0000-0000-000000000001 ' +
+            'msg=<sent-x> timeline=null outcome=resolve_miss',
+            '[yelp_lead] send-link company=00000000-0000-0000-0000-000000000001 ' +
+            'msg=<sent-x> timeline=null outcome=resolve_miss',
+        ]);
+    });
+});
+
+describe('TC-B2-03 · no-send paths perform no greeter link', () => {
+    it('does not link an already-greeted thread or a lead without reply_to', async () => {
+        mockThreadAlreadyGreeted.mockResolvedValueOnce(true);
+        const alreadyGreeted = await agentHandlers.run(yelpTask());
+        const noReplyTo = await agentHandlers.run(yelpTask({ reply_to: null, thread_token: null }));
+
+        expect(mockLinkYelpAgentSend).not.toHaveBeenCalled();
+        expect(mockSendEmail).not.toHaveBeenCalled();
+        expect(alreadyGreeted).toMatchObject({ skipped: 'already_greeted' });
+        expect(noReplyTo).toMatchObject({ skipped: 'no_reply_to' });
+    });
+});
+
+describe('TC-B5-03 · greeter link fault is swallowed after send and ledger mark', () => {
+    it('does not retry or double-send when the call-site helper rejects', async () => {
+        mockLinkYelpAgentSend.mockRejectedValue(new Error('link down'));
+
+        const out = await agentHandlers.run(yelpTask());
+
+        expect(mockSendEmail).toHaveBeenCalledTimes(1);
+        expect(mockMarkGreeted).toHaveBeenCalledTimes(1);
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledTimes(1);
+        expect(out).toMatchObject({ greeted: true, lead_id: 55 });
+        expect(formattedSendLinkLogs()).toEqual([
+            '[yelp_lead] send-link company=00000000-0000-0000-0000-000000000001 ' +
+            'msg=<sent-x> timeline=3208 outcome=error',
+        ]);
     });
 });
