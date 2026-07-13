@@ -1,18 +1,16 @@
 /**
- * TelephonyTwilioSettingsPage — ONBTEL-T9 (spec ONBTEL-001 §2.3/§2.4).
+ * TelephonyTwilioSettingsPage — TELEPHONY-WIZARD-UX-001 (WIZ-T3).
  *
- * 3-step "Telephony — Twilio" marketplace setup wizard:
- *   1 Connect → POST /api/telephony/numbers/connect (+ best-effort softphone/setup)
- *   2 Plan    → POST /api/billing/checkout (payg activates in place; packages → Stripe)
- *   3 Number  → GET /api/telephony/numbers/search + POST /api/telephony/numbers/buy
+ * Optional-plan "Telephony — Twilio" marketplace setup wizard:
+ *   1 Plan   → connect implicitly, then billing checkout (or skip)
+ *   2 Number → search connects implicitly; buy is an idempotent-connect fallback
+ *   3 Done   → a number exists or a transfer is active
  *
  * The ACTIVE step is DERIVED from server state (refresh/re-entry safe):
- *   done1 = GET /api/telephony/numbers/status → state.connected === true
- *   done2 = GET /api/billing → subscription != null && plan_id !== 'trial'
- *   done3 = GET /api/telephony/numbers → numbers.length ≥ 1
- *           ({ ok, numbers: [], not_connected: true } reads as 0 — NOT an error)
- * ?step= is only a hint — the derived step wins when it is smaller. Completed
- * steps are clickable back (connect/subscribe are idempotent); forward is locked.
+ *   donePlan = GET /api/billing → subscription != null && plan_id !== 'trial'
+ *   doneNumber = purchased number OR non-canceled/non-failed port-in request
+ * Plans are optional, so explicit overrides may navigate to either visible step.
+ * ?step=3 is ignored because completion is server-derived only.
  */
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -26,12 +24,13 @@ import { Button } from '../components/ui/button';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { Badge } from '../components/ui/badge';
 import { Checkbox } from '../components/ui/checkbox';
-import { CloudBanner } from '../components/ui/CloudBanner';
 import { FloatingField } from '../components/ui/floating-field';
+import { AreaCodeCombo } from '../components/telephony/AreaCodeCombo';
 import { authedFetch } from '../services/apiClient';
-import type { BillingOverview, Plan } from '../services/billingApi';
+import { billingApi, type BillingOverview, type Plan } from '../services/billingApi';
+import type { AreaCodeSearchCriterion } from '../data/areaCodes';
 
-const RETURN_PATH = '/settings/integrations/telephony-twilio?step=3&billing=success';
+const RETURN_PATH = '/settings/integrations/telephony-twilio?step=2&billing=success';
 
 // PAYG card contract (§2.4) — normative copy.
 const PAYG_BULLETS = [
@@ -41,20 +40,16 @@ const PAYG_BULLETS = [
     'Usage is paid from your wallet',
 ];
 
-const sectionCard = { background: 'rgba(25,25,25,0.03)', borderRadius: 16, padding: '20px 22px' } as const;
-
-interface TelephonyState {
-    connected: boolean;
-    mode?: string;
-    status?: string;
-}
-
 interface FoundNumber {
     phone_number: string;
     locality: string | null;
     region: string | null;
     capabilities?: { voice?: boolean; sms?: boolean };
     monthly_price_usd?: number | string | null;
+}
+
+interface PortInRequest {
+    status: string;
 }
 
 function usd(n: number): string {
@@ -130,9 +125,9 @@ function PlanCard({
                 {bullets.map(b => <PlanBullet key={b} text={b} />)}
             </ul>
             <div style={{ marginTop: 'auto' }}>
-                <Button className="w-full" disabled={disabled || isCurrent} onClick={onChoose}>
+                <Button className="w-full" disabled={disabled} onClick={onChoose}>
                     {busy && <Loader2 size={14} className="mr-1.5 animate-spin" />}
-                    {isCurrent ? 'Current plan' : cta}
+                    {isCurrent ? 'Keep this plan' : cta}
                 </Button>
                 {caption && !isCurrent && (
                     <div style={{ fontSize: 11.5, color: 'var(--blanc-ink-3)', textAlign: 'center', marginTop: 7 }}>
@@ -149,22 +144,13 @@ export default function TelephonyTwilioSettingsPage() {
     const [searchParams] = useSearchParams();
     const billingSuccess = searchParams.get('billing') === 'success';
 
-    // ?step= is only a hint; Math.min against the derived step makes it safe (E-B16).
+    // Plans are optional, so either visible step is a valid explicit destination.
     const [stepOverride, setStepOverride] = useState<number | null>(() => {
         const hint = Number(searchParams.get('step'));
-        return Number.isInteger(hint) && hint >= 1 && hint <= 3 ? hint : null;
+        return Number.isInteger(hint) && hint >= 1 && hint <= 2 ? hint : null;
     });
 
     // ── Step derivation queries — the server is the single source of truth ────
-    const statusQ = useQuery({
-        queryKey: ['telephony-twilio-wizard', 'status'],
-        queryFn: async (): Promise<TelephonyState> => {
-            const r = await authedFetch('/api/telephony/numbers/status');
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) return { connected: false };
-            return j.state || { connected: false };
-        },
-    });
     const billingQ = useQuery({
         queryKey: ['telephony-twilio-wizard', 'billing'],
         queryFn: async (): Promise<BillingOverview | null> => {
@@ -184,17 +170,33 @@ export default function TelephonyTwilioSettingsPage() {
             return j.numbers;
         },
     });
+    const portInQ = useQuery({
+        queryKey: ['telephony-twilio-wizard', 'port-ins'],
+        queryFn: async (): Promise<PortInRequest[]> => {
+            const r = await authedFetch('/api/telephony/port-in');
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || !Array.isArray(j.requests)) return [];
+            return j.requests;
+        },
+        retry: false,
+    });
+    const walletQ = useQuery({
+        queryKey: ['telephony-twilio-wizard', 'wallet'],
+        queryFn: billingApi.wallet,
+        retry: false,
+    });
 
-    const done1 = statusQ.data?.connected === true;
     const subscription = billingQ.data?.subscription ?? null;
-    const done2 = subscription != null && subscription.plan_id !== 'trial';
-    const done3 = (numbersQ.data?.length ?? 0) >= 1;
-    const derivedStep = !done1 ? 1 : !done2 ? 2 : !done3 ? 3 : 4; // 4 = completion
-    const activeStep = stepOverride != null ? Math.min(stepOverride, derivedStep) : derivedStep;
-    const bootLoading = statusQ.isLoading || billingQ.isLoading || numbersQ.isLoading;
+    const donePlan = subscription != null && subscription.plan_id !== 'trial';
+    const hasPurchasedNumber = (numbersQ.data?.length ?? 0) >= 1;
+    const hasActivePortIn = (portInQ.data ?? []).some(request => !['canceled', 'failed'].includes(request.status));
+    const doneNumber = hasPurchasedNumber || hasActivePortIn;
+    const derivedStep = doneNumber ? 3 : donePlan ? 2 : 1; // 3 = completion
+    const activeStep = stepOverride ?? derivedStep;
+    const bootLoading = billingQ.isLoading || numbersQ.isLoading || portInQ.isLoading;
 
-    // ── Step 2: Stripe return — poll billing until the webhook flips the plan ─
-    const awaitingPayment = billingSuccess && !done2;
+    // Stripe return — poll billing until the webhook flips the plan.
+    const awaitingPayment = billingSuccess && !donePlan;
     const [pollTimedOut, setPollTimedOut] = useState(false);
     const refetchBilling = billingQ.refetch;
     useEffect(() => {
@@ -204,39 +206,23 @@ export default function TelephonyTwilioSettingsPage() {
         return () => { clearInterval(iv); clearTimeout(to); };
     }, [awaitingPayment, refetchBilling]);
 
-    // ── Step 1: Connect ────────────────────────────────────────────────────────
-    const [connecting, setConnecting] = useState(false);
-    const [connectError, setConnectError] = useState<string | null>(null);
-    const connectTelephony = async () => {
-        setConnecting(true);
-        setConnectError(null);
-        try {
-            const r = await authedFetch('/api/telephony/numbers/connect', { method: 'POST' });
-            if (!r.ok) {
-                setConnectError(r.status === 403
-                    ? "You don't have permission to manage telephony — ask your administrator."
-                    : 'Could not connect telephony — try again.');
-                return;
-            }
-            // Provision browser-softphone creds in the new subaccount — best-effort,
-            // fire-and-forget (mirrors PhoneNumbersPage.connectTelephony).
-            authedFetch('/api/telephony/numbers/softphone/setup', { method: 'POST' }).catch(() => {});
-            setStepOverride(null);
-            await statusQ.refetch();
-        } catch {
-            setConnectError('Could not connect telephony — try again.');
-        } finally {
-            setConnecting(false);
-        }
-    };
-
-    // ── Step 2: Plan ───────────────────────────────────────────────────────────
+    // ── Step 1: Plan ───────────────────────────────────────────────────────────
     const [planBusy, setPlanBusy] = useState<string | null>(null);
     const [planError, setPlanError] = useState<string | null>(null);
     const choosePlan = async (planId: string) => {
         setPlanBusy(planId);
         setPlanError(null);
+        let connected = false;
         try {
+            const connectResponse = await authedFetch('/api/telephony/numbers/connect', { method: 'POST' });
+            if (!connectResponse.ok) {
+                setPlanError(connectResponse.status === 403
+                    ? "You don't have permission to manage telephony — ask your administrator."
+                    : 'Could not set up your phone workspace — try again.');
+                return;
+            }
+            connected = true;
+
             const body: Record<string, unknown> = { plan_id: planId };
             if (planId !== 'payg') body.return_path = RETURN_PATH;
             const r = await authedFetch('/api/billing/checkout', {
@@ -248,27 +234,35 @@ export default function TelephonyTwilioSettingsPage() {
             if (!r.ok || j.ok === false) {
                 if (j.code === 'PROVIDER_NOT_CONFIGURED') setPlanError('Billing is not enabled yet.');
                 else toast.error(j.error || 'Could not change plan');
+                setStepOverride(1);
+                await Promise.all([refetchBilling(), walletQ.refetch()]);
                 return;
             }
             if (j.url) {
-                window.location.href = j.url; // Stripe hosted checkout → returns to ?step=3&billing=success
+                window.location.href = j.url;
                 return;
             }
             if (j.activated) {
                 toast.success('Plan activated');
-                setStepOverride(null);
-                await refetchBilling();
+                setStepOverride(2);
+                await Promise.all([refetchBilling(), walletQ.refetch()]);
             }
         } catch {
-            toast.error('Could not change plan');
+            if (connected) {
+                toast.error('Could not change plan');
+                setStepOverride(1);
+                await Promise.all([refetchBilling(), walletQ.refetch()]);
+            } else {
+                setPlanError('Could not set up your phone workspace — try again.');
+            }
         } finally {
             setPlanBusy(null);
         }
     };
 
-    // ── Step 3: Number ─────────────────────────────────────────────────────────
-    const [areaCode, setAreaCode] = useState('');
-    const [city, setCity] = useState('');
+    // ── Step 2: Number ─────────────────────────────────────────────────────────
+    const [searchCriterion, setSearchCriterion] = useState<AreaCodeSearchCriterion | null>(null);
+    const [incompleteAreaCode, setIncompleteAreaCode] = useState(false);
     const [containsDigits, setContainsDigits] = useState('');
     const [tollFree, setTollFree] = useState(false);
     const [searching, setSearching] = useState(false);
@@ -276,22 +270,34 @@ export default function TelephonyTwilioSettingsPage() {
     const [results, setResults] = useState<FoundNumber[]>([]);
     const [buying, setBuying] = useState<string | null>(null);
     const [limitUpsell, setLimitUpsell] = useState<string | null>(null); // 422 NUMBER_LIMIT server text
+    const [numberError, setNumberError] = useState<string | null>(null);
 
     const runSearch = async () => {
+        if (incompleteAreaCode) return;
         setSearching(true);
+        setNumberError(null);
         try {
             const qs = new URLSearchParams();
-            if (areaCode.trim()) qs.set('area_code', areaCode.trim());
+            if (searchCriterion) qs.set(searchCriterion.kind, searchCriterion.value);
             if (containsDigits.trim()) qs.set('contains', containsDigits.trim());
-            if (city.trim()) qs.set('locality', city.trim());
             if (tollFree) qs.set('toll_free', 'true');
             const r = await authedFetch(`/api/telephony/numbers/search?${qs}`);
             const j = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(j.error || 'Number search failed');
-            setResults(j.results || []);
+            if (!r.ok) {
+                if (r.status === 403) {
+                    setNumberError("You don't have permission to manage telephony — ask your administrator.");
+                } else if (r.status >= 500) {
+                    setNumberError('Could not set up your phone workspace — try again.');
+                } else {
+                    toast.error(j.error || 'Number search failed');
+                }
+                return;
+            }
+            setResults(Array.isArray(j.results) ? j.results : []);
             setSearched(true);
-        } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'Number search failed');
+            await Promise.all([refetchBilling(), walletQ.refetch()]);
+        } catch {
+            setNumberError('Could not set up your phone workspace — try again.');
         } finally {
             setSearching(false);
         }
@@ -309,7 +315,7 @@ export default function TelephonyTwilioSettingsPage() {
             if (r.ok) {
                 setLimitUpsell(null);
                 setStepOverride(null);
-                await numbersQ.refetch(); // done3 flips → Completion
+                await numbersQ.refetch(); // doneNumber flips → Completion
                 return;
             }
             if (r.status === 422 && j.code === 'NUMBER_LIMIT') {
@@ -320,6 +326,14 @@ export default function TelephonyTwilioSettingsPage() {
             if (r.status === 409) {
                 toast.error(j.error || 'This number was just taken — pick another one');
                 await runSearch(); // refresh the availability list
+                return;
+            }
+            if (r.status === 403) {
+                setNumberError("You don't have permission to manage telephony — ask your administrator.");
+                return;
+            }
+            if (r.status >= 500) {
+                setNumberError('Could not set up your phone workspace — try again.');
                 return;
             }
             toast.error('Failed to buy the number');
@@ -337,11 +351,20 @@ export default function TelephonyTwilioSettingsPage() {
     const packagePlans: Plan[] = plans.filter(p => p.id !== 'trial' && p.id !== 'payg');
     const currentPlanId = subscription?.plan_id ?? null;
     const plansLocked = (awaitingPayment && !pollTimedOut) || planBusy != null;
+    const walletBalance = Number(walletQ.data?.balance_usd ?? 0);
+
+    const selectPlan = (planId: string, planName: string) => {
+        if (planId === currentPlanId) {
+            toast.success(`You're on ${planName} — all set`);
+            setStepOverride(2);
+            return;
+        }
+        void choosePlan(planId);
+    };
 
     const stepsMeta = [
-        { n: 1, label: 'Set up your line', description: 'Create your secure calling workspace.', done: done1 },
-        { n: 2, label: 'Pick your plan', description: 'Choose what fits the way your team works.', done: done2 },
-        { n: 3, label: 'Choose your number', description: 'Find a number your customers will recognize.', done: done3 },
+        { n: 1, label: 'Pick your plan', description: '$5 free credit included', done: donePlan },
+        { n: 2, label: 'Choose your number', description: 'New number or transfer yours', done: doneNumber },
     ];
 
     return (
@@ -349,7 +372,7 @@ export default function TelephonyTwilioSettingsPage() {
             backTo="/settings/integrations"
             backLabel="Integrations"
             title="Telephony — Twilio"
-            description="Connect your business phone: create a workspace, choose a plan, and get a number."
+            description="Choose a plan or start with a phone number."
         >
             {bootLoading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
@@ -357,11 +380,11 @@ export default function TelephonyTwilioSettingsPage() {
                 </div>
             ) : (
                 <>
-                    {/* Stepper: completed → check + clickable BACK; forward of active → locked */}
+                    {/* Plans are optional: either visible step remains reachable. */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 26 }}>
                         {stepsMeta.map((s, i) => {
                             const isActive = s.n === activeStep;
-                            const clickable = s.done && s.n < activeStep;
+                            const clickable = !isActive;
                             return (
                                 <div key={s.n} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                     {i > 0 && <ChevronRight size={14} style={{ color: 'var(--blanc-ink-3)' }} />}
@@ -405,67 +428,41 @@ export default function TelephonyTwilioSettingsPage() {
                         })}
                     </div>
 
-                    {/* Step 1 — Connect */}
-                    {activeStep === 1 && (
-                        <CloudBanner variant="hero">
-                            <p className="blanc-eyebrow">TELEPHONY</p>
-                            <h3
-                                className="mt-2 text-2xl sm:text-[28px]"
-                                style={{ fontFamily: 'var(--blanc-font-heading)', fontWeight: 800, color: 'var(--blanc-ink-1)' }}
-                            >
-                                Your business phone line
-                            </h3>
-                            <p className="mt-2 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                                You're 3 minutes away from your first call.
-                            </p>
-                            <p className="mt-4 max-w-xl text-sm leading-relaxed" style={{ color: 'var(--blanc-ink-2)' }}>
-                                Albusto creates a dedicated Twilio workspace for your company, so your numbers, calls, and texts stay secure and together.
-                            </p>
-                            {connectError && (
-                                <div className="mt-4">
-                                    <InlineError text={connectError} />
-                                </div>
+                    {awaitingPayment && (
+                        <div style={{
+                            border: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong, #fffdf9)',
+                            borderRadius: 16, padding: '14px 16px', marginBottom: 16,
+                            display: 'flex', alignItems: 'flex-start', gap: 10,
+                        }}>
+                            {!pollTimedOut ? (
+                                <>
+                                    <Loader2 size={16} className="animate-spin" style={{ color: 'var(--blanc-info, #2f63d8)', flexShrink: 0, marginTop: 1 }} />
+                                    <span style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)' }}>Confirming your payment…</span>
+                                </>
+                            ) : (
+                                <>
+                                    <AlertCircle size={16} style={{ color: 'var(--blanc-warning)', flexShrink: 0, marginTop: 1 }} />
+                                    <span style={{ fontSize: 13.5, color: 'var(--blanc-ink-2)' }}>
+                                        Still waiting for payment confirmation. If you completed checkout, this page
+                                        will update shortly — you can also check Settings → Billing.
+                                    </span>
+                                </>
                             )}
-                            <Button className="mt-5 h-11 px-6" onClick={connectTelephony} disabled={connecting}>
-                                {connecting && <Loader2 size={14} className="mr-1.5 animate-spin" />}
-                                Connect telephony
-                            </Button>
-                            <p className="mt-2.5 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                                Next, you'll pick a plan and choose your phone number.
-                            </p>
-                        </CloudBanner>
+                        </div>
                     )}
 
-                    {/* Step 2 — Choose your plan */}
-                    {activeStep === 2 && (
-                        <>
-                            {awaitingPayment && (
-                                <div style={{
-                                    border: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong, #fffdf9)',
-                                    borderRadius: 16, padding: '14px 16px', marginBottom: 16,
-                                    display: 'flex', alignItems: 'flex-start', gap: 10,
-                                }}>
-                                    {!pollTimedOut ? (
-                                        <>
-                                            <Loader2 size={16} className="animate-spin" style={{ color: 'var(--blanc-info, #2f63d8)', flexShrink: 0, marginTop: 1 }} />
-                                            <span style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)' }}>Confirming your payment…</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <AlertCircle size={16} style={{ color: 'var(--blanc-warning)', flexShrink: 0, marginTop: 1 }} />
-                                            <span style={{ fontSize: 13.5, color: 'var(--blanc-ink-2)' }}>
-                                                Still waiting for payment confirmation. If you completed checkout, this page
-                                                will update shortly — you can also check Settings → Billing.
-                                            </span>
-                                        </>
-                                    )}
-                                </div>
-                            )}
-                            {planError && (
-                                <div style={{ marginBottom: 14 }}>
-                                    <InlineError text={planError} />
-                                </div>
-                            )}
+                    {/* Step 1 — Choose or keep a plan */}
+                    {activeStep === 1 && (
+                        <div className="space-y-6">
+                            <div className="space-y-2">
+                                <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
+                                    You have $5 to try Albusto pay-as-you-go — or pick a package.
+                                </p>
+                                {walletBalance > 0 && (
+                                    <Badge variant="outline">Wallet balance: ${walletBalance.toFixed(2)}</Badge>
+                                )}
+                            </div>
+                            {planError && <InlineError text={planError} />}
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
                                 <PlanCard
                                     name="Pay as you go"
@@ -475,7 +472,7 @@ export default function TelephonyTwilioSettingsPage() {
                                     isCurrent={currentPlanId === 'payg'}
                                     busy={planBusy === 'payg'}
                                     disabled={plansLocked}
-                                    onChoose={() => choosePlan('payg')}
+                                    onChoose={() => selectPlan('payg', 'Pay as you go')}
                                 />
                                 {packagePlans.map(p => (
                                     <PlanCard
@@ -488,15 +485,18 @@ export default function TelephonyTwilioSettingsPage() {
                                         isCurrent={currentPlanId === p.id}
                                         busy={planBusy === p.id}
                                         disabled={plansLocked}
-                                        onChoose={() => choosePlan(p.id)}
+                                        onChoose={() => selectPlan(p.id, p.name)}
                                     />
                                 ))}
                             </div>
-                        </>
+                            <Button variant="ghost" onClick={() => setStepOverride(2)} disabled={planBusy != null}>
+                                Skip — get a number first
+                            </Button>
+                        </div>
                     )}
 
-                    {/* Step 3 — Get a number */}
-                    {activeStep === 3 && (
+                    {/* Step 2 — Get a number */}
+                    {activeStep === 2 && (
                         <>
                             {limitUpsell && (
                                 <div style={{
@@ -507,23 +507,23 @@ export default function TelephonyTwilioSettingsPage() {
                                     <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)', marginTop: 4 }}>
                                         Need more numbers? Switch to a package plan.
                                     </div>
-                                    <Button size="sm" style={{ marginTop: 10 }} onClick={() => { setLimitUpsell(null); setStepOverride(2); }}>
+                                    <Button size="sm" style={{ marginTop: 10 }} onClick={() => { setLimitUpsell(null); setStepOverride(1); }}>
                                         View plans
                                     </Button>
                                 </div>
                             )}
-                            <div style={sectionCard}>
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                                    <FloatingField
-                                        label="Area code"
-                                        value={areaCode}
-                                        inputMode="numeric"
-                                        onChange={e => setAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))}
-                                    />
-                                    <FloatingField
-                                        label="City"
-                                        value={city}
-                                        onChange={e => setCity(e.target.value)}
+                            {numberError && (
+                                <div className="mb-3.5">
+                                    <InlineError text={numberError} />
+                                </div>
+                            )}
+                            <div className="space-y-3.5">
+                                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                                    <AreaCodeCombo
+                                        value={searchCriterion}
+                                        onChange={setSearchCriterion}
+                                        onIncompleteChange={setIncompleteAreaCode}
+                                        disabled={searching}
                                     />
                                     <FloatingField
                                         label="Contains digits"
@@ -531,12 +531,12 @@ export default function TelephonyTwilioSettingsPage() {
                                         onChange={e => setContainsDigits(e.target.value)}
                                     />
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 14, flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--blanc-ink-1)', cursor: 'pointer' }}>
                                         <Checkbox checked={tollFree} onCheckedChange={c => setTollFree(c === true)} />
                                         Toll-free
                                     </label>
-                                    <Button onClick={runSearch} disabled={searching}>
+                                    <Button onClick={runSearch} disabled={searching || incompleteAreaCode}>
                                         {searching
                                             ? <Loader2 size={14} className="mr-1.5 animate-spin" />
                                             : <Search size={14} className="mr-1.5" />}
@@ -578,8 +578,8 @@ export default function TelephonyTwilioSettingsPage() {
                         </>
                     )}
 
-                    {/* Completion — all three steps derived-done */}
-                    {activeStep === 4 && (
+                    {/* Completion is derived from a purchased number or active transfer. */}
+                    {activeStep === 3 && (
                         <div style={{ textAlign: 'center', padding: '40px 16px' }}>
                             <div style={{
                                 width: 56, height: 56, borderRadius: 28, background: 'rgba(27,139,99,0.12)',
@@ -588,10 +588,12 @@ export default function TelephonyTwilioSettingsPage() {
                                 <CheckCircle2 size={28} style={{ color: 'var(--blanc-success)' }} />
                             </div>
                             <h3 style={{ fontSize: 20, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)', margin: 0 }}>
-                                Telephony is connected
+                                {hasPurchasedNumber ? 'Telephony is connected' : 'Your number transfer is underway'}
                             </h3>
                             <p style={{ fontSize: 14, color: 'var(--blanc-ink-2)', margin: '8px auto 20px', maxWidth: 420 }}>
-                                Your number is active. Incoming calls and texts will appear in Albusto.
+                                {hasPurchasedNumber
+                                    ? 'Your number is active. Incoming calls and texts will appear in Albusto.'
+                                    : 'Transfers usually take 2–4 weeks. Watch for Twilio’s email to sign the Letter of Authorization.'}
                             </p>
                             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                                 <Button onClick={() => navigate('/settings/telephony')}>Manage telephony</Button>
