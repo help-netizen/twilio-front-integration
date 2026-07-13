@@ -436,12 +436,13 @@ export const PulsePage: React.FC = () => {
 
                             {/* Timeline — no wrapper card: items carry their own surfaces on the canvas */}
                             <PulseTimeline
-                                calls={p.callDataItems}
-                                messages={p.messages}
+                                items={p.items}
                                 loading={p.timelineLoading}
                                 timelineKey={p.timelineId || p.contactId}
-                                financialEvents={p.financialEvents}
-                                emailMessages={p.emailMessages}
+                                hasOlder={p.hasOlder}
+                                isFetchingOlder={p.isFetchingOlder}
+                                onLoadOlder={p.fetchOlder}
+                                scrollToBottomSignal={p.scrollToBottomSignal}
                             />
 
                             {/* Reply card — hidden for anonymous timeline (no callback target).

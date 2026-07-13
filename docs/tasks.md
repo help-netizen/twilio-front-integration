@@ -9405,7 +9405,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** `cd frontend && npm run build`; быстрый live-preview прогон (не полный N2): длинный тред → низ без вспышки; скролл вверх → prepend без сдвига видимых items; короткий тред → нет сентинела.
 
-**Зависимости:** T6. **Размер:** M. **Статус:** todo
+**Зависимости:** T6. **Размер:** M. **Статус:** done (2026-07-13, GPT, ревью ACCEPT: build зелёный, все механики §8; классы .pulse-jump-to-latest/.pulse-jump-to-latest-dot/.pulse-feed-spinner-row)
 
 ### Задача T8: frontend — sticky Action-Required бар
 
