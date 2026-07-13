@@ -8,6 +8,9 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-013 (2026-07-13)** — TWO http clients exist: fetch `services/apiClient.ts` AND axios `services/api.ts`.
+  Auth/401/2FA handling changes go into BOTH, with coverage in `authClients2fa.test.ts` (BUG-22: the axios
+  client missing the 2FA code caused an infinite kc.login() reload loop on prod).
 - **L-012 (2026-07-12)** — Worktrees have NO local `node_modules`. Run jest via the main checkout:
   `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath <file> --testPathIgnorePatterns "/node_modules/"`. Do not create node_modules symlinks (or remove them before finishing).
 - **L-011 (2026-07-12)** — In "How I verified", report the EXACT command you executed, byte-for-byte.

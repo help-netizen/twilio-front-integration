@@ -61,7 +61,11 @@ Full spec: `docs/specs/FORM-CANON.md`. Gold-standard examples: `EstimateItemDial
 ## Verification (do this yourself, report results)
 
 - Frontend touched → run `cd frontend && npm run build` (tsc -b; prod build is stricter: `noUnusedLocals` —
-  remove unused imports/vars).
+  remove unused imports/vars) AND `cd frontend && npm test` (vitest — mandatory suites live in
+  `frontend/src/**/*.test.ts`; the BUG-22 auth-clients suite must stay green).
+- Auth-flow changes: the app has TWO http clients — fetch `services/apiClient.ts` (authedFetch) and axios
+  `services/api.ts`. Any change to 401/2FA/session handling MUST be applied to BOTH and covered in
+  `frontend/src/services/authClients2fa.test.ts`.
 - Backend touched → run `npm test -- --testPathPattern '<affected area>'` from repo root. Write/extend Jest
   tests for new logic; tests must exercise real logic (401/403 + tenant-isolation tests for new API routes).
 - You have no network access in the sandbox. If you need a dependency installed, ask — do not vendor code.

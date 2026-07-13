@@ -70,7 +70,8 @@ Skip for small tasks.
 3. `git diff --stat`, then `git diff` — review the full diff ONCE per round. Only open full source
    files when the diff is insufficient to judge correctness.
 4. Independent gates (never trust the self-report):
-   - frontend touched → `cd frontend && npm run build` (exit code; read output only on failure)
+   - frontend touched → `cd frontend && npm run build` AND `cd frontend && npm test` (vitest; exit codes,
+     read output only on failure)
    - backend touched → `npm test -- --testPathPattern '<area>'` (same)
 5. Review checklist, in priority order:
    - tenant scoping (`company_id` on every new query; `req.companyFilter?.company_id`)
