@@ -441,7 +441,7 @@ describe('MARKETPLACE-LEADGEN-SPLIT-001 structural contracts', () => {
         const frontendSource = readFilesRecursively(path.join(ROOT, 'frontend', 'src'))
             .map(filename => fs.readFileSync(filename, 'utf8'))
             .join('\n');
-        expect(frontendSource).not.toMatch(/pro-referral-leads|rely-leads|nsa-leads|lhg-leads/);
+        expect(frontendSource).not.toMatch(/pro-referral-leads|nsa-leads|lhg-leads/);
     });
 
     test('TC-M2-02 · migration files are transaction-safe, silent, and rollback-documented', () => {

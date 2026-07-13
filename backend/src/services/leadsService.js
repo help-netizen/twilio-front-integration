@@ -105,6 +105,8 @@ function rowToLead(row) {
 // Extract custom metadata fields from flat request body
 // Looks up registered api_names in lead_custom_fields, picks matching keys
 // =============================================================================
+const RESERVED_METADATA_KEYS = ['rely_filter'];
+
 async function extractCustomMetadata(fields) {
     const { rows: registeredFields } = await db.query(
         `SELECT api_name FROM lead_custom_fields WHERE is_system = false`
@@ -122,6 +124,10 @@ async function extractCustomMetadata(fields) {
             meta[key] = String(fields[key]);
         }
     }
+
+    // RELY-LEADS-SETTINGS-001: server-owned metadata namespaces cannot be set
+    // through either an external Metadata object or a registered flat api_name.
+    for (const key of RESERVED_METADATA_KEYS) delete meta[key];
 
     return Object.keys(meta).length > 0 ? meta : null;
 }
@@ -310,7 +316,7 @@ async function getLeadById(id, companyId = null) {
 // =============================================================================
 // Create Lead
 // =============================================================================
-async function createLead(fields, companyId = null) {
+async function createLead(fields, companyId = null, { systemMetadata = null } = {}) {
     const uuid = await generateUniqueUUID();
     const columns = mapFieldsToColumns(fields);
 
@@ -340,8 +346,9 @@ async function createLead(fields, companyId = null) {
 
     // Handle custom metadata fields (flat api_name keys + Metadata object)
     const meta = await extractCustomMetadata(fields);
-    if (meta) {
-        columns.metadata = JSON.stringify(meta);
+    const merged = { ...(meta || {}), ...(systemMetadata || {}) };
+    if (Object.keys(merged).length > 0) {
+        columns.metadata = JSON.stringify(merged);
     }
 
     const colNames = Object.keys(columns);
@@ -1289,7 +1296,8 @@ async function countNewLeads(companyId) {
     if (!companyId) return 0;
     const { rows } = await db.query(
         `SELECT COUNT(*)::int AS count FROM leads
-         WHERE company_id = $1 AND lead_lost = false AND status = ANY($2::text[])`,
+         WHERE company_id = $1 AND lead_lost = false AND status = ANY($2::text[])
+           AND NOT COALESCE(metadata @> '{"rely_filter":{"rejected":true}}'::jsonb, false)`,
         [companyId, NEW_LEAD_STATUSES]
     );
     return rows[0]?.count || 0;
@@ -1315,6 +1323,7 @@ function emitLeadChange(eventType, companyId, status, leadId = null) {
 
 module.exports = {
     listLeads,
+    RESERVED_METADATA_KEYS,
     NEW_LEAD_STATUSES,
     countNewLeads,
     getLeadByUUID,

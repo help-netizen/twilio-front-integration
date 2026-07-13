@@ -11,6 +11,7 @@
 const express = require('express');
 const router = express.Router();
 const leadsService = require('../services/leadsService');
+const relyLeadFilterService = require('../services/relyLeadFilterService');
 const {
     rejectLegacyAuth,
     validateHeaders,
@@ -63,8 +64,34 @@ router.post('/leads', requireIntegrationScope('leads:create'), async (req, res) 
             console.error('[IntegrationsLeads] Contact dedup error (non-blocking):', dedupeErr.message);
         }
 
-        // Create lead
-        const result = await leadsService.createLead(payload, req.integrationCompanyId);
+        // RELY-LEADS-SETTINGS-001: acceptance filter, Rely payloads only. Non-Rely:
+        // isRelyLead is a pure string check — zero queries, zero logs (NFR-2).
+        let relyVerdict = null;
+        if (relyLeadFilterService.isRelyLead(payload)) {
+            relyVerdict = await relyLeadFilterService.evaluateRelyLead(payload, req.integrationCompanyId);
+        }
+
+        const result = await leadsService.createLead(
+            payload,
+            req.integrationCompanyId,
+            relyVerdict && !relyVerdict.accepted
+                ? { systemMetadata: { rely_filter: relyLeadFilterService.buildMarker(relyVerdict) } }
+                : undefined
+        );
+
+        if (relyVerdict) {
+            // FR-10: exactly ONE structured line per evaluated Rely lead, after create so uuid/serial exist.
+            console.log('[RelyLeadFilter]', JSON.stringify({
+                decision: relyVerdict.accepted ? 'accept' : 'reject',
+                reason: relyVerdict.reason,
+                extracted: relyVerdict.extracted,
+                active: relyVerdict.active,
+                fail_open_error: relyVerdict.error || undefined,
+                company_id: req.integrationCompanyId,
+                lead_uuid: result.UUID,
+                serial_id: result.SerialId,
+            }));
+        }
 
         // Fallback: link contact if createLead didn't persist it
         if (contactResolution.contact_id && result.ClientId) {

@@ -159,3 +159,63 @@ describe('RELY-LEADS-SETTINGS-001 settings merge · real PostgreSQL', () => {
         }
     });
 });
+
+describe('RELY-LEADS-SETTINGS-001 rejected-lead badge · real PostgreSQL', () => {
+    test('TC-R4-DB-01 · rejected marker is excluded while NULL and rejected:false are counted', async () => {
+        if (!dbReady) return console.warn('TC-R4-DB-01 SKIPPED-NEEDS-DB');
+
+        const leadsService = require('../backend/src/services/leadsService');
+        const suffix = TAG.replace(/[^A-Za-z0-9]/g, '').slice(-12);
+        const leadUuids = [`R4A${suffix}`, `R4B${suffix}`, `R4C${suffix}`];
+        const marker = {
+            rely_filter: {
+                rejected: true,
+                reason: 'out_of_area',
+                evaluated_at: '2026-07-13T00:00:00.000Z',
+                zip: '02888',
+                unit: null,
+                brand: null,
+            },
+        };
+
+        try {
+            await db.query(
+                `INSERT INTO companies (id, name, slug)
+                 VALUES ($1, $2, $3)`,
+                [COMPANY_ID, `Rely Settings ${TAG}`, `rely-settings-${TAG}`.toLowerCase()]
+            );
+            await db.query(
+                `INSERT INTO leads (uuid, company_id, status, lead_lost, comments, metadata)
+                 VALUES
+                    ($1, $4, 'Submitted', false, $5, '{}'::jsonb),
+                    ($2, $4, 'Submitted', false, $5, $6::jsonb),
+                    ($3, $4, 'Submitted', false, $5, NULL)`,
+                [leadUuids[0], leadUuids[1], leadUuids[2], COMPANY_ID, TAG, JSON.stringify(marker)]
+            );
+
+            expect(await leadsService.countNewLeads(COMPANY_ID)).toBe(2);
+
+            await db.query(
+                `UPDATE leads
+                 SET metadata = $3::jsonb
+                 WHERE company_id = $1
+                   AND uuid = $2`,
+                [COMPANY_ID, leadUuids[0], JSON.stringify({ rely_filter: { rejected: false } })]
+            );
+            expect(await leadsService.countNewLeads(COMPANY_ID)).toBe(2);
+        } finally {
+            await db.query(
+                `DELETE FROM leads
+                 WHERE company_id = $1
+                   AND comments = $2`,
+                [COMPANY_ID, TAG]
+            );
+            await db.query(
+                `DELETE FROM companies
+                 WHERE id = $1
+                   AND slug = $2`,
+                [COMPANY_ID, `rely-settings-${TAG}`.toLowerCase()]
+            );
+        }
+    });
+});
