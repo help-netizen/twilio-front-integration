@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Plus, Copy, ShieldOff, Key, Webhook, RefreshCw, Check, Settings2, Save, Trash2, Store, AlertCircle, ExternalLink } from 'lucide-react';
 import { CreateDialog, SecretDialog, RevokeDialog, RegenerateDialog } from './IntegrationDialogs';
+import { RelyLeadsSettingsDialog } from './RelyLeadsSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 
 function formatDate(dateStr: string | null | undefined) {
@@ -157,6 +158,7 @@ export function IntegrationsPage() {
     const [zbApiKeyEditing, setZbApiKeyEditing] = useState(false);
     const [connectTarget, setConnectTarget] = useState<MarketplaceApp | null>(null);
     const [disconnectTarget, setDisconnectTarget] = useState<MarketplaceApp | null>(null);
+    const [relySettingsOpen, setRelySettingsOpen] = useState(false);
 
     const { data: apps = [], isLoading: marketplaceLoading } = useQuery({ queryKey: ['marketplace-apps'], queryFn: fetchMarketplaceApps });
     const { data: mailbox } = useQuery({ queryKey: ['email-mailbox-settings'], queryFn: getMailboxSettings });
@@ -303,6 +305,11 @@ export function IntegrationsPage() {
                                                             Setup
                                                         </Button>
                                                     )}
+                                                    {app.app_key === 'rely-leads' && app.installation?.status === 'connected' && (
+                                                        <Button variant="outline" size="sm" onClick={() => setRelySettingsOpen(true)}>
+                                                            Settings
+                                                        </Button>
+                                                    )}
                                                     {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? (
                                                         <Button variant="outline" size="sm" onClick={() => setDisconnectTarget(app)}>
                                                             Disconnect
@@ -394,6 +401,7 @@ export function IntegrationsPage() {
                 onConfirm={() => disconnectTarget?.installation && disconnectMutation.mutate(disconnectTarget.installation.id)}
                 isPending={disconnectMutation.isPending}
             />
+            <RelyLeadsSettingsDialog open={relySettingsOpen} onOpenChange={setRelySettingsOpen} />
             <CreateDialog open={createOpen} onOpenChange={setCreateOpen} clientName={clientName} setClientName={setClientName} onSubmit={handleCreate} isPending={createMutation.isPending} />
             <SecretDialog open={secretModalOpen} onOpenChange={setSecretModalOpen} integration={newIntegration} />
             <RevokeDialog target={revokeTarget} onClose={() => setRevokeTarget(null)} onRevoke={() => revokeTarget && revokeMutation.mutate(revokeTarget.key_id)} isPending={revokeMutation.isPending} />

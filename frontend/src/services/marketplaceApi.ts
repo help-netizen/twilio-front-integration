@@ -67,6 +67,27 @@ export interface MarketplaceInstallation {
     last_used_at: string | null;
 }
 
+export interface RelyLeadsSettings {
+    zone: {
+        mode: 'company' | 'custom';
+        custom_zips: string[];
+    };
+    unit_types: string[];
+    brands: string[];
+}
+
+export interface RelyLeadsSettingsResponse {
+    settings: RelyLeadsSettings;
+    catalogs: {
+        unit_types: string[];
+        brands: string[];
+    };
+    territory: {
+        active_mode: 'list' | 'radius';
+        has_data: boolean;
+    };
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
     const res = await authedFetch(url, {
         headers: { 'Content-Type': 'application/json' },
@@ -113,4 +134,15 @@ export async function retryMarketplaceProvisioning(installationId: number): Prom
         { method: 'POST', body: JSON.stringify({}) }
     );
     return data.installation;
+}
+
+export async function fetchRelyLeadsSettings(): Promise<RelyLeadsSettingsResponse> {
+    return request<RelyLeadsSettingsResponse>(`${API_BASE}/apps/rely-leads/settings`);
+}
+
+export async function saveRelyLeadsSettings(settings: RelyLeadsSettings): Promise<RelyLeadsSettingsResponse> {
+    return request<RelyLeadsSettingsResponse>(`${API_BASE}/apps/rely-leads/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+    });
 }
