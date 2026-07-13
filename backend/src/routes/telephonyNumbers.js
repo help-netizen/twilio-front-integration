@@ -78,8 +78,31 @@ async function getCompanyLocale(id) {
 // GET /api/telephony/numbers/status — connection state
 router.get('/status', async (req, res) => {
     try {
-        res.json({ ok: true, state: await svc.getTelephonyState(companyId(req)) });
+        const id = companyId(req);
+        const state = await svc.getTelephonyState(id);
+        const { rows } = await db.query(
+            `SELECT settings->>'port_in_prompt' AS port_in_prompt
+             FROM companies
+             WHERE id = $1`,
+            [id]
+        );
+        res.json({ ok: true, state, port_in_prompt: rows[0]?.port_in_prompt || null });
     } catch (err) { fail(res, err, 'Failed to load telephony status'); }
+});
+
+// POST /api/telephony/numbers/port-in-prompt/dismiss — persist the shared prompt dismissal
+router.post('/port-in-prompt/dismiss', async (req, res) => {
+    try {
+        const { rows } = await db.query(
+            `UPDATE companies
+             SET settings = COALESCE(settings, '{}'::jsonb)
+                 || jsonb_build_object('port_in_prompt', 'dismissed')
+             WHERE id = $1
+             RETURNING settings->>'port_in_prompt' AS port_in_prompt`,
+            [companyId(req)]
+        );
+        res.json({ ok: true, port_in_prompt: rows[0]?.port_in_prompt || null });
+    } catch (err) { fail(res, err, 'Failed to dismiss port-in prompt'); }
 });
 
 // POST /api/telephony/numbers/connect — create the tenant subaccount
