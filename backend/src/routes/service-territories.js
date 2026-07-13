@@ -5,7 +5,11 @@
  */
 const express = require('express');
 const router = express.Router();
+const db = require('../db/connection');
 const stQueries = require('../db/serviceTerritoryQueries');
+const radiusQueries = require('../db/territoryRadiusQueries');
+const territoryGeoService = require('../services/territoryGeoService');
+const { normalizeZip } = require('../utils/zip');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -13,6 +17,166 @@ function getCompanyId(req) {
     return req.companyFilter?.company_id
         || DEFAULT_COMPANY_ID;
 }
+
+async function getCompanyZip(companyId) {
+    const { rows } = await db.query(
+        `SELECT zip
+         FROM companies
+         WHERE id = $1`,
+        [companyId]
+    );
+    return rows[0]?.zip || null;
+}
+
+async function getListZipGeographies(companyId) {
+    const { rows } = await db.query(
+        `SELECT st.zip, z.lat, z.lon
+         FROM service_territories st
+         LEFT JOIN zip_geocache z ON z.zip = st.zip
+         WHERE st.company_id = $1
+         ORDER BY st.zip ASC`,
+        [companyId]
+    );
+    return rows;
+}
+
+function splitListZipGeographies(rows) {
+    const unique = new Map();
+    for (const row of rows) {
+        const current = unique.get(row.zip);
+        if (!current || (current.lat == null && row.lat != null && row.lon != null)) {
+            unique.set(row.zip, row);
+        }
+    }
+
+    const listCentroids = [];
+    const missingZips = [];
+    for (const row of unique.values()) {
+        if (row.lat != null && row.lon != null) {
+            listCentroids.push({ zip: row.zip, lat: row.lat, lon: row.lon });
+        } else if (missingZips.length < 10) {
+            missingZips.push(row.zip);
+        }
+    }
+    return { listCentroids, missingZips };
+}
+
+function seedListCentroids(zips) {
+    if (zips.length === 0) return;
+    setImmediate(async () => {
+        const results = await Promise.allSettled(
+            zips.map(zip => territoryGeoService.geocodeZip(zip))
+        );
+        for (const result of results) {
+            if (result.status === 'rejected') {
+                console.warn(
+                    '[ServiceTerritories] lazy centroid seed failed (non-fatal):',
+                    result.reason?.message || String(result.reason)
+                );
+            }
+        }
+    });
+}
+
+// GET /config — radius/list configuration and map data
+router.get('/config', async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const [settings, radii, listZipCount, companyZip, listZipGeographies] = await Promise.all([
+            radiusQueries.getSettings(companyId),
+            radiusQueries.listRadii(companyId),
+            radiusQueries.countListZips(companyId),
+            getCompanyZip(companyId),
+            getListZipGeographies(companyId),
+        ]);
+        const { listCentroids, missingZips } = splitListZipGeographies(listZipGeographies);
+        seedListCentroids(missingZips);
+
+        res.json({
+            config: {
+                active_mode: settings.active_mode,
+                radii,
+                counts: { list_zips: listZipCount, radii: radii.length },
+                company_zip: companyZip,
+                list_centroids: listCentroids,
+            },
+        });
+    } catch (err) {
+        console.error('[ServiceTerritories] GET /config error:', err);
+        res.status(500).json({ error: 'Failed to load service territory config' });
+    }
+});
+
+// PUT /mode — switch the active territory mode without deleting either dataset
+router.put('/mode', async (req, res) => {
+    try {
+        const { active_mode: activeMode } = req.body || {};
+        if (activeMode !== 'list' && activeMode !== 'radius') {
+            return res.status(400).json({ error: 'active_mode must be list or radius' });
+        }
+        const config = await radiusQueries.setMode(getCompanyId(req), activeMode);
+        res.json({ config: { active_mode: config.active_mode } });
+    } catch (err) {
+        console.error('[ServiceTerritories] PUT /mode error:', err);
+        res.status(500).json({ error: 'Failed to update service territory mode' });
+    }
+});
+
+// POST /radii — add one ZIP center + radius pair
+router.post('/radii', async (req, res) => {
+    try {
+        const { zip, radius_miles: radiusMiles } = req.body || {};
+        const inputDigits = zip == null ? '' : String(zip).replace(/\D/g, '');
+        const normalizedZip = normalizeZip(zip);
+        if (inputDigits.length < 4 || !/^\d{5}$/.test(normalizedZip)) {
+            return res.status(400).json({ error: 'zip must be 5 digits' });
+        }
+        if (typeof radiusMiles !== 'number' || !Number.isFinite(radiusMiles)
+            || radiusMiles <= 0 || radiusMiles > 200) {
+            return res.status(400).json({ error: 'radius_miles must be between 0 and 200' });
+        }
+
+        const geo = await territoryGeoService.geocodeZip(normalizedZip);
+        if (!geo) return res.status(422).json({ error: 'ZIP_NOT_FOUND' });
+
+        const companyId = getCompanyId(req);
+        const existingRadii = await radiusQueries.listRadii(companyId);
+        const maxPosition = existingRadii.reduce((max, radius) => {
+            const position = Number(radius.position);
+            return Number.isFinite(position) ? Math.max(max, position) : max;
+        }, -1);
+        const radius = await radiusQueries.createRadius(companyId, {
+            zip: normalizedZip,
+            lat: geo.lat,
+            lon: geo.lon,
+            radius_miles: radiusMiles,
+            position: maxPosition + 1,
+        });
+
+        res.status(201).json({
+            radius: {
+                ...radius,
+                city: geo.city ?? null,
+                state: geo.state ?? null,
+            },
+        });
+    } catch (err) {
+        console.error('[ServiceTerritories] POST /radii error:', err);
+        res.status(500).json({ error: 'Failed to add territory radius' });
+    }
+});
+
+// DELETE /radii/:id — foreign and unknown ids share the same 404
+router.delete('/radii/:id', async (req, res) => {
+    try {
+        const deleted = await radiusQueries.deleteRadius(getCompanyId(req), req.params.id);
+        if (!deleted) return res.status(404).json({ error: 'Radius not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[ServiceTerritories] DELETE /radii/:id error:', err);
+        res.status(500).json({ error: 'Failed to remove territory radius' });
+    }
+});
 
 // GET / — list all zip codes for company
 router.get('/', async (req, res) => {

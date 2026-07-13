@@ -6437,6 +6437,93 @@ Frontend:
 - `frontend/src/components/onboarding/OnboardingChecklistCard.tsx` — компактный трекер
 - `frontend/src/pages/GoogleEmailSettingsPage.tsx`, `TelephonyTwilioSettingsPage.tsx`, `VapiSettingsPage.tsx`, `MailSecretarySettingsPage.tsx`, `IntegrationsPage.tsx` — redesign hero/копии
 
+## Архитектурное решение для фичи SERVICE-TERR-002 — radius-территории + единый containment-seam + онбординг-шаг (2026-07-13)
+
+**Требования:** `Docs/requirements.md` §SERVICE-TERR-002 (решения заказчика — биндинг). Спецификация: `Docs/specs/SERVICE-TERR-002.md`.
+
+### Существующий функционал (расширяем, НЕ дублируем)
+
+- `backend/src/db/serviceTerritoryQueries.js` — CRUD + `search`/`findByZip` (list-режим). **Не меняется**; остаётся единственной точкой list-lookup'а, seam зовёт её.
+- `backend/src/routes/service-territories.js` — существующие endpoints list-режима; mount в `src/server.js:315-316` уже даёт `authenticate + requirePermission('tenant.company.manage') + requireCompanyAccess` → новые endpoints добавляются В ЭТОТ router и наследуют цепочку (server.js НЕ трогаем). `getCompanyId(req)` (companyFilter → DEFAULT_COMPANY_ID) — реюз.
+- `backend/src/routes/zip-check.js` (mount `authenticate + requireCompanyAccess`, server.js:199-200) и `backend/src/services/agentSkills/skills/checkServiceArea.js` — ЕДИНСТВЕННЫЕ потребители `stQueries.search` вне query-слоя (проверено grep'ом; `routes/vapi-tools.js` — тонкий адаптер, диспатчит generic в agentSkills и сам stQueries НЕ зовёт → не меняется). Оба переводятся на новый seam.
+- `backend/src/services/googlePlacesService.js` — образец серверного Geocoding (env-ключ `GOOGLE_GEOCODING_KEY || GOOGLE_PLACES_KEY`, fetch, безопасные фолбэки). Его `geocodeAddress(address)` НЕ реюзаем напрямую: free-text bias и нет address_components (city/state) в ответе — для зипов нужен запрос с `components=postal_code:XXXXX|country:US`. Подход/ключ — тот же, клиент пишется в territoryGeoService.
+- `backend/src/utils/zip.js` — `normalizeZip` применяется на каждом входе зипа (leading-zero gotcha).
+- `backend/src/services/onboardingChecklistService.js` — data-driven `CHECKLIST_ITEMS`; замена записи `company_profile` → `service_territory` = ровно одна запись реестра, visibility/write-once машина не трогается.
+- Frontend: `ServiceTerritoriesPage.tsx` (переделывается), `loadGoogleMaps.ts` (реюз loader), JobMap-паттерн из `CustomTimeModal.tsx:363-523` (refs + Marker + LatLngBounds + fitBounds; Circle — впервые), `SettingsPageShell` (канон header), ViewToggle-паттерн сегмент-контрола (сам ViewToggle areas/table остаётся внутри list-режима).
+- **Нельзя дублировать:** зип-нормализацию (utils/zip), геокод-клиент (один territoryGeoService), containment-логику (ровно один isZipInTerritory — не копировать haversine в потребителей), list-lookup (stQueries.search).
+
+### Новые компоненты
+
+Database (миграция `backend/db/migrations/168_service_territory_radius.sql` + `rollback_168_service_territory_radius.sql`, additive, IF NOT EXISTS):
+- `company_territory_settings` — company_id UUID PK REFERENCES companies(id) ON DELETE CASCADE, active_mode TEXT NOT NULL DEFAULT 'list' CHECK (active_mode IN ('list','radius')), updated_at. Отсутствие строки ≡ 'list' (существующие компании не мигрируются).
+- `territory_radii` — id UUID PK DEFAULT gen_random_uuid(), company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE, zip VARCHAR(10) NOT NULL, lat NUMERIC(9,6) NOT NULL, lon NUMERIC(9,6) NOT NULL, radius_miles NUMERIC(5,1) NOT NULL CHECK (radius_miles > 0 AND radius_miles <= 200), position INT NOT NULL DEFAULT 0, created_at; INDEX (company_id). lat/lon снапшотятся при создании пары (карта и haversine не зависят от живости кэша).
+- `zip_geocache` — zip VARCHAR(10) PK, lat NUMERIC(9,6), lon NUMERIC(9,6), city TEXT, state TEXT, geocoded_at. БЕЗ company_id — география глобальна; таблица НЕ содержит tenant-данных (единственное исключение из per-company фильтрации, зафиксировано комментом в миграции). `dim_zip` не используется (легаси).
+
+Backend:
+- `backend/src/utils/geo.js` (NEW) — `haversineMiles(lat1, lon1, lat2, lon2)`; чистая функция (в кодовой базе haversine отсутствует — проверено grep'ом; slot-engine считает свой внутри контейнера, контейнер не трогаем).
+- `backend/src/services/territoryGeoService.js` (NEW) — `geocodeZip(zip)`: normalizeZip → SELECT zip_geocache → hit: вернуть; miss: Google Geocoding `components=postal_code:{zip}|country:US` (ключ `GOOGLE_GEOCODING_KEY || GOOGLE_PLACES_KEY`, как googlePlacesService) → OK: INSERT zip_geocache ON CONFLICT (zip) DO NOTHING + вернуть `{zip, lat, lon, city, state}`; ZERO_RESULTS/ошибка/нет ключа → null (никогда не throw).
+- `backend/src/db/territoryRadiusQueries.js` (NEW) — `getSettings(companyId)` (active_mode, дефолт 'list'), `setMode(companyId, mode)` (UPSERT), `listRadii(companyId)`, `createRadius(companyId, {zip, lat, lon, radius_miles, position})`, `deleteRadius(companyId, id)` (RETURNING → null ≡ чужой/несуществующий), `countListZips(companyId)`. ВСЕ запросы фильтруют по company_id.
+- `backend/src/services/territoryService.js` (NEW, **единый containment-seam**) — `isZipInTerritory(companyId, query)` → `{inside, area, city, state, zip, mode}`:
+  - mode = getSettings().active_mode;
+  - `'list'` → `stQueries.search(companyId, query)` (полное прежнее поведение: зип/город/area/адрес) → маппинг row → shape;
+  - `'radius'` → извлечь зип из query (normalizeZip чистых цифр, иначе `\b\d{5}\b` из адресной строки; зипа нет → inside:false) → `geocodeZip` (miss → inside:false) → haversineMiles против всех territory_radii → покрывающие круги (dist ≤ radius_miles) → ближайший центр: `area` = zip этого центра (фолбэк 'Radius'), city/state — из zip_geocache запрошенного зипа.
+
+Frontend:
+- `frontend/src/components/settings/TerritoryCoverageMap.tsx` (NEW) — read-only карта (паттерн JobMap: mapRef/mapInstanceRef, `loadGoogleMaps()`); props `{ mode, radii, listCentroids }`; radius → `google.maps.Circle` (center/radius в метрах = miles×1609.34) + `bounds.union(circle.getBounds())`; list → Marker'ы centroids + LatLngBounds; `disableDefaultUI: true, gestureHandling: 'none', clickableIcons: false, keyboardShortcuts: false`; нет данных или нет VITE_GOOGLE_MAPS_API_KEY → компонент рендерит null (graceful, без пустых состояний).
+
+### Изменяемые компоненты
+
+- `backend/src/routes/service-territories.js` — +4 endpoint'а (см. API); существующие не трогаются.
+- `backend/src/routes/zip-check.js` — `stQueries.search` → `territoryService.isZipInTerritory`; внешний контракт `{ok, data:{success, exists, area, city, state, zip}}` байт-в-байт (exists ⇔ inside).
+- `backend/src/services/agentSkills/skills/checkServiceArea.js` — то же; frozen-шейп `{inServiceArea, area, city, state, zip}` сохраняется (AC-11); в list-режиме поведение байт-идентично (тот же search).
+- `backend/src/services/onboardingChecklistService.js` — запись `company_profile` заменяется `service_territory` (позиция 1, est_minutes 2, деривация — один SQL по company_territory_settings + EXISTS, см. спеку §1).
+- `tests/onboardingChecklist.test.js` — нормативный payload: шаг 1 = service_territory.
+- `frontend/src/pages/ServiceTerritoriesPage.tsx` — mode-toggle (List|Radius, паттерн blanc-control-chip), radius-панель (CRUD пар), Coverage preview (TerritoryCoverageMap), мобильная вёрстка (list-actions из header-слота → wrap-toolbar list-режима; ZipTable в overflow-x-auto обёртке).
+- `frontend/src/pages/WelcomePage.tsx` — stepIcons: `company_profile: Receipt` → `service_territory: MapPin`.
+- `Docs/specs/ONBOARDING-UX-001.md` §1.1-1.2 — нормативные таблицы: строка company_profile → service_territory.
+
+### API endpoints (новые; mount существующий — server.js НЕ трогаем)
+
+Все под `/api/settings/service-territories` (authenticate + requirePermission('tenant.company.manage') + requireCompanyAccess; company_id ТОЛЬКО `getCompanyId(req)` ← `req.companyFilter?.company_id`):
+- `GET /config` — `{config: {active_mode, radii[], counts:{list_zips, radii}, company_zip, list_centroids[]}}`.
+- `PUT /mode` — body `{active_mode: 'list'|'radius'}` → UPSERT; 400 на иное значение.
+- `POST /radii` — body `{zip, radius_miles}`; геокод внутри; 201 `{radius}`; 400 (валидация) / 422 `ZIP_NOT_FOUND`.
+- `DELETE /radii/:id` — 200 `{success:true}` / 404 (чужой/несуществующий id — изоляция).
+
+### Файлы для изменений
+
+- backend/db/migrations/168_service_territory_radius.sql (+ rollback_168_…) — создать
+- backend/src/utils/geo.js — создать (haversineMiles)
+- backend/src/services/territoryGeoService.js — создать (geocodeZip, кэш-first)
+- backend/src/db/territoryRadiusQueries.js — создать
+- backend/src/services/territoryService.js — создать (isZipInTerritory seam)
+- backend/src/routes/service-territories.js — +GET /config, PUT /mode, POST /radii, DELETE /radii/:id
+- backend/src/routes/zip-check.js — на seam
+- backend/src/services/agentSkills/skills/checkServiceArea.js — на seam
+- backend/src/services/onboardingChecklistService.js — замена шага
+- tests/{territoryService,serviceTerritoriesConfig}.test.js — создать; tests/onboardingChecklist.test.js — обновить
+- frontend/src/pages/ServiceTerritoriesPage.tsx — режимы/radius-CRUD/мобайл
+- frontend/src/components/settings/TerritoryCoverageMap.tsx — создать
+- frontend/src/pages/WelcomePage.tsx — иконка
+- Docs/specs/ONBOARDING-UX-001.md — §1.1-1.2
+
+### Отвергнутые альтернативы
+
+- **Геокод на фронте (google.maps.Geocoder)** — ключ/квоты в браузере, кэш не шарится между потребителями (Sara ходит без браузера). Отклонено: только сервер.
+- **Реюз `googlePlacesService.geocodeAddress` как есть** — нет components-фильтра по postal_code (free-text «02135» может сматчиться не туда) и не возвращает city/state. Пишем zip-специфичный клиент в territoryGeoService с тем же env-ключом.
+- **`dim_zip` как источник центроидов** — на проде 5 строк, легаси; заказчик явно запретил.
+- **lat/lon только в zip_geocache (без снапшота в territory_radii)** — JOIN-зависимость карты/haversine от кэша, который может быть очищен; снапшот в паре дешевле и стабильнее (кэш остаётся источником для city/state и повторных геокодов).
+- **PostGIS / ST_DWithin** — расширение не установлено, для десятков пар haversine в JS тривиален и тестируем.
+- **Расширение search() radius-логикой внутри serviceTerritoryQueries** — смешивает режимы в query-слое; seam в сервисе оставляет query-слой list-only и даёт единственную точку выбора режима.
+
+### Риски
+
+- **Byte-compat потребителей:** list-режим проходит через тот же stQueries.search — поведение идентично; регресс-тесты фиксируют шейпы zip-check/checkServiceArea.
+- **Google Geocoding недоступен/нет ключа:** POST /radii → 422 (пара не добавляется — честно); isZipInTerritory в radius-режиме на кэш-промахе → inside:false (safe-fail, Sara скажет «вне зоны» — как сейчас при незнакомом зипе).
+- **zip_geocache — глобальная таблица без company_id:** содержит только публичную географию; фиксируем комментом в миграции, чтобы аудит isolation-канона не спотыкался.
+- **Карта на мобиле:** read-only (gestureHandling 'none') — не перехватывает скролл страницы; при отсутствии VITE_GOOGLE_MAPS_API_KEY страница живёт без карты.
+- **Онбординг existing-компаний:** у кого completed_at уже стоит — write-once уважается (шаг не ресурфейсит карточку); у новых компаний service_territory честно false до конфигурации.
+
 ## YELP-CONVO-CONTEXT-002 — architecture: bounded conversation transcript in the turn prompt + agent-send → conv-id timeline linking + owner backfill (2026-07-13)
 
 **Requirements:** Docs/requirements.md «YELP-CONVO-CONTEXT-002» (R1–R9, N1–N4, A1–A3). **Verdict:** backend-only, NO migrations, NO new tables/columns, NO new HTTP routes, NO frontend. Two halves share one per-turn resolved `timelineId`: (A) the transcript enters `runTurn`'s prompt from `email_messages`; (B) every agent send is linked onto the conv-id timeline exactly like the inbound Yelp path links, plus a one-off owner-run backfill for historical sends.

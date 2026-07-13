@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, type React
 import Keycloak from 'keycloak-js';
 import { classifyRefreshFailure, REFRESH_RETRY_BACKOFF_MS } from './refreshPolicy';
 import { loginRedirectAllowed, clearLoginRedirects } from './loginLoopBreaker';
+import { nextCompany } from './companyIdentity';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -267,7 +268,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (res.ok) {
                 const data = await res.json();
                 setPlatformRole(data.user?.platform_role || 'none');
-                setCompany(data.company);
+                // OB-6 / SOFTPHONE-DROP-001: keep the SAME company object reference
+                // when the id is unchanged. fetchAuthzContext runs on every token
+                // refresh (and BUG-22b's refreshOnResume made that frequent); a fresh
+                // object each time re-triggered every `[company]` effect — including
+                // AppLayout's softphone-groups loader, which briefly set enabled=false
+                // → useTwilioDevice destroyed the Twilio Device mid-call (dropped calls)
+                // and the deviceReady flip re-popped the "Good morning" warm-up modal.
+                // Identity-stable company = Device stays alive; badge fetches stop churning.
+                setCompany((prev: any) => nextCompany(prev, data.company ?? null));
                 setMembership(data.membership);
                 setPermissions(data.permissions || []);
                 setScopes(data.scopes || {});

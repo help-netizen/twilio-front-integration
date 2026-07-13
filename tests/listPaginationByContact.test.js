@@ -782,10 +782,15 @@ describe('GET /api/calls/by-contact — route', () => {
         // …and NOTHING was added/removed/renamed vs the pre-change route shape
         // (formatCall spread + contact + the mapped fields; price/price_unit are
         // undefined on this fixture and JSON-dropped, exactly as before).
+        // display_name/external_source joined the frozen set in YELP-TL-DEDUP-002
+        // (b063142, prod 2026-07-11): the by-contact DTO passes them through so
+        // contactless Yelp rows keep their label — the point-deploy shipped the
+        // route without updating this expectation (caught by SERVICE-TERR-002 T4).
         expect(Object.keys(conv).sort()).toEqual([
             'action_required_reason', 'action_required_set_at', 'answered_at',
             'answered_by', 'call_sid', 'contact', 'created_at', 'direction',
-            'duration_sec', 'email_thread_id', 'ended_at', 'from_number',
+            'display_name',
+            'duration_sec', 'email_thread_id', 'ended_at', 'external_source', 'from_number',
             'has_open_task', 'has_unread', 'id', 'is_action_required', 'is_final',
             'last_interaction_at', 'last_interaction_phone', 'last_interaction_type',
             'open_task', 'open_task_count', 'owner_user_id', 'parent_call_sid',

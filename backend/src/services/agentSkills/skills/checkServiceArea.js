@@ -2,10 +2,8 @@
  * agentSkills / skills / checkServiceArea — RELOCATED legacy L0 tool
  * (AGENT-SKILLS-001, spec §7.3 / task T3).
  *
- * Byte-identical relocation of `handleCheckServiceArea` from
- * `routes/vapi-tools.js` (the pre-T4 source of truth). Internals are RELOCATED,
- * NOT rewritten — same `stQueries.search(companyId, zip)` call, same frozen
- * output shapes:
+ * The containment lookup now goes through the SERVICE-TERR-002 seam while the
+ * relocated tool's frozen output shapes remain byte-identical:
  *   in-area   → { inServiceArea:true, area, city, state, zip }
  *   out-area  → { inServiceArea:false, zip }        (echoes the normalized zip)
  *   no zip    → { inServiceArea:false, error:'zip is required' }
@@ -22,7 +20,7 @@
 // ZIP normalization (recover a dropped leading zero) — shared util, so the
 // service-territory query layer and every caller normalize identically.
 const { normalizeZip } = require('../../../utils/zip');
-const stQueries = require('../../../db/serviceTerritoryQueries');
+const territoryService = require('../../territoryService');
 
 /**
  * @param {string} companyId Tenant scope (DEFAULT_COMPANY_ID on the voice surface).
@@ -35,15 +33,15 @@ async function run(companyId, _verifiedContext, input = {}) {
     const z = normalizeZip(zip);
     if (!z) return { inServiceArea: false, error: 'zip is required' };
 
-    const row = await stQueries.search(companyId, z);
-    if (!row) return { inServiceArea: false, zip: z };
+    const result = await territoryService.isZipInTerritory(companyId, z);
+    if (!result.inside) return { inServiceArea: false, zip: z };
 
     return {
         inServiceArea: true,
-        area: row.area || '',
-        city: row.city || '',
-        state: row.state || '',
-        zip: row.zip || z,
+        area: result.area || '',
+        city: result.city || '',
+        state: result.state || '',
+        zip: result.zip || z,
     };
 }
 

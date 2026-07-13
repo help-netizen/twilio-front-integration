@@ -9303,6 +9303,102 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 **Verify:** jest onboardingChecklist (worktree-путь из L-012).
 **Статус:** done (2026-07-13, GPT, ревью ACCEPT, 39/39 jest, стенд-прогон по амендменту 9)
 
+## SERVICE-TERR-002 — план (radius-территории + карта покрытия + единый containment-seam + онбординг-шаг service_territory) (2026-07-13)
+
+Спека: `Docs/specs/SERVICE-TERR-002.md`. Тест-кейсы: `Docs/test-cases/SERVICE-TERR-002.md`. Миграция 168 (+rollback). Mount router'а уже существует (server.js:316) — server.js НЕ трогаем.
+
+### Задача T1.1: миграция 168 + geo-утилита + queries-слой radii
+
+**Цель:** `168_service_territory_radius.sql` + `rollback_168_service_territory_radius.sql` — таблицы `company_territory_settings` / `territory_radii` / `zip_geocache` РОВНО по спеке §1.1 (additive, IF NOT EXISTS, комменты; zip_geocache — глобальная, БЕЗ company_id, зафиксировать COMMENT'ом; dim_zip не трогать/не использовать). `backend/src/utils/geo.js` — `haversineMiles` (в кодовой базе haversine нет — проверено grep). `backend/src/db/territoryRadiusQueries.js` — getSettings (дефолт 'list'), setMode (UPSERT), listRadii (LEFT JOIN zip_geocache для city/state), createRadius, deleteRadius (RETURNING, `AND company_id`), countListZips.
+
+**Файлы, которые можно менять:**
+- backend/db/migrations/168_service_territory_radius.sql (NEW) + rollback_168_service_territory_radius.sql (NEW)
+- backend/src/utils/geo.js (NEW)
+- backend/src/db/territoryRadiusQueries.js (NEW)
+
+**Файлы, которые трогать нельзя:** backend/src/db/serviceTerritoryQueries.js (list-lookup frozen), backend/db/schema.sql, существующие миграции.
+
+**Ожидаемый результат:** миграция накатывается/откатывается на dev-БД; ВСЕ SQL queries-слоя (кроме zip_geocache) фильтруют по company_id — данные изолированы между компаниями.
+
+**Verify:** накат/откат на dev-БД (psql), затем повторный накат; `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js tests/serviceTerritoryZip.test.js --testPathIgnorePatterns "/node_modules/"` (регресс query-слоя).
+
+**Зависимости:** нет. **Статус:** done (2026-07-13, GPT, ревью ACCEPT, up→rollback→re-up прогнан)
+
+### Задача T1.2: territoryGeoService (геокод зипа, кэш-first) + containment-seam territoryService
+
+**Цель:** `territoryGeoService.geocodeZip(zip)` по спеке §1.2 (normalizeZip → zip_geocache → Google Geocoding `components=postal_code:{zip}|country:US`, ключ `GOOGLE_GEOCODING_KEY || GOOGLE_PLACES_KEY` — подход googlePlacesService, его geocodeAddress НЕ реюзать напрямую (нет components-фильтра/city-state); фейл → null, никогда не throw; INSERT ON CONFLICT DO NOTHING). `territoryService.isZipInTerritory(companyId, query)` по спеке §1.3: list → stQueries.search байт-в-байт; radius → извлечь зип → geocodeZip → haversineMiles против всех пар → {inside, area=зип ближайшего покрывающего центра, city, state, zip, mode}.
+
+**Файлы:** backend/src/services/territoryGeoService.js (NEW), backend/src/services/territoryService.js (NEW), tests/territoryService.test.js (NEW — TC-TERR2-001…012, 026).
+
+**Трогать нельзя:** serviceTerritoryQueries.js, googlePlacesService.js (только образец), utils/zip.js.
+
+**Ожидаемый результат:** TC-TERR2-001…012 зелёные; в list-режиме seam делегирует search без модификации query; safe-fail everywhere (пустой radii-набор, геокод-фейл → inside:false, не 500).
+
+**Verify:** `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js tests/territoryService.test.js --testPathIgnorePatterns "/node_modules/"`.
+
+**Зависимости:** после T1.1. **Статус:** done (2026-07-13, GPT plan-first, ревью ACCEPT, 93/93 jest вкл. golden)
+
+### Задача T1.3: endpoints config/mode/radii + перевод потребителей на seam + integration-тесты
+
+**Цель:** в СУЩЕСТВУЮЩИЙ router `routes/service-territories.js` добавить `GET /config` (active_mode + radii[] + counts + company_zip + list_centroids; lazy-seed некэшированных list-зипов cap 10/запрос, dedup), `PUT /mode`, `POST /radii` (валидация 400; геокод внутри; 422 ZIP_NOT_FOUND; position=max+1), `DELETE /radii/:id` (чужой → 404) — контракты РОВНО спека §1.5; существующие endpoints не трогать; `getCompanyId` реюз. Перевести `routes/zip-check.js` и `agentSkills/skills/checkServiceArea.js` на `territoryService.isZipInTerritory` с сохранением frozen-шейпов (§1.4; out-ветка skill — РОВНО `{inServiceArea:false, zip}`). vapi-tools.js НЕ трогать (generic dispatch, проверено).
+
+**Файлы:** backend/src/routes/service-territories.js, backend/src/routes/zip-check.js, backend/src/services/agentSkills/skills/checkServiceArea.js, tests/serviceTerritoriesConfig.test.js (NEW — TC-TERR2-013…023, 027).
+
+**Трогать нельзя:** src/server.js (mount с authenticate+requirePermission('tenant.company.manage')+requireCompanyAccess уже есть), routes/vapi-tools.js, useZipCheck.ts.
+
+**Ожидаемый результат:** company_id ТОЛЬКО из `req.companyFilter?.company_id` (через getCompanyId); SQL-запросы фильтруют по company_id, данные изолированы между компаниями; доступ к чужому radius id → 404; 401/403-матрица (TC-TERR2-020) и isolation (TC-TERR2-021) зелёные; zip-check/skill контракты байт-в-байт в list-режиме (TC-TERR2-022/023).
+
+**Verify:** `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js tests/serviceTerritoriesConfig.test.js tests/serviceTerritoryZip.test.js --testPathIgnorePatterns "/node_modules/"`.
+
+**Зависимости:** после T1.2. **Статус:** done (2026-07-13, GPT, ревью ACCEPT, 15/15)
+
+### Задача T2.1: frontend — TerritoryCoverageMap (read-only карта)
+
+**Цель:** NEW `frontend/src/components/settings/TerritoryCoverageMap.tsx` по спеке §2.4: паттерн JobMap (CustomTimeModal.tsx:363+ — refs, loadGoogleMaps, LatLngBounds/fitBounds), props {mode, radii, listCentroids}; radius → google.maps.Circle (miles×1609.34, fill/stroke на бренд-акценте, fillOpacity ~0.12) + union getBounds; list → Marker'ы центроидов; строго read-only (disableDefaultUI, gestureHandling:'none', clickableIcons:false); нет данных/нет ключа/loader-reject → null (без пустых состояний).
+
+**Файлы:** frontend/src/components/settings/TerritoryCoverageMap.tsx (NEW).
+**Трогать нельзя:** frontend/src/utils/loadGoogleMaps.ts, CustomTimeModal.tsx (только образец).
+**Ожидаемый результат:** компонент компилируется изолированно; TC-TERR2-F02/F04 (проверка в T2.2-preview).
+**Verify:** `cd frontend && npm run build`.
+**Зависимости:** нет (параллельно с T1.*). **Статус:** done (2026-07-13, GPT plan-first, ревью ACCEPT, preview desktop+375: оба режима, seam live-проверен, данные не теряются)
+
+### Задача T2.2: frontend — ServiceTerritoriesPage: режимы, radius-CRUD, карта, мобильная вёрстка
+
+**Цель:** спека §2.1-2.3, §2.5 + Copy-таблица (нормативные строки): сегмент-toggle `Zip list`|`Radius` (паттерн blanc-control-chip; PUT /mode optimistic + откат) + подпись «Both setups are saved…»; radius-панель (пары-карточки `{zip} · {radius} mi` + city/state + бейдж Base у min position, Trash-delete; форма FloatingField «ZIP code»/«Radius (miles)», prefill company_zip при пустом списке, Add coverage, 422 → warm-toast); list-режим: функционал сохранён, кнопки Import/Export/Add из header-actions → wrap-toolbar list-режима; ZipTable в overflow-x-auto обёртке; «Coverage preview» (TerritoryCoverageMap) в обоих режимах; React Query ['service-territories-config']; 375px без горизонтального скролла страницы.
+
+**Файлы:** frontend/src/pages/ServiceTerritoriesPage.tsx.
+**Трогать нельзя:** SettingsPageShell.tsx, authedFetch/apiClient, useZipCheck.ts, дизайн-токены (только --blanc-*, без hr).
+**Ожидаемый результат:** TC-TERR2-F01…F05; существующие list-фичи (CSV import/export/add/удаление/sort/filter/areas) работают как раньше.
+**Verify:** `cd frontend && npm run build`; preview desktop + `resize_window` mobile 375 (оба режима, оба list-вида).
+**Зависимости:** после T1.3 (нужны endpoints) и T2.1. **Статус:** done (2026-07-13, GPT plan-first, ревью ACCEPT, preview desktop+375: оба режима, seam live-проверен, данные не теряются)
+
+### Задача T3: онбординг — шаг service_territory (backend-реестр + тесты + спека ONBOARDING-UX-001 §1.1-1.2 + иконка WelcomePage)
+
+**Цель:** в `CHECKLIST_ITEMS` запись `company_profile` ЗАМЕНИТЬ на `service_territory` (позиция 1; нормативные строки спека §1.6: title 'Set up your service territory', description 'Tell Albusto where you work — service-area checks and booking slots follow your coverage.', cta Set up → /settings/service-territories, est_minutes 2, done_note 'Mapped out — Albusto knows where you work.'); деривация — один tenant-scoped SQL: (mode=list AND EXISTS service_territories) OR (mode=radius AND EXISTS territory_radii), строка settings отсутствует → list; внешние API не зовутся. Write-once/visible-машина — байт-в-байт. `tests/onboardingChecklist.test.js`: нормативный payload/CATALOG → service_territory, деривация-кейсы TC-TERR2-024/025, прежние 401/403/write-once регрессы зелёные. `Docs/specs/ONBOARDING-UX-001.md` §1.1-1.2 — строка company_profile → service_territory. `WelcomePage.tsx` stepIcons: `service_territory: MapPin` (Receipt-импорт убрать, MapPin добавить).
+
+**Файлы:** backend/src/services/onboardingChecklistService.js, tests/onboardingChecklist.test.js, frontend/src/pages/WelcomePage.tsx, Docs/specs/ONBOARDING-UX-001.md.
+**Трогать нельзя:** routes/onboarding.js, getChecklist/markCompleted-машина (только состав реестра), useOnboardingChecklist.ts, OnboardingChecklistCard.tsx.
+**Ожидаемый результат:** чеклист = 4 шага, ключа company_profile нет; изоляция по company_id прежняя; «Blanc» в строках отсутствует; /welcome рендерит MapPin.
+**Verify:** `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js tests/onboardingChecklist.test.js --testPathIgnorePatterns "/node_modules/"`; `cd frontend && npm run build`.
+**Зависимости:** после T1.1 (таблицы для деривации). **Статус:** done (2026-07-13, GPT, ревью ACCEPT)
+
+### Задача T4: verify — build, полный jest, preview desktop+mobile, живой прогон (амендмент-9)
+
+**Цель:** `cd frontend && npm run build && npm test`; полный backend-jest `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --testPathIgnorePatterns "/node_modules/"` (падения сверить с базовым коммитом — 0 регрессий); preview-смоук: TC-TERR2-F01…F06 (desktop + mobile 375); амендмент-9 — ручной прогон с реальными данными dev-БД (TC-TERR2-F07): миграция 168 накатана, radius-пара реальная, GET /api/zip-check в обоих режимах, skill checkServiceArea node-скриптом, zip_geocache наполняется (Google зовётся один раз на зип — по логам); контроль: `git diff` не трогает protected (src/server.js, authedFetch.ts, useRealtimeEvents.ts, serviceTerritoryQueries.js, vapi-tools.js); grep 'Blanc' по изменённым файлам → пусто в UI-строках; накат/откат/накат миграции 168.
+
+**Файлы:** без кода (фиксы — микрокоммитами в рамках задачи).
+**Зависимости:** после T1.3, T2.2, T3. **Статус:** pending
+
+### Порядок выполнения и волны
+
+**Wave 1 (backend):** T1.1 → T1.2 → T1.3 (последовательно: queries → сервисы → endpoints/потребители). Параллельно допустим старт T2.1 (не зависит от backend).
+**Wave 2 (frontend):** T2.2 (после T1.3 + T2.1).
+**Wave 3 (онбординг):** T3 (после T1.1; независим от T1.2/T1.3/T2.* — параллелизуем с Wave 2).
+**Wave 4:** T4 (verify, после всех).
+Critical path: T1.1 → T1.2 → T1.3 → T2.2 → T4. **Prod deploy — owner-gated (deploy-consent).**
+
+> Скоуп-правка оркестратора (2026-07-13): перевод потребителей (zip-check.js, checkServiceArea.js, TC-022/023) перенесён из T1.3 в T1.2 (связность seam+потребители); T1.3 = только endpoints /config /mode /radii.
+
 ---
 
 ## YELP-CONVO-CONTEXT-002 — задачи (2026-07-13)

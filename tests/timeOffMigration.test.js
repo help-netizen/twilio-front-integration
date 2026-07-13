@@ -78,11 +78,11 @@ describe('TC-DO-29: number 167 is free and maximal (worktree-drift RECHECK, prec
         expect(files.some(f => /^166_/.test(f))).toBe(true);
     });
 
-    it('167 is the maximal migration number on disk', () => {
+    it('168 is the maximal migration number on disk (167 dayoff + 168 SERVICE-TERR-002)', () => {
         const numbers = files
             .map(f => (f.match(/^(\d+)_/) || [])[1])
             .filter(Boolean)
             .map(Number);
-        expect(Math.max(...numbers)).toBe(167);
+        expect(Math.max(...numbers)).toBe(168);
     });
 });

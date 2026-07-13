@@ -65,12 +65,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const CATALOG = [
     {
-        key: 'company_profile',
-        title: 'Complete your company profile',
-        description: 'Your company name, address, and logo appear on every estimate and invoice your customers see.',
-        cta: { label: 'Set up', path: '/settings/company' },
+        key: 'service_territory',
+        title: 'Set up your service territory',
+        description: 'Tell Albusto where you work — service-area checks and booking slots follow your coverage.',
+        cta: { label: 'Set up', path: '/settings/service-territories' },
         est_minutes: 2,
-        done_note: 'Looking sharp — your profile is on your documents.',
+        done_note: 'Mapped out — Albusto knows where you work.',
     },
     {
         key: 'connect_telephony',
@@ -141,10 +141,10 @@ const tenantAdminAuthz = (companyId = COMPANY_A) => ({
 const completedAtRow = value => ({ rows: [{ completed_at: value }] });
 const doneRow = done => ({ rows: [{ done }] });
 
-function mockChecklistDb({ completedAt = null, profileDone = false, telephonyDone = false } = {}) {
+function mockChecklistDb({ completedAt = null, territoryDone = false, telephonyDone = false } = {}) {
     db.query
         .mockResolvedValueOnce(completedAtRow(completedAt))
-        .mockResolvedValueOnce(doneRow(profileDone))
+        .mockResolvedValueOnce(doneRow(territoryDone))
         .mockResolvedValueOnce(doneRow(telephonyDone));
 }
 
@@ -181,6 +181,7 @@ describe('GET /api/onboarding/checklist — catalog, progress, and write-once st
                 },
             });
             expect(JSON.stringify(res.body)).not.toContain('Blanc');
+            expect(res.body.checklist.items.map(item => item.key)).not.toContain('company_profile');
             expect(checklistService.CHECKLIST_ITEMS).toHaveLength(4);
             expect(db.query.mock.calls.some(([sql]) => sql.includes('UPDATE companies'))).toBe(false);
         } finally {
@@ -189,7 +190,7 @@ describe('GET /api/onboarding/checklist — catalog, progress, and write-once st
     });
 
     test('TC-OBX-002: partial completion returns 2-of-4 and remains visible', async () => {
-        mockChecklistDb({ profileDone: true, telephonyDone: true });
+        mockChecklistDb({ territoryDone: true, telephonyDone: true });
         stripePaymentsService.getStatus.mockResolvedValue({ readiness: 'onboarding_incomplete' });
 
         const res = await request(appWith({ authz: tenantAdminAuthz() })).get('/api/onboarding/checklist');
@@ -206,7 +207,7 @@ describe('GET /api/onboarding/checklist — catalog, progress, and write-once st
 
     test('TC-OBX-003: all four done performs exactly one guarded write-once UPDATE', async () => {
         const fixed = '2026-07-12T12:30:00+00';
-        mockChecklistDb({ profileDone: true, telephonyDone: true });
+        mockChecklistDb({ territoryDone: true, telephonyDone: true });
         emailMailboxService.getMailboxStatus.mockResolvedValue({ provider: 'gmail', status: 'connected' });
         stripePaymentsService.getStatus.mockResolvedValue({ readiness: 'connected_ready' });
         db.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ completed_at: fixed }] });
@@ -234,7 +235,7 @@ describe('GET /api/onboarding/checklist — catalog, progress, and write-once st
 
     test('TC-OBX-004: existing completed_at never resurfaces despite incomplete new catalog items', async () => {
         const existing = '2026-07-01T09:30:00+00';
-        mockChecklistDb({ completedAt: existing, profileDone: false, telephonyDone: true });
+        mockChecklistDb({ completedAt: existing, territoryDone: false, telephonyDone: true });
 
         const checklist = await checklistService.getChecklist(COMPANY_A);
 
@@ -250,18 +251,42 @@ describe('GET /api/onboarding/checklist — catalog, progress, and write-once st
 
 describe('individual checklist derivations', () => {
     test.each([
-        ['logo exists but address is incomplete', false, false],
-        ['logo and full address exist', true, true],
-    ])('TC-OBX-005: company_profile — %s', async (_label, queryDone, expected) => {
+        ['list mode with service territories', 'list', true, false, true],
+        ['list mode without service territories', 'list', false, true, false],
+        ['radius mode with territory radii', 'radius', false, true, true],
+        ['radius mode without territory radii', 'radius', true, false, false],
+        ['missing settings row defaults to list mode', null, true, false, true],
+    ])('TC-TERR2-024: service_territory — %s', async (_label, mode, listExists, radiusExists, expected) => {
+        const queryDone = mode === 'radius' ? radiusExists : listExists;
         db.query.mockResolvedValueOnce(doneRow(queryDone));
-        const item = checklistService.CHECKLIST_ITEMS.find(candidate => candidate.key === 'company_profile');
+        const item = checklistService.CHECKLIST_ITEMS.find(candidate => candidate.key === 'service_territory');
 
         await expect(item.isComplete(COMPANY_A)).resolves.toBe(expected);
 
         expect(db.query).toHaveBeenCalledWith(
-            'SELECT logo_storage_key IS NOT NULL AND city IS NOT NULL AND state IS NOT NULL AND zip IS NOT NULL AS done FROM companies WHERE id = $1',
+            `SELECT CASE
+                   WHEN COALESCE(
+                       (SELECT active_mode
+                        FROM company_territory_settings
+                        WHERE company_id = $1),
+                       'list'
+                   ) = 'radius'
+                   THEN EXISTS (
+                       SELECT 1
+                       FROM territory_radii
+                       WHERE company_id = $1
+                   )
+                   ELSE EXISTS (
+                       SELECT 1
+                       FROM service_territories
+                       WHERE company_id = $1
+                   )
+                 END AS done`,
             [COMPANY_A]
         );
+        expect(emailMailboxService.getMailboxStatus).not.toHaveBeenCalled();
+        expect(stripePaymentsService.getStatus).not.toHaveBeenCalled();
+        expect(billingService.getSubscription).not.toHaveBeenCalled();
     });
 
     test.each([
@@ -491,7 +516,7 @@ describe('errors, authentication, authorization, and tenant isolation', () => {
 describe('write-once edge cases and onboarding redirect', () => {
     test('TC-OBX-016: concurrent guarded UPDATE loser re-reads winner value', async () => {
         const winner = '2026-07-12T13:00:00+00';
-        mockChecklistDb({ profileDone: true, telephonyDone: true });
+        mockChecklistDb({ territoryDone: true, telephonyDone: true });
         emailMailboxService.getMailboxStatus.mockResolvedValue({ provider: 'gmail', status: 'connected' });
         stripePaymentsService.getStatus.mockResolvedValue({ readiness: 'connected_ready' });
         db.query
@@ -509,7 +534,7 @@ describe('write-once edge cases and onboarding redirect', () => {
     test('TC-OBX-017: completed_at write failure still returns 200 visible:false', async () => {
         const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
         try {
-            mockChecklistDb({ profileDone: true, telephonyDone: true });
+            mockChecklistDb({ territoryDone: true, telephonyDone: true });
             emailMailboxService.getMailboxStatus.mockResolvedValue({ provider: 'gmail', status: 'connected' });
             stripePaymentsService.getStatus.mockResolvedValue({ readiness: 'connected_ready' });
             db.query.mockRejectedValueOnce(new Error('deadlock detected'));

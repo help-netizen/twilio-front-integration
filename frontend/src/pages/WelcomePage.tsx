@@ -1,4 +1,4 @@
-import { CheckCircle2, CreditCard, Mail, Phone, Receipt, Sparkles } from 'lucide-react';
+import { CheckCircle2, CreditCard, Mail, MapPin, Phone, Sparkles } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
 
 import { CloudBanner } from '../components/ui/CloudBanner';
@@ -9,7 +9,7 @@ import { useOnboardingChecklist } from '../hooks/useOnboardingChecklist';
 import type { OnboardingChecklistTrial } from '../services/onboardingApi';
 
 const stepIcons = {
-    company_profile: Receipt,
+    service_territory: MapPin,
     connect_telephony: Phone,
     connect_email: Mail,
     stripe_payments: CreditCard,

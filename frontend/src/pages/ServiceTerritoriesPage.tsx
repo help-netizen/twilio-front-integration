@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../services/apiClient';
 import { Plus, Upload, Download, Trash2, Loader2, Search, ChevronUp, ChevronDown, MapPin, ArrowLeft, LayoutGrid, List } from 'lucide-react';
@@ -9,6 +9,7 @@ import { FloatingField } from '../components/ui/floating-field';
 import { FloatingSelect } from '../components/ui/floating-select';
 import { SelectItem } from '../components/ui/select';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { TerritoryCoverageMap } from '../components/settings/TerritoryCoverageMap';
 import { toast } from 'sonner';
 
 // ---------------------------------------------------------------------------
@@ -25,6 +26,44 @@ interface Territory {
     created_at: string;
 }
 
+type TerritoryMode = 'list' | 'radius';
+
+interface TerritoryRadius {
+    id: string;
+    zip: string;
+    radius_miles: number;
+    lat: number;
+    lon: number;
+    position: number;
+    city: string | null;
+    state: string | null;
+}
+
+interface TerritoryConfig {
+    active_mode: TerritoryMode;
+    radii: TerritoryRadius[];
+    counts: { list_zips: number; radii: number };
+    company_zip: string | null;
+    list_centroids: { zip: string; lat: number; lon: number }[];
+}
+
+class ApiRequestError extends Error {
+    readonly status: number;
+    readonly code?: string;
+
+    constructor(message: string, status: number, code?: string) {
+        super(message);
+        this.status = status;
+        this.code = code;
+    }
+}
+
+async function requestError(response: Response, fallback: string): Promise<never> {
+    const data = await response.json().catch(() => null) as { error?: string } | null;
+    const apiMessage = data?.error;
+    throw new ApiRequestError(apiMessage || fallback, response.status, apiMessage);
+}
+
 async function fetchTerritories(): Promise<Territory[]> {
     const r = await authedFetch(API);
     if (!r.ok) throw new Error('Failed to load');
@@ -37,6 +76,52 @@ async function fetchAreas(): Promise<string[]> {
     if (!r.ok) throw new Error('Failed to load areas');
     const data = await r.json();
     return data.areas;
+}
+
+async function fetchTerritoryConfig(): Promise<TerritoryConfig> {
+    const r = await authedFetch(`${API}/config`);
+    if (!r.ok) return requestError(r, 'Failed to load service territory config');
+    const data = await r.json() as { config: TerritoryConfig };
+    return {
+        ...data.config,
+        radii: data.config.radii.map(radius => ({
+            ...radius,
+            radius_miles: Number(radius.radius_miles),
+            lat: Number(radius.lat),
+            lon: Number(radius.lon),
+            position: Number(radius.position),
+        })),
+        list_centroids: data.config.list_centroids.map(centroid => ({
+            ...centroid,
+            lat: Number(centroid.lat),
+            lon: Number(centroid.lon),
+        })),
+    };
+}
+
+async function updateTerritoryMode(active_mode: TerritoryMode) {
+    const r = await authedFetch(`${API}/mode`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active_mode }),
+    });
+    if (!r.ok) return requestError(r, 'Failed to update service territory mode');
+    return r.json() as Promise<{ config: { active_mode: TerritoryMode } }>;
+}
+
+async function addTerritoryRadius(body: { zip: string; radius_miles: number }) {
+    const r = await authedFetch(`${API}/radii`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!r.ok) return requestError(r, 'Failed to add coverage');
+    return r.json() as Promise<{ radius: TerritoryRadius }>;
+}
+
+async function removeTerritoryRadius(id: string) {
+    const r = await authedFetch(`${API}/radii/${id}`, { method: 'DELETE' });
+    if (!r.ok) return requestError(r, 'Failed to remove coverage');
 }
 
 async function addZipCode(body: { zip: string; area: string; city?: string; state?: string; county?: string }) {
@@ -163,6 +248,30 @@ function ViewToggle({ view, onChange }: { view: 'areas' | 'table'; onChange: (v:
     );
 }
 
+function ModeToggle({ mode, onChange, disabled }: {
+    mode: TerritoryMode;
+    onChange: (mode: TerritoryMode) => void;
+    disabled: boolean;
+}) {
+    return (
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Service territory mode">
+            {([['list', 'Zip list'], ['radius', 'Radius']] as const).map(([value, label]) => (
+                <button
+                    key={value}
+                    type="button"
+                    className="blanc-control-chip disabled:cursor-not-allowed disabled:opacity-50"
+                    data-active={mode === value ? '' : undefined}
+                    aria-pressed={mode === value}
+                    disabled={disabled}
+                    onClick={() => onChange(value)}
+                >
+                    {label}
+                </button>
+            ))}
+        </div>
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Area cards grid
 // ---------------------------------------------------------------------------
@@ -253,8 +362,11 @@ function ZipTable({ rows, onRemove, removing }: {
                     />
                 </div>
             </div>
-            <div style={{ border: '1px solid var(--blanc-line)', borderRadius: 12, overflow: 'hidden' }}>
-                <table className="w-full" style={{ fontSize: 13 }}>
+            <div
+                className="max-w-full overflow-x-auto rounded-xl"
+                style={{ border: '1px solid var(--blanc-line)', WebkitOverflowScrolling: 'touch' }}
+            >
+                <table className="w-full min-w-[720px]" style={{ fontSize: 13 }}>
                     <thead>
                         <tr style={{ background: 'rgba(25,25,25,0.03)' }}>
                             {([['zip','ZIP'],['area','Area'],['city','City'],['state','State'],['county','County']] as [SortKey, string][]).map(([key, label]) => (
@@ -300,6 +412,149 @@ function ZipTable({ rows, onRemove, removing }: {
     );
 }
 
+function RadiusPanel({ config }: { config: TerritoryConfig }) {
+    const qc = useQueryClient();
+    const [zip, setZip] = useState('');
+    const [radiusMiles, setRadiusMiles] = useState('');
+    const prefilledZipRef = useRef(false);
+    const zipTouchedRef = useRef(false);
+
+    const orderedRadii = useMemo(
+        () => [...config.radii].sort((a, b) => a.position - b.position),
+        [config.radii],
+    );
+
+    useEffect(() => {
+        if (prefilledZipRef.current || zipTouchedRef.current || orderedRadii.length > 0 || !config.company_zip) return;
+        const companyZip = String(config.company_zip).replace(/\D/g, '').slice(0, 5);
+        if (!companyZip) return;
+        setZip(companyZip);
+        prefilledZipRef.current = true;
+    }, [config.company_zip, orderedRadii.length]);
+
+    const addRadiusMut = useMutation({
+        mutationFn: addTerritoryRadius,
+        onSuccess: () => {
+            setZip('');
+            setRadiusMiles('');
+            toast.success('Coverage added');
+            qc.invalidateQueries({ queryKey: ['service-territories-config'] });
+        },
+        onError: (error: Error) => {
+            if (error instanceof ApiRequestError && error.status === 422 && error.code === 'ZIP_NOT_FOUND') {
+                toast.error("We couldn't find that ZIP — check the digits and try again.");
+                return;
+            }
+            toast.error(error.message);
+        },
+    });
+
+    const deleteRadiusMut = useMutation({
+        mutationFn: removeTerritoryRadius,
+        onSuccess: () => {
+            toast.success('Coverage removed');
+            qc.invalidateQueries({ queryKey: ['service-territories-config'] });
+        },
+        onError: (error: Error) => toast.error(error.message),
+    });
+
+    const radiusNumber = Number(radiusMiles);
+    const canSubmit = zip.length === 5
+        && radiusMiles.trim() !== ''
+        && Number.isFinite(radiusNumber)
+        && radiusNumber > 0
+        && radiusNumber <= 200;
+
+    const handleSubmit = (event: React.FormEvent) => {
+        event.preventDefault();
+        if (!canSubmit || addRadiusMut.isPending) return;
+        addRadiusMut.mutate({ zip, radius_miles: radiusNumber });
+    };
+
+    return (
+        <div className="min-w-0 space-y-6">
+            {orderedRadii.length === 0 ? (
+                <div className="py-12 text-center" style={{ border: '2px dashed var(--blanc-line)', borderRadius: 16 }}>
+                    <MapPin className="mx-auto mb-3 size-10 opacity-50" style={{ color: 'var(--blanc-ink-3)' }} />
+                    <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--blanc-ink-2)' }}>No coverage yet</div>
+                    <div className="mx-auto mt-1 max-w-lg px-4" style={{ fontSize: 13, color: 'var(--blanc-ink-3)' }}>
+                        Add your base ZIP and how far you'll drive — that's your service area.
+                    </div>
+                </div>
+            ) : (
+                <div className="space-y-3.5">
+                    {orderedRadii.map((radius, index) => {
+                        const location = [radius.city, radius.state].filter(Boolean).join(', ');
+                        const deleting = deleteRadiusMut.isPending && deleteRadiusMut.variables === radius.id;
+                        return (
+                            <div
+                                key={radius.id}
+                                className="flex min-w-0 items-center gap-3 rounded-xl p-4"
+                                style={{ border: '1px solid var(--blanc-line)' }}
+                            >
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span style={{ fontWeight: 600, color: 'var(--blanc-ink-1)' }}>
+                                            {radius.zip} · {radius.radius_miles} mi
+                                        </span>
+                                        {index === 0 && (
+                                            <span
+                                                className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                                                style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
+                                            >
+                                                Base
+                                            </span>
+                                        )}
+                                    </div>
+                                    {location && (
+                                        <div className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>{location}</div>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg disabled:cursor-not-allowed disabled:opacity-50"
+                                    style={{ color: 'var(--blanc-ink-3)' }}
+                                    aria-label={`Remove coverage for ${radius.zip}`}
+                                    title="Remove coverage"
+                                    disabled={deleteRadiusMut.isPending}
+                                    onClick={() => deleteRadiusMut.mutate(radius.id)}
+                                >
+                                    {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                <FloatingField
+                    id="territory-radius-zip"
+                    label="ZIP code"
+                    inputMode="numeric"
+                    value={zip}
+                    onChange={event => {
+                        zipTouchedRef.current = true;
+                        setZip(event.target.value.replace(/\D/g, '').slice(0, 5));
+                    }}
+                />
+                <FloatingField
+                    id="territory-radius-miles"
+                    label="Radius (miles)"
+                    type="number"
+                    inputMode="decimal"
+                    value={radiusMiles}
+                    onChange={event => setRadiusMiles(event.target.value)}
+                />
+                <Button type="submit" className="h-[50px] w-full sm:w-auto" disabled={!canSubmit || addRadiusMut.isPending}>
+                    {addRadiusMut.isPending ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Plus className="mr-1.5 size-4" />}
+                    Add coverage
+                </Button>
+            </form>
+        </div>
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
@@ -307,6 +562,19 @@ const ServiceTerritoriesPage: React.FC = () => {
     const qc = useQueryClient();
     const { data: territories = [], isLoading } = useQuery({ queryKey: ['service-territories'], queryFn: fetchTerritories });
     const { data: areas = [] } = useQuery({ queryKey: ['service-territories-areas'], queryFn: fetchAreas });
+    const configQuery = useQuery({ queryKey: ['service-territories-config'], queryFn: fetchTerritoryConfig });
+    const config = configQuery.data;
+    const activeMode = config?.active_mode ?? 'list';
+    const configErrorToastRef = useRef(false);
+
+    useEffect(() => {
+        if (configQuery.error && !configErrorToastRef.current) {
+            toast.error(configQuery.error.message);
+            configErrorToastRef.current = true;
+        } else if (!configQuery.error) {
+            configErrorToastRef.current = false;
+        }
+    }, [configQuery.error]);
 
     // View mode
     const [view, setView] = useState<'areas' | 'table'>('areas');
@@ -325,7 +593,11 @@ const ServiceTerritoriesPage: React.FC = () => {
     const [addOpen, setAddOpen] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
 
-    const invalidate = () => { qc.invalidateQueries({ queryKey: ['service-territories'] }); qc.invalidateQueries({ queryKey: ['service-territories-areas'] }); };
+    const invalidate = () => {
+        qc.invalidateQueries({ queryKey: ['service-territories'] });
+        qc.invalidateQueries({ queryKey: ['service-territories-areas'] });
+        qc.invalidateQueries({ queryKey: ['service-territories-config'] });
+    };
 
     // Mutations
     const addMut = useMutation({
@@ -343,74 +615,121 @@ const ServiceTerritoriesPage: React.FC = () => {
         onSuccess: (data) => { invalidate(); toast.success(`Imported ${data.imported} zip codes`); setImportOpen(false); },
         onError: () => toast.error('Import failed'),
     });
+    const modeMut = useMutation({
+        mutationFn: updateTerritoryMode,
+        onMutate: async (nextMode) => {
+            await qc.cancelQueries({ queryKey: ['service-territories-config'] });
+            const previous = qc.getQueryData<TerritoryConfig>(['service-territories-config']);
+            qc.setQueryData<TerritoryConfig>(['service-territories-config'], current => (
+                current ? { ...current, active_mode: nextMode } : current
+            ));
+            return { previous };
+        },
+        onError: (error: Error, _nextMode, context) => {
+            if (context?.previous) {
+                qc.setQueryData(['service-territories-config'], context.previous);
+            }
+            toast.error(error.message);
+        },
+        onSettled: () => {
+            qc.invalidateQueries({ queryKey: ['service-territories-config'] });
+        },
+    });
 
     const handleSelectArea = (area: string) => { setActiveArea(area); };
     const handleBackToAreas = () => { setActiveArea(null); };
+    const handleModeChange = (mode: TerritoryMode) => {
+        if (mode !== activeMode && !modeMut.isPending) modeMut.mutate(mode);
+    };
 
     return (
         <SettingsPageShell
             title="Service Territories"
-            description="Manage zip codes your company services, grouped by area."
-            actions={
-                <>
-                    <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-                        <Upload className="size-3.5 mr-1.5" />Import CSV
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => exportCsv()} disabled={territories.length === 0}>
-                        <Download className="size-3.5 mr-1.5" />Export
-                    </Button>
-                    <Button size="sm" onClick={() => setAddOpen(true)}>
-                        <Plus className="size-3.5 mr-1.5" />Add Zip Code
-                    </Button>
-                </>
-            }
+            description="Tell Albusto where you work — as a zip list, or as a radius around your base."
         >
-            {/* Controls + list share one tighter rhythm than the page sections */}
-            <div className="space-y-4">
-                {/* Stats + view toggle */}
-                <div className="flex items-center gap-4 flex-wrap">
-                    <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)' }}>
-                        Total: <strong style={{ color: 'var(--blanc-ink-1)' }}>{territories.length}</strong> zip codes in <strong style={{ color: 'var(--blanc-ink-1)' }}>{uniqueAreas}</strong> areas
-                    </div>
-                    <ViewToggle view={activeArea !== null ? 'areas' : view} onChange={v => { if (v === 'areas') setActiveArea(null); setView(v); }} />
+            <div className="min-w-0 space-y-6">
+                <div className="space-y-3.5">
+                    <ModeToggle
+                        mode={activeMode}
+                        onChange={handleModeChange}
+                        disabled={!config || configQuery.isLoading || modeMut.isPending}
+                    />
+                    <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
+                        Both setups are saved — switching modes never erases anything.
+                    </p>
                 </div>
 
-                {/* Breadcrumb when inside an area */}
-                {activeArea !== null && (
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={handleBackToAreas}
-                            className="inline-flex items-center gap-1.5"
-                            style={{ fontSize: 13, color: 'var(--blanc-ink-3)', cursor: 'pointer', border: 'none', background: 'transparent', padding: 0 }}
-                        >
-                            <ArrowLeft className="size-3.5" />All Areas
-                        </button>
-                        <span style={{ color: 'var(--blanc-ink-3)', fontSize: 13 }}>/</span>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{activeArea || '(No area)'}</span>
-                        <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginLeft: 4 }}>{areaRows.length} zip codes</span>
-                    </div>
-                )}
+                {activeMode === 'list' ? (
+                    <div className="min-w-0 space-y-4">
+                        <div className="flex flex-wrap gap-2">
+                            <Button variant="outline" size="sm" className="min-h-9" onClick={() => setImportOpen(true)}>
+                                <Upload className="mr-1.5 size-3.5" />Import CSV
+                            </Button>
+                            <Button variant="outline" size="sm" className="min-h-9" onClick={() => exportCsv()} disabled={territories.length === 0}>
+                                <Download className="mr-1.5 size-3.5" />Export
+                            </Button>
+                            <Button size="sm" className="min-h-9" onClick={() => setAddOpen(true)}>
+                                <Plus className="mr-1.5 size-3.5" />Add Zip Code
+                            </Button>
+                        </div>
 
-                {/* Content */}
-                {isLoading ? (
+                        {/* Stats + view toggle */}
+                        <div className="flex flex-wrap items-center gap-4">
+                            <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)' }}>
+                                Total: <strong style={{ color: 'var(--blanc-ink-1)' }}>{territories.length}</strong> zip codes in <strong style={{ color: 'var(--blanc-ink-1)' }}>{uniqueAreas}</strong> areas
+                            </div>
+                            <ViewToggle view={activeArea !== null ? 'areas' : view} onChange={v => { if (v === 'areas') setActiveArea(null); setView(v); }} />
+                        </div>
+
+                        {/* Breadcrumb when inside an area */}
+                        {activeArea !== null && (
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    onClick={handleBackToAreas}
+                                    className="inline-flex items-center gap-1.5"
+                                    style={{ fontSize: 13, color: 'var(--blanc-ink-3)', cursor: 'pointer', border: 'none', background: 'transparent', padding: 0 }}
+                                >
+                                    <ArrowLeft className="size-3.5" />All Areas
+                                </button>
+                                <span style={{ color: 'var(--blanc-ink-3)', fontSize: 13 }}>/</span>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{activeArea || '(No area)'}</span>
+                                <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginLeft: 4 }}>{areaRows.length} zip codes</span>
+                            </div>
+                        )}
+
+                        {/* Content */}
+                        {isLoading ? (
+                            <div className="flex items-center justify-center py-16">
+                                <Loader2 className="size-6 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
+                            </div>
+                        ) : territories.length === 0 ? (
+                            <div className="py-16 text-center" style={{ border: '2px dashed var(--blanc-line)', borderRadius: 16 }}>
+                                <MapPin className="mx-auto mb-3 size-10" style={{ color: 'var(--blanc-ink-3)', opacity: 0.5 }} />
+                                <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--blanc-ink-2)' }}>No zip codes yet</div>
+                                <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)', marginTop: 4 }}>Add zip codes manually or import from a CSV file.</div>
+                            </div>
+                        ) : activeArea !== null ? (
+                            <ZipTable rows={areaRows} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
+                        ) : view === 'areas' ? (
+                            <AreaCardsGrid territories={territories} onSelectArea={handleSelectArea} />
+                        ) : (
+                            <ZipTable rows={territories} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
+                        )}
+                    </div>
+                ) : config ? (
+                    <RadiusPanel config={config} />
+                ) : (
                     <div className="flex items-center justify-center py-16">
                         <Loader2 className="size-6 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
                     </div>
-                ) : territories.length === 0 ? (
-                    <div className="text-center py-16" style={{ border: '2px dashed var(--blanc-line)', borderRadius: 16 }}>
-                        <MapPin className="size-10 mx-auto mb-3" style={{ color: 'var(--blanc-ink-3)', opacity: 0.5 }} />
-                        <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--blanc-ink-2)' }}>No zip codes yet</div>
-                        <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)', marginTop: 4 }}>Add zip codes manually or import from a CSV file.</div>
-                    </div>
-                ) : activeArea !== null ? (
-                    /* Area detail — filtered table */
-                    <ZipTable rows={areaRows} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
-                ) : view === 'areas' ? (
-                    /* Area cards grid */
-                    <AreaCardsGrid territories={territories} onSelectArea={handleSelectArea} />
-                ) : (
-                    /* Flat table */
-                    <ZipTable rows={territories} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
+                )}
+
+                {config && (
+                    <TerritoryCoverageMap
+                        mode={activeMode}
+                        radii={config.radii}
+                        listCentroids={config.list_centroids}
+                    />
                 )}
             </div>
 
@@ -484,7 +803,7 @@ function AddZipDialog({ open, onOpenChange, areas, onAdd, isPending, defaultArea
                                 {area === '__new__' && (
                                     <FloatingField id="azd-new-area" label="New area name" value={newArea} onChange={e => setNewArea(e.target.value)} />
                                 )}
-                                <div className="grid grid-cols-[2fr_104px_1fr] gap-3.5">
+                                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-[2fr_104px_1fr]">
                                     <FloatingField id="azd-city" label="City" value={city} onChange={e => setCity(e.target.value)} />
                                     <FloatingSelect id="azd-state" label="State" value={state} onValueChange={setState}>
                                         {US_STATES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -580,7 +899,7 @@ function ImportDialog({ open, onOpenChange, onImport, isPending }: {
                             type="file"
                             accept=".csv,.txt"
                             onChange={handleFile}
-                            className="text-sm"
+                            className="max-w-full text-sm"
                         />
                         {error && <div className="text-sm" style={{ color: 'var(--blanc-danger)' }}>{error}</div>}
                         {parsed && (

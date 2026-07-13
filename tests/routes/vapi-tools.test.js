@@ -21,8 +21,8 @@ const EventEmitter = require('events');
 
 // ─── Mocks (must be declared before requiring the router) ──────────────────────
 
-jest.mock('../../backend/src/db/serviceTerritoryQueries', () => ({
-    search: jest.fn(),
+jest.mock('../../backend/src/services/territoryService', () => ({
+    isZipInTerritory: jest.fn(),
 }));
 jest.mock('../../backend/src/services/leadsService', () => ({
     createLead: jest.fn(),
@@ -46,7 +46,7 @@ const https = require('https');
 // SAFE_FALLBACK: the ONLY shape the skill layer leaks on any error/unknown-tool
 // path (imported from the source of truth so these assertions track its wording).
 const { SAFE_FALLBACK } = require('../../backend/src/services/agentSkills/resultShapes');
-const stQueries = require('../../backend/src/db/serviceTerritoryQueries');
+const territoryService = require('../../backend/src/services/territoryService');
 const leadsService = require('../../backend/src/services/leadsService');
 const scheduleService = require('../../backend/src/services/scheduleService');
 const marketplaceService = require('../../backend/src/services/marketplaceService');
@@ -218,7 +218,9 @@ describe('Group 3 — checkServiceArea', () => {
 
     // TC-LQV2-008
     test('zip in service area → inServiceArea true with area/city/state', async () => {
-        stQueries.search.mockResolvedValue({ zip: '02101', area: 'Boston', city: 'Boston', state: 'MA' });
+        territoryService.isZipInTerritory.mockResolvedValue({
+            inside: true, area: 'Boston', city: 'Boston', state: 'MA', zip: '02101', mode: 'list',
+        });
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', { zip: '02101' }));
         expect(resultOf(res)).toEqual({
@@ -228,7 +230,9 @@ describe('Group 3 — checkServiceArea', () => {
 
     // TC-LQV2-009
     test('zip outside service area → inServiceArea false (echoes the normalized zip)', async () => {
-        stQueries.search.mockResolvedValue(null);
+        territoryService.isZipInTerritory.mockResolvedValue({
+            inside: false, area: '', city: '', state: '', zip: '03801', mode: 'list',
+        });
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', { zip: '03801' }));
         expect(resultOf(res)).toEqual({ inServiceArea: false, zip: '03801' });
@@ -239,14 +243,14 @@ describe('Group 3 — checkServiceArea', () => {
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', {}));
         expect(resultOf(res)).toEqual({ inServiceArea: false, error: 'zip is required' });
-        expect(stQueries.search).not.toHaveBeenCalled();
+        expect(territoryService.isZipInTerritory).not.toHaveBeenCalled();
     });
 
     // TC-LQV2-011 / ASK-VAPI-22 (G6): a DB error inside the skill degrades to the
     // skill-layer SAFE_FALLBACK — HTTP 200, graceful, and CRITICALLY the internal
     // error message ('DB connection failed') is NEVER surfaced to the caller.
     test('DB error → SAFE_FALLBACK, HTTP 200, no err.message leak', async () => {
-        stQueries.search.mockRejectedValue(new Error('DB connection failed'));
+        territoryService.isZipInTerritory.mockRejectedValue(new Error('DB connection failed'));
         const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', { zip: '02101' }));
@@ -891,9 +895,13 @@ describe('Group 7 — parallel tool calls', () => {
 
     // TC-LQV2-030
     test('multiple tool calls in one request → all processed in order', async () => {
-        stQueries.search
-            .mockResolvedValueOnce({ zip: '02101', area: 'Boston', city: 'Boston', state: 'MA' })
-            .mockResolvedValueOnce(null);
+        territoryService.isZipInTerritory
+            .mockResolvedValueOnce({
+                inside: true, area: 'Boston', city: 'Boston', state: 'MA', zip: '02101', mode: 'list',
+            })
+            .mockResolvedValueOnce({
+                inside: false, area: '', city: '', state: '', zip: '03801', mode: 'list',
+            });
         const res = await auth(request(app).post('/api/vapi-tools')).send({
             message: {
                 type: 'tool-calls',
@@ -918,7 +926,9 @@ describe('Group 7 — parallel tool calls', () => {
 describe('Group 9 — public mount', () => {
     // TC-LQV2-033
     test('route works without Authorization header (only x-vapi-secret)', async () => {
-        stQueries.search.mockResolvedValue({ zip: '02101', area: 'Boston', city: 'Boston', state: 'MA' });
+        territoryService.isZipInTerritory.mockResolvedValue({
+            inside: true, area: 'Boston', city: 'Boston', state: 'MA', zip: '02101', mode: 'list',
+        });
         const res = await request(app)
             .post('/api/vapi-tools')
             .set('x-vapi-secret', SECRET)

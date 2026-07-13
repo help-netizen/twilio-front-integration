@@ -36,15 +36,32 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 const CHECKLIST_ITEMS = [
     {
-        key: 'company_profile',
-        title: 'Complete your company profile',
-        description: 'Your company name, address, and logo appear on every estimate and invoice your customers see.',
-        cta: { label: 'Set up', path: '/settings/company' },
+        key: 'service_territory',
+        title: 'Set up your service territory',
+        description: 'Tell Albusto where you work — service-area checks and booking slots follow your coverage.',
+        cta: { label: 'Set up', path: '/settings/service-territories' },
         est_minutes: 2,
-        done_note: 'Looking sharp — your profile is on your documents.',
+        done_note: 'Mapped out — Albusto knows where you work.',
         async isComplete(companyId) {
             const { rows } = await db.query(
-                'SELECT logo_storage_key IS NOT NULL AND city IS NOT NULL AND state IS NOT NULL AND zip IS NOT NULL AS done FROM companies WHERE id = $1',
+                `SELECT CASE
+                   WHEN COALESCE(
+                       (SELECT active_mode
+                        FROM company_territory_settings
+                        WHERE company_id = $1),
+                       'list'
+                   ) = 'radius'
+                   THEN EXISTS (
+                       SELECT 1
+                       FROM territory_radii
+                       WHERE company_id = $1
+                   )
+                   ELSE EXISTS (
+                       SELECT 1
+                       FROM service_territories
+                       WHERE company_id = $1
+                   )
+                 END AS done`,
                 [companyId]
             );
             return rows[0]?.done === true;

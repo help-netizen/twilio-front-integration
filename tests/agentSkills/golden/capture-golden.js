@@ -66,10 +66,10 @@ const EventEmitter = require('events');
 let geocodePayload = null;
 let geocodeError = null;
 
-// serviceTerritoryQueries.search(companyId, zip)
-const stQueries = {
+// territoryService.isZipInTerritory(companyId, zip)
+const territoryService = {
     _next: null,
-    search: async () => stQueries._next,
+    isZipInTerritory: async () => territoryService._next,
 };
 // scheduleService.getAvailableSlots(companyId, opts)
 const scheduleService = {
@@ -132,7 +132,7 @@ const httpsStub = {
 // Built by resolving each service the way the skills import it (from SKILLS_DIR).
 const skillsRequire = Module.createRequire(path.join(SKILLS_DIR, 'noop.js'));
 const STUB_BY_FILE = new Map([
-    [skillsRequire.resolve('../../../db/serviceTerritoryQueries'), stQueries],
+    [skillsRequire.resolve('../../territoryService'), territoryService],
     [skillsRequire.resolve('../../scheduleService'), scheduleService],
     [skillsRequire.resolve('../../marketplaceService'), marketplaceService],
     [skillsRequire.resolve('../../slotEngineService'), slotEngineService],
@@ -195,19 +195,25 @@ function rec(date, start, end, tech = 'Alex', confidence = 'high') {
 const CASES = [
     // ── checkServiceArea ────────────────────────────────────────────────────
     { tool: 'checkServiceArea', name: 'in_area', run: async () => {
-        stQueries._next = { zip: '02101', area: 'Boston', city: 'Boston', state: 'MA' };
+        territoryService._next = {
+            inside: true, area: 'Boston', city: 'Boston', state: 'MA', zip: '02101', mode: 'list',
+        };
         return checkServiceArea.run(DEFAULT_COMPANY_ID, {}, { zip: '02101' });
     } },
     { tool: 'checkServiceArea', name: 'out_of_area', run: async () => {
-        stQueries._next = null;
+        territoryService._next = {
+            inside: false, area: '', city: '', state: '', zip: '03801', mode: 'list',
+        };
         return checkServiceArea.run(DEFAULT_COMPANY_ID, {}, { zip: '03801' });
     } },
     { tool: 'checkServiceArea', name: 'missing_zip', run: async () => {
-        stQueries._next = null;
+        territoryService._next = null;
         return checkServiceArea.run(DEFAULT_COMPANY_ID, {}, {});
     } },
     { tool: 'checkServiceArea', name: 'leading_zero_normalized', run: async () => {
-        stQueries._next = { zip: '02101', area: 'Boston', city: 'Boston', state: 'MA' };
+        territoryService._next = {
+            inside: true, area: 'Boston', city: 'Boston', state: 'MA', zip: '02101', mode: 'list',
+        };
         return checkServiceArea.run(DEFAULT_COMPANY_ID, {}, { zip: '2101' });
     } },
 
