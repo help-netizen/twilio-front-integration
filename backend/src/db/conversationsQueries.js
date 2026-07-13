@@ -201,6 +201,47 @@ async function getMessages(conversationId, { limit = 50, cursor } = {}) {
     return result.rows;
 }
 
+/**
+ * Newest-first timeline page across the supplied conversations. cursorPred is
+ * produced by timelinePage.predicateModeFor('sms', cursor) and has the shape
+ * `{ mode: 'lt'|'lte'|'tuple', ts, id }`.
+ */
+async function getMessagesPageDesc(conversationIds, companyId, { limit, cursorPred } = {}) {
+    const params = [conversationIds, companyId, limit];
+    let cursorClause = '';
+    if (cursorPred?.mode === 'tuple') {
+        params.push(cursorPred.ts, cursorPred.id);
+        cursorClause = `AND (m.created_at, m.id) < ($4::timestamptz, $5::uuid)`;
+    } else if (cursorPred) {
+        params.push(cursorPred.ts);
+        const operator = cursorPred.mode === 'lte' ? '<=' : '<';
+        cursorClause = `AND m.created_at ${operator} $4::timestamptz`;
+    }
+
+    const result = await db.query(`
+        SELECT sub.*
+        FROM unnest($1::uuid[]) AS conv(cid)
+        JOIN LATERAL (
+            SELECT m.*,
+                   to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts,
+                   COALESCE(
+                       (SELECT json_agg(json_build_object(
+                           'id', md.id, 'twilio_media_sid', md.twilio_media_sid,
+                           'filename', md.filename, 'content_type', md.content_type,
+                           'size_bytes', md.size_bytes, 'preview_kind', md.preview_kind
+                       )) FROM sms_media md WHERE md.message_id = m.id), '[]'
+                   ) AS media
+            FROM sms_messages m
+            WHERE m.conversation_id = conv.cid
+              AND m.company_id = $2
+              ${cursorClause}
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT $3
+        ) sub ON true
+    `, params);
+    return result.rows;
+}
+
 async function updateDeliveryStatus(messageSid, status, errorCode, errorMessage) {
     await db.query(`
         UPDATE sms_messages SET delivery_status = $2, error_code = $3, error_message = $4, updated_at = now()
@@ -255,6 +296,7 @@ module.exports = {
     upsertConversation, getConversations, getConversationById, isConversationVisibleToProvider, getConversationBySid,
     findActiveConversation, updateConversationPreview, updateConversationState, markConversationRead, markConversationUnread,
     upsertMessage, getMessages, updateDeliveryStatus,
+    getMessagesPageDesc,
     insertMedia, getMediaById,
     insertEvent, markEventProcessed,
 };

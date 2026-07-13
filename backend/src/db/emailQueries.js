@@ -703,6 +703,76 @@ async function getTimelineEmailByTimeline(companyId, timelineId, { limit } = {})
 }
 
 /**
+ * A contact's timeline email, newest-first and bounded for reverse pagination.
+ * cursorPred is produced by timelinePage.predicateModeFor('email', cursor) and
+ * has the shape `{ mode: 'lt'|'lte'|'tuple', ts, id }`.
+ */
+async function getTimelineEmailPageByContact(companyId, contactId, { limit, cursorPred } = {}) {
+    const params = [companyId, contactId];
+    let cursorClause = '';
+    if (cursorPred?.mode === 'tuple') {
+        params.push(cursorPred.ts, cursorPred.id);
+        cursorClause = `AND (COALESCE(gmail_internal_at, created_at), id) < ($3::timestamptz, $4::bigint)`;
+    } else if (cursorPred) {
+        params.push(cursorPred.ts);
+        const operator = cursorPred.mode === 'lte' ? '<=' : '<';
+        cursorClause = `AND COALESCE(gmail_internal_at, created_at) ${operator} $3::timestamptz`;
+    }
+    params.push(limit);
+
+    const result = await db.query(
+        `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                sent_by_user_email,
+                (direction = 'outbound') AS is_outbound,
+                to_char(COALESCE(gmail_internal_at, created_at) AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
+         FROM email_messages
+         WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true
+           ${cursorClause}
+         ORDER BY COALESCE(gmail_internal_at, created_at) DESC, id DESC
+         LIMIT $${params.length}`,
+        params
+    );
+    return result.rows;
+}
+
+/**
+ * A contactless timeline's email, newest-first and bounded for reverse
+ * pagination. cursorPred has the same predicateModeFor('email', cursor)
+ * contract as getTimelineEmailPageByContact.
+ */
+async function getTimelineEmailPageByTimeline(companyId, timelineId, { limit, cursorPred } = {}) {
+    const params = [companyId, timelineId];
+    let cursorClause = '';
+    if (cursorPred?.mode === 'tuple') {
+        params.push(cursorPred.ts, cursorPred.id);
+        cursorClause = `AND (COALESCE(gmail_internal_at, created_at), id) < ($3::timestamptz, $4::bigint)`;
+    } else if (cursorPred) {
+        params.push(cursorPred.ts);
+        const operator = cursorPred.mode === 'lte' ? '<=' : '<';
+        cursorClause = `AND COALESCE(gmail_internal_at, created_at) ${operator} $3::timestamptz`;
+    }
+    params.push(limit);
+
+    const result = await db.query(
+        `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                sent_by_user_email,
+                (direction = 'outbound') AS is_outbound,
+                to_char(COALESCE(gmail_internal_at, created_at) AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
+         FROM email_messages
+         WHERE company_id = $1 AND timeline_id = $2 AND on_timeline = true
+           ${cursorClause}
+         ORDER BY COALESCE(gmail_internal_at, created_at) DESC, id DESC
+         LIMIT $${params.length}`,
+        params
+    );
+    return result.rows;
+}
+
+/**
  * Newest email thread (local `email_messages.thread_id`) linked to the contact,
  * any direction, on or off timeline — drives the outbound reply-vs-initiate
  * decision (§5/TASK-ET-8). Returns the thread_id (BIGINT) or null when the
@@ -836,6 +906,8 @@ module.exports = {
     listConnectedMailboxes,
     getTimelineEmailByContact,
     getTimelineEmailByTimeline, // YELP-TIMELINE-DEDUP-001
+    getTimelineEmailPageByContact,
+    getTimelineEmailPageByTimeline,
     getNewestThreadIdForContact,
     getMailboxByEmail,
     updateWatchState,

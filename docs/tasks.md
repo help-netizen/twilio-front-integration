@@ -9349,7 +9349,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** `node -e "require('./backend/src/db/conversationsQueries'); require('./backend/src/db/emailQueries')"`; dev-БД smoke одноразовым node-скриптом: каждая новая функция с курсором и без на известной беседе/контакте возвращает строки с валидным µs-`ts`; `git diff` — additive-only.
 
-**Зависимости:** T1 (контракт predicateModeFor/cursorPred). **Размер:** S. **Статус:** todo
+**Зависимости:** T1 (контракт predicateModeFor/cursorPred). **Размер:** S. **Статус:** done (2026-07-13, GPT, ревью ACCEPT: ADD-only 42+72 строк, live dev-DB smoke все 3 функции × все курсор-режимы)
 
 ### Задача T4: backend — routes/pulse.js: paged-ветка + buildTimelinePage + shared-хелперы + route-jest + golden
 
