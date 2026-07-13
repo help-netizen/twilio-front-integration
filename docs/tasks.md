@@ -9431,7 +9431,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** `DATABASE_URL=<dev> node backend/scripts/verify-timeline-revpage.mjs --sabotage=ignore-cursor` → exit≠0; затем честный прогон → exit 0; вывод приложить к статусу задачи.
 
-**Зависимости:** T2, T4 (бэкенд целиком; FE не нужен). Слот исполнения — после T8 (prescribed-порядок «харнес+verify последними»); FE-зависимостей нет — оркестратор ВПРАВЕ поднять сразу после T4 как раннюю страховку бэкенда. **Размер:** M. **Статус:** todo
+**Зависимости:** T2, T4 (бэкенд целиком; FE не нужен). Слот исполнения — после T8 (prescribed-порядок «харнес+verify последними»); FE-зависимостей нет — оркестратор ВПРАВЕ поднять сразу после T4 как раннюю страховку бэкенда. **Размер:** M. **Статус:** done (2026-07-13, GPT, ревью ACCEPT: sabotage exit 1, честный прогон exit 0 — 149 walkable timelines/862 стр/1003 items/0 нарушений, 2 SMS-WARN суб-секундные; N1 EXPLAIN = idx_calls_timeline_page; H02/03/04/07 SKIP на dev-фикстурах)
 
 ### Задача T10: FINAL VERIFY — build + полный jest + харнес + N2 manual checklist
 
