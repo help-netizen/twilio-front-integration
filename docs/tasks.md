@@ -9360,7 +9360,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 **Трогать нельзя:** frontend/src/utils/loadGoogleMaps.ts, CustomTimeModal.tsx (только образец).
 **Ожидаемый результат:** компонент компилируется изолированно; TC-TERR2-F02/F04 (проверка в T2.2-preview).
 **Verify:** `cd frontend && npm run build`.
-**Зависимости:** нет (параллельно с T1.*). **Статус:** pending
+**Зависимости:** нет (параллельно с T1.*). **Статус:** done (2026-07-13, GPT plan-first, ревью ACCEPT, preview desktop+375: оба режима, seam live-проверен, данные не теряются)
 
 ### Задача T2.2: frontend — ServiceTerritoriesPage: режимы, radius-CRUD, карта, мобильная вёрстка
 
@@ -9370,7 +9370,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 **Трогать нельзя:** SettingsPageShell.tsx, authedFetch/apiClient, useZipCheck.ts, дизайн-токены (только --blanc-*, без hr).
 **Ожидаемый результат:** TC-TERR2-F01…F05; существующие list-фичи (CSV import/export/add/удаление/sort/filter/areas) работают как раньше.
 **Verify:** `cd frontend && npm run build`; preview desktop + `resize_window` mobile 375 (оба режима, оба list-вида).
-**Зависимости:** после T1.3 (нужны endpoints) и T2.1. **Статус:** pending
+**Зависимости:** после T1.3 (нужны endpoints) и T2.1. **Статус:** done (2026-07-13, GPT plan-first, ревью ACCEPT, preview desktop+375: оба режима, seam live-проверен, данные не теряются)
 
 ### Задача T3: онбординг — шаг service_territory (backend-реестр + тесты + спека ONBOARDING-UX-001 §1.1-1.2 + иконка WelcomePage)
 
