@@ -78,11 +78,17 @@ describe('TC-DO-29: number 167 is free and maximal (worktree-drift RECHECK, prec
         expect(files.some(f => /^166_/.test(f))).toBe(true);
     });
 
-    it('169 is the maximal migration number on disk (169 = port_in_requests)', () => {
+    // TIMELINE-REVPAGE-001: the original "167 is maximal" assertion was a
+    // point-in-time drift tripwire that breaks on EVERY later migration
+    // (168 landed legitimately, then 169 re-froze the trap). Keep the intent —
+    // parallel worktrees must not collide on a migration number — without
+    // freezing the ledger. Scoped to the modern era: numbers < 100 have
+    // historic pre-convention duplicates (004/040/051/052/087/088).
+    it('no duplicate forward-migration numbers >= 100 on disk', () => {
         const numbers = files
             .map(f => (f.match(/^(\d+)_/) || [])[1])
-            .filter(Boolean)
-            .map(Number);
-        expect(Math.max(...numbers)).toBe(169);
+            .filter(n => n && Number(n) >= 100);
+        expect(new Set(numbers).size).toBe(numbers.length);
+    });
     });
 });
