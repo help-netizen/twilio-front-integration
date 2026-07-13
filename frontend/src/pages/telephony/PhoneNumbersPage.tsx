@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, Search, Plus, Trash2, Loader2, PlugZap, MapPin, Monitor, Headphones } from 'lucide-react';
+import { Phone, Search, Plus, Trash2, PlugZap, Monitor, Headphones } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import { authedFetch } from '../../services/apiClient';
 import { billingApi } from '../../services/billingApi';
 import type { PhoneNumber, UserGroup } from '../../types/telephony';
 import { A2pStepper } from '../../components/telephony/A2pStepper';
+import { NumberSearch } from '../../components/telephony/NumberSearch';
 import { PortInPanel, type PortInRequest } from '../../components/telephony/PortInPanel';
+import { shouldShowTransferBanner } from '../../components/telephony/portInPrompt';
 import { toast } from 'sonner';
 import { SettingsPageShell } from '../../components/settings/SettingsPageShell';
 import { Button } from '../../components/ui/button';
@@ -23,13 +25,9 @@ export default function PhoneNumbersPage() {
 
     // ALB-107: tenant telephony connection + number purchasing
     const [telState, setTelState] = useState<{ connected: boolean; mode?: string; status?: string } | null>(null);
+    const [portInPrompt, setPortInPrompt] = useState<string | null>(null);
     const [buyOpen, setBuyOpen] = useState(false);
-    const [areaCode, setAreaCode] = useState('');
-    const [containsQ, setContainsQ] = useState('');
-    const [tollFree, setTollFree] = useState(false);
-    const [searchBusy, setSearchBusy] = useState(false);
-    const [found, setFound] = useState<Array<{ phone_number: string; locality: string | null; region: string | null; capabilities: { voice: boolean; sms: boolean }; monthly_price_usd: number }>>([]);
-    const [buyingNum, setBuyingNum] = useState<string | null>(null);
+    const [transferOpen, setTransferOpen] = useState(false);
     const [releasingSid, setReleasingSid] = useState<string | null>(null);
     const [numberLimit, setNumberLimit] = useState<number | null>(null);
     // Routing mode per phone number (merged from the old Phone Calls page).
@@ -102,42 +100,31 @@ export default function PhoneNumbersPage() {
             const r = await authedFetch('/api/telephony/numbers/status');
             const j = await r.json();
             setTelState(j.state || { connected: false });
-        } catch { setTelState({ connected: false }); }
+            setPortInPrompt(j.port_in_prompt === 'dismissed' ? 'dismissed' : null);
+        } catch {
+            setTelState({ connected: false });
+            setPortInPrompt(null);
+        }
     };
     useEffect(() => { loadTelState(); }, []);
 
     // ONBTEL-001 §2.5: the connect flow lives in exactly one place — the
     // marketplace wizard. The former local connectTelephony handler is gone.
 
-    const searchAvailable = async () => {
-        setSearchBusy(true); setFound([]);
+    const dismissTransferPrompt = async () => {
+        setPortInPrompt('dismissed');
         try {
-            const qs = new URLSearchParams();
-            if (areaCode) qs.set('area_code', areaCode);
-            if (containsQ) qs.set('contains', containsQ);
-            if (tollFree) qs.set('toll_free', 'true');
-            const r = await authedFetch(`/api/telephony/numbers/search?${qs}`);
-            const j = await r.json();
-            if (!r.ok) throw new Error(j.error || 'Search failed');
-            setFound(j.results || []);
-        } catch (e: any) { toast.error(e.message || 'Search failed'); }
-        finally { setSearchBusy(false); }
-    };
-
-    const buyNumber = async (phone: string) => {
-        setBuyingNum(phone);
-        try {
-            const r = await authedFetch('/api/telephony/numbers/buy', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone_number: phone }),
+            const response = await authedFetch('/api/telephony/numbers/port-in-prompt/dismiss', {
+                method: 'POST',
             });
-            const j = await r.json();
-            if (!r.ok) throw new Error(j.error || 'Purchase failed');
-            setBuyOpen(false); setFound([]);
-            await loadData();
-            toast.success(`${phone} purchased`);
-        } catch (e: any) { toast.error(e.message || 'Purchase failed'); }
-        finally { setBuyingNum(null); }
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || body.port_in_prompt !== 'dismissed') {
+                throw new Error(body.error || 'Could not hide this reminder');
+            }
+        } catch (error) {
+            setPortInPrompt(null);
+            toast.error(error instanceof Error ? error.message : 'Could not hide this reminder');
+        }
     };
 
     const releaseNumber = async (n: PhoneNumber) => {
@@ -248,6 +235,12 @@ export default function PhoneNumbersPage() {
 
     const filtered = numbers.filter(n => !search || n.number.includes(search) || n.friendly_name.toLowerCase().includes(search.toLowerCase()) || (n.group || '').toLowerCase().includes(search.toLowerCase()));
     const atLimit = numberLimit != null && numbers.length >= numberLimit;
+    const showTransferBanner = shouldShowTransferBanner({
+        connected: telState?.connected === true,
+        numbersCount: numbers.length,
+        portRequestsCount: portRequests.length,
+        portInPrompt,
+    });
     return (
         <SettingsPageShell
             title="Phone Numbers"
@@ -260,7 +253,12 @@ export default function PhoneNumbersPage() {
                     {telState?.connected && (
                         <Button onClick={() => setBuyOpen(true)} disabled={atLimit}
                             title={atLimit ? `Your plan includes up to ${numberLimit} numbers — upgrade to add more` : undefined}>
-                            <Plus className="size-4" /> Buy number
+                            <Plus className="size-4" /> Get another number
+                        </Button>
+                    )}
+                    {telState?.connected && (
+                        <Button variant="outline" onClick={() => setTransferOpen(true)}>
+                            Transfer a number
                         </Button>
                     )}
                 </>
@@ -280,6 +278,22 @@ export default function PhoneNumbersPage() {
                     <Button onClick={() => navigate('/settings/integrations/telephony-twilio')}>
                         <PlugZap className="size-4" /> Connect in Marketplace
                     </Button>
+                </div>
+            )}
+
+            {showTransferBanner && (
+                <div className="rounded-2xl border border-[var(--blanc-line)] bg-[var(--blanc-surface-strong)] px-4 py-3.5">
+                    <h3 className="text-[15px] font-semibold text-[var(--blanc-ink-1)]">
+                        Finish transferring your number
+                    </h3>
+                    <p className="mt-1 text-[13.5px] text-[var(--blanc-ink-2)]">
+                        Your new number is live. When you're ready, bring your existing number over — customers
+                        keep reaching you at the number they already know.
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Button size="sm" onClick={() => setTransferOpen(true)}>Transfer now</Button>
+                        <Button size="sm" variant="ghost" onClick={dismissTransferPrompt}>Don't show again</Button>
+                    </div>
                 </div>
             )}
 
@@ -319,42 +333,41 @@ export default function PhoneNumbersPage() {
                 <Dialog open onOpenChange={open => { if (!open) setBuyOpen(false); }}>
                     <DialogContent variant="panel">
                         <DialogPanelHeader>
-                            <DialogTitle>Buy a phone number</DialogTitle>
+                            <DialogTitle>Get another number</DialogTitle>
                             <DialogDescription>Search available US numbers — billed to your workspace at the listed monthly price.</DialogDescription>
                         </DialogPanelHeader>
                         <DialogBody className="md:px-8 md:py-7">
-                            <div className="mx-auto w-full max-w-[740px] space-y-6">
-                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                    <input value={areaCode} onChange={e => setAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))} placeholder="Area code (e.g. 617)" style={{ flex: '1 1 120px', padding: '9px 12px', border: '1px solid var(--blanc-line-strong)', borderRadius: 8, fontSize: 13 }} />
-                                    <input value={containsQ} onChange={e => setContainsQ(e.target.value)} placeholder="Contains digits (optional)" style={{ flex: '1 1 150px', padding: '9px 12px', border: '1px solid var(--blanc-line-strong)', borderRadius: 8, fontSize: 13 }} />
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--blanc-ink-1)' }}>
-                                        <input type="checkbox" checked={tollFree} onChange={e => setTollFree(e.target.checked)} /> Toll-free
-                                    </label>
-                                    <Button onClick={searchAvailable} disabled={searchBusy}>
-                                        {searchBusy ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />} Search
-                                    </Button>
-                                </div>
-                                <div>
-                                    {found.length === 0 && !searchBusy && (
-                                        <div style={{ padding: 24, textAlign: 'center', color: 'var(--blanc-ink-3)', fontSize: 13 }}>Enter an area code and search</div>
-                                    )}
-                                    {found.map(f => (
-                                        <div key={f.phone_number} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 4px', borderBottom: '1px solid var(--blanc-line)' }}>
-                                            <Phone size={14} style={{ color: 'var(--blanc-accent)' }} />
-                                            <div style={{ flex: 1 }}>
-                                                <div style={{ fontWeight: 600, fontSize: 14 }}>{f.phone_number}</div>
-                                                <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                    <MapPin size={11} /> {[f.locality, f.region].filter(Boolean).join(', ') || 'US'} ·
-                                                    {f.capabilities.voice ? ' Voice' : ''}{f.capabilities.sms ? ' · SMS' : ''}
-                                                </div>
-                                            </div>
-                                            <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>${f.monthly_price_usd}/mo</div>
-                                            <Button size="sm" onClick={() => buyNumber(f.phone_number)} disabled={buyingNum === f.phone_number}>
-                                                {buyingNum === f.phone_number ? 'Buying…' : 'Buy'}
-                                            </Button>
-                                        </div>
-                                    ))}
-                                </div>
+                            <div className="mx-auto w-full max-w-[740px]">
+                                <NumberSearch
+                                    onPurchased={async () => {
+                                        setBuyOpen(false);
+                                        await loadData();
+                                    }}
+                                    onViewPlans={() => navigate('/settings/integrations/telephony-twilio?step=1')}
+                                />
+                            </div>
+                        </DialogBody>
+                    </DialogContent>
+                </Dialog>
+            )}
+
+            {transferOpen && (
+                <Dialog open onOpenChange={open => { if (!open) setTransferOpen(false); }}>
+                    <DialogContent variant="panel">
+                        <DialogPanelHeader>
+                            <DialogTitle>Transfer a number</DialogTitle>
+                        </DialogPanelHeader>
+                        <DialogBody className="md:px-8 md:py-7">
+                            <div className="mx-auto w-full max-w-[740px]">
+                                <PortInPanel
+                                    initialRequests={portRequests}
+                                    recommendNewNumber={numbers.length === 0}
+                                    onRequestsChange={setPortRequests}
+                                    onGetNewNumber={() => {
+                                        setTransferOpen(false);
+                                        setBuyOpen(true);
+                                    }}
+                                />
                             </div>
                         </DialogBody>
                     </DialogContent>

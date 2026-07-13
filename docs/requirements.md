@@ -6013,6 +6013,13 @@ a contact only when we have enough info to create a LEAD."*
 - `computeReadiness`/`canCollect`/весь Stripe connect-механизм (OB-7 меняет ТОЛЬКО labels чеклиста и вёрстку not-connected экрана).
 - `src/server.js` — только добавление одной mount-строки по канону (authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess); ядро не трогать. `authedFetch.ts`, `useRealtimeEvents.ts` — не трогать.
 - Миграции ≤168; `CloudBanner`/`.blanc-cloud` — реюз как есть.
+
+**Iteration T6 — решения владельца (БИНДИНГ, 2026-07-13; поверх T1–T5):**
+1. Визард = **3 шага**: 1 Pick your plan ($5) → 2 Choose your number → 3 Transfer your numbers. Сегмент «Get a new number | Transfer your number» со шага 2 убирается — transfer становится шагом 3. Шаг 2 получает тёплое пояснение над поиском (номер может быть временным на период переноса или остаться основным). Шаг 3 = «now or later»: «Transfer now» (T4-панель переезжает сюда) / «I'll do it later» → визард завершён; выбор Later персистится на сервере, визард не возвращает на шаг 3.
+2. Постоянный раздел телефонии (`PhoneNumbersPage`): «Get another number» (реюз визардной формы поиска), «Transfer a number» (реюз PortInPanel в panel-слое), список номеров и трансферов — канон-раскладка в спеке §T6.2.
+3. Баннер «Finish transferring your number» наверху раздела: показывается когда номер куплен, но нет ни одного port-in запроса и не нажато «Don't show again». Dismiss = серверный флаг `companies.settings.port_in_prompt='dismissed'` (паттерн onboarding_checklist, COALESCE-`||`, НЕ jsonb_set — L-003); «Later» на шаге 3 и «Don't show again» в баннере пишут ОДИН флаг. Endpoint — в существующем telephony-route (`tenant.telephony.manage`): POST dismiss + `port_in_prompt` в ответе `GET /numbers/status`.
+4. Нормативные строки (подписи шагов, пояснение шага 2, копия шага 3 и баннера) — зафиксированы в спеке §T6, тёплым тоном, без «Blanc» в UI.
+
 ## YELP-CONVO-CONTEXT-002 — Yelp booking agent gets the FULL conversation in its prompt (bounded transcript) + agent replies become visible on the Pulse timeline (2026-07-13)
 
 **Status:** Requirements · **Priority:** P1 · **Backend-only** · **Date:** 2026-07-13

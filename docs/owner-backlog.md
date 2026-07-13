@@ -55,3 +55,6 @@
 ## OB-8 (2026-07-13) — /pulse: вместо строки «Finish setting up» показывать этапы онбординга сразу — **открыт**
 
 Скриншот владельца (мобильный /pulse): компактный трекер «Finish setting up + прогресс-бар + N of 4» скрывает суть за кликом. Показать прямо в карточке ЭТАПЫ онбординга (список шагов со статусами done/pending, как на /welcome, компактно): пользователь сразу видит, что осталось. Тап по шагу → его CTA; вся карточка → /welcome. Файл: frontend/src/components/onboarding/OnboardingChecklistCard.tsx (вернуть отображение items, но в новой компактной эстетике; gate/fail-quiet сохранить).
+
+## OB-9 (2026-07-13) — TELEPHONY: header actions налезают на заголовок на 375px — **микро, открыт**
+На /settings/telephony/phone-numbers кнопки «Get another number»/«Transfer a number» в header-слоте SettingsPageShell на 375px перекрывают заголовок «Phone Numbers» (тот же паттерн, что был на service-territories). Перенести actions под заголовок на мобиле (flex-wrap/stack), как в SettingsPageShell-канон. Мелкая полировка, добрать в следующий UI-заход.

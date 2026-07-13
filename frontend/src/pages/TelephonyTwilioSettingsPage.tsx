@@ -4,32 +4,32 @@
  * Optional-plan "Telephony — Twilio" marketplace setup wizard:
  *   1 Plan   → connect implicitly, then billing checkout (or skip)
  *   2 Number → search connects implicitly; buy is an idempotent-connect fallback
- *   3 Done   → a number exists or a transfer is active
+ *   3 Transfer → port now or dismiss the prompt for later
+ *   4 Done     → number and transfer decisions are both complete
  *
  * The ACTIVE step is DERIVED from server state (refresh/re-entry safe):
  *   donePlan = GET /api/billing → subscription != null && plan_id !== 'trial'
  *   doneNumber = purchased number OR non-canceled/non-failed port-in request
- * Plans are optional, so explicit overrides may navigate to either visible step.
- * ?step=3 is ignored because completion is server-derived only.
+ *   doneTransfer = active port-in request OR dismissed transfer prompt
+ * Plans are optional, so explicit overrides may navigate to any visible step.
+ * Completion remains server-derived only.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
     AlertCircle, Check, CheckCircle2, ChevronRight,
-    Loader2, MapPin, Search,
+    Loader2,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { Badge } from '../components/ui/badge';
-import { Checkbox } from '../components/ui/checkbox';
-import { FloatingField } from '../components/ui/floating-field';
-import { AreaCodeCombo } from '../components/telephony/AreaCodeCombo';
+import { NumberSearch } from '../components/telephony/NumberSearch';
 import { PortInPanel, type PortInRequest } from '../components/telephony/PortInPanel';
+import { deriveWizardStep } from '../components/telephony/portInPrompt';
 import { authedFetch } from '../services/apiClient';
 import { billingApi, type BillingOverview, type Plan } from '../services/billingApi';
-import type { AreaCodeSearchCriterion } from '../data/areaCodes';
 
 const RETURN_PATH = '/settings/integrations/telephony-twilio?step=2&billing=success';
 
@@ -40,14 +40,6 @@ const PAYG_BULLETS = [
     '1 phone number',
     'Usage is paid from your wallet',
 ];
-
-interface FoundNumber {
-    phone_number: string;
-    locality: string | null;
-    region: string | null;
-    capabilities?: { voice?: boolean; sms?: boolean };
-    monthly_price_usd?: number | string | null;
-}
 
 function usd(n: number): string {
     return '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -141,10 +133,10 @@ export default function TelephonyTwilioSettingsPage() {
     const [searchParams] = useSearchParams();
     const billingSuccess = searchParams.get('billing') === 'success';
 
-    // Plans are optional, so either visible step is a valid explicit destination.
+    // Plans are optional, so any visible step is a valid explicit destination.
     const [stepOverride, setStepOverride] = useState<number | null>(() => {
         const hint = Number(searchParams.get('step'));
-        return Number.isInteger(hint) && hint >= 1 && hint <= 2 ? hint : null;
+        return Number.isInteger(hint) && hint >= 1 && hint <= 3 ? hint : null;
     });
 
     // ── Step derivation queries — the server is the single source of truth ────
@@ -177,6 +169,16 @@ export default function TelephonyTwilioSettingsPage() {
         },
         retry: false,
     });
+    const statusQ = useQuery({
+        queryKey: ['telephony-twilio-wizard', 'status'],
+        queryFn: async (): Promise<string | null> => {
+            const response = await authedFetch('/api/telephony/numbers/status');
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) return null;
+            return body.port_in_prompt === 'dismissed' ? 'dismissed' : null;
+        },
+        retry: false,
+    });
     const walletQ = useQuery({
         queryKey: ['telephony-twilio-wizard', 'wallet'],
         queryFn: billingApi.wallet,
@@ -188,9 +190,10 @@ export default function TelephonyTwilioSettingsPage() {
     const hasPurchasedNumber = (numbersQ.data?.length ?? 0) >= 1;
     const hasActivePortIn = (portInQ.data ?? []).some(request => !['canceled', 'failed'].includes(request.status));
     const doneNumber = hasPurchasedNumber || hasActivePortIn;
-    const derivedStep = doneNumber ? 3 : donePlan ? 2 : 1; // 3 = completion
+    const doneTransfer = hasActivePortIn || statusQ.data === 'dismissed';
+    const derivedStep = deriveWizardStep({ donePlan, doneNumber, doneTransfer });
     const activeStep = stepOverride ?? derivedStep;
-    const bootLoading = billingQ.isLoading || numbersQ.isLoading || portInQ.isLoading;
+    const bootLoading = billingQ.isLoading || numbersQ.isLoading || portInQ.isLoading || statusQ.isLoading;
 
     // Stripe return — poll billing until the webhook flips the plan.
     const awaitingPayment = billingSuccess && !donePlan;
@@ -257,100 +260,34 @@ export default function TelephonyTwilioSettingsPage() {
         }
     };
 
-    // ── Step 2: Number ─────────────────────────────────────────────────────────
-    const [searchCriterion, setSearchCriterion] = useState<AreaCodeSearchCriterion | null>(null);
-    const [incompleteAreaCode, setIncompleteAreaCode] = useState(false);
-    const [containsDigits, setContainsDigits] = useState('');
-    const [tollFree, setTollFree] = useState(false);
-    const [searching, setSearching] = useState(false);
-    const [searched, setSearched] = useState(false);
-    const [results, setResults] = useState<FoundNumber[]>([]);
-    const [buying, setBuying] = useState<string | null>(null);
-    const [limitUpsell, setLimitUpsell] = useState<string | null>(null); // 422 NUMBER_LIMIT server text
-    const [numberError, setNumberError] = useState<string | null>(null);
-    const [numberMode, setNumberMode] = useState<'new' | 'transfer'>('new');
-    const initialNumberModeSet = useRef(false);
-
-    useEffect(() => {
-        if (portInQ.isLoading || initialNumberModeSet.current) return;
-        initialNumberModeSet.current = true;
-        if ((portInQ.data?.length ?? 0) > 0) setNumberMode('transfer');
-    }, [portInQ.data, portInQ.isLoading]);
-
-    const runSearch = async () => {
-        if (incompleteAreaCode) return;
-        setSearching(true);
-        setNumberError(null);
+    // ── Step 3: Transfer now or later ──────────────────────────────────────────
+    const [transferExpanded, setTransferExpanded] = useState(false);
+    const [dismissingTransfer, setDismissingTransfer] = useState(false);
+    const refetchPortIns = portInQ.refetch;
+    const handlePortRequestsChange = useCallback(() => {
+        setStepOverride(null);
+        void refetchPortIns();
+    }, [refetchPortIns]);
+    const dismissTransferPrompt = async () => {
+        setDismissingTransfer(true);
         try {
-            const qs = new URLSearchParams();
-            if (searchCriterion) qs.set(searchCriterion.kind, searchCriterion.value);
-            if (containsDigits.trim()) qs.set('contains', containsDigits.trim());
-            if (tollFree) qs.set('toll_free', 'true');
-            const r = await authedFetch(`/api/telephony/numbers/search?${qs}`);
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                if (r.status === 403) {
-                    setNumberError("You don't have permission to manage telephony — ask your administrator.");
-                } else if (r.status >= 500) {
-                    setNumberError('Could not set up your phone workspace — try again.');
-                } else {
-                    toast.error(j.error || 'Number search failed');
-                }
-                return;
-            }
-            setResults(Array.isArray(j.results) ? j.results : []);
-            setSearched(true);
-            await Promise.all([refetchBilling(), walletQ.refetch()]);
-        } catch {
-            setNumberError('Could not set up your phone workspace — try again.');
-        } finally {
-            setSearching(false);
-        }
-    };
-
-    const buyNumber = async (phone: string) => {
-        setBuying(phone);
-        try {
-            const r = await authedFetch('/api/telephony/numbers/buy', {
+            const response = await authedFetch('/api/telephony/numbers/port-in-prompt/dismiss', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone_number: phone }),
             });
-            const j = await r.json().catch(() => ({}));
-            if (r.ok) {
-                setLimitUpsell(null);
-                setStepOverride(null);
-                await numbersQ.refetch(); // doneNumber flips → Completion
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || body.port_in_prompt !== 'dismissed') {
+                toast.error(body.error || 'Could not save your choice — try again.');
                 return;
             }
-            if (r.status === 422 && j.code === 'NUMBER_LIMIT') {
-                // Mandatory upsell: the server message verbatim + switch-plan CTA (E-B8).
-                setLimitUpsell(j.error || 'Your plan does not include more phone numbers.');
-                return;
-            }
-            if (r.status === 409) {
-                toast.error(j.error || 'This number was just taken — pick another one');
-                await runSearch(); // refresh the availability list
-                return;
-            }
-            if (r.status === 403) {
-                setNumberError("You don't have permission to manage telephony — ask your administrator.");
-                return;
-            }
-            if (r.status >= 500) {
-                setNumberError('Could not set up your phone workspace — try again.');
-                return;
-            }
-            toast.error('Failed to buy the number');
+            toast.success('You can transfer numbers anytime from Settings → Phone Numbers');
+            await statusQ.refetch();
+            setStepOverride(null);
         } catch {
-            toast.error('Failed to buy the number');
+            toast.error('Could not save your choice — try again.');
         } finally {
-            setBuying(null);
+            setDismissingTransfer(false);
         }
     };
-
-    const priceFor = (f: FoundNumber) =>
-        `$${Number(f.monthly_price_usd ?? (tollFree ? 2.15 : 1.15)).toFixed(2)}/mo`;
 
     const plans = billingQ.data?.plans ?? [];
     const packagePlans: Plan[] = plans.filter(p => p.id !== 'trial' && p.id !== 'payg');
@@ -369,7 +306,8 @@ export default function TelephonyTwilioSettingsPage() {
 
     const stepsMeta = [
         { n: 1, label: 'Pick your plan', description: '$5 free credit included', done: donePlan },
-        { n: 2, label: 'Choose your number', description: 'New number or transfer yours', done: doneNumber },
+        { n: 2, label: 'Choose your number', description: "It's live right away", done: doneNumber },
+        { n: 3, label: 'Transfer your numbers', description: 'Now or later', done: doneTransfer },
     ];
 
     return (
@@ -503,120 +441,56 @@ export default function TelephonyTwilioSettingsPage() {
                     {/* Step 2 — Get a number */}
                     {activeStep === 2 && (
                         <div className="space-y-6">
-                            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Choose how to get a phone number">
-                                <Button
-                                    type="button"
-                                    size="sm"
-                                    variant={numberMode === 'new' ? 'secondary' : 'outline'}
-                                    role="tab"
-                                    aria-selected={numberMode === 'new'}
-                                    onClick={() => setNumberMode('new')}
-                                >
-                                    Get a new number
-                                </Button>
-                                <Button
-                                    type="button"
-                                    size="sm"
-                                    variant={numberMode === 'transfer' ? 'secondary' : 'outline'}
-                                    role="tab"
-                                    aria-selected={numberMode === 'transfer'}
-                                    onClick={() => setNumberMode('transfer')}
-                                >
-                                    Transfer your number
-                                </Button>
-                            </div>
+                            <p className="text-sm text-[var(--blanc-ink-2)]">
+                                Pick a number to get started — it can be a temporary line while your own numbers move
+                                over, or stay on as your main one.
+                            </p>
+                            <NumberSearch
+                                onPurchased={async () => {
+                                    setStepOverride(null);
+                                    await numbersQ.refetch();
+                                }}
+                                onViewPlans={() => setStepOverride(1)}
+                            />
+                        </div>
+                    )}
 
-                            {numberMode === 'new' ? (
-                                <div>
-                                    {limitUpsell && (
-                                        <div style={{
-                                            border: '1px solid rgba(178,106,29,0.4)', background: 'rgba(178,106,29,0.06)',
-                                            borderRadius: 16, padding: '14px 16px', marginBottom: 16,
-                                        }}>
-                                            <div style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)' }}>{limitUpsell}</div>
-                                            <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)', marginTop: 4 }}>
-                                                Need more numbers? Switch to a package plan.
-                                            </div>
-                                            <Button size="sm" style={{ marginTop: 10 }} onClick={() => { setLimitUpsell(null); setStepOverride(1); }}>
-                                                View plans
-                                            </Button>
-                                        </div>
-                                    )}
-                                    {numberError && (
-                                        <div className="mb-3.5">
-                                            <InlineError text={numberError} />
-                                        </div>
-                                    )}
-                                    <div className="space-y-3.5">
-                                        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                                            <AreaCodeCombo
-                                                value={searchCriterion}
-                                                onChange={setSearchCriterion}
-                                                onIncompleteChange={setIncompleteAreaCode}
-                                                disabled={searching}
-                                            />
-                                            <FloatingField
-                                                label="Contains digits"
-                                                value={containsDigits}
-                                                onChange={e => setContainsDigits(e.target.value)}
-                                            />
-                                        </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--blanc-ink-1)', cursor: 'pointer' }}>
-                                                <Checkbox checked={tollFree} onCheckedChange={c => setTollFree(c === true)} />
-                                                Toll-free
-                                            </label>
-                                            <Button onClick={runSearch} disabled={searching || incompleteAreaCode}>
-                                                {searching
-                                                    ? <Loader2 size={14} className="mr-1.5 animate-spin" />
-                                                    : <Search size={14} className="mr-1.5" />}
-                                                Search
-                                            </Button>
-                                        </div>
-                                    </div>
-                                    {searched && !searching && results.length === 0 && (
-                                        <p style={{ fontSize: 13.5, color: 'var(--blanc-ink-3)', margin: '18px 2px 0' }}>
-                                            No numbers found — try another area code or city.
-                                        </p>
-                                    )}
-                                    {results.length > 0 && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-                                            {results.map(f => (
-                                                <div key={f.phone_number} style={{
-                                                    border: '1px solid var(--blanc-line)', borderRadius: 12,
-                                                    background: 'var(--blanc-surface-strong, #fffdf9)',
-                                                    padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-                                                }}>
-                                                    <div style={{ flex: '1 1 200px', minWidth: 200 }}>
-                                                        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--blanc-ink-1)' }}>{f.phone_number}</div>
-                                                        <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
-                                                            <MapPin size={11} style={{ color: 'var(--blanc-ink-3)', flexShrink: 0 }} />
-                                                            <span>{[f.locality, f.region].filter(Boolean).join(', ') || 'US'}</span>
-                                                            {f.capabilities?.voice && <Badge variant="outline" style={{ fontSize: 10 }}>Voice</Badge>}
-                                                            {f.capabilities?.sms && <Badge variant="outline" style={{ fontSize: 10 }}>SMS</Badge>}
-                                                        </div>
-                                                    </div>
-                                                    <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--blanc-ink-2)' }}>{priceFor(f)}</span>
-                                                    <Button size="sm" onClick={() => buyNumber(f.phone_number)} disabled={buying != null}>
-                                                        {buying === f.phone_number && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                                                        Buy
-                                                    </Button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
+                    {/* Step 3 — Transfer now or make the explicit later decision. */}
+                    {activeStep === 3 && (
+                        <div className="space-y-6">
+                            <div className="space-y-3.5">
+                                <p className="text-sm text-[var(--blanc-ink-2)]">
+                                    Already have a business number your customers know? Move it into Albusto now — or come
+                                    back to this anytime.
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Button type="button" onClick={() => setTransferExpanded(true)}>
+                                        Transfer now
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        disabled={dismissingTransfer}
+                                        onClick={dismissTransferPrompt}
+                                    >
+                                        {dismissingTransfer && <Loader2 className="size-4 animate-spin" />}
+                                        I'll do it later
+                                    </Button>
                                 </div>
-                            ) : (
+                            </div>
+                            {transferExpanded && (
                                 <PortInPanel
                                     initialRequests={portInQ.data ?? []}
-                                    onGetNewNumber={() => setNumberMode('new')}
+                                    recommendNewNumber={!hasPurchasedNumber}
+                                    onGetNewNumber={() => setStepOverride(2)}
+                                    onRequestsChange={handlePortRequestsChange}
                                 />
                             )}
                         </div>
                     )}
 
-                    {/* Completion is derived from a purchased number or active transfer. */}
-                    {activeStep === 3 && (
+                    {/* Completion is derived from the number and transfer decisions. */}
+                    {activeStep === 4 && (
                         <div style={{ textAlign: 'center', padding: '40px 16px' }}>
                             <div style={{
                                 width: 56, height: 56, borderRadius: 28, background: 'rgba(27,139,99,0.12)',

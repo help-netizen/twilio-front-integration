@@ -231,3 +231,152 @@ SSE-событий фича не добавляет (статусы port-in — 
 ## 9. Риски
 
 - Twilio Porting/Documents API находится в Public Beta; риск изменения контракта принят, а feature-gate аккаунта деградирует в `PORTING_UNAVAILABLE` + локальный `action_required`.
+
+---
+
+## Iteration T6 — owner-итерация: 3-шаговый визард, постоянный раздел телефонии, transfer-баннер (2026-07-13)
+
+Требования владельца — БИНДИНГ (см. requirements §T6). Базовое состояние: T1–T5 реализованы
+(stepsMeta = 2 шага, сегмент «Get a new number | Transfer your number» на Number-шаге,
+`PortInPanel` реюзабелен со `statusOnly`, port-in endpoints T2 live, `PhoneNumbersPage` уже
+рендерит секцию «Number transfers»).
+
+### T6.1 Степ-модель: 3 шага
+
+`stepsMeta` (нормативные подписи):
+
+| n | label | description |
+|---|---|---|
+| 1 | Pick your plan | $5 free credit included |
+| 2 | Choose your number | It's live right away |
+| 3 | Transfer your numbers | Now or later |
+
+```
+done_plan     = subscription != null && plan_id !== 'trial'                 (как сейчас)
+done_number   = numbers.length >= 1 || hasActivePortIn                      (transfer-only путь
+                по-прежнему считается «номер есть» — телефония подключена)
+done_transfer = ∃ port-in запрос со status ∉ {canceled, failed}             (submitted/pending/…/completed)
+                || port_in_prompt === 'dismissed'                            (серверный флаг, §T6.3)
+derivedStep   = !done_number ? (done_plan ? 2 : 1)
+              : (done_transfer ? 4 : 3)                                      (4 = completion)
+activeStep    = stepOverride ?? derivedStep; override разрешён к шагам 1..3
+?step= hint   = 1..3 (hint=4 игнорируется — completion только derived)
+```
+
+- Сегмент-тумблер «Get a new number | Transfer your number» со шага 2 **УДАЛЯЕТСЯ** —
+  шаг 2 содержит только форму поиска+результаты; transfer целиком переезжает в шаг 3.
+- **Шаг 2, нормативное пояснение** (тёплым тоном, 1–2 строки, над поиском, БЕЗ контейнера):
+  **«Pick a number to get started — it can be a temporary line while your own numbers move
+  over, or stay on as your main one.»**
+- **Шаг 3 «Transfer your numbers — now or later»:** intro-копия (нормативно):
+  **«Already have a business number your customers know? Move it into Albusto now — or come
+  back to this anytime.»** Под ней два действия:
+  - **«Transfer now»** (primary) → разворачивает `PortInPanel` (полный T4-флоу: check →
+    форма → статус-карточки) прямо в потоке шага.
+  - **«I'll do it later»** (ghost) → `POST /api/telephony/numbers/port-in-prompt/dismiss`
+    (§T6.3) → toast **«You can transfer numbers anytime from Settings → Phone Numbers»** →
+    рефетч → derived → completion. Ошибка POST → toast error, шаг остаётся.
+- `PortInPanel` получает опциональный prop `recommendNewNumber?: boolean` (default `true`,
+  T4-поведение сохранено): рекомендация «We recommend grabbing a new number now…» рендерится
+  только при `recommendNewNumber` — визард на шаге 3 передаёт `!hasPurchasedNumber` (у кого
+  номер уже куплен, рекомендация «возьми новый номер» неуместна). `onGetNewNumber` на шаге 3 →
+  `setStepOverride(2)`.
+- Wizard добавляет запрос `statusQ → GET /api/telephony/numbers/status` (нужен
+  `port_in_prompt`). Fail-open: ошибка чтения → флаг считается null (шаг 3 покажется —
+  безопасная деградация, dismiss повторно доступен).
+- Completion (state 4) — прежняя копия §2.3 без изменений.
+
+### T6.2 Постоянный раздел телефонии (`PhoneNumbersPage.tsx`) — канон-раскладка
+
+Страница остаётся на `SettingsPageShell`; порядок контента сверху вниз (секции разделяются
+spacing'ом, контейнеры невидимы, LAYOUT-CANON 7):
+
+1. **Header actions** (когда `telState.connected`): чип `N / limit numbers` (как сейчас) +
+   **«Get another number»** (primary, Plus; бывший «Buy number») + **«Transfer a number»**
+   (outline).
+2. **Баннер «Finish transferring your number»** (§T6.4) — первым блоком контента.
+3. Usage-чип, A2P-степпер — как сейчас.
+4. **«Number transfers»** (eyebrow-секция, только когда список непуст) — `PortInPanel
+   statusOnly` (как в T4), state расшарен с transfer-панелью через `onRequestsChange`.
+5. Поиск по своим номерам + таблица номеров — как сейчас.
+
+Формы — слоями (FORM-CANON, right-side panel):
+
+- **«Get another number»** открывает существующий `Dialog variant="panel"`, но внутренности
+  buy-диалога **заменяются реюзом визардной формы**: из шага 2 визарда извлекается общий
+  компонент `frontend/src/components/telephony/NumberSearch.tsx` (NEW) — AreaCodeCombo +
+  FloatingField «Contains digits» + Checkbox Toll-free + Search + карточки результатов + Buy
+  + обработка ошибок §7 (422 NUMBER_LIMIT upsell verbatim, 409 re-search, 403/5xx inline).
+  Props: `{ onPurchased(), onViewPlans() }`; визард: `onViewPlans → setStepOverride(1)`;
+  страница: `onViewPlans → navigate('/settings/integrations/telephony-twilio?step=1')`,
+  `onPurchased → закрыть панель + loadData()`. Сырые `<input>` старого диалога удаляются
+  (floating-канон).
+- **«Transfer a number»** открывает `Dialog variant="panel"` (`DialogPanelHeader` «Transfer
+  a number») с `PortInPanel` (полный режим, `recommendNewNumber={numbers.length === 0}`,
+  `onRequestsChange` → обновить статус-секцию, `onGetNewNumber` → закрыть панель + открыть
+  «Get another number»). Футер не нужен — у PortInPanel собственные CTA; закрытие — штатный
+  OverlayClose.
+
+### T6.3 Серверный флаг `port_in_prompt` (backend)
+
+- Хранение: `companies.settings` jsonb, top-level ключ `port_in_prompt` = строка
+  `'dismissed'` (других значений нет; отсутствие ключа = не dismissed).
+- Запись — паттерн `onboardingChecklistService.markCompleted` (конкатенация `||` с
+  COALESCE, **НЕ `jsonb_set`** — gotcha L-003: jsonb_set молча no-op'ится без родителя):
+
+```sql
+UPDATE companies
+   SET settings = COALESCE(settings, '{}'::jsonb)
+       || jsonb_build_object('port_in_prompt', 'dismissed')
+ WHERE id = $1
+RETURNING settings->>'port_in_prompt' AS port_in_prompt
+```
+
+- **Endpoints** — в существующем `backend/src/routes/telephonyNumbers.js` (mount уже под
+  `authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess`;
+  company_id ТОЛЬКО из `req.companyFilter?.company_id`):
+  - `GET /api/telephony/numbers/status` — ответ расширяется **top-level** полем:
+    `{ ok, state, port_in_prompt: 'dismissed' | null }`. `getTelephonyState` НЕ трогается
+    (его shape используют вебхуки/сервисы); обогащение — на уровне route-хендлера отдельным
+    `SELECT settings->>'port_in_prompt' FROM companies WHERE id=$1`. Существующие потребители
+    (`TelephonyLayout`, `PhoneNumbersPage`) читают только `j.state` — аддитивно безопасно.
+  - `POST /api/telephony/numbers/port-in-prompt/dismiss` — SQL выше, идемпотентен (повторный
+    вызов возвращает то же состояние), ответ `{ ok: true, port_in_prompt: 'dismissed' }`.
+- **«I'll do it later»** (шаг 3 визарда) и **«Don't show again»** (баннер) вызывают ОДИН и
+  тот же endpoint — один флаг гасит и возврат на шаг 3, и баннер. Undo нет (осознанно):
+  transfer остаётся доступен всегда через постоянный раздел.
+
+### T6.4 Баннер «Finish transferring your number»
+
+- Место: верх контента `PhoneNumbersPage` (§T6.2 п.2).
+- Условие показа (все четыре):
+  `telState.connected && numbers.length >= 1 && portRequests.length === 0 && port_in_prompt !== 'dismissed'`.
+  (Любой существующий port-in запрос, включая canceled, гасит баннер — заявка уже была,
+  пользователь дорогу знает.)
+- Вид: одиночная карточка `border var(--blanc-line)`, radius 16, padding 14–16 (паттерн
+  awaitingPayment-карточки визарда), без вложенных блоков, без full-width кнопок.
+- Нормативная копия: заголовок **«Finish transferring your number»**, текст:
+  **«Your new number is live. When you're ready, bring your existing number over — customers
+  keep reaching you at the number they already know.»** Кнопки: **«Transfer now»** (primary,
+  открывает панель «Transfer a number» §T6.2) и **«Don't show again»** (ghost → POST dismiss
+  → optimistic скрытие; ошибка → toast + баннер остаётся).
+
+### T6.5 Чистая логика и тесты
+
+- `frontend/src/components/telephony/portInPrompt.ts` (NEW, pure, без React):
+  `deriveWizardStep({donePlan, doneNumber, doneTransfer})` и
+  `shouldShowTransferBanner({connected, numbersCount, portRequestsCount, portInPrompt})` —
+  визард и страница используют их; vitest-сьют рядом.
+- Jest (`tests/telephonyPortInPrompt.test.js`, NEW): 401 без токена; 403 без права;
+  изоляция (dismiss компании A не задевает B; статус B остаётся null); идемпотентность
+  (двойной POST → одна и та же строка `'dismissed'`, прочие ключи settings не потёрты);
+  NULL-settings компания (COALESCE-ветка); `GET /status` отдаёт `port_in_prompt` null →
+  `'dismissed'` после POST.
+
+### T6.6 Безопасность / инварианты
+
+- Никаких новых прав: всё под `tenant.telephony.manage`; изоляция — `req.companyFilter`.
+- `getTelephonyState`, port-in endpoints T2, NUMBER_LIMIT-upsell (verbatim), Stripe-поллинг,
+  derived-step принцип (сервер = источник правды) — не трогаются.
+- Флаг — companies.settings (без миграции); прочие ключи settings (onboarding_checklist и
+  будущие) сохраняются конкатенацией.

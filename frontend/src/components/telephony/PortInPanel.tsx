@@ -32,6 +32,7 @@ export interface PortInRequest {
 interface PortInPanelProps {
     initialRequests?: PortInRequest[];
     statusOnly?: boolean;
+    recommendNewNumber?: boolean;
     onGetNewNumber?: () => void;
     onRequestsChange?: (requests: PortInRequest[]) => void;
 }
@@ -149,6 +150,7 @@ function PortInStatusCard({
 export function PortInPanel({
     initialRequests = [],
     statusOnly = false,
+    recommendNewNumber = true,
     onGetNewNumber,
     onRequestsChange,
 }: PortInPanelProps) {
@@ -385,7 +387,7 @@ export function PortInPanel({
 
     return (
         <div className="space-y-6">
-            {!statusOnly && (
+            {!statusOnly && recommendNewNumber && (
                 <p className="text-sm text-[var(--blanc-ink-2)]">
                     We recommend grabbing a new number now — outbound calls keep flowing from it while the transfer completes, so you don't lose customers.{' '}
                     <button

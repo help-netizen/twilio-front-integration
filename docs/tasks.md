@@ -9601,6 +9601,59 @@ Critical path: T1.1 → T1.2 → T1.3 → T2.2 → T4. **Prod deploy — owner-g
 5. Регрессия: /settings/telephony у подключённой компании, NUMBER_LIMIT-upsell, Stripe-checkout redirect-путь — не сломаны.
 
 **Зависимости:** после всех T1–T4 · **Статус:** pending
+
+### Волна T6 — owner-итерация (2026-07-13): 3-шаговый визард + постоянный раздел + transfer-баннер
+
+Спека: `docs/specs/TELEPHONY-WIZARD-UX-001.md` §Iteration T6 (нормативные копии там). База: T1–T5 в коде. Порядок: T6.1 (backend) → T6.2 (frontend).
+
+### Задача WIZ-T6.1: port_in_prompt — /status расширение + dismiss-endpoint + jest
+
+**Цель:** серверный флаг `companies.settings.port_in_prompt='dismissed'` — общий для «I'll do it later» (шаг 3) и «Don't show again» (баннер).
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/telephonyNumbers.js` (расширить хендлер `/status`, добавить `POST /port-in-prompt/dismiss`)
+- `tests/telephonyPortInPrompt.test.js` (NEW)
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/services/telephonyTenantService.js` — `getTelephonyState` shape НЕ меняется (обогащение `/status` — route-level отдельным SELECT)
+- `src/server.js` — mount уже существует, новых строк не нужно
+
+**Ожидаемый результат:** `GET /api/telephony/numbers/status` → `{ ok, state, port_in_prompt: 'dismissed'|null }` (top-level, `SELECT settings->>'port_in_prompt'`); `POST /api/telephony/numbers/port-in-prompt/dismiss` → идемпотентный UPDATE `settings = COALESCE(settings,'{}'::jsonb) || jsonb_build_object('port_in_prompt','dismissed')` (паттерн onboardingChecklistService.markCompleted; НЕ jsonb_set — gotcha L-003) → `{ ok, port_in_prompt: 'dismissed' }`. company_id ТОЛЬКО из `req.companyFilter?.company_id`. Jest: 401/403; изоляция (dismiss A не задевает B); идемпотентность двойного POST; NULL-settings компания; прочие ключи settings (onboarding_checklist) не потёрты; /status до/после POST.
+
+**Verify:**
+```bash
+unset NODE_USE_SYSTEM_CA   # L-014
+node --check backend/src/routes/telephonyNumbers.js
+node node_modules/jest/bin/jest.js tests/telephonyPortInPrompt.test.js tests/telephonyPortIn.test.js tests/telephonyWelcomeCredit.test.js --rootDir . --testPathIgnorePatterns "/node_modules/" --forceExit
+```
+
+**Зависимости:** после T1–T5 (использует существующий mount) · **Статус:** done (2026-07-13, GPT, ревью ACCEPT, preview 375)
+
+### Задача WIZ-T6.2: фронт — 3-шаговый визард + постоянный раздел телефонии + баннер + vitest
+
+**Цель:** шаг 3 «Transfer your numbers — now or later»; сегмент-тумблер с шага 2 удалён; PhoneNumbersPage получает «Get another number» / «Transfer a number» / баннер.
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/TelephonyTwilioSettingsPage.tsx` (3 шага; statusQ; пояснение шага 2; шаг 3 now/later)
+- `frontend/src/components/telephony/NumberSearch.tsx` (NEW — извлечение формы поиска+результатов из шага 2)
+- `frontend/src/components/telephony/PortInPanel.tsx` (ТОЛЬКО новый prop `recommendNewNumber?: boolean`, default true)
+- `frontend/src/pages/telephony/PhoneNumbersPage.tsx` (header actions, баннер, buy-панель → NumberSearch, transfer-панель `Dialog variant="panel"` c PortInPanel)
+- `frontend/src/components/telephony/portInPrompt.ts` (NEW, pure) + `frontend/src/components/telephony/portInPrompt.test.ts` (NEW, vitest)
+
+**Файлы, которые трогать нельзя:**
+- `authedFetch.ts`, `useRealtimeEvents.ts`; derived-step принцип, NUMBER_LIMIT-upsell verbatim, Stripe-поллинг — семантику сохранить
+- `portInStatus.ts`, port-in флоу внутри PortInPanel (check/форма/статусы) — без изменений
+
+**Ожидаемый результат:** по спеке §T6.1–T6.5: stepsMeta 3 шага (подписи нормативные), `done_transfer = активный port-in || port_in_prompt==='dismissed'`, derived 4=completion, hint 1..3; шаг 2 без тумблера + пояснение над поиском; шаг 3: intro + «Transfer now» (разворачивает PortInPanel) / «I'll do it later» (POST dismiss → completion); PhoneNumbersPage: баннер «Finish transferring your number» (условие §T6.4, «Transfer now» открывает transfer-панель, «Don't show again» → тот же POST), buy-диалог реюзает NumberSearch (сырые input удалены, floating-канон), секция «Number transfers» сохранена. Vitest на `deriveWizardStep`/`shouldShowTransferBanner` зелёный. Без block-in-block, без «Blanc» в UI.
+
+**Verify:**
+```bash
+unset NODE_USE_SYSTEM_CA   # L-014
+cd frontend && npm run build && npx vitest run src/components/telephony/portInPrompt.test.ts src/data/areaCodes.test.ts
+# preview 1280 + 375: шаги 1→2→3, Later-персистентность (reload не возвращает шаг 3), баннер show/dismiss, Get another number панель
+```
+
+**Зависимости:** после WIZ-T6.1 · **Статус:** done (2026-07-13, GPT, ревью ACCEPT, preview 375)
 ---
 
 ## YELP-CONVO-CONTEXT-002 — задачи (2026-07-13)
