@@ -279,6 +279,27 @@ async function revokeCredentialById(apiIntegrationId, companyId, client = null) 
     return rows[0] || null;
 }
 
+async function countOtherActiveInstallationsOnCredential(
+    companyId,
+    apiIntegrationId,
+    excludeInstallationId,
+    client = null
+) {
+    if (!apiIntegrationId) return 0;
+    await ensureMarketplaceSchema(client);
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT COUNT(*)::int AS count
+         FROM marketplace_installations
+         WHERE company_id = $1
+           AND api_integration_id = $2
+           AND id <> $3
+           AND status IN ('connected', 'provisioning_failed')`,
+        [companyId, apiIntegrationId, excludeInstallationId]
+    );
+    return rows[0].count;
+}
+
 async function markInstallationConnected({ companyId, installationId, externalInstallationId = null }, client = null) {
     await ensureMarketplaceSchema(client);
     const query = queryFor(client);
@@ -374,6 +395,7 @@ module.exports = {
     createInstallation,
     updateInstallationCredential,
     revokeCredentialById,
+    countOtherActiveInstallationsOnCredential,
     markInstallationConnected,
     markProvisioningFailed,
     markDisconnected,

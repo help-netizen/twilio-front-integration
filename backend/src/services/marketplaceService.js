@@ -513,7 +513,16 @@ async function disconnectInstallation(companyId, actorId, installationId, { requ
             throw new MarketplaceServiceError('Installation is not active.', 'INSTALLATION_NOT_ACTIVE', 409);
         }
 
-        const revoked = await marketplaceQueries.revokeCredentialById(installation.api_integration_id, companyId, client);
+        const otherActive = await marketplaceQueries.countOtherActiveInstallationsOnCredential(
+            companyId,
+            installation.api_integration_id,
+            installationId,
+            client
+        );
+        let revoked = null;
+        if (otherActive === 0) {
+            revoked = await marketplaceQueries.revokeCredentialById(installation.api_integration_id, companyId, client);
+        }
         if (revoked) {
             await writeCredentialRevokedEvent({
                 companyId,
@@ -529,7 +538,7 @@ async function disconnectInstallation(companyId, actorId, installationId, { requ
             companyId,
             installationId,
             actorId,
-            status: !installation.api_integration_id || revoked ? 'disconnected' : 'revoked',
+            status: !installation.api_integration_id || revoked || otherActive > 0 ? 'disconnected' : 'revoked',
         }, client);
 
         await marketplaceQueries.writeEvent({
@@ -540,7 +549,7 @@ async function disconnectInstallation(companyId, actorId, installationId, { requ
             actorId,
             eventType: 'disconnected',
             requestId,
-            payload: { credential_revoked: Boolean(revoked) },
+            payload: { credential_revoked: Boolean(revoked), credential_shared: otherActive > 0 },
         }, client);
 
         await client.query('COMMIT');

@@ -860,3 +860,107 @@ describe('MARKETPLACE-LEADGEN-SPLIT-001 migration 169 · real PostgreSQL', () =>
         });
     });
 });
+
+describe('MARKETPLACE-LEADGEN-SPLIT-001 credential-sharing helper · real PostgreSQL', () => {
+    it('TC-G5-01 · count is company-scoped, active-only, self-excluding, and falsy-safe', async () => {
+        if (!dbReady) return console.warn('TC-G5-01 SKIPPED-NEEDS-DB');
+
+        await withTxn(async client => {
+            await resetToPre169(client);
+            await apply169(client);
+
+            const installations = (await client.query(
+                `SELECT mi.id, a.app_key
+                 FROM marketplace_installations mi
+                 JOIN marketplace_apps a ON a.id = mi.app_id
+                 WHERE mi.company_id = $1
+                   AND a.app_key = ANY($2::text[])`,
+                [DEFAULT_COMPANY_ID, ALL_LEAD_APP_KEYS]
+            )).rows;
+            const idByKey = Object.fromEntries(
+                installations.map(row => [row.app_key, row.id])
+            );
+            const companyB = await createCompanyB(client, 'g5');
+            await client.query(
+                `INSERT INTO marketplace_installations
+                    (company_id, app_id, api_integration_id, status, installed_at)
+                 VALUES (
+                    $1,
+                    (SELECT id FROM marketplace_apps WHERE app_key = 'nsa-leads'),
+                    $2,
+                    'connected',
+                    NOW()
+                 )`,
+                [companyB, SOURCE_CREDENTIAL_ID]
+            );
+            await client.query(
+                `UPDATE marketplace_installations mi
+                 SET status = CASE a.app_key
+                     WHEN 'rely-leads' THEN 'provisioning_failed'
+                     WHEN 'lhg-leads' THEN 'disconnected'
+                     ELSE mi.status
+                 END
+                 FROM marketplace_apps a
+                 WHERE mi.app_id = a.id
+                   AND mi.company_id = $1
+                   AND a.app_key IN ('rely-leads', 'lhg-leads')`,
+                [DEFAULT_COMPANY_ID]
+            );
+
+            const nsaCount = await marketplaceQueries.countOtherActiveInstallationsOnCredential(
+                DEFAULT_COMPANY_ID,
+                SOURCE_CREDENTIAL_ID,
+                idByKey['nsa-leads'],
+                client
+            );
+            expect(nsaCount).toBe(3);
+            expect(typeof nsaCount).toBe('number');
+            await expect(marketplaceQueries.countOtherActiveInstallationsOnCredential(
+                DEFAULT_COMPANY_ID,
+                SOURCE_CREDENTIAL_ID,
+                idByKey['lead-generator'],
+                client
+            )).resolves.toBe(3);
+
+            await client.query(
+                `UPDATE marketplace_installations mi
+                 SET status = CASE
+                     WHEN a.app_key = 'rely-leads' THEN 'revoked'
+                     ELSE 'disconnected'
+                 END
+                 FROM marketplace_apps a
+                 WHERE mi.app_id = a.id
+                   AND mi.company_id = $1
+                   AND a.app_key = ANY($2::text[])`,
+                [DEFAULT_COMPANY_ID, FOUR_APP_KEYS]
+            );
+            await expect(marketplaceQueries.countOtherActiveInstallationsOnCredential(
+                DEFAULT_COMPANY_ID,
+                SOURCE_CREDENTIAL_ID,
+                idByKey['lead-generator'],
+                client
+            )).resolves.toBe(0);
+
+            const spyClient = { query: jest.fn((...args) => client.query(...args)) };
+            await expect(marketplaceQueries.countOtherActiveInstallationsOnCredential(
+                DEFAULT_COMPANY_ID,
+                null,
+                idByKey['nsa-leads'],
+                spyClient
+            )).resolves.toBe(0);
+            await expect(marketplaceQueries.countOtherActiveInstallationsOnCredential(
+                DEFAULT_COMPANY_ID,
+                undefined,
+                idByKey['nsa-leads'],
+                spyClient
+            )).resolves.toBe(0);
+            await expect(marketplaceQueries.countOtherActiveInstallationsOnCredential(
+                DEFAULT_COMPANY_ID,
+                0,
+                idByKey['nsa-leads'],
+                spyClient
+            )).resolves.toBe(0);
+            expect(spyClient.query).not.toHaveBeenCalled();
+        });
+    });
+});
