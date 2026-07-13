@@ -45,6 +45,13 @@ async function ensureMarketplaceSchema(client = null) {
         // REPAIR-ADVISOR-001: AI Repair Advisor tile (gate-only, no credential) —
         // resolves through the generic install path, like the smart-slot-engine seed.
         await query(readMigration('161_seed_ai_repair_advisor_marketplace_app.sql'));
+        // MARKETPLACE-LEADGEN-SPLIT-001: rename lead-generator → "Website Leads"
+        // + four per-source lead apps + default-company auto-connect on the
+        // SHARED live credential. MUST run AFTER 083 (whose ON CONFLICT DO UPDATE
+        // re-asserts the old "Lead Generator" name on every boot — the
+        // 132-after-087 precedent). Installation seed = all-statuses NOT EXISTS:
+        // boot replays never duplicate rows nor resurrect a disconnected one.
+        await query(readMigration('169_split_lead_generator_marketplace_apps.sql'));
         return;
     }
 
