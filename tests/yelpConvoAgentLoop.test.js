@@ -979,3 +979,201 @@ describe('TC-D1-01 · history observability is exact and once per turn', () => {
         expect(lines).toHaveLength(1);
     });
 });
+
+// ── YELP-CONVO-CONTEXT-002 · post-send timeline linking ────────────────────
+
+describe('TC-B1-01 · reply send links exactly once after sendEmail', () => {
+    it('passes provider ids and timelineId without contact_id, then logs linked', async () => {
+        const gen = scriptedGenerate([
+            '{"action":"reply","body":"What is the best callback number?","intent":"collect"}',
+        ]);
+
+        const out = await svc.runTurn(DEFAULT_COMPANY_ID, convRow(), inbound(), { generate: gen });
+
+        expect(out).toMatchObject({ outcome: 'reply' });
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledTimes(1);
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledWith(DEFAULT_COMPANY_ID, {
+            providerMessageId: 'sent-1',
+            providerThreadId: 'gt-sent-1',
+            timelineId: 3207,
+        });
+        expect(Object.keys(mockLinkYelpAgentSend.mock.calls[0][1])).toEqual(
+            expect.not.arrayContaining(['contact_id'])
+        );
+        expect(mockLinkYelpAgentSend.mock.invocationCallOrder[0]).toBeGreaterThan(
+            mockSendEmail.mock.invocationCallOrder[0]
+        );
+        const lines = formattedLogLines(console.log)
+            .filter(line => line.startsWith('[YelpConvo] send-link'));
+        expect(lines).toEqual([
+            `[YelpConvo] send-link company=${DEFAULT_COMPANY_ID} conv=${CONV_ID} msg=sent-1 timeline=3207 outcome=linked`,
+        ]);
+    });
+});
+
+describe('TC-B2-01 · every sendOnce terminal links with the same timelineId', () => {
+    const slot = {
+        key: '2026-07-15|10:00|13:00',
+        date: '2026-07-15',
+        start: '10:00',
+        end: '13:00',
+        label: 'Wednesday, July 15, 10 AM to 1 PM',
+    };
+    const repeatedTool = '{"action":"tool","tool":"validateAddress","args":{"street":"1 Foo St","zip":"02467"}}';
+
+    it.each([
+        ['reply/collect', () => svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow(),
+            inbound(),
+            { generate: scriptedGenerate(['{"action":"reply","body":"Thanks.","intent":"collect"}']) }
+        )],
+        ['book-confirm', () => svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow({ lead_uuid: 'lead-uuid', offered_slots: [slot] }),
+            inbound('yes'),
+            { generate: scriptedGenerate([`{"action":"book","slotKey":"${slot.key}"}`]) }
+        )],
+        ['double-book re-confirm', () => svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow({ status: 'book', chosen_slot: slot }),
+            inbound('yes'),
+            { generate: scriptedGenerate([`{"action":"book","slotKey":"${slot.key}"}`]) }
+        )],
+        ['safe re-offer', () => svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow({ offered_slots: [slot] }),
+            inbound(),
+            { generate: scriptedGenerate(['{"action":"book","slotKey":"not-offered"}']) }
+        )],
+        ['parse-failure safe reply', () => svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow(),
+            inbound(),
+            { generate: scriptedGenerate(['not json <<<']) }
+        )],
+        ['loop-break safe reply', () => {
+            mockRunSkill.mockResolvedValue({ valid: true, lat: 42.33, lng: -71.20 });
+            return svc.runTurn(
+                DEFAULT_COMPANY_ID,
+                convRow(),
+                inbound(),
+                { generate: scriptedGenerate([repeatedTool, repeatedTool]) }
+            );
+        }],
+        ['turn-budget handoff', () => svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow({ turn_count: 6 }),
+            inbound(),
+            { generate: scriptedGenerate(['{"action":"reply","body":"Still collecting."}']) }
+        )],
+        ['opt-out handoff', () => svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow(),
+            inbound('stop emailing me'),
+            { generate: scriptedGenerate(['{"action":"handoff","reason":"opt_out"}']) }
+        )],
+        ['LLM transport handoff', () => svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow(),
+            inbound(),
+            { generate: jest.fn().mockRejectedValue(new Error('LLM down')) }
+        )],
+        ['runTurn catch-block fallback', () => {
+            mockUpdateLead.mockRejectedValueOnce(new Error('hold write boom'));
+            return svc.runTurn(
+                DEFAULT_COMPANY_ID,
+                convRow({ lead_uuid: 'lead-uuid', offered_slots: [slot] }),
+                inbound('yes'),
+                { generate: scriptedGenerate([`{"action":"book","slotKey":"${slot.key}"}`]) }
+            );
+        }],
+    ])('%s', async (_terminal, drive) => {
+        await drive();
+
+        expect(mockSendEmail).toHaveBeenCalledTimes(1);
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledTimes(1);
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledWith(
+            DEFAULT_COMPANY_ID,
+            expect.objectContaining({ timelineId: 3207 })
+        );
+        const lines = formattedLogLines(console.log)
+            .filter(line => line.startsWith('[YelpConvo] send-link'));
+        expect(lines).toEqual([
+            `[YelpConvo] send-link company=${DEFAULT_COMPANY_ID} conv=${CONV_ID} msg=sent-1 timeline=3207 outcome=linked`,
+        ]);
+    });
+});
+
+describe('TC-B5-01 · a rejected link is log-only and never double-sends', () => {
+    it('preserves the reply outcome and logs error without entering the send-fault surface', async () => {
+        mockLinkYelpAgentSend.mockRejectedValue(new Error('link db error'));
+        const gen = scriptedGenerate([
+            '{"action":"reply","body":"What is the best callback number?","intent":"collect"}',
+        ]);
+
+        const out = await svc.runTurn(DEFAULT_COMPANY_ID, convRow(), inbound(), { generate: gen });
+
+        expect(out).toMatchObject({ outcome: 'reply' });
+        expect(mockSendEmail).toHaveBeenCalledTimes(1);
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledTimes(1);
+        const lines = formattedLogLines(console.log)
+            .filter(line => line.startsWith('[YelpConvo] send-link'));
+        expect(lines).toEqual([
+            `[YelpConvo] send-link company=${DEFAULT_COMPANY_ID} conv=${CONV_ID} msg=sent-1 timeline=3207 outcome=error`,
+        ]);
+    });
+});
+
+describe('TC-B9-01 · sendOnce preserves its send-fault and success contracts', () => {
+    it('does not link a failed send and leaves the successful turn result unchanged', async () => {
+        const sendError = new Error('SMTP 503');
+        mockSendEmail.mockRejectedValueOnce(sendError);
+
+        await expect(svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow(),
+            inbound(),
+            { generate: scriptedGenerate(['{"action":"reply","body":"Thanks.","intent":"collect"}']) }
+        )).rejects.toMatchObject({ message: 'SMTP 503', __sendFault: true });
+        expect(mockLinkYelpAgentSend).not.toHaveBeenCalled();
+
+        mockSendEmail.mockResolvedValueOnce({
+            provider_message_id: 'sent-1',
+            provider_thread_id: 'gt-sent-1',
+        });
+        const out = await svc.runTurn(
+            DEFAULT_COMPANY_ID,
+            convRow(),
+            inbound(),
+            { generate: scriptedGenerate(['{"action":"reply","body":"Thanks.","intent":"collect"}']) }
+        );
+
+        expect(out).toEqual({ outcome: 'reply', intent: 'collect' });
+        expect(mockLinkYelpAgentSend).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('TC-A10-03 · unresolved timeline skips history and send-link', () => {
+    it('continues the turn with resolve_miss observability and no guessed timeline', async () => {
+        mockGetThreading.mockResolvedValue(null);
+        mockResolveYelpTimeline.mockRejectedValue(new Error('pg down'));
+        const gen = scriptedGenerate([
+            '{"action":"reply","body":"What is the best callback number?","intent":"collect"}',
+        ]);
+
+        const out = await svc.runTurn(DEFAULT_COMPANY_ID, convRow(), inbound(), { generate: gen });
+
+        expect(out).toMatchObject({ outcome: 'reply' });
+        expect(mockListHistory).not.toHaveBeenCalled();
+        expect(mockLinkYelpAgentSend).not.toHaveBeenCalled();
+        expect(mockSendEmail).toHaveBeenCalledTimes(1);
+        const lines = formattedLogLines(console.log);
+        expect(lines).toContain(
+            `[YelpConvo] history degraded (no-history turn) company=${DEFAULT_COMPANY_ID} conv=${CONV_ID} reason=no_timeline`
+        );
+        expect(lines.filter(line => line.startsWith('[YelpConvo] send-link'))).toEqual([
+            `[YelpConvo] send-link company=${DEFAULT_COMPANY_ID} conv=${CONV_ID} msg=sent-1 timeline=null outcome=resolve_miss`,
+        ]);
+    });
+});

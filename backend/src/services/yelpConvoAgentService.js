@@ -248,8 +248,9 @@ async function sendOnce(companyId, conv, body) {
     const to = conv && conv.last_reply_to;
     const t = (conv && conv.__threading) || null;
     const { html, text } = yelpReplyFormat.buildReplyBodies(body, t && t.quote);
+    let sent;
     try {
-        return await emailService.sendEmail(companyId, {
+        sent = await emailService.sendEmail(companyId, {
             to,
             subject: (t && t.subject) || REPLY_SUBJECT,
             body: html,
@@ -260,6 +261,33 @@ async function sendOnce(companyId, conv, body) {
         if (err && typeof err === 'object') err.__sendFault = true;
         throw err;
     }
+
+    const timelineId = conv && conv.__timelineId != null ? conv.__timelineId : null;
+    let outcome = 'resolve_miss';
+    if (timelineId != null) {
+        try {
+            const linkResult = await require('./email/emailTimelineService').linkYelpAgentSend(
+                companyId,
+                {
+                    providerMessageId: sent.provider_message_id,
+                    providerThreadId: sent.provider_thread_id,
+                    timelineId,
+                }
+            );
+            outcome = (linkResult && linkResult.outcome) || 'error';
+        } catch (_) {
+            outcome = 'error';
+        }
+    }
+    console.log(
+        '[YelpConvo] send-link company=%s conv=%s msg=%s timeline=%s outcome=%s',
+        companyId,
+        conv && conv.conversation_id,
+        sent.provider_message_id,
+        timelineId,
+        outcome
+    );
+    return sent;
 }
 
 /**
