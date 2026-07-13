@@ -5,6 +5,9 @@ const integrationsService = require('./integrationsService');
 const provisioningService = require('./marketplaceProvisioningService');
 const emailMailboxService = require('./emailMailboxService');
 const telephonyTenantService = require('./telephonyTenantService');
+const territoryRadiusQueries = require('../db/territoryRadiusQueries');
+const { RELY_UNIT_TYPES, RELY_BRANDS } = require('./relyLeadsCatalog');
+const { parseZipList, resolveRelySettings } = require('./relyLeadFilterService');
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -29,6 +32,8 @@ const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';
 // the REAL Gmail mailbox, not a marketplace_installations row. Special-cased in
 // listApps + isAppConnected; all other apps are untouched.
 const GOOGLE_EMAIL_APP_KEY = 'google-email';
+
+const SETTINGS_ENABLED_APP_KEYS = new Set(['rely-leads']);
 
 /**
  * Mailbox-derived connected boolean for the Google Email app.
@@ -269,6 +274,184 @@ async function listApps(companyId) {
 async function listInstallations(companyId, includeInactive = false) {
     const rows = await marketplaceQueries.listInstallations(companyId, includeInactive);
     return rows.map(mapInstallationRow);
+}
+
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function invalidSettings(message) {
+    throw new MarketplaceServiceError(message, 'INVALID_SETTINGS', 400);
+}
+
+function canonicalizeSettingsCatalog(values, catalog, code, label) {
+    if (!Array.isArray(values)) invalidSettings(`${label} must be an array.`);
+
+    return values.map((value) => {
+        if (typeof value !== 'string') {
+            throw new MarketplaceServiceError(`${label} contains an unsupported value.`, code, 400);
+        }
+        const normalized = value.trim().toLowerCase();
+        const canonical = catalog.find((entry) => entry.toLowerCase() === normalized);
+        if (!canonical) {
+            throw new MarketplaceServiceError(
+                `${label} contains an unsupported value: ${value}.`,
+                code,
+                400
+            );
+        }
+        return canonical;
+    });
+}
+
+function validateRelySettingsInput(body) {
+    if (!isPlainObject(body)) invalidSettings('Settings must be an object.');
+
+    const zoneInput = body.zone === undefined ? {} : body.zone;
+    if (!isPlainObject(zoneInput)) invalidSettings('Zone must be an object.');
+
+    const mode = zoneInput.mode === undefined ? 'company' : zoneInput.mode;
+    if (!['company', 'custom'].includes(mode)) {
+        throw new MarketplaceServiceError(
+            'Zone mode must be either company or custom.',
+            'INVALID_ZONE_MODE',
+            400
+        );
+    }
+
+    const zipInput = zoneInput.custom_zips === undefined ? [] : zoneInput.custom_zips;
+    if (typeof zipInput !== 'string'
+        && (!Array.isArray(zipInput) || zipInput.some((value) => typeof value !== 'string'))) {
+        invalidSettings('Custom ZIP codes must be a string or an array of strings.');
+    }
+    const { zips, invalid } = parseZipList(zipInput);
+    if (invalid.length > 0) {
+        throw new MarketplaceServiceError(
+            `Invalid ZIP codes: ${invalid.slice(0, 10).join(', ')}.`,
+            'INVALID_ZIPS',
+            400
+        );
+    }
+    if (zips.length > 500) {
+        throw new MarketplaceServiceError(
+            'Custom ZIP list cannot contain more than 500 ZIP codes.',
+            'ZIP_LIST_TOO_LARGE',
+            400
+        );
+    }
+
+    const unitTypes = canonicalizeSettingsCatalog(
+        body.unit_types === undefined ? [] : body.unit_types,
+        RELY_UNIT_TYPES,
+        'INVALID_UNIT_TYPES',
+        'Unit types'
+    );
+    const brands = canonicalizeSettingsCatalog(
+        body.brands === undefined ? [] : body.brands,
+        RELY_BRANDS,
+        'INVALID_BRANDS',
+        'Brands'
+    );
+
+    return {
+        zone: { mode, custom_zips: zips },
+        unit_types: unitTypes,
+        brands,
+    };
+}
+
+async function resolveSettingsInstallation(companyId, appKey) {
+    if (!SETTINGS_ENABLED_APP_KEYS.has(appKey)) {
+        throw new MarketplaceServiceError(
+            'Settings are not supported for this marketplace app.',
+            'SETTINGS_NOT_SUPPORTED',
+            404
+        );
+    }
+
+    const app = await marketplaceQueries.getPublishedAppByKey(appKey);
+    if (!app) {
+        throw new MarketplaceServiceError('Marketplace app not found.', 'APP_NOT_FOUND', 404);
+    }
+
+    const installation = await marketplaceQueries.findActiveInstallation(companyId, app.id);
+    if (!installation || installation.status !== 'connected') {
+        throw new MarketplaceServiceError(
+            'Marketplace app is not installed.',
+            'APP_NOT_INSTALLED',
+            404
+        );
+    }
+
+    return { app, installation };
+}
+
+async function getTerritorySummary(companyId) {
+    const territorySettings = await territoryRadiusQueries.getSettings(companyId);
+    const activeMode = territorySettings?.active_mode === 'radius' ? 'radius' : 'list';
+    const hasData = activeMode === 'radius'
+        ? (await territoryRadiusQueries.listRadii(companyId)).length > 0
+        : Number(await territoryRadiusQueries.countListZips(companyId)) > 0;
+
+    return { active_mode: activeMode, has_data: hasData };
+}
+
+async function buildSettingsResponse(companyId, appKey, installation, metadata) {
+    return {
+        app_key: appKey,
+        installation_id: installation.id,
+        settings: resolveRelySettings(metadata),
+        catalogs: {
+            unit_types: RELY_UNIT_TYPES,
+            brands: RELY_BRANDS,
+        },
+        territory: await getTerritorySummary(companyId),
+    };
+}
+
+async function getAppSettings(companyId, appKey) {
+    const { installation } = await resolveSettingsInstallation(companyId, appKey);
+    return buildSettingsResponse(companyId, appKey, installation, installation.metadata);
+}
+
+async function updateAppSettings(
+    companyId,
+    actorId,
+    appKey,
+    body,
+    { requestId = null } = {}
+) {
+    const { app, installation } = await resolveSettingsInstallation(companyId, appKey);
+    const validated = validateRelySettingsInput(body);
+    const storedSettings = {
+        ...validated,
+        updated_at: new Date().toISOString(),
+        updated_by: actorId || null,
+    };
+
+    const updated = await marketplaceQueries.setInstallationSettings(
+        companyId,
+        installation.id,
+        storedSettings
+    );
+    await marketplaceQueries.writeEvent({
+        companyId,
+        installationId: installation.id,
+        appId: app.id,
+        actorId: actorId || null,
+        eventType: 'settings_updated',
+        requestId,
+        payload: {
+            app_key: appKey,
+            zone_mode: validated.zone.mode,
+            custom_zip_count: validated.zone.custom_zips.length,
+            unit_type_count: validated.unit_types.length,
+            brand_count: validated.brands.length,
+        },
+    });
+
+    const metadata = updated?.metadata || { settings: storedSettings };
+    return buildSettingsResponse(companyId, appKey, updated || installation, metadata);
 }
 
 async function createCredentialForInstallation({ app, companyId, installationId, client }) {
@@ -711,12 +894,17 @@ module.exports = {
     MarketplaceServiceError,
     SMART_SLOT_ENGINE_APP_KEY,
     AI_REPAIR_ADVISOR_APP_KEY,
+    SETTINGS_ENABLED_APP_KEYS,
     isAppConnected,
     listApps,
     listInstallations,
     installApp,
     disconnectInstallation,
     retryProvisioning,
+    validateRelySettingsInput,
+    getAppSettings,
+    updateAppSettings,
+    resolveRelySettings,
     _toScopeArray: toScopeArray,
     _accessSummary: accessSummary,
 };

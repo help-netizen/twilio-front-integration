@@ -47,6 +47,33 @@ router.get('/installations', async (req, res) => {
     }
 });
 
+router.get('/apps/:appKey/settings', async (req, res) => {
+    try {
+        const result = await marketplaceService.getAppSettings(
+            companyId(req),
+            req.params.appKey
+        );
+        res.json({ success: true, ...result, request_id: req.requestId });
+    } catch (err) {
+        handleError(err, req, res);
+    }
+});
+
+router.put('/apps/:appKey/settings', async (req, res) => {
+    try {
+        const result = await marketplaceService.updateAppSettings(
+            companyId(req),
+            actorId(req),
+            req.params.appKey,
+            req.body,
+            { requestId: req.requestId }
+        );
+        res.json({ success: true, ...result, request_id: req.requestId });
+    } catch (err) {
+        handleError(err, req, res);
+    }
+});
+
 router.post('/apps/:appKey/install', async (req, res) => {
     try {
         const installation = await marketplaceService.installApp(

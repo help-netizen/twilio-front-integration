@@ -174,6 +174,24 @@ async function findActiveInstallation(companyId, appId, client = null) {
     return rows[0] || null;
 }
 
+// RELY-LEADS-SETTINGS-001 P-14: this ingest hot-path read deliberately skips
+// ensureMarketplaceSchema/reconcileRevokedInstallations. A missing table throws
+// to the filter's fail-open boundary instead of adding schema work per lead.
+async function getConnectedRelySettings(companyId) {
+    const { rows } = await db.query(
+        `SELECT mi.metadata
+         FROM marketplace_installations mi
+         JOIN marketplace_apps ma ON ma.id = mi.app_id
+         WHERE mi.company_id = $1
+           AND ma.app_key = 'rely-leads'
+           AND mi.status = 'connected'
+         ORDER BY mi.created_at DESC
+         LIMIT 1`,
+        [companyId]
+    );
+    return rows[0] || null;
+}
+
 async function listInstallations(companyId, includeInactive = false, client = null) {
     await ensureMarketplaceSchema(client);
     const query = queryFor(client);
@@ -259,6 +277,21 @@ async function updateInstallationCredential(companyId, installationId, apiIntegr
            AND id = $2
          RETURNING *`,
         [companyId, installationId, apiIntegrationId]
+    );
+    return rows[0] || null;
+}
+
+async function setInstallationSettings(companyId, installationId, settingsObject, client = null) {
+    await ensureMarketplaceSchema(client);
+    const query = queryFor(client);
+    const { rows } = await query(
+        `UPDATE marketplace_installations
+         SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('settings', $3::jsonb),
+             updated_at = NOW()
+         WHERE company_id = $1
+           AND id = $2
+         RETURNING *`,
+        [companyId, installationId, JSON.stringify(settingsObject)]
     );
     return rows[0] || null;
 }
@@ -390,10 +423,12 @@ module.exports = {
     listPublishedAppsWithInstallation,
     getPublishedAppByKey,
     findActiveInstallation,
+    getConnectedRelySettings,
     listInstallations,
     getInstallationById,
     createInstallation,
     updateInstallationCredential,
+    setInstallationSettings,
     revokeCredentialById,
     countOtherActiveInstallationsOnCredential,
     markInstallationConnected,
