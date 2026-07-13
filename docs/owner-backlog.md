@@ -30,8 +30,12 @@
 
 Скриншот владельца: шаг «Choose your number», результаты поиска. Список номеров (карточки Buy) живёт внутри контейнера с ограниченной высотой/внутренним скроллом: третья карточка обрезана посередине, дальше до нижней навигации — пустая серая зона; страница не отрисована до конца. На мобиле список должен лежать в общем потоке страницы и скроллиться экраном (канон MobileListPage: display:block, скроллит .app-main), без вложенных фикс-высот. Вместе с OB-1..4.
 
-## OB-6 (2026-07-13) — WARMUP-SUMMARY: модалка «Good morning» всплывает каждые 2-3 минуты — **открыт**
+## OB-6 (2026-07-13) — WARMUP-SUMMARY: модалка «Good morning» всплывает каждые 2-3 минуты + СБРАСЫВАЕТ ЗВОНКИ — **открыт (P1 — ломает звонки)**
 
 Скриншот владельца: десктоп, Jobs + открытая джоба — поверх периодически показывается WarmUpSummaryDialog («Good morning — Here's your day at a glance», Let's go). Должна показываться один раз (warm-up AudioContext + сводка дня), а не каждые 2-3 минуты.
 
-Гипотеза (AppLayout.tsx:76): `useEffect(... if (softPhoneEnabled && voice.phoneAllowed && voice.deviceReady) setShowWarmUp(true))` — Twilio Device периодически перерегистрируется (обновление токена/реконнект) → `deviceReady` флипает → эффект снова ставит showWarmUp=true после dismiss. Нет session-latch. Fix-направление: sticky-дизмисс на сессию (sessionStorage `albusto_warmup_done`, проверять в эффекте), warm-up аудио при этом дёргать не надо повторно. ВАЖНО: не сломать сам warm-up канон (модалка ДЕЛИБЕРАТНАЯ — softphone-warmup-modal-intentional).
+**КРИТИЧНО: из-за этого сбрасываются звонки.** Когда модалка всплывает во время активного/входящего звонка — звонок роняется (вероятно перерегистрация Twilio Device / re-render поддерева / потеря softphone-состояния совпадает с тем же `deviceReady`-флипом, что взводит модалку). Это уже не косметика — теряются реальные звонки. Приоритет P1.
+
+Гипотеза (AppLayout.tsx:76): `useEffect(... if (softPhoneEnabled && voice.phoneAllowed && voice.deviceReady) setShowWarmUp(true))` — Twilio Device периодически перерегистрируется (обновление токена/реконнект) → `deviceReady` флипает → эффект снова ставит showWarmUp=true после dismiss. Нет session-latch. Fix-направление: (1) sticky-дизмисс на сессию (sessionStorage `albusto_warmup_done`, проверять в эффекте); (2) НЕ показывать модалку во время активного/входящего звонка (гейт по voice.incomingCall/activeCall); (3) разобраться, почему тот же цикл роняет звонок — устранить перерегистрацию/размонтирование Device на токен-refresh. ВАЖНО: не сломать warm-up канон (модалка ДЕЛИБЕРАТНАЯ — softphone-warmup-modal-intentional).
+
+**Диагностика:** учётка владельца help@bostonmasters.com (десктоп, softphone). Воспроизвести можно на проде из моего окна Chrome (вход паролем — владелец сам; я снимаю консоль/сеть/Device-события в момент всплытия и в момент сброса звонка).
