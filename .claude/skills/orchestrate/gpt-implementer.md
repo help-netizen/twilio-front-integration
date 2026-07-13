@@ -27,7 +27,10 @@ $CODEX exec -s workspace-write -m gpt-5.6-sol -c model_reasoning_effort=xhigh \
   "<brief>" </dev/null 2>&1 | tee "$SCRATCHPAD/gpt-task-<ID>-r<round>.log" | grep -m1 'session id:'
 ```
 
-- Capture the `session id:` from the banner — fix rounds continue the SAME session:
+- Capture the `session id:` from the banner — ⚠️ the banner prints FIRST, so `| tail -N` EATS it:
+  always `| tee <log>` and grep the LOG for `session id:` (recovery: newest
+  `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` greps by task marker; the UUID is in the filename).
+  Fix rounds continue the SAME session:
   `$CODEX exec resume -c 'sandbox_mode="workspace-write"' <SESSION_ID> "<fix list>" </dev/null 2>&1 | tee <log>`
   ⚠️ `resume` does NOT accept `-s`/`-o` (verified v0.144): sandbox only via the `-c sandbox_mode` config
   override, and the final message must be taken from stdout (tail of the log), not `-o`.

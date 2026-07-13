@@ -6480,3 +6480,91 @@ observability.
 - Seeded `marketplace_installations.metadata` keys (`seeded_by`, `shared_credential`) — must survive settings writes (FR-1).
 - Mig 169 contents + LEADGEN-SPLIT shared-credential disconnect guard — build on, don't modify.
 - `src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts` (protected list); `backend/db/` only via this feature's explicit plan (expected: NO new migration — storage reuses `marketplace_installations.metadata` and `leads.metadata`).
+---
+
+## CLIENT-FEEDBACK-WIDGET-001 — In-app product feedback channel (CRM user → Albusto developer)
+
+**Status:** Requirements
+**Priority:** P2
+**Owner:** Platform / Albusto
+**Spec:** `docs/specs/CLIENT-FEEDBACK-WIDGET-001.md`
+**Test cases:** `docs/test-cases/CLIENT-FEEDBACK-WIDGET-001.md`
+
+### 1. Description
+
+A globally-mounted floating widget through which **logged-in Albusto CRM users** (employees of tenant
+companies) send **product feedback directly to the Albusto developer/owner**. This is explicitly NOT a
+business-customer support channel and NOT an internal tenant task — it is a one-way "CRM user → Albusto
+developer" pipe. Destination inbox = `support@albusto.com` (forwarded to the developer).
+
+The widget presents a Messenger-style panel. The first line is a **deterministic bot STUB** (rule-based,
+NOT AI): it greets, answers with canned lines, and always shows a "Talk to a human" button. On explicit
+"human" click OR after N (default 2) canned replies it escalates: the bot posts a normative line and reveals
+an in-panel form (email prefilled + editable, "What happened?" textarea, optional attachments). On Send the
+submission is persisted to a new `feedback_submissions` table (source of truth) and a best-effort email is
+sent to the feedback inbox. This is a **new feature**; no existing feature covers it.
+
+Checked `requirements.md` for duplication: EMAIL-001 (tenant Gmail workspace), MAIL-AGENT-001 (inbound mail
+triage → dispatcher tasks), TASKS (cross-entity tenant tasks), YELP-* (business-customer channels) — none is
+a CRM-user→developer product-feedback channel. No overlap.
+
+### 2. User scenarios
+
+- **SC-01 — Feedback via escalation form (happy path):** Logged-in user clicks the floating chat button →
+  panel opens with a bot greeting + "Talk to a human". User clicks "Talk to a human" (or sends ≥2 messages) →
+  bot posts *"Okay — leave your details below and we'll get back to you"* and shows the form. Email is
+  prefilled from the user's account (editable). User writes "What happened?", optionally attaches ≤5 files,
+  clicks Send → success confirmation. A `feedback_submissions` row is created and a best-effort email with
+  attachments is sent to the feedback inbox.
+- **SC-02 — Escalation by message count:** User types two messages; the bot replies with canned lines and, on
+  reaching the threshold, auto-escalates to the form without needing the "human" button.
+- **SC-03 — Bot-only, no submission:** User chats with the stub and closes the panel without escalating. No
+  DB row, no email.
+- **SC-04 — Validation failure:** User submits with an invalid email, an empty message, or a file that
+  violates the size/count/mime limits → the request is rejected (422) and the user sees an inline error; no
+  row is created.
+- **SC-05 — Email transport unavailable/failing:** The DB row is created successfully; the best-effort email
+  fails (no platform mailbox connected, or Gmail error). The user still sees success (truth = the persisted
+  row); the failure is logged only. No data is lost.
+
+### 3. Non-functional / constraints
+
+- Audience = authenticated CRM users only. Floating button mounts globally in `AppLayout` (visible to every
+  logged-in user), suppressed on `/signup` and `/onboarding` (which already bypass the app chrome).
+- **Reliability:** the submission MUST NOT be lost. The DB row is the source of truth; email is best-effort
+  and its failure must never fail the request.
+- Do NOT create a task in the tenant's Pulse. Do NOT ask for a phone number.
+- File limits: ≤5 files, ≤10 MB each, mime allowlist = pdf / png / jpg / gif / webp / txt.
+- Copy is English, warm (tone per ONBOARDING-UX-001). No "Blanc" string anywhere in UI.
+- Feature flag `VITE_FEATURE_FEEDBACK_WIDGET` (default on in dev).
+- Design canon: `--blanc-*` tokens, `FloatingField`, no block-in-block, mobile 375 (narrow panel that never
+  covers the bottom nav / softphone).
+- Company isolation: `feedback_submissions.company_id` NOT NULL FK; every query company-scoped.
+
+### 4. Modules / integrations involved
+
+- Backend (new): `backend/db/migrations/170_feedback_submissions.sql` (+ rollback),
+  `backend/src/db/feedbackQueries.js`, `backend/src/services/feedbackService.js`,
+  `backend/src/routes/feedback.js`; mount in `src/server.js`.
+- Backend (reused): `backend/src/services/emailService.js` `sendEmail(companyId,{to,files,…})`,
+  `backend/src/services/emailMailboxService.js` (platform-sender mailbox), `multer` memoryStorage.
+- Frontend (new): `frontend/src/components/feedback/FeedbackWidget.tsx` (+ CSS); mount in
+  `frontend/src/components/layout/AppLayout.tsx`.
+- Frontend (reused): `useAuth()` (`user.email`), `authedFetch`/`apiClient`, `ui/floating-field.tsx`.
+- Integrations: Gmail (best-effort outbound only, via the platform-sender company mailbox). Twilio / Front /
+  Zenbooker / Stripe — none.
+
+### 5. Protected code (do not break)
+
+- `src/server.js` core middleware/SSE shell (only ADD the new `app.use('/api/feedback', …)` mount).
+- `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts` — untouched.
+- `backend/db/` existing schema — only ADD migration 170; no changes to existing tables.
+- `emailService.sendEmail` signature — reused as-is, not modified.
+- `AppLayout` existing render tree (softphone, warm-up modal, nav badges) — only ADD the widget mount.
+
+### 6. Key open question resolved by the Architect
+
+Platform email transport: `emailService.sendEmail` is bound to the **tenant company's** Gmail mailbox, but
+feedback must reach `support@albusto.com` regardless of whether the tenant connected Gmail. See the
+Architecture section for the resolution (no system SMTP transport exists in the backend → DB row = guarantee,
+email = best-effort via the platform-sender company mailbox).

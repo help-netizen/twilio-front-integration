@@ -7484,3 +7484,127 @@ Vultr poster → POST /api/v1/integrations/leads (auth chain untouched)
 6. **Settings last-write-wins** (whole `settings` object) on concurrent edits — accepted, few admins per tenant.
 7. **Disconnect → reinstall creates a NEW installation row** ⇒ settings reset to defaults (settings live on the installation) — expected semantics; note for support.
 8. **`rowToLead` spreads metadata last** (pre-existing) — external keys could shadow DTO fields in general; for `rely_filter` specifically the reserved-key strip closes it, making the top-level DTO field trustworthy.
+---
+
+## Архитектурное решение для фичи CLIENT-FEEDBACK-WIDGET-001
+
+CRM-юзер → Albusto-разработчик канал продуктового фидбека. Backend = гарантированное сохранение +
+best-effort письмо; frontend = глобальный floating-виджет с бот-заглушкой и формой-эскалацией.
+
+### Существующий функционал (реюз, НЕ дублировать)
+
+- `backend/src/services/emailService.js` → `sendEmail(companyId, { to, cc, subject, body, textBody, files,
+  userId, userEmail })` — уже собирает `multipart/mixed` из multer-файлов (`{ originalname, mimetype, buffer }`)
+  и шлёт через Gmail API компании. **Реюз как есть, сигнатуру не менять.** Файлы виджета кладём прямо в `files`.
+- `backend/src/services/emailMailboxService.js` → `getValidAccessToken(companyId)` / `getMailboxWithTokens` —
+  резолв Gmail-mailbox по companyId; **бросает**, если у компании не подключён Gmail (это и есть точка
+  best-effort try/catch).
+- `multer` memoryStorage — образец `backend/src/routes/noteAttachments.js` (limits `{ fileSize, files }`,
+  `upload.array('files', N)`). Реюзим паттерн, НЕ реюзим `noteAttachmentsService`/S3 (см. решение по файлам).
+- `DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001'` — уже константа в нескольких queries-модулях
+  (`callsQueries`, `conversationsQueries`, …). Используем как платформенного отправителя.
+- Frontend: `useAuth()` (`user.email`), `authedFetch`/`apiClient`, `ui/floating-field.tsx` (`FloatingField`,
+  `textarea` проп), паттерн floating-виджета `components/softphone/SoftPhoneWidget.tsx`, стиль пузырей
+  `components/messaging/MessageThread.tsx` (`.msg-bubble`). Бот-заглушка — эфемерный React-стейт, БЕЗ бэка.
+
+### РЕШЕНИЕ ключевого арх-вопроса (платформенный email-транспорт)
+
+Grep по `backend/src` (`nodemailer|sendgrid|postmark|resend|smtp|createTransport|systemMail|transporter`) —
+**0 совпадений.** Системного/платформенного SMTP-транспорта в бэке НЕТ; единственный исходящий канал —
+Gmail API, привязанный к mailbox КОМПАНИИ через `emailService.sendEmail(companyId, …)`.
+
+**Решение (прагматичный MVP, без нового транспорта):**
+1. **Таблица `feedback_submissions` = источник истины и ГАРАНТИЯ.** Юзер видит успех тогда и только тогда,
+   когда INSERT прошёл. Письмо на надёжность не влияет.
+2. **Письмо = best-effort через ПЛАТФОРМЕННОГО отправителя** = mailbox дефолт-компании
+   (`FEEDBACK_SENDER_COMPANY_ID`, default `00000000-…0001`), а НЕ mailbox компании-инициатора (тенант мог не
+   подключать Gmail, и слать «от тенанта» неверно). `to` = `FEEDBACK_INBOX_EMAIL` (default `support@albusto.com`).
+   Весь вызов обёрнут в try/catch: если у платформенной компании нет подключённого mailbox
+   (`getValidAccessToken` бросает) или Gmail отдал ошибку — ловим, пишем `console.warn`, INSERT остаётся,
+   ответ 201. Никогда не роняет запрос.
+3. **Nodemailer/SMTP НЕ добавляем в MVP** (держим скоуп минимальным; таблица уже даёт надёжность). Зафиксировано
+   как будущее улучшение (см. открытые вопросы).
+
+### РЕШЕНИЕ по файлам (хранение)
+
+MVP: **файлы живут только во вложении письма**; в `feedback_submissions.meta` (jsonb) пишем лишь мета —
+`attachments: [{ name, size, mime }]`. S3-стейджинг (`noteAttachmentsService`/`storageService`) НЕ делаем для
+MVP — файл здесь второстепенное подтверждение к текстовому сообщению; потеря вложения при сбое письма не
+теряет сам фидбек (текст в БД). multer memoryStorage → буферы напрямую в `sendEmail({files})`. Апгрейд до
+S3-надёжности задокументирован как открытый вопрос (паттерн `stageAttachments` готов к переиспользованию).
+
+### Новые компоненты
+
+**Database:**
+- Миграция `170_feedback_submissions.sql` (+ `rollback_170_feedback_submissions.sql`). Таблица
+  `feedback_submissions`: `id uuid pk default gen_random_uuid()`, `company_id uuid NOT NULL REFERENCES
+  companies(id) ON DELETE CASCADE`, `user_id uuid REFERENCES crm_users(id)` (nullable; = `req.user.crmUser.id`,
+  НЕ Keycloak sub — created_by-FK gotcha), `user_email text NOT NULL`, `message text NOT NULL`, `meta jsonb
+  NOT NULL DEFAULT '{}'` (вложения-мета + `email_status` + `escalation_reason`), `created_at timestamptz NOT
+  NULL DEFAULT now()`. Индекс `idx_feedback_submissions_company_created ON (company_id, created_at DESC)`.
+  Аддитивно, идемпотентно (`IF NOT EXISTS`), существующих строк не трогает.
+
+**Backend:**
+- `backend/src/db/feedbackQueries.js` — `insertFeedback({ companyId, userId, userEmail, message, meta })`
+  (одна параметризованная company-scoped вставка, RETURNING). Опц. `listFeedback(companyId)` НЕ нужен для MVP.
+- `backend/src/services/feedbackService.js` — `submitFeedback({ companyId, userId, userEmail, message, files })`:
+  (1) валидация (email-формат, message non-empty, файлы: ≤5, ≤10MB, mime ∈ allowlist) → бросает `{ status:422 }`;
+  (2) `insertFeedback` (истина); (3) best-effort `emailService.sendEmail(SENDER_COMPANY_ID, { to:
+  FEEDBACK_INBOX_EMAIL, subject, body, files, … })` в try/catch, результат → `meta.email_status`
+  (`sent|failed|skipped`); (4) вернуть созданную строку. Env: `FEEDBACK_INBOX_EMAIL`
+  (default `support@albusto.com`), `FEEDBACK_SENDER_COMPANY_ID` (default `DEFAULT_COMPANY_ID`),
+  `FEEDBACK_MAX_FILES=5`, `FEEDBACK_MAX_FILE_MB=10`.
+- `backend/src/routes/feedback.js` — `POST /` с `multer.memoryStorage()`, `upload.array('files',
+  FEEDBACK_MAX_FILES)`, `limits { fileSize, files }`. `companyId = req.companyFilter?.company_id`,
+  `userId = req.user?.crmUser?.id ?? null`, `userEmail = req.body.email` (fallback `req.user?.email`). Ошибки
+  валидации → 422; успех → 201 `{ ok:true, data:{ id } }`. Multer `LIMIT_FILE_SIZE`/`LIMIT_FILE_COUNT` →
+  маппим в 422.
+
+**Frontend:**
+- `frontend/src/components/feedback/FeedbackWidget.tsx` (+ `FeedbackWidget.css`) — самодостаточный
+  fixed floating-виджет (паттерн SoftPhoneWidget, НЕ Radix Dialog): floating-кнопка (иконка чата) →
+  мессенджер-панель. Внутри: (a) детерминированная бот-машина состояний (`greeting → chatting → escalated`),
+  канон-реплики массивом, «Talk to a human» кнопка всегда видна; эскалация по клику ИЛИ при `botReplies >= 2`;
+  (b) при `escalated` бот постит нормативную фразу и рендерит форму: `FloatingField` email (prefill
+  `useAuth().user.email`, editable, валидация), `FloatingField textarea` «What happened?» (required), нативный
+  `<input type=file multiple>` (accept-список; клиентская проверка ≤5/≤10MB/mime), кнопка Send →
+  `authedFetch('/api/feedback', { method:'POST', body: FormData })`; success-стейт / inline-ошибка.
+
+### Изменяемые компоненты
+
+- `src/server.js` — ДОБАВИТЬ строку `app.use('/api/feedback', authenticate, requireCompanyAccess,
+  require('../backend/src/routes/feedback'));` рядом с другими tenant-scoped маунтами (никакой другой правки
+  core-шелла).
+- `frontend/src/components/layout/AppLayout.tsx` — ДОБАВИТЬ `<FeedbackWidget />` внутри `div.app-layout`
+  (рядом с `SoftPhoneWidget`), под фича-флагом `import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET !== 'false'`
+  (default on; выключается значением `'false'`). Существующий рендер-трее не переставляем.
+
+### API endpoints
+
+- `POST /api/feedback` — приём фидбека.
+  - Middleware: `authenticate, requireCompanyAccess` (маунт в `src/server.js`).
+  - `company_id` из `req.companyFilter?.company_id`; `user_id` из `req.user?.crmUser?.id`.
+  - Content-Type `multipart/form-data`: `email`, `message`, `files[]` (0..5).
+  - Успех `201 { ok:true, data:{ id } }`; валидация `422 { ok:false, error }`; без токена `401`; без
+    привязки к компании `403`.
+  - Изоляция: INSERT всегда с `company_id` из `req.companyFilter`; строки одной компании не видны другой
+    (для MVP есть только запись; GET-по-id не экспонируется).
+
+### Позиционирование виджета (без конфликта с softphone / bottom-nav)
+
+Softphone-панель = `position:fixed; right:16px; z-index:9000/9001`, появляется по требованию (desktop-only).
+Feedback FAB: `position:fixed`, нижний-правый угол, **z-index в диапазоне 8000-8500 (НИЖЕ softphone 9000)** —
+живой звонок всегда перекрывает FAB. На мобиле (≤375) поднять `bottom` выше `BottomNavBar` (~64px) и держать
+панель узкой (не во всю ширину, не перекрывать нижнюю навигацию). Точные px — в спеке.
+
+### Файлы для изменений (сводно)
+
+- `backend/db/migrations/170_feedback_submissions.sql` — создать таблицу + индекс.
+- `backend/db/migrations/rollback_170_feedback_submissions.sql` — `DROP TABLE IF EXISTS`.
+- `backend/src/db/feedbackQueries.js` — insert (company-scoped).
+- `backend/src/services/feedbackService.js` — валидация + insert + best-effort email.
+- `backend/src/routes/feedback.js` — POST + multer.
+- `src/server.js` — маунт роутера (одна строка).
+- `frontend/src/components/feedback/FeedbackWidget.tsx` (+ `.css`) — виджет.
+- `frontend/src/components/layout/AppLayout.tsx` — маунт под флагом.
+- Тесты: `backend/tests/routes/feedback.test.js` (jest+supertest), `frontend/src/components/feedback/FeedbackWidget.test.tsx` (vitest).
