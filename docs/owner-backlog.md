@@ -29,3 +29,9 @@
 ## OB-5 (2026-07-13) — TELEPHONY-WIZARD-UX-001: результаты поиска номеров обрезаются контейнером — **открыт**
 
 Скриншот владельца: шаг «Choose your number», результаты поиска. Список номеров (карточки Buy) живёт внутри контейнера с ограниченной высотой/внутренним скроллом: третья карточка обрезана посередине, дальше до нижней навигации — пустая серая зона; страница не отрисована до конца. На мобиле список должен лежать в общем потоке страницы и скроллиться экраном (канон MobileListPage: display:block, скроллит .app-main), без вложенных фикс-высот. Вместе с OB-1..4.
+
+## OB-6 (2026-07-13) — WARMUP-SUMMARY: модалка «Good morning» всплывает каждые 2-3 минуты — **открыт**
+
+Скриншот владельца: десктоп, Jobs + открытая джоба — поверх периодически показывается WarmUpSummaryDialog («Good morning — Here's your day at a glance», Let's go). Должна показываться один раз (warm-up AudioContext + сводка дня), а не каждые 2-3 минуты.
+
+Гипотеза (AppLayout.tsx:76): `useEffect(... if (softPhoneEnabled && voice.phoneAllowed && voice.deviceReady) setShowWarmUp(true))` — Twilio Device периодически перерегистрируется (обновление токена/реконнект) → `deviceReady` флипает → эффект снова ставит showWarmUp=true после dismiss. Нет session-latch. Fix-направление: sticky-дизмисс на сессию (sessionStorage `albusto_warmup_done`, проверять в эффекте), warm-up аудио при этом дёргать не надо повторно. ВАЖНО: не сломать сам warm-up канон (модалка ДЕЛИБЕРАТНАЯ — softphone-warmup-modal-intentional).
