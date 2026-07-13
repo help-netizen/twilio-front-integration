@@ -6839,3 +6839,173 @@ Log-only; no metrics infrastructure (R9).
 - Loop tests — extend the emailQueries mock (`listYelpConversationHistory`) + assert: transcript present between OFFERED SLOTS and CUSTOMER MESSAGE; current inbound excluded; history-fetch reject ⇒ prompt identical to today's + one send; `linkYelpAgentSend` called once per send with `{contact_id-free args, timelineId}`; link reject ⇒ outcome unchanged, no throw.
 - `linkYelpAgentSend` — emailTimelineOutbound.test.js pattern (mock emailQueries/realtimeService/providerRegistry): fresh link publishes once; already-linked re-run publishes zero; no-row → reimport → retry; never throws; never calls unread/AR fns.
 - Backfill — yelpTimelineCleanup.db.test.js pattern (`runBackfill` exported): dry-run writes nothing; apply links; 2nd apply no-ops; conflict thread skipped.
+
+## MARKETPLACE-LEADGEN-SPLIT-001 — architecture: migration 169 catalog split (rename → «Website Leads» + 4 per-source lead apps + default-co auto-connect on the SHARED live credential), boot-list registration after 083, shared-credential disconnect guard (2026-07-13)
+
+**Requirements:** Docs/requirements.md «MARKETPLACE-LEADGEN-SPLIT-001» (US-1..6, FR-1..7, NFR-1..6). **Verdict:** catalog-only — ONE new migration (169) + its rollback, ONE boot-list registration line, and ONE guarded disconnect path (FR-5, the only permitted non-catalog change). NO new tables/columns/indexes, NO new HTTP routes, NO frontend edits (NFR-5), NO change to `POST /leads` / `integrationsAuth` / `integrationScopes` (NFR-6), NO write of any kind to `api_integrations` (NFR-1). Migration number **169** confirmed free (latest in repo = 168, both forward and rollback series).
+
+### Verified code findings (2026-07-13, this worktree)
+
+- `ensureMarketplaceSchema` (backend/src/db/marketplaceQueries.js:12-48) is the ONLY place that replays 083 (grep: no other boot list references `083_create_marketplace`). It re-runs the whole seed list inside one advisory-lock transaction at every boot; 083's `ON CONFLICT (app_key) DO UPDATE` (083:166-180) re-asserts name «Lead Generator» each time → **169 MUST be registered in that list AFTER the 083 line** (:27). Precedent = the 132-after-087 ordering comment (:38-41). Registration slot: append after the 161 line (:47) — end-of-list keeps chronological convention and is trivially after 083.
+- `idx_marketplace_installations_one_active` is PARTIAL — `(company_id, app_id) WHERE status IN ('connected','provisioning_failed')` (083:63-65). An `ON CONFLICT`-style seed against it would NOT conflict with a `disconnected`/`revoked` row and would RESURRECT an owner-disconnected installation on the next boot → installation seeding must use **NOT EXISTS over ALL statuses** (FR-4).
+- `disconnectInstallation` (backend/src/services/marketplaceService.js:502-558) revokes unconditionally: `revokeCredentialById(installation.api_integration_id, …)` (:516) sets `api_integrations.revoked_at`. **Amplifier found:** `reconcileRevokedInstallations` (marketplaceQueries.js:76-91) then flips EVERY still-active installation whose credential has `revoked_at` to `'revoked'` on the next list/get — so an unguarded Disconnect of one of five shared-credential apps would kill the live token AND cascade the other four tiles to Revoked. The guard must prevent the revoke itself.
+- `revokeCredentialById` call sites audit: :516 (disconnect — **the only site needing the guard**); :426 and :667 revoke a credential freshly minted in the same flow (never shared); :580 (`retryProvisioning`) is unreachable for the lead apps (`provisioning_mode='manual'` ⇒ `INSTALLATION_NOT_RETRYABLE`, and push-credentials installs always own their credential). No other callers in `backend/src`/`src`.
+- Disconnect status expression today (:532): `!installation.api_integration_id || revoked ? 'disconnected' : 'revoked'` — the guard must extend it, otherwise a skipped (shared) revoke would mislabel the row `'revoked'`.
+- `installApp` (:302-380) has no app_key special-cases that touch the new apps (only `metadata.derived_connection` reject + `requires_connected_gmail` prerequisite — neither applies). `provisioning_mode='manual'` ≠ 'none' ⇒ self-service Enable by other companies mints its OWN credential (:346-360) — US-4 works with zero code. Re-Enable after a disconnect likewise mints a new credential; the original shared token stays protected by the guard via the other active rows.
+- `listApps` overlays special-case ONLY `google-email` / `telephony-twilio` (:252-264); `mapAppRow` renders everything else generically — five lead apps flow through untouched (NFR-5). Marketplace router mount (src/server.js:267): `authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess` — unchanged, no new endpoints, `company_id` stays `req.companyFilter?.company_id` end-to-end.
+- No repo-wide migration auto-runner exists: migrations apply manually at deploy (psql) AND 169 replays every boot via the ensure list → idempotency is doubly mandatory (NFR-2). 169 contains no `CREATE INDEX CONCURRENTLY` → transaction-safe (required: the ensure list runs inside BEGIN/COMMIT).
+- Seed-shape precedents studied: 083 (the two-app upsert), 126/132/145/161 (single-app upserts + comment style), rollback_132/145/161 (DELETE by app_key + restore-prior-values UPDATE; FK notes). Test precedents: tests/marketplaceTelephonyOverlay.test.js + tests/googleEmailMarketplace.test.js (mock `marketplaceQueries`, run REAL `marketplaceService`), tests/yelpSendsBackfill.db.test.js (real-PG suite, `dbReady` beforeAll probe → per-test `SKIPPED-NEEDS-DB` self-skip).
+
+### Design D1 — migration `169_split_lead_generator_marketplace_apps.sql` (three statements, strictly this order)
+
+**(1) Rename `lead-generator` → «Website Leads» (FR-2).** Targeted UPDATE of `name` + both descriptions only (provider_name «Blanc Labs» and every other field untouched — rebrand is an explicit follow-up). Guarded no-op re-run (132's `IS DISTINCT FROM` style); in the boot sequence 083 has just re-asserted the old name inside the same transaction, so the guard fires there every boot — atomic for readers.
+
+```sql
+UPDATE marketplace_apps
+SET name = 'Website Leads',
+    short_description = 'Creates inbound leads from your company website.',
+    long_description = 'Posts orders and form submissions from your company website into Albusto as leads with source attribution.',
+    updated_at = NOW()
+WHERE app_key = 'lead-generator'
+  AND (name IS DISTINCT FROM 'Website Leads'
+       OR short_description IS DISTINCT FROM 'Creates inbound leads from your company website.'
+       OR long_description IS DISTINCT FROM 'Posts orders and form submissions from your company website into Albusto as leads with source attribution.');
+```
+
+**(2) Four new apps (FR-1).** One multi-VALUES `INSERT … ON CONFLICT (app_key) DO UPDATE` mirroring 083/161 (update-set list = all seeded columns + `updated_at = NOW()`). Per row: `app_key` ∈ `pro-referral-leads | rely-leads | nsa-leads | lhg-leads`; `name` ∈ «Pro Referral Leads | Rely Leads | NSA Leads | LHG Leads»; `provider_name='Albusto'`; `category='lead_generation'`; `app_type='internal'`; `requested_scopes='["leads:create"]'::jsonb`; `provisioning_mode='manual'`; `status='published'`; `support_email='support@albusto.com'`; `docs_url='/settings/api-docs'` (same as lead-generator — these apps issue API credentials on install); `privacy_url`/`logo_url` omitted (161/126 precedent; avoids `blanc.local`, NFR-4); `metadata='{"access_summary":["Create leads"]}'::jsonb`. Draft copy = one factual sentence per source, `short_description='Creates inbound leads from <Source>.'`, `long_description='Posts <Source> leads into Albusto with source attribution.'` — no enforcement promises anywhere (FR-6), no «Blanc» in any new string (NFR-4). Draft status is noted in the migration header comment, NOT in user-visible copy.
+**LHG naming decision:** keep the acronym — **«LHG Leads»**. The prod `job_source` value is literally `LHG` (1 lead / 90 days); no verified expansion exists in source data, and the tile must match the label the owner sees on leads (literal-names principle). FR-1 [OWNER] already fixes this name; recorded here so nobody "helpfully" expands it.
+
+**(3) Default-company auto-connect (FR-4).** INSERT-SELECT: `CROSS JOIN LATERAL` resolves the SHARED credential from the newest CONNECTED default-co `lead-generator` installation (**by subquery — the integration id is never hardcoded**; prod resolves to 1). Zero source rows (fresh dev DB, or owner disconnected the original) ⇒ LATERAL empties the set ⇒ seeds nothing — never a `'connected'` row with a NULL credential. `installed_by` omitted (NULL — migration actor), `installed_at=NOW()`.
+
+```sql
+INSERT INTO marketplace_installations
+    (company_id, app_id, api_integration_id, status, installed_at, metadata)
+SELECT
+    '00000000-0000-0000-0000-000000000001'::uuid,
+    a.id,
+    src.api_integration_id,
+    'connected',
+    NOW(),
+    '{"seeded_by":"MARKETPLACE-LEADGEN-SPLIT-001","shared_credential":true}'::jsonb
+FROM marketplace_apps a
+CROSS JOIN LATERAL (
+    SELECT mi.api_integration_id
+    FROM marketplace_installations mi
+    JOIN marketplace_apps lg ON lg.id = mi.app_id AND lg.app_key = 'lead-generator'
+    WHERE mi.company_id = '00000000-0000-0000-0000-000000000001'::uuid
+      AND mi.status = 'connected'
+      AND mi.api_integration_id IS NOT NULL
+    ORDER BY mi.created_at DESC
+    LIMIT 1
+) src
+WHERE a.app_key IN ('pro-referral-leads', 'rely-leads', 'nsa-leads', 'lhg-leads')
+  AND NOT EXISTS (
+      SELECT 1 FROM marketplace_installations existing
+      WHERE existing.company_id = '00000000-0000-0000-0000-000000000001'::uuid
+        AND existing.app_id = a.id
+  );
+```
+
+The `NOT EXISTS` is deliberately **status-blind** (hazard (c)): once a (default-co, app) row has EVER existed — connected, disconnected, revoked, anything — the seed never fires again, so boot replays neither duplicate nor resurrect an owner-disconnected source (FR-4). `api_integrations` is only READ (NFR-1). No `marketplace_installation_events` rows are seeded — an events INSERT has no natural idempotency key for boot replays; `metadata.seeded_by` is the audit trail (decision, not omission).
+
+### Design D2 — boot-list registration (FR-3)
+
+`backend/src/db/marketplaceQueries.js` — ONE line appended after the 161 entry (:47), i.e. after 083, with a comment in the 132 style:
+
+```js
+        // MARKETPLACE-LEADGEN-SPLIT-001: rename lead-generator → "Website Leads"
+        // + four per-source lead apps + default-company auto-connect on the
+        // SHARED live credential. MUST run AFTER 083 (whose ON CONFLICT DO UPDATE
+        // re-asserts the old "Lead Generator" name on every boot — the
+        // 132-after-087 precedent). Installation seed = all-statuses NOT EXISTS:
+        // boot replays never duplicate rows nor resurrect a disconnected one.
+        await query(readMigration('169_split_lead_generator_marketplace_apps.sql'));
+```
+
+### Design D3 — shared-credential disconnect guard (FR-5; the ONLY non-catalog change)
+
+Mechanism: **refcount guard in the disconnect path**. All SQL stays in marketplaceQueries (repo convention — the service never issues raw SQL).
+
+**New query helper** `backend/src/db/marketplaceQueries.js` (+ export):
+
+```js
+async function countOtherActiveInstallationsOnCredential(companyId, apiIntegrationId, excludeInstallationId, client = null) {
+    if (!apiIntegrationId) return 0;
+    await ensureMarketplaceSchema(client);
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT COUNT(*)::int AS n
+         FROM marketplace_installations
+         WHERE company_id = $1
+           AND api_integration_id = $2
+           AND id <> $3
+           AND status IN ('connected', 'provisioning_failed')`,
+        [companyId, apiIntegrationId, excludeInstallationId]
+    );
+    return rows[0]?.n || 0;
+}
+```
+
+Exact predicate rationale: company-scoped (isolation; `revokeCredentialById` is already company-scoped), active set = `('connected','provisioning_failed')` — the same set as the partial-unique index, the disconnect precondition (:512) and `reconcileRevokedInstallations`, so «still needs the credential» means exactly «row the system treats as active».
+
+**`disconnectInstallation` edit** (marketplaceService.js, the :516-544 region — everything else in the function byte-unchanged):
+
+```js
+        // MARKETPLACE-LEADGEN-SPLIT-001 FR-5: five lead apps share ONE live
+        // credential. Revoke ONLY when this is the LAST active installation on
+        // it — otherwise one Disconnect kills ingestion for every source AND
+        // reconcileRevokedInstallations cascades the others to 'revoked'.
+        const otherActive = await marketplaceQueries.countOtherActiveInstallationsOnCredential(
+            companyId, installation.api_integration_id, installationId, client);
+        let revoked = null;
+        if (otherActive === 0) {
+            revoked = await marketplaceQueries.revokeCredentialById(installation.api_integration_id, companyId, client);
+            if (revoked) {
+                await writeCredentialRevokedEvent({ companyId, installationId, appId: installation.app_id,
+                    apiIntegrationId: installation.api_integration_id, actorId, requestId, reason: 'disconnect' }, client);
+            }
+        }
+        const updated = await marketplaceQueries.markDisconnected({
+            companyId, installationId, actorId,
+            status: !installation.api_integration_id || revoked || otherActive > 0 ? 'disconnected' : 'revoked',
+        }, client);
+        // existing 'disconnected' writeEvent: payload gains credential_shared
+        payload: { credential_revoked: Boolean(revoked), credential_shared: otherActive > 0 }
+```
+
+Status truth-table (first three rows = today's behavior, byte-compatible): no credential → `'disconnected'`; not shared + revoke ok → `'disconnected'`; not shared + revoke returned null (company mismatch) → `'revoked'`; **shared → `'disconnected'`, credential untouched** (and `reconcileRevokedInstallations` leaves it alone — `revoked_at` stays NULL). Disconnecting all five one-by-one: the LAST disconnect sees `otherActive=0` and revokes — exactly FR-5's boundary («revoke only when no OTHER connected installation references it»); NFR-1 protects against any SINGLE disconnect, not an owner deliberately disconnecting everything. Concurrency: two simultaneous disconnects of two sharers can BOTH skip the revoke (each still sees the other active under READ COMMITTED) — the credential survives with zero active rows; failure mode is strictly the safe direction (never a wrong revoke: revoking requires the other row's disconnect already committed). No `FOR UPDATE` added — accepted, documented. `retryProvisioning` (:580) intentionally NOT guarded (unreachable for manual-mode apps; push-credentials installs own their credential — see findings).
+
+### Observability
+
+**No new logging/metrics — deliberate.** The existing `marketplace_installation_events` audit stream already records install/disconnect/credential_revoked; the guard enriches the `'disconnected'` event payload with `credential_shared` (zero new infra), and the seeded rows carry `metadata.seeded_by`. The migration itself stays silent (it replays every boot — any `RAISE NOTICE` would spam logs forever).
+
+### Rollback `rollback_169_split_lead_generator_marketplace_apps.sql` (FR-7)
+
+Order is FK-forced (`marketplace_installations.app_id` is ON DELETE RESTRICT): (1) DELETE installations whose `app_id` resolves to the four new app_keys — the default-co seeded rows AND any self-service installs by other companies (script header documents: their minted credentials are NOT revoked/deleted; `api_integrations.marketplace_app_id/marketplace_installation_id` clear via ON DELETE SET NULL; revoke those keys via the integrations UI if desired); (2) DELETE the four `marketplace_apps` rows; (3) UPDATE `lead-generator` back to the exact 083 seed strings (name «Lead Generator», short «Creates inbound leads from external campaigns.», long «Posts validated campaign leads into Blanc with source attribution.» — 083 re-asserts these on the next boot anyway once the list entry is gone; NFR-4 governs new strings only). Header also states: **rolling back requires deleting the `readMigration('169_…')` line from `ensureMarketplaceSchema`**, and that the script never touches the original `lead-generator` installation row, the live `api_integrations` row, or any other app. `marketplace_installation_events` audit rows survive (installation_id/app_id SET NULL) — rollback_161 precedent. Idempotent: every statement no-ops when already rolled back.
+
+### Files to change (complete list — nothing else)
+
+1. `backend/db/migrations/169_split_lead_generator_marketplace_apps.sql` — NEW (D1).
+2. `backend/db/migrations/rollback_169_split_lead_generator_marketplace_apps.sql` — NEW (above).
+3. `backend/src/db/marketplaceQueries.js` — boot-list line after :47 (D2) + `countOtherActiveInstallationsOnCredential` helper + export (D3).
+4. `backend/src/services/marketplaceService.js` — guard inside `disconnectInstallation` only (D3).
+5. `tests/marketplaceLeadgenSplit.test.js` — NEW, service-level (below).
+6. `tests/marketplaceLeadgenSplit.db.test.js` — NEW, real-PG self-skip (below).
+7. `Docs/*` — this block + downstream chain docs.
+**Explicitly untouched:** `integrations-leads.js`, `integrationsAuth.js`, `integrationScopes.js`, `frontend/src/**`, `src/server.js`, existing seeds 083-161 and their ensure-list ordering, existing tests (the new query fn needs NO mock additions in marketplaceTelephonyOverlay/googleEmailMarketplace suites — they never exercise disconnect).
+
+### Tests (precedents named per suite)
+
+- **`tests/marketplaceLeadgenSplit.test.js`** — mock `marketplaceQueries`, run REAL `marketplaceService` (marketplaceTelephonyOverlay.test.js:34-56 pattern). Cases: (a) shared (`otherActive=1`) → `revokeCredentialById` NOT called, no `credential_revoked` event, `markDisconnected` status `'disconnected'`, event payload `{credential_revoked:false, credential_shared:true}`, COMMIT; (b) last active (`0`) → revoke called with `(api_integration_id, companyId, client)`, `credential_revoked` event, status `'disconnected'` — today's behavior preserved; (c) NULL `api_integration_id` → helper short-circuit, status `'disconnected'`; (d) not shared + revoke returns null → status `'revoked'` (regression pin); (e) 404 INSTALLATION_NOT_FOUND / 409 INSTALLATION_NOT_ACTIVE unchanged, ROLLBACK + release on throw.
+- **`tests/marketplaceLeadgenSplit.db.test.js`** — real PG, `dbReady` beforeAll probe + per-test self-skip (yelpSendsBackfill.db.test.js:48,237-250 pattern); every case wraps a dedicated client in `BEGIN … ROLLBACK` (169 is txn-safe, zero residue on the shared dev DB). Cases: catalog shape after applying the real 169 file (5 apps; rename applied; new rows' provider/category/scopes/status/mode); double-apply idempotency (row counts + ids stable, NFR-2); auto-connect rows exist ONLY for the default company and their `api_integration_id` equals the source installation's (seed a tagged fixture company + installation inside the txn to prove non-default companies get nothing, NFR-3); resurrect-guard: flip a seeded row to `'disconnected'`, re-apply 169 → still disconnected, no new row (hazard (c)); NFR-1: full `api_integrations` snapshot before/after 169 AND after rollback — byte-identical; rollback file: 4 apps + their installations gone, name restored, original `lead-generator` installation row byte-identical; **FR-3 ordering proof:** run the REAL `ensureMarketplaceSchema(client)` on the txn client (client-arg path skips the memo and replays the whole list) → final name MUST be `'Website Leads'` — fails if 169 is missing from the list or ordered before 083.
+
+### Risks
+
+1. **Registration before 083 / forgotten registration** → rename silently reverts on next boot — caught by the FR-3 ordering proof above (behavioral, not source-grep).
+2. **Resurrection via partial-index ON CONFLICT** — designed out (status-blind NOT EXISTS) + pinned by the db-suite resurrect case.
+3. **Unguarded disconnect kill-switch + `reconcileRevokedInstallations` cascade** — the guard removes both; service suite pins the truth-table.
+4. **Concurrent disconnect race** → credential may survive with zero active rows (safe direction, never a wrong revoke); accepted, no FOR UPDATE.
+5. **Rollback with self-service installs of the new apps** → those companies' installation rows are deleted, their minted credentials remain valid-but-orphaned (documented in the script header; revocable via integrations UI).
+6. **Fresh/dev DBs without a connected lead-generator installation** → no auto-connect seeds; five tiles show Available — intended (US-4 semantics), not a defect.
+7. **Boot-cost of replaying the seed** — three statements over single-digit-row tables inside the existing advisory-lock txn; negligible.
+8. **Copy drift** — descriptions are drafts by design (FR-1); any future copy edit lands in 169 itself (self-heals every boot), not in a data patch.

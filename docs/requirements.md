@@ -6207,3 +6207,78 @@ observability.
 - Integrations: Gmail (reads/links already-hydrated rows; send behavior byte-unchanged), Gemini
   (prompt grows within existing transport), Yelp relay (send format untouched). Twilio / Front /
   Zenbooker / Stripe — none.
+
+## MARKETPLACE-LEADGEN-SPLIT-001 — split the marketplace «Lead Generator» app into five per-source lead apps (Website / Pro Referral / Rely / NSA / LHG), catalog-only (2026-07-13)
+
+> Status: requirements (Product 01). **Catalog-only change:** NO lead-creation behavior change, NO external-service change (the Vultr rely-lead-processor keeps posting exactly as today), expected NO frontend change (verified below). Binding owner decisions from the interview are baked in and marked **[OWNER]**.
+
+**Краткое описание.** Today ONE marketplace app (`app_key='lead-generator'`, name "Lead Generator") represents ALL externally-posted lead sources. Prod `job_source` over 90 days: Pro Referral=163, Rely=57, Web site order=52, NSA=42, LHG=1 — five distinct streams behind one tile. Split the catalog so each source is its own app: rename the existing app to **"Website Leads"** (key unchanged) and add four new per-source apps, auto-connected for the default company against the SAME live credential. Purely a `marketplace_apps` / `marketplace_installations` catalog re-shape.
+
+### Verified code/schema facts (downstream agents: do NOT re-derive, do NOT contradict)
+
+- `marketplace_apps.app_key` is `TEXT NOT NULL UNIQUE`; migration 083 seeds `lead-generator` (name "Lead Generator", provider "Blanc Labs", category `lead_generation`, `app_type='internal'`, scopes `["leads:create"]`, `provisioning_mode='manual'`, published) with `ON CONFLICT (app_key) DO UPDATE` (`backend/db/migrations/083_create_marketplace_apps.sql:118-180`).
+- `marketplace_installations` has **NO plain UNIQUE(company_id, app_id)** — it is a **partial unique index** `idx_marketplace_installations_one_active ON (company_id, app_id) WHERE status IN ('connected','provisioning_failed')` (083:63-65). Disconnected/revoked rows can accumulate; only one ACTIVE row per (company, app). `api_integration_id` is nullable, FK `ON DELETE SET NULL`, **non-unique index** — several installations MAY legally share one credential.
+- `ensureMarketplaceSchema` (`backend/src/db/marketplaceQueries.js:12-48`) **re-runs the whole seed list at every boot** (advisory-lock txn). Because 083's `ON CONFLICT DO UPDATE` re-asserts the name "Lead Generator" on every boot, any rename NOT registered in that list AFTER 083 is silently reverted at next restart (precedent: the 132-after-087 ordering comment at marketplaceQueries.js:38-41).
+- `disconnectInstallation` (`backend/src/services/marketplaceService.js:502-543`) calls `revokeCredentialById(installation.api_integration_id)` which sets `api_integrations.revoked_at`; `integrationsAuth.js:141` then rejects the token. **With a shared credential, one Disconnect click is a kill-switch for ALL five sources.** The generic tile UI offers that Disconnect button (IntegrationsPage.tsx:306-309).
+- `installApp` (marketplaceService.js) mints a NEW credential when `provisioning_mode !== 'none'` — self-service Enable by other companies behaves for the new apps exactly as for today's Lead Generator.
+- External ingestion contract: `POST /leads` in `backend/src/routes/integrations-leads.js:33` = `authenticateIntegration` (api_integrations by key_id, `revoked_at` check) + `requireIntegrationScope('leads:create')`. **Token+scope only — no marketplace-app or per-source coupling anywhere.** Grep of `backend/src`, `frontend/src`, `src` for `lead-generator` gates: **zero hits**.
+- Frontend genericity: `IntegrationsPage.tsx` hardcodes app_keys only for `vapi-ai` / `stripe-payments` / `google-email` / `telephony-twilio` (setup-page buttons) and value-copy for `smart-slot-engine` / `ai-repair-advisor`; every other app renders through the generic branch (Enable → `MarketplaceConnectDialog`, connected → Disconnect / optional `metadata.setup_path` Setup). `provider_name` is not rendered anywhere in the marketplace UI today. → New lead apps need **zero frontend work**.
+- Prod state: exactly ONE installation of `lead-generator` (default company `00000000-0000-0000-0000-000000000001`, status connected, `api_integration_id=1` = the LIVE token the external service posts with). Latest migration in repo: 168 → this feature takes **169**.
+
+### Пользовательские сценарии (use cases)
+
+- **US-1 (catalog shows 5 lead apps).** The owner opens `/settings/integrations` and sees five lead-source apps: **Website Leads, Pro Referral Leads, Rely Leads, NSA Leads, LHG Leads** — English names, one tile per source, rendered by the existing generic tile UI.
+- **US-2 (per-source connect state).** For the default company all five show **Connected**, each backed by its own `marketplace_installations` row, so the owner sees at a glance which lead sources the company runs.
+- **US-3 (external service unaffected).** Before, during, and after the migration the Vultr rely-lead-processor keeps POSTing leads for ALL sources with the SAME token; every post succeeds identically to today. Zero ingestion downtime, zero config change on the external side.
+- **US-4 (other companies).** Any other company sees the five apps in the catalog as **available-but-disconnected** (no auto-connect for them); clicking Enable follows the existing generic install path (mints its own `leads:create` credential), exactly like today's Lead Generator.
+- **US-5 (disconnect of ONE source app is not a kill-switch).** If the owner disconnects e.g. "NSA Leads", the other four apps stay Connected and ingestion for ALL sources keeps working — the shared live credential must survive (see FR-5/NFR-1).
+- **US-6 (rollback).** Running the rollback restores the single-app catalog (name "Lead Generator", 4 new app rows and their seeded installations gone) **without touching** the live `lead-generator` installation row or `api_integrations` row 1 — ingestion never blinks.
+
+### Функциональные требования
+
+- **FR-1 (new catalog rows) [OWNER].** Migration **169** inserts four `marketplace_apps` rows mirroring the `lead-generator` shape (category `lead_generation`, `app_type='internal'`, `requested_scopes=["leads:create"]`, `provisioning_mode='manual'`, `status='published'`), seeded idempotently by `app_key` (`ON CONFLICT (app_key) DO UPDATE`, same as 083): keys **`pro-referral-leads`, `rely-leads`, `nsa-leads`, `lhg-leads`**; names **"Pro Referral Leads", "Rely Leads", "NSA Leads", "LHG Leads"**; `provider_name='Albusto'`. `short_description` / `long_description` / `metadata.access_summary` = **draft texts** (one factual sentence per source + `["Create leads"]`), to be refined later when each service is доработан — drafts must NOT promise per-source enforcement (see FR-6).
+- **FR-2 (rename, key frozen) [OWNER].** The existing `lead-generator` row is renamed to **"Website Leads"**; **`app_key` stays `lead-generator`** (live installation/token untouched). Its other fields (incl. `provider_name='Blanc Labs'`) are NOT rebranded here (out of scope, follow-up).
+- **FR-3 (rename survives every boot).** The 169 seed is registered in `ensureMarketplaceSchema` **after** `083_create_marketplace_apps.sql`, so the rename + new rows self-heal on every restart instead of being reverted by 083's `ON CONFLICT DO UPDATE` re-seed (132-after-087 precedent).
+- **FR-4 (auto-connect seeding, company-scoped) [OWNER].** Migration 169 seeds four `marketplace_installations` rows **only** for the default company `00000000-0000-0000-0000-000000000001`: `status='connected'`, `api_integration_id=1` (the SAME live credential), `installed_at` set, sensible `metadata` note (seeded-by-MARKETPLACE-LEADGEN-SPLIT-001). No row is created for any other company. **Idempotency guard must check existence across ALL statuses** (NOT-EXISTS per (company, app)), because the partial unique index does not cover disconnected/revoked rows — a boot-time re-run must neither duplicate rows nor RESURRECT an installation the owner intentionally disconnected.
+- **FR-5 (disconnect isolation — the one permitted non-catalog guard).** Disconnecting any one of the five lead apps must NOT revoke `api_integrations` row 1 while another connected installation still references the same `api_integration_id`. Today `disconnectInstallation` unconditionally revokes — the Architect chooses the mechanism (shared-credential refcount guard in the disconnect path, or an equivalent seeding choice that keeps the credential safe) — but the requirement is absolute: **one Disconnect never breaks the other four sources.** Lead-creation code paths themselves stay untouched.
+- **FR-6 (honest connect-state semantics).** Per-source connect state is **catalog/informational**: enforcement remains token+scope (`leads:create`) at `POST /leads`, with NO per-app gate — disconnecting "Rely Leads" does not stop Rely lead ingestion in this feature. No UI string, description, or doc introduced here may claim otherwise. (Per-source enforcement = explicit follow-up, out of scope.)
+- **FR-7 (rollback, live-token-safe).** `rollback_169_*.sql` restores the pre-split catalog: deletes the seeded installations of the four new apps, then the four app rows (FK `ON DELETE RESTRICT` order: installations first; if other companies self-installed a new app, those installation rows are deleted too — their minted credentials are left to `ON DELETE SET NULL`, documented in the script header), and renames "Website Leads" back to "Lead Generator". It must NOT touch the original `lead-generator` installation row, `api_integrations` row 1, or any other app's rows. (Rolling back also requires removing the 169 entry from `ensureMarketplaceSchema`, noted in the script header.)
+
+### Нефункциональные требования
+
+- **NFR-1 (live-token safety — THE critical NFR).** `api_integrations` row 1 (`revoked_at`, `scopes`, `key_id`, `secret_hash`, `company_id`) must never be modified, revoked, or expired by the migration, the boot-time re-runs, seeding, disconnect of any new app (FR-5), or rollback (FR-7). Acceptance = zero failed external posts attributable to this feature across all five `job_source` streams.
+- **NFR-2 (idempotent migration).** Migration 169 is re-runnable arbitrarily many times (it will be — `ensureMarketplaceSchema` executes it at every boot inside the advisory-lock transaction): apps via `ON CONFLICT (app_key) DO UPDATE`, installations via the all-statuses NOT-EXISTS guard of FR-4.
+- **NFR-3 (company-scoped seeding).** Installation seeding touches exactly one company (default); multi-tenant isolation intact — no other company's catalog state changes except seeing four more published (disconnected) apps.
+- **NFR-4 (English UI, no "Blanc" in NEW strings).** All user-visible strings of the NEW rows (names, descriptions, `access_summary`) are English and contain no "Blanc"; new rows use Albusto-branded values (`provider_name='Albusto'`; support/privacy/docs fields Albusto-flavored, not `blanc.local`). Existing rows' "Blanc Labs" stays as-is (follow-up).
+- **NFR-5 (no frontend change).** The five apps render through the existing generic tile branch + `MarketplaceConnectDialog`; no `frontend/src` file is edited. If a screen turns out to need an app-key special case, that is a spec violation to escalate, not to hardcode.
+- **NFR-6 (no external-service change).** Nothing under the external contract changes: `POST /leads` route, `integrationsAuth` / `integrationScopes` middleware, payload/`job_source` handling stay byte-identical; the Vultr rely-lead-processor is not redeployed or reconfigured.
+
+### Out of scope (explicit)
+
+- Per-source ENFORCEMENT (making a disconnected per-source app actually block/route that source's leads) — future feature per FR-6.
+- Re-branding existing `provider_name='Blanc Labs'` rows (call-qa-agent, lead-generator, etc.) to "Albusto" — noted follow-up.
+- Final marketing copy for the four new apps — descriptions ship as drafts, refined when each source's service is доработан.
+- Splitting the shared token into per-app credentials, or any `api_integrations` re-issuance.
+- Any change to the external poster (Vultr rely-lead-processor), its payloads, or `job_source` values/renames; any lead-pipeline change at all.
+- Yelp lead flows (task-based agent pipeline, not marketplace-token based) and the onboarding checklist.
+
+### Потенциально вовлечённые модули (по architecture.md)
+
+- `backend/db/migrations/169_split_lead_generator_marketplace_apps.sql` (+ `rollback_169_*.sql`) — NEW.
+- `backend/src/db/marketplaceQueries.js` — register 169 in `ensureMarketplaceSchema` after 083 (FR-3).
+- `backend/src/services/marketplaceService.js` — ONLY if the Architect places the FR-5 shared-credential disconnect guard there; no other service change.
+- `Docs/*` — this entry + downstream chain. **No `frontend/src` modules** (NFR-5).
+
+### Затронутые интеграции
+
+- Twilio / Front / Zenbooker / Google Places / Gmail / Stripe / VAPI — **none**.
+- External lead-poster (Vultr rely-lead-processor) — explicitly UNTOUCHED (NFR-6); its token keeps working (NFR-1).
+
+### Защищённые части кода (НЕЛЬЗЯ ломать)
+
+- `backend/src/routes/integrations-leads.js` (`POST /leads` contract) + `backend/src/middleware/integrationsAuth.js` / `integrationScopes.js` — do not edit.
+- `api_integrations` row 1 (live credential) — no UPDATE of any kind (NFR-1).
+- The existing `lead-generator` `marketplace_installations` row (id, `api_integration_id` link, status) — untouched by migration and rollback.
+- Seeds/lifecycle of the other marketplace apps (call-qa-agent, mail-secretary, vapi-ai, stripe-payments, smart-slot-engine, google-email, telephony-twilio, ai-repair-advisor) and the `ensureMarketplaceSchema` ordering of existing entries.
+- `frontend/src/pages/IntegrationsPage.tsx` generic branch + `MarketplaceConnectDialog` — no edits (NFR-5).
+- Protected-files list from project-context.md (`src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts`; `backend/db/` changes only via this feature's explicit migration plan).
