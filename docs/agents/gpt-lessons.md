@@ -40,3 +40,7 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 - **L-001 (2026-07-12)** — Every new SQL query must be scoped by `company_id` from
   `req.companyFilter?.company_id`. This codebase had a real cross-tenant leak; the reviewer checks tenant
   scoping before anything else.
+
+- **L-013 (2026-07-13)** — Inside the codex sandbox, bare `node …/jest.js` can crash with macOS
+  `SecItemCopyMatching failed -50` (Keychain). The fix is `node --use-bundled-ca …/jest.js` — use it
+  for every jest invocation run from a codex session; outside the sandbox the flag is harmless.

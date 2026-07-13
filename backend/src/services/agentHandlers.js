@@ -256,6 +256,34 @@ const HANDLERS = {
             console.error('[yelp_lead] markGreeted failed (non-fatal, not re-sent):', e && e.message);
         }
 
+        // (5b) Link the sent greeting onto the conv-id timeline — best-effort and
+        //      independent of the post-send ledger marker above. A link fault must
+        //      never re-queue this task after the email is already out.
+        const timelineId = quote && quote.timeline_id != null ? quote.timeline_id : null;
+        let linkOutcome = 'resolve_miss';
+        if (timelineId != null) {
+            try {
+                const linkResult = await require('./email/emailTimelineService').linkYelpAgentSend(
+                    task.company_id,
+                    {
+                        providerMessageId: sent && sent.provider_message_id,
+                        providerThreadId: sent && sent.provider_thread_id,
+                        timelineId,
+                    }
+                );
+                linkOutcome = (linkResult && linkResult.outcome) || 'error';
+            } catch (_) {
+                linkOutcome = 'error';
+            }
+        }
+        console.log(
+            '[yelp_lead] send-link company=%s msg=%s timeline=%s outcome=%s',
+            task.company_id,
+            sent && sent.provider_message_id,
+            timelineId,
+            linkOutcome
+        );
+
         return {
             greeted: true,
             to: input.reply_to,

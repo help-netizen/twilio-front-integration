@@ -836,6 +836,88 @@ async function sendForContact(companyId, contactId, { body, toEmail, userId, use
     }
 }
 
+/**
+ * YELP-CONVO-CONTEXT-002 — link the agent's own Yelp send onto the conv-id
+ * timeline. Strictly post-send, best-effort, and never throws. `contact_id`
+ * stays NULL because the Pulse email_by_timeline projection reads only
+ * genuinely contactless rows. SSE only: dispatcher-attention state is untouched.
+ *
+ * @param {string} companyId
+ * @param {{providerMessageId:string, providerThreadId?:string|null, timelineId:number|null}} args
+ * @returns {Promise<{linked:boolean, outcome:'linked'|'relinked_after_reimport'|'already_linked'|'no_row'|'error', timelineId:number|null}>}
+ */
+async function linkYelpAgentSend(companyId, { providerMessageId, providerThreadId = null, timelineId } = {}) {
+    const resultTimelineId = timelineId == null ? null : timelineId;
+    try {
+        if (!providerMessageId || timelineId == null) {
+            console.error(
+                `[EmailTimeline] linkYelpAgentSend error (company ${companyId}):`,
+                'providerMessageId and timelineId are required'
+            );
+            return { linked: false, outcome: 'error', timelineId: resultTimelineId };
+        }
+
+        const existing = await emailQueries.getMessageLinkState(providerMessageId, companyId);
+        const alreadyLinked = !!(
+            existing && existing.on_timeline && existing.timeline_id === timelineId
+        );
+        const linkArgs = {
+            contact_id: null,
+            timeline_id: timelineId,
+            on_timeline: true,
+        };
+
+        let linkedRow = await emailQueries.linkMessageToContact(
+            providerMessageId,
+            companyId,
+            linkArgs
+        );
+        let relinkedAfterReimport = false;
+
+        if (!linkedRow) {
+            await reimportThreadBestEffort(
+                providerRegistry.get(),
+                companyId,
+                providerThreadId
+            );
+            linkedRow = await emailQueries.linkMessageToContact(
+                providerMessageId,
+                companyId,
+                linkArgs
+            );
+            relinkedAfterReimport = !!linkedRow;
+        }
+
+        if (!linkedRow) {
+            console.warn(
+                `[EmailTimeline] linkYelpAgentSend: no_row for sent message ${providerMessageId} ` +
+                `(company ${companyId}, thread ${providerThreadId}) after re-import; ` +
+                `it will remain off the timeline until a later sync/backfill.`
+            );
+            return { linked: false, outcome: 'no_row', timelineId: resultTimelineId };
+        }
+
+        if (alreadyLinked) {
+            return { linked: true, outcome: 'already_linked', timelineId: resultTimelineId };
+        }
+
+        try {
+            realtimeService.publishMessageAdded(toEmailItem(linkedRow), { id: null }, timelineId);
+        } catch (e) {
+            console.error('[EmailTimeline] linkYelpAgentSend publishMessageAdded failed:', e.message);
+        }
+
+        return {
+            linked: true,
+            outcome: relinkedAfterReimport ? 'relinked_after_reimport' : 'linked',
+            timelineId: resultTimelineId,
+        };
+    } catch (err) {
+        console.error(`[EmailTimeline] linkYelpAgentSend error (company ${companyId}):`, err.message);
+        return { linked: false, outcome: 'error', timelineId: resultTimelineId };
+    }
+}
+
 module.exports = {
     linkInboundMessage,
     linkOutboundMessage,
@@ -843,4 +925,5 @@ module.exports = {
     ingestPushNotification,
     ingestPolledForCompany,
     sendForContact,
+    linkYelpAgentSend,
 };
