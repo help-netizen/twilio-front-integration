@@ -10146,3 +10146,110 @@ cd frontend && (ls node_modules >/dev/null 2>&1 || npm ci) && npm run build
 **Кросс-чек покрытия:** 51/51 TC замаплены, орфанов нет: T1=18 (F-pure 4 + F-matrix 14) · T2=13 (S 11 + D2 + S3-DB) · T3=11 (route/ingest 10 + R4-DB) · T4=7 (U1–U6 + S6-02) · T5=2 (U7–U8) — Σ=51. Разрез TC-R4-DB-01 (db-кейс в T3, не в T2): его seam — предикат `countNewLeads`, который появляется только в T3; harness он реюзает из T2 (прецедент leadgen TC-G5-01).
 
 **Деплой:** фича dark-safe (нет миграции; settings-API аддитивен; ingest fail-open — до первого PUT настроек фильтры неактивны, non-Rely путь byte-identical); прод-деплой — ТОЛЬКО по явному «да» владельца (deploy-consent). Support-note: Disconnect → reinstall создаёт НОВУЮ installation-строку ⇒ настройки сбрасываются в дефолт (architecture risk 7, инвариант §9.12).
+## CLIENT-FEEDBACK-WIDGET-001 — план задач (in-app feedback: CRM user → Albusto developer)
+
+**Spec:** `docs/specs/CLIENT-FEEDBACK-WIDGET-001.md` · **Tests:** `docs/test-cases/CLIENT-FEEDBACK-WIDGET-001.md`
+
+**Волны:** T1 backend (DB + service + route + jest) → T2 frontend (виджет + маунт + vitest) → T3 verify.
+Порядок на машине (последовательно, один codex за раз): CFW-1 → CFW-2 → CFW-3 → CFW-4 → CFW-5 → CFW-6 → CFW-7 → CFW-8 → CFW-9.
+Критический путь: CFW-1 → CFW-2 → CFW-3 → CFW-4 → CFW-5 (backend) ; CFW-6 → CFW-7 (frontend) ; CFW-8 verify.
+
+### Задача CFW-1: Миграция 170 feedback_submissions (+rollback)
+**Цель:** company-isolated таблица-истина.
+**Файлы (можно менять):**
+- `backend/db/migrations/170_feedback_submissions.sql`
+- `backend/db/migrations/rollback_170_feedback_submissions.sql`
+**Файлы (трогать нельзя:** `backend/db/` существующие миграции/схема — только ADD 170.
+**Ожидаемый результат:** таблица `feedback_submissions` (`id uuid pk`, `company_id uuid NOT NULL REFERENCES
+companies(id) ON DELETE CASCADE`, `user_id uuid REFERENCES crm_users(id)` nullable, `user_email text NOT NULL`,
+`message text NOT NULL`, `meta jsonb NOT NULL DEFAULT '{}'`, `created_at timestamptz NOT NULL DEFAULT now()`) +
+индекс `idx_feedback_submissions_company_created (company_id, created_at DESC)`. Аддитивно, `IF NOT EXISTS`,
+реверсится `DROP TABLE IF EXISTS`.
+**Зависимости:** —. **Статус:** done (2026-07-13, GPT, ревью ACCEPT, 30/30)
+
+### Задача CFW-2: feedbackQueries.js (company-scoped insert)
+**Цель:** параметризованная вставка обращения.
+**Файлы:** `backend/src/db/feedbackQueries.js`
+**Ожидаемый результат:** `insertFeedback({ companyId, userId, userEmail, message, meta })` → одна
+company-scoped параметризованная вставка с `RETURNING id, created_at`. SQL всегда содержит `company_id`
+(изоляция). Никаких кросс-тенантных чтений.
+**Зависимости:** после CFW-1. **Статус:** done (2026-07-13, GPT, ревью ACCEPT, 30/30)
+
+### Задача CFW-3: feedbackService.js (валидация + insert + best-effort email)
+**Цель:** бизнес-логика надёжной доставки.
+**Файлы:** `backend/src/services/feedbackService.js`
+**Файлы (реюз, не менять):** `backend/src/services/emailService.js`, `emailMailboxService.js`.
+**Ожидаемый результат:** `submitFeedback({ companyId, userId, userEmail, message, files })`:
+(1) валидация (email-формат; message non-empty после trim; файлы ≤5/≤10MB/mime ∈ {pdf,png,jpg,gif,webp,txt}) →
+бросает `Object.assign(new Error(...), { status:422 })`; (2) `feedbackQueries.insertFeedback` (истина);
+(3) best-effort `emailService.sendEmail(SENDER_COMPANY_ID, { to:FEEDBACK_INBOX_EMAIL, subject, body, files, … })`
+в try/catch → `meta.email_status` (`sent|failed|skipped`) + `console.warn` при сбое, НЕ пробрасывать;
+(4) вернуть строку. Env: `FEEDBACK_INBOX_EMAIL` (default `support@albusto.com`), `FEEDBACK_SENDER_COMPANY_ID`
+(default `00000000-0000-0000-0000-000000000001`), `FEEDBACK_MAX_FILES=5`, `FEEDBACK_MAX_FILE_MB=10`.
+**Зависимости:** после CFW-2. **Статус:** done (2026-07-13, GPT, ревью ACCEPT, 30/30)
+
+### Задача CFW-4: routes/feedback.js + маунт в src/server.js
+**Цель:** POST-эндпоинт с multer.
+**Файлы:** `backend/src/routes/feedback.js`, `src/server.js` (ДОБАВИТЬ одну строку маунта).
+**Файлы (трогать нельзя):** core-middleware/SSE в `src/server.js` — только добавить mount-строку.
+**Ожидаемый результат:** `POST /` с `multer.memoryStorage()`, `upload.array('files', FEEDBACK_MAX_FILES)`,
+`limits { fileSize: 10MB, files: 5 }`. `companyId = req.companyFilter?.company_id`,
+`userId = req.user?.crmUser?.id ?? null`, `userEmail = req.body.email || req.user?.email`. Успех → `201
+{ ok:true, data:{ id } }`; ошибки валидации/`status` → `422`; multer `LIMIT_FILE_SIZE`/`LIMIT_FILE_COUNT` →
+`422` (не 500). В `src/server.js`: `app.use('/api/feedback', authenticate, requireCompanyAccess,
+require('../backend/src/routes/feedback'));`. SQL фильтруется по `company_id` из `req.companyFilter`, данные
+изолированы между компаниями.
+**Зависимости:** после CFW-3. **Статус:** done (2026-07-13, GPT, ревью ACCEPT, 30/30)
+
+### Задача CFW-5: Backend jest (route + service)
+**Цель:** покрыть TC-CFW-001..015.
+**Файлы:** `backend/tests/routes/feedback.test.js`, `backend/tests/services/feedbackService.test.js`
+**Ожидаемый результат:** зелёные тесты: happy path 201; best-effort (email reject → всё равно 201, строка
+есть); валидация (bad email / empty message / >10MB / >5 файлов / плохой mime → 422); 401 без токена; 403 без
+компании; изоляция (INSERT берёт company_id из req, не из тела); user_id=crmUser.id; email fallback. Моки:
+`emailService.sendEmail`, `feedbackQueries.insertFeedback`.
+**Зависимости:** после CFW-4. **Статус:** done (2026-07-13, GPT, ревью ACCEPT, 30/30)
+
+### Задача CFW-6: FeedbackWidget.tsx + CSS (виджет + бот-заглушка + форма)
+**Цель:** самодостаточный floating-виджет.
+**Файлы:** `frontend/src/components/feedback/FeedbackWidget.tsx`, `frontend/src/components/feedback/FeedbackWidget.css`
+**Файлы (реюз, не менять):** `ui/floating-field.tsx`, `useAuth`, `apiClient`/`authedFetch`.
+**Ожидаемый результат:** floating-кнопка (иконка чата, fixed нижний-правый, `z-index` 8000-8500 ниже
+softphone 9000; мобайл — `bottom` выше `BottomNavBar`, узкая панель) → мессенджер-панель. Бот-машина
+`greeting→chatting→escalated`: канон-реплики, всегда видимая «Talk to a human», эскалация по клику ИЛИ при
+`botReplies>=2` → нормативная фраза + форма. Форма: `FloatingField` email (prefill `useAuth().user.email`,
+editable, валидация), `FloatingField textarea` «What happened?» (required), нативный `<input type=file
+multiple accept=...>` (клиентская проверка ≤5/≤10MB/mime), Send → `authedFetch('/api/feedback',{method:'POST',
+body:FormData})`; success / inline-ошибка. Токены `--blanc-*`, без «Blanc» в копирайте, без block-in-block.
+**Зависимости:** после CFW-4 (контракт API). **Статус:** pending
+
+### Задача CFW-7: Маунт в AppLayout + фича-флаг
+**Цель:** глобальная видимость под флагом.
+**Файлы:** `frontend/src/components/layout/AppLayout.tsx`
+**Файлы (трогать нельзя):** существующий рендер-трее (softphone, warm-up, nav-badges) — только ДОБАВИТЬ
+`<FeedbackWidget />` внутри `div.app-layout`.
+**Ожидаемый результат:** `<FeedbackWidget />` рендерится для всех залогиненных (кроме `/signup`,`/onboarding`,
+которые уже возвращают `<>{children}</>`), под флагом `import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET !== 'false'`
+(default on). Не конфликтует с softphone по позиции/z-index.
+**Зависимости:** после CFW-6. **Статус:** pending
+
+### Задача CFW-8: Frontend vitest (виджет)
+**Цель:** покрыть TC-CFW-016..022.
+**Файлы:** `frontend/src/components/feedback/FeedbackWidget.test.tsx`
+**Ожидаемый результат:** зелёные тесты: эскалация по «human»-клику и по счётчику(2); email-prefill из useAuth
+(редактируемо); клиент-валидация блокирует Send при пустом message; success после 201; inline-ошибка при сбое
+сети; фича-флаг off → нет кнопки. Моки `useAuth`, `authedFetch`.
+**Зависимости:** после CFW-7. **Статус:** pending
+
+### Задача CFW-9: Verify gate
+**Цель:** финальная проверка без нового кода.
+**Verify-команды:**
+- Backend jest (worktree, L-012/L-014): `unset NODE_USE_SYSTEM_CA; node --use-bundled-ca
+  --experimental-vm-modules ../../../node_modules/jest/bin/jest.js backend/tests/routes/feedback.test.js
+  backend/tests/services/feedbackService.test.js` + полный прогон затронутых сьютов.
+- Frontend: `cd frontend && npm run build && npm test` (vitest FeedbackWidget).
+- Preview: desktop 1280 + mobile 375 — floating-кнопка видна, панель→бот→эскалация→форма→Send работают, не
+  перекрывает softphone/BottomNavBar.
+**Ожидаемый результат:** сборка зелёная, jest+vitest зелёные, preview подтверждает флоу и отсутствие конфликта
+с softphone. **Деплой — только по явному «да» владельца (deploy-consent).**
+**Зависимости:** после CFW-8. **Статус:** pending
