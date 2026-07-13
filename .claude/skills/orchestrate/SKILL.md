@@ -399,3 +399,23 @@ These refinements were proven on a full pipeline run and are now part of the pro
 8. **Filesystem note.** `Docs/` and `docs/` are the same directory on this
    macOS checkout (case-insensitive FS) — don't treat the two spellings as
    divergent paths, and never create a sibling that differs only by case.
+
+## Amendments — 2026-07-13 (paid for by the BUG-22 prod incident)
+
+9. **Manual test in the REAL state, not the dev bypass.** A feature touching
+   auth/2FA/billing/telephony state MUST be hand-driven in a state that matches
+   prod (real flag values, real gate conditions) before deploy. The dev-mode
+   preview (FEATURE_AUTH=false, fresh dev DB) silently skips those paths — the
+   ONBOARDING-UX-001 preview looked perfect while the 2FA login-loop shipped.
+   When prod state can't be reached locally, build a stand (mock OIDC / stub
+   API returning the prod-shaped responses) — see scratchpad stub-2fa pattern.
+10. **Verify the deploy ARTIFACT, not the procedure.** After a prod deploy,
+   prove the change is in the running container: `docker exec albusto-app-1
+   grep -l '<string-literal-from-the-change>' /app/public/assets/*.js` (grep a
+   STRING, minification renames identifiers) + the served `index-*.js` hash
+   changed. Build context is `/opt/albusto/app/` (compose `context: ./app`) —
+   rsync to the /opt/albusto ROOT deploys into a ghost tree.
+11. **Never declare a prod fix done from one plausible cause.** BUG-22 had two
+   layers (axios client + the unguarded kc.login() fallback); the first fix
+   deployed cleanly and changed nothing. Reproduce first, fix what the stand
+   proves, and re-run the stand on the final code.
