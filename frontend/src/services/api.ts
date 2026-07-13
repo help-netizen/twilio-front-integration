@@ -4,6 +4,7 @@ import type {
     CallEventsResponse, CallMedia,
 } from '../types/models';
 import { getAuthHeaders, getKeycloak } from '../auth/AuthProvider';
+import { requireTwoFactor } from './twoFactorGate';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 const FEATURE_AUTH = import.meta.env.VITE_FEATURE_AUTH_ENABLED === 'true';
@@ -28,6 +29,18 @@ apiClient.interceptors.response.use(
     async (error) => {
         const status = error.response?.status;
         const original = error.config;
+        // AUTH-2FA-GATE (BUG-22 hotfix): a 401 PHONE_VERIFICATION_REQUIRED is NOT a
+        // dead session — the token is fine, the DEVICE is untrusted. Dispatching
+        // session-expired here sent the app to kc.login(); with a live SSO session
+        // Keycloak bounced straight back → infinite reload loop + an otp/send per
+        // cycle. Route it to the same global 2FA gate authedFetch uses, then retry
+        // once with the fresh trust cookie. (Mirror of apiClient.ts authedFetch.)
+        if (status === 401 && error.response?.data?.code === 'PHONE_VERIFICATION_REQUIRED'
+            && original && !(original as any).__tfaRetried) {
+            (original as any).__tfaRetried = true;
+            await requireTwoFactor();              // resolves once the device is trusted
+            return apiClient.request(original);    // retry once with the new cookie
+        }
         // A 401 on a cold page load is usually a token race / near-expiry, NOT a
         // dead session. Force-refresh the token and retry ONCE before declaring the
         // session expired — otherwise a deep-link refresh blanks the page (the
