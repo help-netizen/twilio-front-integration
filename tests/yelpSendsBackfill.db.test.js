@@ -446,3 +446,166 @@ describe('history SQL · real PostgreSQL', () => {
             .toEqual([PMIDS.I2, PMIDS.I3, PMIDS.I1]);
     });
 });
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { runBackfill } = require('../backend/scripts/yelp_agent_sends_backfill');
+
+const backfillSnapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yelp-sends-backfill-db-'));
+const quietLogger = { log() {}, warn() {} };
+const APPLIED_PMIDS = [PMIDS.O1, PMIDS.O2, PMIDS.O3, PMIDS.M1];
+
+let companyBBeforeApply = null;
+let companyAAfterFirstApply = null;
+
+async function readSeededRows(companyId) {
+    const result = await db.query(
+        `SELECT *
+         FROM email_messages
+         WHERE company_id = $1
+           AND id = ANY($2::bigint[])
+         ORDER BY id`,
+        [companyId, seededMessageIds[companyId]]
+    );
+    return result.rows;
+}
+
+function byPmid(rows) {
+    return new Map(rows.map(item => [item.provider_message_id, item]));
+}
+
+afterAll(() => {
+    fs.rmSync(backfillSnapshotDir, { recursive: true, force: true });
+});
+
+describe('backfill · real PostgreSQL', () => {
+    it('TC-C2-01 · dry-run is read-only, then apply links only eligible company-A outbound rows', async () => {
+        if (!dbReady) return console.warn('TC-C2-01 SKIPPED-NEEDS-DB');
+
+        const companyABefore = await readSeededRows(DEFAULT_COMPANY_ID);
+        companyBBeforeApply = await readSeededRows(COMPANY_B_ID);
+        const beforeByPmid = byPmid(companyABefore);
+
+        const dry = await runBackfill({
+            companyId: DEFAULT_COMPANY_ID,
+            dryRun: true,
+            snapshotDir: backfillSnapshotDir,
+            logger: quietLogger,
+        });
+        expect(dry).toMatchObject({
+            companyId: DEFAULT_COMPANY_ID,
+            dryRun: true,
+            linked: 0,
+            conflictThreadIds: [],
+            residueOutbound: 0,
+        });
+        expect(dry.snapshotFile).toBeTruthy();
+        expect(fs.existsSync(dry.snapshotFile)).toBe(true);
+        const snapshot = JSON.parse(fs.readFileSync(dry.snapshotFile, 'utf8'));
+        expect(snapshot.email_messages.map(item => item.provider_message_id).sort())
+            .toEqual([...APPLIED_PMIDS].sort());
+        await expect(readSeededRows(DEFAULT_COMPANY_ID)).resolves.toEqual(companyABefore);
+
+        const applied = await runBackfill({
+            companyId: DEFAULT_COMPANY_ID,
+            dryRun: false,
+            snapshotDir: backfillSnapshotDir,
+            logger: quietLogger,
+        });
+        expect(applied).toMatchObject({
+            companyId: DEFAULT_COMPANY_ID,
+            dryRun: false,
+            linked: 4,
+            conflictThreadIds: [],
+            residueOutbound: 0,
+        });
+        expect(applied.threads.flatMap(thread => thread.messages)
+            .map(item => item.provider_message_id).sort()).toEqual([...APPLIED_PMIDS].sort());
+
+        companyAAfterFirstApply = await readSeededRows(DEFAULT_COMPANY_ID);
+        const afterByPmid = byPmid(companyAAfterFirstApply);
+        for (const pmid of APPLIED_PMIDS) {
+            const row = afterByPmid.get(pmid);
+            const before = beforeByPmid.get(pmid);
+            expect(String(row.timeline_id)).toBe(String(timelineAId));
+            expect(row.on_timeline).toBe(true);
+            expect(row.contact_id).toBeNull();
+            expect(new Date(row.updated_at).getTime())
+                .toBeGreaterThan(new Date(before.updated_at).getTime());
+        }
+
+        const untouchedPmids = companyABefore
+            .map(item => item.provider_message_id)
+            .filter(pmid => !APPLIED_PMIDS.includes(pmid));
+        for (const pmid of untouchedPmids) {
+            expect(afterByPmid.get(pmid)).toEqual(beforeByPmid.get(pmid));
+        }
+        expect(companyAAfterFirstApply).toHaveLength(companyABefore.length);
+
+        const postApplyHistory = await emailQueries.listYelpConversationHistory(
+            DEFAULT_COMPANY_ID,
+            timelineAId,
+            { excludeProviderMessageId: null, limit: 30 }
+        );
+        expect(postApplyHistory.map(item => item.provider_message_id)).toEqual([
+            PMIDS.M1,
+            PMIDS.O2,
+            PMIDS.I2,
+            PMIDS.O3,
+            PMIDS.O1,
+            PMIDS.I3,
+            PMIDS.I1,
+            PMIDS.NULL_TS,
+        ]);
+        expect(postApplyHistory.filter(item => item.provider_message_id === PMIDS.O1)).toHaveLength(1);
+        expect(postApplyHistory.filter(item => item.provider_message_id === PMIDS.O2)).toHaveLength(1);
+    });
+
+    it('TC-C4-01 · a second apply is a no-op and preserves updated_at', async () => {
+        if (!dbReady) return console.warn('TC-C4-01 SKIPPED-NEEDS-DB');
+
+        const second = await runBackfill({
+            companyId: DEFAULT_COMPANY_ID,
+            dryRun: false,
+            snapshotDir: backfillSnapshotDir,
+            logger: quietLogger,
+        });
+        expect(second).toMatchObject({
+            companyId: DEFAULT_COMPANY_ID,
+            dryRun: false,
+            snapshotFile: null,
+            threads: [],
+            conflictThreadIds: [],
+            linked: 0,
+            residueOutbound: 0,
+        });
+        await expect(readSeededRows(DEFAULT_COMPANY_ID)).resolves.toEqual(companyAAfterFirstApply);
+    });
+
+    it('TC-C7-01 · company-A applies leave company B untouched; company-B dry-run sees only B', async () => {
+        if (!dbReady) return console.warn('TC-C7-01 SKIPPED-NEEDS-DB');
+
+        await expect(readSeededRows(COMPANY_B_ID)).resolves.toEqual(companyBBeforeApply);
+
+        const foreignDry = await runBackfill({
+            companyId: COMPANY_B_ID,
+            dryRun: true,
+            snapshotDir: backfillSnapshotDir,
+            logger: quietLogger,
+        });
+        expect(foreignDry.companyId).toBe(COMPANY_B_ID);
+        expect(foreignDry.linked).toBe(0);
+        expect(foreignDry.threads).toHaveLength(1);
+        const plannedPmids = foreignDry.threads
+            .flatMap(thread => thread.messages)
+            .map(item => item.provider_message_id);
+        expect(plannedPmids.sort()).toEqual([
+            FOREIGN_PMIDS.O1,
+            FOREIGN_PMIDS.O2,
+            FOREIGN_PMIDS.M1,
+        ].sort());
+        expect(plannedPmids.some(pmid => Object.values(PMIDS).includes(pmid))).toBe(false);
+        await expect(readSeededRows(COMPANY_B_ID)).resolves.toEqual(companyBBeforeApply);
+    });
+});
