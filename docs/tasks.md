@@ -9336,7 +9336,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** psql на dev-БД: применить дважды (второй раз — без ошибки), rollback, применить снова.
 
-**Зависимости:** нет. **Размер:** S. **Статус:** todo
+**Зависимости:** нет. **Размер:** S. **Статус:** done (2026-07-13, GPT, ревью ACCEPT: 168 свободен, apply×2+rollback+reapply на dev-БД)
 
 ### Задача T3: backend — DESC-твины query-слоя (sms + email)
 
