@@ -6,6 +6,7 @@ import { authedFetch } from '../../services/apiClient';
 import { billingApi } from '../../services/billingApi';
 import type { PhoneNumber, UserGroup } from '../../types/telephony';
 import { A2pStepper } from '../../components/telephony/A2pStepper';
+import { PortInPanel, type PortInRequest } from '../../components/telephony/PortInPanel';
 import { toast } from 'sonner';
 import { SettingsPageShell } from '../../components/settings/SettingsPageShell';
 import { Button } from '../../components/ui/button';
@@ -14,6 +15,7 @@ import { Dialog, DialogContent, DialogPanelHeader, DialogTitle, DialogDescriptio
 export default function PhoneNumbersPage() {
     const navigate = useNavigate();
     const [numbers, setNumbers] = useState<PhoneNumber[]>([]);
+    const [portRequests, setPortRequests] = useState<PortInRequest[]>([]);
     const [groups, setGroups] = useState<UserGroup[]>([]);
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
@@ -176,12 +178,14 @@ export default function PhoneNumbersPage() {
         try {
             // ALB-107: subaccount tenants list numbers through the tenant API;
             // the legacy master-account company falls back to the old endpoint.
-            const [tenantRes, groupRes, billing, settingsRes] = await Promise.all([
+            const [tenantRes, groupRes, billing, settingsRes, portInRes] = await Promise.all([
                 authedFetch('/api/telephony/numbers').then(r => r.json()).catch(() => null),
                 authedFetch('/api/user-groups').then(r => r.json()).catch(() => ({ data: [] })),
                 billingApi.overview().catch(() => null),
                 authedFetch('/api/phone-settings').then(r => r.json()).catch(() => null),
+                authedFetch('/api/telephony/port-in').then(r => r.json()).catch(() => null),
             ]);
+            if (Array.isArray(portInRes?.requests)) setPortRequests(portInRes.requests);
             // Routing mode (SoftPhone vs Bria/SIP) per number — merged in from the
             // former standalone Phone Calls page. Keyed by phone number.
             if (settingsRes?.ok && Array.isArray(settingsRes.data)) {
@@ -298,6 +302,17 @@ export default function PhoneNumbersPage() {
                     onRefresh={refreshA2p}
                     refreshing={a2pRefreshing}
                 />
+            )}
+
+            {portRequests.length > 0 && (
+                <section className="space-y-3.5">
+                    <h2 className="blanc-eyebrow">Number transfers</h2>
+                    <PortInPanel
+                        initialRequests={portRequests}
+                        statusOnly
+                        onRequestsChange={setPortRequests}
+                    />
+                </section>
             )}
 
             {buyOpen && (

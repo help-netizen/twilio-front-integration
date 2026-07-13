@@ -8,6 +8,9 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-014 (2026-07-13)** — Node 25 on this mac SEGFAULTS when `NODE_USE_SYSTEM_CA=1` is in the env
+  (macOS keychain code): `unset NODE_USE_SYSTEM_CA` (or use `--use-bundled-ca`) before node/vite/jest.
+  This was the mystery behind earlier Vite exit-139 crashes.
 - **L-013 (2026-07-13)** — TWO http clients exist: fetch `services/apiClient.ts` AND axios `services/api.ts`.
   Auth/401/2FA handling changes go into BOTH, with coverage in `authClients2fa.test.ts` (BUG-22: the axios
   client missing the 2FA code caused an infinite kc.login() reload loop on prod).

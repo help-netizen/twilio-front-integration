@@ -12,7 +12,7 @@
  * Plans are optional, so explicit overrides may navigate to either visible step.
  * ?step=3 is ignored because completion is server-derived only.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -26,6 +26,7 @@ import { Badge } from '../components/ui/badge';
 import { Checkbox } from '../components/ui/checkbox';
 import { FloatingField } from '../components/ui/floating-field';
 import { AreaCodeCombo } from '../components/telephony/AreaCodeCombo';
+import { PortInPanel, type PortInRequest } from '../components/telephony/PortInPanel';
 import { authedFetch } from '../services/apiClient';
 import { billingApi, type BillingOverview, type Plan } from '../services/billingApi';
 import type { AreaCodeSearchCriterion } from '../data/areaCodes';
@@ -46,10 +47,6 @@ interface FoundNumber {
     region: string | null;
     capabilities?: { voice?: boolean; sms?: boolean };
     monthly_price_usd?: number | string | null;
-}
-
-interface PortInRequest {
-    status: string;
 }
 
 function usd(n: number): string {
@@ -271,6 +268,14 @@ export default function TelephonyTwilioSettingsPage() {
     const [buying, setBuying] = useState<string | null>(null);
     const [limitUpsell, setLimitUpsell] = useState<string | null>(null); // 422 NUMBER_LIMIT server text
     const [numberError, setNumberError] = useState<string | null>(null);
+    const [numberMode, setNumberMode] = useState<'new' | 'transfer'>('new');
+    const initialNumberModeSet = useRef(false);
+
+    useEffect(() => {
+        if (portInQ.isLoading || initialNumberModeSet.current) return;
+        initialNumberModeSet.current = true;
+        if ((portInQ.data?.length ?? 0) > 0) setNumberMode('transfer');
+    }, [portInQ.data, portInQ.isLoading]);
 
     const runSearch = async () => {
         if (incompleteAreaCode) return;
@@ -497,85 +502,117 @@ export default function TelephonyTwilioSettingsPage() {
 
                     {/* Step 2 — Get a number */}
                     {activeStep === 2 && (
-                        <>
-                            {limitUpsell && (
-                                <div style={{
-                                    border: '1px solid rgba(178,106,29,0.4)', background: 'rgba(178,106,29,0.06)',
-                                    borderRadius: 16, padding: '14px 16px', marginBottom: 16,
-                                }}>
-                                    <div style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)' }}>{limitUpsell}</div>
-                                    <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)', marginTop: 4 }}>
-                                        Need more numbers? Switch to a package plan.
-                                    </div>
-                                    <Button size="sm" style={{ marginTop: 10 }} onClick={() => { setLimitUpsell(null); setStepOverride(1); }}>
-                                        View plans
-                                    </Button>
-                                </div>
-                            )}
-                            {numberError && (
-                                <div className="mb-3.5">
-                                    <InlineError text={numberError} />
-                                </div>
-                            )}
-                            <div className="space-y-3.5">
-                                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                                    <AreaCodeCombo
-                                        value={searchCriterion}
-                                        onChange={setSearchCriterion}
-                                        onIncompleteChange={setIncompleteAreaCode}
-                                        disabled={searching}
-                                    />
-                                    <FloatingField
-                                        label="Contains digits"
-                                        value={containsDigits}
-                                        onChange={e => setContainsDigits(e.target.value)}
-                                    />
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--blanc-ink-1)', cursor: 'pointer' }}>
-                                        <Checkbox checked={tollFree} onCheckedChange={c => setTollFree(c === true)} />
-                                        Toll-free
-                                    </label>
-                                    <Button onClick={runSearch} disabled={searching || incompleteAreaCode}>
-                                        {searching
-                                            ? <Loader2 size={14} className="mr-1.5 animate-spin" />
-                                            : <Search size={14} className="mr-1.5" />}
-                                        Search
-                                    </Button>
-                                </div>
+                        <div className="space-y-6">
+                            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Choose how to get a phone number">
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={numberMode === 'new' ? 'secondary' : 'outline'}
+                                    role="tab"
+                                    aria-selected={numberMode === 'new'}
+                                    onClick={() => setNumberMode('new')}
+                                >
+                                    Get a new number
+                                </Button>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={numberMode === 'transfer' ? 'secondary' : 'outline'}
+                                    role="tab"
+                                    aria-selected={numberMode === 'transfer'}
+                                    onClick={() => setNumberMode('transfer')}
+                                >
+                                    Transfer your number
+                                </Button>
                             </div>
-                            {searched && !searching && results.length === 0 && (
-                                <p style={{ fontSize: 13.5, color: 'var(--blanc-ink-3)', margin: '18px 2px 0' }}>
-                                    No numbers found — try another area code or city.
-                                </p>
-                            )}
-                            {results.length > 0 && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-                                    {results.map(f => (
-                                        <div key={f.phone_number} style={{
-                                            border: '1px solid var(--blanc-line)', borderRadius: 12,
-                                            background: 'var(--blanc-surface-strong, #fffdf9)',
-                                            padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+
+                            {numberMode === 'new' ? (
+                                <div>
+                                    {limitUpsell && (
+                                        <div style={{
+                                            border: '1px solid rgba(178,106,29,0.4)', background: 'rgba(178,106,29,0.06)',
+                                            borderRadius: 16, padding: '14px 16px', marginBottom: 16,
                                         }}>
-                                            <div style={{ flex: '1 1 200px', minWidth: 200 }}>
-                                                <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--blanc-ink-1)' }}>{f.phone_number}</div>
-                                                <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
-                                                    <MapPin size={11} style={{ color: 'var(--blanc-ink-3)', flexShrink: 0 }} />
-                                                    <span>{[f.locality, f.region].filter(Boolean).join(', ') || 'US'}</span>
-                                                    {f.capabilities?.voice && <Badge variant="outline" style={{ fontSize: 10 }}>Voice</Badge>}
-                                                    {f.capabilities?.sms && <Badge variant="outline" style={{ fontSize: 10 }}>SMS</Badge>}
-                                                </div>
+                                            <div style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)' }}>{limitUpsell}</div>
+                                            <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)', marginTop: 4 }}>
+                                                Need more numbers? Switch to a package plan.
                                             </div>
-                                            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--blanc-ink-2)' }}>{priceFor(f)}</span>
-                                            <Button size="sm" onClick={() => buyNumber(f.phone_number)} disabled={buying != null}>
-                                                {buying === f.phone_number && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                                                Buy
+                                            <Button size="sm" style={{ marginTop: 10 }} onClick={() => { setLimitUpsell(null); setStepOverride(1); }}>
+                                                View plans
                                             </Button>
                                         </div>
-                                    ))}
+                                    )}
+                                    {numberError && (
+                                        <div className="mb-3.5">
+                                            <InlineError text={numberError} />
+                                        </div>
+                                    )}
+                                    <div className="space-y-3.5">
+                                        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                                            <AreaCodeCombo
+                                                value={searchCriterion}
+                                                onChange={setSearchCriterion}
+                                                onIncompleteChange={setIncompleteAreaCode}
+                                                disabled={searching}
+                                            />
+                                            <FloatingField
+                                                label="Contains digits"
+                                                value={containsDigits}
+                                                onChange={e => setContainsDigits(e.target.value)}
+                                            />
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--blanc-ink-1)', cursor: 'pointer' }}>
+                                                <Checkbox checked={tollFree} onCheckedChange={c => setTollFree(c === true)} />
+                                                Toll-free
+                                            </label>
+                                            <Button onClick={runSearch} disabled={searching || incompleteAreaCode}>
+                                                {searching
+                                                    ? <Loader2 size={14} className="mr-1.5 animate-spin" />
+                                                    : <Search size={14} className="mr-1.5" />}
+                                                Search
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    {searched && !searching && results.length === 0 && (
+                                        <p style={{ fontSize: 13.5, color: 'var(--blanc-ink-3)', margin: '18px 2px 0' }}>
+                                            No numbers found — try another area code or city.
+                                        </p>
+                                    )}
+                                    {results.length > 0 && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+                                            {results.map(f => (
+                                                <div key={f.phone_number} style={{
+                                                    border: '1px solid var(--blanc-line)', borderRadius: 12,
+                                                    background: 'var(--blanc-surface-strong, #fffdf9)',
+                                                    padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                                                }}>
+                                                    <div style={{ flex: '1 1 200px', minWidth: 200 }}>
+                                                        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--blanc-ink-1)' }}>{f.phone_number}</div>
+                                                        <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+                                                            <MapPin size={11} style={{ color: 'var(--blanc-ink-3)', flexShrink: 0 }} />
+                                                            <span>{[f.locality, f.region].filter(Boolean).join(', ') || 'US'}</span>
+                                                            {f.capabilities?.voice && <Badge variant="outline" style={{ fontSize: 10 }}>Voice</Badge>}
+                                                            {f.capabilities?.sms && <Badge variant="outline" style={{ fontSize: 10 }}>SMS</Badge>}
+                                                        </div>
+                                                    </div>
+                                                    <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--blanc-ink-2)' }}>{priceFor(f)}</span>
+                                                    <Button size="sm" onClick={() => buyNumber(f.phone_number)} disabled={buying != null}>
+                                                        {buying === f.phone_number && <Loader2 size={13} className="mr-1.5 animate-spin" />}
+                                                        Buy
+                                                    </Button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
+                            ) : (
+                                <PortInPanel
+                                    initialRequests={portInQ.data ?? []}
+                                    onGetNewNumber={() => setNumberMode('new')}
+                                />
                             )}
-                        </>
+                        </div>
                     )}
 
                     {/* Completion is derived from a purchased number or active transfer. */}

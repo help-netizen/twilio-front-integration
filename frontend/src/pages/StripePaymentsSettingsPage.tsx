@@ -44,38 +44,6 @@ function ReadinessRow({ ok, label, warn }: { ok: boolean; label: string; warn?: 
     );
 }
 
-/** STRIPE-CONNECT-UX-001 §2 S-3: hardcoded Stripe US rates card (no pricing API). */
-function CostRow({ label, sub, rate, rateColor }: { label: string; sub?: string; rate: string; rateColor?: string }) {
-    return (
-        <div className="flex items-start justify-between gap-3 min-w-0">
-            <div className="min-w-0">
-                <p className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{label}</p>
-                {sub && <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>{sub}</p>}
-            </div>
-            <span className="text-sm font-medium whitespace-nowrap" style={{ color: rateColor ?? 'var(--blanc-ink-1)' }}>{rate}</span>
-        </div>
-    );
-}
-
-function WhatItCostsCard() {
-    return (
-        <div style={{ background: 'rgba(25, 25, 25, 0.03)', borderRadius: 16, padding: '20px 22px' }}>
-            <h4 className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>What it costs</h4>
-            <div className="mt-3.5 space-y-3">
-                <CostRow label="Card payment — link or keyed-in" sub="Visa, Mastercard, Amex, Apple Pay, Google Pay" rate="2.9% + 30¢" />
-                <CostRow label="Tap to Pay in person" sub="on the technician's phone" rate="2.7% + 5¢ · soon" rateColor="var(--blanc-ink-3)" />
-                <CostRow label="Monthly or setup fees" rate="$0" rateColor="var(--blanc-success)" />
-                <CostRow label="Payouts to your bank" sub="about 2 business days" rate="Free" rateColor="var(--blanc-success)" />
-                <CostRow label="Instant payouts — optional" rate="1.5%" />
-                <CostRow label="Albusto fee on top" rate="0%" rateColor="var(--blanc-success)" />
-            </div>
-            <p className="mt-4 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
-                Stripe's standard US rates, charged by Stripe. International cards +1.5%. Full details at stripe.com/pricing.
-            </p>
-        </div>
-    );
-}
-
 export default function StripePaymentsSettingsPage() {
     const qc = useQueryClient();
     const [disconnectOpen, setDisconnectOpen] = useState(false);
@@ -137,9 +105,7 @@ export default function StripePaymentsSettingsPage() {
             ) : (
                 <>
                     {!connected && (
-                        /* R3 (STRIPE-CONNECT-UX-001 §2 S-3): cloud hero + «What it costs» */
-                        <div className="grid grid-cols-1 md:grid-cols-[1.15fr_.85fr] gap-5">
-                            <CloudBanner variant="hero">
+                        <CloudBanner variant="hero">
                                 <p className="blanc-eyebrow">PAYMENTS</p>
                                 <h3
                                     className="mt-2 text-2xl sm:text-[28px]"
@@ -198,9 +164,7 @@ export default function StripePaymentsSettingsPage() {
                                     <Lock className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
                                     <span>Powered by <span className="font-bold" style={{ color: '#635bff' }}>Stripe</span> · Card data never touches Albusto</span>
                                 </div>
-                            </CloudBanner>
-                            <WhatItCostsCard />
-                        </div>
+                        </CloudBanner>
                     )}
 
                     {connected && readiness !== 'connected_ready' && (
