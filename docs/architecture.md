@@ -6437,6 +6437,210 @@ Frontend:
 - `frontend/src/components/onboarding/OnboardingChecklistCard.tsx` — компактный трекер
 - `frontend/src/pages/GoogleEmailSettingsPage.tsx`, `TelephonyTwilioSettingsPage.tsx`, `VapiSettingsPage.tsx`, `MailSecretarySettingsPage.tsx`, `IntegrationsPage.tsx` — redesign hero/копии
 
+## TIMELINE-REVPAGE-001 — architecture decision (2026-07-13)
+
+**Status:** Architecture (Agent-02). Implements the requirements block `TIMELINE-REVPAGE-001` in `Docs/requirements.md` (FR-01..FR-15, N1-N3, binding owner decisions 1-6). Implementation delegated to the GPT-implementer.
+
+### Chosen approach (summary)
+
+Evolve the TWO existing Pulse detail endpoints in place (`GET /api/pulse/timeline-by-id/:timelineId`, `GET /api/pulse/timeline/:contactId`) with an **opt-in paged mode** (`?limit=20[&before=<cursor>]`). Paged mode runs **per-source bounded SQL** (calls / sms / email / estimates / invoices, each `LIMIT 20` + cursor predicate, newest→oldest) and merges in JS via a **pure, jest-testable cursor/merge module** with a strict total order `(ts DESC, kind ASC, id DESC)`. Page = exactly 20 merged items visible to THIS user (permission/tenant filtering happens at source-selection, before the cut). Thread meta (contact, conversations, timeline flags) rides on page 1 only. No `limit` param → legacy `buildTimeline()` byte-identical (back-compat for any straggler; `timeline-by-phone` is a different route and is untouched). Frontend: `usePulseTimeline` becomes a `useInfiniteQuery` (v5.90) where `fetchNextPage` = "load OLDER"; SSE refreshes ONLY the newest page via a manual page-1 fetch + `setQueryData` union-merge (v5 removed `refetchPage` — full `invalidateQueries` refetches every page sequentially, which is exactly what we must avoid). Scroll: single scroller `.pulse-right-column` kept; bottom anchor via pre-paint `useLayoutEffect`; prepend preservation via scrollHeight-delta compensation with `overflow-anchor: none`; sticky AR bar via `position: sticky` inside the column; one unified Jump-to-latest pill.
+
+### Resolution of the flagged open question (Lead/Contact card placement)
+
+Verified in code: **desktop and mobile render the cards in the SAME place** — `PulsePage.tsx` puts AR-bar card → LeadCard/PulseContactPanel/CreateLeadJobWizard → `PulseTimeline` → SmsForm inside `.pulse-right-column`, and `PulsePage.css` (@max-767px, `data-mobile-panel="content"`) keeps that exact column as its own scroller on mobile ("CONTENT panel keeps its own `.pulse-right-column` scroll — the timeline relies on it"). **Decision: cards stay where they are, inside the single scroll region, above the feed — zero structural moves.** This is what binding owner decision 3 and FR-08 literally prescribe ("card stays ABOVE the feed, reachable by scrolling up… once history is exhausted"). Reachability analysis: threads where the card is the PRIMARY action surface (new-lead wizard, fresh contacts) are short (<20 items → FR-14 full render, card is one flick away); long threads have the sticky AR bar as the always-visible action surface (owner-accepted consequence, spelled out in requirements). The card is never unreachable on mobile: the column stays the one scroller and paging up walks to it deterministically. Moving cards out of the scroll region (column header / sibling pane) was rejected — it contradicts binding decision 3, creates nested scrollers on mobile (iOS scroll-chaining), and is NOT the minimal change.
+
+### API contract
+
+Paged mode is triggered by presence of `limit` (int, clamped 1..50; FE always sends 20). `before` = opaque cursor, only valid together with `limit`. `before` present ⇒ older page (no meta). Invalid/malformed cursor or limit → `400 {"error":"Invalid cursor"}` / `{"error":"Invalid limit"}`.
+
+```
+GET /api/pulse/timeline-by-id/:timelineId?limit=20            → page 1 (+meta)
+GET /api/pulse/timeline-by-id/:timelineId?limit=20&before=<c> → older page
+GET /api/pulse/timeline/:contactId?limit=20[&before=<c>]      → same, contact-keyed
+GET …(no query params)                                        → legacy full shape (buildTimeline, unchanged)
+```
+
+Response (paged):
+
+```json
+{
+  "page": {
+    "items": [
+      { "ts": "2026-07-12T18:22:01.123456Z", "src": "call",      "id": "8412",        "data": { /* formatCall output, unchanged shape */ } },
+      { "ts": "2026-07-12T18:20:59.000210Z", "src": "sms",       "id": "b3f0…-uuid",  "data": { /* sms row as in buildTimeline: conversation_id, from_number, to_number, media, … */ } },
+      { "ts": "2026-07-12T17:03:11.550000Z", "src": "email",     "id": "912",         "data": { /* email projection: toTimelineBody body_text, raw body_html, sent_at, … */ } },
+      { "ts": "2026-07-11T09:00:00.000000Z", "src": "financial", "id": "estimate-33", "data": { /* financial event, existing shape */ } }
+    ],
+    "next_cursor": "eyJ2IjoxLCJ0cyI6Ii4uLiIsImsiOjAsImlkIjoiODQxMiJ9",
+    "has_more": true
+  },
+  "meta": {            // PAGE 1 ONLY (no `before`); refreshed on every head refresh
+    "timeline_id": 123,
+    "display_name": null,
+    "external_source": null,
+    "contact": { /* contacts row + contact_emails[] — as today */ },
+    "conversations": [ /* sms_conversations rows — composer needs proxy_e164 */ ]
+  }
+}
+```
+
+`items` are newest→oldest. `data` shapes are **byte-compatible with today's four arrays** (DTO parity, additive-only): `formatCall` (incl. recording/transcript/gemini_summary), the sms mapping block, the email projection (incl. `toTimelineBody`), the financial mapping. The envelope (`ts`,`src`,`id`) is NEW and additive.
+
+**Cursor format (opaque):** `base64url(JSON.stringify({v:1, ts, k, id}))` where `ts` = ISO-8601 UTC **with microseconds**, `k` = kind rank (see below), `id` = raw row id as string (bigint digits or uuid). Server validates: `v===1`, `k∈0..4`, `ts` matches `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$`, `id` matches `^[0-9a-f-]{1,40}$/i`. Cursors stay valid under live inserts (new items land only at the newest end — FR-01).
+
+**Strict total order** (single source of truth, used by SQL predicates, JS merge, and FE display sort):
+
+- `ts` per source (the SAME expression in ORDER BY, cursor predicate, and the returned envelope):
+  - calls → `COALESCE(started_at, created_at)` (exactly what FE `callToCallData.startTime` uses; NULL-safe)
+  - sms → `created_at` (matches `idx_sms_msg_conversation_created`; note: display order source changes from `date_created_remote||created_at` to the envelope ts — divergence is bounded by ingest latency, accepted; bubble-internal time labels untouched)
+  - email → `COALESCE(gmail_internal_at, created_at)` (defensive: `getNewestThreadIdForContact` already treats gmail_internal_at as nullable)
+  - estimates/invoices → `created_at` (== today's `occurred_at`)
+- kind rank `k`: `call=0, sms=1, email=2, estimate=3, invoice=4`. Envelope `src` for the FE stays 4-valued (`financial` covers 3 and 4); the merge module derives the internal kind from the financial id prefix (`estimate-*`/`invoice-*`).
+- Order: `ts DESC, k ASC, id DESC` (id compared numerically for digit ids, as lowercase string for uuids — identical to PG bigint/uuid ordering).
+
+**Microsecond-precision trap (MUST):** node-pg returns `Date` (millisecond-lossy) while PG stores microseconds — a ms-truncated cursor param makes boundary comparisons skip rows (violates FR-02). Therefore every leg SELECTs `to_char(<ts_expr> AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts` and cursor `ts` is passed back as `$n::timestamptz` (lossless round-trip). ISO-UTC-µs strings also sort lexicographically == chronologically, so the FE comparator is a plain string compare.
+
+**Per-leg cursor predicate** (items strictly AFTER cursor C in the DESC order): for a leg of kind S —
+- `rank(S) > C.k` → `ts_expr <= $C.ts` (equal-ts items of a later-ranked source were not yet emitted)
+- `rank(S) == C.k` → `(ts_expr, id) < ($C.ts, $C.id)` (row-value; id cast to the leg's native type)
+- `rank(S) < C.k` → `ts_expr < $C.ts`
+The pure module emits the mode (`lte` / `tuple` / `lt`) per leg; the SQL builders apply it. This is exact across equal-timestamp runs (N3 test case).
+
+**Page assembly invariant (FR-02):** fetch up to `limit` rows per leg → merge-sort DESC (pure) → cut to `limit` → `next_cursor` = envelope key of the last emitted item; `has_more` = (merged leftover > 0) OR (any leg returned exactly `limit` rows). Edge: a thread with exactly 20 items reports `has_more=true` once and the next fetch returns an empty page with `has_more=false` — accepted (one cheap extra request; FE handles empty page gracefully). Users without `financial_data.view` simply have no estimate/invoice legs (pages still exactly 20 of the remaining sources — filtering BEFORE the cut, never post-shrink).
+
+### Backend design (extend, don't duplicate)
+
+`src/server.js:156` already mounts `app.use('/api/pulse', authenticate, requireCompanyAccess, pulseRouter)` and `routes/pulse.js:18` applies `requirePermission('pulse.view')` router-wide — **no server.js change, no new route**. Both GET handlers keep their existing tenant + provider guards (`getTimelineInCompany` / contact ownership check, `isContactVisibleToProvider` 404 semantics) and branch AFTER them: `req.query.limit != null ? buildTimelinePage(...) : buildTimeline(...)`. `company_id` comes ONLY from `req.companyFilter?.company_id` (`tenantCompanyId(req)`), and EVERY leg carries an explicit `company_id` predicate (calls has company_id since mig 012; sms_messages, email_messages, estimates, invoices all have it) — LIST-PAGINATION-001 cross-tenant discipline.
+
+`buildTimelinePage(req, res, contact, timeline, {limit, before})` flow:
+1. Parse/validate cursor via the pure module (bad → 400).
+2. **Conversation discovery (per request, same semantics as today):** phones = contact primary+secondary + `timeline.phone_e164` + distinct call numbers via one cheap 2-column query (`SELECT DISTINCT from_number AS n FROM calls WHERE timeline_id=$1 AND company_id=$2 UNION SELECT DISTINCT to_number FROM calls WHERE …`; no LATERALs) → existing phone-digits `sms_conversations` match (PULSE-PERF-001 expression indexes, company-scoped). Rationale: page-1's 20 calls would under-populate `callPhones`; a bounded 2-column scan keeps conversation discovery byte-equivalent to legacy without embedding conv-ids in the cursor.
+3. **Parallel bounded legs** (`Promise.all`), each ORDER BY `ts_expr DESC, id DESC` LIMIT `limit` + the cursor predicate + `company_id`:
+   - **calls**: the existing heavy SQL, restructured as `SELECT …lat joins… FROM (SELECT * FROM calls WHERE timeline_id=$1 AND company_id=$2 AND parent_call_sid IS NULL AND <cursor pred> ORDER BY COALESCE(started_at,created_at) DESC, id DESC LIMIT $3) c LEFT JOIN LATERAL …` — the inner LIMIT **bounds the 4 recording/transcript LATERALs to ≤20 rows** (today they run for every call in the thread). Factor into a local helper `fetchTimelineCalls(timelineId, companyId, {window})` used by BOTH `buildTimeline` (window=null → current behavior) and the paged path — one SQL string, no duplication.
+   - **sms**: NEW `conversationsQueries.getMessagesPageDesc(conversationIds, companyId, {limit, cursorPred})` — one query, `JOIN LATERAL (SELECT … FROM sms_messages m WHERE m.conversation_id = cid AND m.company_id=$x AND <pred> ORDER BY m.created_at DESC, m.id DESC LIMIT $limit) ON true` over `unnest($1::uuid[])`, then merged/cut in JS. Per-conversation LATERAL guarantees index-backward scans on `idx_sms_msg_conversation_created` (a plain `= ANY()` + ORDER BY would sort the whole thread). Keeps the `sms_media` json_agg (bounded). Existing `getMessages` stays untouched (Conversation legacy consumers). Side note: legacy `getMessages(limit:200)` is `ORDER BY created_at ASC LIMIT 200` — i.e. today the feed silently shows only the OLDEST 200 messages of a >200-message conversation; reverse pagination fixes this class of bug by construction.
+   - **email**: NEW `emailQueries.getTimelineEmailPageByContact(companyId, contactId, {limit, cursorPred})` + `…PageByTimeline(companyId, timelineId, …)` — same SELECT list as the existing pair (row-shape parity guaranteed) + `ts` column, `ORDER BY COALESCE(gmail_internal_at, created_at) DESC, id DESC LIMIT`. Existing ASC functions stay (legacy path).
+   - **estimates / invoices**: the two existing inline queries + `AND <cursor pred>` + `ORDER BY created_at DESC, id DESC LIMIT` (only when `contact?.id && canViewFinancials` — unchanged gate).
+4. Map rows through the SAME formatters as legacy — extract `mapSmsRow(conv, m)`, `projectEmailRow(row)`, `mapEstimateRow/mapInvoiceRow` out of `buildTimeline` into shared local helpers (behavior byte-identical), `formatCall` reused as-is.
+5. `mergePage(legs, limit, cursor)` (pure) → `{items, next_cursor, has_more}`.
+6. Page 1 (no `before`): meta = `{timeline_id, display_name, external_source, contact(+contact_emails via contactsService.getContactEmails), conversations}` — the same code legacy uses.
+7. `res.json({page, ...(page1 && {meta})})`.
+
+Contactless (YELP-TIMELINE-DEDUP-001) timelines work by construction: no contact → sms/financial legs empty or skipped, email leg keyed by `timeline_id`, calls by `timeline.id` (FR-04). Providers with `assigned_only` never reach `buildTimelinePage` for foreign/orphan threads (route-level 404, unchanged).
+
+**NEW pure module `backend/src/services/timelinePage.js`** (zero imports — the jest seam): `encodeCursor(key)`, `parseCursor(str)` (throws typed error), `KIND_RANK`, `tsExprs` docs, `compareDesc(a, b)`, `predicateModeFor(kind, cursor)` → `'lt'|'lte'|'tuple'`, `mergePage(legArrays, limit, cursor)` → `{items, nextCursor, hasMore}`.
+
+### Frontend design
+
+**`usePulseTimeline.ts` — `useInfiniteQuery` (@tanstack/react-query 5.90.20, verified):**
+
+```ts
+useInfiniteQuery({
+  queryKey: ['pulse-timeline', mode, key],          // key unchanged
+  queryFn: ({ pageParam, signal }) => pulseApi.getTimelinePage({ mode, key, before: pageParam ?? undefined, signal }),
+  initialPageParam: null as string | null,
+  getNextPageParam: (lastPage) => lastPage.page.has_more ? lastPage.page.next_cursor : undefined,
+  enabled: !!key, staleTime: 30_000,
+})
+```
+
+Direction convention: **pages[0] = newest; `fetchNextPage()` = load OLDER** (`next_cursor` walks back in time). No `getPreviousPageParam`, no `maxPages`, no reversed-pages trickery — "previous" direction is handled by head refresh below. The hook flattens `pages.flatMap(p => p.page.items)`, **dedupes by `src:id` (first occurrence wins — head is freshest)**, sorts ASC by `(ts string, kindRank, id)` — the exact server comparator — and exposes: `items`, decomposed `calls/messages/emailMessages/financialEvents` (from envelopes), `meta` (contact, conversations, timeline_id, display_name, external_source), `isLoading`, `fetchOlder/hasOlder/isFetchingOlder` (RQ's fetchNextPage/hasNextPage/isFetchingNextPage), `refreshNewestPage`.
+
+**SSE → newest page ONLY (FR-10), precise v5 mechanics:** v5 removed `refetchPage`; `invalidateQueries` on an infinite query refetches ALL cached pages sequentially (today's full-history reload, ×N pages — forbidden). Instead `refreshNewestPage()` (single-flight via ref):
+1. `const fresh = await pulseApi.getTimelinePage({mode, key})` — no `before` → newest 20 + meta.
+2. `queryClient.setQueryData(['pulse-timeline', mode, key], old => …)`: if no `old`, seed `{pages:[fresh], pageParams:[null]}`. Else **union-merge into pages[0]**: `items = unionByKey(fresh.page.items, old.pages[0].page.items)` (key `src:id`, fresh copy wins → picks up call-status/transcript/delivery updates in the head window), sorted DESC; **keep old pages[0].page.next_cursor/has_more** whenever the old head existed (the merged head's oldest item is the old head's oldest, so its boundary cursor stays correct; fresh's next_cursor would skip/dup); adopt `fresh.meta` (conversations may have just been created by the first outbound SMS). `pageParams` unchanged; pages[1..] untouched — loaded history never refetches.
+Handlers in `usePulsePage.ts`: `onCallUpdate` (same timeline gate) / `onMessageAdded` (same timelineId gate) / `onTranscriptFinalized` → `refreshNewestPage()` instead of `refetchTimeline()`; `refetchContacts` calls stay as-is. `finalizeTranscript`/`appendTranscriptDelta` (useLiveTranscript store) and the OUTBOUND-CALL-TIMELINE-001 live robot rows keep working: live rows are calls in the head window (DB id stable across the vapi→CallSid re-key, so the union key holds). Accepted v1 staleness for items living only in older pages — per FR-10.
+
+**Derivations over the loaded window:** `usePulsePage`'s `lastUsedPhone`, `defaultTarget`, `hasActiveCall`, `derivedProxy` currently read the full arrays; they are all newest-biased (want the LATEST inbound / active call / newest conversation), so computing them over the loaded window (which always contains the newest items) is semantically equivalent. `conversations` + `contact` come from `meta`. `phone` resolution keeps its fallback chain (meta.contact → selectedConv → head calls → meta.conversations[0]).
+
+**Scroll container mechanics** (all inside `PulseTimeline.tsx` + one CSS file; container discovered via `closest('.pulse-right-column')` — existing precedent in the file):
+- `overflow-anchor: none` on `.pulse-right-column` (Chrome's native anchoring would double-compensate; Safari doesn't have it — manual compensation is the one cross-browser path).
+- **Bottom anchor on open (FR-07):** `useLayoutEffect` when the first page for a `timelineKey` renders → `container.scrollTop = container.scrollHeight`; runs pre-paint (no top-anchored flash). `anchoredRef` reset on `timelineKey` change. The top IntersectionObserver attaches only AFTER anchoring (state flag) — prevents a spurious page-2 fetch during the first frame.
+- **Stick-to-bottom belt:** `nearBottom` = `scrollHeight - scrollTop - clientHeight <= 120` tracked on scroll (ref + state). While nearBottom, a ResizeObserver on the feed content re-pins scrollTop to bottom (rAF) — this also absorbs async media/image loads right after open (SC-04, FR-11 auto-stick).
+- **Scroll-up paging (FR-08):** when `hasOlder`, render a **reserved-height spinner row** (fixed ~36px) as the FIRST feed row — it doubles as the IO sentinel, so its appearance never shifts layout; spinner spins while `isFetchingOlder`. IO callback fires `onLoadOlder()` only if `hasOlder && !isFetchingOlder` (single-in-flight; same pattern as the left list's loadMoreRef). Before calling, capture `prevScrollHeight`; a `useLayoutEffect` keyed on pages-length applies `container.scrollTop += container.scrollHeight - prevScrollHeight` (prepend preservation — items under the cursor don't move; do the assignment inside rAF for iOS momentum safety, verify in N2).
+- **Jump-to-latest pill (FR-11):** the existing fixed-position button (`PulseTimeline.tsx:169-183`) is REPLACED — same `position: fixed` slot (bottom right, above composer/bottom-nav), new logic: visible ⇔ `!nearBottom`; when `refreshNewestPage` adds new items while `!nearBottom` → `hasNewActivity=true` (accent dot + label); click → scroll to `scrollHeight` (smooth) + clear. `z-index` 20 (unchanged) — well below `OVERLAY_Z.panel`=80, never over dialogs/sheets.
+- **New items while at bottom (SC-04):** effect on newest item key: `nearBottomRef.current ? scrollToBottom() : setHasNewActivity(true)`.
+- **Send → bottom (FR-12):** `handleSendMessage` awaits send → `await refreshNewestPage()` → bumps a `scrollToBottomSignal` counter (returned from `usePulsePage`, passed as prop); `PulseTimeline` effect scrolls to bottom on change. (Composer itself untouched — out of scope.)
+- **Date separators (FR-09):** unchanged single-pass logic, now over the merged LOADED window — one separator per day-transition by construction (no dupes across batches). Stated behavior: the separator sits above the oldest LOADED item of its day; when older items of the same day load in, it moves up with them. The oldest loaded page boundary therefore shows the day label of what's loaded — accepted (decided).
+- **Short/empty threads (FR-14):** `has_more=false` on page 1 → no spinner row, no observer; zero items → existing empty state; loading state → existing spinner block. All bottom-anchored.
+- **Mobile (FR-15):** identical DOM/logic — the mobile 'content' panel IS `.pulse-right-column` (verified in PulsePage.css); panel switching untouched.
+
+**Sticky AR bar (FR-13):** `PulsePage.tsx` adds class `pulse-ar-sticky` to the existing AR card (content/actions byte-identical — Done/Snooze/Assign, Mail-Secretary reason block, TaskActionButtons); `PulsePage.css`: `.pulse-ar-sticky { position: sticky; top: 0; z-index: 5; }`. Works because `.pulse-right-column` is the scroll container on both breakpoints. z=5: above in-flow content (accent stripes use z-1), below the pill (20) and every overlay (`OVERLAY_Z.panel`=80+; Radix dialogs/sheets portal to body). The card keeps `pulse-card-visible-overflow` (its dropdowns portal anyway). The 16px column gap shows the canvas under the stuck card's bottom edge while items scroll behind — flat-canvas look, verify visually in N2.
+
+### Files to change / new files (exact paths)
+
+Backend:
+- `backend/src/routes/pulse.js` — paged-mode branch in both GET handlers; NEW `buildTimelinePage()`; factor shared leg helpers (`fetchTimelineCalls` windowed calls SQL, `mapSmsRow`, `projectEmailRow`, financial mappers) reused by the untouched-in-behavior `buildTimeline()`.
+- `backend/src/services/timelinePage.js` — NEW pure cursor/order/merge module (encode/parse/compare/predicateMode/mergePage).
+- `backend/src/db/conversationsQueries.js` — NEW `getMessagesPageDesc(conversationIds, companyId, {limit, cursor})`; `getMessages` untouched.
+- `backend/src/db/emailQueries.js` — NEW `getTimelineEmailPageByContact` / `getTimelineEmailPageByTimeline`; existing ASC pair untouched.
+- `backend/db/migrations/168_timeline_revpage_call_page_index.sql` — NEW (see index plan).
+- `backend/tests/timelinePage.test.js` — NEW jest for the pure module.
+- `backend/scripts/verify-timeline-revpage.mjs` — NEW N3 harness for a prod-DB copy (house gotcha: scripts aren't in the Docker image — scp + docker cp to run there).
+
+Frontend:
+- `frontend/src/services/pulseApi.ts` — NEW `getTimelinePage({mode, key, before?, signal?})`; delete `getTimeline`/`getTimelineById` after the hook rewrite (verified single consumer).
+- `frontend/src/types/pulse.ts` — additive types: `TimelinePageItem {ts; src; id; data}`, `TimelinePage {items; next_cursor; has_more}`, `PulseTimelineMeta`, `PulseTimelinePageResponse {page; meta?}`.
+- `frontend/src/hooks/usePulseTimeline.ts` — useInfiniteQuery rewrite + `refreshNewestPage` (cache surgery) + flatten/dedup/sort + decomposition + meta.
+- `frontend/src/hooks/usePulsePage.ts` — consume the new hook shape; SSE handlers → `refreshNewestPage`; `handleSendMessage` → refresh + `scrollToBottomSignal`; keep the returned API for PulsePage plus new fields (`items`, `hasOlder`, `isFetchingOlder`, `fetchOlder`, `scrollToBottomSignal`, `refreshNewestPage`).
+- `frontend/src/components/pulse/PulseTimeline.tsx` — envelope-driven rendering; reserved spinner/sentinel row; bottom anchor; prepend compensation; nearBottom/auto-stick; unified pill (old fixed button removed).
+- `frontend/src/pages/PulsePage.tsx` — `pulse-ar-sticky` on the AR card; wire new PulseTimeline props.
+- `frontend/src/pages/PulsePage.css` — `.pulse-ar-sticky`; `overflow-anchor: none` on `.pulse-right-column`; spinner-row style.
+
+NOT touched (protected, verified): `src/server.js` (mount at :156 already `authenticate, requireCompanyAccess`, router-level `requirePermission('pulse.view')` — nothing to add), `GET /api/pulse/timeline-by-phone` + softphone/AppLayout consumers, `ConversationPage.tsx` + `components/conversations/*` (`CreateLeadJobWizard` is only rendered by PulsePage — not modified), `getUnifiedTimelinePage`/left-list SQL, `calls.js` mark-read/unread, `SmsForm.tsx`, `authedFetch.ts`, `useRealtimeEvents.ts`, sseManager event names/payloads.
+
+### Data flow
+
+Open thread → `usePulseTimeline` page-1 request (`?limit=20`) → route guards (tenant, provider) → `buildTimelinePage`: conversation discovery (2 cheap indexed queries) → 5 bounded legs in parallel (≤20 rows each; calls LATERALs bounded by inner LIMIT) → pure merge → 20 envelopes + next_cursor + meta → FE renders bottom-anchored (layout-effect), composer visible. Scroll up → sentinel → `fetchNextPage(before=next_cursor)` → same legs with cursor predicates → prepend + scrollTop compensation. SSE event for this timeline → `refreshNewestPage()` → page-1 fetch → union-merge into pages[0] (+fresh meta) → auto-stick if nearBottom else pill lights up. Send → API → `refreshNewestPage` → scroll to bottom. Legacy consumers (`?` none) → `buildTimeline` exactly as today.
+
+### Index / migration plan
+
+Next free migration: **168** (167 = technician_time_off, applied on prod).
+
+- `backend/db/migrations/168_timeline_revpage_call_page_index.sql`:
+  ```sql
+  -- TIMELINE-REVPAGE-001: reverse-cursor page over a thread's parent calls.
+  -- COALESCE(started_at, created_at) is the canonical feed timestamp (matches the FE).
+  CREATE INDEX IF NOT EXISTS idx_calls_timeline_page
+    ON calls (timeline_id, (COALESCE(started_at, created_at)) DESC, id DESC)
+    WHERE parent_call_sid IS NULL;
+  ```
+  (Existing `idx_calls_timeline_id` stays — other consumers.) COALESCE of two timestamptz columns is immutable → indexable.
+- sms: **no new index** — `idx_sms_msg_conversation_created (conversation_id, created_at)` (mig 017) serves the per-conversation backward scan.
+- email: **no new index** — per-contact/timeline email volumes are small; existing partial indexes (mig 129/165) narrow the filter; the COALESCE sort on the residue is trivial. If the N1 EXPLAIN on the prod copy disagrees, an expression twin of 129/165 is the sanctioned follow-up.
+- estimates/invoices: **no new index** — `idx_estimates_contact` / `idx_invoices_contact` partials narrow to a handful of rows.
+- N1 discipline: EXPLAIN (ANALYZE) the calls leg + sms leg on a prod-DB copy for the heaviest timeline before sign-off (PULSE-PERF-001 method); the migration ships with the feature either way (cheap, targeted).
+
+### Testability seams
+
+- **Pure module jest** (`backend/tests/timelinePage.test.js`): cursor encode/parse round-trip + tamper rejection; total-order comparator (equal-ts runs across all 5 kinds; bigint-vs-uuid id ordering); `predicateModeFor` matrix (lt/lte/tuple per kind vs cursor kind); `mergePage` — exact 20-cut, next_cursor correctness at an equal-ts boundary, has_more edges (exactly-limit leg, empty legs, leftover), financial-legs-absent pages still full-size.
+- **Real-DB harness** (`backend/scripts/verify-timeline-revpage.mjs`, run against prod copy — N3): walks a heavy thread page-by-page asserting no dup/skip vs the legacy full response; equal-timestamp run boundary; no-`financial_data.view` page fullness; provider `assigned_only` 404s; contactless email-only timeline; cross-tenant isolation (foreign timeline → 404, foreign rows never appear); threads with exactly 20 / <20 / 0 items.
+- Route-level jest (mocked db) only for the 400 cursor/limit validation branch; everything else is covered by the pure module + N3 (LIST-PAGINATION-001 lesson: mocked jest alone is not enough).
+- Frontend: `cd frontend && npm run build` (tsc -b, prod stricter — noUnusedLocals); N2 live-preview verification (desktop + 375px): bottom-anchor open without flash, prepend preservation, auto-stick threshold, pill + new-activity dot, sticky AR bar over scrolling items, send→bottom, short-thread no-pagination-UI.
+
+### Rejected alternatives (why, one line each)
+
+- **UNION-ALL spine SQL** (one query unioning ids+ts across 5 tables, then hydrate): one mega-statement mixing five tables' tenancy predicates is the LIST-PAGINATION-001 leak breeding ground, blocks reuse of existing per-source functions/formatters, and saves nothing at ≤20×5 rows per page.
+- **OFFSET pagination:** live inserts shift pages → dup/skip; explicitly forbidden by FR-01.
+- **Day-based batches:** variable page sizes violate the 20-item owner decision; heavy days unbounded.
+- **New sibling endpoint (`/timeline-page`):** needless URL surface + server.js wiring; opt-in query param on the two existing (single-consumer-verified) routes keeps guards/middleware literally the same code.
+- **Separate meta endpoint:** +1 RTT on every thread open; page-1 embed is free and atomically consistent with the head page.
+- **`getPreviousPageParam`/bidirectional infinite query:** newest-side growth via cursorless head refresh + union keeps deeper cursors stable and avoids v5 bidirectional edge cases; feed only ever pages one direction (older).
+- **`invalidateQueries` on SSE (status quo):** v5 refetches every cached page sequentially — the exact full-history reload FR-10 removes.
+- **`flex-direction: column-reverse` bottom anchoring:** reverses DOM/a11y order, breaks separators and card-above-feed flow, notorious Safari quirks; pre-paint layout-effect anchor is deterministic.
+- **Relying on CSS `overflow-anchor` for prepend preservation:** unsupported in Safari; manual scrollHeight-delta is the only cross-browser mechanism (anchor explicitly disabled to avoid double compensation in Chrome).
+- **Cards moved out of the scroll region / sticky column header:** contradicts binding owner decision 3 (card stays above the feed, reachable by scrolling up) and creates nested scrollers on mobile; rejected as non-minimal.
+- **Conversation ids embedded in the cursor:** stale-set risk when conversations appear mid-session + fat cursors; per-page rediscovery is two cheap indexed queries.
+- **Virtualized/windowed DOM:** out of scope per requirements (v1 accumulates loaded pages).
+
+### Risks / notes for implementer & tester
+
+- **SMS ordering key change** (`created_at` instead of `date_created_remote||created_at`): bounded by ingest latency; verify on prod-copy that no thread visibly reorders (N3 harness compares against legacy order).
+- **µs-precision cursor:** never let a JS `Date` touch the cursor ts — envelopes and cursors carry the `to_char` string end-to-end.
+- **iOS momentum + scrollTop compensation:** apply in rAF/layout-effect; N2 on a real 375px viewport (house lesson: live preview catches what specs miss).
+- **Exactly-20 thread** shows the spinner row once and resolves to `has_more=false` on the empty next page — acceptable; assert no visual flicker.
+- **Head-window growth:** pages[0] grows with session-long SSE activity (bounded by new items per session) — fine without virtualization; re-check memory only if a future feature keeps threads open for days.
+- **Meta refresh path:** after the first outbound SMS creates a conversation, the send-triggered head refresh must deliver fresh `meta.conversations` (send path depends on it for targetConv resolution) — covered in N2 smoke.
+
 ## Архитектурное решение для фичи SERVICE-TERR-002 — radius-территории + единый containment-seam + онбординг-шаг (2026-07-13)
 
 **Требования:** `Docs/requirements.md` §SERVICE-TERR-002 (решения заказчика — биндинг). Спецификация: `Docs/specs/SERVICE-TERR-002.md`.

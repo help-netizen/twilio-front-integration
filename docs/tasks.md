@@ -9296,6 +9296,162 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 **Verify:** cd frontend && npm run build + preview.
 **Статус:** done (2026-07-12, GPT, ревью ACCEPT, preview mobile проверен)
 
+## TIMELINE-REVPAGE-001 — план (messenger-паджинация Pulse-ленты: reverse cursor, 20 merged items, bottom-anchor, scroll-up history, sticky AR-бар) (2026-07-13)
+
+Спека (authoritative): `Docs/specs/TIMELINE-REVPAGE-001.md` (§1–16). Тест-кейсы: `docs/test-cases/TIMELINE-REVPAGE-001.md` (53 кейса, TC-TRP-*). Архитектура: `Docs/architecture.md § TIMELINE-REVPAGE-001` (:6440). Исполнитель каждой задачи — GPT (Codex), **один таск за раз на этой машине**; волны ниже фиксируют логический параллелизм, исполнение строго последовательное.
+
+**Общие заметки для всех задач:**
+- Jest-сюита живёт в корневом `tests/` (166 файлов). Корневой `package.json` игнорирует `/\.claude/worktrees/` — **из worktree прогон ОБЯЗАН передавать `--testPathIgnorePatterns "/node_modules/"`** (CLI-флаг перекрывает массив конфига; известный gotcha JOBS-UX-RBAC-001).
+- Frontend **без test-runner'а**: FE-зеркало серверного компаратора (§3.4 ↔ §7.3) верифицируется через N3-харнес + N2 manual — принятый gap #3 тест-кейсов для v1.
+- `company_id` на КАЖДОМ SQL-леге строго из `req.companyFilter?.company_id` (LIST-PAGINATION-001 discipline); paged-режим не добавляет routes/middleware — `authenticate, requireCompanyAccess` (server.js:156) + router-wide `requirePermission('pulse.view')` (routes/pulse.js:18) уже стоят.
+- Protected (zero-diff, спека §16 NOT-touched): `src/server.js`, `timeline-by-phone` + softphone/AppLayout консюмеры, `ConversationPage.tsx` + `components/conversations/*`, `getUnifiedTimelinePage`, `SmsForm.tsx`, `authedFetch.ts`, `useRealtimeEvents.ts`, sseManager, `DateSeparator.tsx`, bubble-компоненты, `permissionCatalog.js`. Проверяется в T9 (H11) и T10.
+- База ветки для diff/jest-бейзлайна: `d5f46b6`. UI-копии English, продукт = Albusto (не «Blanc»), только `--blanc-*` токены. **Prod deploy — owner-gated (deploy-consent), вне скоупа задач.**
+
+### Задача T1: backend — чистый модуль `timelinePage.js` + unit-jest (секция A)
+
+**Цель:** NEW `backend/src/services/timelinePage.js` — zero imports, CommonJS, exported surface ТОЧНО по спеке §4: `KIND_RANK` (frozen), `encodeCursor`, `parseCursor` (типизированная `InvalidCursorError` или `.code==='INVALID_CURSOR'`; валидация §3.1: v===1, k∈0..4, µs-ts regex ровно 6 знаков дроби, id regex `^[0-9a-fA-F-]{1,40}$`), `compareDesc` (ts-строка DESC → rank ASC → id DESC; digit-id — числовое сравнение БЕЗ BigInt: длиннее строка → больше, равная длина → лексикографика; uuid — lowercase-строковое; §3.4), `predicateModeFor` (матрица §3.5: `lte`/`tuple`/`lt`/null), `mergePage` (§4: глобальный сорт compareDesc → cut до limit → envelope `{ts, src: financial-свёртка, id: prefix для financial / String(id)}` → nextCursor от последнего эмитированного (k = внутренний kind, id БЕЗ префикса) → `hasMore = leftover>0 OR legs.some(rows.length>=limit)`). Никакого `Date` на пути курсора (INV-11). NEW `tests/timelinePage.test.js` — корневой `tests/`, НЕ `backend/tests/` (спека §15.1 явно поправляет архитектурный док).
+
+**Файлы, которые можно менять:**
+- backend/src/services/timelinePage.js (NEW)
+- tests/timelinePage.test.js (NEW)
+
+**Файлы, которые трогать нельзя:** всё остальное (модуль самодостаточен — ни db, ни express).
+
+**Acceptance:** TC-TRP-001…013 зелёные (roundtrip с µs-хвостами; полный malformed-набор из TC-TRP-002 incl. uppercase-hex-uuid ВАЛИДЕН; kind-rank tie на идентичном µs; digit >2^53; матрица 30 assertions; cut+next_cursor на equal-ts границе; hasMore-эвристика; permission-filtered полнота; пустые леги; неотсортированный sms-лег; page-walk 100 items no dup/skip; sabotage-контроль TC-TRP-013 — чекер обязан краснеть на cursor=null-потоке).
+
+**Verify:** `npm test -- --runTestsByPath tests/timelinePage.test.js --testPathIgnorePatterns "/node_modules/"`
+
+**Зависимости:** нет. **Размер:** M. **Статус:** done (2026-07-13, GPT, ревью ACCEPT: 13/13 jest независимо зелёные; jest-флаг в этой версии = --testPathPatterns (мн.ч.) либо --runTestsByPath)
+
+### Задача T2: backend — миграция 168 (index-only) + rollback
+
+**Цель:** `168_timeline_revpage_call_page_index.sql` + `rollback_168_…` — SQL вербатим из спеки §6 (`idx_calls_timeline_page` ON calls `(timeline_id, (COALESCE(started_at, created_at)) DESC, id DESC) WHERE parent_call_sid IS NULL`, `IF NOT EXISTS`; rollback `DROP INDEX IF EXISTS`). **Первым шагом ПЕРЕПРОВЕРИТЬ свободный номер** `ls backend/db/migrations/` (прецедент 161: параллельные worktree дрейфуют; на момент плана последняя — 167) — занят → перенумеровать оба файла консистентно. НИКАКИХ других индексов (email-твин — санкционированный follow-up ТОЛЬКО если N1 EXPLAIN в T9 плох; спекулятивно не добавлять, §6).
+
+**Обоснование отдельной задачи (а не в T4):** (a) перепроверка номера — явный изолированный шаг, который нельзя потерять внутри большого route-таска; (b) dev-БД получает индекс ДО route-работы T4 и EXPLAIN в T9/H09; (c) нулевая связность с кодом — чистый rollback.
+
+**Файлы:** backend/db/migrations/168_timeline_revpage_call_page_index.sql (NEW), backend/db/migrations/rollback_168_timeline_revpage_call_page_index.sql (NEW).
+**Трогать нельзя:** прочие миграции, backend/db/v3_schema.sql.
+
+**Acceptance:** INV-15 (index-only, идемпотентна, rollback есть); предусловия TC-TRP-H09.
+
+**Verify:** psql на dev-БД: применить дважды (второй раз — без ошибки), rollback, применить снова.
+
+**Зависимости:** нет. **Размер:** S. **Статус:** todo
+
+### Задача T3: backend — DESC-твины query-слоя (sms + email)
+
+**Цель:** ADD-only: `conversationsQueries.getMessagesPageDesc(conversationIds, companyId, {limit, cursorPred})` — вербатим §5.4 (per-conversation `JOIN LATERAL` над `unnest($1::uuid[])`, `sms_media` json_agg, `ORDER BY m.created_at DESC, m.id DESC LIMIT`, ts-колонка `to_char(… .US"Z"')`, предикат-режимы lt/lte/tuple c row-value `::uuid`); `emailQueries.getTimelineEmailPageByContact(companyId, contactId, {limit, cursorPred})` + `…ByTimeline(companyId, timelineId, …)` — вербатим §5.5 (SELECT-list идентичен существующей ASC-паре + ts, `COALESCE(gmail_internal_at, created_at) DESC, id DESC`, tuple `::bigint`; timeline-твин `AND timeline_id=$2` — contactless YELP). `cursorPred` = `{mode, ts, id}` (mode считает роут через `predicateModeFor` из T1 — контракт зафиксировать в JSDoc). `company_id`-параметр в каждом запросе (§13). `getMessages` и ASC-email пара — БЕЗ диффа (INV-12).
+
+**Файлы:** backend/src/db/conversationsQueries.js, backend/src/db/emailQueries.js.
+**Трогать нельзя:** backend/src/routes/pulse.js (это T4), остальной db-слой.
+
+**Acceptance:** §5.4/§5.5 точно; git diff по обоим файлам — только добавления; INV-12. Реальный SQL-пруф — T9 (H01/H03/H06); в T4 эти функции мокаются (стратегия секции B).
+
+**Verify:** `node -e "require('./backend/src/db/conversationsQueries'); require('./backend/src/db/emailQueries')"`; dev-БД smoke одноразовым node-скриптом: каждая новая функция с курсором и без на известной беседе/контакте возвращает строки с валидным µs-`ts`; `git diff` — additive-only.
+
+**Зависимости:** T1 (контракт predicateModeFor/cursorPred). **Размер:** S. **Статус:** todo
+
+### Задача T4: backend — routes/pulse.js: paged-ветка + buildTimelinePage + shared-хелперы + route-jest + golden
+
+**Цель:** §2 + §5 целиком. Валидация параметров ДО SQL (`limit` regex `/^[1-9]\d*$/` + clamp 50 → иначе `400 Invalid limit`; `before` без `limit` или не прошедший parseCursor → `400 Invalid cursor`); guards обоих GET-хендлеров байт-как-сегодня, ветвление ПОСЛЕ них (`req.query.limit != null → buildTimelinePage`). `buildTimelinePage` — flow §5 шаги 1–7: discovery §5.2 (2-колоночный UNION-скан + существующий digits-match), 5 ограниченных легов `Promise.all` (skip-not-blank: financial только при `contact?.id && canViewFinancials` — гейт ВЕРБАТИМ из legacy; sms только при найденных беседах; email by-contact ИЛИ by-timeline; calls при `timeline?.id`), shared-мапперы §5.7 (`mapSmsRow`, `projectEmailRow`, `mapEstimateRow`/`mapInvoiceRow` извлечь из buildTimeline; `formatCall` как есть), `mergePage` из T1, meta ТОЛЬКО на page 1. `fetchTimelineCalls(timelineId, companyId, {window})` — ОДНА SQL-строка на оба режима (§5.3: inner-LIMIT сабквери ограничивает 4 LATERAL'а ≤limit строк; legacy-режим сохраняет `ORDER BY c.started_at DESC NULLS LAST`; единственная SQL-дельта legacy — result-neutral `AND c.company_id=$2`, §2.5). `buildTimeline` пересажен на shared-хелперы с БАЙТ-ИДЕНТИЧНЫМ JSON (INV-4/INV-5). `src/server.js` не трогать; новых routes/middleware нет.
+
+**КРИТИЧЕСКИЙ внутренний порядок:** golden СНАЧАЛА — написать фикстуру + capture-прогон через ЕЩЁ НЕ ТРОНУТЫЙ buildTimeline (рабочее дерево до рефакторинга), зафиксировать `tests/fixtures/timeline-legacy-golden.json` (call с `started_at=NULL`, sms с media-строкой, email с quote-strip — предусловия TC-TRP-027), и только ПОТОМ рефакторить.
+
+**Файлы:** backend/src/routes/pulse.js, tests/pulseTimelinePageRoute.test.js (NEW), tests/fixtures/timeline-legacy-golden.json (NEW).
+**Трогать нельзя:** src/server.js, `timeline-by-phone`-хендлер внутри pulse.js (zero diff), backend/src/db/* (готово в T3), `getUnifiedTimelinePage`, permissionCatalog.js.
+
+**Acceptance:** TC-TRP-020…034 зелёные (мок-стратегия — шапка секции B: jest-mock `db/connection` c диспетчеризацией по SQL-паттерну, mock conversationsQueries/emailQueries/contactsService, REAL routes/pulse.js + REAL timelinePage.js; walk-фейки честно применяют `{limit, cursorPred}`; sabotage TC-TRP-033 обязателен); таблица ошибок §2.4; изоляция §13 (TC-TRP-032: все 6 легов получили строго company A); legacy golden deep-equal (TC-TRP-027); ветвление и guard-порядок (TC-TRP-020); clamp (TC-TRP-029); contactless (TC-TRP-030); financial-гейт (TC-TRP-031).
+
+**Verify:** `npm test -- --runTestsByPath tests/pulseTimelinePageRoute.test.js tests/timelinePage.test.js --testPathIgnorePatterns "/node_modules/"`; dev-smoke с запущенным локальным backend (curl): без параметров → legacy-shape без `page`/`meta`; `?limit=20` → `{page, meta}`; `?limit=20&before=<next_cursor>` → без `meta`; `?limit=abc` → 400.
+
+**Зависимости:** T1, T3 (T2 желательна заранее для скорости dev-БД, но не блокер). **Размер:** M+ (крупнейшая задача плана; по установке оркестратора route wiring + route tests = один таск — не дробить).
+
+**Статус:** todo
+
+### Задача T5: frontend — data layer: pulseApi + типы + usePulseTimeline (useInfiniteQuery + refreshNewestPage)
+
+**Цель:** §7.1 `getTimelinePage({mode, key, before?, signal?})` (params `{limit: 20, …before}`) + **DELETE** `getTimeline`/`getTimelineById` (единственный консюмер верифицирован спекой); §7.2 аддитивные типы (`TimelinePageItem/TimelinePage/PulseTimelineMeta/PulseTimelinePageResponse`); §7.3 `useInfiniteQuery` (queryKey НЕИЗМЕНЁН `['pulse-timeline', mode, key]`, `initialPageParam: null`, `getNextPageParam = has_more ? next_cursor : undefined`, `enabled: !!key`, `staleTime: 30000`; pages[0]=newest, `fetchNextPage`=OLDER; БЕЗ getPreviousPageParam/maxPages); flatten + dedupe по `src:id` (первое вхождение побеждает) + сорт ЛОКАЛЬНЫМ зеркалом серверного компаратора (KIND_RANK, financial-префикс, digit/uuid id-сравнение — §3.4) + `.reverse()`; декомпозиция calls/messages/emailMessages/financialEvents; `meta = pages[0].meta`; §7.4 `refreshNewestPage` ТОЧНО по спеке (single-flight ref; head-фетч без before; `setQueryData` union-merge fresh-побеждает; **сохранить next_cursor/has_more СТАРОГО head** при его наличии; adopt `fresh.meta`; ошибки console.warn+swallow; ref-сброс на смене mode/key). Return shape вербатим §7.3.
+
+**Файлы:** frontend/src/services/pulseApi.ts, frontend/src/types/pulse.ts, frontend/src/hooks/usePulseTimeline.ts.
+**Трогать нельзя:** frontend/src/lib/authedFetch.ts, useRealtimeEvents.ts, usePulsePage.ts (это T6).
+
+**Acceptance:** §7.1–7.4; НИКАКОГО `invalidateQueries` на SSE-пути; ts сравнивается как строка (никакого `new Date` на пути порядка — INV-11); сборка чистая при prod-строгости (noUnusedLocals — удалить осиротевшие импорты после DELETE).
+
+**Verify:** `cd frontend && npm run build`. (FE-runner'а нет: зеркало компаратора доказывается N3+N2 — принятый gap #3.)
+
+**Зависимости:** T4 (живой контракт для последующего preview). **Размер:** M. **Статус:** todo
+
+### Задача T6: frontend — usePulsePage: SSE → refreshNewestPage, send-path, scrollToBottomSignal
+
+**Цель:** §7.5 вербатим: потребить новую форму хука; `conversations`/`contact` из meta (fallback `contactCalls[0]?.contact`); деривации (lastUsedPhone/defaultTarget/hasActiveCall/derivedProxy/phone) — код без изменений, теперь над загруженным окном; `callDataItems` УДАЛИТЬ; SSE-хендлеры — гейты БЕЗ изменений, действие `refetchTimeline()` → `refreshNewestPage()` в onCallUpdate/onMessageAdded/onTranscriptFinalized (`refetchContacts()` и `finalizeTranscript(...)` остаются; onCallCreated/onContactRead/onGenericEvent/onTranscriptDelta не трогать); send-path FR-12 — в ОБЕИХ ветках `handleSendMessage` `refetchTimeline()` → `await refreshNewestPage(); setScrollToBottomSignal(s => s + 1)` (новый state, возвращается); `refetchTimeline` ОСТАЁТСЯ в API как алиас `refreshNewestPage` (консюмер PulsePage.tsx:431 onLeadCreated); возвращаемый API дополнен `items/hasOlder/isFetchingOlder/fetchOlder/scrollToBottomSignal/refreshNewestPage`.
+
+**Файлы:** frontend/src/hooks/usePulsePage.ts.
+**Трогать нельзя:** useRealtimeEvents.ts (protected), SmsForm.tsx, sseManager, usePulseTimeline.ts (готов в T5).
+
+**Acceptance:** §7.5; INV-6 (SSE-эмиссия нетронута — меняется только потребление), INV-7 (композер-флоу нетронут кроме post-send); error-handling/тосты отправки без изменений; live robo-строки (E-9) работают через head-union по стабильному `src:id`.
+
+**Verify:** `cd frontend && npm run build`.
+
+**Зависимости:** T5. **Размер:** S. **Статус:** todo
+
+### Задача T7: frontend — PulseTimeline: scroll-механика + PulsePage props-wiring + CSS
+
+**Цель:** §8 целиком. Новый props-интерфейс (items/loading/timelineKey/hasOlder/isFetchingOlder/onLoadOlder/scrollToBottomSignal — ЗАМЕНЯЕТ calls/messages/financialEvents/emailMessages); envelope-driven рендер по `src` (bubble-компоненты НЕ трогать; `callToCallData` мемоизирован; row-ключи `call-<id>`/`sms-<id>`/`email-<id>`/`fin-<id>`); §8.1 pre-paint bottom anchor (`anchoredRef` сброс на timelineKey, `useLayoutEffect`, IO подключается ПОСЛЕ анкора через `ioEnabled`); §8.2 nearBottom ≤120px (ref+state) + ResizeObserver-belt (rAF re-pin при nearBottom); §8.3 reserved 36px spinner-row = IO-sentinel ПЕРВОЙ строкой при hasOlder, one-in-flight гард; §8.4 prepend-компенсация (`prevScrollHeightRef` только перед onLoadOlder; layout-effect дельта `scrollTop += delta` + rAF re-assert; отрицательная дельта −36px применяется безусловно; очистка при фейле); §8.5 единый Jump-to-latest pill — УДАЛИТЬ старую fixed-кнопку + showJumpBtn (:39, 87-101, 169-185), pill в тот же слот (fixed bottom 90px/right 40px, z-20), visible ⇔ `!nearBottom && items.length>0`, dot 8px `var(--blanc-danger)` при hasNewActivity, aria-label «Jump to latest — new activity», click → smooth bottom + clear; §8.6 scrollToBottomSignal-эффект (skip initial 0); §8.7 date separators по загруженному окну (`new Date(item.ts)` — display-only, разрешено); §8.8 empty/short/loading — существующие блоки; §8.9 mobile parity (никакого отдельного пути). PulsePage.tsx — ТОЛЬКО props-wiring §8.10. PulsePage.css — `overflow-anchor: none` в существующее правило `.pulse-right-column` + `.pulse-feed-spinner-row` (§8).
+
+**Файлы:** frontend/src/components/pulse/PulseTimeline.tsx, frontend/src/pages/PulsePage.tsx (только §8.10), frontend/src/pages/PulsePage.css (только два добавления §8).
+**Трогать нельзя:** DateSeparator.tsx, PulseCallListItem/SmsListItem/EmailListItem/FinancialEventListItem (bubble-канон), SmsForm.tsx, ConversationPage.tsx.
+
+**Acceptance:** FR-07/08/09/11/12/14/15, SC-01…06; INV-9 (ровно ОДИН jump-affordance); состояния E-6 сбрасываются на смене timelineKey; UI-копии English/Albusto, только токены; сборка чистая.
+
+**Verify:** `cd frontend && npm run build`; быстрый live-preview прогон (не полный N2): длинный тред → низ без вспышки; скролл вверх → prepend без сдвига видимых items; короткий тред → нет сентинела.
+
+**Зависимости:** T6. **Размер:** M. **Статус:** todo
+
+### Задача T8: frontend — sticky Action-Required бар
+
+**Цель:** §9 вербатим: AR-карточке (PulsePage.tsx:287) добавить ОДИН класс `pulse-ar-sticky` (контент/действия карточки байт-идентичны — INV-8); PulsePage.css: `.pulse-ar-sticky { position: sticky; top: 0; z-index: 5; }` (выше in-flow контента, ниже pill z-20 и всех оверлеев OVERLAY_Z.panel=80+). Непрозрачный фон карточки уже есть (`#fff7ed` / `var(--blanc-surface-muted)`).
+
+**Файлы:** frontend/src/pages/PulsePage.tsx (одна строка класса), frontend/src/pages/PulsePage.css (один блок).
+**Трогать нельзя:** содержимое AR-карточки (chip/reason/due/Done/Snooze/Assign/TaskActionButtons), TaskActionButtons.
+
+**Acceptance:** FR-13, INV-8; нет открытой задачи → ничего не рендерится (как сегодня).
+
+**Verify:** `cd frontend && npm run build`; preview: тред с открытой задачей — бар приколот при скролле, дропдауны работают, открытый dialog/sheet НЕ перекрывается баром.
+
+**Зависимости:** T7 (общие файлы PulsePage.tsx/.css — строго после). **Размер:** S. **Статус:** todo
+
+### Задача T9: backend — N3 real-DB харнес (авторинг + прогон)
+
+**Цель:** NEW `backend/scripts/verify-timeline-revpage.mjs` (§15.3 + секция C, env `DATABASE_URL`): H01 page-walk vs legacy на самом тяжёлом треде (set-equality по `src:id` + строгий DESC; SMS-реордер `created_at` vs `date_created_remote` — ОТДЕЛЬНЫЙ WARN-отчёт, FAIL только при кросс-суточном или не-SMS реордере; беседы >200 SMS → H02); H02 тред >200 SMS (new ⊇ legacy, diff = строго новейшие total−200, вердикт «EXPECTED DIFF: NEW correct / LEGACY lossy»); H03 equal-µs run на границе страницы (при отсутствии — засеять в транзакции); H04 permission fullness (20/страница без financial); H05 provider assigned_only → 404-путь до легов; H06 cross-tenant (каждый из 6 легов с чужим company_id → 0 строк, с курсором и без); H07 contactless YELP-walk; H08 кардинальность ровно-20/<20/0; H09 EXPLAIN (ANALYZE) calls-лега (`idx_calls_timeline_page`, LATERALs ≤limit) + sms-лега (backward-scan `idx_sms_msg_conversation_created`) + тайминги page-1 vs legacy + идемпотентность mig 168 + наличие rollback-файла; H10 режим `--sabotage=ignore-cursor` (before=null на каждой итерации) — обязан упасть exit≠0 с «duplicate page-1 detected»; H11 `git diff d5f46b6..HEAD --name-only` не содержит protected-файлов (список §16) + внутри изменённых файлов `getMessages`/ASC-email без диффа. Порядок прогона: **сначала H10 (самопроверка детектора), потом H01–H09, H11**. Плохой email-EXPLAIN — задокументировать как санкционированный follow-up (§6), индекс НЕ добавлять.
+
+**Файлы:** backend/scripts/verify-timeline-revpage.mjs (NEW).
+**Трогать нельзя:** прод; всё остальное. ЛОВУШКА (house): скриптов нет в Docker-образе — для серверного прогона scp + docker cp.
+
+**Acceptance:** TC-TRP-H01…H11 на dev-БД (прод-копия — при доступности; N1-цифры H09 зафиксированы в выводе); TC-TRP-H10 доказал детекторную силу.
+
+**Verify:** `DATABASE_URL=<dev> node backend/scripts/verify-timeline-revpage.mjs --sabotage=ignore-cursor` → exit≠0; затем честный прогон → exit 0; вывод приложить к статусу задачи.
+
+**Зависимости:** T2, T4 (бэкенд целиком; FE не нужен). Слот исполнения — после T8 (prescribed-порядок «харнес+verify последними»); FE-зависимостей нет — оркестратор ВПРАВЕ поднять сразу после T4 как раннюю страховку бэкенда. **Размер:** M. **Статус:** todo
+
+### Задача T10: FINAL VERIFY — build + полный jest + харнес + N2 manual checklist
+
+**Цель/шаги:** (1) `cd frontend && npm run build` (tsc -b; prod-Docker строже — noUnusedLocals: `callDataItems` и осиротевшие импорты удалены чисто — TC-TRP-G01); (2) полный `npm test -- --testPathIgnorePatterns "/node_modules/"` — **известные pre-existing падения НЕ чинить** (бейзлайн ONBOARDING-UX-001 T8: routeGuards public-routes, stateMachine cooldown, inboxWorker legacy paths, slot-engine deps), сравнить счёт с прогоном на базовом коммите ветки (d5f46b6) — **0 НОВЫХ падений**, обе новые сюиты (tests/timelinePage.test.js, tests/pulseTimelinePageRoute.test.js) зелёные; (3) финальный честный прогон харнеса T9 на dev-БД → exit 0; (4) TC-TRP-H11: `git diff d5f46b6..HEAD --name-only` чист от protected-списка §16; `grep -n "Blanc"` по изменённым FE-файлам → пусто в UI-строках; (5) **N2 manual checklist TC-TRP-M01…M13** в живом preview, desktop 1280 И mobile 375, sabotage-шаг M07-S обязателен — **выполняет оркестратор/ревьюер через браузер, НЕ Codex**; результаты по-кейсно фиксируются в статус этой задачи (M01 bottom-anchor без вспышки; M02 prepend/one-in-flight; M03 pill+dot; M04 auto-stick; M05 send→bottom+first-outbound-SMS; M06 короткий/ровно-20; M07 sticky AR+sabotage; M08 contactless/anonymous/empty; M09 mobile+momentum; M10 соседние поверхности; M11 быстрое переключение; M12 SSE network-ассерт — ровно один `?limit=20` без `before` на событие; M13 date separators).
+
+**Файлы:** без кода (только прогоны/отчёт; точечные фиксы из находок — с ре-раном соответствующего гейта).
+
+**Verify:** сами шаги 1–5.
+
+**Зависимости:** T1–T9. **Размер:** S (кода нет; исполнение + чеклист). **Статус:** todo
+
+### Порядок выполнения и волны
+
+**Wave 1:** T1 ∥ T2 — независимы (логический параллелизм; исполнение последовательное: один Codex-таск за раз).
+**Wave 2:** T3 → T4 (query-твины, затем route + тесты + golden).
+**Wave 3:** T5 → T6 → T7 → T8 — строгая FE-цепочка (data layer → page-wiring → scroll-UI → sticky AR; T8 после T7 из-за общих PulsePage.tsx/.css).
+**Wave 4:** T9 → T10 (харнес, затем финальный verify; T9 без FE-зависимостей — допустимо поднять сразу после T4 решением оркестратора).
+
+Critical path: **T1 → T3 → T4 → T5 → T6 → T7 → T8 → T10** (T2 и T9 вне критического пути; T9 обязателен перед T10). Итого 10 задач. **Prod deploy — только по явному «да» владельца (deploy-consent), в план не входит.**
+
 ### Задача T10 (owner-итерация 2026-07-13): шаг company_profile → «Complete your company profile»
 
 **Цель (посыл владельца):** CTA «Add your logo» неверен — шаг должен просить ЗАПОЛНИТЬ ПРОФИЛЬ, потому что имя/адрес/лого показываются в эстимейтах и инвойсах. Нормативные строки — спека §1.2 (обновлена). Деривация done ⇔ `logo_storage_key IS NOT NULL AND city IS NOT NULL AND state IS NOT NULL AND zip IS NOT NULL` (один запрос по companies, tenant-scoped). est_minutes: 1→2.

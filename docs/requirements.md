@@ -5921,6 +5921,101 @@ a contact only when we have enough info to create a LEAD."*
 - `CloudBanner.tsx` / `.blanc-cloud` (design-system.css:826-857) — реюз как есть.
 - Функциональность существующих setup-страниц (mutations, статусы, wizard-логика TelephonyTwilio) — redesign только представления и копии.
 
+## TIMELINE-REVPAGE-001 — messenger-style Pulse conversation timeline: reverse cursor pagination (20-item merged batches), bottom-anchored open, scroll-up history, sticky Action-Required bar (2026-07-13)
+
+**Status:** Requirements (Product/Agent-01). NEW feature. Dedup checked: no prior timeline-detail pagination feature exists; **LIST-PAGINATION-001** covers ONLY the LEFT unified list (`getUnifiedTimelinePage`) — this feature is the RIGHT conversation feed (timeline detail) and does not touch the list SQL. Owner interview done; binding decisions 1–6 below. **Pipeline mode: auto-run; implementation delegated to the GPT-implementer** (Claude = architect/reviewer, ONBOARDING-UX-001 precedent).
+
+**Priority:** P1 — UX + performance. Today the thread feed loads the ENTIRE history (calls query has NO LIMIT with heavy recording/transcript LATERAL joins; SMS 200-per-conversation across all matched conversations; ALL estimates+invoices; all timeline emails) on every open AND on every SSE event, and renders oldest→newest top-down — long threads scroll forever and re-fetch everything constantly.
+
+**Краткое описание / Description:** Rework the Pulse conversation timeline to messenger behavior (WhatsApp/Telegram). The unified feed (calls + SMS + emails + financial events, merged) is paginated ONLY newest→oldest in batches of **20 merged items** with an opaque cursor (not by days, not by offset). Opening a thread lands at the BOTTOM — newest items and the reply composer visible. Scrolling UP loads older batches with scroll-position preservation. New inbound while the user is scrolled up does NOT yank the scroll — a "Jump to latest" pill appears; auto-stick to bottom only when the user is already at/near the bottom. The Action-Required bar becomes sticky at the top of the right column; the Lead/Contact card stays above the feed. Live SSE updates refresh ONLY the newest page instead of reloading the whole history.
+
+**Binding owner decisions (НЕ менять):**
+1. Pipeline: auto-run; implementation by the GPT-implementer.
+2. New inbound while scrolled up → NO auto-scroll; show a "Jump to latest" pill; auto-stick only when already at/near the bottom.
+3. Action-Required bar → STICKY at the top of the right column (always visible while the thread has an open task). Lead/Contact card stays ABOVE the feed, reachable by scrolling up.
+4. Batch size = **20 merged items**.
+5. On open: land at the bottom (latest items + composer visible).
+6. Other timeline consumers stay untouched: `GET /api/pulse/timeline-by-phone` (softphone widget, AppLayout) and the legacy ConversationPage.
+
+**Verified code facts (carry forward; do NOT re-discover):**
+- Backend `backend/src/routes/pulse.js`: `GET /api/pulse/timeline-by-id/:timelineId` (:57) and `GET /api/pulse/timeline/:contactId` (:94) share `buildTimeline()`: calls query has NO LIMIT (`ORDER BY started_at DESC`, heavy LATERAL joins for recording/transcript); SMS = per-conversation `convQueries.getMessages(conv.id, {limit:200})` across `sms_conversations` matched by phone digits; financial events = ALL estimates+invoices (gated by `financial_data.view`); emails via `emailQueries.getTimelineEmailByContact/getTimelineEmailByTimeline` (quote-strip `toTimelineBody`). Response: `{calls, messages, conversations, email_messages, financial_events, timeline_id, display_name, external_source, contact}`. All Pulse routes require `pulse.view`; provider `assigned_only` scoping via `isContactVisibleToProvider`; tenant via `req.companyFilter?.company_id`.
+- Frontend: `frontend/src/hooks/usePulseTimeline.ts` (React Query, key `['pulse-timeline', mode, key]`, staleTime 30s) → `usePulsePage.ts` decomposes the arrays; `frontend/src/components/pulse/PulseTimeline.tsx` merges the 4 arrays client-side, sorts ASCENDING, renders ALL items with `DateSeparator` per company-tz day (:133), and has a fixed "Jump to latest" band-aid button (:169-183). Scroll container = `.pulse-right-column` (`PulsePage.tsx:264`) containing: AR-bar card (:279) → LeadCard/ContactCard/CreateLeadJobWizard → PulseTimeline → SmsForm (composer, bottom). Mobile uses the SAME column in the 'content' panel.
+- SSE: `usePulsePage` `onCallUpdate`/`onMessageAdded`/`onTranscriptFinalized` → `refetchTimeline()` = full invalidate+refetch of the ONE query (i.e., full-history reload on every event today).
+- Consumer check (verified this session): `pulseApi.getTimeline/getTimelineById` have exactly ONE consumer — `usePulseTimeline` → `usePulsePage` (Pulse page). `ContactDetailPanel` only navigates to the `/pulse/timeline/:id` ROUTE; the native tech app does not call `/api/pulse/timeline*`. `timeline-by-phone` is a separate route. So the two detail endpoints may be evolved for pagination without breaking outside consumers.
+
+**User Scenarios:**
+- **SC-01 (open long thread):** Dispatcher opens a thread with 500+ items → the feed shows the newest 20 items anchored to the bottom, composer visible without scrolling; the AR bar (if an open task exists) is pinned at the top of the column. No multi-second full-history load.
+- **SC-02 (read history):** Dispatcher scrolls up → a compact spinner appears at the top of the feed, the next older batch of 20 prepends, and the items under the cursor DO NOT jump; repeated scrolling walks back through history until it is exhausted, after which the Lead/Contact card above the feed is reachable.
+- **SC-03 (new inbound while reading history):** While the dispatcher is scrolled up reading old messages, a new SMS arrives → the reading position does not move; the "Jump to latest" pill lights up with a new-activity indication; clicking it jumps to the bottom showing the new message.
+- **SC-04 (at the bottom):** Dispatcher is at/near the bottom when a new item arrives (inbound SMS, live robot-call row, email) → the feed auto-sticks and scrolls to show it.
+- **SC-05 (send):** Dispatcher sends an SMS/email from the composer → the feed jumps to the bottom and the just-sent message is visible.
+- **SC-06 (short thread):** A thread with 7 items total → all 7 render, no pagination affordances (no top spinner/sentinel), still bottom-anchored, composer visible.
+- **SC-07 (restricted users):** A user without `financial_data.view` sees pages of 20 items with financial events excluded entirely (no gaps, no short pages); a provider with `assigned_only` scope gets the same 403/404 semantics as today.
+- **SC-08 (mobile):** Same behaviors (bottom-anchored open, scroll-up paging, pill, auto-stick, sticky AR bar) in the mobile 'content' panel.
+
+**Functional Requirements:**
+
+*Backend — paged unified feed:*
+- **FR-01 (reverse cursor page contract):** The Pulse conversation feed is served in pages of the MERGED stream (calls + SMS + emails + financial events) ordered newest→oldest, batch size = **20 merged items**. Pagination is cursor-based over a **strict total order** (item timestamp + deterministic tiebreaker, e.g., type+id — architect encodes it as an opaque cursor), NOT offset-based and NOT day-based. First request (no cursor) returns the newest 20; each response carries the next cursor + a `has_more` flag. Because new items land only at the newest end, previously issued cursors stay valid under live inserts (no page shifting).
+- **FR-02 (page invariants — LIST-PAGINATION-001 discipline):** Merging, permission filtering (`financial_data.view`) and tenant/provider scoping are decided BEFORE the 20-cut: a page always contains exactly 20 items visible to THIS user (fewer only on the final oldest page); a page is never shrunk post-query; the strict total order guarantees no skipped and no duplicated items across page boundaries, including equal-timestamp runs.
+- **FR-03 (bounded per-page work):** A page request performs bounded work: call enrichment (recording/transcript LATERAL joins), SMS reads, email projection (quote-strip `toTimelineBody`), and estimate/invoice reads are limited to the page window — no full-history scan+merge per request. Exact SQL strategy (per-source windowed queries vs. UNION spine, etc.) = architect's choice.
+- **FR-04 (both identities, contactless included):** Pagination works for both entries — contact-keyed (`/timeline/:contactId`) and timeline-keyed (`/timeline-by-id/:timelineId`) — including contactless email-only timelines (YELP-TIMELINE-DEDUP-001), where the stream is the email leg only.
+- **FR-05 (thread meta once):** Thread-level meta (`timeline_id`, `display_name`, `external_source`, `contact`, `conversations` — the composer needs the latter) remains available on open WITHOUT being recomputed on every older page (page-1 payload or a separate meta call — architect's choice). Contract evolution must keep decision 6 intact: `timeline-by-phone` byte-unchanged; legacy ConversationPage untouched.
+- **FR-06 (permissions & tenancy unchanged):** `pulse.view` still gates all Pulse routes; `financial_data.view` still gates financial events (absent → excluded from the stream); provider `assigned_only` scoping via `isContactVisibleToProvider` unchanged; `company_id` strictly from `req.companyFilter?.company_id` on EVERY leg of the new SQL (the LIST-PAGINATION-001 cross-tenant SMS leak is the cautionary precedent).
+
+*Frontend — messenger behavior:*
+- **FR-07 (bottom-anchored open):** Opening a thread lands at the bottom: newest items + composer visible with zero scrolling; the initial loading state is preserved; the feed must not visibly render top-anchored and then snap down.
+- **FR-08 (scroll-up loads older):** A top sentinel/threshold triggers loading of the next older batch; a compact spinner row shows at the TOP of the feed while loading; at most ONE older-page request in flight; on arrival the batch prepends with **scroll-position preservation** (previously visible items do not move on screen); repeats until `has_more=false`. Once history is exhausted, the Lead/Contact card (and CreateLeadJobWizard where applicable) above the feed becomes reachable by continuing to scroll up (decision 3).
+- **FR-09 (date separators per day, batch-boundary correct):** `DateSeparator` per company-tz day is preserved, computed over the loaded window; prepending a batch must not duplicate or misplace separators — a day's separator always sits above the OLDEST loaded item of that day and moves up as older items of the same day load in.
+- **FR-10 (live SSE scope = newest page):** SSE handlers (`onCallUpdate`, `onMessageAdded`, `onTranscriptFinalized`) refresh ONLY the newest page (append/update of newest items); loaded older pages stay in memory untouched — the current full invalidate+refetch of the whole history is removed for the Pulse feed. The in-place transcript patch (`finalizeTranscript`) and the live robot-call row lifecycle (OUTBOUND-CALL-TIMELINE-001: placement→live→finalize) keep working. Accepted v1 limitation: a server-side change to an item living only in an older loaded page may stay stale until the thread is reopened.
+- **FR-11 (auto-stick + Jump-to-latest pill):** At/near the bottom (small threshold) when new items arrive → auto-stick (feed follows). Scrolled up → NO auto-scroll (decision 2); a floating "Jump to latest" pill is shown whenever the user is away from the bottom and lights up with a new-activity indication when items arrive meanwhile; click → jump to the bottom of the newest page and clear the indication. The pill REPLACES the existing fixed band-aid button (`PulseTimeline.tsx:169-183`) — exactly one such affordance remains.
+- **FR-12 (send → bottom):** Sending from the composer (SMS or email channel) refreshes the newest page and scrolls the feed to the bottom so the sent message is visible.
+- **FR-13 (sticky Action-Required bar):** The AR bar (Action Required/Snoozed state, reason, task text / Mail-Secretary agent reason, action buttons incl. OUTBOUND-PARTS-CALL-BTN) becomes sticky at the top of the right column — always visible while the thread has an open task, regardless of feed scroll (decision 3). All current AR content and actions are preserved byte-for-byte in behavior; when no open task exists, nothing renders (unchanged). Sticky layering respects the overlay canon (never paints over dialogs/sheets/bottom-sheets).
+- **FR-14 (empty/short histories):** Total items < 20 (`has_more=false` on page 1) → the whole feed renders with NO pagination UI (no sentinel, no spinner row); zero items → current empty-feed behavior; in both cases card + composer render as today.
+- **FR-15 (mobile parity):** All behaviors above work identically in the mobile 'content' panel (same `.pulse-right-column`), including iOS momentum scrolling; no separate mobile data path. The mobile list⇄content panel switching stays untouched.
+
+**Non-functional requirements:**
+- **N1 (performance):** Newest-page open on the heaviest prod thread must be decisively faster than today's full-history load and never worse; older-page fetches similar. `EXPLAIN` the new page query against a prod-DB copy (PULSE-PERF-001 discipline). An **index-only** migration is permitted if EXPLAIN demands it; no schema/data reshaping.
+- **N2 (real-browser verification):** Bottom-anchor open, prepend scroll-preservation, auto-stick threshold, pill, sticky AR bar verified in a REAL browser (live preview), desktop + mobile 375px — house lesson: real-component preview catches what synthetic repros/specs miss.
+- **N3 (real-DB verification):** Mocked jest is NOT enough (LIST-PAGINATION-001 lesson): run the real page query against a prod-DB copy covering — page boundary on an equal-timestamp run, user without `financial_data.view` (still 20/page), provider `assigned_only`, contactless email-only timeline, cross-tenant isolation, thread with exactly 20 / fewer than 20 / zero items. Backend jest green + `npm run build` (tsc -b) green.
+
+**Constraints & Dependencies:**
+- Composes with (per-item content unchanged): EMAIL-TIMELINE-001 / EMAIL-HTML-RENDER-001 / EMAIL-QUOTE-STRIP-001 (email items + `toTimelineBody`/`body_html`), OUTBOUND-CALL-TIMELINE-001 (robot-call live rows), YELP-TIMELINE-DEDUP-001 (contactless timelines must paginate), AR-TASK-UNIFY + MAIL-AGENT-001 + OUTBOUND-PARTS-CALL-BTN-001 (AR bar content/actions), LIST-PAGINATION-001 (invariants precedent; its left-list SQL untouched).
+- **Item DTO parity:** per-item shapes stay compatible with the existing bubbles (`PulseCallListItem`/`SmsListItem`/`EmailListItem`/financial rows) — additive-only changes; no bubble redesign.
+- Accepted consequence of decision 3: in long threads, reaching the Lead/Contact card requires paging up through history; the sticky AR bar is the always-visible action surface precisely for that reason.
+- UI copy English; no "Blanc" in UI strings (product = Albusto); design tokens only (no hardcoded hex outside `--blanc-*`).
+- Prod deploy ONLY on the owner's explicit «да» (standing deploy-consent rule).
+
+**Out of scope (non-goals):**
+- `GET /api/pulse/timeline-by-phone` and the softphone widget / AppLayout paths that use it — byte-untouched (decision 6).
+- Legacy `ConversationPage` and its components — untouched (decision 6).
+- The Pulse LEFT list and `getUnifiedTimelinePage` — untouched.
+- No timeline search, no deep links/permalinks to an item, no jump-to-date.
+- No unread divider ("New messages" line) — the pill is the only new-activity affordance.
+- No virtualization (windowed DOM) — v1 lets loaded pages accumulate in the DOM.
+- No new item types, no bubble/content redesign, no composer rework beyond the post-send scroll/refresh.
+- No changes to SSE event EMISSION (names/payloads) — consumption scope on the Pulse page only.
+- No prod deploy inside this feature (owner-gated).
+
+**Потенциально вовлечённые модули:**
+- `backend/src/routes/pulse.js` — `buildTimeline` → paged variant for the two detail endpoints (`/timeline/:contactId`, `/timeline-by-id/:timelineId`).
+- `backend/db/*` — page-window variants of the calls / SMS (`convQueries.getMessages`) / email (`emailQueries.getTimelineEmailBy*`) / estimates+invoices reads; possible index-only migration.
+- `frontend/src/hooks/usePulseTimeline.ts` (single query → cursor/infinite pages), `frontend/src/hooks/usePulsePage.ts` (SSE refetch scope, send handler), `frontend/src/services/pulseApi.ts` + `frontend/src/types/pulse.ts` (page contract).
+- `frontend/src/components/pulse/PulseTimeline.tsx` (windowed merge, separators across batches, top sentinel/spinner, pill, bottom anchoring, prepend scroll-preservation), `frontend/src/pages/PulsePage.tsx` + pulse CSS (`.pulse-right-column` scroll model, sticky AR bar).
+
+**Затронутые интеграции:** none directly — Twilio / Front / Zenbooker / Stripe / Gmail APIs untouched (financial events and emails are read from local tables as today); VAPI robot calls appear only via the existing SSE/timeline rows. This is a read-path + frontend UX feature.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `GET /api/pulse/timeline-by-phone` (route + response) and its consumers: softphone widget (`useSoftPhoneWidget.ts`, `OpenTimelineButton.tsx`), `AppLayout.tsx` — byte-unchanged.
+- Legacy `ConversationPage.tsx` + `components/conversations/*` — untouched.
+- `getUnifiedTimelinePage` (left list SQL, LIST-PAGINATION-001/PULSE-PERF-001) — shape/semantics/plan unchanged.
+- Item formatters' existing fields — `formatCall` (incl. `gemini_summary`, `playback_url`, `answered_by`), email `toTimelineBody`/`body_html` projection, financial event fields — additive-only.
+- Permission gates: `pulse.view` route gate, `financial_data.view` financial gating, `isContactVisibleToProvider` provider scoping; `company_id` only from `req.companyFilter`.
+- Composer paths: `SmsForm.tsx` channel routing ("To" phones+emails), `handleSendMessage` SMS/email send flows; `CreateLeadJobWizard`, `LeadCard`/`ContactCard` rendering.
+- SSE plumbing: `useRealtimeEvents.ts`, `authedFetch.ts`, sseManager event names/payloads (`call.updated`, `message.added`, `transcript.finalized`) — only their consumption scope on the Pulse page changes.
+- AR bar content/actions (AR-TASK-UNIFY, MAIL-AGENT-001 reason block, task action buttons) — presentation becomes sticky; behavior identical.
+- Mobile panel switching (list⇄content) and the softphone-disabled-on-mobile behavior — untouched.
+
 ## SERVICE-TERR-002 — территория обслуживания v2: radius-режим с картой, единый containment-seam, онбординг-шаг service_territory (2026-07-13)
 
 **Краткое описание:** Вторая итерация Service Territories. К существующему list-режиму (CSV/зипы, таблица `service_territories`) добавляется radius-режим: пары «зип + радиус в милях» вокруг базы компании, с read-only картой покрытия (круги/маркеры Google Maps). Появляется единый серверный containment-seam `isZipInTerritory(companyId, query)`, через который начинают ходить ВСЕ потребители зип-проверки (zip-check UI, Sara/VAPI/Yelp через skill checkServiceArea). Шаг онбординга `company_profile` ЗАМЕНЯЕТСЯ шагом `service_territory`. Страница `/settings/service-territories` чинится на мобильной вёрстке (375px).
