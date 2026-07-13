@@ -189,6 +189,7 @@ app.use('/api/telephony/provider', authenticate, requireCompanyAccess, telephony
 // ALB-107: tenant phone-number management (Twilio subaccount per company)
 const telephonyNumbersRouter = require('../backend/src/routes/telephonyNumbers');
 app.use('/api/telephony/numbers', authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess, telephonyNumbersRouter);
+app.use('/api/telephony/port-in', authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess, require('../backend/src/routes/telephonyPortIn'));
 // ADR-001: automation rules (rules-engine editor) + platform billing
 const automationRulesRouter = require('../backend/src/routes/automationRules');
 app.use('/api/automation', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, automationRulesRouter);
