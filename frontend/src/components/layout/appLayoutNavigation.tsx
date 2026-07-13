@@ -4,6 +4,8 @@ import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
 import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, FileCog, Zap, CreditCard, Building2, ListChecks, Tags } from 'lucide-react';
 import { useAuthz } from '../../hooks/useAuthz';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { isFeedbackWidgetEnabled, openFeedbackWidget } from '../feedback/FeedbackWidget';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; leadsNewCount: number; openTasksCount: number; hasRole: (r: string) => boolean; logout: () => void; }
 
@@ -120,11 +122,28 @@ const SETTINGS_ITEMS = [
 export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) => boolean; logout: () => void }> = ({ activeTab, logout }) => {
     const navigate = useNavigate();
     const { hasPermission, hasPlatformRole } = useAuthz();
+    const isMobile = useIsMobile();
+    const isFeedbackEnabled = isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET);
     const items = SETTINGS_ITEMS.filter(i => hasPermission(i.permission));
     // Platform admin entry is platform-role based, never a tenant capability
     const isPlatformAdmin = hasPlatformRole('super_admin');
 
+    // Low-permission users (provider/technician) get no settings entries — but on
+    // mobile the feedback FAB is hidden, so keep a dropdown that still offers
+    // "Send feedback" alongside Log Out. Otherwise fall back to the bare button.
     if (items.length === 0 && !isPlatformAdmin) {
+        if (isMobile && isFeedbackEnabled) {
+            return (
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild><button className="user-menu" style={{ cursor: 'pointer' }}><Settings className="size-4" style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} /><span className="hidden md:inline">Settings</span></button></DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={openFeedbackWidget}><MessageSquareText className="size-4" />Send feedback</DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="flex items-center gap-2 cursor-pointer text-red-600" onClick={logout}><LogOut className="size-4" />Log Out</DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            );
+        }
         return (
             <button className="user-menu" style={{ cursor: 'pointer' }} onClick={logout}>
                 <LogOut className="size-4" style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} />
@@ -144,6 +163,7 @@ export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) =>
                     );
                 })}
                 {isPlatformAdmin && <><DropdownMenuSeparator /><DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/admin')}><Shield className="size-4" />Super Admin</DropdownMenuItem></>}
+                {isMobile && isFeedbackEnabled && <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={openFeedbackWidget}><MessageSquareText className="size-4" />Send feedback</DropdownMenuItem>}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer text-red-600" onClick={logout}><LogOut className="size-4" />Log Out</DropdownMenuItem>
             </DropdownMenuContent>

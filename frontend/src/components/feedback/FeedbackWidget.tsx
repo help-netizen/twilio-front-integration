@@ -39,6 +39,11 @@ export type FeedbackSubmitResult =
 export const FEEDBACK_ESCALATION_MESSAGE = "Okay — leave your details below and we'll get back to you";
 export const FEEDBACK_SUCCESS_MESSAGE = 'Thanks — we got it';
 export const FEEDBACK_NETWORK_ERROR = "Couldn't send — try again";
+export const FEEDBACK_OPEN_EVENT = 'albusto:open-feedback';
+
+export function openFeedbackWidget() {
+    window.dispatchEvent(new CustomEvent(FEEDBACK_OPEN_EVENT));
+}
 
 const FEEDBACK_GREETING = "Hi! Tell me what's happening, and I'll help get your feedback to the right person.";
 const FEEDBACK_BOT_REPLIES = [
@@ -169,6 +174,12 @@ export function FeedbackWidget() {
     const [sending, setSending] = useState(false);
     const [submitted, setSubmitted] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleOpen = () => setOpen(true);
+        window.addEventListener(FEEDBACK_OPEN_EVENT, handleOpen);
+        return () => window.removeEventListener(FEEDBACK_OPEN_EVENT, handleOpen);
+    }, []);
 
     useEffect(() => {
         if (!emailTouched) setEmail(getFeedbackEmail(user));

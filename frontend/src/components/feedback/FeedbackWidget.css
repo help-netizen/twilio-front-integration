@@ -321,6 +321,7 @@
 
 @media (max-width: 767px) {
     .feedback-fab {
+        display: none;
         right: 12px;
         bottom: calc(76px + env(safe-area-inset-bottom));
     }

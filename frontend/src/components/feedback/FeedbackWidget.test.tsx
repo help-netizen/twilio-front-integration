@@ -1,7 +1,10 @@
+import { act } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
     FEEDBACK_ESCALATION_MESSAGE,
     FEEDBACK_NETWORK_ERROR,
+    FeedbackWidget,
     advanceFeedbackBot,
     createInitialFeedbackBotState,
     escalateFeedbackBot,
@@ -9,6 +12,48 @@ import {
     isFeedbackWidgetEnabled,
     submitFeedback,
 } from './FeedbackWidget';
+
+const feedbackRenderState = vi.hoisted(() => ({
+    open: false,
+    stateCall: 0,
+    effectCall: 0,
+    cleanups: [] as Array<() => void>,
+}));
+
+vi.mock('react', async importOriginal => {
+    const actual = await importOriginal<typeof import('react')>();
+    return {
+        ...actual,
+        useState: <S,>(initialState: S | (() => S)) => {
+            if (feedbackRenderState.stateCall++ === 0) {
+                const setOpen = (value: boolean | ((current: boolean) => boolean)) => {
+                    feedbackRenderState.open = typeof value === 'function'
+                        ? value(feedbackRenderState.open)
+                        : value;
+                };
+                return [feedbackRenderState.open, setOpen];
+            }
+            return actual.useState(initialState);
+        },
+        useEffect: (effect: () => void | (() => void)) => {
+            if (feedbackRenderState.effectCall++ !== 0) return;
+            const cleanup = effect();
+            if (cleanup) feedbackRenderState.cleanups.push(cleanup);
+        },
+    };
+});
+
+vi.mock('../../auth/AuthProvider', () => ({
+    useAuth: () => ({ user: { email: 'me@x.com' } }),
+    getAuthHeaders: () => ({}),
+    getKeycloak: () => ({ updateToken: vi.fn() }),
+}));
+
+function renderFeedbackWidget() {
+    feedbackRenderState.stateCall = 0;
+    feedbackRenderState.effectCall = 0;
+    return renderToStaticMarkup(<FeedbackWidget />);
+}
 
 describe('feedback bot state machine', () => {
     it('escalates immediately when the user asks to talk to a human', () => {
@@ -96,5 +141,28 @@ describe('feedback form behavior', () => {
         expect(isFeedbackWidgetEnabled('false')).toBe(false);
         expect(isFeedbackWidgetEnabled(undefined)).toBe(true);
         expect(isFeedbackWidgetEnabled('true')).toBe(true);
+    });
+});
+
+describe('feedback widget open event', () => {
+    it('opens the panel when the global feedback event is dispatched', () => {
+        feedbackRenderState.open = false;
+        vi.stubGlobal('window', new EventTarget());
+
+        try {
+            let markup = renderFeedbackWidget();
+            expect(markup).not.toContain('role="dialog"');
+
+            act(() => {
+                window.dispatchEvent(new CustomEvent('albusto:open-feedback'));
+            });
+
+            markup = renderFeedbackWidget();
+            expect(markup).toContain('role="dialog"');
+            expect(markup).toContain('How can we help?');
+        } finally {
+            feedbackRenderState.cleanups.splice(0).forEach(cleanup => cleanup());
+            vi.unstubAllGlobals();
+        }
     });
 });
