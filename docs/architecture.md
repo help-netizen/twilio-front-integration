@@ -6523,3 +6523,66 @@ Frontend:
 - **zip_geocache — глобальная таблица без company_id:** содержит только публичную географию; фиксируем комментом в миграции, чтобы аудит isolation-канона не спотыкался.
 - **Карта на мобиле:** read-only (gestureHandling 'none') — не перехватывает скролл страницы; при отсутствии VITE_GOOGLE_MAPS_API_KEY страница живёт без карты.
 - **Онбординг existing-компаний:** у кого completed_at уже стоит — write-once уважается (шаг не ресурфейсит карточку); у новых компаний service_territory честно false до конфигурации.
+
+## Архитектурное решение для фичи TELEPHONY-WIZARD-UX-001 — неявный connect + $5 бонус, Plans-опционален, комбо-поле номера, port-in, Stripe-чистка (2026-07-13)
+
+**Существующий функционал (реюз, НЕ дублировать):**
+- `telephonyTenantService.connectTelephony` (`backend/src/services/telephonyTenantService.js:119-143`) — УЖЕ идемпотентен (`existing.connected → return`); расширяется хуком welcome-бонуса на пути свежего создания субаккаунта. НЕ дублировать «ensureConnected»-логику — ленивый connect = вызов этой же функции из маршрутов.
+- `telephonyTenantService.getClientForCompany` (`:149`) — кидает 409 `TELEPHONY_NOT_CONNECTED`; поведение СОХРАНЯЕТСЯ для всех прочих потребителей (voice, softphone, usage). Ленивый connect добавляется ТОЛЬКО в route-хендлеры `/search` и `/buy` (`backend/src/routes/telephonyNumbers.js:41-51, 65-79`) и в port-in create.
+- `walletService.credit/applyDelta` (`backend/src/services/walletService.js:38-68`) — ref-идемпотентность через UNIQUE `idx_wallet_ledger_ref (company_id, ref) WHERE ref IS NOT NULL` (mig 109) + FOR UPDATE-сериализация. Бонус = `credit(companyId, 5, { type:'adjustment', description:'Welcome credit', ref:'welcome_credit:v1' })`.
+- `billingService.subscribe` (`backend/src/services/billingService.js:139-181`) — план с `monthly_base_usd<=0` активируется напрямую, идемпотентно; используется для авто-активации payg вместе с бонусом. `getSubscription` — проверка trial.
+- `GET /api/billing/wallet` (`backend/src/routes/billing.js:66-89`) + `billingApi.wallet()` (frontend) — готовый источник баланса для показа бонуса в визарде. НЕ добавлять wallet в `GET /api/billing`.
+- Twilio-SDK v5.12.0: Porting API ПОДТВЕРЖДЁН в `node_modules/twilio/lib/rest/numbers/v1/`: `client.numbers.v1.portingPortabilities(phone).fetch({ targetAccountSid })` (portability pre-check) и `client.numbers.v1.portingPortIns.create({ numbersV1PortingPortInCreate })` / `.portingPortIns(sid).fetch()/.remove()` (create/status/cancel). Create-модель: `accountSid` (целевой субаккаунт), `documents[]` (≥1 Utility Bill doc SID), `losingCarrierInformation{customerName, authorizedRepresentative, authorizedRepresentativeEmail, address{...}|addressSid, accountNumber?, customerType?}`, `phoneNumbers[{phoneNumber, pin?}]`, `targetPortInDate?` (≥7 дней, US). Ответ содержит `portInRequestSid`, `port_in_request_status`, `signature_request_url`, `phone_numbers[].portInPhoneNumberStatus`.
+- **Скоуп Porting-вызовов:** Porting API (numbers.twilio.com) вызывается MASTER-клиентом (`masterClient()`), целевой аккаунт передаётся полем `accountSid`/`targetAccountSid` = `company_telephony.twilio_subaccount_sid` (для default-компании — master SID). Обоснование: create-модель имеет явное поле целевого (суб)аккаунта, и master-креды гарантированно имеют доступ к Porting-продукту; субаккаунт-клиент НЕ используется для porting. Загрузка документа (utility bill) — прямой multipart POST на `https://numbers-upload.twilio.com/v1/documents` с Basic-auth master-кредами (в SDK обёртки нет; паттерн multer memoryStorage как в `routes/companyProfile.js`).
+- `territoryGeoService.geocodeZip` (SERVICE-TERR-002) + `zip_geocache`/`territory_radii` (mig 168), `companies.city/state/zip` (mig 097) — источники координат базы компании для сортировки area-кодов.
+- `FloatingField` (`frontend/src/components/ui/floating-field.tsx`) — базовый инпут комбо-поля (есть onFocus/onBlur/onKeyDown); дропдаун подсказок — лёгкий локальный поповер-список (НЕ Radix Select: нужен свободный ввод).
+- `stripePaymentsService.buildChecklist` (`backend/src/services/stripePaymentsService.js:65-72`) — labels чеклиста рендерятся фронтом с бэка; `computeReadiness`/`canCollect` НЕ трогать.
+- НЕ дублировать: `MarketplaceConnectDialog`, `CloudBanner`, NUMBER_LIMIT-upsell, Stripe-checkout поллинг (`TelephonyTwilioSettingsPage.tsx:197-205`).
+
+**Новые компоненты:**
+
+Backend:
+- `backend/db/migrations/169_port_in_requests.sql` (+ `rollback_169_port_in_requests.sql`) — таблица `port_in_requests`: `id uuid PK DEFAULT gen_random_uuid()`, `company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE`, `phone_number text NOT NULL`, `status text NOT NULL DEFAULT 'submitted'`, `twilio_port_in_sid text`, `twilio_status text`, `losing_carrier_info jsonb NOT NULL DEFAULT '{}'`, `documents jsonb NOT NULL DEFAULT '[]'`, `signature_request_url text`, `target_port_in_date date`, `notes text`, `created_by uuid REFERENCES crm_users(id)`, `created_at/updated_at timestamptz`; `CREATE INDEX idx_port_in_requests_company ON port_in_requests(company_id)`.
+- `backend/src/services/portInService.js` — checkPortability / createPortIn (portability → upload doc → portingPortIns.create → INSERT) / listPortIns / getPortIn (live-refresh статуса с Twilio + UPDATE) / cancelPortIn; статус-нормализация Twilio→локальный enum.
+- `backend/src/routes/telephonyPortIn.js` — REST под `/api/telephony/port-in` (см. endpoints ниже), паттерн companyId/fail как в `telephonyNumbers.js`.
+- В `telephonyTenantService.js`: приватный `grantWelcomeCredit(companyId)` (credit $5 + payg-активация при trial), вызывается из `connectTelephony` ПОСЛЕ успешного INSERT свежего субаккаунта, ошибки — лог, не throw; после свежего connect — fire-and-forget `ensureSoftphoneSetup(companyId).catch(log)` (заменяет фронтовый best-effort вызов шага 1).
+- В `routes/telephonyNumbers.js`: ленивый connect в `/search` и `/buy` (перед вызовом сервиса: `await svc.connectTelephony(companyId, { actorId, companyName: req.authz?.company?.name })`); новый `GET /api/telephony/numbers/locale` → `{ city, state, zip, lat, lon }` (companies → zip_geocache по companies.zip → geocodeZip(miss, best-effort) → фолбэк territory_radii ORDER BY position LIMIT 1; все поля nullable).
+
+Frontend:
+- `frontend/src/data/areaCodes.ts` — статический справочник NANPA (~350 US-кодов): `Record<string, { city: string; state: string; lat: number; lon: number }>` + хелперы `suggestAreaCodes(query, locale)` (сортировка: расстояние haversine до locale.lat/lon; без координат — same-state первыми; подсказываются только локальные, см. спеку) и `detectSearchKind(input)` (3 цифры → area_code, иначе locality) — чистые функции под vitest.
+- `frontend/src/components/telephony/AreaCodeCombo.tsx` — FloatingField + локальный дропдаун подсказок «617 — Boston, MA»; value = `{ kind: 'area_code'|'locality', value: string }`.
+- `frontend/src/components/telephony/PortInPanel.tsx` — тумблер-контент «Transfer your number»: форма (номер → Check → данные losing carrier + utility bill file) + список заявок со статусами; реюзается в визарде и на PhoneNumbersPage.
+
+**Изменяемые компоненты:**
+- `frontend/src/pages/TelephonyTwilioSettingsPage.tsx` — шаги: 1 Plans (опционален: intro-копия $5, Skip-кнопка, карта current НЕ disabled — клик по current = подтверждение без API-вызова; wallet-чип из `billingApi.wallet()`), 2 Number (тумблер New number | Transfer; форма без sectionCard; AreaCodeCombo вместо Area code+City; результаты в потоке), 3 Completion (учитывает активный port-in). derived: `numbers>=1 || активный port-in → completion`; иначе `subscription non-trial → Number`; иначе Plans. Forward-переход Plans→Number разрешён (шаг опционален). Перед `choosePlan` — await `POST /api/telephony/numbers/connect` (неявный connect + бонус).
+- `frontend/src/pages/telephony/PhoneNumbersPage.tsx` — секция «Number transfers» (PortInPanel в режиме статус-листа).
+- `frontend/src/pages/StripePaymentsSettingsPage.tsx` — удалить `WhatItCostsCard` (:60-77) и grid-обёртку (:141, :202-203): hero — единственный блок not-connected экрана.
+- `backend/src/services/stripePaymentsService.js` — `buildChecklist:65-72`: `test_payment` → key `first_payment`, label «Start getting paid — collect your first payment right from a job» (key переименовывается ОСОЗНАННО: единственное использование — этот файл, фронт рендерит label с бэка); остальные labels очеловечить (см. спеку).
+- `src/server.js` — ОДНА строка: `app.use('/api/telephony/port-in', authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess, telephonyPortInRouter);` (канон mount'а `:190-191`).
+
+**API endpoints (новые):**
+- `GET /api/telephony/numbers/locale` — координаты/локация базы компании для сортировки подсказок. Middleware: existing mount (`authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess`); company_id из `req.companyFilter?.company_id`.
+- `POST /api/telephony/port-in/check` — `{ phone_number }` → `{ portable, number_type, reason }` (portingPortabilities; ленивый connect внутри).
+- `POST /api/telephony/port-in` — multipart (`utility_bill` file + JSON-поля losing carrier) → создаёт заявку в Twilio + строку в БД. 422 NOT_PORTABLE / TARGET_DATE_TOO_SOON / VALIDATION.
+- `GET /api/telephony/port-in` — список заявок компании (`WHERE company_id = $1`).
+- `GET /api/telephony/port-in/:id` — статус (live-refresh с Twilio); чужой/несуществующий id → 404.
+- `DELETE /api/telephony/port-in/:id` — отмена заявки (Twilio remove + status='canceled'); чужой id → 404.
+Все — mount-цепочка `authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess`; каждый SQL фильтрует по `company_id`.
+
+**Файлы для изменений:**
+- `backend/db/migrations/169_port_in_requests.sql`, `backend/db/migrations/rollback_169_port_in_requests.sql` — создать
+- `backend/src/services/portInService.js` — создать
+- `backend/src/routes/telephonyPortIn.js` — создать
+- `backend/src/services/telephonyTenantService.js` — grantWelcomeCredit + softphone fire-and-forget
+- `backend/src/routes/telephonyNumbers.js` — ленивый connect (/search, /buy) + GET /locale
+- `backend/src/services/stripePaymentsService.js` — buildChecklist labels
+- `src/server.js` — одна mount-строка port-in
+- `frontend/src/data/areaCodes.ts` — создать
+- `frontend/src/components/telephony/AreaCodeCombo.tsx` — создать
+- `frontend/src/components/telephony/PortInPanel.tsx` — создать
+- `frontend/src/pages/TelephonyTwilioSettingsPage.tsx` — перестройка шагов
+- `frontend/src/pages/telephony/PhoneNumbersPage.tsx` — секция port-in
+- `frontend/src/pages/StripePaymentsSettingsPage.tsx` — OB-7
+- Тесты: `tests/telephonyWelcomeCredit.test.js`, `tests/telephonyPortIn.test.js` (создать), `frontend/src/data/areaCodes.test.ts` (vitest, создать)
+
+**НЕ трогать (защищённые):** ядро `src/server.js` (кроме одной mount-строки), `authedFetch.ts`, `useRealtimeEvents.ts`, миграции ≤168, `walletService.applyDelta`, `billingService.subscribe` (вкл. Stripe-путь), `getClientForCompany` (409-контракт для не-визардных потребителей), webhook-цепочка Twilio (AccountSid→company), `computeReadiness/canCollect`, `MarketplaceConnectDialog`, Stripe-checkout поллинг и return_path-валидация.

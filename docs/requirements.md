@@ -5964,3 +5964,52 @@ a contact only when we have enough info to create a LEAD."*
 - Write-once/visible-машина onboardingChecklistService (`getChecklist`/`markCompleted`) — меняется ТОЛЬКО состав CHECKLIST_ITEMS (замена одной записи).
 - `useZipCheck.ts` + Zenbooker-фон — не трогаем; frozen-шейпы vapi/zip-check ответов.
 - `src/server.js` (mount уже существует), `authedFetch.ts`, `useRealtimeEvents.ts`, slot-engine контейнер.
+
+## TELEPHONY-WIZARD-UX-001 — переработка визарда телефонии: неявный connect + $5 welcome-бонус, опциональный шаг тарифа, комбо-поле поиска номера, port-in существующего номера, чистка Stripe-экрана (2026-07-13)
+
+**Краткое описание:** Twilio-визард сокращается с трёх шагов до «Plans (опционален) → Number (+Transfer your number) → Done»: шаг «Set up your line» удаляется, создание Twilio-субаккаунта происходит неявно перед первым действием, которое его требует. При первом подключении телефонии компания автоматически получает $5 welcome-бонус в кошелёк и активацию payg-тарифа. Number-шаг избавляется от block-in-block, объединяет Area code + City в одно комбо-поле с подсказками локальных кодов и получает полный self-service флоу переноса (port-in) существующего номера через Twilio Porting API. Отдельно (OB-7): страница Stripe Payments теряет дублирующий блок «What it costs», чеклист «Setup steps» очеловечивается. Закрывает OB-1, OB-2, OB-3, OB-4, OB-5, OB-7.
+
+**Решения владельца и интервью (БИНДИНГ, не менять):**
+1. (OB-1.1) Шаг «Set up your line» УДАЛЯЕТСЯ. `connectTelephony` (уже идемпотентен) вызывается неявно перед первым действием, требующим субаккаунт: выбор тарифа на Plans-шаге или первый поиск/покупка номера. Никакой отдельной кнопки «Connect telephony» в визарде.
+2. (OB-1.2) На Plans-шаге карта текущего тарифа НЕ дизейблится: бейдж «Current» остаётся, повторный выбор допустим и является no-op/подтверждением (без повторного списания).
+3. (OB-1.3, интервью) $5 welcome-бонус начисляется АВТОМАТИЧЕСКИ при первом `connectTelephony` компании, идемпотентно (ref-дедупликация `welcome_credit:v1` через UNIQUE `idx_wallet_ledger_ref`). Вместе с бонусом, если подписка компании trial/отсутствует — активируется payg (прямая активация, `monthly_base_usd<=0`). Intro-копия Plans-шага: «You have $5 to try Albusto pay-as-you-go — or pick a package». Кнопка «Skip — get a number first» ведёт сразу на Number-шаг. Баланс бонуса показывается в визарде.
+4. (OB-2) Поисковая форма Number-шага лежит в потоке шага БЕЗ серого контейнера-обёртки (канон: контейнеры невидимы, LAYOUT-CANON rule 7; урок «no block-in-block»).
+5. (OB-3/OB-4) Поля Area code + City объединяются в ОДНО комбо-поле: пользователь вводит код ИЛИ город; дропдаун подсказывает «617 — Boston, MA» (код+город+штат) из СТАТИЧЕСКОГО справочника NANPA-кодов во фронте; локальные коды первыми (локация = база компании: companies.city/state/zip, фолбэк — центр territory_radii/zip_geocache); остальные коды НЕ подсказываются — ручной ввод остаётся. Тип введённого определяет Twilio-параметр (3 цифры → areaCode, текст → inLocality). Contains digits и Toll-free остаются.
+6. (OB-5) Результаты поиска номеров лежат в общем потоке страницы и скроллятся экраном (канон MobileListPage: скроллит `.app-main`), без вложенных фикс-высот/внутренних скроллов; на мобиле (375px) карточки не обрезаются.
+7. (OB-1.4, интервью) Port-in — ПОЛНАЯ автоматизация через Twilio Porting API (twilio-node v5: `client.numbers.v1.portingPortabilities` / `portingPortIns` — наличие в SDK 5.12.0 проверено), НЕ заявка-таска. На Number-шаге тумблер «Get a new number | Transfer your number»; проверка portability перед созданием заявки; статус-трекинг заявки в визарде и на странице телефонии. Нормативная копия с рекомендацией владельца: «We recommend grabbing a new number now — outbound calls keep flowing from it while the transfer completes, so you don't lose customers».
+8. (OB-7) Stripe Payments not-connected: блок «What it costs» УДАЛЯЕТСЯ (hero остаётся единственным блоком; чипы цен внутри hero сохраняются). Чеклист «Setup steps»: пункт «Run a test payment» заменяется нормативным «Start getting paid — collect your first payment right from a job»; остальные label'ы очеловечиваются. Label рендерится фронтом с бэка — правка в `buildChecklist`.
+
+**Пользовательские сценарии:**
+1. Владелец новой компании открывает визард Telephony — Twilio: видит сразу Plans-шаг с копией про $5, карточки payg и пакетов. Жмёт «Skip — get a number first» → Number-шаг → вводит «617» в комбо-поле → первый поиск неявно создаёт Twilio-субаккаунт, начисляет $5 и активирует payg → список номеров → Buy → Done-экран.
+2. Владелец на Plans-шаге выбирает payg: неявный connect (бонус+payg) происходит до/вместе с выбором; тост «Plan activated», переход на Number-шаг. Повторный заход в визард показывает payg с бейджем «Current», карта кликабельна; клик по текущему тарифу — подтверждение без списания и без ошибок.
+3. Владелец выбирает платный пакет: неявный connect выполняется, затем существующий Stripe-checkout флоу (redirect, возврат на ?step с billing=success, поллинг) — без изменений.
+4. Пользователь вводит в комбо-поле «Bos»: дропдаун подсказывает локальные коды базы компании («617 — Boston, MA», «857 — Boston, MA»); выбор подсказки ищет по area code. Ввод текста, не совпавшего с подсказками («Worcester»), ищет по inLocality.
+5. Владелец с существующим номером у другого оператора переключает тумблер на «Transfer your number»: вводит номер → система проверяет переносимость (portability) → форма данных losing carrier (имя на счёте, account number, адрес, уполномоченный представитель + email, utility bill) → Submit → заявка создана в Twilio, статус виден в визарде и на странице телефонии; письмо на подпись LOA уходит представителю. Рядом — рекомендация взять новый номер сейчас.
+6. Номер непереносим (portability check вернул portable=false) → человечное объяснение причины, заявка не создаётся, предложение взять новый номер.
+7. Пользователь на iPhone (375px) проходит Number-шаг: форма без серого контейнера, результаты поиска скроллятся экраном до конца, ни одна карточка не обрезана.
+8. Владелец открывает Stripe Payments (not connected): один hero-блок «Get paid on the spot» с чипами цен, без «What it costs»; в «Setup steps» последний пункт — «Start getting paid — collect your first payment right from a job».
+
+**Ограничения и нефункциональные требования:**
+- Идемпотентность бонуса обязательна: двойной/параллельный connect → ровно ОДНА запись ledger (ref `welcome_credit:v1`, UNIQUE `idx_wallet_ledger_ref`). Бонус начисляется ТОЛЬКО на пути свежего создания субаккаунта (не default-компании, не ретроактивно уже подключённым).
+- Сбой начисления бонуса/активации payg НЕ валит connect (лог + продолжение); сбой connect валит действие целиком (поиск/покупка невозможны без субаккаунта).
+- `connectTelephony`, `searchNumbers`, `buyNumber`, `walletService.applyDelta`, `billingService.subscribe` — реюз как есть; новая логика — обвязка вокруг них.
+- Stripe-checkout флоу платных тарифов (redirect/поллинг/return_path-валидация) — байт-в-байт прежний.
+- Порт-ин: НИКАКОЙ покупки/операций без company-scope; заявки строго изолированы по company_id (чужой id → 404). Porting API вызывается master-клиентом с accountSid целевого субаккаунта компании (Porting API работает на уровне top-level аккаунта; решение документируется в спеке).
+- Если на реальном Twilio-аккаунте Porting API окажется недоступен (feature-gate у Twilio), UI показывает честный fallback-стейт «transfer через поддержку», заявка сохраняется локально со статусом action_required — вопрос эскалируется оркестратору (кэп сложности из интервью).
+- Справочник area-кодов — статический TS-модуль (~350 US-кодов, код→{city,state,lat,lon}), без внешних запросов; сортировка по близости к базе компании через лёгкий backend-endpoint locale (companies → zip_geocache → territory_radii), без вызова внешних geocoding API на горячем пути.
+- Дизайн-канон: без block-in-block, FloatingField, токены `--blanc-*`, мобайл 375px; слово «Blanc» в UI запрещено.
+- Тесты: 401/403 + tenant isolation для всех новых endpoints; jest на идемпотентность $5 (двойной connect → один кредит); vitest на сортировку/тип-детекцию комбо-поля.
+
+**Потенциально вовлечённые модули/части системы:**
+- Backend: `backend/src/services/telephonyTenantService.js` (welcome-бонус в connectTelephony, ensure-обвязка), `backend/src/routes/telephonyNumbers.js` (ленивый connect в /search и /buy, endpoint locale), `backend/src/services/portInService.js` (NEW), `backend/src/routes/telephonyPortIn.js` (NEW), `backend/db/migrations/169_port_in_requests.sql` (+rollback, NEW), `backend/src/services/stripePaymentsService.js` (buildChecklist labels), `src/server.js` (ОДНА строка mount /api/telephony/port-in).
+- Frontend: `frontend/src/pages/TelephonyTwilioSettingsPage.tsx` (перестройка шагов), `frontend/src/data/areaCodes.ts` (NEW), `frontend/src/components/telephony/AreaCodeCombo.tsx` (NEW), `frontend/src/components/telephony/PortInPanel.tsx` (NEW), `frontend/src/pages/telephony/PhoneNumbersPage.tsx` (секция port-in статусов), `frontend/src/pages/StripePaymentsSettingsPage.tsx` (OB-7).
+- Затронутые интеграции: Twilio (Porting API — новая поверхность; subaccounts/numbers — реюз), Stripe (только UI/копия; API-флоу не меняется). Front/Zenbooker — нет.
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `telephonyTenantService.getClientForCompany/searchNumbers/buyNumber/ensureSoftphoneSetup` — сигнатуры и контракты (409 TELEPHONY_NOT_CONNECTED для НЕ-визардных потребителей остаётся: ленивый connect добавляется точечно в маршруты визарда, а не глобально в getClientForCompany).
+- `walletService.applyDelta` (транзакция/FOR UPDATE/ref-дедуп) и `billingService.subscribe` (вкл. Stripe-путь платных тарифов, анти-open-redirect валидация return_path в routes/billing.js).
+- Derived-step принцип визарда (сервер — источник правды, ?step= только hint), NUMBER_LIMIT-upsell (422 + verbatim server text), поллинг billing=success.
+- Webhook-контракты Twilio (AccountSid→company, per-subaccount подпись), callFlowRuntime, autonomous-mode.
+- `computeReadiness`/`canCollect`/весь Stripe connect-механизм (OB-7 меняет ТОЛЬКО labels чеклиста и вёрстку not-connected экрана).
+- `src/server.js` — только добавление одной mount-строки по канону (authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess); ядро не трогать. `authedFetch.ts`, `useRealtimeEvents.ts` — не трогать.
+- Миграции ≤168; `CloudBanner`/`.blanc-cloud` — реюз как есть.
