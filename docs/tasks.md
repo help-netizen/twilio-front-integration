@@ -9379,7 +9379,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** `cd frontend && npm run build`. (FE-runner'а нет: зеркало компаратора доказывается N3+N2 — принятый gap #3.)
 
-**Зависимости:** T4 (живой контракт для последующего preview). **Размер:** M. **Статус:** todo
+**Зависимости:** T4 (живой контракт для последующего preview). **Размер:** M. **Статус:** done (2026-07-13, GPT, ревью ACCEPT: useInfiniteQuery v5 + single-flight refreshNewestPage union-merge; build красный ТОЛЬКО в usePulsePage — закрывает T6)
 
 ### Задача T6: frontend — usePulsePage: SSE → refreshNewestPage, send-path, scrollToBottomSignal
 

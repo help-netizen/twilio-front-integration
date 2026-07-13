@@ -78,6 +78,34 @@ export interface PulseTimelineResponse {
     email_messages?: EmailTimelineItem[];
 }
 
+export type TimelinePageSrc = 'call' | 'sms' | 'email' | 'financial';
+
+export interface TimelinePageItem {
+    ts: string;
+    src: TimelinePageSrc;
+    id: string;
+    data: any;
+}
+
+export interface TimelinePage {
+    items: TimelinePageItem[];
+    next_cursor: string | null;
+    has_more: boolean;
+}
+
+export interface PulseTimelineMeta {
+    timeline_id: number | null;
+    display_name: string | null;
+    external_source: string | null;
+    contact: any | null;
+    conversations: SmsConversation[];
+}
+
+export interface PulseTimelinePageResponse {
+    page: TimelinePage;
+    meta?: PulseTimelineMeta;
+}
+
 // Action Required types
 export interface PulseTask {
     id: number;
