@@ -9396,3 +9396,5 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 **Wave 3 (онбординг):** T3 (после T1.1; независим от T1.2/T1.3/T2.* — параллелизуем с Wave 2).
 **Wave 4:** T4 (verify, после всех).
 Critical path: T1.1 → T1.2 → T1.3 → T2.2 → T4. **Prod deploy — owner-gated (deploy-consent).**
+
+> Скоуп-правка оркестратора (2026-07-13): перевод потребителей (zip-check.js, checkServiceArea.js, TC-022/023) перенесён из T1.3 в T1.2 (связность seam+потребители); T1.3 = только endpoints /config /mode /radii.
