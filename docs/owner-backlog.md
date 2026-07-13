@@ -30,7 +30,9 @@
 
 Скриншот владельца: шаг «Choose your number», результаты поиска. Список номеров (карточки Buy) живёт внутри контейнера с ограниченной высотой/внутренним скроллом: третья карточка обрезана посередине, дальше до нижней навигации — пустая серая зона; страница не отрисована до конца. На мобиле список должен лежать в общем потоке страницы и скроллиться экраном (канон MobileListPage: display:block, скроллит .app-main), без вложенных фикс-высот. Вместе с OB-1..4.
 
-## OB-6 (2026-07-13) — WARMUP-SUMMARY: модалка «Good morning» всплывает каждые 2-3 минуты + СБРАСЫВАЕТ ЗВОНКИ — **открыт (P1 — ломает звонки)**
+## OB-6 (2026-07-13) — WARMUP-SUMMARY: модалка + СБРОС ЗВОНКОВ — **ИСПРАВЛЕН (в ветке, НЕ задеплоено)**
+
+**FIX (SOFTPHONE-DROP-001):** КОРЕНЬ — fetchAuthzContext на каждом token-refresh делал setCompany(НОВЫЙ объект) → перезапускался softPhoneGroups-эффект (dep [company]) → на миг enabled=false → useTwilioDevice уничтожал Twilio Device во время звонка (сброс) + deviceReady-флип взводил модалку. BUG-22b refreshOnResume участил token-refresh → «за 3 дня». Fix: identity-stable company (auth/companyIdentity.ts nextCompany — та же ссылка при том же id) — Device живёт, badge-фетчи не долбят, модалка не самовсплывает. Token-refresh НЕ тронут. Плюс 2 ремня на модалку: session-latch (albusto_warmup_shown) + не показывать при voice.callState!==idle. Доказано: 5 vitest (companyIdentity) + саботаж-контроль (сломал reducer → падают, восстановил → 12/12) + code-trace источник→симптом. Реальный Twilio-сброс локально не воспроизводим (нужен живой Device), но цепочка прослежена по коду.
 
 Скриншот владельца: десктоп, Jobs + открытая джоба — поверх периодически показывается WarmUpSummaryDialog («Good morning — Here's your day at a glance», Let's go). Должна показываться один раз (warm-up AudioContext + сводка дня), а не каждые 2-3 минуты.
 

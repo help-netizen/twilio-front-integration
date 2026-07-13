@@ -73,7 +73,17 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
     // SOFTPHONE-WARMUP-SUMMARY-001 belt 2a: explicit !isMobile/!isMobileDevice
     // terms (NOT via softPhoneEnabled indirection) — belts stay independent.
-    useEffect(() => { if (!isMobile && !isMobileDevice && softPhoneEnabled && voice.phoneAllowed && voice.deviceReady) setShowWarmUp(true); }, [isMobile, isMobileDevice, softPhoneEnabled, voice.phoneAllowed, voice.deviceReady]);
+    // OB-6 belt 4: the modal is once-per-session (sessionStorage latch) and is
+    // NEVER shown while a call is live. Root cause of the reappear-every-2-3-min
+    // was the deviceReady flip (fixed at source in AuthProvider — identity-stable
+    // company); these two guards are defense-in-depth so a future flip can't
+    // interrupt an operator or re-nag them.
+    useEffect(() => {
+        if (isMobile || isMobileDevice || !softPhoneEnabled || !voice.phoneAllowed || !voice.deviceReady) return;
+        if (voice.callState !== 'idle') return;                       // never over a live/incoming call
+        try { if (sessionStorage.getItem('albusto_warmup_shown') === '1') return; } catch { /* ignore */ }
+        setShowWarmUp(true);
+    }, [isMobile, isMobileDevice, softPhoneEnabled, voice.phoneAllowed, voice.deviceReady, voice.callState]);
     // Belt 3: reset-on-flip — a latch armed during a transient wrong-width
     // window cannot survive the flags going mobile.
     useEffect(() => { if (isMobile || isMobileDevice) setShowWarmUp(false); }, [isMobile, isMobileDevice]);
@@ -95,16 +105,20 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
             return { pulseInbox: num(parts[0]), newLeads: num(parts[1]), openTasks: num(parts[2]) };
         })()
         : null;
+    // OB-6: latch once dismissed so a later deviceReady flip can't re-nag this session.
+    const latchWarmUpShown = () => { try { sessionStorage.setItem('albusto_warmup_shown', '1'); } catch { /* ignore */ } };
     const handleWarmUpDismiss = useCallback(() => {
         warmUpAudio(); // gesture canon: FIRST synchronous statement on every dismiss path
         setShowWarmUp(false);
+        if (!warmUpPreview) latchWarmUpShown();
         if (warmUpPreview) navigate(location.pathname, { replace: true }); // strip ?warmup=preview so dismiss sticks
     }, [warmUpPreview, navigate, location.pathname]);
     const handleSummaryNavigate = useCallback((path: string) => {
         warmUpAudio(); // gesture canon: FIRST synchronous statement
         setShowWarmUp(false);
+        if (!warmUpPreview) latchWarmUpShown();
         navigate(path); // replaces location → preview param dropped naturally
-    }, [navigate]);
+    }, [navigate, warmUpPreview]);
 
     const handleAcceptIncoming = useCallback(() => {
         setSoftPhoneOpen(true); setSoftPhoneMinimized(false);
