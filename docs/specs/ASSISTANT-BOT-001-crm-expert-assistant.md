@@ -31,10 +31,15 @@ Prompt-level rules (§7) are a second belt, not the primary control.
 
 ## 3. Locked decisions (owner interview, 2026-07-13)
 
-1. **Knowledge source v1 = curated capability catalog in the system prompt.**
-   Claude authors a compact structured "Albusto capabilities" doc from
-   `docs/specs/**` (per app: what it does, prerequisites, setup steps, expected
-   outcome). No vector DB in v1. RAG over docs/specs is a deferred v2.
+1. **Knowledge source v1 = the marketplace catalog itself, standardized.** Each
+   marketplace app carries TWO description layers (see §4a — the app standard):
+   the existing user-facing `short_/long_description`, PLUS a new bot-facing
+   `metadata.assistant` block (what it does under the hood, prerequisites, setup
+   steps, outcome, when to recommend, gotchas). The assistant's knowledge is
+   **derived from the live `marketplace_apps` rows** — not a separate hand-kept
+   file that drifts. Claude authors the `metadata.assistant` content for all
+   existing apps (backfill migration). No vector DB in v1; RAG over `docs/specs`
+   is a deferred v2.
 2. **Config depth = status + settings VALUES**, exposed through a per-app
    allowlist of keys (NOT a raw `metadata` dump). See §5.2.
 3. **Transcripts = stored ANONYMIZED** (no `company_id`, no `user_id`, no email)
@@ -65,10 +70,13 @@ FeedbackWidget (Messenger)
 ```
 
 New files (implementation): `backend/src/services/assistantService.js`,
-`backend/src/services/assistant/capabilityCatalog.js` (the curated KB, authored
-by Claude in A1), `backend/src/services/assistant/serviceConfig.js` (the config
-projection), `backend/src/routes/assistant.js`, migration
-`NNN_assistant_transcripts.sql`. Mount in `src/server.js`:
+`backend/src/services/assistant/capabilityCatalog.js` (reads published apps +
+`metadata.assistant` from the DB and projects the bot-facing catalog),
+`backend/src/services/assistant/serviceConfig.js` (the config projection),
+`backend/src/routes/assistant.js`, a **backfill migration**
+`NNN_seed_assistant_app_descriptions.sql` (Claude-authored `metadata.assistant`
+for all 12 apps, §4a), and migration `NNN_assistant_transcripts.sql`. Mount in
+`src/server.js`:
 `app.use('/api/assistant', authenticate, requireCompanyAccess, require('../backend/src/routes/assistant'))`.
 **Renumber the migration to the next free number vs origin/master at commit time
 ([[parallel-migration-collision]]).**
@@ -78,13 +86,44 @@ The loop template is `backend/src/services/yelpConvoAgentService.js`
 `tolerantParseAction`, DATA-fenced untrusted input). Reuse the SHAPE; do NOT
 route through `agentSkills.runSkill` (that choke-point exposes data/write tools).
 
+## 4a. Marketplace app standard — the two-layer description (NEW, project-wide)
+
+Every marketplace app MUST carry two description layers. This is now part of the
+app definition standard — a new app (or a change to an existing one) is not
+"done" until both are present:
+
+1. **User-facing** (already standard): `short_description`, `long_description` on
+   the `marketplace_apps` row — what the user reads in the catalog card.
+2. **Bot-facing (`metadata.assistant`)** — the under-the-hood knowledge the
+   assistant uses to advise. Structured JSON on the app's `metadata`:
+   ```json
+   "assistant": {
+     "what_it_does": "1–2 sentences, plain, outcome-oriented",
+     "prerequisites": ["e.g. a connected Google mailbox"],
+     "setup_steps": ["Integrations → … → Connect", "…"],
+     "outcome": "what the user gets once configured",
+     "recommend_when": ["user wants to take card payments", "…"],
+     "gotchas": ["live vs test mode", "…"]
+   }
+   ```
+   Keys are English, product-level, and contain **no company data**. Seeded in the
+   SAME migration that seeds/updates the app (co-located → cannot drift).
+
+**Enforcement:** the app-catalog contribution guide and `AGENTS.md` must state
+that any marketplace-app migration includes/updates `metadata.assistant`. The
+capability-catalog tool reads this field; a missing block degrades to
+user-facing text but is flagged in review.
+
 ## 5. Tools (the entire tool surface — exactly two, both read-only)
 
 ### 5.1 `get_capability_catalog()`
 - Input: none (optionally `{ appKey?: string }` to focus one app).
-- Returns the curated catalog (static, product-level, company-agnostic): array of
-  `{ app_key, name, category, what_it_does, prerequisites[], setup_steps[],
-  outcome }`. Source = `capabilityCatalog.js` authored in A1. No DB read.
+- Returns the catalog derived from published `marketplace_apps` rows
+  (company-agnostic, product-level): array of `{ app_key, name, category,
+  short_description, ...metadata.assistant }` (what_it_does, prerequisites[],
+  setup_steps[], outcome, recommend_when[], gotchas[]). Source = a read of
+  published apps + their `metadata.assistant` (§4a). No installation / no company
+  data. Cacheable (catalog changes only on app migrations).
 
 ### 5.2 `get_service_config()`  — company-scoped, whitelisted
 - Input: none. Uses `companyId` from the request (never from model args).
@@ -168,8 +207,13 @@ route through `agentSkills.runSkill` (that choke-point exposes data/write tools)
 - **Cost cap (P2):** over rate/budget → 429 + graceful message.
 
 ## 11. Task breakdown (orchestration)
-- **A1 (Claude):** this spec + `capabilityCatalog.js` seed content (curated from
-  `docs/specs/**`) + test-cases doc.
+- **A1 (Claude):** this spec + the app standard (§4a) + a backfill migration
+  seeding `metadata.assistant` for all 12 apps (Claude-authored descriptions) +
+  the `AGENTS.md`/contribution-guide rule + test-cases doc.
+  The 12 apps: `lead-generator` (Website Leads), `pro-referral-leads`,
+  `rely-leads`, `nsa-leads`, `lhg-leads`, `mail-secretary`, `vapi-ai`,
+  `stripe-payments`, `smart-slot-engine`, `google-email`, `telephony-twilio`,
+  `ai-repair-advisor`.
 - **A2 (GPT):** `assistant/serviceConfig.js` (allowlisted DTO) + isolation unit
   tests (import-graph assertion + allowlist sabotage). Security core — plan-first.
 - **A3 (GPT):** `assistantService.js` (Gemini loop, provider switch, caps,

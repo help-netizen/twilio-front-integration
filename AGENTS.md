@@ -57,6 +57,11 @@ Full spec: `docs/specs/FORM-CANON.md`. Gold-standard examples: `EstimateItemDial
 - `jsonb_set` is a NO-OP if the parent key is missing — build the parent first.
 - Job/lead status transitions are DB-driven SCXML (`fsm_versions`), not a static map. Changing
   transitions = SCXML-rewrite migration, not code edits.
+- **Marketplace app standard (ASSISTANT-BOT-001):** any migration that seeds or changes a
+  `marketplace_apps` row MUST set/refresh `metadata.assistant` (the bot-facing description read by
+  the CRM-expert assistant): `{ what_it_does, prerequisites[], setup_steps[], outcome,
+  recommend_when[], gotchas[] }` — English, product-level, NO company data. An app without it is
+  incomplete. Spec: `docs/specs/ASSISTANT-BOT-001-crm-expert-assistant.md` §4a.
 
 ## Verification (do this yourself, report results)
 
