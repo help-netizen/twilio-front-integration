@@ -9366,7 +9366,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Зависимости:** T1, T3 (T2 желательна заранее для скорости dev-БД, но не блокер). **Размер:** M+ (крупнейшая задача плана; по установке оркестратора route wiring + route tests = один таск — не дробить).
 
-**Статус:** todo
+**Статус:** done (2026-07-13, GPT, ревью ACCEPT: 49/49 независимо (route+module+2 соседних pulse-сьюта), golden-фикстура заморожена до рефакторинга, company_id добавлен в shared calls-хелпер (result-neutral, под golden-гейтом))
 
 ### Задача T5: frontend — data layer: pulseApi + типы + usePulseTimeline (useInfiniteQuery + refreshNewestPage)
 
