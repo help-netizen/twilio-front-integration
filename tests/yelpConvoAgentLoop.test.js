@@ -96,6 +96,12 @@ beforeEach(() => {
         message_id_header: '<in-1@messaging.yelp.com>',
         provider_thread_id: 'gt-1',
         subject: 'Re: your request',
+        // quote fields (YELP-REPLY-FORMAT-001): the send must embed the quoted original
+        body_text: 'Kim requested a quote from ABC Homes for a dishwasher repair.',
+        body_html: null,
+        from_email: 'reply+aa11bb22cc33dd44@messaging.yelp.com',
+        from_name: 'Yelp Inbox',
+        gmail_internal_at: '2026-07-11T21:39:23.000Z',
     });
     jest.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -145,6 +151,11 @@ describe('YCB-LOOP-02 · reply → exactly ONE sendEmail to conv.last_reply_to',
         expect(payload.inReplyTo).toBe('<in-1@messaging.yelp.com>');
         expect(payload.references).toBe('<in-1@messaging.yelp.com>');
         expect(payload.threadId).toBe('gt-1');
+        // YELP-REPLY-FORMAT-001 — the parser also needs the Gmail-style QUOTED ORIGINAL
+        // (multipart/alternative + "… wrote:" + "> " lines) or it bounces cant_parse.
+        expect(payload.textBody).toMatch(/wrote:/);
+        expect(payload.textBody).toContain('> Kim requested a quote from ABC Homes');
+        expect(payload.body).toContain('gmail_quote');
         expect(mockUpdateLead).not.toHaveBeenCalled();
         expect(mockCreateTask).not.toHaveBeenCalled();
     });
@@ -184,13 +195,14 @@ describe('YCB-LOOP-04 · tolerant JSON parse → recover or safe-fallback, never
         const gen = scriptedGenerate(['```json\n{"action":"reply","body":"ok"}\n```']);
         await svc.runTurn(DEFAULT_COMPANY_ID, convRow(), inbound(), { generate: gen });
         expect(mockSendEmail).toHaveBeenCalledTimes(1);
-        expect(mockSendEmail.mock.calls[0][1].body).toBe('ok');
+        // model text tops the plain leg (body is the Gmail-quoted html wrapper now)
+        expect(mockSendEmail.mock.calls[0][1].textBody.startsWith('ok')).toBe(true);
     });
     it('(b) trailing prose after the object → object still recovered', async () => {
         const gen = scriptedGenerate(['{"action":"reply","body":"sure"}\n\nHope that helps!']);
         await svc.runTurn(DEFAULT_COMPANY_ID, convRow(), inbound(), { generate: gen });
         expect(mockSendEmail).toHaveBeenCalledTimes(1);
-        expect(mockSendEmail.mock.calls[0][1].body).toBe('sure');
+        expect(mockSendEmail.mock.calls[0][1].textBody.startsWith('sure')).toBe(true);
     });
     it('(c) unrecoverable garbage on every retry → deterministic safe reply, no throw', async () => {
         const gen = scriptedGenerate(['not json <<<']);

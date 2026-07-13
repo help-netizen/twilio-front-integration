@@ -20,12 +20,19 @@ function createGmailClient(accessToken) {
 
 // ─── MIME helpers ────────────────────────────────────────────────────────
 
-function buildMimeMessage({ from, to, cc, subject, body, inReplyTo, references, files }) {
+function buildMimeMessage({ from, to, cc, subject, body, textBody, inReplyTo, references, files }) {
     const boundary = `blanc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const hasAttachments = files && files.length > 0;
+    // YELP-REPLY-FORMAT-001: when a plain-text alternative is supplied, the body is a
+    // multipart/alternative [text/plain, text/html] pair — some reply-by-email parsers
+    // (Yelp) cannot handle a lone text/html part. Absent textBody nothing changes.
+    const hasAlternative = textBody != null && textBody !== '';
+    const altBoundary = `blanc_alt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const contentType = hasAttachments
         ? `multipart/mixed; boundary="${boundary}"`
-        : 'text/html; charset=utf-8';
+        : hasAlternative
+            ? `multipart/alternative; boundary="${altBoundary}"`
+            : 'text/html; charset=utf-8';
 
     const headers = [
         `From: ${from}`,
@@ -38,13 +45,28 @@ function buildMimeMessage({ from, to, cc, subject, body, inReplyTo, references, 
     if (references) headers.push(`References: ${references}`);
     headers.push(`Content-Type: ${contentType}`);
 
+    // The [text/plain, text/html] alternative pair (used bare or nested in mixed).
+    const alternativePart =
+        `--${altBoundary}\r\n` +
+        `Content-Type: text/plain; charset=utf-8\r\n\r\n` +
+        `${textBody}\r\n\r\n` +
+        `--${altBoundary}\r\n` +
+        `Content-Type: text/html; charset=utf-8\r\n\r\n` +
+        `${body}\r\n\r\n` +
+        `--${altBoundary}--\r\n`;
+
     let message = headers.join('\r\n') + '\r\n\r\n';
 
     if (hasAttachments) {
-        // Body part
+        // Body part (the alternative pair when textBody is present, lone html otherwise)
         message += `--${boundary}\r\n`;
-        message += `Content-Type: text/html; charset=utf-8\r\n\r\n`;
-        message += body + '\r\n\r\n';
+        if (hasAlternative) {
+            message += `Content-Type: multipart/alternative; boundary="${altBoundary}"\r\n\r\n`;
+            message += alternativePart + '\r\n';
+        } else {
+            message += `Content-Type: text/html; charset=utf-8\r\n\r\n`;
+            message += body + '\r\n\r\n';
+        }
 
         // Attachment parts
         for (const file of files) {
@@ -56,6 +78,8 @@ function buildMimeMessage({ from, to, cc, subject, body, inReplyTo, references, 
         }
 
         message += `--${boundary}--\r\n`;
+    } else if (hasAlternative) {
+        message += alternativePart;
     } else {
         message += body;
     }
@@ -65,7 +89,7 @@ function buildMimeMessage({ from, to, cc, subject, body, inReplyTo, references, 
 
 // ─── Send new email ──────────────────────────────────────────────────────
 
-async function sendEmail(companyId, { to, cc, subject, body, files, userId, userEmail, inReplyTo, references, threadId }) {
+async function sendEmail(companyId, { to, cc, subject, body, textBody, files, userId, userEmail, inReplyTo, references, threadId }) {
     const accessToken = await emailMailboxService.getValidAccessToken(companyId);
     const mailboxData = await emailQueries.getMailboxWithTokens(companyId);
 
@@ -85,6 +109,7 @@ async function sendEmail(companyId, { to, cc, subject, body, files, userId, user
         cc,
         subject,
         body,
+        textBody,
         files,
         inReplyTo,
         references,

@@ -525,15 +525,19 @@ async function getMessageLinkState(providerMessageId, companyId) {
 }
 
 /**
- * YELP reply-threading: the RFC headers to send a proper MIME reply to an inbound
- * message — In-Reply-To/References = its Message-ID + the Gmail thread to reply
- * INSIDE. Company-scoped. (Yelp reply-by-email rejects a non-threaded reply with
- * "email client we do not yet support".) Returns null if the message is unknown.
+ * YELP reply-threading: everything a Yelp reply must carry to be ACCEPTED —
+ * the RFC headers (In-Reply-To/References = the inbound's Message-ID + the Gmail
+ * thread to reply INSIDE) AND the inbound's body/sender/date, because Yelp's
+ * reply-by-email parser locates the reply by the QUOTED-ORIGINAL delimiter
+ * ("On <date> <sender> wrote:" + "> " lines) — a bare unquoted body bounces with
+ * cant_parse ("email client we do not yet support"). Company-scoped; null if the
+ * message is unknown.
  */
 async function getThreadingByProviderMessageId(providerMessageId, companyId) {
     if (!providerMessageId) return null;
     const result = await db.query(
-        `SELECT message_id_header, provider_thread_id, subject
+        `SELECT message_id_header, provider_thread_id, subject,
+                body_text, body_html, from_email, from_name, gmail_internal_at
          FROM email_messages
          WHERE company_id = $1 AND provider_message_id = $2
          LIMIT 1`,

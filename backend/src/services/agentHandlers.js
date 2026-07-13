@@ -210,12 +210,14 @@ const HANDLERS = {
 
         // (4) Send via the company mailbox back through the Yelp relay. THE ONLY
         //     throw that reaches the worker → drives the retry (nothing sent yet).
-        //     Thread the reply (In-Reply-To/References + the Gmail thread) against the
-        //     inbound new-lead email — an unthreaded reply is bounced by Yelp with
-        //     "email client we do not yet support". Best-effort: a lookup miss degrades
-        //     to an unthreaded send (a late greeting beats none).
-        const subject = `Re: ${input.service_type || 'your'} request`;
+        //     Yelp's reply-by-email parser needs BOTH the threading headers
+        //     (In-Reply-To/References + the Gmail thread) AND the Gmail-style quoted
+        //     original under multipart/alternative — a bare single-part body bounces
+        //     with cant_parse ("email client we do not yet support"). Best-effort: a
+        //     lookup miss degrades to an unquoted send (a late greeting beats none).
+        let subject = `Re: ${input.service_type || 'your'} request`;
         let threading = {};
+        let quote = null;
         try {
             const row = await require('../db/emailQueries')
                 .getThreadingByProviderMessageId(input.provider_message_id, task.company_id);
@@ -225,14 +227,18 @@ const HANDLERS = {
                     references: row.message_id_header,
                     threadId: row.provider_thread_id || undefined,
                 };
+                quote = row;
+                if (row.subject) subject = /^\s*re:/i.test(row.subject) ? row.subject : `Re: ${row.subject}`;
             }
         } catch (e) {
             console.error('[yelp_lead] threading lookup failed (send unthreaded):', e && e.message);
         }
+        const bodies = require('./yelpReplyFormat').buildReplyBodies(body, quote);
         const sent = await require('./emailService').sendEmail(task.company_id, {
             to: input.reply_to,
             subject,
-            body,
+            body: bodies.html,
+            textBody: bodies.text,
             ...threading,
         });
 
