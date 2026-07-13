@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 170: In-app product feedback — CLIENT-FEEDBACK-WIDGET-001.
+-- Migration 172: In-app product feedback — CLIENT-FEEDBACK-WIDGET-001.
 --
 -- The tenant-scoped row is the source of truth. Attachments are delivered only
 -- by best-effort email; their metadata and delivery status live in meta.

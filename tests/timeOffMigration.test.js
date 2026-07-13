@@ -90,5 +90,4 @@ describe('TC-DO-29: number 167 is free and maximal (worktree-drift RECHECK, prec
             .filter(n => n && Number(n) >= 100);
         expect(new Set(numbers).size).toBe(numbers.length);
     });
-    });
 });

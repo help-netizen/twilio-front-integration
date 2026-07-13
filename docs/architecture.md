@@ -7536,7 +7536,7 @@ S3-надёжности задокументирован как открытый
 ### Новые компоненты
 
 **Database:**
-- Миграция `170_feedback_submissions.sql` (+ `rollback_170_feedback_submissions.sql`). Таблица
+- Миграция `172_feedback_submissions.sql` (+ `rollback_172_feedback_submissions.sql`). Таблица
   `feedback_submissions`: `id uuid pk default gen_random_uuid()`, `company_id uuid NOT NULL REFERENCES
   companies(id) ON DELETE CASCADE`, `user_id uuid REFERENCES crm_users(id)` (nullable; = `req.user.crmUser.id`,
   НЕ Keycloak sub — created_by-FK gotcha), `user_email text NOT NULL`, `message text NOT NULL`, `meta jsonb
@@ -7599,8 +7599,8 @@ Feedback FAB: `position:fixed`, нижний-правый угол, **z-index в
 
 ### Файлы для изменений (сводно)
 
-- `backend/db/migrations/170_feedback_submissions.sql` — создать таблицу + индекс.
-- `backend/db/migrations/rollback_170_feedback_submissions.sql` — `DROP TABLE IF EXISTS`.
+- `backend/db/migrations/172_feedback_submissions.sql` — создать таблицу + индекс.
+- `backend/db/migrations/rollback_172_feedback_submissions.sql` — `DROP TABLE IF EXISTS`.
 - `backend/src/db/feedbackQueries.js` — insert (company-scoped).
 - `backend/src/services/feedbackService.js` — валидация + insert + best-effort email.
 - `backend/src/routes/feedback.js` — POST + multer.
