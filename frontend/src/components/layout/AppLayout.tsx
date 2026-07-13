@@ -15,6 +15,7 @@ import { AppNavTabs, SettingsMenu, BottomNavBar, getActiveTab } from './appLayou
 import { AutonomousModeBanner } from './AutonomousModeBanner';
 import { useAutonomousMode } from '../../hooks/useAutonomousMode';
 import { AutonomousModeProvider } from '../../contexts/AutonomousModeContext';
+import { FeedbackWidget, isFeedbackWidgetEnabled } from '../feedback/FeedbackWidget';
 import './AppLayout.css';
 
 interface AppLayoutProps { children: React.ReactNode; }
@@ -256,6 +257,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 {/* SOFTPHONE-WARMUP-SUMMARY-001 belt 2b: render gate — /schedule term kept verbatim. */}
                 <WarmUpSummaryDialog open={(showWarmUp || warmUpPreview) && !isMobile && !isMobileDevice && !location.pathname.startsWith('/schedule')} counts={warmUpPreviewCounts ?? { pulseInbox: pulseUnreadCount === null || arCount === null ? null : pulseUnreadCount + arCount, newLeads: leadsNewCount, openTasks: openTasksCount }} onNavigate={handleSummaryNavigate} onDismiss={handleWarmUpDismiss} />
                 {!isMobile && !isMobileDevice && <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} disabledReason={!softPhoneEnabled && softPhoneGroupsLoaded ? 'You are not assigned to any group. Ask your administrator.' : undefined} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />}
+                {isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET) && <FeedbackWidget />}
                 <AutonomousModeBanner visible={autonomous.autonomousMode} />
             </div>
           </AutonomousModeProvider>
