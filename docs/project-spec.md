@@ -286,3 +286,34 @@ CTA /settings/billing; fail-soft null) and a completion state. New-company signu
 stays write-once (veteran companies never resurface). Connect/setup pages (Google Email, Telephony
 wizard, VAPI, Mail Secretary, marketplace connect dialog) share the Stripe-etalon warm hero style.
 First feature implemented via the GPT-implementer mode (Codex gpt-5.6-sol; Claude architect/reviewer).
+
+## Pulse conversation timeline — messenger pagination (TIMELINE-REVPAGE-001)
+
+The Pulse detail feed (right column: calls + SMS + email + financial events, merged) is a messenger
+(WhatsApp model) instead of a full-history load. Both detail endpoints
+(`GET /api/pulse/timeline-by-id/:timelineId`, `GET /api/pulse/timeline/:contactId`) gain an opt-in paged
+mode `?limit=20[&before=<cursor>]` → `{ page: { items, next_cursor, has_more }, meta? }`: merged items
+newest→oldest under the strict total order `(ts DESC, kind ASC, id DESC)`, an opaque base64 cursor
+`{v:1, ts, k, id}` with a microsecond-ISO `ts` (compared as strings — no `Date` on the cursor path), and
+an item envelope `{ts, src: call|sms|email|financial, id, data}` whose `data` is byte-compatible with the
+legacy arrays. Pages are assembled from 5 bounded per-source SQL legs (calls, sms, email by-contact or
+by-timeline, estimates+invoices behind the unchanged financial-permission gate) merged by the pure module
+`backend/src/services/timelinePage.js`; thread `meta` (contact, conversations, timeline identity) rides
+on page 1 only. **No `limit` → the legacy full response, byte-identical** (golden-fixture gated).
+Migration 168 (index-only) adds the partial index `idx_calls_timeline_page` on
+`calls (timeline_id, COALESCE(started_at, created_at) DESC, id DESC) WHERE parent_call_sid IS NULL`.
+
+Frontend (`usePulseTimeline` → `useInfiniteQuery` v5, `PulseTimeline.tsx`): opening a thread lands
+bottom-anchored pre-paint (newest items + composer visible, no top flash); scrolling up hits a
+top-sentinel IntersectionObserver that loads older pages with scrollHeight-delta scroll compensation; an
+SSE event triggers a single head fetch union-merged into the cache (`refreshNewestPage` — keeps the old
+head's `next_cursor` so the page chain never breaks; never a full refetch); the bottom pin is belted by a
+ResizeObserver over all direct children of the scroll container plus the container itself, with a
+MutationObserver re-observing late mounts, and the scroll container is resolved dynamically; a unified
+Jump-to-latest pill with a new-activity dot replaces scroll-yanking when reading history; sending a
+message refreshes the head and scrolls to bottom; the Action-Required bar is `position: sticky` at the
+top of the column (`.pulse-ar-sticky`). By construction this also fixes >200-SMS threads, which
+previously showed only the OLDEST 200 messages. Known v1 limits are recorded in spec §17 (e.g.
+media-heavy prepended pages can shift the viewport ~100px after lazy players load).
+`timeline-by-phone`/softphone and the legacy `ConversationPage` are untouched. Not yet deployed
+(owner-gated).

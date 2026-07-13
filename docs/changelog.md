@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-13 — TIMELINE-REVPAGE-001: Pulse-лента = мессенджер (reverse-cursor паджинация по 20, bottom-anchor, scroll-up история, sticky AR-бар)
+
+Детальная лента Pulse (звонки + SMS + email + финансовые события, merged) грузила ВСЮ историю на каждое открытие и каждый SSE-эвент и рендерилась сверху-вниз; тред с >200 SMS показывал только СТАРЕЙШИЕ 200 сообщений. Теперь это мессенджер (модель WhatsApp): открытие приземляется внизу на новейших 20, скролл вверх догружает историю страницами, SSE освежает только head-страницу. `timeline-by-phone`/софтфон и legacy `ConversationPage` не тронуты. **НЕ задеплоено** (deploy-consent).
+
+- **Backend — reverse cursor:** оба detail-эндпоинта (`GET /api/pulse/timeline-by-id/:timelineId`, `GET /api/pulse/timeline/:contactId`) получили opt-in `?limit=20[&before=<cursor>]`; страница = merged items newest→oldest под строгим total order `ts DESC, kind ASC, id DESC`; курсор opaque base64 `{v:1,ts,k,id}` с µs-ISO `ts` (сравнение строкой, никакого `Date` на пути курсора); 5 ограниченных per-source SQL-легов сливает НОВЫЙ чистый модуль `backend/src/services/timelinePage.js`; `meta` (contact/conversations/identity) — только на page 1. Без `limit` → legacy-ответ **байт-в-байт** (заморожен golden-фикстурой до рефакторинга `buildTimeline` на shared-мапперы).
+- **Frontend — мессенджер-механика:** `usePulseTimeline` → `useInfiniteQuery` (v5); SSE → ОДИН head-фетч + union-merge в кэш (`refreshNewestPage`, сохраняет `next_cursor` старого head — цепочка страниц не рвётся; никаких full-refetch); bottom-anchored открытие pre-paint (без вспышки сверху); top-sentinel IntersectionObserver-подгрузка со scrollHeight-delta компенсацией; pin-ремень = ResizeObserver на ВСЕХ прямых детях скролл-контейнера + сам контейнер + MutationObserver на поздние маунты; скролл-контейнер резолвится динамически; единый Jump-to-latest pill с точкой новой активности вместо выдёргивания скролла; send → head-refresh + scroll-signal вниз; sticky Action-Required бар (`.pulse-ar-sticky`).
+- **Миграция 168** (index-only): partial `idx_calls_timeline_page` ON calls `(timeline_id, COALESCE(started_at, created_at) DESC, id DESC) WHERE parent_call_sid IS NULL` + rollback.
+- **Верификация:** jest 61 фичевый тест зелёный; полный свип **2700 passed / 22 pre-existing fails байт-идентичны базе d5f46b6** (0 новых регрессий; протухший «167-maximal» tripwire TC-DO-29 расфрожен); N3-харнес `backend/scripts/verify-timeline-revpage.mjs` exit 0 на dev-БД (149 walkable timelines / 862 страницы / 1003 items / 0 нарушений инвариантов; sabotage-режим exit 1; EXPLAIN использует `idx_calls_timeline_page`); N2 headless-Chrome e2e 17/19 + SSE-dot тест PASS end-to-end; известные v1-лимиты зафиксированы в спеке §17 (media-heavy prepend может сдвинуть viewport ~100px после ленивых плееров).
+- Коммиты: f58ab04 (T1 + docs-цепочка), 0737b5e (T2 mig 168), 7a34f30 (T3 query-твины), bf786dd (T4 route+golden), fa83aac (T5 FE data layer), 6f90dab (T6 wiring), 7ca299f (T7 scroll-механика), 70570cc (T8 sticky AR), 1939390 (T9 харнес), 665a5e8 (T7 live-фиксы), 7e76e3c (TC-DO-29 un-freeze).
+
+---
+
 ## 2026-07-11 — YELP-CONVO fix: `yelp_conversations.lead_uuid` UUID→TEXT (migration 166) — turn-0 приветствие больше не теряется
 
 Первый живой Yelp-лид после включения диалогового агента (`YELP_CONVO_ENABLED=true`) НЕ получил приветствие. Причина: миграция 164 объявила `yelp_conversations.lead_uuid` типом **UUID**, а «uuid» лида — это короткий код («72JR1E», не Postgres uuid) → `upsertConversation` падал (`invalid input syntax for type uuid`, тихо, best-effort) → строка-разговор не создавалась → turn-0-хендлер скипал `no_conversation` → приветствие не уходило. Латентно с момента dark-launch; всплыло на первом реальном лиде.

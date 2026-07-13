@@ -875,3 +875,16 @@ Frontend:
 - `frontend/src/pages/PulsePage.css` — `.pulse-ar-sticky`; `overflow-anchor: none`; `.pulse-feed-spinner-row` (§8, §9).
 
 NOT touched (protected — verify zero diff): `src/server.js`, `GET /api/pulse/timeline-by-phone` + softphone/AppLayout consumers, `ConversationPage.tsx` + `components/conversations/*`, `getUnifiedTimelinePage`/left-list SQL, `calls.js` mark-read/unread, `SmsForm.tsx`, `authedFetch.ts`/`apiClient` plumbing, `useRealtimeEvents.ts`, sseManager event names/payloads, `DateSeparator.tsx`, `PulseCallListItem`/`SmsListItem`/`EmailListItem`/`FinancialEventListItem`, `permissionCatalog.js`.
+
+
+---
+
+## §17 Post-implementation deviations (live-verified, 2026-07-13)
+
+Three §8 mechanics were adjusted after live browser verification (headless-Chrome e2e + real-data dev stack); the implementation in `PulseTimeline.tsx` is authoritative:
+
+1. **Pin-belt scope (§8.2):** the ResizeObserver observes ALL direct children of the scroll container (not just the feed) **plus the container itself**, with a MutationObserver re-observing late mounts. Rationale: the contact/lead card ABOVE the feed loads async and pushed content ~400px past the anchor; a notification banner mounting BELOW shrinks the container's clientHeight with no child resize — both drifted the bottom pin. Near-bottom state also recomputes on any observed layout shift (pill correctness without scroll events).
+2. **Scroll-container resolution (§8.1):** resolved dynamically — first ancestor of the end-anchor with `overflow-y: auto|scroll` that actually overflows; falls back to `.pulse-right-column`, then `document.scrollingElement`. The class-hardcoded lookup broke under layout variants.
+3. **Prepend preservation tolerance (§8.4):** exact scrollHeight-delta compensation holds for text rows; audio/transcript players inside the PREPENDED page load lazily after compensation and can shift the viewport by up to ~100px on media-heavy threads. Accepted v1 limitation (native scroll anchoring is disabled by design; Safari has none).
+
+Verification record: N2 e2e 17/19 PASS + M04/M04b SSE dot test PASS on the full production chain (unsigned dev webhook → ConvService → SSE → gate → single head fetch → union-merge → dot; viewport pinned). M08c skipped (dev-env softphone-500 noise). Real-device iOS momentum = owner smoke.
