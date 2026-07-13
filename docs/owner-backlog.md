@@ -49,3 +49,5 @@
 ## OB-7 (2026-07-13) — STRIPE-CONNECT: два дублирующих блока на экране подключения — **открыт**
 
 Страница Stripe Payments (not-connected): показываются ДВА дублирующих блока — красивый hero «Get paid on the spot» и системный «What it costs». **Убрать второй («What it costs»)** — ценовая информация при необходимости живёт внутри hero (STRIPE-CONNECT-UX-001 вводил in-product pricing; теперь владелец решил: один блок). Файл: frontend/src/pages/StripePaymentsSettingsPage.tsx.
+
+Там же: блок **«Setup steps» не очеловечен** — переписать тёплым тоном; **последний пункт «run a test payment» убрать** и заменить на посыл «начинайте принимать платежи» (например «Start getting paid — collect your first payment right from a job»).
