@@ -9418,7 +9418,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** `cd frontend && npm run build`; preview: тред с открытой задачей — бар приколот при скролле, дропдауны работают, открытый dialog/sheet НЕ перекрывается баром.
 
-**Зависимости:** T7 (общие файлы PulsePage.tsx/.css — строго после). **Размер:** S. **Статус:** todo
+**Зависимости:** T7 (общие файлы PulsePage.tsx/.css — строго после). **Размер:** S. **Статус:** done (2026-07-13, GPT, ревью ACCEPT: один класс + один CSS-блок, build зелёный)
 
 ### Задача T9: backend — N3 real-DB харнес (авторинг + прогон)
 

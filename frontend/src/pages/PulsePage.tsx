@@ -284,7 +284,7 @@ export const PulsePage: React.FC = () => {
                                 const tlId = conv.timeline_id;
                                 return (
                                     <div
-                                        className="pulse-card pulse-card-visible-overflow"
+                                        className="pulse-card pulse-card-visible-overflow pulse-ar-sticky"
                                         style={{ backgroundColor: isSnoozed ? 'var(--blanc-surface-muted)' : '#fff7ed' }}
                                     >
                                         <div className="flex items-center gap-2.5 px-5 py-3">

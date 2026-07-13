@@ -139,6 +139,16 @@
     overflow: visible;
 }
 
+/* TIMELINE-REVPAGE-001: AR bar pinned while the thread has an open task.
+   Works on both breakpoints because .pulse-right-column is the scroll container.
+   z=5: above in-flow content (accent stripes use z-1), below the jump pill (20)
+   and every overlay (OVERLAY_Z.panel = 80+; dialogs/sheets portal to body). */
+.pulse-ar-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
 /* Empty state sits directly on the canvas — no card around it */
 .pulse-empty-state {
     display: flex;
