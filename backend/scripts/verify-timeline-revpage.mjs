@@ -1134,10 +1134,10 @@ async function runH09(client, state) {
     console.log(`[H09] PLAN ${limitLine.trim()}`);
     console.log(`[H09] PLAN ${indexLine.trim()}`);
 
-    const migration = fs.readFileSync(path.join(repoRoot, 'backend/db/migrations/168_timeline_revpage_call_page_index.sql'), 'utf8');
-    const rollback = fs.readFileSync(path.join(repoRoot, 'backend/db/migrations/rollback_168_timeline_revpage_call_page_index.sql'), 'utf8');
-    assertHarness(migration.includes('CREATE INDEX IF NOT EXISTS idx_calls_timeline_page'), 'migration 168 is not idempotent');
-    assertHarness(rollback.includes('DROP INDEX IF EXISTS idx_calls_timeline_page'), 'migration 168 rollback is missing');
+    const migration = fs.readFileSync(path.join(repoRoot, 'backend/db/migrations/171_timeline_revpage_call_page_index.sql'), 'utf8');
+    const rollback = fs.readFileSync(path.join(repoRoot, 'backend/db/migrations/rollback_171_timeline_revpage_call_page_index.sql'), 'utf8');
+    assertHarness(migration.includes('CREATE INDEX IF NOT EXISTS idx_calls_timeline_page'), 'migration 171 is not idempotent');
+    assertHarness(rollback.includes('DROP INDEX IF EXISTS idx_calls_timeline_page'), 'migration 171 rollback is missing');
     return `timeline=${candidate.context.timeline.id} ANALYZE=false index=idx_calls_timeline_page`;
 }
 

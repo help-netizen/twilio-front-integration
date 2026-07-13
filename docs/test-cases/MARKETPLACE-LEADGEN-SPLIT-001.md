@@ -1,7 +1,7 @@
 # Test Cases: MARKETPLACE-LEADGEN-SPLIT-001 — split «Lead Generator» into five per-source lead apps (migration 169 + boot line + shared-credential disconnect guard)
 
 **Spec (AUTHORITATIVE):** `Docs/specs/MARKETPLACE-LEADGEN-SPLIT-001.md` (scenarios M1–M8, G1–G9, C1–C6; §2 exact contracts; §7 invariants 1–14). **Architecture:** `Docs/architecture.md` «MARKETPLACE-LEADGEN-SPLIT-001 — architecture» (D1–D3). **Requirements:** `Docs/requirements.md` «MARKETPLACE-LEADGEN-SPLIT-001» (US-1..6, FR-1..7, NFR-1..6).
-**Change under test (complete):** NEW `backend/db/migrations/169_split_lead_generator_marketplace_apps.sql` + `rollback_169_*.sql`; ONE boot-list line in `backend/src/db/marketplaceQueries.js` `ensureMarketplaceSchema` (after the 161 entry, i.e. after 083) + NEW exported helper `countOtherActiveInstallationsOnCredential`; guarded region :516-544 of `disconnectInstallation` in `backend/src/services/marketplaceService.js`. Nothing else.
+**Change under test (complete):** NEW `backend/db/migrations/170_split_lead_generator_marketplace_apps.sql` + `rollback_169_*.sql`; ONE boot-list line in `backend/src/db/marketplaceQueries.js` `ensureMarketplaceSchema` (after the 161 entry, i.e. after 083) + NEW exported helper `countOtherActiveInstallationsOnCredential`; guarded region :516-544 of `disconnectInstallation` in `backend/src/services/marketplaceService.js`. Nothing else.
 
 ## Locked design facts these cases assert against (from spec §2 — do not re-litigate)
 
@@ -36,7 +36,7 @@
 
 | # | Property | Control case(s) | Sabotage | Exact red-condition |
 |---|---|---|---|---|
-| 1 | Rename + catalog survive every boot (FR-3 ordering) | TC-M3-01 | **SAB-BOOT-DROP-169** — delete the `await query(readMigration('169_split_lead_generator_marketplace_apps.sql'))` line from `ensureMarketplaceSchema` (equivalently: move it BEFORE the 083 line) | TC-M3-01 RED: after the REAL `ensureMarketplaceSchema(client)` replay, `SELECT name FROM marketplace_apps WHERE app_key='lead-generator'` = `'Lead Generator'` (expected `'Website Leads'`) and the four-new-key COUNT = 0 (expected 4; on the mis-order variant the name assert alone goes red) |
+| 1 | Rename + catalog survive every boot (FR-3 ordering) | TC-M3-01 | **SAB-BOOT-DROP-169** — delete the `await query(readMigration('170_split_lead_generator_marketplace_apps.sql'))` line from `ensureMarketplaceSchema` (equivalently: move it BEFORE the 083 line) | TC-M3-01 RED: after the REAL `ensureMarketplaceSchema(client)` replay, `SELECT name FROM marketplace_apps WHERE app_key='lead-generator'` = `'Lead Generator'` (expected `'Website Leads'`) and the four-new-key COUNT = 0 (expected 4; on the mis-order variant the name assert alone goes red) |
 | 2 | One shared-source Disconnect never kills the live token (FR-5/US-5) | TC-G1-01 (+TC-G8-01) | **SAB-GUARD-DROP** — remove the `otherActive` computation/condition in `disconnectInstallation` (revert :516 to the unconditional pre-feature revoke) | TC-G1-01 RED: `queries.revokeCredentialById` **was called** with `(1, COMPANY, mockClient)` where the case expects `.not.toHaveBeenCalled()`; a `writeEvent` call with `eventType:'credential_revoked'` appears (expected zero); the `'disconnected'` event payload lacks `credential_shared:true`. TC-G8-01 RED the same way on the first disconnect |
 | 3 | Boot replay never resurrects an owner-disconnected source (FR-4/M5) | TC-M5-01 | **SAB-SEED-ONCONFLICT** — replace statement (3)'s status-blind `NOT EXISTS` with an `ON CONFLICT`-style insert keyed on the partial-unique index | TC-M5-01 RED: after flipping the seeded (default-co, `nsa-leads`) row to `'disconnected'` and re-applying 169, the (default-co, `nsa-leads`) row count = 2 with a fresh `'connected'` row (the partial index ignores inactive rows), or the single row reads `'connected'` again — expected exactly 1 row, still `'disconnected'` (same red for the `'revoked'` variant) |
 | 4 | Credential resolved from the newest CONNECTED source installation, never hardcoded (FR-4) | TC-M1-01 (+TC-M4-01) | **SAB-CREDENTIAL-HARDCODE** — replace the `CROSS JOIN LATERAL` subquery with a literal `api_integration_id` (e.g. `1`) | TC-M1-01 RED: the four seeded rows carry `api_integration_id = 1 ≠ 424242` (the txn fixture id; the decoy 424243 assert also proves status-filtering), or the INSERT throws FK `23503` on a DB with no committed id=1 — red either way. TC-M4-01 RED: the no-source variants seed 4 rows anyway (expected 0) |
@@ -46,7 +46,7 @@
 ## §M — migration & boot (db real-PG self-skip, `tests/marketplaceLeadgenSplit.db.test.js`)
 
 ### TC-M1-01 · fresh apply: exact catalog + default-co seed on the resolved shared credential — P0 · db · covers M1, FR-1/2/4, NFR-1 — **SAB-CREDENTIAL-HARDCODE control**
-- **Target seam:** raw `169_split_lead_generator_marketplace_apps.sql` over a mig-168-equivalent state.
+- **Target seam:** raw `170_split_lead_generator_marketplace_apps.sql` over a mig-168-equivalent state.
 - **Setup:** `withTxn` → `resetToPre169(client)` (source row on 424242 + older disconnected decoy on 424243). Snapshot: full `lead-generator` row; `SELECT COUNT(*) FROM marketplace_installation_events`; full `api_integrations` (`SELECT * ORDER BY id`).
 - **Steps:** `apply169(client)`; re-select.
 - **Expected:**

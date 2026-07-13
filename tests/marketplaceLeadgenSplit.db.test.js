@@ -82,11 +82,11 @@ async function withTxn(fn) {
 }
 
 async function apply169(client) {
-    await client.query(readMigration('169_split_lead_generator_marketplace_apps.sql'));
+    await client.query(readMigration('170_split_lead_generator_marketplace_apps.sql'));
 }
 
 async function applyRollback169(client) {
-    await client.query(readMigration('rollback_169_split_lead_generator_marketplace_apps.sql'));
+    await client.query(readMigration('rollback_170_split_lead_generator_marketplace_apps.sql'));
 }
 
 async function resetToPre169(client) {

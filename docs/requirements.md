@@ -6359,7 +6359,7 @@ observability.
 
 ### Потенциально вовлечённые модули (по architecture.md)
 
-- `backend/db/migrations/169_split_lead_generator_marketplace_apps.sql` (+ `rollback_169_*.sql`) — NEW.
+- `backend/db/migrations/170_split_lead_generator_marketplace_apps.sql` (+ `rollback_169_*.sql`) — NEW.
 - `backend/src/db/marketplaceQueries.js` — register 169 in `ensureMarketplaceSchema` after 083 (FR-3).
 - `backend/src/services/marketplaceService.js` — ONLY if the Architect places the FR-5 shared-credential disconnect guard there; no other service change.
 - `Docs/*` — this entry + downstream chain. **No `frontend/src` modules** (NFR-5).

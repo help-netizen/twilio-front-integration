@@ -447,11 +447,11 @@ describe('MARKETPLACE-LEADGEN-SPLIT-001 structural contracts', () => {
     test('TC-M2-02 · migration files are transaction-safe, silent, and rollback-documented', () => {
         const migrationDir = path.join(ROOT, 'backend', 'db', 'migrations');
         const forward = fs.readFileSync(
-            path.join(migrationDir, '169_split_lead_generator_marketplace_apps.sql'),
+            path.join(migrationDir, '170_split_lead_generator_marketplace_apps.sql'),
             'utf8'
         );
         const rollback = fs.readFileSync(
-            path.join(migrationDir, 'rollback_169_split_lead_generator_marketplace_apps.sql'),
+            path.join(migrationDir, 'rollback_170_split_lead_generator_marketplace_apps.sql'),
             'utf8'
         );
         const forwardWithoutComments = forward

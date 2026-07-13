@@ -376,11 +376,11 @@ Fetch up to `limit` rows per leg (sms: per conversation) → `mergePage` sorts D
 
 ---
 
-## 6. Migration 168 (index-only; ships with the feature)
+## 6. migration 171 (index-only; ships with the feature)
 
 Next free number: **168** (167 = `technician_time_off`, applied on prod). **RECHECK `ls backend/db/migrations/` at build time** — parallel worktrees drift (precedent: 161).
 
-`backend/db/migrations/168_timeline_revpage_call_page_index.sql`:
+`backend/db/migrations/171_timeline_revpage_call_page_index.sql`:
 
 ```sql
 -- TIMELINE-REVPAGE-001: reverse-cursor page over a thread's parent calls.
@@ -390,7 +390,7 @@ CREATE INDEX IF NOT EXISTS idx_calls_timeline_page
     WHERE parent_call_sid IS NULL;
 ```
 
-`backend/db/migrations/rollback_168_timeline_revpage_call_page_index.sql`:
+`backend/db/migrations/rollback_171_timeline_revpage_call_page_index.sql`:
 
 ```sql
 -- TIMELINE-REVPAGE-001 rollback
@@ -794,7 +794,7 @@ The card's own opaque background (`#fff7ed` / `var(--blanc-surface-muted)`) prev
 - **INV-12.** `convQueries.getMessages` and the existing ASC email functions stay untouched (legacy consumers).
 - **INV-13.** `src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts`, sseManager — zero diff.
 - **INV-14.** No virtualization; no `maxPages`; pages accumulate in memory for the session (accepted v1).
-- **INV-15.** Migration 168 is index-only (no schema/data reshaping) and idempotent (`IF NOT EXISTS`), with a rollback file.
+- **INV-15.** migration 171 is index-only (no schema/data reshaping) and idempotent (`IF NOT EXISTS`), with a rollback file.
 
 ---
 
@@ -861,7 +861,7 @@ Backend:
 - `backend/src/services/timelinePage.js` — NEW pure module (§4).
 - `backend/src/db/conversationsQueries.js` — NEW `getMessagesPageDesc` (§5.4); `getMessages` untouched.
 - `backend/src/db/emailQueries.js` — NEW `getTimelineEmailPageByContact` / `getTimelineEmailPageByTimeline` (§5.5); ASC pair untouched.
-- `backend/db/migrations/168_timeline_revpage_call_page_index.sql` + `rollback_168_timeline_revpage_call_page_index.sql` (§6).
+- `backend/db/migrations/171_timeline_revpage_call_page_index.sql` + `rollback_171_timeline_revpage_call_page_index.sql` (§6).
 - `tests/timelinePage.test.js` — NEW (§15.1); optional `tests/pulseTimelinePageRoute.test.js` for §15.2.
 - `backend/scripts/verify-timeline-revpage.mjs` — NEW N3 harness (§15.3).
 

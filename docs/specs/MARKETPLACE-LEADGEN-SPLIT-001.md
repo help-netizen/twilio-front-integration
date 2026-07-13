@@ -10,7 +10,7 @@ One marketplace app (`app_key='lead-generator'`, «Lead Generator») today front
 
 ## 2. Exact contracts
 
-### 2.1 Migration `backend/db/migrations/169_split_lead_generator_marketplace_apps.sql` — three statements, strictly this order
+### 2.1 Migration `backend/db/migrations/170_split_lead_generator_marketplace_apps.sql` — three statements, strictly this order
 
 **(1) Guarded rename UPDATE (FR-2).** Only `name` + the two descriptions + `updated_at`; every other column (incl. `provider_name='Blanc Labs'`, `app_key`, scopes, urls) untouched:
 
@@ -77,12 +77,12 @@ Contract points: credential resolved **by subquery from the newest CONNECTED def
 `backend/src/db/marketplaceQueries.js` `ensureMarketplaceSchema` — exactly ONE line appended after the 161 entry (:47), i.e. AFTER the 083 line (:27), with a 132-style comment (rename self-heals over 083's `ON CONFLICT DO UPDATE` re-assert; the 132-after-087 precedent :38-41):
 
 ```js
-await query(readMigration('169_split_lead_generator_marketplace_apps.sql'));
+await query(readMigration('170_split_lead_generator_marketplace_apps.sql'));
 ```
 
 Existing entries and their order are byte-unchanged. The list runs inside the advisory-lock transaction (`pg_advisory_xact_lock(hashtext('blanc_marketplace_schema'))`, :17) on every boot; the memoized no-client path (:51-69) COMMITs or ROLLBACKs atomically.
 
-### 2.3 Rollback `backend/db/migrations/rollback_169_split_lead_generator_marketplace_apps.sql` (FR-7)
+### 2.3 Rollback `backend/db/migrations/rollback_170_split_lead_generator_marketplace_apps.sql` (FR-7)
 
 FK-forced order (`marketplace_installations.app_id` is ON DELETE RESTRICT):
 1. DELETE `marketplace_installations` whose `app_id` resolves to the four new app_keys — the default-co seeded rows AND any other company's self-service installs.
@@ -121,7 +121,7 @@ No `FOR UPDATE` is added — the concurrent-disconnect race is accepted in the s
 
 ## 3. Scenarios — M (migration & boot)
 
-- **M1 — fresh apply.** *Given* a database at migration 168 where 083's seed exists (default-co has one CONNECTED `lead-generator` installation with `api_integration_id=1`), *when* `169_split_lead_generator_marketplace_apps.sql` is applied once (psql at deploy), *then*: `marketplace_apps` has exactly 5 rows with `category='lead_generation'`; `lead-generator`'s name is «Website Leads» and both descriptions match §2.1(1) verbatim, all its other columns byte-identical to before; the four new rows match the §2.1(2) table exactly; four new `marketplace_installations` rows exist for company `00000000-0000-0000-0000-000000000001` ONLY, each `status='connected'`, `api_integration_id` = the value resolved from the newest connected `lead-generator` installation (=1 on prod), `installed_at` set, `installed_by` NULL, `metadata = {"seeded_by":"MARKETPLACE-LEADGEN-SPLIT-001","shared_credential":true}`; zero rows written to `marketplace_installation_events`; `api_integrations` byte-identical before/after (NFR-1).
+- **M1 — fresh apply.** *Given* a database at migration 168 where 083's seed exists (default-co has one CONNECTED `lead-generator` installation with `api_integration_id=1`), *when* `170_split_lead_generator_marketplace_apps.sql` is applied once (psql at deploy), *then*: `marketplace_apps` has exactly 5 rows with `category='lead_generation'`; `lead-generator`'s name is «Website Leads» and both descriptions match §2.1(1) verbatim, all its other columns byte-identical to before; the four new rows match the §2.1(2) table exactly; four new `marketplace_installations` rows exist for company `00000000-0000-0000-0000-000000000001` ONLY, each `status='connected'`, `api_integration_id` = the value resolved from the newest connected `lead-generator` installation (=1 on prod), `installed_at` set, `installed_by` NULL, `metadata = {"seeded_by":"MARKETPLACE-LEADGEN-SPLIT-001","shared_credential":true}`; zero rows written to `marketplace_installation_events`; `api_integrations` byte-identical before/after (NFR-1).
 
 - **M2 — idempotent re-apply.** *Given* M1 has run, *when* the same file is applied again (arbitrarily many times), *then* row counts and row ids in `marketplace_apps` and `marketplace_installations` are stable (upsert refreshes `updated_at` only; the NOT EXISTS suppresses every installation re-seed); no duplicate active row can ever violate `idx_marketplace_installations_one_active`; `api_integrations` still untouched (NFR-2).
 

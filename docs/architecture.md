@@ -6573,7 +6573,7 @@ Backend:
 - `backend/src/services/timelinePage.js` — NEW pure cursor/order/merge module (encode/parse/compare/predicateMode/mergePage).
 - `backend/src/db/conversationsQueries.js` — NEW `getMessagesPageDesc(conversationIds, companyId, {limit, cursor})`; `getMessages` untouched.
 - `backend/src/db/emailQueries.js` — NEW `getTimelineEmailPageByContact` / `getTimelineEmailPageByTimeline`; existing ASC pair untouched.
-- `backend/db/migrations/168_timeline_revpage_call_page_index.sql` — NEW (see index plan).
+- `backend/db/migrations/171_timeline_revpage_call_page_index.sql` — NEW (see index plan).
 - `backend/tests/timelinePage.test.js` — NEW jest for the pure module.
 - `backend/scripts/verify-timeline-revpage.mjs` — NEW N3 harness for a prod-DB copy (house gotcha: scripts aren't in the Docker image — scp + docker cp to run there).
 
@@ -6596,7 +6596,7 @@ Open thread → `usePulseTimeline` page-1 request (`?limit=20`) → route guards
 
 Next free migration: **168** (167 = technician_time_off, applied on prod).
 
-- `backend/db/migrations/168_timeline_revpage_call_page_index.sql`:
+- `backend/db/migrations/171_timeline_revpage_call_page_index.sql`:
   ```sql
   -- TIMELINE-REVPAGE-001: reverse-cursor page over a thread's parent calls.
   -- COALESCE(started_at, created_at) is the canonical feed timestamp (matches the FE).
@@ -6738,7 +6738,7 @@ Frontend:
 - `GET /api/billing/wallet` (`backend/src/routes/billing.js:66-89`) + `billingApi.wallet()` (frontend) — готовый источник баланса для показа бонуса в визарде. НЕ добавлять wallet в `GET /api/billing`.
 - Twilio-SDK v5.12.0: Porting API ПОДТВЕРЖДЁН в `node_modules/twilio/lib/rest/numbers/v1/`: `client.numbers.v1.portingPortabilities(phone).fetch({ targetAccountSid })` (portability pre-check) и `client.numbers.v1.portingPortIns.create({ numbersV1PortingPortInCreate })` / `.portingPortIns(sid).fetch()/.remove()` (create/status/cancel). Create-модель: `accountSid` (целевой субаккаунт), `documents[]` (≥1 Utility Bill doc SID), `losingCarrierInformation{customerName, authorizedRepresentative, authorizedRepresentativeEmail, address{...}|addressSid, accountNumber?, customerType?}`, `phoneNumbers[{phoneNumber, pin?}]`, `targetPortInDate?` (≥7 дней, US). Ответ содержит `portInRequestSid`, `port_in_request_status`, `signature_request_url`, `phone_numbers[].portInPhoneNumberStatus`.
 - **Скоуп Porting-вызовов:** Porting API (numbers.twilio.com) вызывается MASTER-клиентом (`masterClient()`), целевой аккаунт передаётся полем `accountSid`/`targetAccountSid` = `company_telephony.twilio_subaccount_sid` (для default-компании — master SID). Обоснование: create-модель имеет явное поле целевого (суб)аккаунта, и master-креды гарантированно имеют доступ к Porting-продукту; субаккаунт-клиент НЕ используется для porting. Загрузка документа (utility bill) — прямой multipart POST на `https://numbers-upload.twilio.com/v1/documents` с Basic-auth master-кредами (в SDK обёртки нет; паттерн multer memoryStorage как в `routes/companyProfile.js`).
-- `territoryGeoService.geocodeZip` (SERVICE-TERR-002) + `zip_geocache`/`territory_radii` (mig 168), `companies.city/state/zip` (mig 097) — источники координат базы компании для сортировки area-кодов.
+- `territoryGeoService.geocodeZip` (SERVICE-TERR-002) + `zip_geocache`/`territory_radii` (mig 171), `companies.city/state/zip` (mig 097) — источники координат базы компании для сортировки area-кодов.
 - `FloatingField` (`frontend/src/components/ui/floating-field.tsx`) — базовый инпут комбо-поля (есть onFocus/onBlur/onKeyDown); дропдаун подсказок — лёгкий локальный поповер-список (НЕ Radix Select: нужен свободный ввод).
 - `stripePaymentsService.buildChecklist` (`backend/src/services/stripePaymentsService.js:65-72`) — labels чеклиста рендерятся фронтом с бэка; `computeReadiness`/`canCollect` НЕ трогать.
 - НЕ дублировать: `MarketplaceConnectDialog`, `CloudBanner`, NUMBER_LIMIT-upsell, Stripe-checkout поллинг (`TelephonyTwilioSettingsPage.tsx:197-205`).
@@ -7060,7 +7060,7 @@ Log-only; no metrics infrastructure (R9).
 - No repo-wide migration auto-runner exists: migrations apply manually at deploy (psql) AND 169 replays every boot via the ensure list → idempotency is doubly mandatory (NFR-2). 169 contains no `CREATE INDEX CONCURRENTLY` → transaction-safe (required: the ensure list runs inside BEGIN/COMMIT).
 - Seed-shape precedents studied: 083 (the two-app upsert), 126/132/145/161 (single-app upserts + comment style), rollback_132/145/161 (DELETE by app_key + restore-prior-values UPDATE; FK notes). Test precedents: tests/marketplaceTelephonyOverlay.test.js + tests/googleEmailMarketplace.test.js (mock `marketplaceQueries`, run REAL `marketplaceService`), tests/yelpSendsBackfill.db.test.js (real-PG suite, `dbReady` beforeAll probe → per-test `SKIPPED-NEEDS-DB` self-skip).
 
-### Design D1 — migration `169_split_lead_generator_marketplace_apps.sql` (three statements, strictly this order)
+### Design D1 — migration `170_split_lead_generator_marketplace_apps.sql` (three statements, strictly this order)
 
 **(1) Rename `lead-generator` → «Website Leads» (FR-2).** Targeted UPDATE of `name` + both descriptions only (provider_name «Blanc Labs» and every other field untouched — rebrand is an explicit follow-up). Guarded no-op re-run (132's `IS DISTINCT FROM` style); in the boot sequence 083 has just re-asserted the old name inside the same transaction, so the guard fires there every boot — atomic for readers.
 
@@ -7123,7 +7123,7 @@ The `NOT EXISTS` is deliberately **status-blind** (hazard (c)): once a (default-
         // re-asserts the old "Lead Generator" name on every boot — the
         // 132-after-087 precedent). Installation seed = all-statuses NOT EXISTS:
         // boot replays never duplicate rows nor resurrect a disconnected one.
-        await query(readMigration('169_split_lead_generator_marketplace_apps.sql'));
+        await query(readMigration('170_split_lead_generator_marketplace_apps.sql'));
 ```
 
 ### Design D3 — shared-credential disconnect guard (FR-5; the ONLY non-catalog change)
@@ -7183,14 +7183,14 @@ Status truth-table (first three rows = today's behavior, byte-compatible): no cr
 
 **No new logging/metrics — deliberate.** The existing `marketplace_installation_events` audit stream already records install/disconnect/credential_revoked; the guard enriches the `'disconnected'` event payload with `credential_shared` (zero new infra), and the seeded rows carry `metadata.seeded_by`. The migration itself stays silent (it replays every boot — any `RAISE NOTICE` would spam logs forever).
 
-### Rollback `rollback_169_split_lead_generator_marketplace_apps.sql` (FR-7)
+### Rollback `rollback_170_split_lead_generator_marketplace_apps.sql` (FR-7)
 
 Order is FK-forced (`marketplace_installations.app_id` is ON DELETE RESTRICT): (1) DELETE installations whose `app_id` resolves to the four new app_keys — the default-co seeded rows AND any self-service installs by other companies (script header documents: their minted credentials are NOT revoked/deleted; `api_integrations.marketplace_app_id/marketplace_installation_id` clear via ON DELETE SET NULL; revoke those keys via the integrations UI if desired); (2) DELETE the four `marketplace_apps` rows; (3) UPDATE `lead-generator` back to the exact 083 seed strings (name «Lead Generator», short «Creates inbound leads from external campaigns.», long «Posts validated campaign leads into Blanc with source attribution.» — 083 re-asserts these on the next boot anyway once the list entry is gone; NFR-4 governs new strings only). Header also states: **rolling back requires deleting the `readMigration('169_…')` line from `ensureMarketplaceSchema`**, and that the script never touches the original `lead-generator` installation row, the live `api_integrations` row, or any other app. `marketplace_installation_events` audit rows survive (installation_id/app_id SET NULL) — rollback_161 precedent. Idempotent: every statement no-ops when already rolled back.
 
 ### Files to change (complete list — nothing else)
 
-1. `backend/db/migrations/169_split_lead_generator_marketplace_apps.sql` — NEW (D1).
-2. `backend/db/migrations/rollback_169_split_lead_generator_marketplace_apps.sql` — NEW (above).
+1. `backend/db/migrations/170_split_lead_generator_marketplace_apps.sql` — NEW (D1).
+2. `backend/db/migrations/rollback_170_split_lead_generator_marketplace_apps.sql` — NEW (above).
 3. `backend/src/db/marketplaceQueries.js` — boot-list line after :47 (D2) + `countOtherActiveInstallationsOnCredential` helper + export (D3).
 4. `backend/src/services/marketplaceService.js` — guard inside `disconnectInstallation` only (D3).
 5. `tests/marketplaceLeadgenSplit.test.js` — NEW, service-level (below).

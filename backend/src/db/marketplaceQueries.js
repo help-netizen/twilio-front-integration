@@ -51,7 +51,7 @@ async function ensureMarketplaceSchema(client = null) {
         // re-asserts the old "Lead Generator" name on every boot — the
         // 132-after-087 precedent). Installation seed = all-statuses NOT EXISTS:
         // boot replays never duplicate rows nor resurrect a disconnected one.
-        await query(readMigration('169_split_lead_generator_marketplace_apps.sql'));
+        await query(readMigration('170_split_lead_generator_marketplace_apps.sql'));
         return;
     }
 

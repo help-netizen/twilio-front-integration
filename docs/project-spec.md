@@ -300,7 +300,7 @@ legacy arrays. Pages are assembled from 5 bounded per-source SQL legs (calls, sm
 by-timeline, estimates+invoices behind the unchanged financial-permission gate) merged by the pure module
 `backend/src/services/timelinePage.js`; thread `meta` (contact, conversations, timeline identity) rides
 on page 1 only. **No `limit` → the legacy full response, byte-identical** (golden-fixture gated).
-Migration 168 (index-only) adds the partial index `idx_calls_timeline_page` on
+migration 171 (index-only) adds the partial index `idx_calls_timeline_page` on
 `calls (timeline_id, COALESCE(started_at, created_at) DESC, id DESC) WHERE parent_call_sid IS NULL`.
 
 Frontend (`usePulseTimeline` → `useInfiniteQuery` v5, `PulseTimeline.tsx`): opening a thread lands

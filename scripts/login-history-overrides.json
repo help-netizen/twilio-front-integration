@@ -165,5 +165,135 @@
   },
   "e1e6e25": {
     "hide": true
+  },
+  "306bdaf": {
+    "hide": true
+  },
+  "eec3d88": {
+    "hide": true
+  },
+  "3ab0712": {
+    "hide": true
+  },
+  "17a6f58": {
+    "hide": true
+  },
+  "bdff23d": {
+    "hide": true
+  },
+  "8cd69de": {
+    "hide": true
+  },
+  "3928d45": {
+    "hide": true
+  },
+  "51879ab": {
+    "hide": true
+  },
+  "d57f178": {
+    "hide": true
+  },
+  "e08dd0c": {
+    "hide": true
+  },
+  "ad4bfff": {
+    "hide": true
+  },
+  "f656cb6": {
+    "hide": true
+  },
+  "695839f": {
+    "hide": true
+  },
+  "f5b6bbb": {
+    "hide": true
+  },
+  "1c18563": {
+    "hide": true
+  },
+  "d59364e": {
+    "hide": true
+  },
+  "421c103": {
+    "hide": true
+  },
+  "8db77b1": {
+    "hide": true
+  },
+  "63b151b": {
+    "hide": true
+  },
+  "ac41c55": {
+    "hide": true
+  },
+  "9391584": {
+    "hide": true
+  },
+  "d7bc838": {
+    "hide": true
+  },
+  "9f59f8b": {
+    "hide": true
+  },
+  "7d6eebf": {
+    "hide": true
+  },
+  "db2b809": {
+    "hide": true
+  },
+  "8c4b6da": {
+    "hide": true
+  },
+  "1ec54b5": {
+    "tag": "Feature",
+    "text": "Pulse conversations open at the latest message — scroll up loads older history"
+  },
+  "fe4d062": {
+    "tag": "Polish",
+    "text": "Action Required bar stays pinned while you read a thread"
+  },
+  "ba78a40": {
+    "tag": "Feature",
+    "text": "Transfer your existing business number — guided 3-step wizard"
+  },
+  "afb8b61": {
+    "tag": "Feature",
+    "text": "New companies get a $5 welcome credit with pay-as-you-go activation"
+  },
+  "534abb4": {
+    "tag": "Feature",
+    "text": "Lead-generator apps split into separate marketplace cards"
+  },
+  "f30c0fd": {
+    "tag": "Feature",
+    "text": "Yelp booking agent now remembers the whole conversation"
+  },
+  "93e94d3": {
+    "tag": "Feature",
+    "text": "Service territory: radius editor and read-only coverage map"
+  },
+  "163fafa": {
+    "tag": "Fix",
+    "text": "Fixed mid-call drops when the company identity refreshes"
+  },
+  "c6b145b": {
+    "tag": "Feature",
+    "text": "Every new Yelp lead creates a “call the customer” task"
+  },
+  "0b13364": {
+    "tag": "Polish",
+    "text": "Onboarding nudges you to finish the company profile"
+  },
+  "80faa7c": {
+    "tag": "Fix",
+    "text": "Killed the eternal “Confirm it’s you” login reload loop"
+  },
+  "30656f8": {
+    "tag": "Fix",
+    "text": "Yelp accepts our email replies again (quoted-reply format)"
+  },
+  "373ec40": {
+    "tag": "Fix",
+    "text": "2FA prompt shows instead of a forced re-login"
   }
 }
