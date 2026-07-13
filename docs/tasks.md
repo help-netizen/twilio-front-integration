@@ -9392,7 +9392,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 
 **Verify:** `cd frontend && npm run build`.
 
-**Зависимости:** T5. **Размер:** S. **Статус:** todo
+**Зависимости:** T5. **Размер:** S. **Статус:** done (2026-07-13, GPT, ревью ACCEPT: SSE→head-refresh, send→refresh+scrollSignal, refetchTimeline-алиас; build красный только PulsePage.tsx → T7)
 
 ### Задача T7: frontend — PulseTimeline: scroll-механика + PulsePage props-wiring + CSS
 

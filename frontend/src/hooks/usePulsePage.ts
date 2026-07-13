@@ -13,7 +13,6 @@ import { appendTranscriptDelta, finalizeTranscript } from './useLiveTranscript';
 import { authedFetch } from '../services/apiClient';
 import { useLeadByPhone } from './useLeadByPhone';
 import { useLeadByContact } from './useLeadByContact';
-import { callToCallData } from '../components/pulse/pulseHelpers';
 import { makePulseLeadActions } from './pulseLeadActions';
 import type { Call } from '../types/models';
 import type { Lead } from '../types/lead';
@@ -35,10 +34,23 @@ export function usePulsePage() {
     const loadMoreRef = useRef<HTMLDivElement | null>(null);
     useEffect(() => { if (!loadMoreRef.current) return; const obs = new IntersectionObserver(entries => { if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) fetchNextPage(); }, { threshold: 0.1 }); obs.observe(loadMoreRef.current); return () => obs.disconnect(); }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-    const { data: timelineData, isLoading: timelineLoading, refetch: refetchTimeline } = usePulseTimeline(contactId, timelineId || undefined);
+    const {
+        items,
+        calls: contactCalls,
+        messages,
+        emailMessages,
+        financialEvents,
+        meta,
+        isLoading: timelineLoading,
+        fetchOlder,
+        hasOlder,
+        isFetchingOlder,
+        refreshNewestPage,
+    } = usePulseTimeline(contactId, timelineId || undefined);
+    const [scrollToBottomSignal, setScrollToBottomSignal] = useState(0);
 
     useRealtimeEvents({
-        onCallUpdate: (event: SSECallEvent) => { if (event.parent_call_sid) return; refetchContacts(); if ((contactId && event.contact_id && Number(event.contact_id) === contactId) || (timelineId && event.timeline_id && Number(event.timeline_id) === timelineId)) refetchTimeline(); },
+        onCallUpdate: (event: SSECallEvent) => { if (event.parent_call_sid) return; refetchContacts(); if ((contactId && event.contact_id && Number(event.contact_id) === contactId) || (timelineId && event.timeline_id && Number(event.timeline_id) === timelineId)) refreshNewestPage(); },
         onCallCreated: () => refetchContacts(),
         onMessageAdded: (event: SSEMessageAddedEvent) => {
             // List badge always updates (any contact, company-wide).
@@ -48,24 +60,19 @@ export function usePulsePage() {
             // both set it). If it's null/absent the event isn't timeline-scoped, so fall back to the
             // prior behavior and refetch whenever a timeline is open.
             const evtTimelineId = event?.timelineId;
-            if (evtTimelineId == null) { if (contactId || timelineId) refetchTimeline(); return; }
-            if (timelineId && Number(evtTimelineId) === timelineId) refetchTimeline();
+            if (evtTimelineId == null) { if (contactId || timelineId) refreshNewestPage(); return; }
+            if (timelineId && Number(evtTimelineId) === timelineId) refreshNewestPage();
         },
         onContactRead: () => refetchContacts(),
         onGenericEvent: (et: string) => { if (['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned', 'timeline.read', 'timeline.unread'].includes(et)) refetchContacts(); },
         onTranscriptDelta: (e: SSETranscriptDeltaEvent) => { appendTranscriptDelta(e.callSid, { text: e.text, speaker: e.speaker, turnOrder: e.turnOrder, isFinal: e.isFinal, receivedAt: e.receivedAt }); },
-        onTranscriptFinalized: (e: SSETranscriptFinalizedEvent) => { finalizeTranscript(e.callSid, e.text); if (contactId || timelineId) refetchTimeline(); },
+        onTranscriptFinalized: (e: SSETranscriptFinalizedEvent) => { finalizeTranscript(e.callSid, e.text); if (contactId || timelineId) refreshNewestPage(); },
     });
 
     const filteredCalls = useMemo(() => { const raw = contactData?.conversations || []; const seen = new Map<string, number>(); const deduped: Call[] = []; for (const c of raw) { const p = c.contact?.phone_e164 || c.from_number || ''; const d = p.replace(/\D/g, ''); if (!d) { deduped.push(c); continue; } if (!seen.has(d)) { seen.set(d, deduped.length); deduped.push(c); } } return deduped; }, [contactData?.conversations]);
 
-    const callDataItems = useMemo(() => (timelineData?.calls || []).map(callToCallData), [timelineData?.calls]);
-    const messages = timelineData?.messages || [];
-    const conversations = timelineData?.conversations || [];
-    const financialEvents = (timelineData as any)?.financial_events || [];
-    const emailMessages = (timelineData as any)?.email_messages || [];
-    const contactCalls = timelineData?.calls || [];
-    const contact = (timelineData as any)?.contact || contactCalls[0]?.contact;
+    const conversations = meta?.conversations || [];
+    const contact = meta?.contact || contactCalls[0]?.contact;
     const selectedConv = filteredCalls.find((c: Call) => { const tlId = (c as any).timeline_id; return tlId ? Number(tlId) === timelineId : c.contact?.id === contactId; });
     const phone = contact?.phone_e164 || (selectedConv as any)?.tl_phone || contactCalls[0]?.from_number || contactCalls[0]?.to_number || selectedConv?.contact?.phone_e164 || selectedConv?.from_number || conversations[0]?.customer_e164 || '';
     const hasActiveCall = contactCalls.some((c: any) => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status));
@@ -186,7 +193,8 @@ export function usePulsePage() {
             if (!cid) { toast.error('Cannot send email: contact not resolved'); return; }
             try {
                 await emailApi.sendTimelineEmail(cid, { body: message, toEmail: target.value });
-                refetchTimeline();
+                await refreshNewestPage();
+                setScrollToBottomSignal(s => s + 1);
             } catch (err: any) {
                 console.error('[Email] Send failed:', err);
                 if (err instanceof emailApi.TimelineEmailError && err.code === 'MAILBOX_NOT_CONNECTED') {
@@ -204,7 +212,8 @@ export function usePulsePage() {
             if (targetConv) { await messagingApi.sendMessage(targetConv.id, { body: message }, files?.[0]); }
             else if (sendTo && proxyPhone) { const toE164 = (p: string) => { const d = p.replace(/\D/g, ''); if (d.startsWith('1') && d.length === 11) return `+${d}`; if (d.length === 10) return `+1${d}`; return `+${d}`; }; await messagingApi.startConversation({ customerE164: toE164(sendTo), proxyE164: toE164(proxyPhone), initialMessage: message }); }
             else if (sendTo && !proxyPhone) { toast.error('Cannot send SMS: no proxy phone number available'); return; }
-            refetchTimeline();
+            await refreshNewestPage();
+            setScrollToBottomSignal(s => s + 1);
         } catch (err: any) {
             console.error('[SMS] Send failed:', err);
             toast.error(err?.response?.data?.error || 'Failed to send message');
@@ -228,14 +237,15 @@ export function usePulsePage() {
     return {
         location, contactId, timelineId, searchQuery, setSearchQuery,
         contactsLoading, filteredCalls, loadMoreRef, isFetchingNextPage,
-        timelineLoading, callDataItems, messages, financialEvents, emailMessages, phone, hasActiveCall,
+        timelineLoading, items, messages, financialEvents, emailMessages, phone, hasActiveCall,
+        hasOlder, isFetchingOlder, fetchOlder, scrollToBottomSignal, refreshNewestPage,
         lead, leadLoading, contact, contactDetail, contactDetailLoading, selectedConv,
         editingLead, setEditingLead, convertingLead, setConvertingLead,
         secondaryPhone, secondaryPhoneName, contactEmails, emailConnected, selectedTarget, setSelectedTarget,
         handleUpdateStatus: actions.handleUpdateStatus, handleUpdateSource: actions.handleUpdateSource,
         handleUpdateComments: actions.handleUpdateComments, handleMarkLost: actions.handleMarkLost,
         handleActivate: actions.handleActivate, handleConvert, handleConvertSuccess, handleDelete, handleUpdateLead,
-        handleSendMessage, handleAiFormat, refetchContacts, refetchTimeline,
+        handleSendMessage, handleAiFormat, refetchContacts, refetchTimeline: refreshNewestPage,
         getLeadForPhone,
         refreshContactDetail: () => { if (contact?.id) contactsApi.getContact(contact.id).then(res => setContactDetail({ contact: res.data.contact, leads: res.data.leads })).catch(() => { }); },
     };
