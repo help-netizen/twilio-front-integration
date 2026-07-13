@@ -9827,7 +9827,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 # stay-green: boot-list тронут — смежные marketplace-сьюты обязаны пройти без правок
 node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/marketplaceTelephonyOverlay.test.js tests/googleEmailMarketplace.test.js tests/services/marketplaceService.test.js tests/routes/marketplace.test.js --rootDir . --testPathIgnorePatterns "/node_modules/" --forceExit
 ```
-**Зависимости:** нет. **Статус:** todo
+**Зависимости:** нет. **Статус:** done (2026-07-13, GPT r1, ревью ACCEPT, 30/30 на живой dev-БД)
 
 ### T2: shared-credential disconnect guard (хелпер + сервис) + unit-сьют + append TC-G5-01 в db-сьют
 **Цель:** по D3/§2.4. (1) NEW query-хелпер `countOtherActiveInstallationsOnCredential(companyId, apiIntegrationId, excludeInstallationId, client = null)` в `marketplaceQueries.js` + в `module.exports` (:359-374): falsy `apiIntegrationId` → `return 0` ДО ensureMarketplaceSchema/query (зеркало `revokeCredentialById` :260); иначе `ensureMarketplaceSchema(client)` + `queryFor(client)` + `SELECT COUNT(*)::int … WHERE company_id=$1 AND api_integration_id=$2 AND id<>$3 AND status IN ('connected','provisioning_failed')` — active-set РОВНО как partial-index/precondition/reconciler; весь SQL в queries (сервис raw SQL не пишет). (2) `disconnectInstallation` (`marketplaceService.js:502-558`) — меняется ТОЛЬКО регион :516-544: `otherActive` считается ДО revoke; `revokeCredentialById` зовётся ТОЛЬКО при `otherActive === 0`; `writeCredentialRevokedEvent` — только если revoke вернул строку (как сегодня); статус-выражение расширяется до `!installation.api_integration_id || revoked || otherActive > 0 ? 'disconnected' : 'revoked'`; payload события `'disconnected'` = `{ credential_revoked: Boolean(revoked), credential_shared: otherActive > 0 }`. Сигнатура, 404/409-прекондишны (:509-514), BEGIN/COMMIT/ROLLBACK/release, return shape `{id,status,disconnected_at}` — byte-unchanged; truth-table строки 1–3 = сегодняшнее поведение (регрессия-пин TC-G7-01), строка 4 — новая. Без FOR UPDATE (G8 принят); `retryProvisioning` НЕ гвардить (G4). (3) NEW `tests/marketplaceLeadgenSplit.test.js` по прецеденту marketplaceTelephonyOverlay.test.js:34-56 — mock `marketplaceQueries` (telephonyOverlay-фабрика + НОВЫЙ `countOtherActiveInstallationsOnCredential: jest.fn()`), РЕАЛЬНЫЙ `marketplaceService`; 10 unit-кейсов + 3 structural (fs/glob, без DB/сети). (4) APPEND-ONLY describe TC-G5-01 в `tests/marketplaceLeadgenSplit.db.test.js` (реальный SQL хелпера: company-scoped/active-set/self-excluding/falsy-short-circuit/Number).
@@ -9842,7 +9842,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 # stay-green (zero mock additions — сьюты не трогались)
 node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/marketplaceTelephonyOverlay.test.js tests/googleEmailMarketplace.test.js tests/services/marketplaceService.test.js tests/routes/marketplace.test.js tests/middleware/integrationScopes.test.js --rootDir . --testPathIgnorePatterns "/node_modules/" --forceExit
 ```
-**Зависимости:** T1 (TC-M2-02 читает оба NEW SQL-файла через fs; db-сьют/harness существует; shared `marketplaceQueries.js`). **Статус:** todo
+**Зависимости:** T1 (TC-M2-02 читает оба NEW SQL-файла через fs; db-сьют/harness существует; shared `marketplaceQueries.js`). **Статус:** done (2026-07-13, GPT r1, ревью ACCEPT, 50/50 на живой dev-БД)
 
 ### T3: FINAL VERIFY — полный stay-green gate (БЕЗ кода)
 **Цель:** финальный прогон всей coverage-матрицы (27/27 TC в итоговом состоянии) + stay-green лист тест-кейсов. `npm run build` НЕ нужен (backend-only, FE не тронут) — вместо него `node --check` по обоим правленым JS. При любом RED — фикс возвращается в задачу-владельца файла (T1/T2), T3 перезапускается целиком; ассерты не редактировать.
@@ -9860,7 +9860,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 # 3) stay-green: Yelp-сет (explicit non-goal — task-based, не marketplace-token)
 node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/yelpAgentSendLink.test.js tests/yelpCallTask.test.js tests/yelpConversationId.test.js tests/yelpConvoAgentLoop.test.js tests/yelpConvoGreeterDedup.test.js tests/yelpConvoHandler.test.js tests/yelpConvoHandler.db.test.js tests/yelpConvoHistory.test.js tests/yelpConvoIntercept.test.js tests/yelpLeadClaim.db.test.js tests/yelpLeadEnqueue.test.js tests/yelpLeadHandler.test.js tests/yelpLeadHook.test.js tests/yelpLeadSafeFail.test.js tests/yelpLeadService.claim.test.js tests/yelpLeadService.detect.test.js tests/yelpLeadService.parse.test.js tests/yelpReplyFormat.test.js tests/yelpSendsBackfill.db.test.js tests/yelpSendsBackfill.dry.test.js tests/yelpTimelineCleanup.db.test.js tests/yelpTimelineDedup.test.js tests/yelpTimelinePulse.db.test.js tests/yelpTimelineResolve.db.test.js --rootDir . --testPathIgnorePatterns "/node_modules/" --forceExit
 ```
-**Зависимости:** T1, T2. **Статус:** todo
+**Зависимости:** T1, T2. **Статус:** done (2026-07-13, orchestrator verify: node --check 2/2, 13 suites / 162 tests)
 
 ## MARKETPLACE-LEADGEN-SPLIT-001 — порядок выполнения
 
