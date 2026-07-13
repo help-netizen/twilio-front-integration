@@ -7214,6 +7214,227 @@ Order is FK-forced (`marketplace_installations.app_id` is ON DELETE RESTRICT): (
 7. **Boot-cost of replaying the seed** — three statements over single-digit-row tables inside the existing advisory-lock txn; negligible.
 8. **Copy drift** — descriptions are drafts by design (FR-1); any future copy edit lands in 169 itself (self-heals every boot), not in a data patch.
 
+
+## OUTBOUND-LEAD-CALL-001 — architecture decision (2026-07-13)
+
+**Verdict: ONE dialer, TWO scenarios.** Extend the LIVE parts-robot infrastructure (`outbound_call_attempts` + `outboundCallWorker` + `vapiCallStatus` webhook + `outboundCallService.placeCall` + `vapiCallTimelineService`) with a `scenario` discriminator; all lead-specific behavior lives in a NEW service `outboundLeadCallService.js` that the worker/webhook dispatch to by scenario. The parts path stays **byte-identical** except three additive touches (a dispatch branch, one extra export, two columns in a SELECT list). Trigger = a NEW `eventBus.emit('lead.created')` in `leadsService.createLead` (the event exists only as an SSE broadcast today — see groundwork G3) + a REPAIR-ADVISOR-style subscriber. Marketplace app `outbound-lead-caller` (gate + setup page) with a dedicated `outbound_lead_call_settings` table (Mail-Secretary settings precedent + outbound-call-settings resolve precedent). In-call booking = NEW L0 skill `confirmLeadBooking` (confirmPartsVisit "Deviation 1" pattern), never `bookOnLead`.
+
+### Verified groundwork (file:line — all checked in the current tree)
+
+- **G1 — `outbound_call_attempts` IS job-scoped today:** `job_id BIGINT NOT NULL REFERENCES jobs(id)` (`backend/db/migrations/158_outbound_call_attempts.sql:23`); the parts concurrency guard is a partial unique on `(job_id) WHERE status IN ('pending','dialing')` (:38-40). Postgres unique indexes ignore NULL rows → making `job_id` nullable and adding lead rows with `job_id = NULL` **cannot** trip the parts guard. Statuses vocabulary already matches FR-10 (:57).
+- **G2 — claim loop / retry / webhook are scenario-splittable without touching parts logic:** the claim UPDATE returns `*` (`backend/src/services/outboundCallWorker.js:465-481`) so new columns flow into `processAttempt` automatically; the per-attempt loop (:487-503) is the single dispatch point. All parts-only semantics are inside `processAttempt` (Guard-1 job re-read :252-288, groupRouting business-hours clamp :294-323, `scheduleRetryOrExhaust` :400-443, CANCEL-001 `retryBlockReason` :208-228) — none of it needs modification. Webhook side: correlation is scenario-agnostic (`backend/src/routes/vapiCallStatus.js:147-156`), timeline finalize (:229-233) and the terminal-idempotence check (:236-238) are generic; everything parts-specific (booked-detection via job status :245-259, decline/retry/exhaust :275-374) sits AFTER those — a lead branch inserted between :238 and :245 splits cleanly. `classifyEndedReason` (:112-127) is the shared outcome vocabulary.
+- **G3 — `lead.created` is NOT on the event bus today.** `leadsService.createLead` → `emitLeadChange('lead.created', …)` is only a `realtimeService.broadcast` SSE fan-out with a minimal no-PII payload (`backend/src/services/leadsService.js:358`, :1303-1314). The bus emit exists for jobs only (`jobsService.js:577-582`, REPAIR-ADVISOR-001 pattern; subscriber precedent `eventSubscribers.js:33-42` — `setImmediate`, lazy require, return-immediately). `eventCatalog.js:14` already DECLARES `lead.created` (sample fields `id, first_name, last_name, phone, job_type`) — emitting it is catalog-conformant. **Side effect (deliberate, documented):** the rules-engine `'*'` subscriber (`eventSubscribers.js:18`) will start receiving `lead.created`; any pre-configured automation rules on that event become live. Deploy checklist: audit prod `automation_rules` for `lead.created` triggers before enabling.
+- **G4 — VAPI assistant + discrimination:** the worker dials `VAPI_OUTBOUND_ASSISTANT_ID` with caller-ID from `VAPI_OUTBOUND_PHONE_NUMBER_ID` or transient-Twilio `VAPI_OUTBOUND_TWILIO_NUMBER` (`outboundCallService.js:71-105`); context is injected via `assistantOverrides.variableValues` with conditional spreads that keep absent keys byte-absent (:107-133). The repo mirror `voice-agent/assistants/parts-visit-scheduler.json` shows the live outbound assistant has tools `recommendSlots` + `confirmPartsVisit` only, `serverMessages: ['end-of-call-report','status-update']` (no change needed), and a **parts-specific static `firstMessage`** ("your part has arrived", hardcoded company name) — so the lead scenario MUST override the greeting per-call via `assistantOverrides.firstMessage` (VAPI supports per-call overrides of assistant properties; parts calls don't send the key → their greeting is untouched). Anti-spoof: `vapi-tools.buildSkillInput` spreads `variableValues` LAST over model args (`backend/src/routes/vapi-tools.js:90-105`) — injected identity/slot keys always win (Yelp injection-hardening precedent).
+- **G5 — marketplace precedents:** connect gate = generic `marketplaceService.isAppConnected(companyId, appKey)` (`marketplaceService.js:99`); `provisioning_mode='none'` apps skip credential minting in `installApp` (:345-360) — the ai-repair-advisor/smart-slot-engine "pure gate" path. Boot-reseed registration list = `ensureMarketplaceSchema` (`backend/src/db/marketplaceQueries.js:27-54`, last entry `170_split_lead_generator…` at :54, ordering-after-083 rule documented at :48-53). Settings-page precedent = Mail Secretary: dedicated table `mail_agent_settings` (mig `152_mail_agent.sql:9-20`), `metadata.setup_path` on the catalog row (:47-50), routed page (`App.tsx:163`), Configure button rendered generically from `metadata.setup_path` (`IntegrationsPage.tsx:301-302`), API mounted with `authenticate + requirePermission('tenant.integrations.manage') + requireCompanyAccess` (`src/server.js:270-271`).
+- **G6 — business-hours source (D2):** canonical accessor `scheduleService.getDispatchSettings(companyId)` → `dispatch_settings` row or `DEFAULT_DISPATCH_SETTINGS` (`scheduleService.js:14-23`, :667-673; storage `scheduleQueries.js:283-316`): `timezone`, `work_start_time 'HH:MM'`, `work_end_time`, `work_days [0=Sun…6=Sat]`. This is what the schedule uses (`getAvailableSlots` :560-564). NOTE: the parts worker uses a DIFFERENT source (`groupRouting.isBusinessHours` over `user_group_hours`, `outboundCallWorker.js:58-81`) — per D2 the lead scenario does NOT reuse it; parts keeps its source untouched.
+- **G7 — parts ladder config:** `outbound_call_settings` is one-row-per-company with parts defaults `['immediate','+2h','next_business_morning']` (mig 159:16-24; `outboundCallSettingsService.js:14-19`, safe-fail `resolve` :64-71). Changing its PK to add a scenario would touch the live parts resolve — rejected (see D-B).
+- **G8 — slot pre-compute for a LEAD (zip-only) works:** `recommendSlots.run(companyId, {}, input)` accepts `{ zip | lat+lng | address, … }` with location preference lat+lng → address → zip (`agentSkills/skills/recommendSlots.js:128-153`), gates on the `smart-slot-engine` app, safe-fails to `SLOT_FALLBACK`, and already includes the TECH-DAYOFF-001 seam (inside `slotEngineService`). Parts pre-compute precedent: `partsCallService.startRobotCall` calls `recommendSlots.run` before enqueue (`partsCallService.js:697,764`) and ships the top slot as `slot_json` → `placeCall` variableValues. Leads have `postal_code`/`latitude`/`longitude`/`lead_notes`/`comments`/`job_source` columns (FIELD_MAP `leadsService.js:132-164`); `leads.uuid` is `VARCHAR(20) NOT NULL UNIQUE` (`004_create_leads.sql:9`) → FK-able. Company-scoped re-reads exist: `getLeadByUUID(uuid, companyId)` :255, `getLeadById(id, companyId)` :284. Open-lead definition = `status NOT IN ('Lost','Converted')` (:192).
+- **G9 — timeline + tasks:** `vapiCallTimelineService.recordPlacement` resolves the Pulse thread **by dialed phone** (`findOrCreateTimeline(dialedNumber, cid)`, `vapiCallTimelineService.js:251-254`) — `job_id` is only audit payload → lead calls mirror into Pulse with ZERO timeline changes (FR-13 confirmed). Tasks bind to leads natively: `tasks.lead_id` (mig 136), `PARENTS.lead` (`tasksQueries.js:22-29`), and the Yelp precedent creates a lead-bound, Pulse-AR-visible task via `timelinesQueries.createTask({ threadId, subjectType:'lead', subjectId, … })` (`yelpLeadService.js:456-484`; `timelinesQueries.js:847`).
+- **G10 — migration numbering:** files exist through `171_timeline_revpage_call_page_index.sql` → next free = **172** (+173 for the seed). Renumber at implementation if a parallel worktree lands first (project rule).
+
+### Decisions
+
+**D-A · Data model — EXTEND `outbound_call_attempts` (no parallel table).** Migration `172_outbound_lead_call.sql` (+ rollback):
+
+```sql
+-- 1. Scenario discriminator + lead key; job becomes per-scenario-required.
+ALTER TABLE outbound_call_attempts ALTER COLUMN job_id DROP NOT NULL;
+ALTER TABLE outbound_call_attempts
+    ADD COLUMN IF NOT EXISTS scenario  TEXT NOT NULL DEFAULT 'parts_visit',
+    ADD COLUMN IF NOT EXISTS lead_uuid VARCHAR(20) REFERENCES leads(uuid) ON DELETE CASCADE;
+
+-- 2. Shape honesty (existing rows are scenario='parts_visit' with job_id set → valid).
+--    Wrapped in a DO $$ … IF NOT EXISTS(pg_constraint) block for re-runnability.
+ALTER TABLE outbound_call_attempts ADD CONSTRAINT chk_outbound_call_attempts_scope
+    CHECK ((scenario = 'lead_call' AND lead_uuid IS NOT NULL)
+        OR (scenario <> 'lead_call' AND job_id IS NOT NULL));
+
+-- 3. FR-14(a): at most ONE active chain per lead (mirror of uq_…_active_job; the
+--    job guard is untouched — NULL job_id rows are invisible to it).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_outbound_call_attempts_active_lead
+    ON outbound_call_attempts (lead_uuid)
+    WHERE status IN ('pending','dialing') AND lead_uuid IS NOT NULL;
+
+-- 4. Lifetime-once lookup (FR-14c) + webhook/worker reads by lead.
+CREATE INDEX IF NOT EXISTS idx_outbound_call_attempts_lead
+    ON outbound_call_attempts (lead_uuid) WHERE lead_uuid IS NOT NULL;
+
+-- 5. Scenario-scoped settings (D-B): one row per company, resolve-with-defaults.
+CREATE TABLE IF NOT EXISTS outbound_lead_call_settings (
+    company_id       UUID PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+    enabled_sources  JSONB       NOT NULL DEFAULT '["ProReferral"]'::jsonb,
+    max_attempts     INTEGER     NOT NULL DEFAULT 3,
+    backoff_schedule JSONB       NOT NULL DEFAULT '["immediate","+30m","+2h"]'::jsonb,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);  -- + the standard updated_at trigger
+```
+
+Rollback: delete `scenario='lead_call'` rows → drop index/constraint/columns → `job_id SET NOT NULL` → drop settings table. Existing claim index `(company_id, status, scheduled_at)` and the `vapi_call_id` index serve both scenarios unchanged.
+
+**D-B · Settings storage — dedicated `outbound_lead_call_settings` table** (FR-2 sources + FR-5 ladder in one row). Follows BOTH precedents at once: `mail_agent_settings` (app settings behind a setup page, mig 152) and `outbound_call_settings` (per-company resolve, safe-fail defaults, mig 159). New `outboundLeadCallSettingsService.js` mirrors `outboundCallSettingsService` exactly (`DEFAULTS`/`coerceStored`/`get`/`resolve`-never-throws) + owns source normalization: `normalizeSource(s) = String(s).trim().replace(/\s+/g,'').toLowerCase()` → `"Pro Referral" ≡ "ProReferral"` (FR-2), and `isSourceEnabled(settings, rawSource)`. The parts table/PK/defaults are untouched (two independent ladders, one resolve seam each — FR-5 satisfied).
+
+**D-C · Enqueue path — direct eventBus subscriber (REPAIR-ADVISOR pattern), no agent-task indirection.** The attempt ROW is already the durable retry queue; wrapping it in a YELP-002 agent task would add a second queue that owns nothing. Two touches:
+
+1. `leadsService.createLead` (:358 area) gains a fire-and-forget bus emit right after the INSERT (jobsService :577-582 pattern; `.catch(()=>{})`, never blocks the create; `createLead(fields, companyId)` signature and the SSE `emitLeadChange` stay byte-identical — protected). Payload (catalog-conformant, `eventCatalog.js:14`): `{ id, uuid, first_name, last_name, phone, job_type, job_source, status }`, opts `{ actorType:'system', aggregateType:'lead', aggregateId: id }`. This single emit site covers ALL ingestion paths (UI `routes/leads.js`, external `integrations-leads.js`, Yelp `yelpLeadService.js:278`, Sara `createLead` skill) — they all funnel through `leadsService.createLead`.
+2. `eventSubscribers.js` registers `eventBus.subscribe('outbound-lead-caller', 'lead.created', …)` → guard `payload.id && company_id` → lazy-require `outboundLeadCallService` → `setImmediate(() => onLeadCreated({ leadId, companyId }))` (returns immediately; a slow handler never stalls sibling subscribers).
+
+`onLeadCreated({ leadId, companyId })` — eligibility gauntlet, cheapest-first, every step logged with a machine-readable skip reason (N-6), whole body try/caught (N-2):
+1. `marketplaceService.isAppConnected(companyId, 'outbound-lead-caller')` — else stop (no trace; FR-3/FR-14b: connect-time gate = no backfill by construction, MAIL-AGENT-002 precedent without needing an activation date).
+2. `outboundLeadCallSettingsService.resolve(companyId)` → `isSourceEnabled(settings, lead.job_source)` (lead re-read via `getLeadById(leadId, companyId)` — the bus payload is a hint, the row is the truth) — else stop, no trace (SC-06).
+3. Dialable phone: lead.Phone E.164-normalizable (createLead already normalizes :320-330; re-check defensively). Missing/undialable → **append the FR-3 trace to `leads.comments`** (append-only, company-scoped): `UPDATE leads SET comments = COALESCE(NULLIF(comments,'')||E'\n\n','') || $2 WHERE uuid=$1 AND company_id=$3` with `[AI Phone] <ISO-ts> — Outbound call skipped — no phone number on the lead.` → stop.
+4. Goal-already-achieved at birth: `LeadDateTime` set or status ∈ {Lost, Converted} → stop (a lead created WITH a hold needs no call).
+5. Lifetime-once (FR-14c): `SELECT 1 FROM outbound_call_attempts WHERE lead_uuid=$1 LIMIT 1` (any status) → stop if exists.
+6. INSERT the chain: `(company_id, lead_uuid, scenario='lead_call', contact_id = lead.contact_id∥NULL, phone, attempt_no=1, status='pending', scheduled_at = clampIntoWorkWindow(now, dispatchSettings), slot_json NULL)` with `ON CONFLICT DO NOTHING` on the active-lead partial unique (duplicate `lead.created` deliveries → no-op, FR-14a). `job_id` stays NULL. Slot is NOT computed here (see D-D — claim-time keeps it fresh for out-of-hours carries).
+
+**D-D · Worker — extend `outboundCallWorker` with a scenario dispatch branch; lead processing lives in `outboundLeadCallService`.** Justification vs a parallel worker: the claim loop, `FOR UPDATE SKIP LOCKED` atomicity, the 60s lifecycle, the `FEATURE_OUTBOUND_CALL_WORKER` gate and the fail-safe catch are exactly what a second worker would have to duplicate — and two claimers on one table would need scenario predicates in BOTH claim queries to avoid stealing each other's rows. One claimer + per-row dispatch is strictly less risk. Worker diff (total):
+
+```js
+// tick() loop, replacing the single processAttempt call:
+if (attempt.scenario === 'lead_call') {
+    await require('./outboundLeadCallService').processLeadAttempt(attempt);  // lazy → no cycle
+} else {
+    await processAttempt(attempt);   // parts path byte-identical
+}
+// module.exports: + getTimezoneOffsetMs  (additive export, CANCEL-001 retryBlockReason precedent)
+```
+The shared catch → `terminate('failed','worker_error:…')` stays for both scenarios (an UNEXPECTED throw ends a lead chain silently-but-audited; expected failures are handled inside `processLeadAttempt` via the ladder — deliberate, keeps the crash path task-spam-free).
+
+`processLeadAttempt(attempt)` (all company scope from the row):
+1. Lead re-read `getLeadByUUID(attempt.lead_uuid, companyId)`; missing/deleted → terminate `canceled` / `lead_not_found` (FR-6; FK CASCADE usually removes rows first).
+2. **Goal-achieved skip (FR-6, D3-exception):** `LeadDateTime` set OR status ∈ {Lost, Converted} → terminate `canceled` / `goal_achieved:<detail>`; NO task, NO note.
+3. **Eligibility re-check (FR-15):** app disconnected → `canceled`/`app_disconnected`; source no longer enabled → `canceled`/`source_disabled`.
+4. **Business window (FR-4/D2):** `scheduleService.getDispatchSettings(companyId)` → `isWithinWorkWindow(now, ds)`; outside → push back `pending` at `nextWindowStart(now, ds)` (carry, never drop; mirrors the parts clamp :314-323). Honors the existing `OUTBOUND_CALL_IGNORE_BUSINESS_HOURS` test toggle (same regex, :301-303).
+5. **Slot pre-compute (FR-9):** `recommendSlots.run(companyId, {}, { zip: lead.PostalCode, lat, lng, address })` → top slot. `available:false`/empty → do NOT dial; `scheduleLeadRetryOrExhaust(attempt, 'no_slots', …)` (technical failure feeds the ladder; final-attempt task copy says "couldn't compute appointment slots").
+6. `outboundCallService.placeCall({ …lead args, scenario:'lead_call' })` → ok: stamp `vapi_call_id` + `vapiCallTimelineService.recordPlacement` (non-fatal, same as parts :374-385); fail: `scheduleLeadRetryOrExhaust(attempt, result.error, …)`.
+
+Window math — pure, fake-clock-testable, exported: `isWithinWorkWindow(now, ds)`, `nextWindowStart(now, ds)` (scan ≤14 days over `work_days`, land on `work_start_time`; malformed/empty `work_days` → `DEFAULT_DISPATCH_SETTINGS` days, hard +24h fallback — never loops), `clampIntoWorkWindow(date, ds)`, `computeLeadNextDueAt(justFailedNo, settings, ds, now)` (token `immediate|+30m|+2h` — generic `+<N>[mh]` parser — then clampIntoWorkWindow). UTC↔wall-clock via the worker's exported `getTimezoneOffsetMs` (:120-134; DST-safe Intl probe — no new tz code).
+
+`scheduleLeadRetryOrExhaust(attempt, reason, klass='failed')`: mark this attempt `klass`+reason → goal-achieved/eligibility re-check (skip-insert + `outbound_lead_call_retry_skipped` event — the lead flavor of the parts no-resurrection guard, D3-narrowed: ONLY goal/eligibility, never human-contact) → `attempt_no < max_attempts` ? INSERT next `pending` row (identity copied, `scheduled_at = computeLeadNextDueAt(...)`) : INSERT `exhausted` marker row + **exhaustion task** (FR-12): `timelinesQueries.createTask({ companyId, threadId: findOrCreateTimeline(attempt.phone).id, subjectType:'lead', subjectId: lead.id, title: "Couldn't reach <name> — <N> automated call attempts", description: per-attempt timestamps/outcomes, priority:'p1', createdBy:'agent', agentType:'outbound_lead_call' })` (Yelp task precedent — lead-bound AND Pulse-AR-visible). Exactly-once: task creation rides the single exhausted-transition site + a belt `SELECT 1 FROM tasks WHERE company_id=$ AND lead_id=$ AND agent_type='outbound_lead_call' AND status='open'`.
+
+**D-E · Webhook split — one lead branch in `routes/vapiCallStatus.js`.** `correlateAttempt` SELECT gains `scenario, lead_uuid` (:149; additive columns). The branch goes AFTER the shared timeline finalize (:229-233) and AFTER the terminal-idempotence no-op (:236-238), BEFORE the parts booked-detection (:245):
+
+```js
+if (attempt.scenario === 'lead_call') {
+    const klass = classifyEndedReason(endedReason);      // shared vocabulary stays route-owned
+    await require('../services/outboundLeadCallService')
+        .handleLeadEndOfCall(attempt, klass, endedReason, message);   // internally safe-fail
+    return res.json({ ok: true });
+}
+```
+
+`handleLeadEndOfCall` classification ladder (FR-10/FR-11):
+1. **Booked evidence:** normally `confirmLeadBooking` already flipped the attempt to `booked` mid-call → this webhook hits the :236 idempotence no-op and never reaches the branch (timeline still finalizes — it runs before the check). Belt: lead re-read — `LeadDateTime` set → mark `booked`, close chain, no task.
+2. **Declined:** `klass === 'declined'` OR `message.analysis?.structuredData?.outcome ∈ {'declined','callback'}` (analysisPlan added in the VAPI PATCH — endedReason alone rarely says "declined"; the structuredData outcome is the reliable human-answered-didn't-book signal, SC-08) → terminal `declined` + follow-up dispatcher task on the lead carrying `message.analysis?.summary` (best-effort) — NO retry.
+3. **Transient** (`no_answer`/`voicemail`/`failed`) → `scheduleLeadRetryOrExhaust(attempt, endedReason, klass)` (same helper as the worker side — ladder math lives in exactly one module; the parts webhook's own retry block :291-374 is untouched).
+
+**D-F · Call placement + in-call toolset.** `outboundCallService.placeCall` gains OPTIONAL args `{ scenario, leadUuid, zip, problemDescription, source, firstMessage }` — every one spread conditionally (`...(scenario ? { scenario } : {})` etc., the established balanceDue/techId pattern :121-131) so the **parts request body is byte-identical**. `firstMessage` (when provided) is sent as `assistantOverrides.firstMessage` — the lead greeting is server-composed (company display name from `companyProfileService`, lead name, source label, problem) because the assistant's static firstMessage is parts-specific (G4).
+
+**variableValues contract (scenario `lead_call`):**
+
+| key | source | consumed by |
+|---|---|---|
+| `scenario: 'lead_booking'` | constant | assistant prompt dispatch (absent on parts calls → parts script) |
+| `leadUuid` | attempt row | `confirmLeadBooking` identity (authoritative — spread-last, G4) |
+| `companyId` | attempt row | skill tenant scope |
+| `contactId` | attempt row (nullable) | audit only |
+| `customerName` | lead First+Last (∥ 'there') | greeting/prompt |
+| `zip` | `leads.postal_code` | `checkServiceArea`, in-call `recommendSlots` location |
+| `lat`/`lng` | lead geocode, both-or-nothing | in-call `recommendSlots` location (TECHSLOT spread precedent) |
+| `problemDescription` | `lead_notes ∥ comments`, trimmed ≤300 chars | prompt context (FR-7) |
+| `source` | `job_source` display label | prompt ("you reached out on Pro Referral…") |
+| `slotLabel/slotDate/slotStart/slotEnd/slotKey` | claim-time pre-computed top slot | SAME keys as parts → the prompt's offer + `confirmLeadBooking` offered-guard |
+
+**In-call tools for the lead scenario:** `recommendSlots` (already on the assistant; zip/lat/lng auto-injected via the buildSkillInput spread), `checkServiceArea` (registry L0 :81 — added to the assistant), and NEW **`confirmLeadBooking`** (registry entry `{ kind:'write', requiredLevel:'L0' }` — the confirmPartsVisit "Deviation 1" pattern: outbound calls have no caller-claimed identity to verify; isolation is in-skill). `validateAddress` is NOT exposed v1 (a hold needs only the window; address completion is dispatcher work at convert — keeps the call short). `bookOnLead` is NOT used: it is L1 contact-gated and targets "the newest open lead of the verified contact" (`bookOnLead.js:16-19,130-141`) — wrong on both axes for contactless Pro Referral leads and multi-lead contacts. The generic vapi-tools dispatch (:110-160) needs ZERO changes — a registry entry + the assistant PATCH is full exposure. `confirmLeadBooking` is NOT added to the parallel MCP registry (`agentSkillsMcpRegistry.js` is an explicit list — voice-only by default).
+
+`confirmLeadBooking(companyId, _vc, input)` algorithm (no false success, refusal shapes from `resultShapes`):
+1. Identity: `leadUuid` + `companyId` from input (server-injected wins by spread order; model cannot override). Missing → refusal.
+2. Slot guards: `isConfirmedSlot(chosenSlot)` + positive span (confirmPartsVisit helpers, reused) + derived key `date|start|end` must equal the model's `slotKey`.
+3. **Offered-guard (FR-8 injection-hardening):** `slotKey === variableValues.slotKey` (the pre-dial engine slot) → accept; otherwise re-validate against the ENGINE: `recommendSlots.run(companyId, {}, { zip/lat/lng from input, targetDay: chosenSlot.date })` and require a key match (TECHSLOT targetDay path). Engine fallback during re-validation → refusal ("let me have a teammate confirm") — fail-closed for non-offered slots, and stronger than a stored offered-list (also re-checks availability).
+4. Ownership: company-scoped lead re-read (`getLeadByUUID(leadUuid, companyId)`); not found / closed → refusal (cross-company indistinguishable from missing).
+5. Hold write: `leadsService.updateLead(leadUuid, { LeadDateTime: tzCombine(date,start,tz), LeadEndDateTime: tzCombine(date,end,tz), (Latitude/Longitude both-or-nothing) }, companyId)` — byte-same hold shape as `bookOnLead`/VAPI-SLOT-ENGINE (`bookOnLead.js:96-103`).
+6. CC-07 analog: flip own attempt `UPDATE outbound_call_attempts SET status='booked' WHERE company_id=$ AND lead_uuid=$ AND status='dialing'` (non-fatal) — records the outcome AND turns the end-of-call webhook into the :236 idempotent no-op.
+7. `eventService.logEvent(companyId,'lead',leadUuid,'lead_slot_held',{window, actor:'AI Phone', scenario:'lead_call'})` (non-fatal) → speak success.
+
+**D-G · Marketplace app + settings API + frontend.** Migration `173_seed_outbound_lead_caller_marketplace_app.sql` (+ rollback), REGISTERED in `ensureMarketplaceSchema` after the `170_…` line (`marketplaceQueries.js:54`; new-app seeds are boot-replayed — 161/170 precedent; the DDL migration 172 is deliberately NOT in the boot list): `app_key='outbound-lead-caller'`, name **"Outbound Lead Caller"**, provider `Albusto`, category `lead_generation` (sits next to the per-source lead tiles it consumes), `app_type='internal'`, `provisioning_mode='none'` (pure gate — G5), `requested_scopes '[]'`, status `published`, metadata `{ access_summary: ["Call new leads from enabled sources and offer appointment windows", "Write a schedule hold on the lead when the customer books"], requires_credential_input: false, setup_path: "/settings/integrations/outbound-lead-caller" }`. No default-company auto-install (connect is an owner action). Connect/disconnect = existing generic tile; FR-15 disconnect semantics come free from the claim-time eligibility re-check (D-D step 3) — no queue-purge code needed.
+
+New router `backend/src/routes/outboundLeadCall.js`, mounted in `src/server.js` next to the mail-agent mount (:270-271) with the IDENTICAL chain: `app.use('/api/outbound-lead-caller', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, router)`. `company_id` ONLY via `req.companyFilter?.company_id`; every SQL company-filtered:
+- `GET /api/outbound-lead-caller/settings` → `{ ok, data: { settings (resolved), installed, install_status, company_sources: [DISTINCT non-empty leads.job_source for the company], recent: last-30d attempt counts by status (one GROUP BY, observability) } }` (mailAgent GET shape :35-58).
+- `PUT /api/outbound-lead-caller/settings` → v1 accepts `{ enabled_sources: string[] }` (validate: array, each non-empty trimmed string ≤80 chars, ≤50 items; stored as picked display labels — matching normalizes both sides at read); upsert the settings row. Ladder columns are DB-editable v1 (no UI — parts precedent).
+
+Frontend (N-7: English, Albusto, tokens only):
+- `frontend/src/services/outboundLeadCallerApi.ts` — NEW, mirrors `mailAgentApi.ts` (authedFetch wrappers + types).
+- `frontend/src/pages/OutboundLeadCallerSettingsPage.tsx` — NEW, mirrors `MailSecretarySettingsPage.tsx` (SettingsPageShell + SettingsSection + not-installed connect CTA via `installMarketplaceApp`). Content: source multi-select as a `Checkbox` list over the normalized-deduped union of canonical `JOB_SOURCES` (`frontend/src/components/leads/editLeadHelpers.ts:8` — import, do not copy) and `company_sources` from the API (FR-2 — prod has "Pro Referral" with a space); a short "How it works" block (ladder + business-hours copy); the Yelp caution line ("Yelp leads are already handled by the email booking agent"). Save via PUT; toasts via sonner.
+- `frontend/src/App.tsx` — route `/settings/integrations/outbound-lead-caller` under `ProtectedRoute permissions={['tenant.integrations.manage']}` (App.tsx:163 precedent). `IntegrationsPage.tsx` untouched (tile + Configure render from catalog metadata, G5).
+
+### End-to-end data flow
+
+```
+POST /leads (integrations-leads) ─┐
+UI create / Yelp / Sara createLead┴→ leadsService.createLead ──INSERT──→ eventBus.emit('lead.created')   [NEW]
+    → eventSubscribers 'outbound-lead-caller' → setImmediate → outboundLeadCallService.onLeadCreated
+        → gates: connected → source enabled (normalized) → dialable phone (else comments trace) → open+no-hold → no prior chain
+        → INSERT outbound_call_attempts (scenario='lead_call', lead_uuid, pending, due=clamped-now)
+outboundCallWorker.tick (60s, FEATURE_OUTBOUND_CALL_WORKER) — claims due rows, scenario dispatch  [branch NEW]
+    → processLeadAttempt: lead re-read → goal-achieved? → eligibility? → work-window? (carry)
+        → recommendSlots (zip/lat/lng, day-off seam, slot-engine gate) → placeCall(scenario lead_call,
+          variableValues + assistantOverrides.firstMessage) → stamp vapi_call_id → recordPlacement (Pulse live row)
+in-call (same Sara outbound assistant, scenario='lead_booking' prompt branch):
+    recommendSlots (alternatives) · checkServiceArea (zip doubts) · confirmLeadBooking → hold on THE lead
+      (LeadDateTime/LeadEndDateTime) + own attempt → 'booked'  [skill NEW]
+POST /api/vapi/call-status (shared secret): status-update → live pill (unchanged) ·
+    end-of-call-report → timeline finalize (unchanged) → idempotence (booked = no-op) →
+    scenario branch [NEW] → handleLeadEndOfCall: booked-belt | declined(+analysis outcome)→task |
+    transient→ladder (immediate/+30m/+2h, window-clamped) | exhausted→marker+dispatcher task
+```
+
+### VAPI deploy-time step (owner-gated PATCH — checklist item, NOT code)
+
+REST `PATCH https://api.vapi.ai/assistant/{VAPI_OUTBOUND_ASSISTANT_ID}` (CLI panics; live config DRIFTS — **GET first, merge, PATCH**; **re-inject `x-vapi-secret`/`VAPI_TOOLS_SECRET` into every tool server block on model writes** — known gotcha). Payload sketch:
+1. `model.messages[0].content` += a `## Scenario dispatch` section: `{{scenario}} == 'lead_booking'` → lead script (the greeting already happened via firstMessage; confirm interest referencing `{{source}}`/`{{problemDescription}}` — do NOT re-verify data we already have; offer `{{slotLabel}}` first; alternatives via `recommendSlots`; service-area doubt → `checkServiceArea` with `{{zip}}`; on pick call `confirmLeadBooking` with `chosenSlot` + the exact offered `slotKey`; explicit decline / "call me later" → polite close, never promise a robo-callback). Any other/absent scenario → the existing parts script, verbatim.
+2. `model.tools` += `confirmLeadBooking`, `checkServiceArea` (server.url = the existing `/api/vapi-tools`, same secret header).
+3. `analysisPlan.structuredDataPlan` += `{ outcome: enum[booked, declined, callback, no_answer, voicemail, other] }` — feeds D-E's declined detection (additive; the parts webhook branch ignores analysis).
+4. `serverMessages` unchanged (`end-of-call-report`,`status-update` already live). `firstMessage` default unchanged (parts).
+5. Mirror the result into `voice-agent/assistants/parts-visit-scheduler.json` (repo-truth discipline, commit 75bf624 precedent).
+
+### Testability seams (jest; worktree runs need `--testPathIgnorePatterns` per project gotcha)
+
+- **Pure fns** (no DB): `normalizeSource`/`isSourceEnabled`; `isWithinWorkWindow`/`nextWindowStart`/`clampIntoWorkWindow`/`computeLeadNextDueAt` with injected `now` (fake clock) — DST edges, Sat-22:40→Mon-08:00 (SC-03), +2h-past-close carry, empty `work_days` fallback.
+- **`tests/outboundLeadCallEnqueue.test.js`** — mock `db`/`marketplaceService`/`leadsService`: the eligibility matrix (connected×source×phone×hold×prior-chain), comments-trace copy, ON CONFLICT no-op, emit-payload contract.
+- **`tests/outboundLeadCallWorker.test.js`** — mock `recommendSlots`/`outboundCallService`: goal-achieved skip, FR-15 cancels, window carry, no-slots→ladder, placeCall variableValues snapshot (parts body regression pin: place a parts call, assert byte-identical body).
+- **`tests/outboundLeadCallWebhook.test.js`** — the route with the shared-secret header (existing vapiCallStatus test pattern): scenario branch routing, booked idempotence, declined→task, transient→ladder insert, analysis-outcome override; parts fixtures unchanged (regression).
+- **`tests/confirmLeadBooking.test.js`** — offered-guard (injected key pass; foreign key + engine-revalidation pass/fail-closed), ownership refusal, hold write shape, attempt flip non-fatal.
+- **`tests/outboundLeadCallSettings.test.js`** — route GET/PUT validation + resolve defaults (mailAgent route-test pattern).
+
+### Files (complete)
+
+**NEW:** `backend/db/migrations/172_outbound_lead_call.sql` + `rollback_172_outbound_lead_call.sql` · `backend/db/migrations/173_seed_outbound_lead_caller_marketplace_app.sql` + `rollback_173_…` · `backend/src/services/outboundLeadCallService.js` · `backend/src/services/outboundLeadCallSettingsService.js` · `backend/src/services/agentSkills/skills/confirmLeadBooking.js` · `backend/src/routes/outboundLeadCall.js` · `frontend/src/services/outboundLeadCallerApi.ts` · `frontend/src/pages/OutboundLeadCallerSettingsPage.tsx` · the five test files above.
+
+**MODIFIED (all additive):** `backend/src/services/leadsService.js` (bus emit in `createLead` + top-level eventBus require) · `backend/src/services/eventSubscribers.js` (one subscriber) · `backend/src/services/outboundCallWorker.js` (scenario branch in `tick` loop + export `getTimezoneOffsetMs`) · `backend/src/routes/vapiCallStatus.js` (correlate SELECT + lead branch) · `backend/src/services/outboundCallService.js` (optional lead args, conditional spreads) · `backend/src/services/agentSkills/registry.js` (one L0 entry) · `backend/src/db/marketplaceQueries.js` (boot-list line for 173, after :54) · `src/server.js` (one authed mount line) · `frontend/src/App.tsx` (one route) · `voice-agent/assistants/parts-visit-scheduler.json` (deploy-time mirror).
+
+**Explicitly untouched (protected):** `processAttempt`/`scheduleRetryOrExhaust`/`retryBlockReason`/Guard-1, `uq_outbound_call_attempts_active_job`, `outbound_call_settings` + its service, `partsCallService` (CANCEL-001 stays parts-only), inbound assistant 30e85a87, `vapi-tools.js` dispatch + `buildSkillInput`, `vapiCallTimelineService`, `groupRouting`, Pulse CTEs, `IntegrationsPage.tsx`, `leadsService.createLead` signature + SSE emits, `integrations-leads.js`, `authedFetch.ts`, `useRealtimeEvents.ts`.
+
+### Rejected alternatives
+
+1. **Parallel `outbound_lead_call_attempts` table + second worker** — duplicates claim loop, backoff, webhook correlation, timeline mirroring; two dialers to keep consistent; NULL-invisible partial-unique already isolates the parts guard.
+2. **`scenario` column in `outbound_call_settings` (PK change)** — mutates the live parts resolve path for zero gain; a dedicated table keeps two independent ladders (FR-5) with zero parts risk.
+3. **Settings in `marketplace_installations.metadata`** — installations metadata is lifecycle bookkeeping; Mail Secretary's dedicated-table precedent gives typed columns + trigger + safe-fail resolve.
+4. **Agent-task indirection (YELP-002)** — `outbound_call_attempts` IS the durable queue with retries; a task wrapper adds a second queue that owns nothing.
+5. **New VAPI assistant for leads** — overruled by D4 (same Sara, scenario discriminator).
+6. **Reusing `bookOnLead` in-call** — L1 phone-verification-gated and "newest open lead of the contact"-targeted; wrong for contactless/multi-lead cases; L0 `confirmLeadBooking` scoped to the injected `leadUuid` mirrors the proven confirmPartsVisit deviation.
+7. **`groupRouting.isBusinessHours` for the lead window** — D2 pins `dispatch_settings` (the schedule/slot-engine source); `user_group_hours` remains the parts flow's source.
+8. **CANCEL-001-style human-takeover guards** — owner-rejected (D3); only the goal-achieved/eligibility skips exist.
+9. **Stored per-call offered-slots list for the booking guard** — requires a write hook inside the shared vapi-tools dispatch (protected seam); injected-key-or-engine-revalidation is stronger (re-checks availability) and self-contained in the skill.
+
+### Risks / open items
+
+1. **`ALTER COLUMN job_id DROP NOT NULL`** on a live table — metadata-only, instant; the CHECK constraint keeps parts rows honest. Run 172 via psql before deploying code (prod procedure unchanged).
+2. **Declined-detection quality** depends on the PATCH's analysisPlan landing; until then a human "no" classifies as `failed` → at most `max_attempts-1` extra polite retries (bounded; same semantics the parts robot ships today). Verify `assistantOverrides.firstMessage` acceptance on the first owner-observed test call (fallback: template the assistant firstMessage on `{{scenario}}`-selected variables).
+3. **`lead.created` on the bus wakes the rules engine** for an event it never saw — audit prod `automation_rules` for `lead.created` triggers pre-deploy (checklist).
+4. **Shared BATCH=10/tick** — lead chains share the dial budget with parts calls; current volumes are single-digit/day each; revisit only if a source floods.
+5. **Sara-created leads** (`JobSource='AI Phone'`) could theoretically be re-dialed if an operator enables that label — the goal-achieved-at-birth gate (hold already set by Sara's booking) covers the common case; do not add 'AI Phone' to the settings options list (implementer note).
+6. **Migration renumbering** if a parallel worktree lands 172/173 first (project rule).
+
 ## RELY-LEADS-SETTINGS-001 — architecture: settings in installation.metadata + app-key settings API (GET/PUT), relyLeadFilterService on the Rely ingest branch (fail-open), non-FSM rejected marker `leads.metadata.rely_filter` + reserved-key injection guard, badge exclusion, FE panel/chip/filter — NO new migration (2026-07-13)
 
 **Requirements:** `Docs/requirements.md` §RELY-LEADS-SETTINGS-001 (FR-1..11, NFR-1..8, US-1..6, A1-A4; [OWNER]/[PRODUCT] markers binding). Builds on MARKETPLACE-LEADGEN-SPLIT-001 (mig 169) and reuses the SERVICE-TERR-002 containment seam. **Migration verdict: NO migration 170 — zero schema change.** Settings live in existing `marketplace_installations.metadata` JSONB (083:58), the rejected marker in existing `leads.metadata` JSONB (007, `DEFAULT '{}'`), catalogs are code constants, and the FE Settings-button gate is an app_key check (IntegrationsPage already special-cases four app_keys — precedent, no `metadata.has_settings` seed needed).

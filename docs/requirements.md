@@ -6378,6 +6378,125 @@ observability.
 - `frontend/src/pages/IntegrationsPage.tsx` generic branch + `MarketplaceConnectDialog` — no edits (NFR-5).
 - Protected-files list from project-context.md (`src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts`; `backend/db/` changes only via this feature's explicit migration plan).
 
+---
+
+## OUTBOUND-LEAD-CALL-001 — outbound voice agent (Sara) auto-calls every NEW LEAD from configured lead sources and books the customer into the schedule (marketplace app; launch source: Pro Referral) (2026-07-13)
+
+**Status:** Requirements (Product / Agent-01) · **Priority:** P1 · **Owner:** Voice / CRM / Leads
+**Type:** feature — **backend** (a `lead.created` trigger hook that starts an outbound call chain on the EXISTING outbound dialer infrastructure; business-hours gating in the company timezone; a 3-attempt retry ladder with scenario-scoped config; goal-achieved retry skip; dispatcher task on exhaustion; a new scenario discriminator inside the SAME outbound VAPI assistant) + **marketplace app** (catalog row + per-company connect/disconnect + settings page with a lead-source multi-select) + **frontend** (the settings page only — Pulse timeline visibility of attempts already exists).
+
+**Binding owner decisions (Step 0.5 — these OVERRIDE any conflicting assumption):**
+- **D1 — Retry ladder.** 3 attempts on failure to reach: **immediately / +30 min / +2 h**. After the 3rd failed attempt → create a **dispatcher task** ("couldn't reach the lead"). Retry/backoff config uses the **same mechanism as the parts robot** (`outbound_call_settings`-style per-company resolve with safe-fail defaults) — but **scenario-scoped**: this feature's ladder must be configurable independently of the parts-robot ladder (`['immediate','+2h','next_business_morning']` stays untouched for parts).
+- **D2 — Calling window.** Company **business hours in the company timezone** only (dispatch settings `work_days` + `work_start_time`/`work_end_time` + company timezone — the same source the schedule/slot engine uses). A lead created out of hours **waits for the next business-day start**.
+- **D3 — Call IMMEDIATELY on lead creation.** No grace delay, no human-takeover cancellation (owner explicitly chose speed over the OUTBOUND-PARTS-CALL-CANCEL-001-style guards — a dispatcher softphone call to the lead does NOT cancel the chain). **EXCEPTION (goal-achieved, not takeover):** a RETRY attempt is skipped when the lead is already booked — schedule-hold set (`LeadDateTime`) or the lead is closed (`Lost`/`Converted`) — re-dialing a booked lead never happens.
+- **D4 — Persona.** **Sara** — the same voice/persona as inbound and parts calls; implemented as a **new scenario discriminator inside the SAME outbound VAPI assistant** the parts robot uses (`VAPI_OUTBOUND_ASSISTANT_ID`). NO new assistant is created.
+- **D5 — Launch source.** **Pro Referral** is the first configured source; the settings must support any source from the canonical list.
+
+### Duplication check (result)
+
+**Not a duplicate — a new auto-trigger + lead-scoped chain on top of proven infra.** Adjacent features, reused and distinguished:
+
+- **OUTBOUND-PARTS-CALL-001/-TECHSLOT/-CANCEL (`## OUTBOUND-PARTS-CALL-001`)** built the outbound dialer infrastructure this feature RUNS ON: `outbound_call_attempts` retry queue (per-chain partial-unique concurrency guard), `outboundCallWorker.js` (60s tick, `FOR UPDATE SKIP LOCKED` claim, safe-fail), `outboundCallSettingsService.js`, `outboundCallService.placeCall` (VAPI `POST /call`, `assistantOverrides.variableValues`, registered-number-or-transient-Twilio caller-ID), end-of-call webhook retry classification, and `vapiCallTimelineService` Pulse mirroring. That feature is **job-scoped and human-triggered** (task button); this one is **lead-scoped and auto-triggered** (`lead.created`). Its CANCEL-001 guards are deliberately NOT reused (D3).
+- **VAPI-SLOT-ENGINE-001 / AGENT-SKILLS-001/-002** — Sara's booking toolset is reused verbatim: `validateAddress`/`checkServiceArea`/`recommendSlots` (slot-engine incl. TECH-DAYOFF-001 seam and nearest-fallback) and the schedule-hold write (`LeadDateTime`/`LeadEndDateTime` semantics of `bookOnLead`/`createLead` hold).
+- **YELP-CONVO-BOOKING-001** books leads over **email** with the same skills; this feature is the **voice** twin for phone-first sources. Its injection-hardening precedent (book only `slotKey ∈ offered_slots`; identity server-injected) carries over.
+- **MARKETPLACE-LEADGEN-SPLIT-001** created per-source lead-INGESTION catalog apps (`pro-referral-leads` etc., catalog-informational). This feature is a separate CONSUMER app; its source multi-select is its own setting and is NOT coupled to those apps' connect state.
+- **MAIL-AGENT-002 activation-date gate** — precedent for "enabling never backfills history" (FR-14).
+
+### 1. Description
+
+When a new lead arrives from a paid lead source (launch: Pro Referral), speed-to-call decides whether we win the job. Today a dispatcher must notice the lead and dial by hand. This feature ships a marketplace app: once connected, every NEW lead whose source is in the company's configured list and which has a dialable phone number gets an **automatic outbound call from Sara within the business-hours window** — immediately when in hours, at the next business-day start otherwise. Sara opens with the lead's context (name, zip, problem description), qualifies, offers slot-engine-ranked appointment windows, and books the pick as a **schedule-blocking hold on that same lead** (identical semantics to Sara inbound / VAPI-SLOT-ENGINE-001). Unreached leads are retried per the D1 ladder; after the final failure a dispatcher task takes over. Every attempt is visible live in the Pulse timeline with recording/transcript/summary on finalize.
+
+### 2. User Scenarios
+
+- **SC-01 (happy path).** A Pro Referral lead (name, zip, problem, phone) is created at 10:02 on a business day; the app is connected and "Pro Referral" is enabled → the worker dials within ~1 minute. Sara: "Hi {name}, this is Sara from {company} — you asked about your {problem}…", offers 2–3 engine slots, the customer picks one → schedule-hold written to the lead, chain closes `booked`, the call (recording/transcript/summary) is on the Pulse timeline, the lead card shows the held window.
+- **SC-02 (no answer → ladder → dispatcher task).** Same lead, nobody answers. Attempt 1 immediate, attempt 2 at +30 min, attempt 3 at +2 h (all within hours, else carried to the next business-day start). After the 3rd failure the chain closes `exhausted` and a dispatcher task "Couldn't reach the lead" appears bound to the lead; all three attempts are visible in Pulse.
+- **SC-03 (out-of-hours lead).** A lead is created Saturday 22:40 (company works Mon–Sat 08:00–18:00) → no dial that night; the first attempt fires Monday at 08:00 company time.
+- **SC-04 (goal achieved between retries).** After a no-answer, the customer calls back and Sara inbound (or a dispatcher) books the lead → the pending retry is skipped at claim time (hold set / lead closed) and the chain closes without dialing.
+- **SC-05 (no phone).** A configured-source lead arrives without a dialable phone → no chain starts; a timestamped trace line is appended to the lead's **Comments** ("[AI Phone] Outbound call skipped — no phone number on the lead"), visible on the Lead card.
+- **SC-06 (source not configured).** A Thumbtack lead arrives while only "Pro Referral" is enabled → nothing happens (no chain, no trace).
+- **SC-07 (connect / settings / disconnect).** The owner connects the app on `/settings/integrations` → the settings page appears with the source multi-select ("Pro Referral" preselected). Disconnecting stops new chains immediately and cancels queued attempts; leads created while disconnected are NEVER dialed later, even after reconnect (FR-14).
+- **SC-08 (customer answered but did not book).** The customer answers and declines / asks for a human / can't decide → NO further auto-redial (a human conversation happened); the chain closes `declined` and a dispatcher follow-up task with the call summary is created on the lead.
+- **SC-09 (dispatcher visibility).** A dispatcher watches the attempt live in the Pulse timeline (live row → finalize with recording/transcript/summary), exactly like parts-robot calls (OUTBOUND-CALL-TIMELINE-001).
+
+### 3. Functional Requirements
+
+- **FR-1 (marketplace app).** New catalog row (proposed `app_key='outbound-lead-caller'`, name **"Outbound Lead Caller"**, category `lead_generation`-adjacent per Architect, `app_type='internal'`, `provider_name='Albusto'`, published), seeded idempotently by `app_key` and registered in `ensureMarketplaceSchema` AFTER 083 (boot-reseed ordering precedent). Per-company connect/disconnect via the existing generic tile + `metadata.setup_path` settings page (Mail Secretary precedent). Connect requires no external credential (internal app; VAPI config is server-env).
+- **FR-2 (settings = enabled sources).** The settings page holds a per-company **multi-select of lead sources**: options = union of the canonical `JOB_SOURCES` list (`frontend/src/components/leads/editLeadHelpers.ts`) and the DISTINCT non-empty `job_source` values present on the company's leads (prod reality check: leads arrive as "Pro Referral" with a space, while the canon says "ProReferral"). **Matching is normalized** (trim, collapse whitespace, case-insensitive → "ProReferral" ≡ "Pro Referral"). Default on first connect: **Pro Referral enabled** (D5). Settings persist per company and survive restarts; changes take effect for leads created AFTER the change.
+- **FR-3 (trigger).** On `lead.created` (eventBus, `backend/src/services/leadsService.js`): if the company has the app **connected** AND the lead's `job_source` normalized-matches an **enabled** source AND the lead has a **dialable phone** (E.164-normalizable) → start ONE outbound call chain for that lead. Missing/undialable phone → NO chain; append a timestamped **"[AI Phone] Outbound call skipped — no phone number on the lead"** line to the lead's Comments (append-only, never overwrite) — the visible trace of SC-05. Non-matching source or disconnected app → no action, no trace.
+- **FR-4 (immediate dial + business-hours window).** Attempt 1 is scheduled **immediately** when the trigger fires inside business hours (dispatch settings `work_days`, `work_start_time`–`work_end_time`, company timezone); otherwise at the **next business-day `work_start_time`**. NO attempt (first or retry) may ever dial outside the window: the window is enforced at claim/execution time, and an out-of-window due attempt is carried to the next window start, not dropped.
+- **FR-5 (retry ladder, scenario-scoped config).** Failure-to-reach outcomes re-schedule per the ladder **immediate / +30 min / +2 h** (relative to the failed attempt), `max_attempts=3`, offsets clamped into business hours (an offset past `work_end_time` lands at the next business-day start). Config per company via the `outbound_call_settings` mechanism (safe-fail `resolve`, never throws), **scoped to this scenario** so the parts-robot ladder is untouched — the Architect picks the shape (scenario column / second table / JSONB), the requirement is: two independent ladders, one resolve seam each.
+- **FR-6 (goal-achieved skip — D3 exception).** At claim time, BEFORE dialing, every attempt re-checks the lead: schedule-hold present (`LeadDateTime` set) OR status closed (`Lost`/`Converted` — the existing open-lead definition in `leadsService`) OR lead deleted → skip the dial, close the chain (`canceled`/goal-achieved reason), no dispatcher task. This is NOT a human-takeover guard: an ongoing dispatcher call, an open softphone, or a recent human note never cancels the chain (D3).
+- **FR-7 (call placement + context injection).** Reuse `outboundCallService.placeCall` semantics (VAPI `POST /call`, safe-fail, registered `VAPI_OUTBOUND_PHONE_NUMBER_ID` or transient-Twilio caller-ID, no secret leakage). `assistantOverrides.variableValues` carries the lead context: **`leadUuid`, `companyId`, `customerName`, `zip`, `problemDescription`** (lead description/comments-derived), `source` label, scenario discriminator, plus the pre-computed top slot (FR-9). Server-injected values are authoritative — `vapi-tools.buildSkillInput` spreads `variableValues` LAST, so the model can never override identity (Yelp injection-hardening precedent).
+- **FR-8 (conversation goal — same Sara, new scenario).** The SAME outbound VAPI assistant as parts calls gains a **`scenario` discriminator** (e.g. `lead_booking` vs the existing parts flow) selecting the lead-booking script: greet by name referencing the source inquiry and the problem, confirm/qualify against the injected context (zip → `checkServiceArea` only when needed; no re-verification of data we already have), offer engine-ranked windows via `recommendSlots` (slot-engine with TECH-DAYOFF-001 day-off seam and nearest-fallback), and on the customer's pick write the **schedule-hold on the TRIGGERING lead** (`leadUuid`-scoped; `LeadDateTime`/`LeadEndDateTime` semantics identical to VAPI-SLOT-ENGINE-001/`bookOnLead`; booking accepted only for a `slotKey` the engine actually offered). No new lead and no job is ever created by this flow; the existing parts scenario must remain byte-identical in behavior.
+- **FR-9 (pre-computed slot; never dial empty-handed).** Before each dial the worker pre-computes the top slot via `recommendSlots` (D3 precedent of the parts robot: the call opens with a concrete window, no API hit at call-open; alternatives are pulled live in-call). Slot-engine error or zero slots → the attempt is NOT dialed and is treated as a technical failure in the ladder (FR-5); if that persists through the final attempt, the FR-12 task states the real reason ("couldn't compute slots" vs "couldn't reach").
+- **FR-10 (outcome classification).** Every attempt ends in exactly one recorded outcome: **`booked` / `no_answer` / `voicemail` / `declined` / `failed`** (placement or technical error), classified from the existing VAPI end-of-call webhook seam (`endedReason` + booking evidence), same statuses vocabulary as `outbound_call_attempts` today.
+- **FR-11 (ladder vs terminal outcomes).** `no_answer` / `voicemail` / `failed` → next ladder step (or exhaustion). `booked` → chain closes successfully, no task. `declined` (a human answered but did not book — incl. "call me later"/"send a human") → chain closes with NO further auto-redial and a dispatcher follow-up task on the lead carrying the call summary. Voicemail: the attempt counts as unreached; leaving a voicemail message is out of scope v1.
+- **FR-12 (exhaustion task).** After the final failed attempt the chain closes `exhausted` and ONE dispatcher task ("Couldn't reach the lead — {N} attempts") is created, bound to the lead (existing Tasks system; opens the lead card), carrying per-attempt timestamps/outcomes. Exactly one task per chain (idempotent create).
+- **FR-13 (Pulse visibility).** Every dialed attempt is mirrored to the Pulse timeline by the EXISTING `vapiCallTimelineService` flow (placement → live row → finalize with recording/transcript/summary; `vapi:<id>` → real CallSid re-key) — zero new timeline code expected; requirement is that lead-scenario calls flow through the same seam.
+- **FR-14 (idempotency + no backfill).** (a) At most ONE active chain per lead — a partial-unique guard analogous to the parts `uq_outbound_call_attempts_active_job`, keyed by the lead; duplicate `lead.created` deliveries or hook re-entry must not double-dial. (b) Connecting/re-enabling the app or adding a source NEVER dials pre-existing leads: only `lead.created` events observed while the app is connected AND the source enabled start chains (activation-gate precedent MAIL-AGENT-002). (c) A lead gets at most one chain lifetime-wise unless a dispatcher explicitly re-triggers (explicit re-trigger UI is out of scope v1).
+- **FR-15 (disconnect / source-off mid-chain).** Eligibility is re-checked at claim time: app disconnected or the lead's source no longer enabled → the pending attempt is canceled (chain closes `canceled`, no task, no dial). Disconnect therefore stops queued work without racing the worker tick.
+
+### 4. Non-functional Requirements
+
+- **N-1 (multi-tenant).** Everything company-scoped (`company_id` on chains/settings; worker claim, slot calls, hold writes, tasks, timeline all tenant-filtered). No cross-company dialing under any misconfiguration.
+- **N-2 (safe-fail worker).** No error (missing lead, VAPI fault, engine fault, settings fault, comments-append hiccup) may crash the worker tick, corrupt another chain, or break the parts-robot chains sharing the infra. Decision points (skip/carry/cancel reasons) are logged structuredly.
+- **N-3 (latency).** An eligible in-hours lead is dialed within ~1 worker tick (≤ ~60 s) of `lead.created`.
+- **N-4 (permissions).** Settings page gated like existing marketplace settings pages (admin/settings-level); no new permission catalog entries expected. Timeline rows follow existing `pulse.view`; tasks follow existing tasks RBAC.
+- **N-5 (config safety).** Missing VAPI env (`VAPI_API_KEY` / `VAPI_OUTBOUND_ASSISTANT_ID` / caller-number config) → safe-fail, no dial, clear log (`vapi_config_missing` precedent); the chain fails technically rather than silently disappearing.
+- **N-6 (observability).** Per-attempt rows (status, scheduled_at, outcome reason) queryable in the DB; skip/carry decisions carry machine-readable reasons; grep-able log prefix for the scenario. No new dashboard v1.
+- **N-7 (UI language/brand).** All new user-visible strings English, Albusto-branded, no "Blanc"; settings page follows FORM-CANON (right-side panel, floating fields, tokens only).
+
+### 5. Constraints & Dependencies
+
+- **Reuse, do not fork:** `outbound_call_attempts` (+ its worker claim/backoff/webhook classification), `outboundCallService.placeCall`, `outboundCallSettingsService` mechanism, `vapiCallTimelineService`, agentSkills (`recommendSlots`/`checkServiceArea`/hold-write path), dispatch-settings business-hours source, marketplace connect + settings-page pattern. The Architect decides lead-chain storage (extend `outbound_call_attempts` with a nullable lead key vs parallel table) — the FR-14 per-lead active-uniqueness and the untouched job-guard semantics are the hard requirements.
+- **Same assistant, live-edit discipline:** the outbound assistant is edited via REST PATCH (CLI panics; live config DRIFTS — GET before PATCH; re-inject `VAPI_TOOLS_SECRET` on model writes). Prompt/scenario changes are deploy-time-gated by owner consent like all prod pushes.
+- **Slot recommendations require the `smart-slot-engine` marketplace app** (existing gate) and the slot-engine container (separate service) — without them FR-9 refuses to dial (technical-failure path), it must not bypass the gate.
+- **Booking = lead hold only.** No Zenbooker write at booking time (the hold lives on the lead; ZB is touched later at lead→job conversion, existing flow). No FSM/job-status change.
+- **Autonomous mode (telephony) gates INBOUND only** — it does not block this outbound scenario (consistent with the parts robot). If the owner ever wants a global outbound kill-switch, that is the app's disconnect.
+- **Yelp source caution:** enabling "Yelp" here would run the voice robot alongside the Yelp EMAIL convo agent on the same leads. v1 does not special-case or block it — operator decision; document in the settings page copy ("Yelp leads are already handled by the email booking agent").
+- **Migration numbering:** next free number (≥172 at time of writing) — renumber at implementation per the parallel-worktree rule.
+- **Compliance note:** business-hours window is the only calling-time restriction v1 (owner-accepted); TCPA-style DNC lists are out of scope (below).
+
+### 6. Out of Scope (explicit)
+
+- Lead sources beyond the configured multi-select; auto-enabling new sources.
+- SMS fallback / follow-up texts after failed attempts; post-call drip campaigns.
+- Human-takeover cancellation of the chain (owner explicitly rejected CANCEL-001-style guards for this flow — D3).
+- Leaving voicemail messages; answering-machine scripts.
+- DNC / do-not-call list management and quiet-hours compliance beyond the business-hours window.
+- Dispatcher "re-run the robot" button on the lead card (chains start only from `lead.created` in v1).
+- Coupling with the per-source lead-ingestion apps (MARKETPLACE-LEADGEN-SPLIT-001) or per-source ingestion enforcement.
+- Any change to the parts-robot scenario, its ladder defaults, or CANCEL-001 behavior.
+- Backfill dialing of leads created before the app/source was enabled.
+
+### 7. Potentially Involved Modules (по architecture.md)
+
+- `backend/src/services/outboundCallWorker.js` — extend: claim/execute lead-scenario attempts (window carry, goal-achieved skip, eligibility re-check).
+- `backend/src/services/outboundCallService.js` — extend: lead-context variableValues (leadUuid/zip/problem/scenario) without disturbing the parts call body.
+- `backend/src/services/outboundCallSettingsService.js` — extend: scenario-scoped resolve (lead ladder defaults immediate/+30m/+2h).
+- `backend/src/services/leadsService.js` — trigger hook consumer on `lead.created` (emit side unchanged); Comments append trace.
+- `backend/src/services/agentSkills/*` — reuse; hold-write path scoped to the triggering `leadUuid`.
+- `backend/src/routes/vapi-*` webhook seam — outcome classification for the new scenario.
+- `backend/db/migrations/<next>_outbound_lead_call.sql` (+ rollback) — chain storage/uniqueness + app catalog seed (+ `ensureMarketplaceSchema` registration in `backend/src/db/marketplaceQueries.js`).
+- `frontend/src/pages/` — new settings page (setup_path), route registration; `IntegrationsPage.tsx` untouched (generic tile).
+- `voice-agent/assistants/*.json` — outbound assistant scenario/prompt update (repo mirror of the live PATCH).
+
+### 8. Integrations Affected
+
+- **VAPI** — assistant prompt PATCH (scenario discriminator) + outbound `POST /call` volume for lead chains.
+- **Twilio** — caller-ID leg (registered VAPI number or transient BYO number), unchanged mechanism.
+- **Slot-engine service** — `recommendSlots` volume (pre-dial + in-call), existing gate.
+- **Zenbooker / Front / Gmail / Stripe / Google Places** — none (no ZB write at hold time; `validateAddress` only if the conversation needs it).
+
+### 9. Protected Parts (DO NOT BREAK)
+
+- The parts-robot chain end-to-end: job-scoped `outbound_call_attempts` semantics, `uq_outbound_call_attempts_active_job`, its ladder defaults, TASK-ACTIONS buttons, CANCEL-001 behavior.
+- Inbound Sara (assistant `30e85a87`), callflow routing (CALLFLOW-BUSY-TO-AGENT-001), and the inbound `/api/vapi-tools` contract (`buildSkillInput` spread order is load-bearing).
+- `leadsService.createLead(fields, companyId)` signature and the `lead.created` event contract (`eventCatalog.js`); external lead ingestion `POST /leads` (`integrations-leads.js`) — read-only consumers.
+- `vapiCallTimelineService` re-key/finalize logic and Pulse list CTEs (PULSE-PERF-001 discipline).
+- Slot-engine container + `slotEngineService` seam (TECH-DAYOFF-001) — consume, don't modify.
+- Marketplace seeds/lifecycle of existing apps and `ensureMarketplaceSchema` ordering; protected files list (`src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts`).
+
 ## RELY-LEADS-SETTINGS-001 — Rely Leads settings (service area / unit types / brands) + ingest acceptance filtering with rejected-lead marker (2026-07-13)
 
 > Status: requirements (Product 01). Builds directly on **MARKETPLACE-LEADGEN-SPLIT-001** (migration 169, master, UNDEPLOYED — owner-gated) and REUSES the **SERVICE-TERR-002** containment seam. Binding owner decisions from the interview are baked in and marked **[OWNER]**. This feature deliberately supersedes LEADGEN-SPLIT NFR-5 ("zero frontend work") for the `rely-leads` tile ONLY, and is the first step of the "per-source behavior" follow-up that LEADGEN-SPLIT FR-6 declared out of scope — but it is a lead-ACCEPTANCE filter, NOT ingestion enforcement (disconnect still doesn't block; rejected leads are still created).
