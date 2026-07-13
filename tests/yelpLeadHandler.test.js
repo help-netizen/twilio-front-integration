@@ -46,6 +46,12 @@ beforeEach(() => {
         message_id_header: '<20260711.abc@messaging.yelp.com>',
         provider_thread_id: 'gmail-thread-99',
         subject: 'You have a new dishwasher repair request',
+        // quote fields (YELP-REPLY-FORMAT-001): the greeting must embed the quoted original
+        body_text: 'Kim requested a quote from ABC Homes for a dishwasher repair.',
+        body_html: null,
+        from_email: 'reply+8160b36a1c2d3e4f@messaging.yelp.com',
+        from_name: 'Yelp Inbox',
+        gmail_internal_at: '2026-07-11T21:39:23.000Z',
     });
 });
 
@@ -68,7 +74,7 @@ describe('C-01 · HANDLER-sends-once (SAB-HANDLER-SKIP-SEND)', () => {
         const [company, args] = mockSendEmail.mock.calls[0];
         expect(company).toBe(DEFAULT_COMPANY_ID);
         expect(args.to).toBe('reply+8160b36a1c2d3e4f@messaging.yelp.com');
-        expect(args.body).toBe('Hi Kim, ...');
+        expect(args.body).toContain('Hi Kim, ...');
         expect(String(args.subject || '')).not.toHaveLength(0);
         // (2b) YELP reply-threading — the reply carries In-Reply-To/References (the
         //      inbound Message-ID) + the Gmail thread, else Yelp bounces it. The
@@ -77,6 +83,12 @@ describe('C-01 · HANDLER-sends-once (SAB-HANDLER-SKIP-SEND)', () => {
         expect(args.inReplyTo).toBe('<20260711.abc@messaging.yelp.com>');
         expect(args.references).toBe('<20260711.abc@messaging.yelp.com>');
         expect(args.threadId).toBe('gmail-thread-99');
+        // (2c) YELP-REPLY-FORMAT-001 — the parser also needs the Gmail-style QUOTED
+        //      ORIGINAL (multipart/alternative + "… wrote:" + "> " lines) or the
+        //      greeting bounces cant_parse (proven on prod, thread "Ryan P.").
+        expect(args.textBody).toMatch(/wrote:/);
+        expect(args.textBody).toContain('> Kim requested a quote from ABC Homes');
+        expect(args.body).toContain('gmail_quote');
         // (3) markGreeted stamps the ledger
         expect(mockMarkGreeted).toHaveBeenCalledTimes(1);
         expect(mockMarkGreeted).toHaveBeenCalledWith(7, expect.objectContaining({

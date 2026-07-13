@@ -35,6 +35,7 @@ const leadsService = require('./leadsService');
 const slotEngineService = require('./slotEngineService');
 const emailService = require('./emailService');
 const emailQueries = require('../db/emailQueries');
+const yelpReplyFormat = require('./yelpReplyFormat');
 const tasksQueries = require('../db/tasksQueries');
 const yelpConversationQueries = require('../db/yelpConversationQueries');
 
@@ -221,18 +222,23 @@ function sanitizeToolArgs(args) {
 
 /**
  * Send exactly one email to the conversation's reply address; tag a fault so ONLY a
- * send fault escapes runTurn. Carries the MIME threading headers resolved for THIS
- * turn (conv.__threading) so Yelp's reply-by-email accepts the reply — an unthreaded
- * reply is bounced with "email client we do not yet support".
+ * send fault escapes runTurn. Carries everything Yelp's reply-by-email parser needs,
+ * resolved for THIS turn (conv.__threading): the MIME threading headers AND the
+ * Gmail-style quoted original (multipart/alternative + "On <date> … wrote:" + "> "
+ * quoting) — a bare single-part body is bounced with cant_parse ("email client we
+ * do not yet support"), threading headers alone are NOT enough (proven on prod:
+ * the owner's Gmail reply to the SAME message was accepted; ours bounced).
  */
 async function sendOnce(companyId, conv, body) {
     const to = conv && conv.last_reply_to;
     const t = (conv && conv.__threading) || null;
+    const { html, text } = yelpReplyFormat.buildReplyBodies(body, t && t.quote);
     try {
         return await emailService.sendEmail(companyId, {
             to,
             subject: (t && t.subject) || REPLY_SUBJECT,
-            body,
+            body: html,
+            textBody: text,
             ...(t ? { inReplyTo: t.inReplyTo, references: t.references, threadId: t.threadId } : {}),
         });
     } catch (err) {
@@ -242,12 +248,15 @@ async function sendOnce(companyId, conv, body) {
 }
 
 /**
- * The MIME threading headers a Yelp reply MUST carry (In-Reply-To/References = the
- * inbound Message-ID, + the Gmail thread to reply INSIDE) so Yelp's reply-by-email
- * accepts it. Resolved ONCE per turn from the message we're answering (the live
- * inbound, else conv.last_inbound_message_id). Best-effort: a miss returns null and
- * the send degrades to unthreaded (a late reply beats none). Subject echoes the
- * original ("Re: …") so the relay stitches the reply into the same conversation.
+ * Everything a Yelp reply MUST carry to be accepted, resolved ONCE per turn from the
+ * message we're answering (the live inbound, else conv.last_inbound_message_id):
+ *   • the MIME threading headers (In-Reply-To/References = the inbound Message-ID,
+ *     + the Gmail thread to reply INSIDE), and
+ *   • the inbound row itself (`quote`) so the send composes the Gmail-style QUOTED
+ *     ORIGINAL — Yelp's parser cuts the reply out at the "… wrote:" delimiter and
+ *     bounces a bare unquoted body with cant_parse.
+ * Best-effort: a miss returns null and the send degrades (a late reply beats none).
+ * Subject echoes the original ("Re: …") so the relay stitches the conversation.
  */
 async function resolveThreading(companyId, conv, inbound) {
     const rawPmid = (inbound && inbound.provider_message_id) || (conv && conv.last_inbound_message_id);
@@ -270,6 +279,8 @@ async function resolveThreading(companyId, conv, inbound) {
             references: row.message_id_header,
             threadId: row.provider_thread_id || undefined,
             subject: subj,
+            // the inbound row for the quoted-original block (body/sender/date)
+            quote: row,
         };
     } catch (err) {
         console.error('[YelpConvo] threading lookup failed (send unthreaded):', err && err.message);
