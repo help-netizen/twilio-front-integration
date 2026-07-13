@@ -9380,7 +9380,7 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 **Трогать нельзя:** routes/onboarding.js, getChecklist/markCompleted-машина (только состав реестра), useOnboardingChecklist.ts, OnboardingChecklistCard.tsx.
 **Ожидаемый результат:** чеклист = 4 шага, ключа company_profile нет; изоляция по company_id прежняя; «Blanc» в строках отсутствует; /welcome рендерит MapPin.
 **Verify:** `node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js tests/onboardingChecklist.test.js --testPathIgnorePatterns "/node_modules/"`; `cd frontend && npm run build`.
-**Зависимости:** после T1.1 (таблицы для деривации). **Статус:** pending
+**Зависимости:** после T1.1 (таблицы для деривации). **Статус:** done (2026-07-13, GPT, ревью ACCEPT)
 
 ### Задача T4: verify — build, полный jest, preview desktop+mobile, живой прогон (амендмент-9)
 

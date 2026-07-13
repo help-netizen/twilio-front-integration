@@ -19,18 +19,18 @@
 
 | # | key | done ⇔ | Источник истины | cta.path | est_minutes |
 |---|-----|--------|-----------------|----------|-------------|
-| 1 | `company_profile` | `companies.logo_storage_key IS NOT NULL` | колонка `companies` (mig 134) | `/settings/company` | 1 |
+| 1 | `service_territory` | `(active_mode='list' AND EXISTS(service_territories WHERE company_id=$1)) OR (active_mode='radius' AND EXISTS(territory_radii WHERE company_id=$1))`; нет settings-строки → `list` | company_territory_settings + service_territories + territory_radii | `/settings/service-territories` | 2 |
 | 2 | `connect_telephony` | `EXISTS(phone_number_settings WHERE company_id=$1)` — БЕЗ ИЗМЕНЕНИЙ | phone_number_settings | `/settings/integrations/telephony-twilio` | 2 |
 | 3 | `connect_email` | `emailMailboxService.getMailboxStatus(companyId)` → mailbox существует И `provider==='gmail'` И `status==='connected'` | email_mailboxes | `/settings/integrations/google-email` | 1 |
 | 4 | `stripe_payments` | `stripePaymentsService.getStatus(companyId).readiness === 'connected_ready'` | stripe_connected_accounts (DB-only чтение; provider не сконфигурирован → `not_connected` → false) | `/settings/integrations/stripe-payments` | 5 |
 
-Обоснование `company_profile`: name/phone/email/адрес заполняются при bootstrapCompany — деривация по ним была бы всегда-true; логотип — единственное реальное действие (и он реально нужен: уходит на estimates/invoices/emails).
+Обоснование замены: профильный шаг покрыт визардом signup + логотип-подшагом Company Profile; территория — реальный gating-шаг для Sara/слотов.
 
 ### 1.2 Нормативная копия items (English, «Blanc» запрещён)
 
 | key | title | description | cta.label | done_note |
 |-----|-------|-------------|-----------|-----------|
-| company_profile | `Complete your company profile` | `Your company name, address, and logo appear on every estimate and invoice your customers see.` | `Set up` | `Looking sharp — your profile is on your documents.` |
+| service_territory | `Set up your service territory` | `Tell Albusto where you work — service-area checks and booking slots follow your coverage.` | `Set up` | `Mapped out — Albusto knows where you work.` |
 | connect_telephony | `Connect telephony` | `Get a business phone number to make and receive calls and texts in Albusto.` (существующая нормативная строка ONBTEL-001 — не менять) | `Set up` | `Nice — your phone line is live!` |
 | connect_email | `Connect your email` | `Bring your Gmail into Albusto so every customer email lands in one timeline.` | `Set up` | `Great — your email flows into Albusto now.` |
 | stripe_payments | `Get paid with Stripe` | `Take card payments on the job, by link, or over the phone.` | `Set up` | `You're ready to get paid on the spot.` |

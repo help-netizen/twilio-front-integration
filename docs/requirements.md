@@ -5920,3 +5920,47 @@ a contact only when we have enough info to create a LEAD."*
 - `src/server.js`, `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/db/` — не трогать.
 - `CloudBanner.tsx` / `.blanc-cloud` (design-system.css:826-857) — реюз как есть.
 - Функциональность существующих setup-страниц (mutations, статусы, wizard-логика TelephonyTwilio) — redesign только представления и копии.
+
+## SERVICE-TERR-002 — территория обслуживания v2: radius-режим с картой, единый containment-seam, онбординг-шаг service_territory (2026-07-13)
+
+**Краткое описание:** Вторая итерация Service Territories. К существующему list-режиму (CSV/зипы, таблица `service_territories`) добавляется radius-режим: пары «зип + радиус в милях» вокруг базы компании, с read-only картой покрытия (круги/маркеры Google Maps). Появляется единый серверный containment-seam `isZipInTerritory(companyId, query)`, через который начинают ходить ВСЕ потребители зип-проверки (zip-check UI, Sara/VAPI/Yelp через skill checkServiceArea). Шаг онбординга `company_profile` ЗАМЕНЯЕТСЯ шагом `service_territory`. Страница `/settings/service-territories` чинится на мобильной вёрстке (375px).
+
+**Решения заказчика (БИНДИНГ, не менять):**
+1. Онбординг: в `CHECKLIST_ITEMS` шаг `company_profile` заменяется шагом `service_territory` («Set up your service territory», тёплая описка в тоне остальных, CTA Set up → `/settings/service-territories`, est_minutes 2). Профильный шаг УДАЛЯЕТСЯ (чеклист остаётся из 4 шагов, не 5). Иконка шага на /welcome — MapPin (lucide).
+2. `/settings/service-territories` — два режима, активен ровно один (toggle сверху): **List** (существующий, функционал сохранить: CSV upload, add zip, export, список) и **Radius** (новый: пары «зип + радиус (miles)», первая пара = база компании, можно добавлять несколько пар и удалять их; зип вводится ТОЛЬКО инпутом). Переключение режимов в любой момент; данные ОБОИХ режимов сохраняются независимо (ничего не стирается); активный режим — отдельное поле хранения.
+3. Карта Google — строго read-only (никакого взаимодействия): radius-режим — круги (`google.maps.Circle`) по центрам зипов; list-режим — маркеры центроидов зипов, у которых есть геокод (fit bounds). Паттерн — JobMap из `CustomTimeModal.tsx` (refs, Marker, LatLngBounds); loader `frontend/src/utils/loadGoogleMaps.ts`; Circle используется впервые.
+4. Хранение — миграция 168 (+ rollback): `company_territory_settings` (company_id PK, active_mode 'list'|'radius' DEFAULT 'list'), `territory_radii` (id, company_id, zip, lat, lon, radius_miles CHECK >0 AND ≤200, position, created_at), `zip_geocache` (zip PK, lat, lon, city, state, geocoded_at — БЕЗ company_id, география глобальна). `service_territories` НЕ трогаем. `dim_zip` НЕ использовать (легаси, 5 строк на проде).
+5. Геокод зипа — только серверный: `territoryGeoService.geocodeZip(zip)` — zip_geocache-first, миссы через Google Geocoding (ключ `GOOGLE_PLACES_KEY || GOOGLE_GEOCODING_KEY`, подход как в googlePlacesService). Ошибка геокода → 422 `ZIP_NOT_FOUND`, пара не добавляется.
+6. Containment — ЕДИНЫЙ seam `isZipInTerritory(companyId, query)`: list → текущий `stQueries.search`; radius → геокод зипа (кэш) + haversine (мили, хелпера в кодовой базе нет — написать) против всех territory_radii; вернуть `{inside, area}` (radius: area = зип центра ближайшего покрывающего круга). Перевести на seam: `routes/zip-check.js` и `agentSkills/skills/checkServiceArea.js` (vapi-tools проверен — ходит через skill, напрямую stQueries не зовёт).
+7. API под `/api/settings/service-territories` (существующий mount: authenticate + requirePermission('tenant.company.manage') + requireCompanyAccess; company_id ТОЛЬКО из `req.companyFilter`): `GET /config`, `PUT /mode`, `POST /radii` (геокод внутри), `DELETE /radii/:id`. Существующие endpoints list-режима не трогаем.
+8. Онбординг-деривация: `service_territory` done ⇔ (mode=list AND EXISTS service_territories) OR (mode=radius AND EXISTS territory_radii).
+9. Мобильная вёрстка страницы: на 375px всё читается; таблица → карточки или overflow-x-auto; кнопки переносятся аккуратно; header по канону.
+
+**Пользовательские сценарии:**
+1. Новый владелец на /welcome видит шаг «Set up your service territory» → CTA ведёт на `/settings/service-territories` → добавляет базовый зип + радиус 25 миль → видит круг на карте → шаг в чеклисте становится done.
+2. Владелец существующей компании (list-режим, зипы загружены CSV) переключает toggle на Radius, добавляет пары; передумав, возвращается на List — все зипы на месте, поведение zip-check вернулось к прежнему.
+3. Клиент звонит Sara и называет зип: checkServiceArea теперь отвечает по активному режиму — в radius-режиме зип в 20 милях от базы (радиус 25) считается in-area, area = зип базы.
+4. Диспетчер на `/pulse` пользуется zip-check-полем: в radius-режиме ввод зипа геокодится (из кэша) и проверяется по кругам; город/штат берутся из zip_geocache.
+5. Владелец добавляет пару с опечаткой в зипе → сервер не находит геокод → 422 ZIP_NOT_FOUND → тёплый toast, пара не добавлена.
+6. Field-tech открывает страницу на телефоне (375px): режимы, список пар, карта и таблица зипов читаются без горизонтального скролла страницы.
+
+**Ограничения и нефункциональные требования:**
+- Поведение list-режима БАЙТ-В-БАЙТ прежнее: пока active_mode='list' (в т.ч. когда строки company_territory_settings нет — дефолт), zip-check и checkServiceArea отвечают ровно как сейчас (тот же stQueries.search, те же frozen-шейпы ответов).
+- Frozen-шейпы потребителей сохраняются: skill checkServiceArea → `{inServiceArea, area, city, state, zip}` (без ok/speak — AC-11 AGENT-SKILLS-001); zip-check → `{ok, data:{success, exists, area, city, state, zip}}`.
+- Google Geocoding зовётся ТОЛЬКО на промахе кэша и только на сервере; ключ не уходит в браузер (карта фронта — отдельный VITE_GOOGLE_MAPS_API_KEY, как в JobMap).
+- Никаких вызовов внешних API в онбординг-деривации (только локальные таблицы).
+- `normalizeZip` применяется на всех входах зипа (leading-zero gotcha Бостона).
+- Тесты 401/403 + tenant isolation для новых endpoints обязательны; DELETE чужого radius id → 404.
+
+**Потенциально вовлечённые модули/части системы:**
+- Backend: `backend/db/migrations/168_*.sql` (+rollback), `backend/src/services/territoryGeoService.js` (NEW), `backend/src/services/territoryService.js` (NEW, seam), `backend/src/db/territoryRadiusQueries.js` (NEW), `backend/src/utils/geo.js` (NEW, haversine), `backend/src/routes/service-territories.js`, `backend/src/routes/zip-check.js`, `backend/src/services/agentSkills/skills/checkServiceArea.js`, `backend/src/services/onboardingChecklistService.js`.
+- Frontend: `frontend/src/pages/ServiceTerritoriesPage.tsx`, `frontend/src/components/settings/TerritoryCoverageMap.tsx` (NEW), `frontend/src/pages/WelcomePage.tsx` (иконка шага).
+- Затронутые интеграции: Google Geocoding (сервер, кэш-first), Google Maps JS (фронт, read-only). Twilio/Front/Zenbooker — нет (Zenbooker-фон в useZipCheck НЕ трогаем).
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `serviceTerritoryQueries.js` (search/findByZip/bulkReplace) — используется list-режимом и seam'ом; поведение не менять.
+- Существующие endpoints list-режима (GET /, /areas, /export, POST /, /bulk-import, DELETE /:zip) и их контракты.
+- `getCompanyId` route-хелпер с DEFAULT_COMPANY_ID-фолбэком (прод-поведение) — сохранить.
+- Write-once/visible-машина onboardingChecklistService (`getChecklist`/`markCompleted`) — меняется ТОЛЬКО состав CHECKLIST_ITEMS (замена одной записи).
+- `useZipCheck.ts` + Zenbooker-фон — не трогаем; frozen-шейпы vapi/zip-check ответов.
+- `src/server.js` (mount уже существует), `authedFetch.ts`, `useRealtimeEvents.ts`, slot-engine контейнер.
