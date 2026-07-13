@@ -537,13 +537,44 @@ async function getThreadingByProviderMessageId(providerMessageId, companyId) {
     if (!providerMessageId) return null;
     const result = await db.query(
         `SELECT message_id_header, provider_thread_id, subject,
-                body_text, body_html, from_email, from_name, gmail_internal_at
+                body_text, body_html, from_email, from_name, gmail_internal_at, timeline_id
          FROM email_messages
          WHERE company_id = $1 AND provider_message_id = $2
          LIMIT 1`,
         [companyId, providerMessageId]
     );
     return result.rows[0] || null;
+}
+
+/**
+ * YELP-CONVO-CONTEXT-002: prior messages for one Yelp conversation timeline.
+ * Includes linked rows plus sent outbound siblings of every locally-anchored
+ * Gmail thread, so pre-backfill sends and manual replies remain available.
+ * Newest-first, bounded, and company-scoped.
+ */
+async function listYelpConversationHistory(companyId, timelineId, { excludeProviderMessageId = null, limit = 30 } = {}) {
+    const result = await db.query(
+        `WITH conv_threads AS (
+             SELECT DISTINCT em.thread_id
+             FROM email_messages em
+             WHERE em.company_id = $1 AND em.timeline_id = $2 AND em.on_timeline = true
+         )
+         SELECT em.id, em.provider_message_id, em.direction, em.body_text, em.snippet,
+                em.gmail_internal_at
+         FROM email_messages em
+         WHERE em.company_id = $1
+           AND (
+                 (em.timeline_id = $2 AND em.on_timeline = true)
+              OR (em.direction = 'outbound'
+                  AND em.message_id_header IS NOT NULL AND em.message_id_header <> ''
+                  AND em.thread_id IN (SELECT thread_id FROM conv_threads))
+               )
+           AND ($3::text IS NULL OR em.provider_message_id <> $3)
+         ORDER BY em.gmail_internal_at DESC NULLS LAST, em.id DESC
+         LIMIT $4`,
+        [companyId, timelineId, excludeProviderMessageId, limit]
+    );
+    return result.rows;
 }
 
 /**
@@ -799,6 +830,7 @@ module.exports = {
     listMessageIdsForAddress, // CONTACT-EMAIL-MERGE-001
     getMessageLinkState,
     getThreadingByProviderMessageId, // YELP reply-threading (In-Reply-To/References + Gmail thread)
+    listYelpConversationHistory,
     listUnlinkedInboundForTimeline,
     listUnlinkedOutboundForTimeline,
     listConnectedMailboxes,
