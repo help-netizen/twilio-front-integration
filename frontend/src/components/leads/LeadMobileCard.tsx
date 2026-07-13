@@ -17,7 +17,8 @@
 import React from 'react';
 import type { Lead } from '../../types/lead';
 import { formatPhoneDisplay } from '../../utils/phoneUtils';
-import { LEAD_STATUS_COLORS, getLeadStatusPillStyle } from './leadStatusStyles';
+import { LEAD_STATUS_COLORS, getLeadStatusPillStyle, hexToRgba } from './leadStatusStyles';
+import { REJECTED_REASON_COPY } from './leadConstants';
 import { useAuthz } from '../../hooks/useAuthz';
 
 interface LeadMobileCardProps {
@@ -36,6 +37,9 @@ export const LeadMobileCard: React.FC<LeadMobileCardProps> = ({ lead, onClick })
     const typeSource = [lead.JobType, canViewSource ? lead.JobSource : null].filter(Boolean).join(' · ');
 
     const pill = getLeadStatusPillStyle(lead.Status);
+    const rejectedReason = lead.rely_filter?.reason
+        ? REJECTED_REASON_COPY[lead.rely_filter.reason] ?? 'Rejected'
+        : 'Rejected';
 
     return (
         <div
@@ -59,19 +63,30 @@ export const LeadMobileCard: React.FC<LeadMobileCardProps> = ({ lead, onClick })
         >
             <div className="p-3.5 pb-3 flex flex-col gap-1" style={{ paddingLeft: '14px' }}>
                 {/* Row 1: name hero (left) + status chip (right) */}
-                <div className="flex items-start justify-between gap-2" style={{ minWidth: 0 }}>
+                <div className="flex flex-wrap items-start justify-between gap-2" style={{ minWidth: 0 }}>
                     <h3
-                        className="font-semibold truncate"
+                        className="font-semibold truncate flex-1 basis-[140px]"
                         style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.03em', fontSize: '17px', color: 'var(--blanc-ink-1)', margin: 0, minWidth: 0 }}
                     >
                         {name}
                     </h3>
-                    <span
-                        className="inline-flex items-center self-start rounded-full px-2.5 py-0.5 text-[12px] font-semibold whitespace-nowrap flex-shrink-0"
-                        style={{ background: pill.bg, color: pill.color, border: `1px solid ${pill.border}` }}
-                    >
-                        {lead.Status}
-                    </span>
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <span
+                            className="inline-flex items-center self-start rounded-full px-2.5 py-0.5 text-[12px] font-semibold whitespace-nowrap flex-shrink-0"
+                            style={{ background: pill.bg, color: pill.color, border: `1px solid ${pill.border}` }}
+                        >
+                            {lead.Status}
+                        </span>
+                        {lead.rely_filter?.rejected && (
+                            <span
+                                title={rejectedReason}
+                                className="inline-flex items-center self-start rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap"
+                                style={{ background: hexToRgba('#DC2626', 0.1), color: '#DC2626' }}
+                            >
+                                Rejected
+                            </span>
+                        )}
+                    </div>
                 </div>
 
                 {/* Row 2: phone — plain text (no tel: link; tap opens detail) */}

@@ -5,7 +5,8 @@ import { Copy } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import type { Lead } from '../../types/lead';
-import { getLeadStatusPillStyle } from './leadStatusStyles';
+import { getLeadStatusPillStyle, hexToRgba } from './leadStatusStyles';
+import { REJECTED_REASON_COPY } from './leadConstants';
 
 export function handleCopyPhone(phone: string, e: React.MouseEvent) { e.stopPropagation(); navigator.clipboard.writeText(phone); toast.success('Phone number copied to clipboard'); }
 
@@ -20,14 +21,28 @@ export function renderCell(columnId: string, lead: Lead, key: string, canViewSou
     switch (columnId) {
         case 'status': {
             const st = getLeadStatusPillStyle(lead.Status);
+            const rejectedReason = lead.rely_filter?.reason
+                ? REJECTED_REASON_COPY[lead.rely_filter.reason] ?? 'Rejected'
+                : 'Rejected';
             return (
                 <TableCell key={key} style={cellStyle}>
-                    <span
-                        className="inline-flex items-center px-3 text-xs font-semibold"
-                        style={{ backgroundColor: st.bg, color: st.color, border: `1px solid ${st.border}`, minHeight: 28, borderRadius: 8 }}
-                    >
-                        {lead.Status}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                            className="inline-flex items-center px-3 text-xs font-semibold"
+                            style={{ backgroundColor: st.bg, color: st.color, border: `1px solid ${st.border}`, minHeight: 28, borderRadius: 8 }}
+                        >
+                            {lead.Status}
+                        </span>
+                        {lead.rely_filter?.rejected && (
+                            <span
+                                title={rejectedReason}
+                                className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap"
+                                style={{ backgroundColor: hexToRgba('#DC2626', 0.1), color: '#DC2626' }}
+                            >
+                                Rejected
+                            </span>
+                        )}
+                    </div>
                 </TableCell>
             );
         }

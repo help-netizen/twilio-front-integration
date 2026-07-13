@@ -15,6 +15,7 @@ interface LeadsFilterBodyProps {
     statusFilter: string[]; onToggleStatus: (status: string) => void;
     sourceFilter: string[]; onToggleSource: (source: string) => void;
     jobTypeFilter: string[]; onToggleJobType: (type: string) => void;
+    rejectedOnly: boolean; onToggleRejected: () => void;
     /** Statuses to offer — FSM states when available, else LEAD_STATUSES. */
     statuses: string[];
     /** Job-type names from lead-form settings. */
@@ -26,11 +27,12 @@ export function LeadsFilterBody({
     statusFilter, onToggleStatus,
     sourceFilter, onToggleSource,
     jobTypeFilter, onToggleJobType,
+    rejectedOnly, onToggleRejected,
     statuses, dynamicJobTypes, onClearAll,
 }: LeadsFilterBodyProps) {
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
-    const activeFilterCount = statusFilter.length + sourceFilter.length + jobTypeFilter.length;
+    const activeFilterCount = statusFilter.length + sourceFilter.length + jobTypeFilter.length + (rejectedOnly ? 1 : 0);
 
     return (
         <>
@@ -55,6 +57,12 @@ export function LeadsFilterBody({
                             <X className="size-3 cursor-pointer" onClick={() => onToggleJobType(t)} />
                         </Badge>
                     ))}
+                    {rejectedOnly && (
+                        <Badge variant="outline" className="gap-1 text-xs">
+                            Rejected
+                            <X className="size-3 cursor-pointer" onClick={onToggleRejected} />
+                        </Badge>
+                    )}
                     <button
                         onClick={onClearAll}
                         className="text-xs ml-1 transition-opacity hover:opacity-70"
@@ -66,10 +74,11 @@ export function LeadsFilterBody({
             )}
 
             {/* Columns */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 p-3 gap-3 sm:gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
+            <div className="grid grid-cols-1 sm:grid-cols-4 p-3 gap-3 sm:gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
                 <FilterColumn title="STATUS" items={statuses} selected={statusFilter} onToggle={onToggleStatus} colorMap={LEAD_STATUS_COLORS} />
                 {canViewSource && <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={onToggleSource} />}
                 <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={onToggleJobType} />
+                <FilterColumn title="FLAGS" items={['Rejected']} selected={rejectedOnly ? ['Rejected'] : []} onToggle={onToggleRejected} />
             </div>
         </>
     );

@@ -18,6 +18,7 @@ import { MetadataSection, LeadDetailFooter } from './LeadDetailSections';
 import { LeadInfoSections } from './LeadInfoSections';
 import { LeadFinancialsTab } from './LeadFinancialsTab';
 import { LEAD_STATUS_COLORS, hexToRgba } from './leadStatusStyles';
+import { REJECTED_REASON_COPY } from './leadConstants';
 import { useAuthz } from '../../hooks/useAuthz';
 
 interface LeadDetailPanelProps {
@@ -194,6 +195,9 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
     const reachable = allStatuses.filter(s => s !== lead.Status && allowedTargets.has(s));
     const unreachable = allStatuses.filter(s => s !== lead.Status && !allowedTargets.has(s));
     const canReset = initialState && lead.Status !== initialState;
+    const rejectedReason = lead.rely_filter?.reason
+        ? REJECTED_REASON_COPY[lead.rely_filter.reason] ?? 'Rejected'
+        : 'Rejected';
 
     return (
         <>
@@ -290,7 +294,21 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                         {lead.SubStatus}
                     </span>
                 )}
+
+                {lead.rely_filter?.rejected && (
+                    <span
+                        title={rejectedReason}
+                        className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap"
+                        style={{ background: hexToRgba('#DC2626', 0.1), color: '#DC2626' }}
+                    >
+                        Rejected
+                    </span>
+                )}
             </div>
+
+            {lead.rely_filter?.rejected && (
+                <p className="text-[13px] mt-2" style={{ color: '#DC2626' }}>{rejectedReason}</p>
+            )}
         </>
     );
 }

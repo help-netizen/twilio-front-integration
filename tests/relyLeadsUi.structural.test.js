@@ -140,3 +140,73 @@ describe('RELY-LEADS-SETTINGS-001 frontend structural contracts', () => {
         expect(routerSource.replace(helper[0], '')).not.toMatch(/company_id/);
     });
 });
+
+describe('RELY-LEADS-SETTINGS-001 rejected lead UI contracts', () => {
+    test('TC-U7-01 · rejected marker renders chips and reason copy across lead surfaces', () => {
+        const typeSource = read('frontend/src/types/lead.ts');
+        const constantsSource = read('frontend/src/components/leads/leadConstants.ts');
+        const tableSource = read('frontend/src/components/leads/leadsTableHelpers.tsx');
+        const mobileSource = read('frontend/src/components/leads/LeadMobileCard.tsx');
+        const detailSource = read('frontend/src/components/leads/LeadDetailPanel.tsx');
+        const statusCase = tableSource.slice(tableSource.indexOf("case 'status':"), tableSource.indexOf("case 'name':"));
+
+        expect(collapse(typeSource)).toMatch(/rely_filter\?: \{ rejected\?: boolean; reason\?: 'out_of_area' \| 'unit_not_serviced' \| 'brand_not_serviced'; evaluated_at\?: string; zip\?: string \| null; unit\?: string \| null; brand\?: string \| null; \} \| null;/);
+        expect(collapse(constantsSource)).toContain("export const REJECTED_REASON_COPY = { out_of_area: 'Rejected — out of service area', unit_not_serviced: 'Rejected — unit type not serviced', brand_not_serviced: 'Rejected — brand not serviced', } as const;");
+        expect(statusCase).toContain('lead.rely_filter?.rejected');
+        expect(statusCase).toContain("hexToRgba('#DC2626', 0.1)");
+        expect(statusCase).toContain('title={rejectedReason}');
+        expect(mobileSource).toContain('lead.rely_filter?.rejected');
+        expect(mobileSource).toContain('flex flex-wrap items-center justify-end');
+        expect(detailSource).toContain('lead.rely_filter?.rejected');
+        expect(detailSource).toContain('className="text-[13px] mt-2"');
+        expect(detailSource).toContain("color: '#DC2626'");
+
+        const reasonCopy = {
+            out_of_area: 'Rejected — out of service area',
+            unit_not_serviced: 'Rejected — unit type not serviced',
+            brand_not_serviced: 'Rejected — brand not serviced',
+        };
+        const copyFor = reason => reasonCopy[reason] ?? 'Rejected';
+        const pillFor = lead => lead.rely_filter?.rejected ? 'Rejected' : null;
+
+        expect(copyFor('out_of_area')).toBe('Rejected — out of service area');
+        expect(copyFor('zone_v2')).toBe('Rejected');
+        expect(pillFor({ rely_filter: { rejected: true } })).toBe('Rejected');
+        expect(pillFor({ rely_filter: { rejected: false } })).toBeNull();
+        expect(pillFor({})).toBeNull();
+    });
+
+    test('TC-U8-01 · FLAGS filter strictly narrows marked leads on the client', () => {
+        const pageSource = read('frontend/src/pages/LeadsPage.tsx');
+        const bodySource = read('frontend/src/components/leads/LeadsFilterBody.tsx');
+        const desktopSource = read('frontend/src/components/leads/LeadsFilters.tsx');
+        const mobileSource = read('frontend/src/components/leads/LeadsMobileBar.tsx');
+        const leadsApiSource = read('frontend/src/services/leadsApi.ts');
+        const filterColumnSource = bodySource.slice(bodySource.indexOf('export function FilterColumn'));
+
+        expect(pageSource).toContain('const [rejectedOnly, setRejectedOnly] = useState(false)');
+        expect(pageSource).toContain('l.rely_filter?.rejected === true');
+        expect(pageSource).toContain('rejectedOnly={rejectedOnly}');
+        expect(collapse(bodySource)).toContain('<FilterColumn title="FLAGS" items={[\'Rejected\']} selected={rejectedOnly ? [\'Rejected\'] : []} onToggle={onToggleRejected} />');
+        expect(bodySource).toContain('+ (rejectedOnly ? 1 : 0)');
+        expect(bodySource).toContain('onClick={onToggleRejected}');
+        expect(bodySource).toContain('sm:grid-cols-4');
+        expect(filterColumnSource).not.toContain('rejectedOnly');
+
+        for (const source of [desktopSource, mobileSource]) {
+            expect(source).toContain('rejectedOnly');
+            expect(source).toContain('onToggleRejected');
+            expect(source).toContain('if (rejectedOnly) onToggleRejected()');
+        }
+        expect(leadsApiSource).not.toContain('rejectedOnly');
+        expect(leadsApiSource).not.toContain('rely_filter');
+
+        const leads = [
+            { rely_filter: { rejected: true } },
+            { rely_filter: { rejected: false } },
+            { rely_filter: {} },
+            {},
+        ];
+        expect(leads.filter(lead => lead.rely_filter?.rejected === true)).toEqual([leads[0]]);
+    });
+});

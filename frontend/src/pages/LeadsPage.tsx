@@ -39,6 +39,7 @@ export function LeadsPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
+    const [rejectedOnly, setRejectedOnly] = useState(false);
     const [hasMore, setHasMore] = useState(false);
     const [sortBy, setSortBy] = useState<string>('CreatedDate');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -83,6 +84,7 @@ export function LeadsPage() {
         if (searchQuery.trim()) { const q = searchQuery.toLowerCase(); result = result.filter(lead => { const fn = `${lead.FirstName || ''} ${lead.LastName || ''}`.toLowerCase(); if (fn.includes(q) || lead.Company?.toLowerCase().includes(q) || lead.Phone?.includes(q) || lead.Email?.toLowerCase().includes(q) || String(lead.SerialId)?.includes(q)) return true; if (lead.Metadata && searchableFields.length > 0) { for (const f of searchableFields) { const v = (lead.Metadata as any)[f.api_name]; if (v && String(v).toLowerCase().includes(q)) return true; } } return false; }); }
         if (sourceFilter.length > 0) result = result.filter(l => l.JobSource && sourceFilter.includes(l.JobSource));
         if (jobTypeFilter.length > 0) result = result.filter(l => l.JobType && jobTypeFilter.includes(l.JobType));
+        if (rejectedOnly) result = result.filter(l => l.rely_filter?.rejected === true);
         // Client-side sort
         result = [...result].sort((a, b) => {
             const av = (a as any)[sortBy] ?? '';
@@ -91,7 +93,7 @@ export function LeadsPage() {
             return sortOrder === 'asc' ? cmp : -cmp;
         });
         return result;
-    }, [leads, searchQuery, sourceFilter, jobTypeFilter, searchableFields, sortBy, sortOrder]);
+    }, [leads, searchQuery, sourceFilter, jobTypeFilter, rejectedOnly, searchableFields, sortBy, sortOrder]);
 
     const handleFiltersChange = (nf: Partial<LeadsListParams>) => setFilters(prev => ({ ...prev, ...nf, offset: 0 }));
     const handleNextPage = () => { if (hasMore) setFilters(prev => ({ ...prev, offset: (prev.offset || 0) + (prev.records || 100) })); };
@@ -123,6 +125,7 @@ export function LeadsPage() {
                             filters={filters} onFiltersChange={handleFiltersChange}
                             sourceFilter={sourceFilter} onSourceFilterChange={setSourceFilter}
                             jobTypeFilter={jobTypeFilter} onJobTypeFilterChange={setJobTypeFilter}
+                            rejectedOnly={rejectedOnly} onToggleRejected={() => setRejectedOnly(current => !current)}
                             sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }}
                             onNewLead={() => setCreateDialogOpen(true)}
                             canCreateLead={canCreateLead}
@@ -163,7 +166,7 @@ export function LeadsPage() {
                         </div>
 
                         <div className="blanc-controls-group">
-                            <LeadsFilters filters={filters} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
+                            <LeadsFilters filters={filters} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} rejectedOnly={rejectedOnly} onFiltersChange={handleFiltersChange} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} onToggleRejected={() => setRejectedOnly(current => !current)} />
                             <button
                                 onClick={() => setSettingsDialogOpen(true)}
                                 className="blanc-control-chip-icon"

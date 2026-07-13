@@ -55,6 +55,7 @@ interface LeadsMobileBarProps {
 
     sourceFilter: string[]; onSourceFilterChange: (v: string[]) => void;
     jobTypeFilter: string[]; onJobTypeFilterChange: (v: string[]) => void;
+    rejectedOnly: boolean; onToggleRejected: () => void;
 
     sortBy: string;
     sortOrder: 'asc' | 'desc';
@@ -69,6 +70,7 @@ export const LeadsMobileBar: React.FC<LeadsMobileBarProps> = ({
     filters, onFiltersChange,
     sourceFilter, onSourceFilterChange,
     jobTypeFilter, onJobTypeFilterChange,
+    rejectedOnly, onToggleRejected,
     sortBy, sortOrder, onSortChange,
     onNewLead, canCreateLead,
 }) => {
@@ -88,9 +90,10 @@ export const LeadsMobileBar: React.FC<LeadsMobileBarProps> = ({
         onJobTypeFilterChange(jobTypeFilter.includes(type) ? jobTypeFilter.filter(t => t !== type) : [...jobTypeFilter, type]);
     };
 
-    const activeFilterCount = statusFilter.length + sourceFilter.length + jobTypeFilter.length;
+    const activeFilterCount = statusFilter.length + sourceFilter.length + jobTypeFilter.length + (rejectedOnly ? 1 : 0);
     const resetFilters = () => {
         onFiltersChange({ status: [] }); onSourceFilterChange([]); onJobTypeFilterChange([]);
+        if (rejectedOnly) onToggleRejected();
     };
     const close = () => setSheetOpen(false);
 
@@ -146,6 +149,7 @@ export const LeadsMobileBar: React.FC<LeadsMobileBarProps> = ({
                         statusFilter={statusFilter} onToggleStatus={toggleStatus}
                         sourceFilter={sourceFilter} onToggleSource={toggleSource}
                         jobTypeFilter={jobTypeFilter} onToggleJobType={toggleJobType}
+                        rejectedOnly={rejectedOnly} onToggleRejected={onToggleRejected}
                         statuses={statuses}
                         dynamicJobTypes={dynamicJobTypes}
                         onClearAll={resetFilters}

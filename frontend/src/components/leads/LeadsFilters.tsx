@@ -16,18 +16,22 @@ interface LeadsFiltersProps {
     filters: LeadsListParams;
     sourceFilter: string[];
     jobTypeFilter: string[];
+    rejectedOnly: boolean;
     onFiltersChange: (filters: Partial<LeadsListParams>) => void;
     onSourceFilterChange: (sources: string[]) => void;
     onJobTypeFilterChange: (types: string[]) => void;
+    onToggleRejected: () => void;
 }
 
 export function LeadsFilters({
     filters,
     sourceFilter,
     jobTypeFilter,
+    rejectedOnly,
     onFiltersChange,
     onSourceFilterChange,
     onJobTypeFilterChange,
+    onToggleRejected,
 }: LeadsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
@@ -57,12 +61,13 @@ export function LeadsFilters({
     };
 
     const activeFilterCount =
-        (filters.status?.length || 0) + sourceFilter.length + jobTypeFilter.length;
+        (filters.status?.length || 0) + sourceFilter.length + jobTypeFilter.length + (rejectedOnly ? 1 : 0);
 
     const clearAllFilters = () => {
         onFiltersChange({ status: [] });
         onSourceFilterChange([]);
         onJobTypeFilterChange([]);
+        if (rejectedOnly) onToggleRejected();
     };
 
     return (
@@ -97,6 +102,7 @@ export function LeadsFilters({
                         statusFilter={filters.status || []} onToggleStatus={toggleStatus}
                         sourceFilter={sourceFilter} onToggleSource={toggleSource}
                         jobTypeFilter={jobTypeFilter} onToggleJobType={toggleJobType}
+                        rejectedOnly={rejectedOnly} onToggleRejected={onToggleRejected}
                         statuses={statuses}
                         dynamicJobTypes={dynamicJobTypes}
                         onClearAll={clearAllFilters}
