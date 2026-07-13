@@ -9398,3 +9398,206 @@ Critical path: T1 → T2 → T3 → T8. **Prod deploy — owner-gated (deploy-co
 Critical path: T1.1 → T1.2 → T1.3 → T2.2 → T4. **Prod deploy — owner-gated (deploy-consent).**
 
 > Скоуп-правка оркестратора (2026-07-13): перевод потребителей (zip-check.js, checkServiceArea.js, TC-022/023) перенесён из T1.3 в T1.2 (связность seam+потребители); T1.3 = только endpoints /config /mode /radii.
+
+## TELEPHONY-WIZARD-UX-001 — план (неявный connect + $5 бонус, Plans-опционален, комбо-поле, port-in, Stripe-чистка) (2026-07-13)
+
+Спека: `docs/specs/TELEPHONY-WIZARD-UX-001.md` · ТК: `docs/test-cases/TELEPHONY-WIZARD-UX-001.md`.
+Волны: T1 (backend бонус/lazy/Stripe) → T2 (мига 169 + portInService + endpoints; plan-first у GPT-имплементера) → T3 (фронт визард) → T4 (фронт port-in + Stripe-экран) → T5 (verify). T1 и T2 независимы после T1.1; T3 зависит от T1, T4 — от T2+T3.
+
+### Задача WIZ-T1.1: $5 welcome-бонус + softphone fire-and-forget в connectTelephony
+
+**Цель:** первый connect компании начисляет $5 (идемпотентно) и активирует payg при trial; softphone-setup уходит с фронта в backend best-effort.
+
+**Файлы, которые можно менять:**
+- `backend/src/services/telephonyTenantService.js`
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/services/walletService.js` — applyDelta/credit реюз как есть (ref-идемпотентность)
+- `backend/src/services/billingService.js` — subscribe реюз как есть
+
+**Ожидаемый результат:** приватный `grantWelcomeCredit(companyId)`: `walletService.credit(companyId, 5, {type:'adjustment', description:'Welcome credit', ref:'welcome_credit:v1'})`; затем если подписка отсутствует/trial → `billingService.subscribe(companyId,'payg')`; ошибки — console.error, connect не падает. Вызывается ТОЛЬКО на свежем пути connectTelephony (после INSERT), НЕ на early-return; после свежего connect — `setImmediate`-fire-and-forget `ensureSoftphoneSetup(companyId).catch(log)`. Default-компания и ранее подключённые бонус не получают (спека §1.2-1.3).
+
+**Зависимости:** нет · **Статус:** pending
+
+### Задача WIZ-T1.2: Ленивый connect в /search и /buy + GET /numbers/locale
+
+**Цель:** первый поиск/покупка номера неявно подключают телефонию; endpoint локали компании для сортировки area-кодов.
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/telephonyNumbers.js`
+
+**Файлы, которые трогать нельзя:**
+- `src/server.js` — mount /api/telephony/numbers уже существует
+- `telephonyTenantService.getClientForCompany` — 409-контракт для прочих потребителей сохраняется
+
+**Ожидаемый результат:** `/search` и `/buy` перед вызовом сервиса делают `await svc.connectTelephony(companyId, {actorId: req.user?.crmUser?.id, companyName: req.authz?.company?.name})`. Новый `GET /api/telephony/numbers/locale` → `{city, state, zip, lat, lon}` (companies → zip_geocache → best-effort territoryGeoService.geocodeZip → фолбэк territory_radii ORDER BY position LIMIT 1; все nullable). company_id ТОЛЬКО из `req.companyFilter?.company_id`; SQL фильтрует по company_id (изоляция — TC-WIZ-013).
+
+**Зависимости:** после WIZ-T1.1 · **Статус:** pending
+
+### Задача WIZ-T1.3: Stripe-чеклист — нормативные labels (OB-7 backend)
+
+**Цель:** очеловечить «Setup steps», заменить test_payment.
+
+**Файлы, которые можно менять:**
+- `backend/src/services/stripePaymentsService.js` (только buildChecklist:65-72)
+
+**Файлы, которые трогать нельзя:**
+- `computeReadiness`/`canCollect`/`publicStatus` — механика неизменна
+
+**Ожидаемый результат:** labels по табличке спеки §5; key `test_payment` → `first_payment` (осознанное переименование, других использований key нет); done-логика/порядок/deferred прежние.
+
+**Зависимости:** нет · **Статус:** pending
+
+### Задача WIZ-T1.4: Jest — welcome-бонус и lazy connect
+
+**Цель:** закрыть TC-WIZ-001…009 (идемпотентность $5 — на dev-БД, амендмент-9).
+
+**Файлы, которые можно менять:**
+- `tests/telephonyWelcomeCredit.test.js` (NEW)
+
+**Ожидаемый результат:** двойной/параллельный connect → ОДИН кредит; default/ретро-компании без бонуса; платный пакет не сбивается; сбой credit не валит connect; /search лениво коннектит; сбой Twilio → без частичного состояния. Jest с `--testPathIgnorePatterns "/node_modules/"`.
+
+**Зависимости:** после WIZ-T1.2 · **Статус:** pending
+
+### Задача WIZ-T2.1: Миграция 169 port_in_requests (+rollback)
+
+**Цель:** хранилище заявок переноса.
+
+**Файлы, которые можно менять:**
+- `backend/db/migrations/169_port_in_requests.sql` (NEW)
+- `backend/db/migrations/rollback_169_port_in_requests.sql` (NEW)
+
+**Ожидаемый результат:** таблица по архитектуре (id/company_id FK CASCADE/phone_number/status/twilio_port_in_sid/twilio_status/losing_carrier_info jsonb/documents jsonb/signature_request_url/target_port_in_date/notes/created_by FK crm_users/created_at/updated_at) + `idx_port_in_requests_company`; идемпотентна (IF NOT EXISTS); rollback дропает таблицу.
+
+**Зависимости:** нет (параллельно T1) · **Статус:** pending
+
+### Задача WIZ-T2.2: portInService — Twilio Porting API
+
+**Цель:** сервис портирования: portability check, create (c upload документа), list/get с live-refresh, cancel.
+
+**Файлы, которые можно менять:**
+- `backend/src/services/portInService.js` (NEW)
+
+**Файлы, которые трогать нельзя:**
+- `telephonyTenantService.js` — реюз getTelephonyState/connectTelephony/masterClient-паттерна; не дублировать клиентов
+
+**Ожидаемый результат:** ВСЕ Twilio-вызовы master-клиентом: `numbers.v1.portingPortabilities(phone).fetch({targetAccountSid})`, `portingPortIns.create({numbersV1PortingPortInCreate:{accountSid: targetAccountSid, documents:[docSid], phoneNumbers:[{phoneNumber}], losingCarrierInformation, targetPortInDate?}})`, `.fetch()`, `.remove()` — методы ПРОВЕРЕНЫ в node_modules/twilio 5.12.0 (НЕ выдумывать другие). targetAccountSid = субаккаунт компании (default → master SID). Upload utility bill: multipart POST `https://numbers-upload.twilio.com/v1/documents`, Basic auth master-кредами. Нормализация статусов (§4.1); ошибка «Porting недоступен» → строка status='action_required' + err code PORTING_UNAVAILABLE (§4.2 fallback). Каждый SQL — `AND company_id = $N`.
+
+**Зависимости:** после WIZ-T2.1 · **Статус:** pending
+
+### Задача WIZ-T2.3: Роуты /api/telephony/port-in + mount
+
+**Цель:** REST-поверхность port-in.
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/telephonyPortIn.js` (NEW)
+- `src/server.js` (ТОЛЬКО одна mount-строка)
+
+**Ожидаемый результат:** `POST /check`, `POST /` (multer memoryStorage, file `utility_bill`, лимит 10MB, mime pdf/jpeg/png), `GET /`, `GET /:id`, `DELETE /:id` — контракты §4.3 (422 NOT_PORTABLE/TARGET_DATE_TOO_SOON/VALIDATION, 409 PORT_ALREADY_REQUESTED/NOT_CANCELABLE, 502 PORTING_UNAVAILABLE). Ленивый connect в check/create. Mount: `app.use('/api/telephony/port-in', authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess, router)`; company_id из `req.companyFilter?.company_id`; чужой id → 404; losing_carrier_info наружу не отдаётся.
+
+**Зависимости:** после WIZ-T2.2 · **Статус:** pending
+
+### Задача WIZ-T2.4: Jest — port-in (auth/изоляция/флоу)
+
+**Цель:** закрыть TC-WIZ-010…021.
+
+**Файлы, которые можно менять:**
+- `tests/telephonyPortIn.test.js` (NEW)
+
+**Ожидаемый результат:** 401 без токена; 403 без права; изоляция (список пуст, чужой id → 404); happy path create; NOT_PORTABLE; TARGET_DATE_TOO_SOON; валидация; дубликат 409; live-refresh нормализует статус; cancel-ветки; PORTING_UNAVAILABLE fallback. Twilio — jest.mock.
+
+**Зависимости:** после WIZ-T2.3 · **Статус:** pending
+
+### Задача WIZ-T3.1: Справочник area-кодов + комбо-компонент
+
+**Цель:** статический NANPA-справочник и AreaCodeCombo.
+
+**Файлы, которые можно менять:**
+- `frontend/src/data/areaCodes.ts` (NEW)
+- `frontend/src/data/areaCodes.test.ts` (NEW, vitest)
+- `frontend/src/components/telephony/AreaCodeCombo.tsx` (NEW)
+
+**Ожидаемый результат:** ~350 US-кодов `{code, city, state, lat, lon}`; чистые `suggestAreaCodes(query, locale)` (дистанция → same-state → пусто; ТОЛЬКО локальные; ≤8) и `detectSearchKind` (3 цифры → area_code, текст → locality); vitest TC-WIZ-022…024 зелёные. AreaCodeCombo: FloatingField + локальный дропдаун «617 — Boston, MA», клавиатура ↑/↓/Enter/Esc, клик-вне закрывает; value `{kind, value}`; локаль — `GET /api/telephony/numbers/locale`.
+
+**Зависимости:** после WIZ-T1.2 (endpoint locale) · **Статус:** pending
+
+### Задача WIZ-T3.2: Перестройка визарда (шаги, Plans-опционален, $5-копия, разблок current)
+
+**Цель:** визард «Plans (skip) → Number → Done» без шага Set up your line.
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/TelephonyTwilioSettingsPage.tsx`
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts`, `useRealtimeEvents.ts`
+- Server-derived-принцип, NUMBER_LIMIT-upsell, Stripe-поллинг — семантику сохранить
+
+**Ожидаемый результат:** stepsMeta из 2 шагов + completion; derived по спеке §2.1 (`done_number` учитывает активный port-in; forward-override на Number разрешён); Step 1 Connect УДАЛЁН; Plans: intro «You have $5 to try Albusto pay-as-you-go — or pick a package», wallet-чип (`billingApi.wallet()`, fail-quiet), карта current НЕ disabled (клик = toast + переход на Number, БЕЗ API), «Skip — get a number first»; choosePlan не-текущего: сначала `await POST /api/telephony/numbers/connect` (403/5xx → inline-ошибки §7), затем прежний checkout; RETURN_PATH → `?step=2&billing=success`. Number: sectionCard-обёртка удалена (OB-2), AreaCodeCombo вместо Area code+City (search-параметры по kind), Contains digits + Toll-free остаются, результаты в потоке. `npm run build` зелёный.
+
+**Зависимости:** после WIZ-T3.1 · **Статус:** pending
+
+### Задача WIZ-T3.3: Мобайл-фикс обрезания результатов (OB-5)
+
+**Цель:** на 375px результаты скроллятся экраном до конца.
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/settings/SettingsLayout.tsx` И/ИЛИ `frontend/src/components/layout/AppLayout.css` (минимальный фикс на уровне найденного виновника)
+
+**Файлы, которые трогать нельзя:**
+- Desktop-скролл (`md:overflow-y-auto` сайдбар-канон) — без регрессий
+
+**Ожидаемый результат:** воспроизведено на preview 375×812 (≥10 результатов) → диагностирован обрезающий контейнер (кандидаты: `.app-main` flex-column + SettingsLayout-обёртка, спека §3.3) → минимальный фикс: контент в блочном потоке, скроллит `.app-main`; пустой серой зоны нет; десктоп 1280 не изменился.
+
+**Зависимости:** после WIZ-T3.2 · **Статус:** pending
+
+### Задача WIZ-T4.1: PortInPanel (форма + статусы) на Number-шаге
+
+**Цель:** UI переноса номера в визарде.
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/telephony/PortInPanel.tsx` (NEW)
+- `frontend/src/pages/TelephonyTwilioSettingsPage.tsx` (тумблер + встраивание)
+
+**Ожидаемый результат:** тумблер «Get a new number | Transfer your number» в потоке шага; флоу §4.4: номер → Check (`POST /check`; not portable → InlineError + «Get a new number instead») → форма losing carrier (FloatingField-канон, группы space-y-6) + file utility bill → Submit → статус-карточки (человечные статусы, ссылка LOA, Cancel). Нормативная копия-рекомендация владельца дословно (§4.4). Активный port-in флипает done_number; completion-копия «Your number transfer is underway».
+
+**Зависимости:** после WIZ-T2.3 и WIZ-T3.2 · **Статус:** pending
+
+### Задача WIZ-T4.2: Port-in статусы на странице телефонии
+
+**Цель:** трекинг заявки вне визарда.
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/telephony/PhoneNumbersPage.tsx`
+
+**Ожидаемый результат:** секция «Number transfers» (только когда список непуст) — реюз PortInPanel в status-only режиме; без block-in-block.
+
+**Зависимости:** после WIZ-T4.1 · **Статус:** pending
+
+### Задача WIZ-T4.3: Stripe not-connected — один hero (OB-7 frontend)
+
+**Цель:** убрать дублирующий блок.
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/StripePaymentsSettingsPage.tsx`
+
+**Файлы, которые трогать нельзя:**
+- Hero-содержимое CloudBanner (чипы цен внутри) — сохранить; mutations/статусы — не менять
+
+**Ожидаемый результат:** `WhatItCostsCard` и `CostRow` удалены; grid-обёртка → одиночный CloudBanner; чеклист рендерит новые labels с бэка без изменений кода рендера. `npm run build` зелёный.
+
+**Зависимости:** после WIZ-T1.3 · **Статус:** pending
+
+### Задача WIZ-T5.1: Verify-волна
+
+**Цель:** сквозная проверка перед докладом.
+
+**Файлы, которые можно менять:** только фиксы по находкам (в границах задач выше).
+
+**Ожидаемый результат:**
+1. `npm run build` (tsc -b, прод строже — noUnusedLocals) зелёный; vitest зелёный; jest (`--testPathIgnorePatterns "/node_modules/"`) зелёный.
+2. Мига 169 применяется и откатывается на dev-БД; $5-идемпотентность прогнана на dev-БД (TC-WIZ-001/002).
+3. Preview desktop 1280 + mobile 375: TC-WIZ-026 (результаты не обрезаны, форма без контейнера), TC-WIZ-027 (полный флоу: без шага 1, Skip, wallet-чип, current-карта кликабельна), TC-WIZ-028 (Stripe: один hero, новые labels). Амендмент-9: живой стенд для UI не нужен.
+4. Данные справочника area-кодов: спот-чек 10 кодов (617 Boston, 212 NYC, 415 SF, 90210-зона 310 …) на корректность city/state.
+5. Регрессия: /settings/telephony у подключённой компании, NUMBER_LIMIT-upsell, Stripe-checkout redirect-путь — не сломаны.
+
+**Зависимости:** после всех T1–T4 · **Статус:** pending

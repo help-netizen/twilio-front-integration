@@ -13,6 +13,8 @@ const crypto = require('crypto');
 const twilio = require('twilio');
 const db = require('../db/connection');
 const auditService = require('./auditService');
+const billingService = require('./billingService');
+const walletService = require('./walletService');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -43,6 +45,27 @@ function decryptToken(stored) {
 function masterClient() {
     const { getTwilioClient } = require('./twilioClient');
     return getTwilioClient();
+}
+
+async function grantWelcomeCredit(companyId) {
+    try {
+        await walletService.credit(companyId, 5, {
+            type: 'adjustment',
+            description: 'Welcome credit',
+            ref: 'welcome_credit:v1',
+        });
+    } catch (err) {
+        console.error(`[TelephonyTenant] welcome credit failed (${companyId}):`, err.message);
+    }
+
+    try {
+        const subscription = await billingService.getSubscription(companyId);
+        if (!subscription || subscription.plan_id === 'trial') {
+            await billingService.subscribe(companyId, 'payg');
+        }
+    } catch (err) {
+        console.error(`[TelephonyTenant] payg activation failed (${companyId}):`, err.message);
+    }
 }
 
 // ── Tenant connection state ──────────────────────────────────────────────────
@@ -132,6 +155,14 @@ async function connectTelephony(companyId, { actorId, companyName } = {}) {
             status = 'connected', suspended_at = NULL, updated_at = now()`,
         [companyId, sub.sid, encryptToken(sub.authToken), actorId || null]
     );
+
+    await grantWelcomeCredit(companyId);
+
+    setImmediate(() => {
+        ensureSoftphoneSetup(companyId).catch(err => {
+            console.error(`[TelephonyTenant] softphone setup failed (${companyId}):`, err.message);
+        });
+    });
 
     auditService.log({
         actor_id: actorId, action: 'telephony.connected',
