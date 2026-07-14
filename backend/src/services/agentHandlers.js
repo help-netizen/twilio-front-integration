@@ -337,6 +337,10 @@ const HANDLERS = {
             return { skipped: 'already_handled_inbound', conversation_id: convId };
         }
 
+        if (!input.greeting && !String(input.inbound_body_text || '').trim()) {
+            return { skipped: 'no_reply_content', conversation_id: convId };
+        }
+
         // (3a) Phase A (brain OFF): record the turn (bump turn_count, stamp inbound).
         //      No LLM, no send. Best-effort — a post-claim persist failure is non-fatal.
         const convoEnabled = /^(1|true|yes|on)$/i.test(String(process.env.YELP_CONVO_ENABLED || '').trim());

@@ -153,6 +153,7 @@ describe('assistantService.chat', () => {
         const payload = JSON.parse(outboundBody);
         expect(payload).not.toHaveProperty('tools');
         expect(payload.generationConfig.responseMimeType).toBe('application/json');
+        expect(payload.generationConfig.thinkingConfig.thinkingBudget).toBe(0);
         expect(mockDbQuery.mock.calls[0][1][0]).toBe(COMPANY_ID);
     });
 

@@ -137,7 +137,8 @@ async function generateViaGemini(prompt) {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: 512,
+            maxOutputTokens: 1024,
+            thinkingConfig: { thinkingBudget: 0 },
             candidateCount: 1,
             responseMimeType: 'application/json',
         },
