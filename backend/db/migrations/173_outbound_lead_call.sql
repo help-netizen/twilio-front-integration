@@ -38,9 +38,14 @@ BEGIN
 END $$;
 
 -- FR-14(a): at most ONE active/queued attempt per lead (mirror of the job guard).
+-- NOTE: no `lead_uuid IS NOT NULL` in the predicate — unique indexes ignore
+-- NULL rows anyway (parts rows are invisible by construction), and the extra
+-- clause breaks ON CONFLICT partial-index INFERENCE in the enqueue INSERT
+-- (caught live on the TC-OLC-057 stand: "no unique or exclusion constraint
+-- matching the ON CONFLICT specification").
 CREATE UNIQUE INDEX IF NOT EXISTS uq_outbound_call_attempts_active_lead
     ON outbound_call_attempts (lead_uuid)
-    WHERE status IN ('pending', 'dialing') AND lead_uuid IS NOT NULL;
+    WHERE status IN ('pending', 'dialing');
 
 -- FR-14(c) lifetime-once lookup + worker/webhook reads by lead.
 CREATE INDEX IF NOT EXISTS idx_outbound_call_attempts_lead

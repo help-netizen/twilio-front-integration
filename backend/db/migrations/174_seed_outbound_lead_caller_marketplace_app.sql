@@ -15,7 +15,10 @@ INSERT INTO marketplace_apps (
     'outbound-lead-caller',
     'Outbound Lead Caller',
     'Albusto',
-    'lead_generation',
+    -- category 'ai' (VAPI AI / Repair Advisor precedent): this app CONSUMES
+    -- leads, it is not a lead SOURCE — and the leadgen real-DB suite pins the
+    -- lead_generation set to exactly the five per-source apps.
+    'ai',
     'internal',
     'Sara calls new leads from your chosen sources within a minute and books them into the schedule.',
     'When connected, every new lead from an enabled source (for example Pro Referral) gets an automatic phone call from Sara, the AI scheduling assistant — immediately during business hours, or at the next business-day start. Sara references the customer''s request, offers real appointment windows ranked by the scheduling engine, and books the customer''s pick as a schedule hold on the lead. Unanswered calls retry up to three times; if the customer can''t be reached or declines, a dispatcher task is created on the lead. Every call appears live in the Pulse timeline with recording, transcript, and summary.',

@@ -43,8 +43,11 @@ describe('TC-OLC-055: migration 173 dialer-extension shape', () => {
 
     it('one-active-chain-per-lead partial unique + lead lookup index', () => {
         expect(ddl).toMatch(
-            /CREATE UNIQUE INDEX IF NOT EXISTS uq_outbound_call_attempts_active_lead\s+ON outbound_call_attempts \(lead_uuid\)\s+WHERE status IN \('pending', 'dialing'\) AND lead_uuid IS NOT NULL/
+            /CREATE UNIQUE INDEX IF NOT EXISTS uq_outbound_call_attempts_active_lead\s+ON outbound_call_attempts \(lead_uuid\)\s+WHERE status IN \('pending', 'dialing'\);/
         );
+        // ON CONFLICT inference requires the index predicate WITHOUT the
+        // redundant NOT NULL clause (TC-OLC-057 live finding).
+        expect(ddl).not.toMatch(/WHERE status IN \('pending', 'dialing'\) AND lead_uuid IS NOT NULL/);
         expect(ddl).toMatch(/CREATE INDEX IF NOT EXISTS idx_outbound_call_attempts_lead/);
     });
 
@@ -87,7 +90,7 @@ describe('TC-OLC-056: migration 174 marketplace seed', () => {
     it('seeds the outbound-lead-caller tile with the gate-only shape', () => {
         expect(seed).toMatch(/'outbound-lead-caller'/);
         expect(seed).toMatch(/'Albusto'/);
-        expect(seed).toMatch(/'lead_generation'/);
+        expect(seed).toMatch(/'ai'/); // consumes leads; not a lead SOURCE (leadgen set is pinned to five)
         expect(seed).toMatch(/'internal'/);
         expect(seed).toMatch(/'none'/);
         expect(seed).toMatch(/'published'/);
