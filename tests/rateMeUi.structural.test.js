@@ -618,3 +618,70 @@ describe('RATE-ME-CRM-001 Caddy and deployment reference contracts', () => {
         });
     });
 });
+
+// RM2-T7 — APPEND ONLY: T6 owns the harness and TC-RM2-SR-01..13 above.
+describe('RATE-ME-CRM-002 Job-card Rate Me structural contract', () => {
+    test('TC-RM2-SR-14 · Job-card timeline, send-link panel, and authenticated jobs clients are pinned', () => {
+        const blockSource = read('frontend/src/components/jobs/JobRateMeBlock.tsx');
+        const modalSource = read('frontend/src/components/jobs/RateLinkModal.tsx');
+        const jobStatusSource = read('frontend/src/components/jobs/JobStatusTags.tsx');
+        const jobsApiSource = read('frontend/src/services/jobsApi.ts');
+        const actionBand = between(jobStatusSource, '{/* ── JOB-ACTIONS-SLIM-001', '{/* ── ONWAY-001: "On the way" modal');
+
+        expect(blockSource).toContain("queryKey: ['job-rate-status', jobId]");
+        expect(blockSource).toContain('queryFn: () => getRateStatus(jobId)');
+        expect(blockSource).toContain('status.sent_at &&');
+        expect(blockSource).toContain('status.opened_at &&');
+        expect(blockSource).toContain('status.rating?.created_at &&');
+        expect(blockSource).toContain('status.google_click_at &&');
+        expect(blockSource).toContain('Rating link sent · via');
+        expect(blockSource).toContain('label="Opened"');
+        expect(blockSource).toContain('Rated ★');
+        expect(blockSource).toContain('label="Opened Google review"');
+        expect(blockSource).toContain('Send rating link');
+        expect(blockSource).toContain("style={{ backgroundColor: 'var(--blanc-accent)' }}");
+        expect(blockSource).toContain('await statusQuery.refetch();');
+        expect(blockSource).toContain('onSuccess={refreshAfterSend}');
+
+        expect(modalSource).toContain('<DialogContent variant="panel">');
+        expect(modalSource).toContain('<DialogPanelHeader>');
+        expect(modalSource).toContain('<DialogBody className="md:px-8 md:py-7">');
+        expect(modalSource).toContain('className="mx-auto w-full max-w-[740px] space-y-6"');
+        expect(modalSource).toContain('<DialogPanelFooter>');
+        expect(modalSource).not.toContain('variant="dialog"');
+        expect(modalSource).toContain("setChannel('sms')");
+        expect(modalSource).toContain("setChannel('email')");
+        expect(modalSource).toContain("setChannel('copy')");
+        expect(modalSource).toContain('disabled={!hasPhone || sending}');
+        expect(modalSource).toContain('disabled={!hasEmail || sending}');
+        expect(modalSource).toContain('No customer phone on file');
+        expect(modalSource).toContain('No customer email on file');
+        expect(modalSource).toContain('const result = await sendRateLink(jobId, channel);');
+        expect(modalSource).toContain('navigator.clipboard.writeText(result.url)');
+        expect(modalSource).toContain("toast.success('Rating link copied.')");
+        ['WALLET_BLOCKED', 'SMS_FAILED', 'NO_PHONE', 'NO_EMAIL', 'MAIL_DISCONNECTED'].forEach(code => {
+            expect(modalSource).toContain(`code === '${code}'`);
+        });
+        expect(modalSource).toContain('error instanceof RateLinkError');
+
+        expect(actionBand).toContain('<JobRateMeBlock');
+        expect(actionBand).toContain('jobId={job.id}');
+        expect(actionBand).toContain('customerPhone={job.customer_phone}');
+        expect(actionBand).toContain('customerEmail={job.customer_email}');
+        expect(actionBand).toContain("canSend={hasPermission('messages.send')}");
+        expect(actionBand).toContain('onSent={onNotified}');
+
+        expect(jobsApiSource).toContain("import { authedFetch } from './apiClient';");
+        expect(jobsApiSource).toContain('export class RateLinkError extends Error');
+        expect(jobsApiSource).toContain('export async function getRateStatus(jobId: number)');
+        expect(jobsApiSource).toContain('`${JOBS_BASE}/${jobId}/rate-status`');
+        expect(jobsApiSource).toContain('export async function sendRateLink(jobId: number, channel: RateLinkChannel)');
+        expect(jobsApiSource).toContain('`${JOBS_BASE}/${jobId}/rate-link`');
+        expect(jobsApiSource).toContain("method: 'POST'");
+        expect(jobsApiSource).toContain('body: JSON.stringify({ channel })');
+        expect(`${blockSource}\n${modalSource}`).not.toMatch(/Blanc/);
+        expect(`${blockSource}\n${modalSource}`).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+
+        // Manual: open a job, verify reached-only steps, and exercise SMS/Email/Copy plus error toasts.
+    });
+});
