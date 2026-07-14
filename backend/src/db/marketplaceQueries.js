@@ -56,7 +56,7 @@ async function ensureMarketplaceSchema(client = null) {
         // credential; setup page via metadata.setup_path). Boot-replayed AFTER
         // 083 per the ordering rule. The DDL migration is deliberately NOT in
         // this list (schema migration, not a seed).
-        await query(readMigration('174_seed_outbound_lead_caller_marketplace_app.sql'));
+        await query(readMigration('176_seed_outbound_lead_caller_marketplace_app.sql'));
         // ASSISTANT-BOT-001: restore bot-facing descriptions after app seeds overwrite metadata.
         // MUST run AFTER every app seed above (it patches their metadata).
         await query(readMigration('173_seed_assistant_app_descriptions.sql'));

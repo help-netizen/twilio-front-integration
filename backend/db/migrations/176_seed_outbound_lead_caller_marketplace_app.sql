@@ -1,10 +1,10 @@
 -- =============================================================================
--- Migration 174: Seed the "Outbound Lead Caller" marketplace app
+-- Migration 176: Seed the "Outbound Lead Caller" marketplace app
 -- (OUTBOUND-LEAD-CALL-001). provisioning_mode='none' — pure gate (VAPI config is
 -- server-env); connecting enables the lead.created auto-call trigger. Registered
 -- in ensureMarketplaceSchema AFTER the 170 line (boot-reseed; 083's ON CONFLICT
 -- DO UPDATE ordering rule). NO installation seed — connect is an owner action.
--- (Spec drafted this as 173; renumbered with the DDL shift 172→173, seed 173→174.)
+-- (Spec drafted this as 173; renumbered with the DDL shift → seed is now 176.)
 -- =============================================================================
 
 INSERT INTO marketplace_apps (

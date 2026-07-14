@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 173: OUTBOUND-LEAD-CALL-001 — lead-scoped outbound call chains on the
+-- Migration 175: OUTBOUND-LEAD-CALL-001 — lead-scoped outbound call chains on the
 -- shared dialer table + per-company scenario-scoped settings.
 --
 -- 1) outbound_call_attempts gains a `scenario` discriminator ('parts_visit' for
@@ -13,7 +13,7 @@
 --    the lead ladder (FR-5) — fully independent of the parts outbound_call_settings.
 -- NOT registered in ensureMarketplaceSchema (DDL, not a seed) — run via the
 -- normal migration path (psql before code deploy, prod procedure unchanged).
--- (Spec drafted this as 172; renumbered 172→173: 172 taken by feedback_submissions.)
+-- (Spec drafted this as 172; renumbered 172→173→175: 172 taken by feedback_submissions, 173/174 by assistant-bot.)
 -- =============================================================================
 
 ALTER TABLE outbound_call_attempts ALTER COLUMN job_id DROP NOT NULL;

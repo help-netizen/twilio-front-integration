@@ -1,9 +1,9 @@
 /**
  * OUTBOUND-LEAD-CALL-001 (OLC-T1) — TC-OLC-055/056: psql-less shape assertions
- * for migration 173 (dialer extension + settings) and 174 (marketplace seed)
+ * for migration 175 (dialer extension + settings) and 176 (marketplace seed)
  * + rollback order + boot-registration. Pure fs + regex over the SQL files
  * (precedent: tests/timeOffMigration.test.js). Live-PG constraint behavior is
- * TC-OLC-057 (manual stand). Spec drafted these as 172/173; renumbered 173/174
+ * TC-OLC-057 (manual stand). Spec drafted these as 172/173; renumbered 173/174→175/176 (assistant-bot took 173/174)
  * (172 taken by feedback_submissions) — the global ≥100 uniqueness tripwire in
  * tests/timeOffMigration.test.js guards collisions; no maximality assert here.
  */
@@ -12,10 +12,10 @@ const fs = require('fs');
 const path = require('path');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'backend', 'db', 'migrations');
-const DDL_FILE = '173_outbound_lead_call.sql';
-const DDL_ROLLBACK = 'rollback_173_outbound_lead_call.sql';
-const SEED_FILE = '174_seed_outbound_lead_caller_marketplace_app.sql';
-const SEED_ROLLBACK = 'rollback_174_seed_outbound_lead_caller_marketplace_app.sql';
+const DDL_FILE = '175_outbound_lead_call.sql';
+const DDL_ROLLBACK = 'rollback_175_outbound_lead_call.sql';
+const SEED_FILE = '176_seed_outbound_lead_caller_marketplace_app.sql';
+const SEED_ROLLBACK = 'rollback_176_seed_outbound_lead_caller_marketplace_app.sql';
 
 const ddl = fs.readFileSync(path.join(MIGRATIONS_DIR, DDL_FILE), 'utf8');
 const ddlRollback = fs.readFileSync(path.join(MIGRATIONS_DIR, DDL_ROLLBACK), 'utf8');
@@ -25,7 +25,7 @@ const files = fs.readdirSync(MIGRATIONS_DIR);
 const bootRegistry = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'src', 'db', 'marketplaceQueries.js'), 'utf8');
 
-describe('TC-OLC-055: migration 173 dialer-extension shape', () => {
+describe('TC-OLC-055: migration 175 dialer-extension shape', () => {
     it('relaxes job_id and adds the scenario discriminator with parts default', () => {
         expect(ddl).toMatch(/ALTER TABLE outbound_call_attempts ALTER COLUMN job_id DROP NOT NULL/);
         expect(ddl).toMatch(/ADD COLUMN IF NOT EXISTS scenario\s+TEXT NOT NULL DEFAULT 'parts_visit'/);
@@ -79,14 +79,14 @@ describe('TC-OLC-055: migration 173 dialer-extension shape', () => {
         for (const stmt of drops) expect(stmt).toMatch(/outbound_lead_call_settings/);
     });
 
-    it('numbering: exactly one 173_ forward migration — ours; rollback exists; 172 exists (no gap)', () => {
-        expect(files.filter(f => /^173_/.test(f))).toEqual([DDL_FILE]);
+    it('numbering: exactly one 175_ forward migration — ours; rollback exists; 174 exists (no gap)', () => {
+        expect(files.filter(f => /^175_/.test(f))).toEqual([DDL_FILE]);
         expect(files).toContain(DDL_ROLLBACK);
-        expect(files.some(f => /^172_/.test(f))).toBe(true);
+        expect(files.some(f => /^174_/.test(f))).toBe(true);
     });
 });
 
-describe('TC-OLC-056: migration 174 marketplace seed', () => {
+describe('TC-OLC-056: migration 176 marketplace seed', () => {
     it('seeds the outbound-lead-caller tile with the gate-only shape', () => {
         expect(seed).toMatch(/'outbound-lead-caller'/);
         expect(seed).toMatch(/'Albusto'/);
@@ -117,10 +117,10 @@ describe('TC-OLC-056: migration 174 marketplace seed', () => {
 
     it('boot-registered in ensureMarketplaceSchema AFTER the 170 line; the DDL 173 is NOT boot-replayed', () => {
         const line170 = bootRegistry.indexOf("readMigration('170_split_lead_generator_marketplace_apps.sql')");
-        const line174 = bootRegistry.indexOf("readMigration('174_seed_outbound_lead_caller_marketplace_app.sql')");
+        const line174 = bootRegistry.indexOf("readMigration('176_seed_outbound_lead_caller_marketplace_app.sql')");
         expect(line170).toBeGreaterThanOrEqual(0);
         expect(line174).toBeGreaterThan(line170);
-        expect(bootRegistry).not.toMatch(/readMigration\('173_outbound_lead_call\.sql'\)/);
+        expect(bootRegistry).not.toMatch(/readMigration\('175_outbound_lead_call\.sql'\)/);
     });
 
     it('seed rollback deletes only the tile', () => {
@@ -128,8 +128,8 @@ describe('TC-OLC-056: migration 174 marketplace seed', () => {
         expect(seedRollback).not.toMatch(/DROP TABLE/i);
     });
 
-    it('numbering: exactly one 174_ forward migration — ours; rollback exists', () => {
-        expect(files.filter(f => /^174_/.test(f))).toEqual([SEED_FILE]);
+    it('numbering: exactly one 176_ forward migration — ours; rollback exists', () => {
+        expect(files.filter(f => /^176_/.test(f))).toEqual([SEED_FILE]);
         expect(files).toContain(SEED_ROLLBACK);
     });
 });
