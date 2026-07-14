@@ -276,6 +276,401 @@ async function onLeadCreated({ leadId, companyId }) {
     }
 }
 
+// ── §5.3-5.6 Claim-time processing, ladder, webhook classification, tasks ────
+// (OLC-T4/T5.) Heavy collaborators are lazy-required inside the functions:
+// outboundCallService / vapiCallTimelineService / recommendSlots / timelines-
+// Queries / eventService / companyProfileService — keeps unit tests light and
+// avoids any chance of require cycles through the worker.
+
+/** Same 3-line terminal UPDATE as the worker's private terminate — local copy. */
+async function terminateLead(attemptId, status, reason) {
+    await db.query(
+        `UPDATE outbound_call_attempts
+         SET status = $2, reason = $3, updated_at = now()
+         WHERE id = $1`,
+        [attemptId, status, String(reason || '').slice(0, 120)]
+    );
+    console.log(`[outboundLeadCall] terminated attempt=${attemptId} status=${status} reason=${reason}`);
+}
+
+const IGNORE_HOURS_RE = /^(1|true|yes|on)$/i;
+
+/**
+ * §5.3 — claim-time processing for a scenario='lead_call' row (worker Touch-1
+ * dispatches here). Company scope always from the attempt row.
+ */
+async function processLeadAttempt(attempt) {
+    const companyId = attempt.company_id;
+    const now = new Date();
+
+    // 1. Lead re-read (FK CASCADE usually beat us to deleted leads; belt).
+    let lead;
+    try {
+        lead = await leadsService.getLeadByUUID(attempt.lead_uuid, companyId);
+    } catch (err) {
+        if (err && err.code === 'LEAD_NOT_FOUND') {
+            return terminateLead(attempt.id, 'canceled', 'lead_not_found');
+        }
+        throw err; // worker catch → 'failed' worker_error (audited)
+    }
+
+    // 2. Goal-achieved skip (FR-6/D3 — NOT a takeover guard).
+    const status = String(lead.Status || '').toUpperCase();
+    if (lead.LeadDateTime) {
+        return terminateLead(attempt.id, 'canceled', 'goal_achieved:hold_set');
+    }
+    if (status === 'LOST' || status === 'CONVERTED') {
+        return terminateLead(attempt.id, 'canceled', `goal_achieved:closed_${status.toLowerCase()}`);
+    }
+
+    // 3. Eligibility re-check (FR-15): disconnect/source-off stops queued work
+    // at the next tick without any queue-purge code.
+    const connected = await marketplaceService.isAppConnected(companyId, APP_KEY);
+    if (!connected) return terminateLead(attempt.id, 'canceled', 'app_disconnected');
+    const settings = await outboundLeadCallSettingsService.resolve(companyId);
+    if (!outboundLeadCallSettingsService.isSourceEnabled(settings, lead.JobSource)) {
+        return terminateLead(attempt.id, 'canceled', 'source_disabled');
+    }
+
+    // 4. Business window (FR-4/D2) — carry, never drop. Test toggle honored
+    // (same regex as the parts worker).
+    let ds;
+    try {
+        ds = await scheduleService.getDispatchSettings(companyId);
+    } catch {
+        ds = { ...FALLBACK_DISPATCH_SETTINGS };
+    }
+    const ignoreHours = IGNORE_HOURS_RE.test(process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS || '');
+    if (!ignoreHours && !isWithinWorkWindow(now, ds)) {
+        const carryTo = nextWindowStart(now, ds);
+        await db.query(
+            `UPDATE outbound_call_attempts
+             SET status = 'pending', scheduled_at = $2, updated_at = now()
+             WHERE id = $1`,
+            [attempt.id, carryTo]
+        );
+        console.log(`[outboundLeadCall] carried attempt=${attempt.id} to=${carryTo.toISOString()}`);
+        return;
+    }
+
+    // 5. Slot pre-compute (FR-9 — never dial empty-handed). recommendSlots
+    // safe-fails to {available:false, fallback:true} and gates on the
+    // smart-slot-engine app itself — the gate is never bypassed here.
+    const zip = lead.PostalCode || undefined;
+    // Number(null) is 0 — a lead without geocode must NOT become lat/lng 0,0.
+    const lat = lead.Latitude != null && lead.Latitude !== '' ? Number(lead.Latitude) : NaN;
+    const lng = lead.Longitude != null && lead.Longitude !== '' ? Number(lead.Longitude) : NaN;
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+    const address = lead.Address
+        ? [lead.Address, lead.City, lead.State].filter(Boolean).join(', ')
+        : undefined;
+
+    let topSlot = null;
+    try {
+        const recommendSlots = require('./agentSkills/skills/recommendSlots');
+        const recs = await recommendSlots.run(companyId, {}, {
+            zip,
+            ...(hasCoords ? { lat, lng } : {}),
+            address,
+        });
+        if (recs && recs.available && !recs.fallback && Array.isArray(recs.slots) && recs.slots.length > 0) {
+            topSlot = recs.slots[0];
+        }
+    } catch (err) {
+        console.warn('[outboundLeadCall] recommendSlots failed:', err.message);
+    }
+    if (!topSlot) {
+        await scheduleLeadRetryOrExhaust(attempt, 'no_slots', 'failed');
+        return;
+    }
+
+    // 6. Place the call.
+    const customerName = [lead.FirstName, lead.LastName].filter(Boolean).join(' ') || 'there';
+    const problemDescription =
+        String(lead.Description || lead.Comments || '').trim().slice(0, 300) || undefined;
+
+    let companyName = null;
+    try {
+        const companyProfileService = require('./companyProfileService');
+        const profile = await companyProfileService.getProfile(companyId);
+        companyName = (profile && profile.name) || null;
+    } catch { /* variant B greeting */ }
+    const sourceLabel = lead.JobSource || 'online';
+    const firstMessage = companyName
+        ? `Hi {{customerName}}, this is Sara with ${companyName} — you reached out on ${sourceLabel} about your appliance. I can get you on the schedule right now: we have {{slotLabel}} available — would that work?`
+        : `Hi {{customerName}}, this is Sara — you reached out on ${sourceLabel} about your appliance. I can get you on the schedule right now: we have {{slotLabel}} available — would that work?`;
+
+    // lat/lng ride on the slot object → reuses placeCall's TECHSLOT spread.
+    const slot = { ...topSlot, ...(hasCoords ? { lat, lng } : {}) };
+
+    const outboundCallService = require('./outboundCallService');
+    const result = await outboundCallService.placeCall({
+        companyId,
+        scenario: 'lead_call',
+        leadUuid: attempt.lead_uuid,
+        contactId: attempt.contact_id || undefined,
+        customerName,
+        customerNumber: attempt.phone,
+        slot,
+        zip,
+        problemDescription,
+        source: lead.JobSource || undefined,
+        firstMessage,
+    });
+
+    if (result.ok) {
+        await db.query(
+            `UPDATE outbound_call_attempts
+             SET vapi_call_id = $2, slot_json = $3, updated_at = now()
+             WHERE id = $1`,
+            [attempt.id, result.vapiCallId, JSON.stringify(topSlot)]
+        );
+        try {
+            const vapiCallTimelineService = require('./vapiCallTimelineService');
+            await vapiCallTimelineService.recordPlacement({
+                attempt,
+                vapiCallId: result.vapiCallId,
+                dialedNumber: attempt.phone,
+                callerId: process.env.VAPI_OUTBOUND_TWILIO_NUMBER || process.env.OUTBOUND_CALLER_ID || null,
+            });
+        } catch (err) {
+            console.warn('[outboundLeadCall] timeline placement mirror failed:', err.message);
+        }
+        console.log(`[outboundLeadCall] dialed attempt=${attempt.id} lead=${attempt.lead_uuid} vapi=${result.vapiCallId}`);
+    } else {
+        await scheduleLeadRetryOrExhaust(attempt, result.error || 'place_call_failed', 'failed');
+    }
+}
+
+/**
+ * §5.4 — the ONE ladder site (worker failures AND webhook transients).
+ * Marks the attempt terminal, re-checks goal/eligibility ONLY (D3 — no
+ * human-takeover guard), then inserts the next rung or exhausts + task.
+ */
+async function scheduleLeadRetryOrExhaust(attempt, reason, klass = 'failed') {
+    const companyId = attempt.company_id;
+    const eventService = require('./eventService');
+
+    // 1. Honest-terminal mark frees the (lead_uuid) active guard.
+    await db.query(
+        `UPDATE outbound_call_attempts
+         SET status = $2, reason = $3, updated_at = now()
+         WHERE id = $1`,
+        [attempt.id, klass, String(reason || '').slice(0, 120)]
+    );
+
+    // 2. No-resurrection re-check (goal + eligibility only; fail-open).
+    let lead = null;
+    let blockedBy = null;
+    try {
+        try {
+            lead = await leadsService.getLeadByUUID(attempt.lead_uuid, companyId);
+        } catch (err) {
+            if (err && err.code === 'LEAD_NOT_FOUND') blockedBy = 'lead_not_found';
+            else throw err;
+        }
+        if (!blockedBy && lead) {
+            const status = String(lead.Status || '').toUpperCase();
+            if (lead.LeadDateTime) blockedBy = 'goal_achieved';
+            else if (status === 'LOST' || status === 'CONVERTED') blockedBy = 'goal_achieved';
+            else if (!(await marketplaceService.isAppConnected(companyId, APP_KEY))) blockedBy = 'app_disconnected';
+            else {
+                const settings = await outboundLeadCallSettingsService.resolve(companyId);
+                if (!outboundLeadCallSettingsService.isSourceEnabled(settings, lead.JobSource)) {
+                    blockedBy = 'source_disabled';
+                }
+            }
+        }
+    } catch (err) {
+        console.warn('[outboundLeadCall] retry re-check failed (fail-open):', err.message);
+    }
+    if (blockedBy) {
+        try {
+            eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_retry_skipped',
+                { attemptNo: attempt.attempt_no, outcome: klass, blockedBy }, 'system');
+        } catch { /* non-fatal */ }
+        console.log(`[outboundLeadCall] retry blocked attempt=${attempt.id} by=${blockedBy}`);
+        return;
+    }
+
+    const settings = await outboundLeadCallSettingsService.resolve(companyId);
+    const maxAttempts = settings.max_attempts || 3;
+
+    if (attempt.attempt_no < maxAttempts) {
+        // 3. Next rung — fresh slot at claim (slot_json deliberately not copied).
+        let ds;
+        try {
+            ds = await scheduleService.getDispatchSettings(companyId);
+        } catch {
+            ds = { ...FALLBACK_DISPATCH_SETTINGS };
+        }
+        const nextAt = computeLeadNextDueAt(attempt.attempt_no, settings, ds, new Date());
+        await db.query(
+            `INSERT INTO outbound_call_attempts
+                 (company_id, lead_uuid, scenario, contact_id, phone, attempt_no, status, scheduled_at)
+             VALUES ($1, $2, 'lead_call', $3, $4, $5, 'pending', $6)`,
+            [companyId, attempt.lead_uuid, attempt.contact_id || null, attempt.phone, attempt.attempt_no + 1, nextAt]
+        );
+        try {
+            eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_retry',
+                { attemptNo: attempt.attempt_no, nextScheduledAt: nextAt.toISOString(), outcome: klass }, 'system');
+        } catch { /* non-fatal */ }
+        console.log(`[outboundLeadCall] retry scheduled lead=${attempt.lead_uuid} attempt=${attempt.attempt_no + 1} at=${nextAt.toISOString()}`);
+    } else {
+        // 4. Exhaustion (FR-12): terminal marker row + dispatcher task.
+        await db.query(
+            `INSERT INTO outbound_call_attempts
+                 (company_id, lead_uuid, scenario, contact_id, phone, attempt_no, status, scheduled_at, reason)
+             VALUES ($1, $2, 'lead_call', $3, $4, $5, 'exhausted', now(), 'max_attempts_reached')`,
+            [companyId, attempt.lead_uuid, attempt.contact_id || null, attempt.phone, attempt.attempt_no]
+        );
+        await createLeadCallTask(companyId, lead, attempt, 'exhausted', { finalReason: String(reason || '') });
+        try {
+            eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_exhausted',
+                { attempts: maxAttempts }, 'system');
+        } catch { /* non-fatal */ }
+        console.log(`[outboundLeadCall] exhausted lead=${attempt.lead_uuid} after=${attempt.attempt_no}`);
+    }
+}
+
+/**
+ * §5.5 — end-of-call classification for lead attempts (called from the VAPI
+ * webhook AFTER the shared timeline finalize + terminal-idempotence no-op).
+ * Safe-fail by contract.
+ */
+async function handleLeadEndOfCall(attempt, klass, endedReason, message) {
+    try {
+        const companyId = attempt.company_id;
+        const eventService = require('./eventService');
+
+        // 1. Booked belt: the hold is the truth even if the mid-call flip failed.
+        let lead = null;
+        try {
+            lead = await leadsService.getLeadByUUID(attempt.lead_uuid, companyId);
+        } catch { /* fall through to classification */ }
+        if (lead && lead.LeadDateTime) {
+            await db.query(
+                `UPDATE outbound_call_attempts SET status = 'booked', updated_at = now() WHERE id = $1`,
+                [attempt.id]
+            );
+            console.log(`[outboundLeadCall] booked (belt) attempt=${attempt.id} lead=${attempt.lead_uuid}`);
+            return;
+        }
+
+        // 2. Declined — a human said no; terminal, dispatcher follows up (FR-11).
+        const outcome = message && message.analysis && message.analysis.structuredData
+            && message.analysis.structuredData.outcome;
+        if (klass === 'declined' || outcome === 'declined' || outcome === 'callback') {
+            await db.query(
+                `UPDATE outbound_call_attempts SET status = 'declined', reason = $2, updated_at = now() WHERE id = $1`,
+                [attempt.id, String(endedReason || outcome || 'declined').slice(0, 120)]
+            );
+            await createLeadCallTask(companyId, lead, attempt, 'declined', {
+                summary: message && message.analysis && message.analysis.summary,
+            });
+            try {
+                eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_declined',
+                    { attemptNo: attempt.attempt_no, outcome: outcome || klass }, 'system');
+            } catch { /* non-fatal */ }
+            return;
+        }
+
+        // 3. Transient (no_answer / voicemail / failed) → the ladder.
+        await scheduleLeadRetryOrExhaust(attempt, String(endedReason || klass), klass);
+    } catch (err) {
+        console.warn('[outboundLeadCall] handleLeadEndOfCall failed:', err && err.message);
+    }
+}
+
+/**
+ * §5.6 — dispatcher task (FR-12/SC-08), Yelp createYelpCallTask precedent:
+ * lead-bound AND Pulse-AR-visible; createdBy 'agent' with NO agentStatus (the
+ * agentWorker never claims it). Non-fatal by contract.
+ */
+async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
+    try {
+        const timelinesQueries = require('../db/timelinesQueries');
+        const leadClientId = lead && lead.ClientId ? lead.ClientId : null;
+
+        // Exactly-once belt per chain. NOTE (spec deviation from architecture,
+        // flagged there): the belt matches subject_type/subject_id — the columns
+        // timelinesQueries.createTask actually writes (tasks.lead_id is only
+        // populated by the /api/tasks parent path).
+        if (leadClientId) {
+            const { rows } = await db.query(
+                `SELECT 1 FROM tasks
+                 WHERE company_id = $1 AND subject_type = 'lead' AND subject_id = $2
+                   AND agent_type = 'outbound_lead_call' AND status = 'open'
+                 LIMIT 1`,
+                [companyId, leadClientId]
+            );
+            if (rows.length > 0) {
+                console.log(`[outboundLeadCall] task_exists lead=${attempt.lead_uuid}`);
+                return;
+            }
+        }
+
+        const timeline = await timelinesQueries.findOrCreateTimeline(attempt.phone, companyId);
+        const name = lead
+            ? ([lead.FirstName, lead.LastName].filter(Boolean).join(' ') || 'the lead')
+            : 'the lead';
+        const n = attempt.attempt_no;
+        const sourceLabel = (lead && lead.JobSource) || '';
+
+        let title;
+        let description;
+        if (kind === 'declined') {
+            title = `${name} answered but didn't book — follow up`;
+            description = `Sara reached the customer on this ${sourceLabel} lead but they didn't pick a time.`
+                + (extra.summary ? `\n\nCall summary: ${extra.summary}` : '')
+                + `\n\nPlease follow up personally.`;
+        } else {
+            // exhausted — per-attempt log lines from the chain.
+            let lines = '';
+            try {
+                const { rows } = await db.query(
+                    `SELECT attempt_no, status, reason, updated_at
+                     FROM outbound_call_attempts
+                     WHERE lead_uuid = $1 AND company_id = $2
+                       AND status NOT IN ('pending', 'dialing', 'exhausted')
+                     ORDER BY attempt_no, id`,
+                    [attempt.lead_uuid, companyId]
+                );
+                lines = rows.map(r =>
+                    `Attempt ${r.attempt_no}: ${r.status}${r.reason ? ` (${r.reason})` : ''} — ${new Date(r.updated_at).toISOString()}`
+                ).join('\n');
+            } catch { /* attempt log is best-effort */ }
+
+            if (extra.finalReason === 'no_slots') {
+                title = `Couldn't offer ${name} a time — appointment slots unavailable (${n} attempts)`;
+                description = `Sara couldn't compute appointment slots for this lead (slot engine unavailable or no windows for the lead's location), so no call could offer a time.`
+                    + (lines ? `\n\n${lines}` : '')
+                    + `\n\nPlease schedule manually.`;
+            } else {
+                title = `Couldn't reach ${name} — ${n} automated call attempts`;
+                description = `Sara tried to call this ${sourceLabel} lead but couldn't reach them.`
+                    + (lines ? `\n\n${lines}` : '')
+                    + `\n\nPlease follow up and book the appointment.`;
+            }
+        }
+
+        await timelinesQueries.createTask({
+            companyId,
+            threadId: timeline.id,
+            subjectType: 'lead',
+            subjectId: leadClientId,
+            title,
+            description,
+            priority: 'p1',
+            createdBy: 'agent',
+            agentType: 'outbound_lead_call',
+        });
+        console.log(`[outboundLeadCall] task created kind=${kind} lead=${attempt.lead_uuid}`);
+    } catch (err) {
+        console.warn('[outboundLeadCall] createLeadCallTask failed:', err && err.message);
+    }
+}
+
 module.exports = {
     APP_KEY,
     // §5.1 pure helpers (jest)
@@ -287,4 +682,9 @@ module.exports = {
     computeLeadNextDueAt,
     // §5.2
     onLeadCreated,
+    // §5.3-5.6
+    processLeadAttempt,
+    scheduleLeadRetryOrExhaust,
+    handleLeadEndOfCall,
+    createLeadCallTask,
 };

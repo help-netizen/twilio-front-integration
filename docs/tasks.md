@@ -10100,7 +10100,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** `node node_modules/jest/bin/jest.js --runTestsByPath tests/outboundLeadCallWorker.test.js tests/outboundCallWorker.test.js tests/outboundCallService.test.js tests/confirmPartsVisit.test.js tests/vapiCallStatusWebhook.test.js --testPathIgnorePatterns "/node_modules/"`.
 
-**Зависимости:** OLC-T3 (сервис-файл, window-хелперы, tz-экспорт). **Размер:** M+ (крупнейшая задача ядра). **Статус:** pending
+**Зависимости:** OLC-T3 (сервис-файл, window-хелперы, tz-экспорт). **Размер:** M+ (крупнейшая задача ядра). **Статус:** done (2026-07-13, Claude: Touch-1 + §5.3-5.6 + golden-фикстура; 42/42 + 4 parts-сьюты 102/102 нетронуты; тестом пойман и исправлен Number(null)=0 координатный баг)
 
 ### Задача OLC-T5: placeCall-расширение + webhook lead-ветка + handleLeadEndOfCall + тесты
 

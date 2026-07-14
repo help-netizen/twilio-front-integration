@@ -488,7 +488,14 @@ async function tick() {
         // Per-attempt isolation: one bad row never aborts the tick nor touches
         // another company's row.
         try {
-            await processAttempt(attempt);
+            // OUTBOUND-LEAD-CALL-001: per-row scenario dispatch. Lead chains are
+            // processed by outboundLeadCallService (lazy require — no cycle);
+            // every other row takes the parts path byte-identically.
+            if (attempt.scenario === 'lead_call') {
+                await require('./outboundLeadCallService').processLeadAttempt(attempt);
+            } else {
+                await processAttempt(attempt);
+            }
         } catch (err) {
             console.error(`[outboundCallWorker] attempt ${attempt.id} (job ${attempt.job_id}) failed:`, err.message);
             // Best-effort: leave a reason on the row so it isn't silently stuck
