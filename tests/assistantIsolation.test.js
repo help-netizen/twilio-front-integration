@@ -20,6 +20,12 @@ const { getServiceConfig } = require('../backend/src/services/assistant/serviceC
 
 const COMPANY_ID = '11111111-1111-1111-1111-111111111111';
 const ASSISTANT_DIR = path.join(__dirname, '..', 'backend', 'src', 'services', 'assistant');
+const ASSISTANT_SERVICE = path.join(
+    __dirname, '..', 'backend', 'src', 'services', 'assistantService.js'
+);
+const ASSISTANT_ROUTE = path.join(
+    __dirname, '..', 'backend', 'src', 'routes', 'assistant.js'
+);
 
 function appRow(appKey, installationStatus = null, installationSettings = null) {
     return {
@@ -76,6 +82,53 @@ describe('ASSISTANT-BOT-001 structural isolation', () => {
             .map(match => match[1]);
         expect([...new Set(marketplaceCalls)]).toEqual(['getAppConnectionSnapshot']);
         expect([...new Set(slotCalls)]).toEqual(['getByCompany']);
+    });
+
+    test('root assistant executor imports only context providers and operational DB', () => {
+        const source = fs.readFileSync(ASSISTANT_SERVICE, 'utf8');
+        const requireCalls = source.match(/\brequire\s*\(/g) || [];
+        const imports = [...source.matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)]
+            .map(match => match[1]);
+
+        expect(imports).toHaveLength(requireCalls.length);
+        expect(imports).toEqual([
+            './assistant/capabilityCatalog',
+            './assistant/serviceConfig',
+            '../db/connection',
+        ]);
+        expect(source).not.toMatch(/agentSkills/i);
+        expect(source).not.toMatch(/(?:leads|jobs|contacts|calls|payments)Queries/i);
+        expect(source).not.toMatch(/require\([^)]*timeline(?:Queries|Service)?/i);
+        expect(source).not.toMatch(/require\([^)]*Queries/i);
+    });
+
+    test('assistant route imports only its service, operational DB, and runtime primitives', () => {
+        const source = fs.readFileSync(ASSISTANT_ROUTE, 'utf8');
+        const imports = [...source.matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)]
+            .map(match => match[1]);
+
+        expect(imports).toEqual([
+            'express',
+            'node:crypto',
+            '../services/assistantService',
+            '../db/connection',
+        ]);
+        expect(source).not.toMatch(/agentSkills/i);
+        expect(source).not.toMatch(/require\([^)]*Queries/i);
+    });
+
+    test('boot replay restores assistant metadata after the split app seed', () => {
+        const source = fs.readFileSync(
+            path.join(__dirname, '..', 'backend', 'src', 'db', 'marketplaceQueries.js'),
+            'utf8'
+        );
+        const split = "await query(readMigration('170_split_lead_generator_marketplace_apps.sql'));";
+        const assistant = "await query(readMigration('173_seed_assistant_app_descriptions.sql'));";
+
+        expect(source.match(/readMigration\('173_seed_assistant_app_descriptions\.sql'\)/g))
+            .toHaveLength(1);
+        expect(source.indexOf(split)).toBeGreaterThan(-1);
+        expect(source.indexOf(assistant)).toBeGreaterThan(source.indexOf(split));
     });
 
     test('marketplace connection snapshot is one company-scoped pure SELECT', async () => {

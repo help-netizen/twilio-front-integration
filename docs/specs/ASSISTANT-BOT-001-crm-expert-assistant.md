@@ -114,7 +114,23 @@ that any marketplace-app migration includes/updates `metadata.assistant`. The
 capability-catalog tool reads this field; a missing block degrades to
 user-facing text but is flagged in review.
 
-## 5. Tools (the entire tool surface — exactly two, both read-only)
+## 4b. v1 execution model — PRE-INJECT, no model-invoked tools (safest)
+
+Because the catalog is small (12 apps), v1 does **not** expose model-callable
+tools at all. The server, before calling Gemini, itself calls the two read
+functions and injects their output into the prompt:
+- `get_capability_catalog()` → the full catalog block (product knowledge).
+- `get_service_config(companyId)` → this company's connection/config block,
+  fenced as DATA-not-instructions.
+
+Then a **single** `generateContent` call produces the answer. There is no
+tool-loop, so there is zero chance the model invokes an off-whitelist tool — the
+strongest possible form of "restricted tools" (the model has none). If the
+catalog outgrows the context window later, a model-invoked tool-loop (the
+`yelpConvoAgentService` shape) is the deferred v2. The two functions below are
+therefore **server-side context providers**, not model tools.
+
+## 5. Context providers (server-side reads — exactly two, both read-only)
 
 ### 5.1 `get_capability_catalog()`
 - Input: none (optionally `{ appKey?: string }` to focus one app).
