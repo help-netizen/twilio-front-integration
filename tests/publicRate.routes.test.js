@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * RATE-ME-CRM-001 T3 — public rating routes + first-mounted host gate.
+ * RATE-ME-CRM-001 T3 + RATE-ME-CRM-002 T3 — public rating routes,
+ * click attribution beacon, and first-mounted host gate.
  *
  * The real router, service, and gate run together. Only query/storage/transaction
  * seams are mocked so host binding and body-identity isolation stay end-to-end.
@@ -21,6 +22,8 @@ const TOKEN_EXPIRED = 'Etok_'.padEnd(32, 'e');
 const TOKEN_DISCONNECTED = 'Dtok_'.padEnd(32, 'd');
 const TOKEN_UNKNOWN = 'Utok_'.padEnd(32, 'u');
 const GOOGLE_URL = 'https://g.page/r/abc/review';
+const BOOKING_URL = 'https://book.bostonmasters.com';
+const START_DATE = '2024-07-12T14:00:00.000Z';
 
 const UNIFORM_NOT_FOUND = {
     ok: false,
@@ -39,10 +42,13 @@ let mockObservedRateHosts;
 let mockIpCounter = 0;
 
 const mockGetTokenContext = jest.fn();
+const mockGetExpiredTokenBranding = jest.fn();
 const mockGetConnectedRateMeMeta = jest.fn();
 const mockGetServableDomain = jest.fn();
 const mockInsertRating = jest.fn();
 const mockStampTokenUsed = jest.fn();
+const mockStampTokenOpened = jest.fn();
+const mockStampGoogleClick = jest.fn();
 const mockGetDomainByCompany = jest.fn();
 const mockUpsertDomainForCompany = jest.fn();
 const mockSetDomainStatus = jest.fn();
@@ -56,10 +62,13 @@ const mockGetClient = jest.fn();
 
 jest.mock('../backend/src/db/rateMeQueries', () => ({
     getTokenContext: (...args) => mockGetTokenContext(...args),
+    getExpiredTokenBranding: (...args) => mockGetExpiredTokenBranding(...args),
     getConnectedRateMeMeta: (...args) => mockGetConnectedRateMeMeta(...args),
     getServableDomain: (...args) => mockGetServableDomain(...args),
     insertRating: (...args) => mockInsertRating(...args),
     stampTokenUsed: (...args) => mockStampTokenUsed(...args),
+    stampTokenOpened: (...args) => mockStampTokenOpened(...args),
+    stampGoogleClick: (...args) => mockStampGoogleClick(...args),
     getDomainByCompany: (...args) => mockGetDomainByCompany(...args),
     upsertDomainForCompany: (...args) => mockUpsertDomainForCompany(...args),
     setDomainStatus: (...args) => mockSetDomainStatus(...args),
@@ -90,20 +99,41 @@ function tokenRow(overrides = {}) {
         technician_name: 'Alex Petrov',
         already_rated: false,
         not_expired: true,
+        expired: false,
         expires_at: null,
         used_at: null,
+        opened_at: null,
+        google_click_at: null,
         job_id: 41,
+        contact_id: 81,
         tech_id: 'zb-77',
+        contact_first_name: 'Sarah',
+        customer_name: 'Sarah Chen',
+        customer_last_name: 'Chen',
+        service_name: 'Refrigerator repair',
+        start_date: START_DATE,
+        company_timezone: 'America/New_York',
+        company_phone: '+16175551234',
+        company_email: 'hello@bostonmasters.com',
+        contact_phone: '+16175551234',
+        contact_email: 'hello@bostonmasters.com',
         ...overrides,
     };
 }
 
-function connectedMeta(companyId, googleReviewUrl = GOOGLE_URL) {
+function connectedMeta(
+    companyId,
+    googleReviewUrl = GOOGLE_URL,
+    bookingUrl = BOOKING_URL
+) {
     return {
         installation_id: `installation-${companyId}`,
         app_id: 'rate-me-app',
         metadata: {
-            settings: { google_review_url: googleReviewUrl },
+            settings: {
+                google_review_url: googleReviewUrl,
+                booking_url: bookingUrl,
+            },
         },
     };
 }
@@ -125,6 +155,7 @@ function resetFixtureState() {
             id: 503,
             token: TOKEN_EXPIRED,
             not_expired: false,
+            expired: true,
             expires_at: '2020-01-01T00:00:00.000Z',
         }),
         tokenRow({
@@ -150,6 +181,13 @@ function resetFixtureState() {
             (hostCompanyId == null || row.company_id === hostCompanyId)
         ))
     ));
+    mockGetExpiredTokenBranding.mockImplementation(async (token, hostCompanyId = null) => (
+        mockTokenRows.find((row) => (
+            row.token === token &&
+            row.expired &&
+            (hostCompanyId == null || row.company_id === hostCompanyId)
+        ))
+    ));
     mockGetConnectedRateMeMeta.mockImplementation(async (companyId) => (
         mockMetaByCompany.get(companyId) || null
     ));
@@ -165,6 +203,18 @@ function resetFixtureState() {
         return { id: 900 + mockStoredRatings.length };
     });
     mockStampTokenUsed.mockResolvedValue({ id: 501, used_at: new Date().toISOString() });
+    mockStampTokenOpened.mockImplementation(async (id) => {
+        const row = mockTokenRows.find((item) => item.id === id);
+        if (row && row.opened_at === null) row.opened_at = '2026-07-14T12:00:00.000Z';
+        return row;
+    });
+    mockStampGoogleClick.mockImplementation(async (id) => {
+        const row = mockTokenRows.find((item) => item.id === id);
+        if (row && row.google_click_at === null) {
+            row.google_click_at = '2026-07-14T12:05:00.000Z';
+        }
+        return row;
+    });
     mockGetDomainByCompany.mockImplementation(async (companyId) => (
         [...mockDomainRows.values()].find((row) => row.company_id === companyId) || null
     ));
@@ -267,7 +317,7 @@ describe('public rate routes', () => {
         expect(mockStampTokenUsed).not.toHaveBeenCalled();
     });
 
-    test('TC-P1-01 · GET returns exactly the five public context keys', async () => {
+    test('TC-RM2-GC-01/06/07 · GET live returns the exact 12-key context', async () => {
         const { app } = buildPublicApp();
         const response = await withClientIp(request(app).get(`/api/public/rate/${TOKEN_X}`))
             .set('Host', 'rate.albusto.com');
@@ -279,31 +329,59 @@ describe('public rate routes', () => {
                 company_name: 'Boston Masters',
                 company_logo_url: 'https://s3.example/presigned',
                 technician_name: 'Alex Petrov',
+                first_name: 'Sarah',
+                service_label: 'Refrigerator repair',
+                visit_date: 'Friday, Jul 12',
+                company_phone: '+16175551234',
+                company_email: 'hello@bostonmasters.com',
+                booking_url: BOOKING_URL,
                 already_rated: false,
                 five_star_redirect: true,
+                expired: false,
             },
         });
         expect(Object.keys(response.body.data).sort()).toEqual([
             'already_rated',
+            'booking_url',
+            'company_email',
             'company_logo_url',
             'company_name',
+            'company_phone',
+            'expired',
+            'first_name',
             'five_star_redirect',
+            'service_label',
             'technician_name',
+            'visit_date',
         ]);
-        expect(JSON.stringify(response.body)).not.toContain(COMPANY_X);
-        expect(JSON.stringify(response.body)).not.toContain(GOOGLE_URL);
+        const wireBody = JSON.stringify(response.body);
+        for (const forbidden of [
+            COMPANY_X,
+            GOOGLE_URL,
+            START_DATE,
+            'Chen',
+            'contact_id',
+            'job_id',
+            'opened_at',
+        ]) {
+            expect(wireBody).not.toContain(forbidden);
+        }
         expect(mockGetTokenContext).toHaveBeenCalledTimes(1);
         expect(mockGetConnectedRateMeMeta).toHaveBeenCalledTimes(1);
         expect(mockGetPresignedUrl).toHaveBeenCalledTimes(1);
+        expect(mockStampTokenOpened).toHaveBeenCalledTimes(1);
+        expect(mockStampTokenOpened).toHaveBeenCalledWith(501);
     });
 
-    test('TC-P2-01 · unknown well-formed token returns the uniform 404', async () => {
+    test('TC-RM2-GC-03 · unknown well-formed token returns the uniform 404', async () => {
         const { app } = buildPublicApp();
         const response = await withClientIp(request(app).get(`/api/public/rate/${TOKEN_UNKNOWN}`))
             .set('Host', 'rate.albusto.com');
 
         expect(response.status).toBe(404);
         expect(response.body).toEqual(UNIFORM_NOT_FOUND);
+        expect(mockGetTokenContext).toHaveBeenCalledWith(TOKEN_UNKNOWN, null);
+        expect(mockGetExpiredTokenBranding).toHaveBeenCalledWith(TOKEN_UNKNOWN, null);
     });
 
     test('TC-P3-01 · malformed token guard runs before any query', async () => {
@@ -345,7 +423,7 @@ describe('public rate routes', () => {
         }
     });
 
-    test('TC-P4-01 · expired token is indistinguishable from unknown on GET and POST', async () => {
+    test('TC-RM2-GC-02 · GET branded-expired is 200 while POST rating stays uniform 404', async () => {
         const { app } = buildPublicApp();
         const getResponse = await withClientIp(
             request(app).get(`/api/public/rate/${TOKEN_EXPIRED}`)
@@ -354,13 +432,35 @@ describe('public rate routes', () => {
             request(app).post(`/api/public/rate/${TOKEN_EXPIRED}/rating`).send({ stars: 5 })
         ).set('Host', 'rate.albusto.com');
 
-        expect(getResponse.status).toBe(404);
+        expect(getResponse.status).toBe(200);
         expect(postResponse.status).toBe(404);
-        expect(getResponse.body).toEqual(UNIFORM_NOT_FOUND);
+        expect(getResponse.body).toEqual({
+            ok: true,
+            data: {
+                expired: true,
+                company_name: 'Boston Masters',
+                company_logo_url: 'https://s3.example/presigned',
+                company_phone: '+16175551234',
+                company_email: 'hello@bostonmasters.com',
+                booking_url: BOOKING_URL,
+            },
+        });
+        expect(Object.keys(getResponse.body.data).sort()).toEqual([
+            'booking_url',
+            'company_email',
+            'company_logo_url',
+            'company_name',
+            'company_phone',
+            'expired',
+        ]);
+        expect(getResponse.body.data).not.toHaveProperty('first_name');
+        expect(getResponse.body.data).not.toHaveProperty('service_label');
+        expect(getResponse.body.data).not.toHaveProperty('visit_date');
         expect(postResponse.body).toEqual(UNIFORM_NOT_FOUND);
+        expect(mockStampTokenOpened).not.toHaveBeenCalled();
     });
 
-    test('TC-P6-01 · malformed/unknown/expired/foreign/disconnected 404s are byte-identical', async () => {
+    test('TC-RM2-GC-05 · truly-invalid GET 404s are byte-identical', async () => {
         mockDomainRows.set('rate.bostonmasters.com', {
             company_id: COMPANY_X,
             domain: 'rate.bostonmasters.com',
@@ -370,7 +470,6 @@ describe('public rate routes', () => {
         const requests = [
             withClientIp(request(app).get('/api/public/rate/abc')).set('Host', 'rate.albusto.com'),
             withClientIp(request(app).get(`/api/public/rate/${TOKEN_UNKNOWN}`)).set('Host', 'rate.albusto.com'),
-            withClientIp(request(app).get(`/api/public/rate/${TOKEN_EXPIRED}`)).set('Host', 'rate.albusto.com'),
             withClientIp(request(app).get(`/api/public/rate/${TOKEN_Y}`)).set('Host', 'rate.bostonmasters.com'),
             withClientIp(request(app).get(`/api/public/rate/${TOKEN_DISCONNECTED}`)).set('Host', 'rate.albusto.com'),
         ];
@@ -386,7 +485,25 @@ describe('public rate routes', () => {
         expect(mockGetTokenContext).toHaveBeenCalledWith(TOKEN_Y, COMPANY_X);
     });
 
-    test('TC-P7-01 · GET after rating retains the DTO and reports already_rated', async () => {
+    test('TC-RM2-GC-04 · foreign-host GET checks both seams and leaks no company-Y data', async () => {
+        mockDomainRows.set('rate.bostonmasters.com', {
+            company_id: COMPANY_X,
+            domain: 'rate.bostonmasters.com',
+            status: 'active',
+        });
+        const { app } = buildPublicApp();
+        const response = await withClientIp(request(app).get(`/api/public/rate/${TOKEN_Y}`))
+            .set('Host', 'rate.bostonmasters.com');
+
+        expect(response.status).toBe(404);
+        expect(response.body).toEqual(UNIFORM_NOT_FOUND);
+        expect(mockGetTokenContext).toHaveBeenCalledWith(TOKEN_Y, COMPANY_X);
+        expect(mockGetExpiredTokenBranding).toHaveBeenCalledWith(TOKEN_Y, COMPANY_X);
+        expect(JSON.stringify(response.body)).not.toContain('Company Y');
+        expect(JSON.stringify(response.body)).not.toContain('Taylor Y');
+    });
+
+    test('TC-RM2-GC-01b · already-rated GET retains the live personalized DTO', async () => {
         mockTokenRows[0].already_rated = true;
         const { app } = buildPublicApp();
         const response = await withClientIp(request(app).get(`/api/public/rate/${TOKEN_X}`))
@@ -394,7 +511,10 @@ describe('public rate routes', () => {
 
         expect(response.status).toBe(200);
         expect(response.body.data.already_rated).toBe(true);
-        expect(Object.keys(response.body.data)).toHaveLength(5);
+        expect(response.body.data.expired).toBe(false);
+        expect(response.body.data.first_name).toBe('Sarah');
+        expect(response.body.data.technician_name).toBe('Alex Petrov');
+        expect(Object.keys(response.body.data)).toHaveLength(12);
     });
 
     test('TC-P8-01 · GET exposes only the boolean five-star redirect flag', async () => {
@@ -410,7 +530,7 @@ describe('public rate routes', () => {
         expect(JSON.stringify(configured.body)).not.toContain(GOOGLE_URL);
     });
 
-    test('TC-P10-01 · first 5-star rating records before returning the redirect', async () => {
+    test('TC-RM2-RT-01 · first 5-star rating keeps the 001 redirect contract', async () => {
         const { app } = buildPublicApp();
         const response = await withClientIp(
             request(app).post(`/api/public/rate/${TOKEN_X}/rating`).send({ stars: 5 })
@@ -553,7 +673,7 @@ describe('public rate routes', () => {
         expect(mockGetTokenContext).not.toHaveBeenCalled();
     });
 
-    test('TC-M3-01 · host × token isolation matrix matches the specification', async () => {
+    test('TC-RM2-ISO-01 · host × token isolation matrix covers GET and click beacon', async () => {
         mockDomainRows.set('rate.bostonmasters.com', {
             company_id: COMPANY_X,
             domain: 'rate.bostonmasters.com',
@@ -574,25 +694,64 @@ describe('public rate routes', () => {
             { value: TOKEN_DISCONNECTED, className: 'disconnected' },
         ];
         const hosts = [
-            { value: 'rate.albusto.com', className: 'shared', allowed: ['x', 'y'] },
-            { value: 'rate.bostonmasters.com', className: 'custom', allowed: ['x'] },
-            { value: 'pending.bostonmasters.com', className: 'pending', allowed: [] },
-            { value: 'evil.example.com', className: 'unknown-host', allowed: [] },
-            { value: 'app.albusto.com', className: 'pass-through', allowed: ['x', 'y'] },
+            {
+                value: 'rate.albusto.com',
+                className: 'shared',
+                live: ['x', 'y'],
+                brandedExpired: ['expired'],
+            },
+            {
+                value: 'rate.bostonmasters.com',
+                className: 'custom',
+                live: ['x'],
+                brandedExpired: ['expired'],
+            },
+            {
+                value: 'pending.bostonmasters.com',
+                className: 'pending',
+                live: [],
+                brandedExpired: [],
+            },
+            {
+                value: 'evil.example.com',
+                className: 'unknown-host',
+                live: [],
+                brandedExpired: [],
+            },
+            {
+                value: 'app.albusto.com',
+                className: 'pass-through',
+                live: ['x', 'y'],
+                brandedExpired: ['expired'],
+            },
         ];
 
         for (const host of hosts) {
             for (const token of tokens) {
-                const response = await withClientIp(
+                const getResponse = await withClientIp(
                     request(app).get(`/api/public/rate/${token.value}`)
                 ).set('Host', host.value);
-                const shouldPass = host.allowed.includes(token.className);
-                expect(response.status).toBe(shouldPass ? 200 : 404);
-                if (!shouldPass && !['pending', 'unknown-host'].includes(host.className)) {
-                    expect(response.body).toEqual(UNIFORM_NOT_FOUND);
+                const clickResponse = await withClientIp(
+                    request(app).post(`/api/public/rate/${token.value}/click`)
+                ).set('Host', host.value);
+                const isLive = host.live.includes(token.className);
+                const isBrandedExpired = host.brandedExpired.includes(token.className);
+                const gateRejects = ['pending', 'unknown-host'].includes(host.className);
+
+                expect(getResponse.status).toBe(isLive || isBrandedExpired ? 200 : 404);
+                expect(clickResponse.status).toBe(isLive ? 204 : 404);
+                if (isBrandedExpired) {
+                    expect(getResponse.body.data.expired).toBe(true);
                 }
-                if (!shouldPass && ['pending', 'unknown-host'].includes(host.className)) {
-                    expect(response.body).toEqual(GATE_NOT_FOUND);
+                if (!isLive && !isBrandedExpired) {
+                    expect(getResponse.body).toEqual(
+                        gateRejects ? GATE_NOT_FOUND : UNIFORM_NOT_FOUND
+                    );
+                }
+                if (!isLive) {
+                    expect(clickResponse.body).toEqual(
+                        gateRejects ? GATE_NOT_FOUND : UNIFORM_NOT_FOUND
+                    );
                 }
             }
         }
@@ -606,6 +765,126 @@ describe('public rate routes', () => {
         expect(sharedY.status).toBe(200);
         expect(customForeign.status).toBe(404);
         expect(customForeign.body).toEqual(UNIFORM_NOT_FOUND);
+    });
+});
+
+describe('click beacon', () => {
+    test('TC-RM2-BK-01 · live beacon returns empty 204 and stamps the URL token', async () => {
+        const { app } = buildPublicApp();
+        const response = await withClientIp(
+            request(app).post(`/api/public/rate/${TOKEN_X}/click`)
+        ).set('Host', 'rate.albusto.com');
+
+        expect(response.status).toBe(204);
+        expect(response.text).toBe('');
+        expect(mockGetTokenContext).toHaveBeenCalledWith(TOKEN_X, null);
+        expect(mockStampGoogleClick).toHaveBeenCalledTimes(1);
+        expect(mockStampGoogleClick).toHaveBeenCalledWith(501);
+    });
+
+    test('TC-RM2-BK-02 · repeat beacons are 204 and preserve the first click time', async () => {
+        const { app } = buildPublicApp();
+        const first = await withClientIp(
+            request(app).post(`/api/public/rate/${TOKEN_X}/click`)
+        ).set('Host', 'rate.albusto.com');
+        const firstClickAt = mockTokenRows[0].google_click_at;
+        const second = await withClientIp(
+            request(app).post(`/api/public/rate/${TOKEN_X}/click`)
+        ).set('Host', 'rate.albusto.com');
+
+        expect(first.status).toBe(204);
+        expect(second.status).toBe(204);
+        expect(firstClickAt).toBe('2026-07-14T12:05:00.000Z');
+        expect(mockTokenRows[0].google_click_at).toBe(firstClickAt);
+        expect(mockStampGoogleClick).toHaveBeenCalledTimes(2);
+    });
+
+    test('TC-RM2-BK-03 · malformed beacon token is uniform 404 before DB reads', async () => {
+        const { app } = buildPublicApp();
+        const response = await withClientIp(
+            request(app).post('/api/public/rate/abc/click')
+        ).set('Host', 'rate.albusto.com');
+
+        expect(response.status).toBe(404);
+        expect(response.body).toEqual(UNIFORM_NOT_FOUND);
+        expect(mockGetTokenContext).not.toHaveBeenCalled();
+        expect(mockStampGoogleClick).not.toHaveBeenCalled();
+    });
+
+    test('TC-RM2-BK-04 · unknown, expired, foreign, and disconnected beacons share 404', async () => {
+        mockDomainRows.set('rate.bostonmasters.com', {
+            company_id: COMPANY_X,
+            domain: 'rate.bostonmasters.com',
+            status: 'active',
+        });
+        const { app } = buildPublicApp();
+        const cases = [
+            [TOKEN_UNKNOWN, 'rate.albusto.com'],
+            [TOKEN_EXPIRED, 'rate.albusto.com'],
+            [TOKEN_Y, 'rate.bostonmasters.com'],
+            [TOKEN_DISCONNECTED, 'rate.albusto.com'],
+        ];
+
+        for (const [token, host] of cases) {
+            const response = await withClientIp(
+                request(app).post(`/api/public/rate/${token}/click`)
+            ).set('Host', host);
+            expect(response.status).toBe(404);
+            expect(response.body).toEqual(UNIFORM_NOT_FOUND);
+        }
+        expect(mockGetTokenContext).toHaveBeenCalledWith(TOKEN_Y, COMPANY_X);
+        expect(mockStampGoogleClick).not.toHaveBeenCalled();
+    });
+
+    test('TC-RM2-BK-06 · beacon body cannot override URL-token attribution', async () => {
+        const { app } = buildPublicApp();
+        const response = await withClientIp(
+            request(app).post(`/api/public/rate/${TOKEN_X}/click`).send({
+                job_id: 999,
+                company_id: COMPANY_Y,
+                token: TOKEN_Y,
+                token_id: 777,
+            })
+        ).set('Host', 'rate.albusto.com');
+
+        expect(response.status).toBe(204);
+        expect(mockGetTokenContext).toHaveBeenCalledWith(TOKEN_X, null);
+        expect(mockStampGoogleClick).toHaveBeenCalledTimes(1);
+        expect(mockStampGoogleClick).toHaveBeenCalledWith(501);
+        expect(mockStampGoogleClick).not.toHaveBeenCalledWith(777);
+        expect(mockStampGoogleClick).not.toHaveBeenCalledWith(999);
+    });
+
+    test('TC-RM2-BK-07 · click rides the existing host-gate allowlist and public mount', async () => {
+        const { app } = buildPublicApp();
+        const blocked = await withClientIp(
+            request(app).post(`/api/public/rate/${TOKEN_X}/click`)
+        ).set('Host', 'evil.example.com');
+
+        expect(blocked.status).toBe(404);
+        expect(blocked.body).toEqual(GATE_NOT_FOUND);
+        expect(mockGetTokenContext).not.toHaveBeenCalled();
+
+        const gateSource = fs.readFileSync(
+            path.join(__dirname, '..', 'backend', 'src', 'middleware', 'rateHostGate.js'),
+            'utf8'
+        );
+        const routeSource = fs.readFileSync(
+            path.join(__dirname, '..', 'backend', 'src', 'routes', 'public-rate.js'),
+            'utf8'
+        );
+        const serverSource = fs.readFileSync(
+            path.join(__dirname, '..', 'src', 'server.js'),
+            'utf8'
+        );
+        expect(gateSource).toContain('/^\\/api\\/public\\/rate(?:\\/|-domain-ask)/');
+        expect(/^\/api\/public\/rate(?:\/|-domain-ask)/.test(
+            `/api/public/rate/${TOKEN_X}/click`
+        )).toBe(true);
+        expect(routeSource).toMatch(
+            /router\.post\('\/rate\/:token\/click',\s*postRateLimiter,\s*requireRateToken/
+        );
+        expect(serverSource).not.toContain('RATE-ME-CRM-002');
     });
 });
 
@@ -667,6 +946,41 @@ describe('rate limits', () => {
         expect(source).toMatch(/max:\s*60/);
         expect(source).toMatch(/max:\s*10/);
         expect(source).toContain('ipKeyGenerator');
+    });
+});
+
+describe('click beacon rate limit', () => {
+    beforeEach(() => {
+        jest.resetModules();
+    });
+
+    test('TC-RM2-BK-05 · 11th beacon is limited by XFF and another IP is independent', async () => {
+        const { app } = buildPublicApp();
+        const beaconIp = '203.0.113.130';
+        for (let index = 0; index < 10; index += 1) {
+            const response = await request(app)
+                .post(`/api/public/rate/${TOKEN_X}/click`)
+                .set('Host', 'rate.albusto.com')
+                .set('X-Forwarded-For', beaconIp);
+            expect(response.status).toBe(204);
+        }
+
+        const limited = await request(app)
+            .post(`/api/public/rate/${TOKEN_X}/click`)
+            .set('Host', 'rate.albusto.com')
+            .set('X-Forwarded-For', beaconIp);
+        expect(limited.status).toBe(429);
+        expect(limited.body).toEqual({
+            ok: false,
+            error: { code: 'RATE_LIMITED', message: 'Too many requests' },
+        });
+        expect(Object.keys(limited.headers).some((key) => key.startsWith('ratelimit'))).toBe(true);
+
+        const independent = await request(app)
+            .post(`/api/public/rate/${TOKEN_X}/click`)
+            .set('Host', 'rate.albusto.com')
+            .set('X-Forwarded-For', '203.0.113.131');
+        expect(independent.status).toBe(204);
     });
 });
 
