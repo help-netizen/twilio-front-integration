@@ -233,7 +233,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
     // ALB-101: auth pages render bare — no header/nav/softphone chrome.
     // (After all hooks to keep the hook order stable.)
-    if (location.pathname.startsWith('/signup') || location.pathname.startsWith('/onboarding')) {
+    if (location.pathname.startsWith('/signup') || location.pathname.startsWith('/onboarding') || location.pathname.startsWith('/r/')) {
         return <>{children}</>;
     }
 

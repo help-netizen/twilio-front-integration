@@ -42,6 +42,7 @@ import OutboundLeadCallerSettingsPage from './pages/OutboundLeadCallerSettingsPa
 import PublicInvoicePayPage from './pages/PublicInvoicePayPage';
 import PublicPayThanksPage from './pages/PublicPayThanksPage';
 import PublicEstimateViewPage from './pages/PublicEstimateViewPage';
+import RatePage from './pages/RatePage';
 import TechnicianPhotosPage from './pages/TechnicianPhotosPage';
 import ApiDocsPage from './pages/ApiDocsPage';
 import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
@@ -111,6 +112,7 @@ function App() {
               <Route path="/pay/thanks" element={<PublicPayThanksPage />} />
               <Route path="/pay/:token" element={<PublicInvoicePayPage />} />
               <Route path="/e/:token" element={<PublicEstimateViewPage />} />
+              <Route path="/r/:token" element={<RatePage />} />
               <Route path="/onboarding" element={<OnboardingPage />} />
               <Route path="/" element={<Navigate to="/pulse" replace />} />
               <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
