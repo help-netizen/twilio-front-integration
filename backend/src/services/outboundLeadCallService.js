@@ -389,16 +389,12 @@ async function processLeadAttempt(attempt) {
     const problemDescription =
         String(lead.Description || lead.Comments || '').trim().slice(0, 300) || undefined;
 
-    let companyName = null;
-    try {
-        const companyProfileService = require('./companyProfileService');
-        const profile = await companyProfileService.getProfile(companyId);
-        companyName = (profile && profile.name) || null;
-    } catch { /* variant B greeting */ }
-    const sourceLabel = lead.JobSource || 'online';
-    const firstMessage = companyName
-        ? `Hi {{customerName}}, this is Sara with ${companyName} — you reached out on ${sourceLabel} about your appliance. I can get you on the schedule right now: we have {{slotLabel}} available — would that work?`
-        : `Hi {{customerName}}, this is Sara — you reached out on ${sourceLabel} about your appliance. I can get you on the schedule right now: we have {{slotLabel}} available — would that work?`;
+    // The greeting is owned by the DEDICATED lead-booking VAPI assistant (its
+    // own static firstMessage + prompt — see VAPI_LEAD_CALL_ASSISTANT_ID). We no
+    // longer compose a per-call firstMessage from the company profile name: that
+    // pulled the legal name ("… LLC") and, on the shared parts assistant, let the
+    // model drift into the part-arrival script. The dedicated assistant carries
+    // the correct spoken brand name and a lead-only prompt.
 
     // lat/lng ride on the slot object → reuses placeCall's TECHSLOT spread.
     const slot = { ...topSlot, ...(hasCoords ? { lat, lng } : {}) };
@@ -415,7 +411,6 @@ async function processLeadAttempt(attempt) {
         zip,
         problemDescription,
         source: lead.JobSource || undefined,
-        firstMessage,
     });
 
     if (result.ok) {

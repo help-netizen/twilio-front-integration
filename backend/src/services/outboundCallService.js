@@ -81,7 +81,15 @@ async function placeCall({
     scenario, leadUuid, zip, problemDescription, source, firstMessage,
 } = {}) {
     const apiKey = process.env.VAPI_API_KEY;
-    const assistantId = process.env.VAPI_OUTBOUND_ASSISTANT_ID;
+    // OUTBOUND-LEAD-CALL-001: the lead-booking scenario dials a DEDICATED
+    // assistant (clean first-contact prompt, no part-arrival script to drift
+    // into) when VAPI_LEAD_CALL_ASSISTANT_ID is set; every other scenario keeps
+    // the parts assistant. Falls back to the parts assistant if the lead id is
+    // unset, so a half-configured deploy still dials (parts prompt) rather than
+    // failing — but the two flows never share an assistant once it's set.
+    const assistantId = (scenario === 'lead_call' && process.env.VAPI_LEAD_CALL_ASSISTANT_ID)
+        ? process.env.VAPI_LEAD_CALL_ASSISTANT_ID
+        : process.env.VAPI_OUTBOUND_ASSISTANT_ID;
     const phoneNumberId = process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID;
     // Caller-ID source. Prefer a registered VAPI phone number (phoneNumberId).
     // Otherwise place via a TRANSIENT Twilio number (BYO creds): VAPI originates

@@ -341,7 +341,7 @@ describe('TC-OLC-023: slot pre-compute failures feed the ladder', () => {
 });
 
 describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
-    it('full-context lead → exact placeCall argument (variant A greeting, tokens NOT interpolated)', async () => {
+    it('full-context lead → exact placeCall argument (greeting owned by the dedicated assistant, NO firstMessage override)', async () => {
         const longDesc = 'x'.repeat(400);
         getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, Description: longDesc });
         await svc.processLeadAttempt(mkLeadAttempt());
@@ -359,8 +359,10 @@ describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
             zip: '02467',
             problemDescription: 'x'.repeat(300),
             source: 'Pro Referral',
-            firstMessage: 'Hi {{customerName}}, this is Sara with ABC Homes — you reached out on Pro Referral about your appliance. I can get you on the schedule right now: we have {{slotLabel}} available — would that work?',
         });
+        // The lead greeting/brand name lives on the dedicated VAPI assistant, not
+        // in a per-call override built from the (legal) company profile name.
+        expect(arg).not.toHaveProperty('firstMessage');
         expect(arg.problemDescription).toHaveLength(300);
 
         // ok:true → correlation stamp + slot audit + Pulse mirror
@@ -373,37 +375,19 @@ describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
         }));
     });
 
-    it.each([
-        ['profile throws', () => companyProfileService.getProfile.mockRejectedValue(new Error('x')), /^Hi \{\{customerName\}\}, this is Sara — you reached out on Pro Referral/],
-        ['profile empty', () => companyProfileService.getProfile.mockResolvedValue({}), /^Hi \{\{customerName\}\}, this is Sara — /],
-    ])('variant B when %s', async (_l, prep, re) => {
-        prep();
+    it('company profile is NOT read for the greeting anymore (dedicated assistant owns it)', async () => {
         await svc.processLeadAttempt(mkLeadAttempt());
-        expect(outboundCallService.placeCall.mock.calls[0][0].firstMessage).toMatch(re);
+        expect(companyProfileService.getProfile).not.toHaveBeenCalled();
+        expect(outboundCallService.placeCall.mock.calls[0][0]).not.toHaveProperty('firstMessage');
     });
 
-    it('no source → "online"; no name → "there"', async () => {
+    it('no name → "there"; source passed through for prompt context', async () => {
         getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, JobSource: 'Pro Referral', FirstName: null, LastName: null });
         leadResolveSpy.mockResolvedValue({ enabled_sources: ['Pro Referral'], max_attempts: 3, backoff_schedule: [] });
         await svc.processLeadAttempt(mkLeadAttempt());
-        expect(outboundCallService.placeCall.mock.calls[0][0].customerName).toBe('there');
-
-        // no source: source gate must still pass → enable '' is impossible;
-        // simulate a source-enabled-but-empty-label edge via isSourceEnabled spy.
-        jest.clearAllMocks();
-        mockQuery.mockImplementation(async () => ({ rows: [], rowCount: 1 }));
-        recommendSlots.run.mockResolvedValue({ available: true, fallback: false, slots: [{ ...TOP_SLOT }] });
-        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'v' });
-        marketplaceService.isAppConnected.mockResolvedValue(true);
-        scheduleService.getDispatchSettings.mockResolvedValue({ ...NY_DS });
-        companyProfileService.getProfile.mockResolvedValue({ name: 'ABC Homes' });
-        getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, JobSource: null });
-        const gate = jest.spyOn(leadSettings, 'isSourceEnabled').mockReturnValue(true);
-        await svc.processLeadAttempt(mkLeadAttempt());
         const arg = outboundCallService.placeCall.mock.calls[0][0];
-        expect(arg.firstMessage).toContain('you reached out on online about');
-        expect(arg.source).toBeUndefined();
-        gate.mockRestore();
+        expect(arg.customerName).toBe('there');
+        expect(arg.source).toBe('Pro Referral');
     });
 
     it('recordPlacement throw does NOT reclassify the attempt (stays dialing)', async () => {

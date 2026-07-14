@@ -24,6 +24,7 @@ jest.mock('axios', () => ({
 const ENV_KEYS = [
     'VAPI_API_KEY',
     'VAPI_OUTBOUND_ASSISTANT_ID',
+    'VAPI_LEAD_CALL_ASSISTANT_ID',
     'VAPI_OUTBOUND_PHONE_NUMBER_ID',
     'VAPI_OUTBOUND_TWILIO_NUMBER',
     'TWILIO_ACCOUNT_SID',
@@ -365,5 +366,35 @@ describe('TC-OLC-031: placeCall — lead conditional spreads (parts wire body by
         }
         expect(Object.keys(body.assistantOverrides)).not.toContain('firstMessage');
         expect(body.assistantOverrides.variableValues.scenario).toBe('lead_booking');
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OUTBOUND-LEAD-CALL-001 (fix): dedicated lead-booking assistant selection.
+// The lead scenario dials VAPI_LEAD_CALL_ASSISTANT_ID (a clean first-contact
+// assistant) instead of the shared parts assistant — eliminating scenario drift.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('placeCall — scenario picks the assistant (dedicated lead agent)', () => {
+    beforeEach(() => {
+        mockPost.mockResolvedValue({ status: 201, data: { id: 'vapi_call' } });
+    });
+
+    test('scenario=lead_call + VAPI_LEAD_CALL_ASSISTANT_ID set → dials the LEAD assistant', async () => {
+        process.env.VAPI_LEAD_CALL_ASSISTANT_ID = 'asst_lead_777';
+        await outboundCallService.placeCall({ ...CALL_ARGS, jobId: undefined, scenario: 'lead_call', leadUuid: 'LD-1' });
+        expect(mockPost.mock.calls[0][1].assistantId).toBe('asst_lead_777');
+    });
+
+    test('scenario=lead_call but lead id UNSET → falls back to the parts assistant (half-configured deploy still dials)', async () => {
+        delete process.env.VAPI_LEAD_CALL_ASSISTANT_ID;
+        await outboundCallService.placeCall({ ...CALL_ARGS, jobId: undefined, scenario: 'lead_call', leadUuid: 'LD-1' });
+        expect(mockPost.mock.calls[0][1].assistantId).toBe('asst_outbound_123');
+    });
+
+    test('parts scenario → always the parts assistant even when the lead id is set', async () => {
+        process.env.VAPI_LEAD_CALL_ASSISTANT_ID = 'asst_lead_777';
+        await outboundCallService.placeCall(CALL_ARGS); // no scenario = parts
+        expect(mockPost.mock.calls[0][1].assistantId).toBe('asst_outbound_123');
     });
 });
