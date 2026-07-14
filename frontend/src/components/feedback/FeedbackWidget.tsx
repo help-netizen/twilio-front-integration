@@ -20,7 +20,6 @@ export interface FeedbackBotMessage {
 
 export interface FeedbackBotState {
     phase: FeedbackBotPhase;
-    botReplies: number;
     messages: FeedbackBotMessage[];
 }
 
@@ -32,24 +31,36 @@ interface FeedbackSubmissionInput {
 
 type FeedbackRequest = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+export interface AssistantChatTurn {
+    role: 'user' | 'assistant';
+    text: string;
+}
+
+export interface AssistantChatInput {
+    history: readonly AssistantChatTurn[];
+    message: string;
+    session_key: string;
+}
+
 export type FeedbackSubmitResult =
     | { ok: true }
     | { ok: false; error: string };
+
+export type AssistantChatResult =
+    | { ok: true; reply: string; escalate: boolean }
+    | { ok: false };
 
 export const FEEDBACK_ESCALATION_MESSAGE = "Okay — leave your details below and we'll get back to you";
 export const FEEDBACK_SUCCESS_MESSAGE = 'Thanks — we got it';
 export const FEEDBACK_NETWORK_ERROR = "Couldn't send — try again";
 export const FEEDBACK_OPEN_EVENT = 'albusto:open-feedback';
+export const ASSISTANT_FALLBACK_MESSAGE = "I couldn't reach the assistant — let me hand you to a person.";
 
 export function openFeedbackWidget() {
     window.dispatchEvent(new CustomEvent(FEEDBACK_OPEN_EVENT));
 }
 
 const FEEDBACK_GREETING = "Hi! Tell me what's happening, and I'll help get your feedback to the right person.";
-const FEEDBACK_BOT_REPLIES = [
-    'Thanks for sharing that. What else should we know?',
-    'Got it — that helps us understand what happened.',
-] as const;
 const MAX_FILES = 5;
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set([
@@ -66,7 +77,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function createInitialFeedbackBotState(): FeedbackBotState {
     return {
         phase: 'greeting',
-        botReplies: 0,
         messages: [{ sender: 'bot', text: FEEDBACK_GREETING }],
     };
 }
@@ -81,25 +91,6 @@ export function escalateFeedbackBot(state: FeedbackBotState): FeedbackBotState {
             { sender: 'bot', text: FEEDBACK_ESCALATION_MESSAGE },
         ],
     };
-}
-
-export function advanceFeedbackBot(state: FeedbackBotState, userMessage: string): FeedbackBotState {
-    const message = userMessage.trim();
-    if (!message || state.phase === 'escalated') return state;
-
-    const reply = FEEDBACK_BOT_REPLIES[Math.min(state.botReplies, FEEDBACK_BOT_REPLIES.length - 1)];
-    const botReplies = state.botReplies + 1;
-    const nextState: FeedbackBotState = {
-        phase: 'chatting',
-        botReplies,
-        messages: [
-            ...state.messages,
-            { sender: 'user', text: message },
-            { sender: 'bot', text: reply },
-        ],
-    };
-
-    return botReplies >= 2 ? escalateFeedbackBot(nextState) : nextState;
 }
 
 export function getFeedbackEmail(user: { email?: string | null } | null | undefined): string {
@@ -161,11 +152,38 @@ export async function submitFeedback(
     }
 }
 
+export async function submitAssistantChat(
+    input: AssistantChatInput,
+    request: FeedbackRequest = authedFetch,
+): Promise<AssistantChatResult> {
+    try {
+        const response = await request('/api/assistant/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                history: input.history.slice(-12),
+                message: input.message,
+                session_key: input.session_key,
+            }),
+        });
+        if (!response.ok) return { ok: false };
+
+        const payload = await response.json() as { reply?: unknown; escalate?: unknown };
+        if (typeof payload.reply !== 'string' || typeof payload.escalate !== 'boolean') {
+            return { ok: false };
+        }
+        return { ok: true, reply: payload.reply, escalate: payload.escalate };
+    } catch {
+        return { ok: false };
+    }
+}
+
 export function FeedbackWidget() {
     const { user } = useAuth();
     const [open, setOpen] = useState(false);
     const [botState, setBotState] = useState<FeedbackBotState>(createInitialFeedbackBotState);
     const [chatInput, setChatInput] = useState('');
+    const [thinking, setThinking] = useState(false);
     const [email, setEmail] = useState(() => getFeedbackEmail(user));
     const [emailTouched, setEmailTouched] = useState(false);
     const [message, setMessage] = useState('');
@@ -173,10 +191,14 @@ export function FeedbackWidget() {
     const [formError, setFormError] = useState<string | null>(null);
     const [sending, setSending] = useState(false);
     const [submitted, setSubmitted] = useState(false);
+    const sessionKeyRef = useRef<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        const handleOpen = () => setOpen(true);
+        const handleOpen = () => {
+            if (!sessionKeyRef.current) sessionKeyRef.current = crypto.randomUUID();
+            setOpen(true);
+        };
         window.addEventListener(FEEDBACK_OPEN_EVENT, handleOpen);
         return () => window.removeEventListener(FEEDBACK_OPEN_EVENT, handleOpen);
     }, []);
@@ -187,13 +209,44 @@ export function FeedbackWidget() {
 
     useEffect(() => {
         if (open) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, [botState.messages, open, submitted]);
+    }, [botState.messages, open, submitted, thinking]);
 
-    const handleChatSubmit = (event: FormEvent<HTMLFormElement>) => {
+    const handleChatSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (!chatInput.trim()) return;
-        setBotState(state => advanceFeedbackBot(state, chatInput));
+        const userMessage = chatInput.trim();
+        if (!userMessage || thinking) return;
+
+        const history = botState.messages.slice(-12).map<AssistantChatTurn>(item => ({
+            role: item.sender === 'user' ? 'user' : 'assistant',
+            text: item.text,
+        }));
+        const sessionKey = sessionKeyRef.current ?? crypto.randomUUID();
+        sessionKeyRef.current = sessionKey;
+
+        setBotState(state => ({
+            ...state,
+            phase: 'chatting',
+            messages: [...state.messages, { sender: 'user', text: userMessage }],
+        }));
         setChatInput('');
+        setThinking(true);
+
+        const result = await submitAssistantChat({ history, message: userMessage, session_key: sessionKey });
+        setBotState(state => {
+            if (!result.ok) {
+                return {
+                    ...state,
+                    phase: 'escalated',
+                    messages: [...state.messages, { sender: 'bot', text: ASSISTANT_FALLBACK_MESSAGE }],
+                };
+            }
+            return {
+                ...state,
+                phase: result.escalate ? 'escalated' : state.phase,
+                messages: [...state.messages, { sender: 'bot', text: result.reply }],
+            };
+        });
+        setThinking(false);
     };
 
     const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -236,7 +289,10 @@ export function FeedbackWidget() {
                         <button
                             type="button"
                             className="feedback-panel__close"
-                            onClick={() => setOpen(false)}
+                            onClick={() => {
+                                sessionKeyRef.current = null;
+                                setOpen(false);
+                            }}
                             aria-label="Close feedback"
                         >
                             <X size={19} />
@@ -252,6 +308,11 @@ export function FeedbackWidget() {
                                 {item.text}
                             </div>
                         ))}
+                        {thinking && (
+                            <div className="feedback-message feedback-message--bot">
+                                Thinking…
+                            </div>
+                        )}
 
                         {botState.phase === 'escalated' && !submitted && (
                             <form className="feedback-form" onSubmit={handleFeedbackSubmit} noValidate>
@@ -344,8 +405,13 @@ export function FeedbackWidget() {
                                     }}
                                     placeholder="Write a message…"
                                     aria-label="Message"
+                                    disabled={thinking}
                                 />
-                                <button type="submit" disabled={!chatInput.trim()} aria-label="Send message">
+                                <button
+                                    type="submit"
+                                    disabled={thinking || !chatInput.trim()}
+                                    aria-label="Send message"
+                                >
                                     <Send size={17} />
                                 </button>
                             </form>
@@ -357,7 +423,15 @@ export function FeedbackWidget() {
             <button
                 type="button"
                 className="feedback-fab"
-                onClick={() => setOpen(value => !value)}
+                onClick={() => {
+                    if (open) {
+                        sessionKeyRef.current = null;
+                        setOpen(false);
+                        return;
+                    }
+                    sessionKeyRef.current = crypto.randomUUID();
+                    setOpen(true);
+                }}
                 aria-label={open ? 'Close feedback' : 'Open feedback'}
                 aria-expanded={open}
             >
