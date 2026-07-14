@@ -10,7 +10,7 @@
 
 The `rate-me` marketplace app gives every tenant an isolated technician-rating system: opaque 192-bit tokens tied to `(company, job, technician)`, a mobile-first branded public page at `/r/:token`, and per-company rating storage. The page is served on the shared host `rate.albusto.com` (option A) and/or on the tenant's own subdomain connected via one CNAME record (option B, Caddy `on_demand_tls` with an ask endpoint). A 5★ rating records then redirects to the company's Google-review link; 1–4★ records with optional private feedback and ends on a thank-you. Happy threshold = 5★ exactly, not configurable [OWNER].
 
-**New artifacts:** migration `172_rate_me.sql` (3 tables + app seed), `backend/src/db/rateMeQueries.js`, `backend/src/services/rateMeService.js`, `backend/src/routes/public-rate.js`, `backend/src/middleware/rateHostGate.js`, `frontend/src/pages/RatePage.tsx`, `frontend/src/pages/RateMeSettingsDialog.tsx`, Caddy fragment.
+**New artifacts:** migration `177_rate_me.sql` (3 tables + app seed), `backend/src/db/rateMeQueries.js`, `backend/src/services/rateMeService.js`, `backend/src/routes/public-rate.js`, `backend/src/middleware/rateHostGate.js`, `frontend/src/pages/RatePage.tsx`, `frontend/src/pages/RateMeSettingsDialog.tsx`, Caddy fragment.
 **Touched:** `src/server.js` (two flagged mount lines ONLY — NFR-10), `marketplaceService.js` (per-app-key settings dispatch), `marketplace.js` (4 rate-me routes + error unwrap), `App.tsx` (+1 route), `AuthProvider.tsx` (`PUBLIC_AUTH_PATHS` += `'/r/'`), `AppLayout.tsx` (bare-return += `'/r/'`), `IntegrationsPage.tsx`, `marketplaceApi.ts`, `infra/Caddyfile` + `infra/README.md`.
 
 ### Pinned decisions (this spec resolves what requirements/architecture left open)
@@ -100,13 +100,13 @@ Then: every GET → 200 identical DTO; no state change; `used_at` stays NULL. Op
 
 **T9 — expiry semantics.** `expires_at` is nullable; nothing mints expiring tokens this phase. NULL = no expiry (T7 forever). If a row has `expires_at <= NOW()` (manually set / future phases): GET and POST both → uniform 404; the guard is in the context query (`expires_at IS NULL OR expires_at > NOW()`), so expired ≡ nonexistent with zero behavioral difference.
 
-**T10 — migration 172 semantics.**
+**T10 — migration 177 semantics.**
 - Additive + idempotent: re-running the migration is a no-op (`IF NOT EXISTS` / `ON CONFLICT (app_key) DO UPDATE` seed, mig-161/170 precedent); dark-deploy safe (NFR-9) — with no Caddy/DNS applied the CRM is byte-identical.
 - Tables per architecture D2: `rate_tokens`, `technician_ratings` (`rate_token_id BIGINT NOT NULL UNIQUE`), `rate_me_domains` (`UNIQUE(company_id)` — one custom domain per company; `UNIQUE(domain)` — globally unique). `jobs.id` is BIGSERIAL → BIGINT FKs correct (verified mig 031). `updated_at` trigger reuses pre-existing `update_updated_at_column()` (mig-123 pattern).
 - FK behavior: deleting a job → `job_id SET NULL` on tokens/ratings, rating survives and the page keeps working off `tech_name` snapshot; deleting a company → CASCADE removes its tokens/ratings/domain.
 - App seed: `app_key='rate-me'`, `provider_name='Albusto'`, `app_type='internal'`, `provisioning_mode='none'`, `status='published'`, `requested_scopes=[]`, `metadata.requires_credential_input=false`. Install/disconnect ride the generic marketplace flow untouched; install creates the `marketplace_installations` row that settings live on.
 - Rollback file drops `technician_ratings` → `rate_tokens` → `rate_me_domains` (ratings before tokens — FK order) + deletes the app row (disconnect-first presumption, rollback-161 precedent).
-- Header comment says "Migration 172"; the FILENAME is authoritative (numbering-lie gotcha).
+- Header comment says "Migration 177"; the FILENAME is authoritative (numbering-lie gotcha).
 
 ### P — Public API (`/api/public/rate*`)
 
@@ -441,8 +441,8 @@ Serve-authorized = `{verified, active}` (both; the split is humane copy only, FR
 14. Tokens ≥128-bit (192 actual, 32-char base64url); estimate 64-bit mint NOT copied (T6/NFR-1).
 15. No "Blanc" string, no CRM chrome on the public page (U1).
 16. Every rate-me query is company- or token-scoped; no cross-tenant read path exists (§3, NFR-3).
-17. Protected files: `authedFetch.ts`, `useRealtimeEvents.ts` untouched; `backend/db/` touched only by migration 172 (+ rollback).
-18. Migration 172 is additive/idempotent/dark-safe; CRM byte-identical until manual Caddy/DNS steps (T10/NFR-9/C4).
+17. Protected files: `authedFetch.ts`, `useRealtimeEvents.ts` untouched; `backend/db/` touched only by migration 177 (+ rollback).
+18. Migration 177 is additive/idempotent/dark-safe; CRM byte-identical until manual Caddy/DNS steps (T10/NFR-9/C4).
 19. Domain mutations clear the host/ask caches — removal takes effect immediately, never after a stale-cache window (H11/D17).
 20. Cache is bounded (cap 1000, clear-on-overflow) — an attacker enumerating hosts cannot balloon memory (H11/D17).
 

@@ -421,7 +421,7 @@ describe('RATE-ME-CRM-001 Caddy and deployment reference contracts', () => {
         const readme = read(INFRA_README_PATH);
         const section = readme.slice(readme.indexOf('## Rate Me custom-domain rollout'));
         const orderedSteps = [
-            'Deploy the app with migration 172 first',
+            'Deploy the app with migration 177 first',
             'GoDaddy A record `rate → 108.61.87.117`',
             'validate → backup → swap → reload',
             "curl -H 'Host: rate.albusto.com' 127.0.0.1:3000/r/x",

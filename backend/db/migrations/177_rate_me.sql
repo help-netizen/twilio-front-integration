@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 172: Rate Me tokens, technician ratings, custom domains, and app.
+-- Migration 177: Rate Me tokens, technician ratings, custom domains, and app.
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS rate_tokens (

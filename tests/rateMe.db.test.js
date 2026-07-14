@@ -17,8 +17,8 @@ jest.setTimeout(30000);
 
 const TAG = `RM-${Date.now()}-${process.pid}`;
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'backend', 'db', 'migrations');
-const MIGRATION_FILE = '172_rate_me.sql';
-const ROLLBACK_FILE = 'rollback_172_rate_me.sql';
+const MIGRATION_FILE = '177_rate_me.sql';
+const ROLLBACK_FILE = 'rollback_177_rate_me.sql';
 const QUERY_FILE = path.join(__dirname, '..', 'backend', 'src', 'db', 'rateMeQueries.js');
 
 const fixtureCompanyIds = new Set();
@@ -120,11 +120,11 @@ afterAll(async () => {
     try { await db.pool.end(); } catch (_) { /* ignore */ }
 });
 
-describe('RATE-ME-CRM-001 migration 172 · real PostgreSQL', () => {
+describe('RATE-ME-CRM-001 migration 177 · real PostgreSQL', () => {
     test('TC-T10-DB-01 · objects, double-apply, seed upsert, checks, and trigger', async () => {
         const migration = readMigration(MIGRATION_FILE);
-        expect(path.basename(path.join(MIGRATIONS_DIR, MIGRATION_FILE))).toBe('172_rate_me.sql');
-        expect(migration).toMatch(/Migration 172/);
+        expect(path.basename(path.join(MIGRATIONS_DIR, MIGRATION_FILE))).toBe('177_rate_me.sql');
+        expect(migration).toMatch(/Migration 177/);
 
         if (!dbReady) return skipNeedsDb('TC-T10-DB-01');
 

@@ -41,7 +41,7 @@ login-gated) are all untouched.
 Production deployment remains gated on the owner's explicit “yes” for each deploy.
 Apply the Rate Me infrastructure in this order:
 
-1. Deploy the app with migration 172 first. This is a dark deployment: existing CRM
+1. Deploy the app with migration 177 first. This is a dark deployment: existing CRM
    behavior remains byte-identical until Rate Me is connected (NFR-9).
 2. The owner adds the GoDaddy A record `rate → 108.61.87.117`. This is browser-only;
    there is no API procedure for the DNS change.

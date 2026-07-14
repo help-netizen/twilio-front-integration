@@ -6721,7 +6721,7 @@ email = best-effort via the platform-sender company mailbox).
 ### Функциональные требования
 
 - **FR-1 (marketplace app `rate-me`).** Migration **172** seeds a `marketplace_apps` row `app_key='rate-me'`, name "Rate Me", `provider_name='Albusto'`, `app_type='internal'`, `provisioning_mode='none'` (no API credential — mig 161 ai-repair-advisor model), `status='published'`; category/copy = Architect draft, owner-refinable. Install/disconnect = the generic marketplace flow (installation row is REQUIRED — it carries settings). The rating engine is **gated per company** on a connected `rate-me` installation (generic `isAppConnected` path).
-- **FR-2 (data model, migration 172, additive + idempotent + rollback).**
+- **FR-2 (data model, migration 177, additive + idempotent + rollback).**
   - `rate_tokens`: `id`, `company_id UUID NOT NULL → companies`, `token TEXT UNIQUE NOT NULL` (opaque, ≥128-bit crypto-random, URL-safe base64url), `job_id` (FK per Architect), `tech_id TEXT NOT NULL` (ZB id), `created_at`, `expires_at TIMESTAMPTZ NULL` (NULL = no expiry; nothing mints expiring tokens this phase), `used_at TIMESTAMPTZ NULL` (set on first recorded rating). Company-scoped reads everywhere; lookup by exact token match (unique index).
   - `technician_ratings`: `id`, `company_id UUID NOT NULL`, `rate_token_id UNIQUE NOT NULL → rate_tokens` (**DB-level idempotency anchor: one rating per token, ever**), `job_id`, `tech_id TEXT NOT NULL`, `stars SMALLINT NOT NULL CHECK (stars BETWEEN 1 AND 5)`, `feedback TEXT NULL`, `created_at`. STORED ONLY — no CRM read surface this phase [OWNER].
   - `rate_me_domains`: `id`, `company_id UUID NOT NULL`, `domain TEXT NOT NULL UNIQUE` (**globally unique**, stored lowercase, punycode-normalized), **`UNIQUE(company_id)`** (exactly one custom domain per company this phase), `status TEXT NOT NULL` lifecycle `pending → verified → active` + failure state `failed` (retryable), `verified_at`, `activated_at`, `last_checked_at`, `last_error TEXT NULL`, timestamps.
@@ -6749,7 +6749,7 @@ email = best-effort via the platform-sender company mailbox).
 - **NFR-7 (performance).** Public GET ≤ ~2-3 queries + one presign; page lightweight/mobile-first (single fetch, no CRM bundles if separate; fast on LTE).
 - **NFR-8 (fail behavior).** Logo presign failure → name-only render (companyProfile best-effort precedent); POST storage failure → honest 5xx + "try again" on page (NEVER redirect to Google on failure); DNS-resolver transport errors → `failed` + humane retry copy, never a crash.
 - **NFR-9 (deploy safety).** Dark-safe: mig 172 additive; engine install-gated per company; until the Caddy fragment + DNS records are applied (manual owner steps, deploy-consent «да» required) the new hosts simply don't resolve and the CRM is byte-identical. No backfill, no cron.
-- **NFR-10 (protected files).** `src/server.js` = minimal mount-only lines under this explicit plan (public rating router, ask-endpoint, host gate if that mechanism is chosen); `authedFetch.ts` / `useRealtimeEvents.ts` untouched; `backend/db/` only via migration 172.
+- **NFR-10 (protected files).** `src/server.js` = minimal mount-only lines under this explicit plan (public rating router, ask-endpoint, host gate if that mechanism is chosen); `authedFetch.ts` / `useRealtimeEvents.ts` untouched; `backend/db/` only via migration 177.
 
 ### Open items for the Architect
 
