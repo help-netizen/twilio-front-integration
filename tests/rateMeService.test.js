@@ -7,6 +7,11 @@ const mockDbQuery = jest.fn();
 const mockGetClient = jest.fn();
 const mockInsertToken = jest.fn();
 const mockGetTokenContext = jest.fn();
+const mockGetExpiredTokenBranding = jest.fn();
+const mockStampTokenOpened = jest.fn();
+const mockStampGoogleClick = jest.fn();
+const mockStampTokenSent = jest.fn();
+const mockGetJobRateStatus = jest.fn();
 const mockInsertRating = jest.fn();
 const mockStampTokenUsed = jest.fn();
 const mockGetConnectedRateMeMeta = jest.fn();
@@ -27,6 +32,11 @@ jest.mock('../backend/src/db/connection', () => ({
 jest.mock('../backend/src/db/rateMeQueries', () => ({
     insertToken: mockInsertToken,
     getTokenContext: mockGetTokenContext,
+    getExpiredTokenBranding: mockGetExpiredTokenBranding,
+    stampTokenOpened: mockStampTokenOpened,
+    stampGoogleClick: mockStampGoogleClick,
+    stampTokenSent: mockStampTokenSent,
+    getJobRateStatus: mockGetJobRateStatus,
     insertRating: mockInsertRating,
     stampTokenUsed: mockStampTokenUsed,
     getConnectedRateMeMeta: mockGetConnectedRateMeMeta,
@@ -54,8 +64,14 @@ jest.mock('dns', () => ({
 
 const COMPANY_X = '00000000-0000-0000-0000-000000000001';
 const TOKEN_X = 'Xtok_'.padEnd(32, 'x');
+const EXPIRED_TOKEN = 'Etok_'.padEnd(32, 'e');
 const META = {
-    metadata: { settings: { google_review_url: 'https://g.page/r/abc/review' } },
+    metadata: {
+        settings: {
+            google_review_url: 'https://g.page/r/abc/review',
+            booking_url: 'https://book.bostonmasters.com',
+        },
+    },
     installation_id: 7,
     app_id: 'app-rate',
 };
@@ -67,8 +83,46 @@ const CONTEXT = {
     company_name: 'Boston Masters',
     logo_storage_key: 'logos/x.png',
     technician_name: 'Alex Petrov',
+    contact_first_name: 'Sarah',
+    customer_name: 'Sarah Chen',
+    service_name: 'Refrigerator repair',
+    start_date: '2024-07-12T14:00:00.000Z',
+    company_timezone: 'America/New_York',
+    company_phone: '+16175551234',
+    company_email: 'hello@bostonmasters.com',
     already_rated: false,
+    expires_at: null,
+    used_at: null,
 };
+const EXPIRED_CONTEXT = {
+    company_id: COMPANY_X,
+    company_name: 'Boston Masters',
+    logo_storage_key: 'logos/x.png',
+    contact_phone: '+16175551234',
+    contact_email: 'hello@bostonmasters.com',
+};
+const LIVE_KEYS = [
+    'already_rated',
+    'booking_url',
+    'company_email',
+    'company_logo_url',
+    'company_name',
+    'company_phone',
+    'expired',
+    'first_name',
+    'five_star_redirect',
+    'service_label',
+    'technician_name',
+    'visit_date',
+];
+const EXPIRED_KEYS = [
+    'booking_url',
+    'company_email',
+    'company_logo_url',
+    'company_name',
+    'company_phone',
+    'expired',
+];
 
 let service;
 let client;
@@ -86,6 +140,11 @@ function setupDefaults() {
     mockGetClient.mockResolvedValue(client);
     mockGetConnectedRateMeMeta.mockResolvedValue(META);
     mockGetTokenContext.mockResolvedValue({ ...CONTEXT });
+    mockGetExpiredTokenBranding.mockResolvedValue(undefined);
+    mockStampTokenOpened.mockResolvedValue({ id: 501 });
+    mockStampGoogleClick.mockResolvedValue({ id: 501 });
+    mockStampTokenSent.mockResolvedValue({ id: 501 });
+    mockGetJobRateStatus.mockResolvedValue({ has_token: false, rating: null });
     mockInsertToken.mockResolvedValue({ id: 501 });
     mockInsertRating.mockResolvedValue({ id: 900 });
     mockStampTokenUsed.mockResolvedValue({ id: 501 });
@@ -278,8 +337,15 @@ describe('RATE-ME-CRM-001 token and public-context service', () => {
             company_name: 'Boston Masters',
             company_logo_url: 'https://s3.example/presigned',
             technician_name: 'Alex Petrov',
-            already_rated: false,
+            first_name: 'Sarah',
+            service_label: 'Refrigerator repair',
+            visit_date: 'Friday, Jul 12',
+            company_phone: '+16175551234',
+            company_email: 'hello@bostonmasters.com',
+            booking_url: 'https://book.bostonmasters.com',
             five_star_redirect: true,
+            already_rated: false,
+            expired: false,
         });
         expect(mockGetTokenContext).toHaveBeenCalledTimes(2);
     });
@@ -301,6 +367,188 @@ describe('RATE-ME-CRM-001 token and public-context service', () => {
             company_logo_url: null,
         });
         expect(mockGetPresignedUrl).not.toHaveBeenCalled();
+    });
+
+    test('TC-RM2-SV-01 · live context is exactly the 12-key PII-minimal whitelist', async () => {
+        const result = await service.getPublicContext(TOKEN_X, null);
+
+        expect(Object.keys(result).sort()).toEqual(LIVE_KEYS);
+        expect(result).toEqual({
+            company_name: 'Boston Masters',
+            company_logo_url: 'https://s3.example/presigned',
+            technician_name: 'Alex Petrov',
+            first_name: 'Sarah',
+            service_label: 'Refrigerator repair',
+            visit_date: 'Friday, Jul 12',
+            company_phone: '+16175551234',
+            company_email: 'hello@bostonmasters.com',
+            booking_url: 'https://book.bostonmasters.com',
+            five_star_redirect: true,
+            already_rated: false,
+            expired: false,
+        });
+        const serialized = JSON.stringify(result);
+        expect(serialized).not.toContain('Sarah Chen');
+        expect(serialized).not.toContain('job_id');
+        expect(serialized).not.toContain('expires_at');
+        expect(serialized).not.toContain('2024-07-12T14:00:00.000Z');
+        expect(serialized).not.toContain('https://g.page/r/abc/review');
+        expect(mockStampTokenOpened).toHaveBeenCalledWith(CONTEXT.id);
+    });
+
+    test('TC-RM2-SV-02 · first name uses contact then customer-name fallback then null', async () => {
+        const rows = [
+            [{ ...CONTEXT, contact_first_name: null, customer_name: 'Sarah Chen' }, 'Sarah'],
+            [{ ...CONTEXT, contact_first_name: null, customer_name: null }, null],
+            [{ ...CONTEXT, contact_first_name: 'Maya', customer_name: 'Sarah Chen' }, 'Maya'],
+        ];
+
+        for (const [context, expected] of rows) {
+            mockGetTokenContext.mockResolvedValueOnce(context);
+            const result = await service.getPublicContext(TOKEN_X, null);
+            expect(Object.keys(result).sort()).toEqual(LIVE_KEYS);
+            expect(result.first_name).toBe(expected);
+            expect(JSON.stringify(result)).not.toContain('Sarah Chen');
+        }
+    });
+
+    test('TC-RM2-SV-03 · missing service and visit date stay null without dropping keys', async () => {
+        mockGetTokenContext.mockResolvedValue({
+            ...CONTEXT,
+            job_id: null,
+            service_name: null,
+            start_date: null,
+            customer_name: null,
+            contact_first_name: null,
+        });
+
+        const result = await service.getPublicContext(TOKEN_X, null);
+
+        expect(Object.keys(result).sort()).toEqual(LIVE_KEYS);
+        expect(result).toMatchObject({
+            first_name: null,
+            service_label: null,
+            visit_date: null,
+        });
+    });
+
+    test('TC-RM2-SV-04 · formatVisitDate uses company timezone and safely rejects bad input', async () => {
+        const startDate = '2024-07-12T04:30:00.000Z';
+
+        expect(service.formatVisitDate(startDate, 'America/Los_Angeles'))
+            .toBe('Thursday, Jul 11');
+        expect(service.formatVisitDate(startDate, 'America/New_York'))
+            .toBe('Friday, Jul 12');
+        expect(service.formatVisitDate(startDate))
+            .toBe('Friday, Jul 12');
+        expect(service.formatVisitDate(startDate, 'Not/AZone')).toBeNull();
+        expect(service.formatVisitDate('not-a-date', 'America/New_York')).toBeNull();
+        expect(service.formatVisitDate(null, 'America/New_York')).toBeNull();
+
+        mockGetTokenContext.mockResolvedValue({
+            ...CONTEXT,
+            start_date: startDate,
+            company_timezone: 'Not/AZone',
+        });
+        const result = await service.getPublicContext(TOKEN_X, null);
+        expect(Object.keys(result).sort()).toEqual(LIVE_KEYS);
+        expect(result.visit_date).toBeNull();
+    });
+
+    test('TC-RM2-SV-05 · already-rated live context remains personalized and stamps opened', async () => {
+        mockGetTokenContext.mockResolvedValue({ ...CONTEXT, already_rated: true });
+
+        const result = await service.getPublicContext(TOKEN_X, null);
+
+        expect(Object.keys(result).sort()).toEqual(LIVE_KEYS);
+        expect(result).toMatchObject({
+            already_rated: true,
+            expired: false,
+            first_name: 'Sarah',
+            technician_name: 'Alex Petrov',
+        });
+        expect(mockStampTokenOpened).toHaveBeenCalledWith(CONTEXT.id);
+    });
+
+    test('TC-RM2-SV-06 · expired context is exactly the 6-key branded whitelist without stamp', async () => {
+        mockGetTokenContext.mockResolvedValue(undefined);
+        mockGetExpiredTokenBranding.mockResolvedValue({ ...EXPIRED_CONTEXT });
+
+        const result = await service.getPublicContext(EXPIRED_TOKEN, null);
+
+        expect(Object.keys(result).sort()).toEqual(EXPIRED_KEYS);
+        expect(result).toEqual({
+            company_name: 'Boston Masters',
+            company_logo_url: 'https://s3.example/presigned',
+            company_phone: '+16175551234',
+            company_email: 'hello@bostonmasters.com',
+            booking_url: 'https://book.bostonmasters.com',
+            expired: true,
+        });
+        expect(mockStampTokenOpened).not.toHaveBeenCalled();
+        expect(JSON.stringify(result)).not.toContain('five_star_redirect');
+        expect(JSON.stringify(result)).not.toContain('technician_name');
+    });
+
+    test('TC-RM2-SV-07 · disconnected and unknown tokens return null without leaking branding', async () => {
+        mockGetConnectedRateMeMeta.mockResolvedValue(null);
+
+        await expect(service.getPublicContext(TOKEN_X, null)).resolves.toBeNull();
+        expect(mockGetExpiredTokenBranding).not.toHaveBeenCalled();
+
+        mockGetTokenContext.mockResolvedValueOnce(undefined);
+        mockGetExpiredTokenBranding.mockResolvedValueOnce(undefined);
+        await expect(service.getPublicContext(TOKEN_X, null)).resolves.toBeNull();
+
+        mockGetTokenContext.mockResolvedValueOnce(undefined);
+        mockGetExpiredTokenBranding.mockResolvedValueOnce({ ...EXPIRED_CONTEXT });
+        await expect(service.getPublicContext(EXPIRED_TOKEN, null)).resolves.toBeNull();
+
+        expect(mockGetPresignedUrl).not.toHaveBeenCalled();
+        expect(mockStampTokenOpened).not.toHaveBeenCalled();
+    });
+
+    test('TC-RM2-SV-08 · opened-at stamp is live-only and best-effort', async () => {
+        await expect(service.getPublicContext(TOKEN_X, null)).resolves
+            .toMatchObject({ expired: false });
+        expect(mockStampTokenOpened).toHaveBeenCalledWith(CONTEXT.id);
+
+        mockStampTokenOpened.mockRejectedValueOnce(new Error('stamp failed'));
+        const liveResult = await service.getPublicContext(TOKEN_X, null);
+        expect(Object.keys(liveResult).sort()).toEqual(LIVE_KEYS);
+
+        mockStampTokenOpened.mockClear();
+        mockGetTokenContext.mockResolvedValueOnce(undefined);
+        mockGetExpiredTokenBranding.mockResolvedValueOnce({ ...EXPIRED_CONTEXT });
+        await expect(service.getPublicContext(EXPIRED_TOKEN, null)).resolves
+            .toMatchObject({ expired: true });
+        expect(mockStampTokenOpened).not.toHaveBeenCalled();
+    });
+
+    test('TC-RM2-SV-09 · recordGoogleClick is host-bound and stamps only the token row id', async () => {
+        await expect(service.recordGoogleClick(TOKEN_X, COMPANY_X)).resolves
+            .toEqual({ ok: true });
+        expect(mockGetTokenContext).toHaveBeenCalledWith(TOKEN_X, COMPANY_X);
+        expect(mockStampGoogleClick).toHaveBeenCalledWith(CONTEXT.id);
+
+        mockStampGoogleClick.mockClear();
+        mockGetTokenContext.mockResolvedValueOnce(undefined);
+        await expect(service.recordGoogleClick(TOKEN_X, COMPANY_X)).resolves.toBeNull();
+
+        mockGetConnectedRateMeMeta.mockResolvedValueOnce(null);
+        await expect(service.recordGoogleClick(TOKEN_X, COMPANY_X)).resolves.toBeNull();
+        expect(mockStampGoogleClick).not.toHaveBeenCalled();
+    });
+
+    test('TC-RM2-SV-10 · bookingUrl returns only a non-empty string setting', () => {
+        expect(service.bookingUrl({ settings: { booking_url: 'https://book.co/x' } }))
+            .toBe('https://book.co/x');
+        expect(service.bookingUrl({ settings: { booking_url: null } })).toBeNull();
+        expect(service.bookingUrl({ settings: {} })).toBeNull();
+        expect(service.bookingUrl({})).toBeNull();
+        expect(service.bookingUrl(undefined)).toBeNull();
+        expect(service.bookingUrl({ settings: { booking_url: 42 } })).toBeNull();
+        expect(service.bookingUrl({ settings: { booking_url: '' } })).toBeNull();
     });
 
     test('TC-P12-02 · feedback is trimmed, null-normalized, and silently capped at 2000', async () => {
