@@ -16,7 +16,10 @@ const eventService = require('../services/eventService');
 const conversationsService = require('../services/conversationsService');
 const routeDistanceService = require('../services/routeDistanceService');
 const googlePlacesService = require('../services/googlePlacesService');
+const emailService = require('../services/emailService');
+const rateMeService = require('../services/rateMeService');
 const companyQueries = require('../db/companyQueries');
+const rateMeQueries = require('../db/rateMeQueries');
 const { toE164 } = require('../utils/phoneUtils');
 const { resolveCompanyProxyE164 } = require('../services/messagingHelper');
 const { requirePermission } = require('../middleware/authorization');
@@ -878,6 +881,143 @@ router.post('/:id/eta/notify', requirePermission('messages.send'), async (req, r
     } catch (err) {
         console.error('[Jobs API] ETA notify error:', err.message);
         res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// POST /:id/rate-link — mint a fresh rating link, deliver it, then stamp success.
+router.post('/:id/rate-link', requirePermission('messages.send'), async (req, res) => {
+    try {
+        const channel = req.body?.channel;
+        if (!['sms', 'email', 'copy'].includes(channel)) {
+            return res.status(400).json({
+                ok: false,
+                code: 'INVALID_CHANNEL',
+                message: 'Channel must be one of: sms, email, copy.',
+            });
+        }
+
+        const companyId = req.companyFilter?.company_id;
+        const jobId = parseInt(req.params.id, 10);
+        const job = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
+        if (!job) {
+            return res.status(404).json({ ok: false, code: 'JOB_NOT_FOUND', message: 'Job not found' });
+        }
+
+        const technician = job.assigned_techs?.[0];
+        const techId = technician?.id == null ? undefined : String(technician.id);
+        const techName = typeof technician?.name === 'string' ? technician.name : null;
+        const { token, url } = await rateMeService.mintToken(companyId, {
+            jobId,
+            techId,
+            techName,
+        });
+
+        if (channel === 'sms') {
+            const customerE164 = toE164((job.customer_phone || '').trim());
+            if (!customerE164) {
+                return res.status(422).json({
+                    ok: false,
+                    code: 'NO_PHONE',
+                    message: 'No phone number on file for this customer.',
+                });
+            }
+
+            const proxyE164 = await resolveCompanyProxyE164(companyId);
+            if (!proxyE164) {
+                return res.status(422).json({
+                    ok: false,
+                    code: 'NO_PROXY',
+                    message: 'No sending number configured for your company.',
+                });
+            }
+
+            try {
+                const conv = await conversationsService.getOrCreateConversation(
+                    customerE164,
+                    proxyE164,
+                    companyId
+                );
+                await conversationsService.sendMessage(conv.id, {
+                    body: `How did we do? Please rate your recent service: ${url}`,
+                    author: 'agent',
+                });
+            } catch (sendErr) {
+                if (sendErr.code === 'WALLET_BLOCKED') {
+                    return res.status(sendErr.httpStatus || 402).json({
+                        ok: false,
+                        code: 'WALLET_BLOCKED',
+                        message: 'Messaging is paused — top up your balance.',
+                    });
+                }
+                console.error('[Jobs API] Rate link SMS error:', sendErr.message);
+                return res.status(502).json({
+                    ok: false,
+                    code: 'SMS_FAILED',
+                    message: "Couldn't send the message. Please try again.",
+                });
+            }
+        } else if (channel === 'email') {
+            const customerEmail = (job.customer_email || '').trim();
+            if (!customerEmail) {
+                return res.status(422).json({
+                    ok: false,
+                    code: 'NO_EMAIL',
+                    message: 'No email on file for this customer.',
+                });
+            }
+
+            try {
+                await emailService.sendEmail(companyId, {
+                    to: customerEmail,
+                    subject: 'How was your service?',
+                    body: `We'd love your feedback on your recent service. <a href="${url}">Rate your visit</a>.`,
+                    userId: req.user.crmUser.id,
+                });
+            } catch (sendErr) {
+                console.error('[Jobs API] Rate link email error:', sendErr.message);
+                return res.status(409).json({
+                    ok: false,
+                    code: 'MAIL_DISCONNECTED',
+                    message: 'Connect a mailbox to send email.',
+                });
+            }
+        }
+
+        const stamped = await rateMeQueries.stampTokenSent(token, companyId, channel);
+        const data = { channel, sent_at: stamped.sent_at };
+        if (channel === 'copy') data.url = url;
+        return res.json({ ok: true, data });
+    } catch (err) {
+        if (err instanceof rateMeService.RateMeServiceError) {
+            return res.status(err.httpStatus || 400).json({
+                ok: false,
+                code: err.code,
+                message: err.message,
+            });
+        }
+        console.error('[Jobs API] Rate link error:', err.message);
+        return res.status(500).json({
+            ok: false,
+            code: 'INTERNAL_ERROR',
+            message: 'Unable to send rating link.',
+        });
+    }
+});
+
+// GET /:id/rate-status — attribution aggregate for this company and job.
+router.get('/:id/rate-status', requirePermission('jobs.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const jobId = parseInt(req.params.id, 10);
+        const data = await rateMeQueries.getJobRateStatus(companyId, jobId);
+        return res.json({ ok: true, data });
+    } catch (err) {
+        console.error('[Jobs API] Rate status error:', err.message);
+        return res.status(500).json({
+            ok: false,
+            code: 'INTERNAL_ERROR',
+            message: 'Unable to load rating status.',
+        });
     }
 });
 
