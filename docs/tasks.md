@@ -10126,7 +10126,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** `node node_modules/jest/bin/jest.js --runTestsByPath tests/confirmLeadBooking.test.js --testPathIgnorePatterns "/node_modules/"`.
 
-**Зависимости:** жёстких нет (лениво требует существующие модули) — логически ∥ OLC-T3..T5; слот исполнения после OLC-T5. **Размер:** M. **Статус:** pending
+**Зависимости:** жёстких нет (лениво требует существующие модули) — логически ∥ OLC-T3..T5; слот исполнения после OLC-T5. **Размер:** M. **Статус:** done (2026-07-13, Claude: L0-скилл + registry, 44/44 вкл. sabotage-047 и MCP-неэкспозицию)
 
 ### Задача OLC-T7: settings-роуты `/api/outbound-lead-caller` + mount + тесты
 

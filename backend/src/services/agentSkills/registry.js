@@ -76,6 +76,12 @@ const SKILLS = [
     // tool-set is unchanged — this additive entry only makes the skill executable.
     { name: 'confirmPartsVisit', kind: 'write', requiredLevel: 'L0', run: lazyRun('confirmPartsVisit') },
 
+    // OUTBOUND-LEAD-CALL-001: in-call booking write for the OUTBOUND lead-call
+    // scenario. L0 on the outbound surface (Deviation 1) — identity (leadUuid/
+    // companyId) is server-injected via variableValues, never a caller claim;
+    // isolation is fully in-skill. Inbound Sara's tool-set is unchanged.
+    { name: 'confirmLeadBooking', kind: 'write', requiredLevel: 'L0', run: lazyRun('confirmLeadBooking') },
+
     // --- 5 RELOCATED legacy L0 tools (byte-compat; own legacy shapes) --------
     // L0 so deriveLevel never blocks them → "never block the call" preserved.
     { name: 'checkServiceArea', kind: 'read', requiredLevel: 'L0', run: lazyRun('checkServiceArea') },
