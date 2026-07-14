@@ -246,3 +246,202 @@ describe('RATE-ME-CRM-001 inherited auth and server mount contracts', () => {
         expect(rateBlock).not.toMatch(/req\.companyId|req\.(?:params|body|query)(?:\.|\?\.)company_id/);
     });
 });
+
+const RATE_SETTINGS_DIALOG_PATH = 'frontend/src/pages/RateMeSettingsDialog.tsx';
+const MARKETPLACE_API_PATH = 'frontend/src/services/marketplaceApi.ts';
+const INTEGRATIONS_PAGE_PATH = 'frontend/src/pages/IntegrationsPage.tsx';
+const CADDYFILE_PATH = 'infra/Caddyfile';
+const INFRA_README_PATH = 'infra/README.md';
+
+describe('RATE-ME-CRM-001 settings dialog structural contracts', () => {
+    test('TC-D19-01 · domain pane renders the literal CNAME record and humane statuses', () => {
+        const source = read(RATE_SETTINGS_DIALOG_PATH);
+        const compact = collapse(source);
+        const firstLabel = value => value.trim().split('.')[0] || 'rate';
+
+        expect(source).toContain("const firstLabel = domainInput.trim().split('.')[0] || 'rate';");
+        expect(source).toContain("const publicHost = settingsQuery.data?.public_host || '';");
+        expect(source).toContain('<div>Type: CNAME</div>');
+        expect(source).toContain('<div>Host/Name: {firstLabel}</div>');
+        expect(source).toContain('<div>Target: {publicHost}</div>');
+        expect(compact).toContain('{firstLabel} IN CNAME {publicHost}');
+        expect(source).toContain("return 'Waiting for DNS';");
+        expect(source).toContain("return 'Verified';");
+        expect(source).toContain('return `Live at https://${domain.domain}`;');
+        expect(source).toContain('{domain.last_error}');
+        expect(source).toContain("domain.status === 'failed' ? 'Retry' : 'Verify'");
+        expect(source).toContain("removeDomainMutation.isPending ? 'Removing…' : 'Remove'");
+
+        expect(firstLabel('rate.bostonmasters.com')).toBe('rate');
+        expect(firstLabel('reviews.acme.co')).toBe('reviews');
+        expect(`Type: CNAME · Host/Name: ${firstLabel('rate.bostonmasters.com')} · Target: rate.albusto.com`)
+            .toBe('Type: CNAME · Host/Name: rate · Target: rate.albusto.com');
+
+        // Manual: enter reviews.acme.co, then confirm the failed copy and Retry affordance after a failed check.
+    });
+
+    test('TC-S9-01 · hosting mode derives from GET data and only explicit actions mutate domains', () => {
+        const source = read(RATE_SETTINGS_DIALOG_PATH);
+        const albustoRadio = between(source, 'value="albusto"', 'className="mt-0.5 h-4 w-4');
+        const customRadio = between(source, 'value="custom"', 'className="mt-0.5 h-4 w-4');
+        const saveHandler = between(source, 'const handleSave = () => {', 'const handleSaveDomain');
+
+        expect(source).toContain('const customHosting = domain !== null || customDraftOpen;');
+        expect(source).not.toMatch(/hostingMode[^\n]*useState|useState[^\n]*hostingMode/);
+        expect(albustoRadio).toContain('checked={!customHosting}');
+        expect(albustoRadio).toContain('setCustomDraftOpen(false)');
+        expect(customRadio).toContain('checked={customHosting}');
+        expect(customRadio).toContain('setCustomDraftOpen(true)');
+        expect(`${albustoRadio}\n${customRadio}`).not.toMatch(/setRateMeDomain|verifyRateMeDomain|removeRateMeDomain|\.mutate\(/);
+        expect(saveHandler).toContain('saveMutation.mutate({ google_review_url: googleReviewUrl.trim() || null });');
+        expect(saveHandler).not.toMatch(/Domain|domain/);
+        expect(source).toContain('mutationFn: removeRateMeDomain');
+        expect(source).toContain('onClick={() => removeDomainMutation.mutate()}');
+        expect(source).toContain("queryKey: ['rate-me-settings']");
+        expect(source).toContain('enabled: open');
+        expect(source).toContain("setDomainInput(settingsQuery.data.domain?.domain || '');");
+        expect(source).toContain('setCustomDraftOpen(false);');
+
+        // Manual: flip both radios with Network open; only Save domain, Verify, Remove, and footer Save may request.
+    });
+
+    test('TC-S9-02 · FORM-CANON, API exports, invalidation, and connected-only tile gate are pinned', () => {
+        const dialogSource = read(RATE_SETTINGS_DIALOG_PATH);
+        const apiSource = read(MARKETPLACE_API_PATH);
+        const integrationsSource = read(INTEGRATIONS_PAGE_PATH);
+        const integrationsCompact = collapse(integrationsSource);
+        const newFrontendSources = `${dialogSource}\n${apiSource}`;
+
+        expect(dialogSource).toContain('<DialogContent variant="panel">');
+        expect(dialogSource).toContain('<DialogPanelHeader>');
+        expect(dialogSource).toContain('<DialogBody className="md:px-8 md:py-7">');
+        expect(dialogSource).toContain('className="mx-auto w-full max-w-[740px] space-y-6"');
+        expect(dialogSource).toContain('<DialogPanelFooter>');
+        expect(dialogSource).toContain('<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>');
+        expect(dialogSource).toContain("{saveMutation.isPending ? 'Saving…' : 'Save'}");
+        expect(dialogSource).toContain('label="Google review link"');
+        expect(dialogSource).toContain('label="Your subdomain"');
+        expect(dialogSource).not.toContain('variant="dialog"');
+        expect(dialogSource).not.toContain('aria-label="Close"');
+
+        expect(apiSource).toContain("import { authedFetch } from './apiClient';");
+        expect(apiSource).toContain('export interface RateMeDomain');
+        expect(apiSource).toContain('export interface RateMeSettingsResponse');
+        expect(apiSource).toContain('google_review_url: string | null;');
+        expect(apiSource).toContain('domain: RateMeDomain | null;');
+        expect(apiSource).toContain('public_host: string;');
+        expect(apiSource).toContain('export async function fetchRateMeSettings');
+        expect(apiSource).toContain('export async function saveRateMeSettings');
+        expect(apiSource).toContain('export async function setRateMeDomain');
+        expect(apiSource).toContain('export async function verifyRateMeDomain');
+        expect(apiSource).toContain('export async function removeRateMeDomain');
+        expect(dialogSource.match(/invalidateQueries\(\{ queryKey: \['rate-me-settings'\] \}\)/g)).toHaveLength(4);
+        expect(dialogSource.match(/toast\.error\(error\.message/g)).toHaveLength(4);
+
+        expect(integrationsCompact).toContain("app.app_key === 'rate-me' && app.installation?.status === 'connected' && ( <Button variant=\"outline\" size=\"sm\" onClick={() => setRateMeSettingsOpen(true)}> Settings </Button> )");
+        expect(integrationsSource).toContain('<RateMeSettingsDialog open={rateMeSettingsOpen} onOpenChange={setRateMeSettingsOpen} />');
+        expect(newFrontendSources).not.toMatch(/Blanc/);
+        expect(newFrontendSources).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    });
+});
+
+describe('RATE-ME-CRM-001 Caddy and deployment reference contracts', () => {
+    test('TC-C1-01 · global on-demand TLS ask fragment is exact', () => {
+        const caddy = read(CADDYFILE_PATH);
+
+        expect(caddy).toContain(`{
+\temail help@bostonmasters.com
+\ton_demand_tls {
+\t\task http://127.0.0.1:3000/api/public/rate-domain-ask
+\t\tinterval 2m
+\t\tburst 5
+\t}
+}`);
+        expect(caddy.match(/on_demand_tls \{/g)).toHaveLength(1);
+    });
+
+    test('TC-C2-01 · shared rate host uses a managed certificate block', () => {
+        const caddy = read(CADDYFILE_PATH);
+        const rateHostBlock = between(caddy, 'rate.albusto.com {', '\n}');
+
+        expect(caddy).toContain(`rate.albusto.com {
+\tencode zstd gzip
+\treverse_proxy 127.0.0.1:3000
+}`);
+        expect(rateHostBlock).not.toContain('on_demand');
+    });
+
+    test('TC-C3-01 · on-demand catch-all is exact and existing site blocks remain verbatim', () => {
+        const caddy = read(CADDYFILE_PATH);
+
+        expect(caddy).toContain(`https:// {
+\tencode zstd gzip
+\ttls {
+\t\ton_demand
+\t}
+\treverse_proxy 127.0.0.1:3000
+}`);
+        expect(caddy).toContain(`albusto.com, www.albusto.com {
+\troot * /var/www/albusto
+\tencode zstd gzip
+\tfile_server
+\theader {
+\t\tX-Content-Type-Options nosniff
+\t\tReferrer-Policy no-referrer-when-downgrade
+\t}
+}`);
+        expect(caddy).toContain(`app.albusto.com, api.albusto.com {
+\tencode zstd gzip
+
+\t# Marketplace apps (isolated runtimes) under /apps/<key>
+\thandle_path /apps/leads* {
+\t\treverse_proxy 127.0.0.1:4001
+\t}
+
+\thandle {
+\t\treverse_proxy 127.0.0.1:3000
+\t}
+
+\thandle_errors {
+\t\trespond "Albusto backend is not deployed yet." {err.status_code}
+\t}
+}`);
+        expect(caddy).toContain(`auth.albusto.com {
+\tencode zstd gzip
+\t# Bare root otherwise 302s into the raw Keycloak admin console; send
+\t# visitors to the app instead (unauthenticated users get the branded login).
+\t@root path /
+\tredir @root https://app.albusto.com/ 302
+
+\treverse_proxy 127.0.0.1:8081
+}`);
+    });
+
+    test('TC-C4-01 · README keeps the owner-gated deploy, smoke, and rollback order', () => {
+        const readme = read(INFRA_README_PATH);
+        const section = readme.slice(readme.indexOf('## Rate Me custom-domain rollout'));
+        const orderedSteps = [
+            'Deploy the app with migration 172 first',
+            'GoDaddy A record `rate → 108.61.87.117`',
+            'validate → backup → swap → reload',
+            "curl -H 'Host: rate.albusto.com' 127.0.0.1:3000/r/x",
+            'restore `Caddyfile.bak.<ts>`',
+        ];
+
+        expect(section).toContain('dark deployment');
+        expect(section).toContain('browser-only');
+        expect(section).toContain('caddy validate');
+        expect(section).toContain('sudo cp');
+        expect(section).toContain('sudo systemctl reload caddy');
+        expect(section).toContain('uniform\n   404');
+        expect(section).toContain('POST /api/marketplace/apps/rate-me/tokens');
+        expect(section).toContain('https://rate.albusto.com/r/<token>');
+        expect(section).toContain('Caddy on the production host is 2.6.2');
+        expect(section).toContain('removed in Caddy ≥2.8');
+        expect(section).toContain('re-check this fragment before any');
+        expect(section).toContain('owner\'s explicit “yes”');
+        orderedSteps.forEach((step, index) => {
+            expect(section.indexOf(step)).toBeGreaterThan(index === 0 ? -1 : section.indexOf(orderedSteps[index - 1]));
+        });
+    });
+});

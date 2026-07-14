@@ -35,3 +35,27 @@ The bare root would otherwise `302` into Keycloak's raw Administration Console.
 An **exact** `path /` matcher redirects only the root to the app; the login flow
 (`/realms/*`), OIDC discovery, `/resources/*`, and the admin console (`/admin`,
 login-gated) are all untouched.
+
+## Rate Me custom-domain rollout
+
+Production deployment remains gated on the owner's explicit “yes” for each deploy.
+Apply the Rate Me infrastructure in this order:
+
+1. Deploy the app with migration 172 first. This is a dark deployment: existing CRM
+   behavior remains byte-identical until Rate Me is connected (NFR-9).
+2. The owner adds the GoDaddy A record `rate → 108.61.87.117`. This is browser-only;
+   there is no API procedure for the DNS change.
+3. Apply the reference `Caddyfile` with the existing validate → backup → swap → reload
+   procedure above: run `caddy validate`, create the `sudo cp` backup, swap the file,
+   then run `sudo systemctl reload caddy`.
+4. Smoke the shared host with
+   `curl -H 'Host: rate.albusto.com' 127.0.0.1:3000/r/x`; it must return the uniform
+   404. Then mint a smoke token through
+   `POST /api/marketplace/apps/rate-me/tokens` and open
+   `https://rate.albusto.com/r/<token>`.
+5. To roll back, restore `Caddyfile.bak.<ts>` and run
+   `sudo systemctl reload caddy`.
+
+Caddy on the production host is 2.6.2, where `interval` and `burst` are valid for
+`on_demand_tls`. They were removed in Caddy ≥2.8; re-check this fragment before any
+Caddy upgrade.
