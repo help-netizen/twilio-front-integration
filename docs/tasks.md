@@ -2338,7 +2338,7 @@ Test cases: `docs/test-cases/F014-ads-analytics-microservice.md`
 **Зависимости:** нет
 
 ### TASK-F017-002: Backend — groupRouting service
-**Приоритет:** P0 · **Статус:** pending
+**Приоритет:** P0 · **Статус:** done (2026-07-13, Claude: зеркало parts-сервиса + нормализация источников; юнит 21/21)
 **Цель:** Резолв номер→группа→flow и список доступных агентов группы.
 **Файлы:** `backend/src/services/groupRouting.js` (новый)
 **Результат:** `resolveGroupForNumber(toNumber, companyId)`, `availableAgentsForGroup(groupId)` (фильтр по agentPresence). SQL по company_id.
