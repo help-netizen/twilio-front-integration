@@ -466,7 +466,8 @@ describe('RATE-ME-CRM-001 settings dialog structural contracts', () => {
         expect(customRadio).toContain('checked={customHosting}');
         expect(customRadio).toContain('setCustomDraftOpen(true)');
         expect(`${albustoRadio}\n${customRadio}`).not.toMatch(/setRateMeDomain|verifyRateMeDomain|removeRateMeDomain|\.mutate\(/);
-        expect(saveHandler).toContain('saveMutation.mutate({ google_review_url: googleReviewUrl.trim() || null });');
+        expect(saveHandler).toContain('google_review_url: googleReviewUrl.trim() || null,');
+        expect(saveHandler).toContain('booking_url: bookingUrl.trim() || null,');
         expect(saveHandler).not.toMatch(/Domain|domain/);
         expect(source).toContain('mutationFn: removeRateMeDomain');
         expect(source).toContain('onClick={() => removeDomainMutation.mutate()}');
@@ -683,5 +684,52 @@ describe('RATE-ME-CRM-002 Job-card Rate Me structural contract', () => {
         expect(`${blockSource}\n${modalSource}`).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
 
         // Manual: open a job, verify reached-only steps, and exercise SMS/Email/Copy plus error toasts.
+    });
+});
+
+// RM2-T8 — APPEND ONLY: settings coverage after T6's screens and T7's SR-14 block.
+describe('RATE-ME-CRM-002 Rate Me settings structural contract', () => {
+    test('TC-RM2-SR-15 · booking URL field and full settings payload are pinned', () => {
+        const dialogSource = read('frontend/src/pages/RateMeSettingsDialog.tsx');
+        const apiSource = read('frontend/src/services/marketplaceApi.ts');
+        const saveHandler = between(dialogSource, 'const handleSave = () => {', 'const handleSaveDomain');
+        const linksSection = between(dialogSource, '<div className="blanc-eyebrow">RATING PAGE LINKS</div>', '</section>');
+        const fullPayloadReplica = (googleReviewUrl, bookingUrl) => ({
+            google_review_url: googleReviewUrl.trim() || null,
+            booking_url: bookingUrl.trim() || null,
+        });
+
+        expect(dialogSource).toContain("const [bookingUrl, setBookingUrl] = useState('');");
+        expect(dialogSource).toContain("setBookingUrl(settingsQuery.data.settings.booking_url || '');");
+        expect(linksSection).toContain('className="grid grid-cols-1 gap-3.5 sm:grid-cols-2"');
+        expect(linksSection).toContain('id="rate-me-google-review-url"');
+        expect(linksSection).toContain('label="Google review link"');
+        expect(linksSection).toContain('id="rate-me-booking-url"');
+        expect(linksSection).toContain('label="Booking page URL"');
+        expect(linksSection).toContain('value={bookingUrl}');
+        expect(linksSection).toContain('onChange={event => setBookingUrl(event.target.value)}');
+        expect(linksSection).toContain("Where 'Book Visit' sends customers from the rating page.");
+        expect(linksSection.match(/Use an HTTPS URL up to 500 characters\./g)).toHaveLength(2);
+
+        expect(saveHandler).toContain('saveMutation.mutate({');
+        expect(saveHandler).toContain('google_review_url: googleReviewUrl.trim() || null,');
+        expect(saveHandler).toContain('booking_url: bookingUrl.trim() || null,');
+        expect(fullPayloadReplica(' https://g.page/r/review ', ' https://book.example/visit ')).toEqual({
+            google_review_url: 'https://g.page/r/review',
+            booking_url: 'https://book.example/visit',
+        });
+        expect(fullPayloadReplica('', '   ')).toEqual({ google_review_url: null, booking_url: null });
+
+        expect(apiSource).toContain('google_review_url: string | null;');
+        expect(apiSource).toContain('booking_url: string | null;');
+        expect(apiSource).toContain("export async function fetchRateMeSettings(): Promise<RateMeSettingsResponse>");
+        expect(apiSource).toContain("saveRateMeSettings(settings: RateMeSettingsResponse['settings'])");
+        expect(apiSource).toContain('body: JSON.stringify(settings)');
+        expect(dialogSource).toContain('<DialogContent variant="panel">');
+        expect(dialogSource).not.toContain('variant="dialog"');
+        expect(`${dialogSource}\n${apiSource}`).not.toMatch(/Blanc/);
+        expect(`${dialogSource}\n${apiSource}`).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+
+        // Manual: save, reopen, and clear Booking URL while confirming the Google link survives each save.
     });
 });

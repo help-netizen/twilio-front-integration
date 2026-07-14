@@ -100,6 +100,7 @@ export interface RateMeDomain {
 export interface RateMeSettingsResponse {
     settings: {
         google_review_url: string | null;
+        booking_url: string | null;
     };
     domain: RateMeDomain | null;
     public_host: string;

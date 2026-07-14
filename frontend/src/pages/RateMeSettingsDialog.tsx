@@ -46,6 +46,7 @@ function statusChipLabel(domain: RateMeDomain) {
 export function RateMeSettingsDialog({ open, onOpenChange }: RateMeSettingsDialogProps) {
     const queryClient = useQueryClient();
     const [googleReviewUrl, setGoogleReviewUrl] = useState('');
+    const [bookingUrl, setBookingUrl] = useState('');
     const [domainInput, setDomainInput] = useState('');
     const [customDraftOpen, setCustomDraftOpen] = useState(false);
     const [hasHydrated, setHasHydrated] = useState(false);
@@ -66,6 +67,7 @@ export function RateMeSettingsDialog({ open, onOpenChange }: RateMeSettingsDialo
         if (hasHydrated || settingsQuery.isFetching || !settingsQuery.data) return;
 
         setGoogleReviewUrl(settingsQuery.data.settings.google_review_url || '');
+        setBookingUrl(settingsQuery.data.settings.booking_url || '');
         setDomainInput(settingsQuery.data.domain?.domain || '');
         setCustomDraftOpen(false);
         setHasHydrated(true);
@@ -124,7 +126,10 @@ export function RateMeSettingsDialog({ open, onOpenChange }: RateMeSettingsDialo
     });
 
     const handleSave = () => {
-        saveMutation.mutate({ google_review_url: googleReviewUrl.trim() || null });
+        saveMutation.mutate({
+            google_review_url: googleReviewUrl.trim() || null,
+            booking_url: bookingUrl.trim() || null,
+        });
     };
 
     const handleSaveDomain = () => {
@@ -184,17 +189,33 @@ export function RateMeSettingsDialog({ open, onOpenChange }: RateMeSettingsDialo
                         {hasHydrated && (
                             <>
                                 <section className="space-y-3.5">
-                                    <div className="blanc-eyebrow">GOOGLE REVIEWS</div>
-                                    <FloatingField
-                                        id="rate-me-google-review-url"
-                                        type="url"
-                                        label="Google review link"
-                                        value={googleReviewUrl}
-                                        onChange={event => setGoogleReviewUrl(event.target.value)}
-                                    />
-                                    <p className="text-xs text-[var(--blanc-ink-3)]">
-                                        5-star customers are sent here to leave a public review.
-                                    </p>
+                                    <div className="blanc-eyebrow">RATING PAGE LINKS</div>
+                                    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                                        <div className="space-y-2">
+                                            <FloatingField
+                                                id="rate-me-google-review-url"
+                                                type="url"
+                                                label="Google review link"
+                                                value={googleReviewUrl}
+                                                onChange={event => setGoogleReviewUrl(event.target.value)}
+                                            />
+                                            <p className="text-xs text-[var(--blanc-ink-3)]">
+                                                5-star customers are sent here to leave a public review. Use an HTTPS URL up to 500 characters.
+                                            </p>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <FloatingField
+                                                id="rate-me-booking-url"
+                                                type="url"
+                                                label="Booking page URL"
+                                                value={bookingUrl}
+                                                onChange={event => setBookingUrl(event.target.value)}
+                                            />
+                                            <p className="text-xs text-[var(--blanc-ink-3)]">
+                                                Where 'Book Visit' sends customers from the rating page. Use an HTTPS URL up to 500 characters.
+                                            </p>
+                                        </div>
+                                    </div>
                                 </section>
 
                                 <section className="space-y-3.5">
