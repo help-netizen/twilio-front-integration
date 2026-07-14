@@ -69,6 +69,10 @@ app.use((req, res, next) => {
     next();
 });
 
+// RATE-ME-CRM-001: host gate — rating hosts (rate.albusto.com + verified customer
+// domains) expose ONLY the public rating surface; all Albusto hosts pass through untouched.
+app.use(require('../backend/src/middleware/rateHostGate'));
+
 // Billing webhook (Stripe) MUST receive the raw, unparsed body for HMAC
 // signature verification, so it is mounted before express.json. Path-scoped:
 // every other route is unaffected and still gets parsed JSON below.
@@ -240,6 +244,9 @@ app.use('/api/public', publicInvoicesRouter);
 // Public, un-authenticated estimate routes (tokenized view JSON + PDF for "send" links).
 const publicEstimatesRouter = require('../backend/src/routes/public-estimates');
 app.use('/api/public', publicEstimatesRouter);
+// RATE-ME-CRM-001: public tokenized rating surface + Caddy on-demand-TLS ask endpoint.
+const publicRateRouter = require('../backend/src/routes/public-rate');
+app.use('/api/public', publicRateRouter);
 // ALB-101: self-registration surface (rate-limited, no auth, no tenant data)
 const publicAuthRouter = require('../backend/src/routes/publicAuth');
 app.use('/api/public', publicAuthRouter);
