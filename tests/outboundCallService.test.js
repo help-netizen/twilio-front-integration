@@ -300,3 +300,70 @@ describe('TC-TS-18: placeCall — slot techId/lat/lng → variableValues technic
         expect(keys).not.toContain('lng');
     });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OUTBOUND-LEAD-CALL-001 (OLC-T5) — TC-OLC-031: lead-scenario conditional
+// spreads. Additive describe: everything above is byte-untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('TC-OLC-031: placeCall — lead conditional spreads (parts wire body byte-identical)', () => {
+    const LEAD_ARGS = {
+        companyId: CO,
+        scenario: 'lead_call',
+        leadUuid: 'LD-1',
+        contactId: 501,
+        customerName: 'Alfreda Smith',
+        customerNumber: '+16175551234',
+        slot: { ...SLOT, lat: 42.31, lng: -71.16 },
+        zip: '02467',
+        problemDescription: 'Dishwasher leaks',
+        source: 'Pro Referral',
+        firstMessage: 'Hi {{customerName}}, this is Sara with ABC Homes — would {{slotLabel}} work?',
+    };
+
+    beforeEach(() => {
+        mockPost.mockResolvedValue({ status: 201, data: { id: 'vapi_new_call' } });
+    });
+
+    test('(a) parts args → NO lead keys on the wire; no firstMessage override', async () => {
+        await outboundCallService.placeCall(CALL_ARGS);
+        const body = mockPost.mock.calls[0][1];
+        const vv = body.assistantOverrides.variableValues;
+        expect(vv.jobId).toBe(50);
+        expect(vv.contactId).toBe(501);
+        for (const k of ['scenario', 'leadUuid', 'zip', 'problemDescription', 'source']) {
+            expect(Object.keys(vv)).not.toContain(k);
+        }
+        expect(Object.keys(body.assistantOverrides)).not.toContain('firstMessage');
+    });
+
+    test('(b) lead args → prompt discriminator lead_booking (NOT the db value), slot keys, coords, firstMessage; NO jobId key', async () => {
+        await outboundCallService.placeCall(LEAD_ARGS);
+        const body = mockPost.mock.calls[0][1];
+        const vv = body.assistantOverrides.variableValues;
+        expect(vv.scenario).toBe('lead_booking'); // §7.1 naming trap: not 'lead_call'
+        expect(vv.leadUuid).toBe('LD-1');
+        expect(vv.zip).toBe('02467');
+        expect(vv.problemDescription).toBe('Dishwasher leaks');
+        expect(vv.source).toBe('Pro Referral');
+        expect(vv).toMatchObject({
+            slotLabel: SLOT.label, slotDate: SLOT.date,
+            slotStart: SLOT.start, slotEnd: SLOT.end, slotKey: SLOT.key,
+            lat: 42.31, lng: -71.16,
+        });
+        expect(Object.keys(vv)).not.toContain('jobId');
+        expect(body.assistantOverrides.firstMessage).toBe(LEAD_ARGS.firstMessage);
+    });
+
+    test('(c) absent options yield ABSENT keys (not undefined)', async () => {
+        const { zip, problemDescription, source, firstMessage, ...rest } = LEAD_ARGS;
+        await outboundCallService.placeCall({ ...rest, slot: { ...SLOT } });
+        const body = mockPost.mock.calls[0][1];
+        const keys = Object.keys(body.assistantOverrides.variableValues);
+        for (const k of ['zip', 'problemDescription', 'source', 'lat', 'lng']) {
+            expect(keys).not.toContain(k);
+        }
+        expect(Object.keys(body.assistantOverrides)).not.toContain('firstMessage');
+        expect(body.assistantOverrides.variableValues.scenario).toBe('lead_booking');
+    });
+});

@@ -10113,7 +10113,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** `node node_modules/jest/bin/jest.js --runTestsByPath tests/outboundCallService.test.js tests/outboundLeadCallWebhook.test.js tests/outboundLeadCallWorker.test.js tests/vapiCallStatusWebhook.test.js --testPathIgnorePatterns "/node_modules/"`.
 
-**Зависимости:** OLC-T4 (ladder-хелпер + golden-фикстура). **Размер:** M. **Статус:** pending
+**Зависимости:** OLC-T4 (ladder-хелпер + golden-фикстура). **Размер:** M. **Статус:** done (2026-07-13, Claude: placeCall-спреды + webhook-ветка + handleLeadEndOfCall-классификация; 163/163 по 6 сьютам, golden после диффа неизменен)
 
 ### Задача OLC-T6: скилл `confirmLeadBooking` + registry + тесты
 

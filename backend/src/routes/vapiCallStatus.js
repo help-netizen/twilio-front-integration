@@ -146,7 +146,8 @@ async function addAttemptNote(jobId, text) {
 // foreign id → null (the caller answers a 200 no-op).
 async function correlateAttempt(vapiCallId) {
     const { rows } = await db.query(
-        `SELECT id, company_id, job_id, task_id, attempt_no, status, phone, contact_id, slot_json
+        `SELECT id, company_id, job_id, task_id, attempt_no, status, phone, contact_id, slot_json,
+                scenario, lead_uuid
          FROM outbound_call_attempts
          WHERE vapi_call_id = $1
          LIMIT 1`,
@@ -234,6 +235,22 @@ router.post('/', webhookSecretAuth, async (req, res) => {
 
         // Idempotence (S9 / edge-6): a non-`dialing` attempt is terminal → no-op.
         if (attempt.status !== 'dialing') {
+            return res.json({ ok: true });
+        }
+
+        // ── OUTBOUND-LEAD-CALL-001: lead-scenario classification ──────────────
+        // Shared plumbing above already ran for this row: timeline finalize
+        // (CT-05b) and the terminal-idempotence no-op (a confirmLeadBooking
+        // mid-call flip lands there — CC-07 analog). Everything parts-specific
+        // stays below and is untouched.
+        if (attempt.scenario === 'lead_call') {
+            const klass = classifyEndedReason(endedReason);
+            try {
+                await require('../services/outboundLeadCallService')
+                    .handleLeadEndOfCall(attempt, klass, endedReason, message);
+            } catch (leadErr) {
+                console.warn('[vapiCallStatus] lead end-of-call failed (safe-fail):', leadErr && leadErr.message);
+            }
             return res.json({ ok: true });
         }
 

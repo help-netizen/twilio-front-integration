@@ -65,9 +65,21 @@ function getClient() {
  *                                       worker; omitted when unknown (no local
  *                                       invoice). Passed through to variableValues
  *                                       ONLY when defined — never as an empty key.
+ * OUTBOUND-LEAD-CALL-001 (all optional; absent on parts calls — conditional
+ * spreads keep the parts wire body byte-identical):
+ * @param {string}  [args.scenario]           'lead_call' → prompt var scenario:'lead_booking'.
+ * @param {string}  [args.leadUuid]           Triggering lead (confirmLeadBooking identity).
+ * @param {string}  [args.zip]                Lead postal code (in-call slot re-lookups).
+ * @param {string}  [args.problemDescription] lead_notes/comments, ≤300 chars.
+ * @param {string}  [args.source]             Lead source display label ("Pro Referral").
+ * @param {string}  [args.firstMessage]       Per-call greeting override (assistant's
+ *                                            static firstMessage is parts-specific).
  * @returns {Promise<{ok:true, vapiCallId:string} | {ok:false, error:string}>}
  */
-async function placeCall({ companyId, jobId, contactId, customerName, customerNumber, slot, balanceDue } = {}) {
+async function placeCall({
+    companyId, jobId, contactId, customerName, customerNumber, slot, balanceDue,
+    scenario, leadUuid, zip, problemDescription, source, firstMessage,
+} = {}) {
     const apiKey = process.env.VAPI_API_KEY;
     const assistantId = process.env.VAPI_OUTBOUND_ASSISTANT_ID;
     const phoneNumberId = process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID;
@@ -105,9 +117,15 @@ async function placeCall({ companyId, jobId, contactId, customerName, customerNu
             : { phoneNumber: { twilioPhoneNumber: twilioNumber, twilioAccountSid: twilioSid, twilioAuthToken: twilioToken } }),
         customer: { number: customerNumber },
         assistantOverrides: {
+            // OUTBOUND-LEAD-CALL-001: per-call greeting override — the assistant's
+            // static firstMessage is parts-specific. Parts calls never send the
+            // key, so their greeting is untouched.
+            ...(firstMessage ? { firstMessage } : {}),
             variableValues: {
-                jobId,
-                contactId,
+                // Parts calls always pass non-null jobId/contactId — conditional
+                // spreads change nothing on the parts wire body (golden-pinned).
+                ...(jobId != null ? { jobId } : {}),
+                ...(contactId != null ? { contactId } : {}),
                 companyId,
                 customerName,
                 slotLabel: s.label,
@@ -129,6 +147,14 @@ async function placeCall({ companyId, jobId, contactId, customerName, customerNu
                 // then scopes to that technician and locates at the job.
                 ...(s.techId ? { technicianId: s.techId } : {}),
                 ...(s.lat != null && s.lng != null ? { lat: s.lat, lng: s.lng } : {}),
+                // OUTBOUND-LEAD-CALL-001 — absent keys keep the parts body
+                // byte-identical. Discriminator naming (exact, per architecture):
+                // DB column value 'lead_call'; PROMPT variable 'lead_booking'.
+                ...(scenario === 'lead_call' ? { scenario: 'lead_booking' } : {}),
+                ...(leadUuid ? { leadUuid } : {}),
+                ...(zip ? { zip } : {}),
+                ...(problemDescription ? { problemDescription } : {}),
+                ...(source ? { source } : {}),
             },
         },
     };
