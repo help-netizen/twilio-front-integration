@@ -6,6 +6,7 @@ const provisioningService = require('./marketplaceProvisioningService');
 const emailMailboxService = require('./emailMailboxService');
 const telephonyTenantService = require('./telephonyTenantService');
 const territoryRadiusQueries = require('../db/territoryRadiusQueries');
+const rateMeQueries = require('../db/rateMeQueries');
 const { RELY_UNIT_TYPES, RELY_BRANDS } = require('./relyLeadsCatalog');
 const { parseZipList, resolveRelySettings } = require('./relyLeadFilterService');
 
@@ -33,7 +34,10 @@ const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';
 // listApps + isAppConnected; all other apps are untouched.
 const GOOGLE_EMAIL_APP_KEY = 'google-email';
 
-const SETTINGS_ENABLED_APP_KEYS = new Set(['rely-leads']);
+const SETTINGS_ENABLED_APP_KEYS = new Set(['rely-leads', 'rate-me']);
+const RATE_ME_PUBLIC_HOST = String(
+    process.env.RATE_ME_PUBLIC_HOST || 'rate.albusto.com'
+).trim().toLowerCase().replace(/\.+$/, '');
 
 /**
  * Mailbox-derived connected boolean for the Google Email app.
@@ -360,6 +364,37 @@ function validateRelySettingsInput(body) {
     };
 }
 
+function validateRateMeSettingsInput(body) {
+    const rawUrl = body?.google_review_url;
+    if (rawUrl === null) return { google_review_url: null };
+    if (typeof rawUrl !== 'string') {
+        throw new MarketplaceServiceError(
+            'Google review URL must be a valid HTTPS URL no longer than 500 characters.',
+            'INVALID_GOOGLE_REVIEW_URL',
+            400
+        );
+    }
+
+    const googleReviewUrl = rawUrl.trim();
+    if (!googleReviewUrl) return { google_review_url: null };
+
+    let parsed;
+    try {
+        parsed = new URL(googleReviewUrl);
+    } catch {
+        parsed = null;
+    }
+    if (!parsed || parsed.protocol !== 'https:' || googleReviewUrl.length > 500) {
+        throw new MarketplaceServiceError(
+            'Google review URL must be a valid HTTPS URL no longer than 500 characters.',
+            'INVALID_GOOGLE_REVIEW_URL',
+            400
+        );
+    }
+
+    return { google_review_url: googleReviewUrl };
+}
+
 async function resolveSettingsInstallation(companyId, appKey) {
     if (!SETTINGS_ENABLED_APP_KEYS.has(appKey)) {
         throw new MarketplaceServiceError(
@@ -396,7 +431,7 @@ async function getTerritorySummary(companyId) {
     return { active_mode: activeMode, has_data: hasData };
 }
 
-async function buildSettingsResponse(companyId, appKey, installation, metadata) {
+async function buildRelySettingsResponse(companyId, appKey, installation, metadata) {
     return {
         app_key: appKey,
         installation_id: installation.id,
@@ -409,9 +444,52 @@ async function buildSettingsResponse(companyId, appKey, installation, metadata) 
     };
 }
 
+async function buildRateMeSettingsResponse(companyId, appKey, installation, metadata) {
+    return {
+        app_key: 'rate-me',
+        installation_id: installation.id,
+        settings: {
+            google_review_url: metadata?.settings?.google_review_url || null,
+        },
+        domain: await rateMeQueries.getDomainByCompany(companyId),
+        public_host: RATE_ME_PUBLIC_HOST,
+    };
+}
+
+function relyEventPayload(validated) {
+    return {
+        app_key: 'rely-leads',
+        zone_mode: validated.zone.mode,
+        custom_zip_count: validated.zone.custom_zips.length,
+        unit_type_count: validated.unit_types.length,
+        brand_count: validated.brands.length,
+    };
+}
+
+const SETTINGS_HANDLERS = {
+    'rely-leads': {
+        validate: validateRelySettingsInput,
+        buildResponse: buildRelySettingsResponse,
+        buildEventPayload: relyEventPayload,
+    },
+    'rate-me': {
+        validate: validateRateMeSettingsInput,
+        buildResponse: buildRateMeSettingsResponse,
+        buildEventPayload: (validated) => ({
+            app_key: 'rate-me',
+            has_google_review_url: Boolean(validated.google_review_url),
+        }),
+    },
+};
+
 async function getAppSettings(companyId, appKey) {
     const { installation } = await resolveSettingsInstallation(companyId, appKey);
-    return buildSettingsResponse(companyId, appKey, installation, installation.metadata);
+    return SETTINGS_HANDLERS[appKey].buildResponse(
+        companyId,
+        appKey,
+        installation,
+        installation.metadata
+    );
 }
 
 async function updateAppSettings(
@@ -422,7 +500,8 @@ async function updateAppSettings(
     { requestId = null } = {}
 ) {
     const { app, installation } = await resolveSettingsInstallation(companyId, appKey);
-    const validated = validateRelySettingsInput(body);
+    const handler = SETTINGS_HANDLERS[appKey];
+    const validated = handler.validate(body);
     const storedSettings = {
         ...validated,
         updated_at: new Date().toISOString(),
@@ -441,17 +520,16 @@ async function updateAppSettings(
         actorId: actorId || null,
         eventType: 'settings_updated',
         requestId,
-        payload: {
-            app_key: appKey,
-            zone_mode: validated.zone.mode,
-            custom_zip_count: validated.zone.custom_zips.length,
-            unit_type_count: validated.unit_types.length,
-            brand_count: validated.brands.length,
-        },
+        payload: handler.buildEventPayload(validated),
     });
 
     const metadata = updated?.metadata || { settings: storedSettings };
-    return buildSettingsResponse(companyId, appKey, updated || installation, metadata);
+    return handler.buildResponse(
+        companyId,
+        appKey,
+        updated || installation,
+        metadata
+    );
 }
 
 async function createCredentialForInstallation({ app, companyId, installationId, client }) {
@@ -902,6 +980,7 @@ module.exports = {
     disconnectInstallation,
     retryProvisioning,
     validateRelySettingsInput,
+    validateRateMeSettingsInput,
     getAppSettings,
     updateAppSettings,
     resolveRelySettings,
