@@ -10152,7 +10152,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** `cd frontend && npm run build`.
 
-**Зависимости:** OLC-T7 (живой API-контракт), OLC-T1 (seed — для живого тайла на стенде). **Размер:** M. **Статус:** pending
+**Зависимости:** OLC-T7 (живой API-контракт), OLC-T1 (seed — для живого тайла на стенде). **Размер:** M. **Статус:** done (2026-07-13, Claude: api-клиент + страница (CloudBanner hero + Checkbox-мультиселект + 30d чипы) + роут; tile = zero-code по metadata.setup_path; build зелёный)
 
 ### Задача OLC-T9: FINAL VERIFY — полный jest (0 новых падений vs база) + FE build + стенд TC-OLC-057..062 + docs-консистентность
 
