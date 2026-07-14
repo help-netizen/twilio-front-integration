@@ -7829,3 +7829,257 @@ Feedback FAB: `position:fixed`, нижний-правый угол, **z-index в
 - `frontend/src/components/feedback/FeedbackWidget.tsx` (+ `.css`) — виджет.
 - `frontend/src/components/layout/AppLayout.tsx` — маунт под флагом.
 - Тесты: `backend/tests/routes/feedback.test.js` (jest+supertest), `frontend/src/components/feedback/FeedbackWidget.test.tsx` (vitest).
+
+
+---
+
+## RATE-ME-CRM-001 — architecture: migration 172 (rate_tokens · technician_ratings · rate_me_domains + rate-me app seed), host-gated public rating page /r/:token served by the main SPA, /api/public/rate surface + Caddy on_demand_tls ask endpoint, per-app-key marketplace-settings dispatch (2026-07-13)
+
+**Verdict.** Rate Me rides three proven precedents end-to-end: the `/e/:token` public-token model (main-SPA route + `PUBLIC_AUTH_PATHS` bypass + unauthenticated `/api/public` router with uniform-404), the `/pay/:token` technician-display model (`technicianProfilesService` + `companyProfileService` presigned branding), and the RELY settings scaffold (settings in `marketplace_installations.metadata.settings`, refactored into a per-app-key dispatch). The only genuinely new mechanism is **host binding**: one new first-mounted middleware (`rateHostGate`) restricts `rate.albusto.com` + verified customer domains to the rating surface (NFR-5), and one new Caddy `on_demand_tls`-with-`ask` block issues certificates ONLY for domains our ask endpoint authorizes. `src/server.js` receives exactly TWO flagged mount-only additions (host gate + public rate router) — authorized under NFR-10; everything else lives in new files or inside `marketplace.js`/`marketplaceService.js`.
+
+### D0. Open-items resolution (A1–A6)
+
+- **A1 (path + serving) = `/r/:token`, main SPA, host-gate filter.** Not `/:token` — a bare catch-all collides with every SPA route and makes the Express allowlist ambiguous; `/r/` gives one unambiguous prefix shared by the gate, the SPA route, and `PUBLIC_AUTH_PATHS`. Serving mechanism: NO new serving code — on rating hosts `rateHostGate` allowlists `/r/*` and lets the EXISTING production SPA-fallback (`src/server.js:358-369`) serve `index.html`; the SPA router renders `RatePage`; `PUBLIC_AUTH_PATHS` gets `'/r/'` (with trailing slash — `'/e'` already startsWith-matches `/estimates`, we do not extend that quirk) so Keycloak never boots. NFR-5 enforcement = the gate 404s every non-allowlisted path on rating hosts, so `index.html` is unreachable for CRM routes there (no SPA boot → no KC redirect → no CRM cookies), and `/api/*` beyond the rating surface is 404 before any router sees it.
+- **A2 (settings dispatch) = `SETTINGS_HANDLERS` registry in `marketplaceService.js`** keyed by app_key: `{ validate, buildResponse, buildEventPayload }`. Rely functions are renamed-in-place (`buildSettingsResponse` → `buildRelySettingsResponse`, body byte-identical; `validateRelySettingsInput` keeps its name AND its export — `tests/relyLeadsSettings*.js` import it). `getAppSettings`/`updateAppSettings` become thin dispatchers. rate-me validation (`validateRateMeSettingsInput`) lives in marketplaceService next to the registry; domain state is read via `rateMeQueries` (db layer) — no service→service cycle.
+- **A3 (domain endpoints) = inside `backend/src/routes/marketplace.js`** under the existing authed mount (`src/server.js:268`: `authenticate + requirePermission('tenant.integrations.manage') + requireCompanyAccess`) at literal paths `PUT/DELETE /api/marketplace/apps/rate-me/domain`, `POST /api/marketplace/apps/rate-me/domain/verify` — zero new server.js lines for the authed surface. Settings GET **embeds** the domain row + `public_host` (single panel payload).
+- **A4 (ask) = `GET /api/public/rate-domain-ask?domain=` inside the public rate router** (the one `/api/public` mount covers it). Guard: localhost-only — loopback `req.socket.remoteAddress` AND absent `X-Forwarded-For` (Caddy's ask subrequest is a direct local HTTP call with no XFF; ALL Caddy-proxied traffic carries XFF, so the public route is a uniform 404 through the proxy). 60s in-memory decision cache (Map, cap 1000, full `clear()` on overflow and on every domain mutation). Caddy 2.6.2 syntax (verified against the box version in `infra/README.md`): global `on_demand_tls { ask … interval 2m burst 5 }` + catch-all `https://` site with `tls { on_demand }` (fragment in D8). **Activation signal (FR-11) = the first positive ask decision**: `verified → active` + `domain_activated` event (the ask always precedes the first TLS handshake, so it is the earliest true "page is live" signal; a page-GET fallback is unnecessary).
+- **A5 (CNAME check) = `dns.promises.Resolver#resolveCname`** (available on the runtime, verified) with a 5s `Promise.race` timeout; targets normalized (lowercase, strip trailing dot); success ⇔ list includes `RATE_ME_PUBLIC_HOST` (`rate.albusto.com`). `ENOTFOUND`/`ENODATA` → `failed` + "We can't see the CNAME record yet — DNS changes can take up to an hour. Check the record and try again. If your DNS provider proxies traffic (e.g. Cloudflare's orange cloud), switch the record to DNS-only."; wrong target → `failed` + "The CNAME points to <target> — it needs to point to rate.albusto.com."; resolver transport error/timeout → humane retry copy, and **never demotes** an already `verified`/`active` row (no-demote rule: only `pending`/`failed` rows transition on verify; removal is the explicit kill switch). CDN CNAME-flattening = documented limitation of the owner-chosen CNAME-only model (no resolved-A fallback this phase).
+- **A6 (mint seam) = service fn + ONE permission-gated smoke endpoint, no UI.** `rateMeService.mintToken(companyId, {jobId, techId, techName})` + `POST /api/marketplace/apps/rate-me/tokens` under the same authed marketplace mount. Mint validation: connected `rate-me` installation required (404 otherwise), `tech_id` non-empty TEXT; when `job_id` is present the job must exist AND belong to the company (`SELECT 1 FROM jobs WHERE id=$1 AND company_id=$2`, else 400 `JOB_NOT_FOUND`); `tech_name` snapshot auto-resolved from the job's `assigned_techs` entry when not supplied.
+- **Token semantics decision (FR-2):** multi-open allowed, rating-once. `expires_at` stays NULL this phase (guard still enforces it when set later); `used_at` stamps the first recorded rating; `technician_ratings.rate_token_id UNIQUE` is the race-proof idempotency anchor; `already_rated` truth = the rating row EXISTS (LEFT JOIN in the context query), `used_at` is a convenience stamp.
+
+### D1. Reuse map (extend, don't duplicate)
+
+| Existing | Where | Role here |
+|---|---|---|
+| Public-token router model (`TOKEN_RE` guard, uniform 404 `Invalid link`, `{ok,data}/{ok:false,error}` envelope) | `backend/src/routes/public-estimates.js` | Template for `public-rate.js`; existing routers stay byte-identical |
+| `/api/public` mount pattern BEFORE authed routers | `src/server.js:236-246` | The new router mounts the same way (flagged line) |
+| SPA fallback serving `index.html` for non-API paths (prod) | `src/server.js:352-369` | Serves `/r/:token` on rating hosts — untouched |
+| `PUBLIC_AUTH_PATHS` KC bypass | `frontend/src/auth/AuthProvider.tsx:192` | += `'/r/'` |
+| Bare-render path list (no CRM chrome) | `frontend/src/components/layout/AppLayout.tsx:235` | += `'/r/'` |
+| Technician display (COALESCE profile.name → assigned_techs name), `technician_profiles` (mig 123, `(company_id, tech_id TEXT)`) | `backend/src/services/technicianProfilesService.js` | Same COALESCE chain folded into the context SQL; table read-only |
+| Company branding + presign-best-effort-null | `backend/src/services/companyProfileService.js` (`presign()`), `storageService.getPresignedUrl` | `getPublicContext` reads `companies.name/logo_storage_key` directly (2 columns) + same best-effort presign |
+| Marketplace settings scaffold: `resolveSettingsInstallation`, `setInstallationSettings` (wholesale `metadata.settings` replace), `writeEvent` | `backend/src/services/marketplaceService.js:363-455`, `backend/src/db/marketplaceQueries.js:284,389` | Dispatch refactor (D6); storage/audit reused as-is |
+| One-query connected-app metadata read | `marketplaceQueries.getConnectedRelySettings` | Mirrored as `getConnectedRateMeMeta` (hot public path, 1 query) |
+| App-seed upsert + rollback | `backend/db/migrations/161_seed_ai_repair_advisor_marketplace_app.sql` + its rollback | Mirrored inside mig 172 |
+| Per-IP `express-rate-limit` (v8.2.1) | `backend/src/routes/publicAuth.js` | Reused with an XFF-aware `keyGenerator` (D4 — deliberate deviation, documented) |
+| Settings-button-per-app-key on the tile | `frontend/src/pages/IntegrationsPage.tsx:308` (rely) | Same one-liner for `rate-me` |
+| FORM-CANON settings panel | `frontend/src/pages/RelyLeadsSettingsDialog.tsx` | Template for `RateMeSettingsDialog.tsx` |
+
+**Must NOT duplicate:** estimate 64-bit token mint (`estimatesService.js:695`) — rate tokens are 192-bit; `validateRelySettingsInput`/rely response shape — moved behind the registry unchanged; existing Caddyfile site blocks — append-only.
+
+### D2. Migration `backend/db/migrations/172_rate_me.sql` (+ `rollback_172_rate_me.sql`)
+
+Additive, idempotent (`IF NOT EXISTS` / `ON CONFLICT`), safe on a dark deploy. Header comment states "Migration 172" (filename is authoritative regardless).
+
+```sql
+CREATE TABLE IF NOT EXISTS rate_tokens (
+    id           BIGSERIAL PRIMARY KEY,
+    company_id   UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    token        TEXT NOT NULL UNIQUE,              -- 192-bit crypto: randomBytes(24) → base64url (32 chars)
+    job_id       BIGINT REFERENCES jobs(id) ON DELETE SET NULL,
+    tech_id      TEXT NOT NULL,                     -- Zenbooker TEXT id (= technician_profiles.tech_id)
+    tech_name    TEXT,                              -- display-name snapshot at mint (resilience if job/profile vanish)
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at   TIMESTAMPTZ NULL,                  -- NULL = no expiry; nothing mints expiring tokens this phase
+    used_at      TIMESTAMPTZ NULL                   -- stamped on first recorded rating
+);
+CREATE INDEX IF NOT EXISTS idx_rate_tokens_company ON rate_tokens(company_id);
+
+CREATE TABLE IF NOT EXISTS technician_ratings (
+    id             BIGSERIAL PRIMARY KEY,
+    company_id     UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    rate_token_id  BIGINT NOT NULL UNIQUE REFERENCES rate_tokens(id) ON DELETE CASCADE,  -- idempotency anchor: one rating per token, ever
+    job_id         BIGINT REFERENCES jobs(id) ON DELETE SET NULL,
+    tech_id        TEXT NOT NULL,
+    stars          SMALLINT NOT NULL CHECK (stars BETWEEN 1 AND 5),
+    feedback       TEXT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_technician_ratings_company_tech ON technician_ratings(company_id, tech_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS rate_me_domains (
+    id              BIGSERIAL PRIMARY KEY,
+    company_id      UUID NOT NULL UNIQUE REFERENCES companies(id) ON DELETE CASCADE,  -- exactly one custom domain per company (FR-2)
+    domain          TEXT NOT NULL UNIQUE,           -- lowercase, punycode-ASCII
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','verified','active','failed')),
+    verified_at     TIMESTAMPTZ NULL,
+    activated_at    TIMESTAMPTZ NULL,
+    last_checked_at TIMESTAMPTZ NULL,
+    last_error      TEXT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+DROP TRIGGER IF EXISTS trg_rate_me_domains_updated_at ON rate_me_domains;
+CREATE TRIGGER trg_rate_me_domains_updated_at BEFORE UPDATE ON rate_me_domains
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- rate-me marketplace app seed — mirrors 161 (gate-only, provisioning_mode='none', ON CONFLICT upsert).
+INSERT INTO marketplace_apps (app_key, name, provider_name, category, app_type, short_description,
+    long_description, requested_scopes, provisioning_mode, status, support_email, metadata)
+VALUES ('rate-me', 'Rate Me', 'Albusto', 'customer_experience', 'internal',
+    'Collect technician ratings on a branded page — 5-star customers go straight to your Google reviews.',
+    'Rate Me gives every completed job a private rating link. Customers rate the technician on a mobile page with your logo and name — hosted on rate.albusto.com or on your own domain via a single CNAME record. A 5-star rating sends the customer straight to your Google review page; anything less opens a private feedback box so problems reach you, not the internet. Ratings are stored per company.',
+    '[]'::jsonb, 'none', 'published', 'support@albusto.com',
+    '{"access_summary": ["Store customer ratings and private feedback per technician", "Read technician display names and your company branding for the public page"], "requires_credential_input": false}'::jsonb)
+ON CONFLICT (app_key) DO UPDATE SET name=EXCLUDED.name, provider_name=EXCLUDED.provider_name,
+    category=EXCLUDED.category, app_type=EXCLUDED.app_type, short_description=EXCLUDED.short_description,
+    long_description=EXCLUDED.long_description, requested_scopes=EXCLUDED.requested_scopes,
+    provisioning_mode=EXCLUDED.provisioning_mode, status=EXCLUDED.status,
+    support_email=EXCLUDED.support_email, metadata=EXCLUDED.metadata, updated_at=NOW();
+```
+
+Rollback: `DROP TABLE IF EXISTS technician_ratings; DROP TABLE IF EXISTS rate_tokens; DROP TABLE IF EXISTS rate_me_domains; DELETE FROM marketplace_apps WHERE app_key='rate-me';` (order: ratings before tokens; app delete presumes disconnect-first, rollback-161 precedent). Copy = draft, owner-refinable (FR-1).
+
+### D3. `backend/src/db/rateMeQueries.js` (NEW) + `backend/src/services/rateMeService.js` (NEW)
+
+**rateMeQueries** (thin, every query company- or token-scoped):
+- `insertToken({companyId, token, jobId, techId, techName})` → row.
+- `getTokenContext(token, hostCompanyId = null)` — THE public read (1 query):
+```sql
+SELECT t.id, t.company_id, t.expires_at, t.used_at,
+       c.name  AS company_name, c.logo_storage_key,
+       COALESCE(p.name, t.tech_name) AS technician_name,
+       (r.id IS NOT NULL) AS already_rated
+FROM rate_tokens t
+JOIN companies c            ON c.id = t.company_id
+LEFT JOIN technician_profiles p ON p.company_id = t.company_id AND p.tech_id = t.tech_id
+LEFT JOIN technician_ratings  r ON r.rate_token_id = t.id
+WHERE t.token = $1
+  AND ($2::uuid IS NULL OR t.company_id = $2)          -- host binding (FR-8)
+  AND (t.expires_at IS NULL OR t.expires_at > NOW())
+```
+- `insertRating({companyId, rateTokenId, jobId, techId, stars, feedback}, client)` — `INSERT … ON CONFLICT (rate_token_id) DO NOTHING RETURNING id`.
+- `stampTokenUsed(rateTokenId, client)` — `UPDATE rate_tokens SET used_at = NOW() WHERE id = $1 AND used_at IS NULL`.
+- `getConnectedRateMeMeta(companyId)` — mirror of `getConnectedRelySettings` (installations ⋈ apps, `app_key='rate-me'`, `status='connected'`, newest, 1 row) → `{metadata, installation_id, app_id}`.
+- `getDomainByCompany(companyId)` / `getServableDomain(domain)` (`status IN ('verified','active')`) / `upsertDomainForCompany(companyId, domain)` (ON CONFLICT (company_id) DO UPDATE SET domain, status='pending', verified_at=NULL, activated_at=NULL, last_checked_at=NULL, last_error=NULL; 23505 on the domain-unique index bubbles to the service) / `setDomainStatus(...)` / `deleteDomain(companyId)`.
+
+**rateMeService** — public API:
+- `mintToken(companyId, {jobId=null, techId, techName=null})` → gate `getConnectedRateMeMeta` (404 `APP_NOT_INSTALLED`); validate; job-ownership check; snapshot tech_name from `jobs.assigned_techs` when absent; `token = crypto.randomBytes(24).toString('base64url')` with unique-violation retry (≤3); returns `{token, url: 'https://' + RATE_ME_PUBLIC_HOST + '/r/' + token}`.
+- `getPublicContext(token, hostCompanyId=null)` → `getTokenContext` (null → null); `getConnectedRateMeMeta(row.company_id)` (null → null — disconnected app is a uniform 404, FR-4); returns whitelist DTO `{company_name, company_logo_url (presign best-effort null), technician_name, already_rated, five_star_redirect: Boolean(settings.google_review_url)}`. **2 queries + 1 presign (NFR-7).** Nothing else — no ids, no Google URL in GET (NFR-6).
+- `submitRating(token, {stars, feedback}, hostCompanyId=null)` → same resolve+gates; on `already_rated` → `{recorded:false, already_recorded:true, next:'thanks'}` (200); else txn (`db.getClient()` BEGIN/COMMIT): `insertRating` (feedback trimmed, capped 2000, empty→null) — conflict race → replay response; `stampTokenUsed`; response `{recorded:true, next:'google_redirect', redirect_url}` iff `stars===5 && google_review_url`, else `{recorded:true, next:'thanks'}`. Redirect URL appears ONLY here (record-before-redirect, FR-5).
+- `resolveDomainCompany(host)` — 60s TTL cache over `getServableDomain` (negative results cached too) → `{companyId} | null`; cache cleared by every domain mutation.
+- `authorizeAskDomain(domain)` — normalize → `resolveDomainCompany` → null ⇒ false; `getConnectedRateMeMeta(companyId)` null ⇒ false; if row status `'verified'` → `setDomainStatus(…,'active', activated_at=NOW())` + `writeEvent('domain_activated', actorId:null)`; true. Decisions memoized in the same 60s cache keyed `ask:<domain>`.
+- `setCustomDomain(companyId, actorId, rawDomain)` — normalize: trim → `new URL('http://'+raw).hostname` (IDN→punycode) → lowercase → strip trailing dot; validate RFC-hostname regex + length ≤253; reject `*.albusto.com`/`albusto.com` (`RESERVED_DOMAIN`); **apex rule: require ≥3 labels**, else 400 `APEX_DOMAIN_NOT_SUPPORTED` ("Use a subdomain like rate.<their-domain> — root domains can't carry a CNAME record"); upsert; 23505 → 400 `DOMAIN_TAKEN` ("This domain is already in use.") — never reveals the holder; `writeEvent('domain_added')`; cache clear.
+- `verifyDomain(companyId, actorId)` — row required (404 `DOMAIN_NOT_FOUND`); resolveCname per A5; success: `pending/failed → 'verified'` (+`verified_at`, `last_error=NULL`, `writeEvent('domain_verified')`; `active` stays `active`); failure: no-demote rule; always updates `last_checked_at`; returns the refreshed row (HTTP 200 either way — status chips, not exceptions); cache clear.
+- `removeDomain(companyId, actorId)` — DELETE + `writeEvent('domain_removed')` + cache clear (ask stops authorizing immediately; cert lapses at renewal).
+- Errors: `RateMeServiceError(message, code, httpStatus)` mirroring `MarketplaceServiceError`.
+
+Dependency direction: rateMeService → {rateMeQueries, marketplaceQueries, storageService, db} only; marketplaceService → rateMeQueries only. **No service↔service cycle.**
+
+### D4. Public router `backend/src/routes/public-rate.js` (NEW, mounted at `/api/public`)
+
+- `RATE_TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/` (≥128-bit base64url ⇒ ≥22 chars; ours = 32) — format guard BEFORE any DB read; fail = uniform 404 `{ok:false,error:{code:'NOT_FOUND',message:'Invalid link'}}` (public-estimates envelope).
+- `GET /rate/:token` — limiter 60/min/IP → guard → `getPublicContext(token, req.rateHost?.companyId ?? null)` → 200 `{ok:true,data}` | uniform 404.
+- `POST /rate/:token/rating` — limiter 10/min/IP → token format guard → body validation BEFORE DB (`stars` must be integer 1..5 → 400 `INVALID_STARS`; `feedback` if present must be string → 400 `INVALID_FEEDBACK`; extra fields ignored — company/job/tech derive ONLY from the token, FR-5) → `submitRating` → 200 | uniform 404 | honest 500 (NFR-8: page shows "try again", never redirects on failure).
+- `GET /rate-domain-ask?domain=` — localhost guard (A4): `req.headers['x-forwarded-for']` present OR remoteAddress not in `{127.0.0.1, ::1, ::ffff:127.0.0.1}` ⇒ bare 404; else `authorizeAskDomain` ⇒ bare 200/404, **empty body both ways** (NFR-4).
+- **Rate limiting:** `express-rate-limit` (v8) with `keyGenerator` = first `X-Forwarded-For` hop (normalized via the library's `ipKeyGenerator` helper), fallback `req.ip`. ⚠️ Deliberate deviation from the publicAuth precedent: the app does NOT set `trust proxy`, so `req.ip` behind Caddy is always `127.0.0.1` — copying the precedent verbatim would make the limit global instead of per-IP. Caddy always sets XFF on proxied requests; direct localhost smoke calls fall back to `req.ip`.
+- Host binding plumbing: handlers read `req.rateHost` ({mode:'shared'} on `rate.albusto.com` ⇒ token-only; {mode:'custom', companyId} on customer domains ⇒ company-bound; absent on app hosts ⇒ token-only, giving `/r/:token` the same app-host smoke path `/e/:token` has).
+
+### D5. Host gate `backend/src/middleware/rateHostGate.js` (NEW) + the two flagged server.js lines
+
+Pure filter, zero serving logic, zero DB work for Albusto traffic:
+1. `host = String(req.hostname||'').toLowerCase()`; if `host === RATE_ME_PUBLIC_HOST` → mode `shared`.
+2. else if host is Albusto-family (`albusto.com`, `*.albusto.com`) or a pass-through suffix (`RATE_ME_PASSTHROUGH_SUFFIXES`, default `localhost,127.0.0.1,::1,.fly.dev` — keeps dev, docker healthchecks and the legacy Fly deployment byte-identical) → `next()` (CRM default path, no lookup, no cache).
+3. else custom-domain candidate → `resolveDomainCompany(host)` (60s cache): hit ⇒ mode `custom`; DB error ⇒ 503 (fail-closed — only unknown hosts can hit this branch); miss ⇒ mode `unknown`.
+4. mode `shared`/`custom`: path allowlist `^/r/`, `^/api/public/rate(/|-domain-ask)`, `^/assets/`, `^/icons/`, `^/vite\.svg$` → stamp `req.rateHost = {mode, companyId?}` → `next()`; anything else → immediate 404 (JSON envelope for `/api/*`, plain `Not found` otherwise). `manifest.webmanifest` is deliberately NOT allowlisted (Albusto-branded PWA metadata must not surface on tenant domains; the 404 is benign console noise). mode `unknown` → 404 for EVERYTHING (FR-8; such hosts can't complete TLS anyway — belt and suspenders).
+
+**`src/server.js` — the ONLY two additions (flagged, authorized by the orchestrator under NFR-10, mirroring the public-estimates mount style):**
+```js
+// RATE-ME-CRM-001: host gate — rating hosts (rate.albusto.com + verified customer
+// domains) expose ONLY the public rating surface; all Albusto hosts pass through untouched.
+app.use(require('../backend/src/middleware/rateHostGate'));
+```
+placed immediately after the CORS middleware block (before the raw-body webhook mounts at :75 — so NO `/api/*` path predates the gate on rating hosts), and
+```js
+// RATE-ME-CRM-001: public tokenized rating surface + Caddy on-demand-TLS ask endpoint.
+const publicRateRouter = require('../backend/src/routes/public-rate');
+app.use('/api/public', publicRateRouter);
+```
+next to the existing public mounts (`:239-246`). Nothing else in the file changes. The gate needs no body/requestId and passes OPTIONS via the earlier CORS handler; `req.hostname` is the Caddy-preserved Host header (Caddy keeps Host on reverse_proxy by default; no `trust proxy` needed).
+
+### D6. Marketplace: settings dispatch + rate-me endpoints
+
+**`backend/src/services/marketplaceService.js`:**
+- `SETTINGS_ENABLED_APP_KEYS = new Set(['rely-leads', 'rate-me'])`.
+- Registry: `SETTINGS_HANDLERS = { 'rely-leads': { validate: validateRelySettingsInput, buildResponse: buildRelySettingsResponse, buildEventPayload: relyEventPayload }, 'rate-me': { validate: validateRateMeSettingsInput, buildResponse: buildRateMeSettingsResponse, buildEventPayload: (v) => ({ app_key:'rate-me', has_google_review_url: Boolean(v.google_review_url) }) } }`.
+- `getAppSettings`/`updateAppSettings` dispatch through the registry; `resolveSettingsInstallation` untouched (whitelist → published app → connected installation → 404 trio). Rely path: same functions, same order, same payload (`zone_mode/custom_zip_count/unit_type_count/brand_count` moves verbatim into `relyEventPayload`) — `tests/relyLeadsSettings*.js` + `relyLeadsUi.structural.test.js` stay green; PUT still replaces `metadata.settings` wholesale; seeded metadata keys survive (`||` merge in `setInstallationSettings`).
+- `validateRateMeSettingsInput(body)` → `{google_review_url: string|null}`: trim; empty→null; must parse via `new URL` with protocol `https:`, length ≤500 → else 400 `INVALID_GOOGLE_REVIEW_URL`.
+- `buildRateMeSettingsResponse(companyId, appKey, installation, metadata)` → `{ app_key:'rate-me', installation_id, settings: { google_review_url: metadata?.settings?.google_review_url || null }, domain: await rateMeQueries.getDomainByCompany(companyId) → {domain,status,verified_at,activated_at,last_checked_at,last_error} | null, public_host: RATE_ME_PUBLIC_HOST }`.
+
+**`backend/src/routes/marketplace.js`** (all under the existing authed mount — middleware chain inherited from `src/server.js:268`; `company_id` via the router's existing `companyId(req)` = `req.companyFilter?.company_id`):
+- `PUT /apps/rate-me/domain` `{domain}` → `rateMeService.setCustomDomain` → `{success, domain}`.
+- `POST /apps/rate-me/domain/verify` → `verifyDomain` → `{success, domain}` (HTTP 200 even when `status:'failed'` — humane chip + `last_error`).
+- `DELETE /apps/rate-me/domain` → `removeDomain` → `{success:true}`.
+- `POST /apps/rate-me/tokens` `{job_id?, tech_id, tech_name?}` → `mintToken` → 201 `{success:true, token:{token,url}}` (A6 smoke seam, no UI).
+- `handleError` extended to also unwrap `RateMeServiceError` (same shape as MarketplaceServiceError).
+
+### D7. Frontend
+
+- **`frontend/src/pages/RatePage.tsx` (NEW)** — public, mobile-first; plain `fetch` (never `authedFetch`), no CRM imports (PublicEstimateViewPage style: inline warm-palette styles, `IBM Plex Sans`/`Manrope` load via the existing Google-Fonts `@import`, CDN-hosted so they work on any host). States: loading → rate (logo 52px round if `company_logo_url`, `onError` hides it — NFR-8; company name eyebrow; `How did {technician_name || 'our technician'} do?` h1; five 44px+ star targets) → 5★: immediate POST, on `next:'google_redirect'` → `window.location.replace(redirect_url)`, on `'thanks'` → thanks view (US-6) → 1–4★: textarea "What could we have done better?" + Send (empty allowed), POST → thanks → `already_rated` (GET) or `already_recorded` (POST replay) → thanks view, no picker (US-3). POST 5xx → inline "Something went wrong — please try again." keeping the selection (never a Google redirect on failure). 404 → "This link is no longer available." No "Blanc", no CRM chrome, no nav.
+- **`frontend/src/App.tsx`** — `<Route path="/r/:token" element={<RatePage />} />` next to `/e/:token` (:112).
+- **`frontend/src/auth/AuthProvider.tsx:192`** — `PUBLIC_AUTH_PATHS = ['/signup', '/pay', '/e', '/r/']` (trailing slash; does not extend the `/e`≻`/estimates` startsWith quirk).
+- **`frontend/src/components/layout/AppLayout.tsx:235`** — bare-return list += `location.pathname.startsWith('/r/')` (no header/nav/softphone on the rating page even on app hosts).
+- **`frontend/src/pages/RateMeSettingsDialog.tsx` (NEW)** — FORM-CANON panel (RelyLeadsSettingsDialog template): group "Google reviews" → `FloatingField label="Google review link"` + hint "5-star customers are sent here to leave a public review."; group "Rating page hosting" → two native radio rows (rely zone-radio precedent): "On albusto.com" (hint: `https://rate.albusto.com`) / "On your own domain" revealing: `FloatingField label="Your subdomain"` (placeholder `rate.yourcompany.com`), the literal CNAME instruction block (monospace: `Type: CNAME · Host/Name: rate · Target: rate.albusto.com`, Host = first label of the entered domain), **Verify** button + status chip (pending amber · verified green · active green "Live at https://<domain>" · failed red + `last_error` line + retry), Remove link. Radio state derived: custom ⇔ domain row exists. Footer Save PUTs `{google_review_url}` (full object, scaffold semantics); domain actions fire their own endpoints immediately. Data: `useQuery(['rate-me-settings'])` + mutations, invalidate on success.
+- **`frontend/src/pages/IntegrationsPage.tsx`** — rate-me Settings button (rely one-liner precedent at `:308`) + `rateMeSettingsOpen` state + dialog mount.
+- **`frontend/src/services/marketplaceApi.ts`** — `RateMeSettingsResponse {settings:{google_review_url:string|null}; domain: RateMeDomain|null; public_host:string}`, `fetchRateMeSettings`, `saveRateMeSettings`, `setRateMeDomain`, `verifyRateMeDomain`, `removeRateMeDomain`.
+
+### D8. `infra/Caddyfile` (reference, append-only) + `infra/README.md`
+
+Global block (existing `{ email … }` block gains ONE directive):
+```caddyfile
+{
+	email help@bostonmasters.com
+	on_demand_tls {
+		ask http://127.0.0.1:3000/api/public/rate-domain-ask
+		interval 2m
+		burst 5
+	}
+}
+```
+New site blocks (existing blocks byte-identical):
+```caddyfile
+rate.albusto.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+}
+
+https:// {
+	encode zstd gzip
+	tls {
+		on_demand
+	}
+	reverse_proxy 127.0.0.1:3000
+}
+```
+Notes for README: Caddy 2.6.2 — `interval/burst` valid on this version (removed in ≥2.8; re-check on any Caddy upgrade); the `ask` URL is called by Caddy itself on localhost (never through TLS, never via the proxy — hence the XFF-absent guard); explicit host blocks always win over the `https://` catch-all, so app/api/auth/albusto.com are untouched; `rate.albusto.com` has its own managed-cert block and never depends on the ask path (FR-13). **Deploy order (manual, deploy-consent per memory):** (1) app deploy with mig 172 — dark; (2) owner adds GoDaddy A-record `rate → 108.61.87.117` (browser-only); (3) Caddyfile apply via the existing validate→backup→swap→reload procedure; (4) smoke `curl -H 'Host: rate.albusto.com' 127.0.0.1:3000/r/x` (404 uniform) + mint a token via the smoke endpoint and open it.
+
+### D9. Observability + error taxonomy
+
+- `[RateMe]` structured logs: mint `{company_id, job_id, tech_id, token_prefix(8)}`; context/rating 404s counted with reason class (`bad_format|not_found|host_mismatch|app_disconnected|expired`) — never the full token (it is the credential); rating writes `{company_id, rate_token_id, stars, has_feedback, replay}`; domain lifecycle `{company_id, domain, action, result, error}`; EVERY ask decision `{domain, allow}`.
+- Marketplace audit via existing `writeEvent`: `settings_updated` (scaffold) + NEW `domain_added` / `domain_verified` / `domain_activated` (actor null — system) / `domain_removed`, payload `{app_key:'rate-me', domain}`.
+- Error taxonomy — authed (MarketplaceServiceError/RateMeServiceError → marketplace `handleError`): `INVALID_GOOGLE_REVIEW_URL` 400 · `INVALID_DOMAIN` 400 · `APEX_DOMAIN_NOT_SUPPORTED` 400 · `RESERVED_DOMAIN` 400 · `DOMAIN_TAKEN` 400 · `DOMAIN_NOT_FOUND` 404 · `JOB_NOT_FOUND` 400 · scaffold trio (`SETTINGS_NOT_SUPPORTED`/`APP_NOT_FOUND`/`APP_NOT_INSTALLED`) 404. Public: uniform 404 `Invalid link` · 400 `INVALID_STARS`/`INVALID_FEEDBACK` (post-format-guard, so the 400 leaks nothing about token existence) · 429 `RATE_LIMITED` · honest 500.
+- Env: `RATE_ME_PUBLIC_HOST` (default `rate.albusto.com`), `RATE_ME_PASSTHROUGH_SUFFIXES` (default `localhost,127.0.0.1,::1,.fly.dev`). No feature flag needed: the engine is install-gated per company and the hosts don't resolve until the manual DNS/Caddy steps (NFR-9).
+
+### Files (complete list)
+
+**New:** `backend/db/migrations/172_rate_me.sql` + `rollback_172_rate_me.sql` · `backend/src/db/rateMeQueries.js` · `backend/src/services/rateMeService.js` · `backend/src/routes/public-rate.js` · `backend/src/middleware/rateHostGate.js` · `frontend/src/pages/RatePage.tsx` · `frontend/src/pages/RateMeSettingsDialog.tsx` · tests (`tests/rateMePublic.test.js`, `tests/rateMeDomains.test.js`, `tests/rateHostGate.test.js`, `tests/rateMeSettings.test.js`).
+**Changed:** `src/server.js` (⚠️ protected — ONLY the two flagged mount additions, D5) · `backend/src/services/marketplaceService.js` (dispatch registry + rate-me validate/response) · `backend/src/routes/marketplace.js` (4 rate-me routes + handleError unwrap) · `frontend/src/App.tsx` (+1 route) · `frontend/src/auth/AuthProvider.tsx` (⚠️ PUBLIC_AUTH_PATHS `'/r/'` one-liner) · `frontend/src/components/layout/AppLayout.tsx` (bare-return `'/r/'`) · `frontend/src/pages/IntegrationsPage.tsx` · `frontend/src/services/marketplaceApi.ts` · `infra/Caddyfile` + `infra/README.md` · `Docs/*`.
+**Explicitly untouched:** `authedFetch.ts`, `useRealtimeEvents.ts`, existing public routers (`public-estimates.js`/`public-invoices.js`/`publicAuth.js`), rely settings behavior (suites green), install/disconnect/credential flows, `technician_profiles`/`technician_base_locations`/`jobs.assigned_techs` shapes, `companies` schema, existing Caddyfile site blocks, FSM/leads/jobs/Pulse.
+
+### Test seams (for TestCases/Planner)
+
+- **rateMePublic**: supertest over an express app mounting `public-rate.js` with mocked `rateMeQueries`/`storageService` (relyLeadsSettings.test.js pattern) — token regex matrix; GET whitelist DTO (exactly 5 keys); uniform-404 quintet (malformed/unknown/expired/foreign-host/app-disconnected — byte-identical bodies, NFR-3 pin); POST happy 5★-with/without-link, 1–4★ feedback trim+cap, replay `{recorded:false,already_recorded:true}`, concurrent-insert race (ON CONFLICT path), INVALID_STARS before any DB call, 429 keying on XFF.
+- **rateHostGate**: host matrix — `rate.albusto.com`+allowlist pass / `rate.albusto.com` `/pulse`+`/api/marketplace` → 404 (NFR-5 pin) / `app.albusto.com` anything → next() with NO db call / verified custom domain → `req.rateHost.companyId` / pending+unknown domain → full 404 / DB error → 503 / `.fly.dev` pass-through.
+- **rateMeDomains**: normalization (IDN, case, trailing dot), apex/reserved/taken copy (no holder disclosure), verify transitions + no-demote rule, ask allow/deny matrix (pending/failed/foreign/disconnected ⇒ deny; verified ⇒ allow + activation event exactly once), cache invalidation on set/remove, localhost guard (XFF present ⇒ 404).
+- **rateMeSettings**: dispatch — rely GET/PUT byte-identical (existing suites re-run green = the pin), rate-me URL validation taxonomy, response embeds domain + public_host, `settings_updated` payload.
+- Mint: job-ownership 400, snapshot resolution, 201 URL shape, entropy/format (32-char base64url).
+
+### Risks
+
+1. **Let's Encrypt/abuse via on-demand certs** — ask authorizes only `verified`/`active` domains of connected installations; decision cache + Caddy `interval/burst` throttle; global LE limits shared but volume is single-digit domains this phase.
+2. **Full CRM bundle served on tenant domains** (weight on LTE, code visibility) — accepted `/e`-precedent trade-off this phase; assets are absolute `/assets/*` so they resolve on any host (verified `frontend/index.html`); a separate light bundle is the future optimization. `manifest.webmanifest` 404 + possible SSE `/events` 404 retries on rating hosts = benign console noise (AppLayout's hooks still execute before its bare return — hook-order rules — but `company=null` no-ops every fetch; the shared SSE manager may probe `/events` → gate-404 → retry noise, same class as today's `/pay` behavior; RatePage itself imports nothing CRM).
+3. **First-mounted global middleware** on every prod request — Albusto-host branch is a pure string check (no DB, no cache); only unknown hosts can trigger the cached DB lookup; fail-closed 503 is scoped to that branch. Placement BEFORE the raw-body webhook mounts is load-bearing for NFR-5 — pin with the gate test.
+4. **CNAME-flattening CDNs** (Cloudflare orange-cloud) make `resolveCname` return ENODATA → verify fails; humane copy explicitly says "switch to DNS-only"; documented limitation of the owner-chosen CNAME-only model. Multi-label-TLD apexes (`example.co.uk`) pass the ≥3-label rule and fail at Verify with the generic copy — acceptable v1.
+5. **Logo presign TTL (~1h)** — a rating page left open >1h shows a broken logo; FE `onError` hides the img (name-only render, NFR-8).
+6. **Domain row survives app disconnect** — ask + public context both re-check `isAppConnected`-equivalent (connected installation), so serving stops; cert lapses at renewal; reconnect resumes without re-verification (status preserved) — document for support.
+7. **Settings on the installation row** — disconnect→reinstall creates a new installation ⇒ `google_review_url` resets (rely risk-7 semantics); domain row is company-keyed and SURVIVES reinstall — deliberate asymmetry, document.
