@@ -26,7 +26,7 @@
 
 ### Section Separation
 
-- **No horizontal lines (`<hr>`, `border-top`, `<Separator>`).** They look like noise and don't fit the warm design system.
+- **No horizontal lines (`<hr>`, `border-top`, `<Separator>`).** They look like noise and don't fit the clean neutral design system.
 - **Sections are separated by spacing and layout**, not borders. If a section card is needed, use subtle background `rgba(25, 25, 25, 0.03)` (or `var(--blanc-surface-muted)` on white), border-radius 16px, padding 14-16px. But prefer flat layout when possible. **Containers are invisible** (LAYOUT-CANON rule 7): list/area wrappers carry no bg/border/radius/shadow — surface belongs to content tiles only.
 - **Section headers** — `.blanc-eyebrow` (11px, uppercase, letter-spacing). Keep them to a minimum. If two sections can merge — merge them.
 
@@ -55,11 +55,14 @@
 - No "designer-y" words in UI when direct ones exist ("Activity" -> "Leads & Jobs")
 - No overloaded cards: emojis, unnecessary badges, small details that don't help make decisions
 
-### Design System (Blanc)
+### Design System — Albusto PALETTE-V2
 
-- Backgrounds: `--blanc-bg`, `--blanc-surface-strong` (#fffdf9)
-- Text: `--blanc-ink-1` (primary), `--blanc-ink-2` (secondary), `--blanc-ink-3` (hints)
-- Borders: `--blanc-line` (rgba 117,106,89 / 0.18)
-- Radii: 10 / 16 / 22 / 28px
-- Fonts: IBM Plex Sans (body), Manrope (headings)
+Source of truth: `frontend/src/styles/design-system.css` (`--blanc-*` are internal token names only — NEVER ship the word "Blanc" in UI; product is Albusto). Palette is a **neutral canvas, NOT warm cream** — it migrated off the old beige aesthetic; ignore the stale "warm beige" comment at the top of that file.
+
+- Canvas: `--blanc-bg` #F1F1F0 (neutral light gray), `--blanc-bg-deep` #E8E8E6. Surfaces (white / frosted-glass): `--blanc-surface-strong` #FFFFFF, `--blanc-surface` rgba(255,255,255,.88), `--blanc-surface-muted` #F6F6F6.
+- Text (neutral ink): `--blanc-ink-1` #191919, `--blanc-ink-2` #6E6E6E, `--blanc-ink-3` #8A8A8A.
+- **Action color = the single violet accent: `--blanc-accent` #7F42E1** (all primary buttons/links). `--blanc-accent-soft` #E7DBFD (lavender — Action-Required plaques, soft highlights). Field fill: `--blanc-field` #F0F0F0.
+- Borders: `--blanc-line` rgba(25,25,25,.08), `--blanc-line-strong` rgba(25,25,25,.20).
+- Entity colors: job #2f63d8 · lead #b26a1d · task/success #1b8b63 · danger #F0503F.
+- Radii: 10 / 16 / 22 / 28px. Fonts: IBM Plex Sans (body), Manrope (headings).
 - Eyebrow label: `.blanc-eyebrow` (11px, uppercase, 0.14em letter-spacing, `--blanc-ink-3`)

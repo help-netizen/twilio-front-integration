@@ -8083,3 +8083,120 @@ Notes for README: Caddy 2.6.2 — `interval/burst` valid on this version (remove
 5. **Logo presign TTL (~1h)** — a rating page left open >1h shows a broken logo; FE `onError` hides the img (name-only render, NFR-8).
 6. **Domain row survives app disconnect** — ask + public context both re-check `isAppConnected`-equivalent (connected installation), so serving stops; cert lapses at renewal; reconnect resumes without re-verification (status preserved) — document for support.
 7. **Settings on the installation row** — disconnect→reinstall creates a new installation ⇒ `google_review_url` resets (rely risk-7 semantics); domain row is company-keyed and SURVIVES reinstall — deliberate asymmetry, document.
+
+---
+
+## RATE-ME-CRM-002 — architecture: personalized 7-screen public rating page + review→job attribution (migration 178) + dispatcher "Send rating link" (SMS/Email/Copy) + `booking_url` rate-me setting — ADDITIVE on deployed 001 (2026-07-14)
+
+> Phase 2 of RATE-ME-CRM-001. **Purely additive UX + data** on the live 001 infra (opaque tokens, `/api/public/rate` surface, `/r/:token` SPA page, `rateHostGate`, the `rate-me` marketplace app + `google_review_url` setting, migration 177 with `rate_tokens.job_id`). **Do NOT break 001**: isolation, the uniform-404 quintet, replay-idempotency (`technician_ratings.rate_token_id UNIQUE`), `google_review_url`, and rely-leads settings all stay byte-identical. All owner decisions in the RM2 context pack + requirements FR-RM2-01..19 are BINDING. Requirement→guard map: SAB-CONTEXT-PII-LEAK, SAB-GOOGLE-SAME-TAB, SAB-BUBBLE-INSERTS-TEXT, SAB-SENDLINK-CROSS-TENANT, SAB-ATTRIBUTION-WRONG-JOB.
+
+### Existing functionality (extend — do NOT duplicate / do NOT re-implement)
+- `backend/src/db/rateMeQueries.js` `getTokenContext(token, hostCompanyId)` — the single host-bound public read. **Its expiry filter `(t.expires_at IS NULL OR t.expires_at > NOW())` is LOAD-BEARING and stays UNTOUCHED** (see D-EXP below): it is what makes `submitRating` + the new beacon reject expired tokens for free. EXTEND only the SELECT list (joins/fields), never the WHERE.
+- `backend/src/services/rateMeService.js` `getPublicContext` (extend return shape + expired branch + opened_at stamp), `mintToken` (reuse as-is — already job∈company + connected-installation guarded), `googleReviewUrl(metadata)` (mirror with `bookingUrl`), `submitRating` (UNCHANGED — already returns `redirect_url` on 5★, which the FE keeps using; the Google URL is NEVER put in the public GET context).
+- `backend/src/routes/public-rate.js` — `getRateLimiter` (60/min), `postRateLimiter` (10/min), `requireRateToken` (RATE_TOKEN_RE), `UNIFORM_NOT_FOUND`. Add the beacon route here; reuse `postRateLimiter` + `requireRateToken` + `req.rateHost?.companyId`.
+- `backend/src/routes/jobs.js` `POST /:id/eta/notify` (L806-882) — the canonical wallet-gated SMS pattern (`resolveCompanyProxyE164` → `getOrCreateConversation` → `conversationsService.sendMessage`, `WALLET_BLOCKED`/`SMS_FAILED`, `toE164`), gated `requirePermission('messages.send')`. The send-link SMS branch mirrors it exactly. `jobsService.getJobById(jobId, companyId, getProviderScope(req))` is the tenant-scoped job load.
+- `backend/src/services/marketplaceService.js` `validateRateMeSettingsInput` / `buildRateMeSettingsResponse` / `SETTINGS_HANDLERS['rate-me']` / `updateAppSettings` (replace-on-PUT) — extend for `booking_url`.
+- `backend/src/services/emailService.js` `sendEmail(companyId, { to, cc, subject, body, files, userId, userEmail })` — throws if the mailbox is disconnected.
+- FE: `frontend/src/pages/RatePage.tsx` (rewrite), `frontend/src/components/jobs/JobStatusTags.tsx` `JobOpsSection` (JOB-ACTIONS-SLIM band — already wires `OnTheWayModal`, the exact precedent for a modal-launching action), `frontend/src/components/jobs/OnTheWayModal.tsx` (`Dialog variant="panel"` FORM-CANON precedent), `frontend/src/services/jobsApi.ts` (`authedFetch` via `./apiClient`; `notifyEta`/`EtaNotifyError` precedent), `frontend/src/hooks/useJobDetail.ts` (`afterMutation` refresh), `frontend/src/pages/RateMeSettingsDialog.tsx` + `frontend/src/services/marketplaceApi.ts` (`google_review_url` → add `booking_url`).
+
+### Database — Migration 178 (additive, idempotent, NOT boot-registered)
+Files: `backend/db/migrations/178_rate_token_attribution.sql` + `backend/db/migrations/rollback_178_rate_token_attribution.sql`.
+- `178`: `ALTER TABLE rate_tokens ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ NULL; … google_click_at TIMESTAMPTZ NULL; … sent_at TIMESTAMPTZ NULL; … sent_via TEXT NULL;` (four idempotent `ADD COLUMN IF NOT EXISTS`). **No `booking_url` column** (that is a JSONB setting — see below). No index needed (attribution is read by `job_id`, already covered; token lookups by the UNIQUE `token`).
+- `rollback_178`: `ALTER TABLE rate_tokens DROP COLUMN IF EXISTS sent_via; … sent_at; … google_click_at; … opened_at;` (data-loss on down = attribution history only; acceptable, additive columns).
+- **Next-free number = 178, CONFIRMED**: highest on `origin/master` is `177_rate_me.sql`; no `178*` exists locally or on `origin/master`. Parallel-session risk — RE-CHECK at push and `git mv` both ends if 178 was taken (parallel-migration-collision memory).
+- **NOT boot-registered**: applied via `psql`/`apply_migrations.js` at deploy (same as 177). `apply_migrations.js` scans the migrations dir and runs every non-`rollback` `.sql` in sorted order — there is NO code registry array to edit (verified). The `IF NOT EXISTS` guards make re-apply safe.
+
+### `booking_url` — a rate-me marketplace setting (JSONB in `marketplace_installations.metadata.settings`, NO column)
+Justification: company phone/email already live on `companies` (tenant-scoped) and are read server-side; the ONLY new per-company value is the rebooking URL, and the rate-me app already owns a settings blob (`google_review_url`). Adding a column + `companyProfileService` whitelist churn for one string is unjustified — the setting seam already exists and is tenant-scoped. Exact edits in `marketplaceService.js`:
+- `validateRateMeSettingsInput(body)` → **MUST return BOTH keys**: `{ google_review_url, booking_url }`. Because `updateAppSettings` spreads `...validated` and `setInstallationSettings` REPLACES `metadata.settings` wholesale, dropping either key on PUT wipes it. `booking_url` validation mirrors google: `=== null` or empty-after-trim → `null`; else must be a string that `new URL(...)` parses with `protocol === 'https:'` and length ≤ 500, else throw `MarketplaceServiceError('… valid HTTPS URL no longer than 500 characters.', 'INVALID_BOOKING_URL', 400)`.
+- `buildRateMeSettingsResponse` → `settings: { google_review_url: metadata?.settings?.google_review_url || null, booking_url: metadata?.settings?.booking_url || null }`.
+- `SETTINGS_HANDLERS['rate-me'].buildEventPayload` → add `has_booking_url: Boolean(validated.booking_url)`.
+- New reader in `rateMeService.js`: `bookingUrl(metadata)` → `const v = metadata?.settings?.booking_url; return typeof v === 'string' && v ? v : null;` (mirrors `googleReviewUrl`).
+- **NFR-RM2-10**: rely-leads GET/PUT stays byte-identical (only the `rate-me` handler changes); `google_review_url` survives PUT (regression-test the round-trip).
+
+### Personalization — `getTokenContext` + `getPublicContext` (PII-minimal)
+`rateMeQueries.getTokenContext` — extend the SELECT (WHERE unchanged): add `LEFT JOIN jobs j ON j.id = t.job_id` and `LEFT JOIN contacts ct ON ct.id = j.contact_id`, and select `j.service_name`, `j.start_date`, `j.customer_name`, `ct.first_name AS contact_first_name`, `c.timezone AS company_timezone`, `c.contact_phone AS company_phone`, `c.contact_email AS company_email`. (`companies.timezone` default `'America/New_York'`, `contact_phone`, `contact_email` all exist — migration 043.)
+`rateMeService.getPublicContext` computes, server-side:
+- `first_name` = `contact_first_name` || first whitespace token of `customer_name` || `null` (→ FE greets "Hi there," when null).
+- `service_label` = `service_name` || `null`.
+- `visit_date` = `start_date` formatted in `company_timezone` via `new Intl.DateTimeFormat('en-US', { timeZone, weekday:'long', month:'short', day:'numeric' }).format(new Date(start_date))` (e.g. "Friday, Jul 12"); `null` when `start_date` is null. Wrap in try/catch → `null` on a bad tz.
+- `company_phone`/`company_email` = the `companies` values || `null`; `booking_url` = `bookingUrl(installation.metadata)`.
+
+**Public context contract (the HARD whitelist `getPublicContext` returns for a LIVE token — NFR-RM2-2):**
+```
+{
+  company_name:      string,
+  company_logo_url:  string | null,   // presigned; onError → name-only (001 NFR-8)
+  technician_name:   string | null,
+  first_name:        string | null,   // ← ONLY PII that leaves the context
+  service_label:     string | null,
+  visit_date:        string | null,   // pre-formatted in company tz; never a raw ts
+  company_phone:     string | null,
+  company_email:     string | null,
+  booking_url:       string | null,
+  five_star_redirect: boolean,        // 001 flag = google_review_url configured
+  already_rated:     boolean,
+  expired:           false            // present & false on the live path
+}
+```
+**FORBIDDEN in the payload (SAB-CONTEXT-PII-LEAK = RED if present):** last name, customer phone/email, any id (contact_id/job_id/token id), raw timestamps, the Google URL (stays server-side in `submitRating.redirect_url`), or any other company's data (host-bind guarantees single-company).
+
+### D-EXP — expired (branded rebooking) vs invalid (uniform 404), non-oracle
+**Design choice: keep `getTokenContext` byte-identical (expiry filter intact) and add a SEPARATE, narrowly-scoped expired lookup.** This means `submitRating` and the beacon inherit "expired → no row → 404" with ZERO new code and ZERO 001 regression risk; only `getPublicContext` gains the branded-expired branch. New query `rateMeQueries.getExpiredTokenBranding(token, hostCompanyId)`: selects `t.company_id, c.name AS company_name, c.logo_storage_key, c.contact_phone, c.contact_email` `FROM rate_tokens t JOIN companies c … WHERE t.token=$1 AND ($2::uuid IS NULL OR t.company_id=$2) AND t.expires_at IS NOT NULL AND t.expires_at <= NOW()` (exists + host-binds + IS expired).
+`getPublicContext(token, host)` flow:
+1. `ctx = getTokenContext(token, host)` (live-only). If a row AND `getConnectedRateMeMeta(ctx.company_id)` is connected → build the full live contract (`expired:false`), best-effort stamp `opened_at`, return. **If the installation is disconnected → return `null`** (→ uniform 404, generic — satisfies D-EXP "app-disconnected → generic").
+2. Else `exp = getExpiredTokenBranding(token, host)`; if a row AND its company has a CONNECTED rate-me installation → return the BRANDED-EXPIRED payload `{ expired:true, company_name, company_logo_url, company_phone, company_email, booking_url }` (NO first_name/service/visit_date/stars — the job context is stale; rebooking only). Else → `null`.
+3. Route (`public-rate.js` GET): `null` → **HTTP 404 `UNIFORM_NOT_FOUND`** (no company data). Non-null → **200 `{ ok:true, data }`** (the FE branches on `data.expired`).
+
+**Non-oracle invariants preserved:** unknown/malformed → `requireRateToken` 404; foreign-host → both queries host-bind → `null` → 404; disconnected-app → `null` → 404. A branded 200 is emitted ONLY for a real, host-binding, EXPIRED token of a connected company → Screen 7. `already_rated` precedence: a LIVE rated token returns via step 1 (`already_rated:true, expired:false`) → Screen 6; an expired token (rated or not) returns `expired:true` → Screen 7 (both rebook — the rare expired-and-rated case landing on Screen 7 is accepted/documented).
+
+### `opened_at` stamp (first open, idempotent, host-bound)
+Inside `getPublicContext` on the LIVE path only, after `ctx.id` is known: `rateMeQueries.stampTokenOpened(ctx.id)` = `UPDATE rate_tokens SET opened_at = NOW() WHERE id = $1 AND opened_at IS NULL` (first-open wins; host already bound by the read that produced `ctx`). **Best-effort**: wrap in try/catch and log — a stamp failure must NEVER fail the GET (NFR-RM2-9).
+
+### Beacon — `POST /api/public/rate/:token/click` (public, host-bound, idempotent)
+In `public-rate.js`: `router.post('/rate/:token/click', postRateLimiter, requireRateToken, handler)` (reuse the 10/min limiter). `handler` → `rateMeService.recordGoogleClick(token, req.rateHost?.companyId ?? null)`:
+- `ctx = getTokenContext(token, host)` (live-only; expired/foreign/unknown → `null`). `null` → route replies **404 `UNIFORM_NOT_FOUND`** (uniform, non-oracle).
+- Else `rateMeQueries.stampGoogleClick(ctx.id)` = `UPDATE rate_tokens SET google_click_at = NOW() WHERE id = $1 AND google_click_at IS NULL` (first-click wins, idempotent). Company/job derived from the TOKEN only (never the body).
+- Success → **`res.status(204).end()`** (minimal). Covered by the existing `rateHostGate` allowlist (`/^\/api\/public\/rate(?:\/|-domain-ask)/` already matches `…/click`) → **NO new public prefix, NO server.js change** (verified). Client fires it JUST BEFORE `window.open`; a slow/failed beacon must not block the new tab.
+
+### Send-rating-link — authenticated DISPATCHER action (mounted on the JOBS surface, NOT marketplace)
+**Gate decision + justification:** `/api/marketplace` is mounted `requirePermission('tenant.integrations.manage')` — admin/integrations only, WRONG for a dispatcher at a job card. `/api/jobs` is mounted `authenticate + requireCompanyAccess` with per-route permissions and is the dispatcher surface; the On-the-way SMS action there already uses `requirePermission('messages.send')`. So both new endpoints live in `backend/src/routes/jobs.js` (no server.js change), NOT in `marketplace.js`.
+- **`POST /api/jobs/:id/rate-link`** — `requirePermission('messages.send')` (the exact dispatcher-messaging precedent). Body `{ channel: 'sms' | 'email' | 'copy' }`. `companyId = req.companyFilter?.company_id`. Load `job = jobsService.getJobById(jobId, companyId, getProviderScope(req))`; `null` → **404** (tenant scope ⇒ a foreign job is impossible → SAB-SENDLINK-CROSS-TENANT). Resolve `techId`/`techName` from `job.assigned_techs[0]`. Mint `{ token, url } = rateMeService.mintToken(companyId, { jobId, techId, techName })` (re-checks job∈company AND connected installation → `APP_NOT_INSTALLED` 404). Then per channel:
+  - `copy` → return `{ url }`; stamp `sent_via:'copy'`.
+  - `sms` → require `toE164(job.customer_phone)` else **422 `NO_PHONE`**; `resolveCompanyProxyE164` else **422 `NO_PROXY`**; `getOrCreateConversation` + `conversationsService.sendMessage(conv.id, { body, author:'agent' })` (wallet gate inside → **402 `WALLET_BLOCKED`** / **502 `SMS_FAILED`**, mirroring eta/notify); stamp `sent_via:'sms'`.
+  - `email` → require `job.customer_email` else **422 `NO_EMAIL`**; `emailService.sendEmail(companyId, { to, subject, body, userId })` (throws if mailbox disconnected → honest **409/502 `MAIL_DISCONNECTED`**); stamp `sent_via:'email'`.
+  - Stamp = `rateMeQueries.stampTokenSent(token, companyId, via)` = `UPDATE rate_tokens SET sent_at = NOW(), sent_via = $3 WHERE token = $1 AND company_id = $2` (company-scoped; single-valued → **most-recent-send wins**, FR-RM2-14). **Order:** mint first (SMS needs the URL), send, then stamp `sent_at` ONLY on channel success — a failed SMS/email leaves an unsent (harmless, unrated) token, not a false "sent". Response `{ ok:true, data:{ channel, url?, sent_at } }`.
+- **`GET /api/jobs/:id/rate-status`** — `requirePermission('jobs.view')` (read; any dispatcher who can view the job sees its rate status). `rateMeQueries.getJobRateStatus(companyId, jobId)` returns two company-scoped reads: (a) most-recent `rate_tokens` for `(company_id, job_id)` → `sent_at, sent_via, opened_at, google_click_at`; (b) most-recent `technician_ratings` for `(company_id, job_id)` → `stars, created_at`. Shape `{ has_token, sent_at, sent_via, opened_at, google_click_at, rating: { stars, created_at } | null }`. Foreign job → empty (SAB-SENDLINK-CROSS-TENANT / SAB-ATTRIBUTION-WRONG-JOB). No token & no rating → `{ has_token:false, rating:null }` (FE shows only the Send action).
+- **AR3 (token reuse vs re-mint):** each "Send rating link" MINTS A FRESH token (simplest; no reuse lookup). Reading the RATING by `job_id` (not by the latest token) means a re-send NEVER hides an existing rating, while opened/clicked/sent reflect the latest token — coherent timeline, correct attribution. Documented.
+
+### Frontend
+**CHANGE:**
+- `frontend/src/pages/RatePage.tsx` — **FULL REWRITE** into the 7-screen state machine (public page; raw `fetch`, no auth). `RateContext` extended with `first_name, service_label, visit_date, company_phone, company_email, booking_url, expired`. States/screens: **(1)** invitation — logo+eyebrow, "Hi {first},", "How did {tech} do?", "{service} · {date}", gold `StarPicker` (≥44px). **(2)** 5★ Google helper — POST rating FIRST (001 contract) → on `next:'google_redirect' && redirect_url`: fire the click beacon (`fetch(.../click,{method:'POST',keepalive:true})`, ignore failure) THEN `window.open(redirect_url, '_blank', 'noopener')` inside the click handler, then drop to Screen 3 (thank-you stays visible) — **NEVER `location.replace` (SAB-GOOGLE-SAME-TAB)**; prompt chips are inert `<button>`s (no textarea) + fine print; "Maybe another time" → Screen 3; if `five_star_redirect` false → Screen 3 directly. **(3)** happy thanks — gold mark, "You're the best, {first}.", tech signature, QUIET violet text-link "Book your next visit →" (`booking_url`), `tel:`/`mailto:` contacts. **(4)** 1–4★ feedback — NO auto-POST; textarea + inert topic chips + "Private — only {company} sees this" plaque + violet "Send to the team" (POST rating+feedback) → Screen 5. **(5)** feedback thanks — green check + contacts, **NO booking**. **(6)** already-rated — violet "Book Visit" + contacts. **(7)** expired (`data.expired`) — clock + same rebooking block; truly-invalid (404) keeps the generic "This link is no longer available." with NO branding. **Gold stars** via inline `#E0A72C`/`#D2D2D0` (rating-semantics exception); every other action `var(--blanc-accent)`. Chips inert everywhere (SAB-BUBBLE-INSERTS-TEXT). Unconfigured booking/contacts/Google → affordance omitted (no dead links).
+- `frontend/src/components/jobs/JobStatusTags.tsx` (`JobOpsSection`) — render `<JobRateMeBlock jobId … />` in the JOB-ACTIONS-SLIM band (mirrors the existing `OnTheWayModal` wiring).
+- `frontend/src/services/jobsApi.ts` — add `sendRateLink(id, channel)` (`POST /:id/rate-link`), `getRateStatus(id)` (`GET /:id/rate-status`), their result types, and a `RateLinkError` (mirror `EtaNotifyError` for `WALLET_BLOCKED`/`NO_PHONE`/`NO_EMAIL`/`MAIL_DISCONNECTED`). Uses the existing `authedFetch` — **`frontend/src/lib/authedFetch.ts` is NOT modified**.
+- `frontend/src/pages/RateMeSettingsDialog.tsx` — add a `booking_url` `FloatingField` (https hint) beside `google_review_url`.
+- `frontend/src/services/marketplaceApi.ts` — extend the rate-me settings type + GET/PUT payloads with `booking_url`.
+
+**NEW:**
+- `frontend/src/components/jobs/RateLinkModal.tsx` — `Dialog variant="panel"` (FORM-CANON), SMS/Email/Copy chooser; disables SMS when no `customer_phone` and Email when no `customer_email` with an honest reason; calls `jobsApi.sendRateLink`; Copy → clipboard; surfaces wallet/mail errors; on success calls the block refresh.
+- `frontend/src/components/jobs/JobRateMeBlock.tsx` — fetches `getRateStatus(jobId)`, renders the attribution timeline (**Rating link sent** {sent_at}·{sent_via} → **Opened** {opened_at} → **Rated** ★N {created_at} → **Opened Google review** {google_click_at}, each step only when its ts exists), and hosts the "Send rating link" button + `RateLinkModal`. Keeps `JobStatusTags` lean.
+
+### Middleware / access (new authed routes)
+- `POST /api/jobs/:id/rate-link` — `authenticate → requireCompanyAccess` (mount) `→ requirePermission('messages.send')` (route); `company_id` via `req.companyFilter?.company_id`; job load + mint + stamp all `company_id`-scoped.
+- `GET /api/jobs/:id/rate-status` — same chain, `requirePermission('jobs.view')`; query filters `company_id = $1`.
+- Public GET/POST-rating/POST-click — NO `authenticate`; `rateHostGate` (host-bind) + per-IP rate-limit + `RATE_TOKEN_RE` + token-only company/job derivation (001 hardening preserved).
+
+### Files to change / create
+**Backend — change:** `backend/src/db/rateMeQueries.js` (getTokenContext SELECT +joins/fields, WHERE unchanged; +`getExpiredTokenBranding`, `stampTokenOpened`, `stampGoogleClick`, `stampTokenSent`, `getJobRateStatus`) · `backend/src/services/rateMeService.js` (getPublicContext personalization + expired branch + opened_at; +`recordGoogleClick`, `bookingUrl`, `formatVisitDate`) · `backend/src/routes/public-rate.js` (+beacon `POST /rate/:token/click`) · `backend/src/routes/jobs.js` (+`POST /:id/rate-link`, +`GET /:id/rate-status`) · `backend/src/services/marketplaceService.js` (`validateRateMeSettingsInput`+`buildRateMeSettingsResponse`+event payload for `booking_url`).
+**Backend — new:** `backend/db/migrations/178_rate_token_attribution.sql` · `backend/db/migrations/rollback_178_rate_token_attribution.sql`.
+**Frontend — change:** `frontend/src/pages/RatePage.tsx` (rewrite) · `frontend/src/components/jobs/JobStatusTags.tsx` · `frontend/src/services/jobsApi.ts` · `frontend/src/pages/RateMeSettingsDialog.tsx` · `frontend/src/services/marketplaceApi.ts`.
+**Frontend — new:** `frontend/src/components/jobs/RateLinkModal.tsx` · `frontend/src/components/jobs/JobRateMeBlock.tsx`.
+**PROTECTED — UNTOUCHED (verified):** `src/server.js` (**NO change** — beacon is under the already-mounted `/api/public` + `rateHostGate` allowlist already matches `…/click`; send-link/status are under the already-mounted `/api/jobs`; migration 178 is psql-applied, not code-registered) · `frontend/src/lib/authedFetch.ts` · `frontend/src/hooks/useRealtimeEvents.ts` · `backend/db/` schema (only migration 178).
+
+### API endpoints (new)
+- `GET  /api/public/rate/:token` — extended context (personalization + `expired`); unchanged route contract, additive fields (public).
+- `POST /api/public/rate/:token/click` — beacon; stamps `google_click_at`; 204 / uniform-404 (public).
+- `POST /api/jobs/:id/rate-link` — `messages.send`; mint + SMS/Email/Copy; stamps `sent_at`/`sent_via`.
+- `GET  /api/jobs/:id/rate-status` — `jobs.view`; job-scoped attribution timeline for the Job-card block.
+
+### Does `src/server.js` change? **NO.** OPEN QUESTIONS FOR OWNER: **none** — the one Product flagged (expired vs invalid) is resolved by binding decision D-EXP; all other choices (send-link gate = `messages.send`, status gate = `jobs.view`, jobs-surface mount, `booking_url` as a setting, mint-fresh + rating-by-job_id) are within the Architect mandate.
