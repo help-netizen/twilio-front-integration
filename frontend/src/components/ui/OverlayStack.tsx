@@ -75,6 +75,17 @@ export function OverlayStackProvider({ children }: OverlayStackProviderProps) {
     return <OverlayStackContext.Provider value={value}>{children}</OverlayStackContext.Provider>
 }
 
+/**
+ * True when at least one overlay (dialog / panel / sheet) is currently open.
+ * Provider-optional: with no provider the registry is empty → returns false.
+ * Used by always-on floating chrome (e.g. the feedback FAB) to hide itself while
+ * an overlay is up, so it never paints over a dialog's footer actions.
+ */
+export function useHasOpenOverlay(): boolean {
+    const { stack } = useContext(OverlayStackContext)
+    return stack.length > 0
+}
+
 export interface OverlayStackInfo {
     /** 0-based index of this overlay in open-order (0 when closed or no provider). */
     depth: number
