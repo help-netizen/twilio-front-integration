@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-13 — ASSISTANT-BOT-001: Gemini CRM-expert assistant (data-isolated) в фидбек-виджете
+
+Бот-заглушка фидбек-виджета заменена реальным Gemini-ассистентом — экспертом по Albusto, который советует, какие marketplace-сервисы подключить и как настроить под нужный результат. **Ноль доступа к бизнес-данным** (структурно): у ассистента нет ни импорта agentSkills, ни record-запросов, ни креда — максимум читает каталог возможностей + статус/конфиг подключённых сервисов компании. НЕ задеплоено (deploy-consent).
+
+- **Стандарт приложения (§4a):** каждый marketplace-app теперь несёт ДВА слоя описания — user-facing (short/long_description) + bot-facing `metadata.assistant` (what_it_does/prerequisites/setup_steps/outcome/recommend_when/gotchas). Миграция 173 бэкфиллит все 12 приложений (Claude-authored); правило закреплено в AGENTS.md; 173 зарегистрирована в boot-replay после 170 (иначе сиды перетирают metadata).
+- **Security-ядро (A2):** `assistant/capabilityCatalog.js` (published-only каталог) + `assistant/serviceConfig.js` (company-scoped config-DTO по per-app allowlist ключей — реальные slot-engine колонки; Stripe/телефония-флаги отложены, не фабрикуются) + `marketplaceQueries.getAppConnectionSnapshot` (чистый SELECT, без reconcile-записи). Импорты assistant/* ограничены read-поверхностью. 14 тестов изоляции + саботаж-контроли.
+- **Исполнитель (A3):** v1 = PRE-INJECT (сервер сам читает каталог+конфиг и вкладывает в промпт; у модели НОЛЬ тулов → 0 шанса дёрнуть данные). Один Gemini-вызов (primary+fallback), редакция companyId из промпта, tolerant {reply,escalate}. `POST /api/assistant/chat` (auth+companyScope, 400/429/503). DB-quota (mig 174 assistant_usage_counters: rate-limit + daily token budget с резервированием + fail-closed — переживает рестарты, в отличие от in-memory; защита от повтора Gemini spend-cap инцидента). Анонимные транскрипты (mig 174 assistant_transcripts: session_key, без company_id/user_id/email). 46 тестов + саботаж (редакция companyId off → injection RED).
+- **Фронт (A4):** чат виджета → `/api/assistant/chat`, индикатор **«Thinking…»** + блок ввода на время ответа, эскалация в форму при escalate или сбое (graceful). session_key на сессию. 13 vitest; preview-верификация desktop (greeting→сообщение→graceful fallback→форма эскалации, консоль чистая).
+- Коммиты: A1 ff2719d · A2 df457c0 · A3 3ce7619 · A4 61a24a0. Отложено (v2): RAG вместо каталога, SSE-стриминг, «обратная сторона» ответов, реальные Stripe/telephony config-флаги, PII-скраб транскриптов.
+
+---
+
 ## 2026-07-13 — TIMELINE-REVPAGE-001: Pulse-лента = мессенджер (reverse-cursor паджинация по 20, bottom-anchor, scroll-up история, sticky AR-бар)
 
 Детальная лента Pulse (звонки + SMS + email + финансовые события, merged) грузила ВСЮ историю на каждое открытие и каждый SSE-эвент и рендерилась сверху-вниз; тред с >200 SMS показывал только СТАРЕЙШИЕ 200 сообщений. Теперь это мессенджер (модель WhatsApp): открытие приземляется внизу на новейших 20, скролл вверх догружает историю страницами, SSE освежает только head-страницу. `timeline-by-phone`/софтфон и legacy `ConversationPage` не тронуты. **НЕ задеплоено** (deploy-consent).
