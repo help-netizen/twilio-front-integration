@@ -271,6 +271,9 @@ app.use('/api/marketplace', authenticate, requirePermission('tenant.integrations
 // MAIL-AGENT-001: Mail Secretary settings + activity (same gate as marketplace).
 app.use('/api/mail-agent', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,
     require('../backend/src/routes/mailAgent'));
+// OUTBOUND-LEAD-CALL-001: Outbound Lead Caller settings (same gate as marketplace).
+app.use('/api/outbound-lead-caller', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,
+    require('../backend/src/routes/outboundLeadCall'));
 // F018 Stripe Payments settings/onboarding (the /webhook subpath is mounted earlier,
 // before express.json, so it is unaffected by this authed mount).
 app.use('/api/stripe-payments', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,

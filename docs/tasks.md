@@ -10139,7 +10139,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** `node node_modules/jest/bin/jest.js --runTestsByPath tests/outboundLeadCallRoutes.test.js --testPathIgnorePatterns "/node_modules/"`.
 
-**Зависимости:** OLC-T2 (get/saveSources). Логически ∥ OLC-T3..T6; слот исполнения после OLC-T6. **Размер:** M. **Статус:** pending
+**Зависимости:** OLC-T2 (get/saveSources). Логически ∥ OLC-T3..T6; слот исполнения после OLC-T6. **Размер:** M. **Статус:** done (2026-07-13, Claude: роуты + mount за marketplace-гейтом; 15/15 вкл. anti-spoof и tenant-изоляцию)
 
 ### Задача OLC-T8: frontend — api-клиент + settings-страница + route (+ zero-code tile-чек)
 
