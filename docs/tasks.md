@@ -10162,7 +10162,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** сами шаги 1–6; результаты по-кейсно фиксируются в статус этой задачи.
 
-**Зависимости:** OLC-T1..T8. **Размер:** M. **Статус:** pending
+**Зависимости:** OLC-T1..T8. **Размер:** M. **Статус:** done (2026-07-13, Claude: FE build зелёный; полный jest 3180 passed / 22 fails = пре-существующие 6 сьютов + leadgen-db параллельный дедлок, ВОСПРОИЗВЕДЁН на базе 5f8290d без фичи (0 новых регрессий; чип на фикс advisory-lock создан); TC-057 real-PG 13/13 — поймал и исправил ON CONFLICT-inference предикат; E2E-стенд 7/7 (enqueue→ladder→exhaustion→FR-9 задача→lifetime-once, окно клэмпит live); category 'ai' вместо lead_generation (потребитель лидов, leadgen-set заморожен их сьютом))
 
 ### Задача OLC-T10: DEPLOY CHECKLIST (owner-gated — ЗАПЛАНИРОВАН, исполняется ТОЛЬКО на явное «да» владельца)
 
@@ -10172,7 +10172,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** TC-OLC-063 по-шагово; результат + PATCH-лог в статус задачи.
 
-**Зависимости:** OLC-T9 + **явное «да» владельца (deploy-consent — стоячее правило)**. **Размер:** M. **Статус:** pending (blocked-on-owner)
+**Зависимости:** OLC-T9 + **явное «да» владельца (deploy-consent — стоячее правило)**. **Размер:** M. **Статус:** ГОТОВ, owner-gated — НЕ исполнялся (ждёт «да»: psql 173+174 → код → automation_rules-аудит → VAPI GET-before-PATCH (secret re-inject, serverMessages destination, firstMessage-подстановка на первом живом звонке) → mirror-коммит → owner-смоук TC-063)
 
 ### Порядок выполнения и волны
 
