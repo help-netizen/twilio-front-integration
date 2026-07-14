@@ -102,9 +102,12 @@ describe('TC-OLC-042: slotKey match — hold on THE lead without engine call', (
         const out = await skill.run(CO, {}, buildInput({ chosenSlot: { ...SLOT } }, injectedVars()));
 
         expect(recommendSlots.run).not.toHaveBeenCalled();
+        // OLC-POSTCALL-001: the hold also flips the lead to 'Review' (tentative AI
+        // booking a dispatcher must confirm).
         expect(leadsService.updateLead).toHaveBeenCalledWith('LD-1', {
             LeadDateTime: '2026-07-21T09:00:00-04:00',
             LeadEndDateTime: '2026-07-21T11:00:00-04:00',
+            Status: 'Review',
             Latitude: 42.31,
             Longitude: -71.16,
         }, CO);

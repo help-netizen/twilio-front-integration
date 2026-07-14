@@ -148,14 +148,17 @@ describe('route wiring (handleLeadEndOfCall mocked)', () => {
         expect(mockFinalize).toHaveBeenCalledTimes(1); // shared timeline finalize DID run
     });
 
-    it('TC-035(a): terminal row (mid-call booked flip) → 200 no-op BEFORE the branch; finalize still ran', async () => {
+    it('TC-035(a): booked lead row → handleLeadEndOfCall runs BEFORE the parts idempotence guard (OLC-POSTCALL-001); parts detect never runs', async () => {
+        // A lead booking flips the attempt to 'booked' MID-CALL, so by end-of-call
+        // it is already terminal. The lead post-call branch must STILL run (Review +
+        // summary + confirm task) — it sits before the dialing-only guard now.
         armCorrelate(leadRow({ status: 'booked' }));
         const res = await post(endReport('v1', 'customer-ended-call'));
         expect(res.status).toBe(200);
-        expect(handleSpy).not.toHaveBeenCalled();
-        expect(mockFinalize).toHaveBeenCalledTimes(1);
-        // finalize happens before the idempotence gate — order via invocation sequence
-        expect(mockFinalize.mock.invocationCallOrder[0]).toBeLessThan(Number.MAX_SAFE_INTEGER);
+        expect(handleSpy).toHaveBeenCalledTimes(1);
+        expect(handleSpy.mock.calls[0][0]).toMatchObject({ status: 'booked', scenario: 'lead_call' });
+        expect(mockFinalize).toHaveBeenCalledTimes(1);      // shared timeline finalize still ran
+        expect(mockGetJobById).not.toHaveBeenCalled();      // parts booked-detection never ran for a lead row
     });
 
     it('TC-038(a): unknown call.id → 200 no-op, zero writes', async () => {
@@ -205,13 +208,32 @@ describe('classification (REAL handleLeadEndOfCall)', () => {
     const terminalMark = () => updates(/SET status = \$2, reason = \$3/);
     const ladderInserts = () => updates(/INSERT INTO outbound_call_attempts/);
 
-    it('TC-034(1): booked belt — hold set wins over any endedReason; no task, no retry', async () => {
-        getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, LeadDateTime: '2026-07-16T14:00:00Z' });
-        await svc.handleLeadEndOfCall(leadRow(), 'no_answer', 'customer-did-not-answer', {});
-        const booked = updates(/SET status = 'booked'/);
-        expect(booked).toHaveLength(1);
-        expect(timelinesQueries.createTask).not.toHaveBeenCalled();
+    it('TC-034(1): booked → review flow — flip booked, set Review, ONE confirm task w/ summary, no retry (OLC-POSTCALL-001)', async () => {
+        const updateSpy = jest.spyOn(leadsService, 'updateLead').mockResolvedValue({});
+        mockQuery.mockImplementation(async (sql) => (/SELECT 1 FROM tasks/.test(sql) ? { rows: [] } : { rows: [], rowCount: 1 }));
+        getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, Status: 'Submitted', LeadDateTime: '2026-07-16T14:00:00Z' });
+        await svc.handleLeadEndOfCall(leadRow(), 'no_answer', 'customer-did-not-answer',
+            { analysis: { summary: 'Customer booked Tue 2-4pm.' } });
+        // hold wins over the transient endedReason — attempt flips booked, no ladder
+        expect(updates(/SET status = 'booked'/).length).toBeGreaterThanOrEqual(1);
         expect(ladderInserts()).toHaveLength(0);
+        // lead → Review (a human must confirm the tentative AI booking)
+        expect(updateSpy).toHaveBeenCalledWith('LD-1', { Status: 'Review' }, COMPANY);
+        // exactly one Action-Required confirm task, carrying the call summary
+        expect(timelinesQueries.createTask).toHaveBeenCalledTimes(1);
+        expect(timelinesQueries.createTask.mock.calls[0][0].title).toMatch(/Confirm the AI-booked appointment/);
+        expect(timelinesQueries.createTask.mock.calls[0][0].description).toMatch(/Customer booked Tue 2-4pm/);
+        expect(eventService.logEvent).toHaveBeenCalledWith(
+            COMPANY, 'lead', 'LD-1', 'outbound_lead_call_booked', expect.anything(), 'system');
+    });
+
+    it('TC-034(1b): booked idempotence — lead already in Review → NO redundant Status write; task belt still fires once', async () => {
+        const updateSpy = jest.spyOn(leadsService, 'updateLead').mockResolvedValue({});
+        mockQuery.mockImplementation(async (sql) => (/SELECT 1 FROM tasks/.test(sql) ? { rows: [] } : { rows: [], rowCount: 1 }));
+        getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, Status: 'Review', LeadDateTime: '2026-07-16T14:00:00Z' });
+        await svc.handleLeadEndOfCall(leadRow({ status: 'booked' }), 'failed', 'customer-ended-call', {});
+        expect(updateSpy).not.toHaveBeenCalled();                    // already Review → skip
+        expect(ladderInserts()).toHaveLength(0);                    // never a retry for a booked lead
     });
 
     it.each([

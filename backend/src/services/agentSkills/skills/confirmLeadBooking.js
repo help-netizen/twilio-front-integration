@@ -143,6 +143,12 @@ async function run(companyId, _verifiedContext, input) {
         const hold = {
             LeadDateTime: slotEngineService.tzCombine(slot.date, slot.start, tz),
             LeadEndDateTime: slotEngineService.tzCombine(slot.date, slot.end, tz),
+            // OLC-POSTCALL-001: an AI-booked window is TENTATIVE — a human dispatcher
+            // must confirm it. Flip the lead to 'Review' the instant the hold lands
+            // (reliable: this is the tool call, not the end-of-call webhook that may
+            // be missed). The Pulse timeline call entry + the end-of-call review task
+            // carry the summary; the hold already shows on the dispatcher calendar.
+            Status: 'Review',
         };
         if (addressUpdate) Object.assign(hold, addressUpdate);
         else if (resolvedCoords) { hold.Latitude = resolvedCoords.lat; hold.Longitude = resolvedCoords.lng; }

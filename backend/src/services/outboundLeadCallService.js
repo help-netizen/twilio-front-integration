@@ -588,32 +588,61 @@ async function handleLeadEndOfCall(attempt, klass, endedReason, message) {
     try {
         const companyId = attempt.company_id;
         const eventService = require('./eventService');
+        const summary = (message && message.analysis && message.analysis.summary) || null;
 
-        // 1. Booked belt: the hold is the truth even if the mid-call flip failed.
         let lead = null;
         try {
             lead = await leadsService.getLeadByUUID(attempt.lead_uuid, companyId);
         } catch { /* fall through to classification */ }
+
+        // 1. Booked — OLC-POSTCALL-001. The hold on the lead is the truth (the
+        //    confirmLeadBooking flip runs MID-CALL). An AI-booked window is
+        //    TENTATIVE: a human dispatcher must confirm it. So on a booking we
+        //    (a) mark the attempt booked, (b) ensure the lead sits in 'Review',
+        //    and (c) raise a Pulse Action-Required task carrying the call summary +
+        //    slot so it lands in the dispatcher queue. ALL idempotent — this path
+        //    runs on EVERY lead end-of-call (before the parts dialing-only guard),
+        //    so a repeat webhook must never double-write: the attempt flip is
+        //    guarded, Review is skipped when already set, and createLeadCallTask
+        //    carries an exactly-once belt.
         if (lead && lead.LeadDateTime) {
             await db.query(
-                `UPDATE outbound_call_attempts SET status = 'booked', updated_at = now() WHERE id = $1`,
+                `UPDATE outbound_call_attempts SET status = 'booked', updated_at = now()
+                 WHERE id = $1 AND status <> 'booked'`,
                 [attempt.id]
             );
-            console.log(`[outboundLeadCall] booked (belt) attempt=${attempt.id} lead=${attempt.lead_uuid}`);
+            if (String(lead.Status || '').toLowerCase() !== 'review') {
+                try {
+                    await leadsService.updateLead(attempt.lead_uuid, { Status: 'Review' }, companyId);
+                } catch (sErr) {
+                    console.warn('[outboundLeadCall] set Review failed (non-fatal):', sErr && sErr.message);
+                }
+            }
+            await createLeadCallTask(companyId, lead, attempt, 'booked', { summary });
+            try {
+                eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_booked',
+                    { attemptNo: attempt.attempt_no, needsReview: true }, 'system');
+            } catch { /* non-fatal */ }
+            console.log(`[outboundLeadCall] booked → review attempt=${attempt.id} lead=${attempt.lead_uuid}`);
             return;
         }
+
+        // Not booked — the retry/terminal FSM must run EXACTLY once, only for a
+        // still-`dialing` attempt. A repeat end-of-call webhook on an already-
+        // terminal attempt is a no-op here (so we never re-schedule a retry or
+        // double-file a declined task).
+        if (attempt.status !== 'dialing') return;
 
         // 2. Declined — a human said no; terminal, dispatcher follows up (FR-11).
         const outcome = message && message.analysis && message.analysis.structuredData
             && message.analysis.structuredData.outcome;
         if (klass === 'declined' || outcome === 'declined' || outcome === 'callback') {
             await db.query(
-                `UPDATE outbound_call_attempts SET status = 'declined', reason = $2, updated_at = now() WHERE id = $1`,
+                `UPDATE outbound_call_attempts SET status = 'declined', reason = $2, updated_at = now()
+                 WHERE id = $1 AND status = 'dialing'`,
                 [attempt.id, String(endedReason || outcome || 'declined').slice(0, 120)]
             );
-            await createLeadCallTask(companyId, lead, attempt, 'declined', {
-                summary: message && message.analysis && message.analysis.summary,
-            });
+            await createLeadCallTask(companyId, lead, attempt, 'declined', { summary });
             try {
                 eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_declined',
                     { attemptNo: attempt.attempt_no, outcome: outcome || klass }, 'system');
@@ -665,7 +694,20 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
 
         let title;
         let description;
-        if (kind === 'declined') {
+        if (kind === 'booked') {
+            // OLC-POSTCALL-001: an AI-booked window is a TENTATIVE hold a human must
+            // confirm. Surface the slot + call summary so the dispatcher can review,
+            // confirm with the customer, and finalize.
+            const slot = (attempt.slot_json && typeof attempt.slot_json === 'object') ? attempt.slot_json
+                : (() => { try { return JSON.parse(attempt.slot_json); } catch { return null; } })();
+            const windowStr = (slot && slot.label) ? slot.label
+                : (lead && lead.LeadDateTime ? new Date(lead.LeadDateTime).toISOString() : '');
+            title = `Confirm the AI-booked appointment — ${name}`;
+            description = `Sara booked ${name} on this ${sourceLabel} lead${windowStr ? ` for ${windowStr}` : ''}. `
+                + `This is a tentative hold from an automated call — the lead is in Review and the time already shows on the schedule. `
+                + `Please review the call, confirm the time and service address with the customer, then finalize the appointment.`
+                + (extra.summary ? `\n\nCall summary: ${extra.summary}` : '');
+        } else if (kind === 'declined') {
             title = `${name} answered but didn't book — follow up`;
             description = `Sara reached the customer on this ${sourceLabel} lead but they didn't pick a time.`
                 + (extra.summary ? `\n\nCall summary: ${extra.summary}` : '')

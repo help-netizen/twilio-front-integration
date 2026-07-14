@@ -92,6 +92,10 @@ function webhookSecretAuth(req, res, next) {
     }
     const header = req.headers['x-vapi-secret'];
     if (header !== secret) {
+        // Diagnostic (no secret leaked): a webhook we reject never reaches the
+        // finalize/classify body, so a silently-stuck call timeline points here.
+        // Logs only whether VAPI sent ANY x-vapi-secret header, not its value.
+        console.warn(`[vapiCallStatus] 401 x-vapi-secret mismatch (header_present=${header != null})`);
         return res.status(401).json({ ok: false, error: 'Unauthorized' });
     }
     next();
@@ -161,6 +165,14 @@ async function correlateAttempt(vapiCallId) {
 router.post('/', webhookSecretAuth, async (req, res) => {
     try {
         const message = req.body && req.body.message;
+        // Diagnostic breadcrumb (auth already passed): which VAPI message types
+        // actually arrive per call. A call whose timeline stays "Ringing" but has
+        // no 'end-of-call-report' line here means VAPI only sent status-updates —
+        // distinct from an auth-rejected (401-logged) delivery.
+        if (message && message.type) {
+            const dcid = message.call && message.call.id;
+            console.log(`[vapiCallStatus] rx type=${message.type} callId=${dcid || '?'}`);
+        }
 
         // ── OUTBOUND-CALL-TIMELINE-001 (CT-05a): mid-call status-update ───────
         // status-update / conversation-update / tool-calls all reach this same
@@ -233,16 +245,15 @@ router.post('/', webhookSecretAuth, async (req, res) => {
             console.warn('[vapiCallStatus] finalize timeline failed (non-fatal):', tlErr && tlErr.message);
         }
 
-        // Idempotence (S9 / edge-6): a non-`dialing` attempt is terminal → no-op.
-        if (attempt.status !== 'dialing') {
-            return res.json({ ok: true });
-        }
-
-        // ── OUTBOUND-LEAD-CALL-001: lead-scenario classification ──────────────
-        // Shared plumbing above already ran for this row: timeline finalize
-        // (CT-05b) and the terminal-idempotence no-op (a confirmLeadBooking
-        // mid-call flip lands there — CC-07 analog). Everything parts-specific
-        // stays below and is untouched.
+        // ── OUTBOUND-LEAD-CALL-001 / OLC-POSTCALL-001: lead post-call ─────────
+        // Runs for EVERY lead end-of-call, BEFORE the parts dialing-only
+        // idempotence guard below. Rationale: an AI booking flips the attempt to
+        // 'booked' MID-CALL (confirmLeadBooking), so by end-of-call it is already
+        // terminal — gating it behind `status === 'dialing'` would starve the
+        // review task, the summary, and the 'Review' flip. handleLeadEndOfCall is
+        // internally idempotent (booked/declined writes are status-guarded, the
+        // review task carries an exactly-once belt), so a repeat webhook is safe.
+        // Timeline finalize (CT-05b, above) already ran for this row.
         if (attempt.scenario === 'lead_call') {
             const klass = classifyEndedReason(endedReason);
             try {
@@ -251,6 +262,11 @@ router.post('/', webhookSecretAuth, async (req, res) => {
             } catch (leadErr) {
                 console.warn('[vapiCallStatus] lead end-of-call failed (safe-fail):', leadErr && leadErr.message);
             }
+            return res.json({ ok: true });
+        }
+
+        // Idempotence (S9 / edge-6): a non-`dialing` PARTS attempt is terminal → no-op.
+        if (attempt.status !== 'dialing') {
             return res.json({ ok: true });
         }
 
