@@ -2327,7 +2327,7 @@ Test cases: `docs/test-cases/F014-ads-analytics-microservice.md`
 **Режим:** планирование (Steps 1–5). Реализация — отдельными прогонами по приоритетам.
 
 ### TASK-F017-001: DB migration — routing foundation
-**Приоритет:** P0 · **Статус:** pending
+**Приоритет:** P0 · **Статус:** done (2026-07-13, Claude: РЕНУМЕРАЦИЯ 172/173→173/174 (172 занял feedback_submissions на origin/master), shape-тесты 15/15, boot-line после 170)
 **Цель:** Заложить схему маршрутизации: привязка номер→группа, состояние исполнения flow, единственная стратегия.
 **Файлы (создать/менять):**
 - `backend/db/migrations/NNN_f017_telephony_routing.sql` (новый)

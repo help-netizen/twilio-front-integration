@@ -52,7 +52,13 @@ async function ensureMarketplaceSchema(client = null) {
         // 132-after-087 precedent). Installation seed = all-statuses NOT EXISTS:
         // boot replays never duplicate rows nor resurrect a disconnected one.
         await query(readMigration('170_split_lead_generator_marketplace_apps.sql'));
+        // OUTBOUND-LEAD-CALL-001: Outbound Lead Caller tile (gate-only, no
+        // credential; setup page via metadata.setup_path). Boot-replayed AFTER
+        // 083 per the ordering rule. The DDL migration is deliberately NOT in
+        // this list (schema migration, not a seed).
+        await query(readMigration('174_seed_outbound_lead_caller_marketplace_app.sql'));
         // ASSISTANT-BOT-001: restore bot-facing descriptions after app seeds overwrite metadata.
+        // MUST run AFTER every app seed above (it patches their metadata).
         await query(readMigration('173_seed_assistant_app_descriptions.sql'));
         return;
     }
