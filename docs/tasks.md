@@ -10087,7 +10087,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** `node node_modules/jest/bin/jest.js --runTestsByPath tests/outboundLeadCallWindow.test.js tests/outboundLeadCallEnqueue.test.js --testPathIgnorePatterns "/node_modules/"`.
 
-**Зависимости:** OLC-T2 (resolve/isSourceEnabled). **Размер:** M+. **Статус:** pending
+**Зависимости:** OLC-T2 (resolve/isSourceEnabled). **Размер:** M+. **Статус:** done (2026-07-13, Claude: emit+subscriber+window math+gauntlet+Touch-2; юнит 60/60, окно в 2 TZ)
 
 ### Задача OLC-T4: worker — golden-фикстура parts + scenario dispatch + processLeadAttempt + ladder + createLeadCallTask + тесты (incl ★ TC-OLC-029)
 

@@ -536,4 +536,7 @@ module.exports = {
     // CANCEL-001 (CC-04): shared with routes/vapiCallStatus.js — both retry-
     // insertion sites run ONE guard (spec S10).
     retryBlockReason,
+    // OUTBOUND-LEAD-CALL-001 Touch-2: DST-safe tz offset probe, shared with the
+    // lead scenario's window math (outboundLeadCallService lazy-requires it).
+    getTimezoneOffsetMs,
 };

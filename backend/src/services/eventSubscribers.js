@@ -41,6 +41,20 @@ function registerSubscribers() {
         });
     });
 
+    // Outbound Lead Caller (OUTBOUND-LEAD-CALL-001): on lead.created, run the
+    // eligibility gauntlet and enqueue the first call attempt. Handler returns
+    // immediately (setImmediate) — dispatchToSubscribers awaits sequentially.
+    eventBus.subscribe('outbound-lead-caller', 'lead.created', (event) => {
+        const companyId = event.company_id;
+        const leadId = event.payload && event.payload.id;
+        if (!leadId || !companyId) return;
+        const outboundLeadCallService = require('./outboundLeadCallService');
+        setImmediate(() => {
+            outboundLeadCallService.onLeadCreated({ leadId, companyId })
+                .catch((err) => console.warn('[outbound-lead-caller] onLeadCreated failed:', err && err.message));
+        });
+    });
+
     console.log(`[eventBus] ${eventBus._subscribers.length} subscriber(s) registered`);
 }
 

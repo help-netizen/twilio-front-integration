@@ -363,6 +363,26 @@ async function createLead(fields, companyId = null, { systemMetadata = null } = 
 
     const { rows } = await db.query(sql, values);
     emitLeadChange('lead.created', columns.company_id, columns.status || 'Submitted', rows[0].id);
+    // OUTBOUND-LEAD-CALL-001: post-insert domain event (REPAIR-ADVISOR pattern,
+    // convertLead precedent). Fire-and-forget: a failing bus never breaks the
+    // create. This single emit site covers ALL ingestion paths — UI routes,
+    // external integrations, Yelp, Sara's createLead skill — they all funnel
+    // through this function. The SSE emitLeadChange above is untouched.
+    eventBus.emit(
+        columns.company_id,
+        'lead.created',
+        {
+            id: rows[0].id,
+            uuid: rows[0].uuid,
+            first_name: columns.first_name || null,
+            last_name: columns.last_name || null,
+            phone: columns.phone || null,
+            job_type: columns.job_type || null,
+            job_source: columns.job_source || null,
+            status: columns.status || 'Submitted',
+        },
+        { actorType: 'system', aggregateType: 'lead', aggregateId: rows[0].id }
+    ).catch(() => {});
     return {
         UUID: rows[0].uuid,
         SerialId: rows[0].serial_id,
