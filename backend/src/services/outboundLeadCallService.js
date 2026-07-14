@@ -112,6 +112,8 @@ function localWallClock(date, timezone) {
  * exactly at end = outside). D2/FR-4.
  */
 function isWithinWorkWindow(now, ds) {
+    // OLC-WINDOW-001: 'always' (24/7) mode is in-window at every instant.
+    if (ds && ds.always === true) return true;
     const s = sanitizeDispatchSettings(ds);
     const { dow, minutes } = localWallClock(now, s.timezone);
     if (!s.work_days.includes(dow)) return false;
@@ -134,6 +136,9 @@ function localCalendarDate(date, timezone) {
  * (no candidate in 14 days) → warn + from+24h hard fallback. SC-03/FR-4.
  */
 function nextWindowStart(from, ds) {
+    // OLC-WINDOW-001: 24/7 has no "next" boundary — now is always open. (Defensive;
+    // callers only reach here when isWithinWorkWindow is false, never for 'always'.)
+    if (ds && ds.always === true) return new Date(from.getTime());
     const s = sanitizeDispatchSettings(ds);
     // Lazy require: the worker requires this module back in its tick branch —
     // a top-level cross-require would cycle (architecture pins this direction).
@@ -167,6 +172,30 @@ function nextWindowStart(from, ds) {
 /** Identity inside the window; else the next window start. */
 function clampIntoWorkWindow(date, ds) {
     return isWithinWorkWindow(date, ds) ? date : nextWindowStart(date, ds);
+}
+
+/**
+ * OLC-WINDOW-001 — the EFFECTIVE calling window for a company, from its OLC
+ * settings mode overlaid on the dispatch business hours:
+ *   - 'always' → { always: true } (24/7; the window helpers short-circuit),
+ *   - 'custom' → a synthetic dispatch-settings object: the custom HH:MM..HH:MM
+ *     window on EVERY day, in the company timezone (borrowed from dispatch),
+ *   - 'office_hours' (default / anything else) → the dispatch settings verbatim.
+ * Pure — the caller resolves both `settings` and `ds` and passes them in.
+ */
+function effectiveWindow(settings, ds) {
+    const mode = settings && settings.calling_window_mode;
+    if (mode === 'always') return { always: true };
+    if (mode === 'custom' && settings.custom_start_time && settings.custom_end_time) {
+        const tz = (ds && ds.timezone) || FALLBACK_DISPATCH_SETTINGS.timezone;
+        return {
+            timezone: tz,
+            work_start_time: settings.custom_start_time,
+            work_end_time: settings.custom_end_time,
+            work_days: [0, 1, 2, 3, 4, 5, 6],
+        };
+    }
+    return ds;
 }
 
 /**
@@ -299,14 +328,15 @@ async function onLeadCreated({ leadId, companyId }) {
         );
         if (existing.length > 0) return skip(leadId, companyId, 'chain_exists');
 
-        // 7. Enqueue — due now, clamped into the business window (D2).
+        // 7. Enqueue — due now, clamped into the effective calling window
+        //    (OLC-WINDOW-001: office hours / 24-7 / custom, per settings).
         let ds;
         try {
             ds = await scheduleService.getDispatchSettings(companyId);
         } catch {
             ds = { ...FALLBACK_DISPATCH_SETTINGS };
         }
-        const dueAt = clampIntoWorkWindow(new Date(), ds);
+        const dueAt = clampIntoWorkWindow(new Date(), effectiveWindow(settings, ds));
         await db.query(
             `INSERT INTO outbound_call_attempts
                  (company_id, lead_uuid, scenario, contact_id, phone, attempt_no, status, scheduled_at)
@@ -376,17 +406,19 @@ async function processLeadAttempt(attempt) {
         return terminateLead(attempt.id, 'canceled', 'source_disabled');
     }
 
-    // 4. Business window (FR-4/D2) — carry, never drop. Test toggle honored
-    // (same regex as the parts worker).
+    // 4. Calling window (FR-4/D2 + OLC-WINDOW-001) — carry, never drop. The
+    // effective window is office hours / 24-7 / custom per settings. Test toggle
+    // honored (same regex as the parts worker).
     let ds;
     try {
         ds = await scheduleService.getDispatchSettings(companyId);
     } catch {
         ds = { ...FALLBACK_DISPATCH_SETTINGS };
     }
+    const eff = effectiveWindow(settings, ds);
     const ignoreHours = IGNORE_HOURS_RE.test(process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS || '');
-    if (!ignoreHours && !isWithinWorkWindow(now, ds)) {
-        const carryTo = nextWindowStart(now, ds);
+    if (!ignoreHours && !isWithinWorkWindow(now, eff)) {
+        const carryTo = nextWindowStart(now, eff);
         await db.query(
             `UPDATE outbound_call_attempts
              SET status = 'pending', scheduled_at = $2, updated_at = now()
@@ -550,7 +582,7 @@ async function scheduleLeadRetryOrExhaust(attempt, reason, klass = 'failed') {
         } catch {
             ds = { ...FALLBACK_DISPATCH_SETTINGS };
         }
-        const nextAt = computeLeadNextDueAt(attempt.attempt_no, settings, ds, new Date());
+        const nextAt = computeLeadNextDueAt(attempt.attempt_no, settings, effectiveWindow(settings, ds), new Date());
         await db.query(
             `INSERT INTO outbound_call_attempts
                  (company_id, lead_uuid, scenario, contact_id, phone, attempt_no, status, scheduled_at)
@@ -768,6 +800,7 @@ module.exports = {
     nextWindowStart,
     clampIntoWorkWindow,
     computeLeadNextDueAt,
+    effectiveWindow,
     parseLeadContext,
     // §5.2
     onLeadCreated,

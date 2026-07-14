@@ -5,11 +5,23 @@
 
 import { authedFetch } from './apiClient';
 
+export type CallingWindowMode = 'office_hours' | 'always' | 'custom';
+
 export interface OutboundLeadCallerSettings {
     enabled_sources: string[];
     max_attempts: number;
     backoff_schedule: string[];
+    calling_window_mode: CallingWindowMode;
+    custom_start_time: string | null;
+    custom_end_time: string | null;
     updated_at?: string | null;
+}
+
+export interface OutboundLeadCallerSettingsInput {
+    enabled_sources: string[];
+    calling_window_mode: CallingWindowMode;
+    custom_start_time?: string | null;
+    custom_end_time?: string | null;
 }
 
 export interface OutboundLeadCallerOverview {
@@ -36,11 +48,13 @@ export async function getOutboundLeadCallerOverview(): Promise<OutboundLeadCalle
     return unwrap(await authedFetch(`${BASE}/settings`));
 }
 
-export async function saveOutboundLeadCallerSettings(enabledSources: string[]): Promise<OutboundLeadCallerSettings> {
+export async function saveOutboundLeadCallerSettings(
+    input: OutboundLeadCallerSettingsInput,
+): Promise<OutboundLeadCallerSettings> {
     const res = await authedFetch(`${BASE}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled_sources: enabledSources }),
+        body: JSON.stringify(input),
     });
     return (await unwrap<{ settings: OutboundLeadCallerSettings }>(res)).settings;
 }
