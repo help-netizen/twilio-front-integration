@@ -317,3 +317,63 @@ previously showed only the OLDEST 200 messages. Known v1 limits are recorded in 
 media-heavy prepended pages can shift the viewport ~100px after lazy players load).
 `timeline-by-phone`/softphone and the legacy `ConversationPage` are untouched. Not yet deployed
 (owner-gated).
+
+## Outbound Lead Caller (OUTBOUND-LEAD-CALL-001)
+
+A marketplace app (`app_key='outbound-lead-caller'`, category `'ai'`, `provisioning_mode='none'`,
+tile → `/settings/integrations/outbound-lead-caller`): once connected, Sara — the SAME outbound
+VAPI assistant the parts robot uses — automatically dials every NEW lead whose `job_source` is in
+the company's enabled-sources list (launch default: Pro Referral), with the goal of booking. The
+call carries injected lead context (name / zip / problem description / source) and a pre-dial top
+slot from the slot engine (through the single `slotEngineService` seam, so technician day-off
+periods are respected). Dialing is clamped to the business-hours window from **dispatch settings**
+in the company tz (never `groupRouting.isBusinessHours` — that stays parts-only); an out-of-hours
+lead is scheduled for the next business-day start. Unreached leads retry on a window-clamped
+3-attempt ladder (`immediate/+30m/+2h`, scenario-scoped settings in `outbound_lead_call_settings`,
+fully independent of the parts ladder); a rung is skipped when the goal is already achieved (hold
+present / Lost / Converted) — there is deliberately NO human-takeover cancellation for lead chains
+(owner decision, unlike parts CANCEL-001). An accepted slot books a **schedule-hold on THE
+triggering lead** (`LeadDateTime`/`LeadEndDateTime`; no job, no new lead, no Zenbooker write) via a
+new L0 skill `confirmLeadBooking`: identity comes ONLY from the attempt-injected variableValues
+(transport args cannot spoof it), with a fail-closed offered-guard — the derived slot key must
+equal the injected `slotKey` OR pass a live engine re-validation; the skill is voice-only (not
+exposed over MCP). Decline/exhaustion creates ONE p1 dispatcher task on the lead (surfaces in
+Pulse Action-Required); every dialed attempt mirrors into the Pulse timeline through the existing
+`vapiCallTimelineService` seam. Guards: lifetime-once per lead plus a partial-unique
+one-active-chain index — reconnecting the app never re-dials old leads.
+
+**One dialer, two scenarios (architecture).** `outbound_call_attempts` gains a `scenario`
+discriminator (default `'parts_visit'`) and a nullable `lead_uuid` (migration 173, which also adds
+`outbound_lead_call_settings`; migration 174 idempotently seeds the marketplace tile — renumbered
+from the spec's 172/173 because 172 was taken by `feedback_submissions`). The worker tick claims
+scenario-agnostically and dispatches per row (`scenario='lead_call'` →
+`outboundLeadCallService.processLeadAttempt`, everything else → the untouched parts
+`processAttempt`); the `vapiCallStatus` webhook gains a mirror lead branch after the
+terminal-idempotence gate. The parts flow is byte-identical, frozen by a golden wire-body fixture
+(TC-OLC-029 must-pass gate).
+
+**New bus event.** `leadsService.createLead` now emits a fire-and-forget **`lead.created`** on the
+eventBus (immediately after the SSE `emitLeadChange`) — ONE emission point covering ALL ingestion
+paths (UI, integrations API, Yelp, Sara). The `'outbound-lead-caller'` subscriber runs a
+cheapest-first eligibility gauntlet (app connected → source enabled via normalized match →
+dialable phone, else an `[AI Phone]` trace appended to lead Comments → goal-at-birth →
+lifetime-once) before enqueueing the first attempt. Documented side effect: the emit also wakes
+any `automation_rules` with `trigger_event='lead.created'` — a pre-enable audit is on the deploy
+checklist.
+
+**Settings.** `GET/PUT /api/outbound-lead-caller/settings` (`tenant.integrations.manage`,
+tenant-isolated via `req.companyFilter`) plus a settings page: sources multi-select (canonical
+`JOB_SOURCES` ∪ observed company sources, normalized dedup), "How it works" copy, and a
+"Last 30 days" outcome rollup scoped strictly to `scenario='lead_call'`. Connect/disconnect IS the
+on/off switch (no separate enable toggle); disconnect keeps settings intact.
+
+**Verification & status.** 168 feature jest tests green (7 new suites) + the 4 parts suites
+untouched; full suite 3180 passed with only pre-existing failures (reproduced on the pre-feature
+base — 0 new regressions); real-PG constraint stand 13/13 (caught and fixed an ON
+CONFLICT-inference index-predicate bug); E2E dev stand 7/7 (live `createLead` → eventBus → enqueue
+→ 3-rung ladder → exhaustion → dispatcher task → lifetime-once). **Not deployed** (owner-gated):
+the deploy checklist includes psql 173+174 before code, the `automation_rules` audit, and the VAPI
+GET-before-PATCH assistant update (prompt scenario-dispatch section + `confirmLeadBooking`/
+`checkServiceArea` tools + `structuredData.outcome`) — until that PATCH lands, calls would greet
+per the `firstMessage` override but the prompt-side scenario discriminator and tools only exist in
+the PATCH.

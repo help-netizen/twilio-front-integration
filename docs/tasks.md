@@ -10061,7 +10061,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** `node node_modules/jest/bin/jest.js --runTestsByPath tests/outboundLeadCallMigration.test.js --testPathIgnorePatterns "/node_modules/"`; psql dev-БД: apply 172+173 дважды (идемпотентность), rollback обеих, re-apply.
 
-**Зависимости:** нет. **Размер:** M. **Статус:** pending
+**Зависимости:** нет. **Размер:** M. **Статус:** done (2026-07-13, Claude: РЕНУМЕРАЦИЯ 172/173→173/174, shape-тесты 15/15, boot-line; live-стенд TC-057 позже поймал ON CONFLICT-inference → предикат индекса упрощён)
 
 ### Задача OLC-T2: settings-сервис `outboundLeadCallSettingsService` + unit-тесты
 
@@ -10074,7 +10074,7 @@ node /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/
 
 **Verify:** `node node_modules/jest/bin/jest.js --runTestsByPath tests/outboundLeadCallSettingsService.test.js --testPathIgnorePatterns "/node_modules/"`.
 
-**Зависимости:** нет (логически ∥ OLC-T1). **Размер:** S. **Статус:** pending
+**Зависимости:** нет (логически ∥ OLC-T1). **Размер:** S. **Статус:** done (2026-07-13, Claude: зеркало parts-сервиса + нормализация источников; юнит 23/23)
 
 ### Задача OLC-T3: триггер — emit `lead.created` + подписчик + чистые window/phone-хелперы + eligibility gauntlet + тесты
 
