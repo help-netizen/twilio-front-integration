@@ -21,18 +21,27 @@ jest.mock('../backend/src/services/eventService', () => ({ logEvent: jest.fn() }
 jest.mock('../backend/src/services/agentSkills/skills/recommendSlots', () => ({
     run: jest.fn(),
 }));
+jest.mock('../backend/src/services/agentSkills/skills/validateAddress', () => ({
+    run: jest.fn(),
+}));
 
 const leadsService = require('../backend/src/services/leadsService');
 const slotEngineService = require('../backend/src/services/slotEngineService');
 const eventService = require('../backend/src/services/eventService');
 const recommendSlots = require('../backend/src/services/agentSkills/skills/recommendSlots');
+const validateAddress = require('../backend/src/services/agentSkills/skills/validateAddress');
 const skill = require('../backend/src/services/agentSkills/skills/confirmLeadBooking');
 const registry = require('../backend/src/services/agentSkills/registry');
 
 const CO = '00000000-0000-0000-0000-000000000001';
 const SLOT = { date: '2026-07-21', start: '09:00', end: '11:00' };
 const KEY = '2026-07-21|09:00|11:00';
-const LEAD = { UUID: 'LD-1', Status: 'Submitted', FirstName: 'Alfreda' };
+// Default fixture has a usable stored address so the booking tests exercise the
+// happy path; the address-requirement tests override it.
+const LEAD = {
+    UUID: 'LD-1', Status: 'Submitted', FirstName: 'Alfreda',
+    Address: '101 Asheville Rd', City: 'Chestnut Hill', State: 'MA', PostalCode: '02467',
+};
 
 // buildSkillInput order: model args FIRST, injected variableValues spread LAST.
 function buildInput(modelArgs = {}, injected = {}) {
@@ -51,6 +60,7 @@ beforeEach(() => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     leadsService.getLeadByUUID.mockResolvedValue({ ...LEAD });
     leadsService.updateLead.mockResolvedValue({});
+    validateAddress.run.mockResolvedValue({ valid: true, standardized: '12 Oak St, Boston, MA 02118', correctedZip: '02118', lat: 42.34, lng: -71.07 });
     slotEngineService.resolveTimezone.mockResolvedValue('America/New_York');
     slotEngineService.tzCombine.mockImplementation((d, t) => `${d}T${t}:00-04:00`);
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
@@ -238,6 +248,52 @@ describe('TC-OLC-047: sabotage — the offered-guard detector can go red', () =>
             { chosenSlot: { date: '2026-07-22', start: '13:00', end: '15:00' } }, injectedVars()));
         expect(out.success).toBe(true);
         expect(leadsService.updateLead).toHaveBeenCalled(); // ← 043(b)'s "NOT called" would fail on such an impl
+    });
+});
+
+describe('TC-OLC-048-ADDR: service address is required before booking', () => {
+    it('empty lead (no stored address) + no collected address → refuse and ASK, no booking', async () => {
+        leadsService.getLeadByUUID.mockResolvedValue({ UUID: 'LD-1', Status: 'Submitted' }); // no address
+        const out = await skill.run(CO, {}, buildInput({ chosenSlot: { ...SLOT } }, injectedVars()));
+        expect(out.needsAddress).toBe(true);
+        expect(out.success).not.toBe(true);
+        expect(out.speak).toMatch(/service address/i);
+        expect(leadsService.updateLead).not.toHaveBeenCalled();
+        expect(validateAddress.run).not.toHaveBeenCalled();
+    });
+
+    it('customer-provided address → re-validated server-side, persisted to the lead, then booked', async () => {
+        leadsService.getLeadByUUID.mockResolvedValue({ UUID: 'LD-1', Status: 'Submitted' }); // no stored address
+        const serviceAddress = { street: '12 Oak St', city: 'Boston', state: 'MA', zip: '02118' };
+        const out = await skill.run(CO, {}, buildInput({ chosenSlot: { ...SLOT }, serviceAddress }, injectedVars()));
+        expect(validateAddress.run).toHaveBeenCalledWith(CO, {}, expect.objectContaining({ street: '12 Oak St', zip: '02118' }));
+        expect(out.success).toBe(true);
+        const hold = leadsService.updateLead.mock.calls[0][1];
+        expect(hold).toMatchObject({
+            Address: '12 Oak St', City: 'Boston', State: 'MA', PostalCode: '02118',
+            Latitude: 42.34, Longitude: -71.07, // from validateAddress, not the injected lead geocode
+        });
+        expect(hold.LeadDateTime).toBe('2026-07-21T09:00:00-04:00');
+    });
+
+    it('customer-provided address that FAILS geocoding → refuse and re-ask, no booking', async () => {
+        leadsService.getLeadByUUID.mockResolvedValue({ UUID: 'LD-1', Status: 'Submitted' });
+        validateAddress.run.mockResolvedValue({ valid: false });
+        const out = await skill.run(CO, {}, buildInput(
+            { chosenSlot: { ...SLOT }, serviceAddress: { street: 'asdfqwer', zip: '00000' } }, injectedVars()));
+        expect(out.needsAddress).toBe(true);
+        expect(out.success).not.toBe(true);
+        expect(leadsService.updateLead).not.toHaveBeenCalled();
+    });
+
+    it('stored address on the lead + no collected address → books using the stored location (no re-validate)', async () => {
+        // default LEAD fixture already carries a stored address
+        const out = await skill.run(CO, {}, buildInput({ chosenSlot: { ...SLOT } }, injectedVars()));
+        expect(out.success).toBe(true);
+        expect(validateAddress.run).not.toHaveBeenCalled();
+        const hold = leadsService.updateLead.mock.calls[0][1];
+        expect(hold).toMatchObject({ Latitude: 42.31, Longitude: -71.16 }); // injected lead geocode
+        expect(hold).not.toHaveProperty('Address'); // stored address left as-is
     });
 });
 

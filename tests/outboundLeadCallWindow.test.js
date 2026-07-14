@@ -213,3 +213,45 @@ describe('TC-OLC-010: sabotage — the clamp detector can go red', () => {
         expect(() => assertClamped(unclamped, NY)).toThrow(/not clamped/);
     });
 });
+
+describe('TC-OLC-011: parseLeadContext (appliance context the agent confirms)', () => {
+    it('(a) structured pipe-delimited comments → Unit/Brand/Problem', () => {
+        const out = svc.parseLeadContext({
+            Comments: 'Unit: Refrigerator | Brand: Samsung | Age: 5 years | Problem: not cooling | Fee agreed: Yes',
+        });
+        expect(out).toEqual({ applianceType: 'Refrigerator', applianceBrand: 'Samsung', applianceProblem: 'not cooling' });
+    });
+
+    it('(b) job_type gives the unit when comments have none; the trailing verb is stripped', () => {
+        expect(svc.parseLeadContext({ JobType: 'Dryer Repair' }).applianceType).toBe('Dryer');
+        expect(svc.parseLeadContext({ JobType: 'Washer Installation' }).applianceType).toBe('Washer');
+        // Comments Unit wins over job_type.
+        expect(svc.parseLeadContext({ JobType: 'Dryer Repair', Comments: 'Unit: Oven' }).applianceType).toBe('Oven');
+    });
+
+    it('(c) synonyms — Make/Manufacturer→brand, Issue/Symptom→problem, Appliance/Type→unit', () => {
+        expect(svc.parseLeadContext({ Comments: 'Make: LG | Issue: won\'t drain' }))
+            .toEqual({ applianceType: null, applianceBrand: 'LG', applianceProblem: "won't drain" });
+        expect(svc.parseLeadContext({ Comments: 'Appliance: Microwave | Symptom: sparks' }))
+            .toEqual({ applianceType: 'Microwave', applianceBrand: null, applianceProblem: 'sparks' });
+    });
+
+    it('(d) no structured problem → free-text Description is the reported issue', () => {
+        expect(svc.parseLeadContext({ Description: 'Dishwasher leaks from the door' }).applianceProblem)
+            .toBe('Dishwasher leaks from the door');
+        // A structured Problem beats the Description fallback.
+        expect(svc.parseLeadContext({ Comments: 'Problem: no heat', Description: 'ignore me' }).applianceProblem)
+            .toBe('no heat');
+    });
+
+    it('(e) placeholder junk (unknown / n/a / - / ?) is dropped, not spoken', () => {
+        expect(svc.parseLeadContext({ Comments: 'Unit: unknown | Brand: N/A | Problem: -' }))
+            .toEqual({ applianceType: null, applianceBrand: null, applianceProblem: null });
+        expect(svc.parseLeadContext({ JobType: 'Repair' }).applianceType).toBeNull(); // verb-only → empty → null
+    });
+
+    it('(f) empty / garbage lead → all-null, never throws', () => {
+        expect(svc.parseLeadContext({})).toEqual({ applianceType: null, applianceBrand: null, applianceProblem: null });
+        expect(() => svc.parseLeadContext({ Comments: null, Description: null, JobType: null })).not.toThrow();
+    });
+});

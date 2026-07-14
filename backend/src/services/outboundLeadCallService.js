@@ -191,6 +191,50 @@ function computeLeadNextDueAt(justFailedNo, settings, ds, now = new Date()) {
     return clampIntoWorkWindow(target, ds);
 }
 
+/**
+ * Parse the appliance context a lead carries so the agent can reference it
+ * specifically ("your Samsung refrigerator that isn't cooling") instead of a
+ * generic "your appliance" — the owner's trust/naturalness ask.
+ *
+ * Real prod leads store this two ways, both handled:
+ *  - job_type: "Refrigerator Repair" → unit type "Refrigerator".
+ *  - comments: pipe-delimited "Unit: Refrigerator | Brand: Samsung | Age: 5
+ *    years | Problem: not cooling | Fee agreed: Yes | …" (lead-generator ingest).
+ * Free-text lead_notes is the fallback problem when nothing structured is found.
+ * Pure; never throws; placeholder values ("unknown"/"n/a") are dropped.
+ */
+function parseLeadContext(lead) {
+    const out = { applianceType: null, applianceBrand: null, applianceProblem: null };
+    const clean = (v) => {
+        const s = String(v ?? '').trim();
+        if (!s || /^(unknown|n\/?a|none|-|\?)$/i.test(s)) return null;
+        return s;
+    };
+
+    // job_type ("<Unit> Repair/Service/Install") → unit type.
+    if (lead.JobType) {
+        out.applianceType = clean(String(lead.JobType).replace(/\s*(repair|service|maintenance|install(ation)?)\s*$/i, ''));
+    }
+
+    // Structured pipe-delimited comments — "Key: Value | Key: Value".
+    const text = String(lead.Comments || '');
+    const field = (...keys) => {
+        for (const k of keys) {
+            const m = new RegExp(`(?:^|\\|)\\s*${k}\\s*:\\s*([^|]+)`, 'i').exec(text);
+            if (m) { const v = clean(m[1]); if (v) return v; }
+        }
+        return null;
+    };
+    out.applianceType = field('Unit', 'Appliance', 'Type') || out.applianceType;
+    out.applianceBrand = field('Brand', 'Make', 'Manufacturer');
+    out.applianceProblem = field('Problem', 'Issue', 'Symptom', 'Concern');
+
+    // No structured problem? Use free-text lead_notes as the reported issue.
+    if (!out.applianceProblem) out.applianceProblem = clean(lead.Description);
+
+    return out;
+}
+
 // ── §5.2 onLeadCreated — the eligibility gauntlet ────────────────────────────
 
 function skip(leadId, companyId, reason) {
@@ -386,8 +430,13 @@ async function processLeadAttempt(attempt) {
 
     // 6. Place the call.
     const customerName = [lead.FirstName, lead.LastName].filter(Boolean).join(' ') || 'there';
-    const problemDescription =
-        String(lead.Description || lead.Comments || '').trim().slice(0, 300) || undefined;
+    // Structured appliance context so the agent confirms the SPECIFIC job
+    // ("your Samsung refrigerator that isn't cooling — is that right?") before
+    // scheduling — reads human, not robotic (owner's trust ask).
+    const ctx = parseLeadContext(lead);
+    const applianceType = ctx.applianceType ? ctx.applianceType.slice(0, 60) : undefined;
+    const applianceBrand = ctx.applianceBrand ? ctx.applianceBrand.slice(0, 40) : undefined;
+    const applianceProblem = ctx.applianceProblem ? ctx.applianceProblem.slice(0, 120) : undefined;
 
     // The greeting is owned by the DEDICATED lead-booking VAPI assistant (its
     // own static firstMessage + prompt — see VAPI_LEAD_CALL_ASSISTANT_ID). We no
@@ -409,7 +458,9 @@ async function processLeadAttempt(attempt) {
         customerNumber: attempt.phone,
         slot,
         zip,
-        problemDescription,
+        applianceType,
+        applianceBrand,
+        applianceProblem,
         source: lead.JobSource || undefined,
     });
 
@@ -675,6 +726,7 @@ module.exports = {
     nextWindowStart,
     clampIntoWorkWindow,
     computeLeadNextDueAt,
+    parseLeadContext,
     // §5.2
     onLeadCreated,
     // §5.3-5.6

@@ -79,6 +79,7 @@ function getClient() {
 async function placeCall({
     companyId, jobId, contactId, customerName, customerNumber, slot, balanceDue,
     scenario, leadUuid, zip, problemDescription, source, firstMessage,
+    applianceType, applianceBrand, applianceProblem,
 } = {}) {
     const apiKey = process.env.VAPI_API_KEY;
     // OUTBOUND-LEAD-CALL-001: the lead-booking scenario dials a DEDICATED
@@ -163,6 +164,13 @@ async function placeCall({
                 ...(zip ? { zip } : {}),
                 ...(problemDescription ? { problemDescription } : {}),
                 ...(source ? { source } : {}),
+                // Structured appliance context so the lead agent confirms the
+                // SPECIFIC job ("your Samsung refrigerator that isn't cooling —
+                // is that right?") before scheduling. Absent keys → the prompt's
+                // Liquid conditionals skip them.
+                ...(applianceType ? { applianceType } : {}),
+                ...(applianceBrand ? { applianceBrand } : {}),
+                ...(applianceProblem ? { applianceProblem } : {}),
             },
         },
     };
