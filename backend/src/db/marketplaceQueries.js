@@ -142,6 +142,33 @@ async function listPublishedAppsWithInstallation(companyId, client = null) {
     return rows;
 }
 
+// ASSISTANT-BOT-001 A2: deliberately skips schema setup and revoked-installation
+// reconciliation so this company-scoped assistant snapshot is a pure read.
+async function getAppConnectionSnapshot(companyId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT
+            a.app_key,
+            a.name,
+            a.category,
+            i.status AS installation_status,
+            i.metadata->'settings' AS installation_settings
+         FROM marketplace_apps a
+         LEFT JOIN LATERAL (
+             SELECT mi.status, mi.metadata
+             FROM marketplace_installations mi
+             WHERE mi.app_id = a.id
+               AND mi.company_id = $1
+             ORDER BY mi.created_at DESC
+             LIMIT 1
+         ) i ON true
+         WHERE a.status = 'published'
+         ORDER BY a.category ASC, a.name ASC`,
+        [companyId]
+    );
+    return rows;
+}
+
 async function getPublishedAppByKey(appKey, client = null) {
     await ensureMarketplaceSchema(client);
     const query = queryFor(client);
@@ -421,6 +448,7 @@ module.exports = {
     ensureMarketplaceSchema,
     reconcileRevokedInstallations,
     listPublishedAppsWithInstallation,
+    getAppConnectionSnapshot,
     getPublishedAppByKey,
     findActiveInstallation,
     getConnectedRelySettings,

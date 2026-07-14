@@ -127,28 +127,45 @@ user-facing text but is flagged in review.
 
 ### 5.2 `get_service_config()`  — company-scoped, whitelisted
 - Input: none. Uses `companyId` from the request (never from model args).
-- Source reads (read-only): `marketplaceQueries.listPublishedAppsWithInstallation(companyId)`,
-  and for connected apps that carry settings: `installation.metadata.settings`
-  and `slotEngineSettingsQueries.getByCompany(companyId)`.
+- Source reads (read-only): a NEW dedicated read-only marketplace query (a pure
+  SELECT — NOT `listPublishedAppsWithInstallation`, which calls
+  `reconcileRevokedInstallations()` = an UPDATE) returning app identity +
+  `installation_status` + `installation.metadata->'settings'`; and
+  `slotEngineSettingsQueries.getByCompany(companyId)`.
 - Returns per app: `{ app_key, name, category, status, configured }` where
   `status ∈ {connected, not_connected, provisioning, error}`, plus a `settings`
   object containing **only the keys in the per-app ALLOWLIST** below. Any key not
   listed is dropped. Never returns records, counts of records, credentials, tokens,
   webhook secrets, or raw `metadata`.
 
-  Per-app settings allowlist (initial; extend deliberately, never wildcard):
-  - `stripe-payments`: `{ live_mode, connected_ready }`
-  - `telephony` / `telephony-twilio`: `{ autonomous_mode, has_numbers }`
-  - `rely-leads`: `{ zone_mode, zip_count, unit_types, brands }`
-  - `slot-engine` (from slot_engine_settings): `{ rec_window_days, max_radius_mi, per_day_cap, nearest_fallback_enabled }`
-  - `mail-secretary`: `{ provider, enabled }`
-  - `vapi-ai`: `{ assistant_configured }`
+  Per-app settings allowlist (initial; extend deliberately, never wildcard).
+  Keys must map to a REAL source — do not fabricate a flag with no accessor:
+  - `rely-leads` (from installation.metadata.settings): `{ zone_mode, zip_count,
+    unit_types, brands }` — `zone_mode` = `settings.zone.mode`, `zip_count` =
+    `settings.zone.custom_zips.length` (a config count, NOT lead data).
+  - `smart-slot-engine` (from slot_engine_settings REAL columns): `{ horizon_days,
+    max_distance_miles, recommendations_shown, overlap_minutes, min_buffer_minutes }`.
+  - `mail-secretary` (metadata.settings, if present): `{ provider, enabled }`.
+  - `vapi-ai` (metadata.settings, if present): `{ assistant_configured }`.
   - default for any other app: `{}` (status/configured only).
 
+  **Deferred to a follow-up (no clean read-only source in installation metadata):**
+  `stripe-payments` live-mode/readiness and `telephony-twilio` autonomous_mode/
+  has_numbers live outside the marketplace tables (telephony connection is
+  *derived*, not an installation row). For v1 these apps expose `status` +
+  `configured` best-effort only — the bot advises generically ("check Stripe is
+  in live mode") rather than asserting a value it can't reliably read. Wiring
+  their real read-only accessors is a documented v2 follow-up.
+
   Rationale: the owner chose "settings values", so we surface config that helps
-  the advisor be specific — but via an explicit key allowlist so a future
-  sensitive key can never leak by default. `zip_count` is a count of configured
-  ZIPs (config sizing), NOT lead/job data.
+  the advisor be specific — but via an explicit key allowlist mapped to real
+  sources, so nothing sensitive or fabricated leaks.
+
+- **Runtime persistence caveat:** `ensureMarketplaceSchema` replays the per-app
+  seed migrations on boot and they overwrite `metadata`; migration 173's
+  `metadata.assistant` must therefore be registered in the boot replay list
+  AFTER the app seeds (mirror the split-migration boot-line), or the catalog
+  falls back to `short_description` after a restart. Handled in A3.
 
 ## 6. Endpoint contract — `POST /api/assistant/chat`
 - Auth: `authenticate` + `requireCompanyAccess` (same as feedback).
