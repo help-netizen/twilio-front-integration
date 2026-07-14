@@ -377,3 +377,69 @@ GET-before-PATCH assistant update (prompt scenario-dispatch section + `confirmLe
 `checkServiceArea` tools + `structuredData.outcome`) — until that PATCH lands, calls would greet
 per the `firstMessage` override but the prompt-side scenario discriminator and tools only exist in
 the PATCH.
+
+## Rate Me — in-CRM review capture (RATE-ME-CRM-001 → 002)
+
+Rate Me is a multitenant post-visit review-capture service that lives **inside** the CRM. Each rating
+link is an opaque, non-guessable, company-scoped `rate_tokens` row (job/technician-bound); a customer
+opens it at the SPA route `/r/:token`, served both on `rate.albusto.com` and on tenants' own custom
+domains through the **`rateHostGate`** (Albusto hosts pass through untouched with zero DB work; a rate
+host is a fail-closed allowlist of `/r` + `/api/public/rate` + assets and 404s everything else, so no
+CRM/Keycloak/webhook surface leaks onto a review host). The public API is `/api/public/rate` (GET
+context 60/min, POST rating 10/min, XFF-keyed); a submitted rating is idempotent
+(`technician_ratings.rate_token_id` UNIQUE). Per-company settings (radio Albusto|custom domain with
+CNAME verify, plus `google_review_url`) live in the marketplace installation and dispatch exactly like
+the other per-app settings. **Identity always derives from the token row, never from the request
+body.** (RATE-ME-CRM-001, the infra phase — migration 177: `rate_tokens`, `technician_ratings`,
+`rate_me_domains`.)
+
+**Humane conversion page (RATE-ME-CRM-002).** The bare 001 rating page became a **7-screen flow
+personalized from the job** — invitation → Google-helper → happy → feedback → feedback-thanks →
+already-rated → expired (plus a generic-invalid state). Rating **gold stars** (`#E0A72C`/`#D2D2D0`)
+are the only non-violet accent; every other action uses `var(--blanc-accent)`, and the string "Blanc"
+never renders. The "prompt" chips on the Google-helper and feedback screens are inert thought-starters
+that insert nothing into the textarea. A 5★ rating records via the unchanged 001 `POST /rating`, then
+the client fires a fire-and-forget **click beacon** and opens the Google review in a **new tab**
+(`window.open('_blank')`, never `window.location.replace`, so the thank-you stays visible). The public
+GET context is extended (server-side, from the token's `job_id` via a LEFT JOIN) with the customer
+**first name**, **service label**, **visit date** (formatted in the company timezone), per-company
+**contacts** (`tel:`/`mailto:`), and a **booking URL** — each omitted when unset. It stays PII-minimal:
+the live payload is a hard 12-key whitelist whose only customer PII is the first name; a
+recognized-but-**expired** token returns a branded rebooking payload (`expired:true`, 6-key whitelist),
+while every truly-invalid class (unknown / malformed / foreign-host / app-disconnected) keeps 001's
+**uniform 404 with no company data** (the D-EXP non-oracle split).
+
+**Attribution + dispatcher send (RATE-ME-CRM-002).** Migration 178 adds four nullable columns to
+`rate_tokens` — `opened_at` (stamped best-effort on first GET), `google_click_at` (stamped by the
+beacon), and `sent_at`/`sent_via` (stamped on a dispatcher send). Dispatchers get a **Rate Me block on
+the Job card** with a **Send rating link** action (FORM-CANON modal — SMS / Email / Copy):
+`POST /api/jobs/:id/rate-link` (`messages.send`) mints a fresh token and delivers it through the
+canonical `conversationsService.sendMessage` / `emailService.sendEmail` paths (mirroring the ETA-notify
+pattern — wallet-gated SMS, honest 422/402/409/502 errors, and `sent_*` stamped only on channel
+success). `GET /api/jobs/:id/rate-status` (`jobs.view`) feeds the card's attribution timeline (sent →
+opened → rated ★N → opened-Google). The **rating is read by `(company_id, job_id)`, not by the latest
+token**, so re-sending a link never hides an existing rating. A per-company **`booking_url`** joins
+`google_review_url` as a rate-me setting (JSONB in the installation metadata, no DB column); its
+validator returns **both** keys so the wholesale replace-on-PUT never wipes the sibling, and it is
+validated as an HTTPS URL ≤500 chars (`INVALID_BOOKING_URL` otherwise).
+
+**New endpoints** (all additive; **zero `src/server.js` change** — the beacon rides the already-mounted
+`/api/public` host-gate allowlist and the jobs routes ride the existing `/api/jobs` mount):
+- `POST /api/public/rate/:token/click` — public click beacon; idempotent first-click-wins
+  `google_click_at` stamp → `204`; company/job derived from the token only; unknown/expired/foreign-host
+  → uniform 404.
+- `POST /api/jobs/:id/rate-link` (`messages.send`) — mint + send a link via `{ channel: sms|email|copy }`
+  (`url` returned only for `copy`).
+- `GET /api/jobs/:id/rate-status` (`jobs.view`) — the Job-card attribution timeline.
+- `booking_url` added to `GET/PUT /api/marketplace/apps/rate-me/settings` alongside `google_review_url`.
+
+**Isolation** is unchanged and load-bearing: non-guessable tokens, host-bound public reads (a
+foreign-host or foreign-tenant token is a uniform 404 with no oracle), token-only company/job derivation
+on the beacon, and `company_id = req.companyFilter?.company_id` scoping on both jobs endpoints. Verified
+by 6 rate-me suites / 152 tests plus a frontend build and a stay-green sweep, with five named sabotage
+controls (PII-leak, same-tab redirect, chip-inserts-text, cross-tenant send, wrong-job attribution) each
+shown red-then-restored. **Not yet deployed** (owner-gated, dark-safe — migration 178 is
+additive/idempotent and the routes/UI are gated per-company install): the 002 deploy is psql-apply
+`178_rate_token_attribution.sql` → frontend rebuild → force-logout all Keycloak sessions; the 001 infra
+prerequisites (migration 177, the live-Caddyfile merge, and the `rate.albusto.com` DNS record) remain
+pending as well.
