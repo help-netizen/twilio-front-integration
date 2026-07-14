@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 /**
  * YELP-CONVO-CONTEXT-002 T1 — pure bounded transcript composer.
  *
@@ -79,6 +82,33 @@ describe('yelpConvoHistory — pure transcript composer', () => {
     expect(formatHistoryTimestamp('2026-07-11T21:39:12.000Z')).toBe('2026-07-11 21:39Z');
     expect(formatHistoryTimestamp(null)).toBe(null);
     expect(formatHistoryTimestamp('garbage')).toBe(null);
+  });
+
+  test('cleans first-message and respondable wrappers before rendering history', () => {
+    const firstMessage = fs.readFileSync(
+      path.join(__dirname, '../backend/tests/fixtures/yelp_first_message_sample.txt'),
+      'utf8'
+    );
+    const reply = fs.readFileSync(
+      path.join(__dirname, '../backend/tests/fixtures/yelp_respondable_v2_sample.txt'),
+      'utf8'
+    );
+    const result = composeTranscript([
+      histRow({ body_text: reply, gmail_internal_at: '2026-07-11T21:41:05.000Z' }),
+      histRow({
+        id: 2,
+        provider_message_id: 'ymsg-H2',
+        body_text: firstMessage,
+        gmail_internal_at: '2026-07-11T21:39:12.000Z',
+      }),
+    ]);
+
+    expect(result.text).toContain('CUSTOMER: Thermador dish washer E19 code At 444 W 2nd st South Boston');
+    expect(result.text).toContain('CUSTOMER: Thank you I would Like to proceed');
+    expect(result.text).toContain('617.312.5457');
+    expect(result.text).not.toMatch(/You have a new|Sent to ABC Homes|stay responsive|response rate/i);
+    expect(result.text).not.toMatch(/Reply to Robert on Yelp Biz|I already replied|Respond Now/i);
+    expect(result.text).not.toMatch(/In what location do you need the service\?|https?:\/\//i);
   });
 
   test('TC-A5-01: removes Yelp padding before quote stripping and collapses to one line', () => {

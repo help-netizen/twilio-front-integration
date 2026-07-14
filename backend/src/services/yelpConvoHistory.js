@@ -1,6 +1,7 @@
 'use strict';
 
 const { toTimelineBody } = require('./email/emailTimelineBody');
+const { extractYelpReplyBody } = require('./yelpReplyExtract');
 
 const HISTORY_DEFAULTS = {
   maxEntryChars: 600,
@@ -107,7 +108,13 @@ function composeTranscript(rowsNewestFirst, opts = {}) {
 
     for (const value of rows) {
       const row = value || {};
-      const body = sanitizeEntry(row.body_text, { snippet: row.snippet }, maxEntryChars);
+      const extractedBody = extractYelpReplyBody(row.body_text);
+      const entryBody = extractedBody || row.body_text || row.snippet;
+      const body = sanitizeEntry(
+        entryBody,
+        { snippet: extractedBody ? null : row.snippet },
+        maxEntryChars
+      );
       if (body === '') continue;
 
       const timestamp = formatHistoryTimestamp(row.gmail_internal_at);
