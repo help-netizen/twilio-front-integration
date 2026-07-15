@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-07-15 — JOB-ESTIMATE-MULTI: несколько эстимейтов на один джоб (UI-паритет с инвойсами)
+
+Блок **Estimate** на карточке Job → Finance раньше давал кнопку создания только в пустом состоянии — после первого эстимейта добавить ещё было нельзя. Блок Invoices при этом всегда показывает persistent «New invoice» при наличии инвойсов. Добавил такую же persistent-кнопку **«New estimate»** в шапку секции Estimates (видна при `estimates.length > 0`), открывающую редактор нового эстимейта. Чисто presentational: модель данных и API уже поддерживали несколько эстимейтов на джоб (как инвойсы) — не хватало только UI-аффорданса. Один файл `frontend/src/components/jobs/JobFinancialsTab.tsx`; пустое состояние и секция Invoices нетронуты. Оркестрация: спека Claude, код — Codex (gpt-5.6-sol xhigh), ревью+build-гейт Claude (npm run build exit 0). Спека: `Docs/specs/JOB-ESTIMATE-MULTI.md`.
+
+---
+
 ## 2026-07-13 — OUTBOUND-LEAD-CALL-001: Sara автообзванивает каждый НОВЫЙ лид из настроенных источников (marketplace-app «Outbound Lead Caller»; один дайлер — два сценария)
 
 Новое marketplace-приложение **Outbound Lead Caller** (`app_key='outbound-lead-caller'`, category `'ai'`, `provisioning_mode='none'`, тайл → `/settings/integrations/outbound-lead-caller`): подключил — и Sara (тот же outbound-ассистент, что у parts-робота) сама набирает каждый новый лид из включённых источников (launch-дефолт: Pro Referral) с целью ЗАБУКАТЬ. В звонок инжектится контекст лида (имя/zip/описание проблемы/источник) и пре-вычисленный топ-слот слот-движка (day-off seam включён); набор — строго в бизнес-окне dispatch settings в tz компании (вне окна → старт следующего рабочего дня). Недозвон ретраится лестницей **immediate/+30m/+2h** (окно-клэмп на каждой ступени; scenario-scoped настройки, независимые от parts-лестницы); goal-achieved (hold на лиде / Lost / Converted) скипает ступень — human-takeover-отмены СОЗНАТЕЛЬНО нет (решение владельца, в отличие от parts CANCEL-001). Букинг = schedule-hold на ТОМ ЖЕ лиде через новый L0-скилл `confirmLeadBooking`; decline/исчерпание → ОДНА p1-задача диспетчеру на лиде (видна в Pulse-AR); каждая попытка зеркалится в Pulse через существующий `vapiCallTimelineService`. Lifetime-once на лид + partial-unique «одна активная цепочка»; reconnect app никогда не перезванивает старым лидам. **НЕ задеплоено** (deploy-consent); **VAPI PATCH ассистента — pending** (deploy-time шаг T10).
