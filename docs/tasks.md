@@ -10733,3 +10733,11 @@ git diff --stat master -- tests/relyLead*   # ПУСТО
 - **SAB-ATTRIBUTION-WRONG-JOB** → T5 (JS-06 rating-by-job переживает re-send) + T3 (BK-06 beacon token-only) + T2 (SV-09 recordGoogleClick token-only) + T1 (DB-07 db-половина).
 
 **Деплой (owner-gated, отдельно, НЕ часть задач):** фича dark-safe — миграция 178 аддитивна/идемпотентна (`ADD COLUMN IF NOT EXISTS`), FE/роуты gated per-company install; без применения = CRM байт-идентичен. Шаги по «да» владельца (deploy-consent): psql-apply `179_rate_token_attribution.sql` (как 177, НЕ boot-registered) → FE rebuild → force-logout-all KC-сессии (stale SPA-чанки). RE-CHECK номер 178 vs origin/master перед push (parallel-migration-collision); при коллизии `git mv` ОБА конца + renumber в T1-verify.
+
+## JOB-RECORD-PAYMENT-001 — offline job payment (cash/check) [DONE 2026-07-15]
+- T1 (backend) ✅ paymentsService.createTransaction threads client `processed_at` (default now).
+- T2 (backend) ✅ POST /api/jobs/:id/record-payment (tenant guard, actor=crmUser.id, amount>0 + method∈{cash,check}, delegates recordManualPayment) + tests/jobRecordPayment.routes.test.js (10, sabotage-proven). Commit ad80b2c.
+- T3 (FE api) ✅ paymentsCanonicalApi.recordJobPayment + processed_at.
+- T4 (FE dialog) ✅ JobRecordPaymentDialog (FORM-CANON, 5 fields, prefill/date-default).
+- T5 (FE card) ✅ JobFinancialsTab «Pay by Card» rename + Option-A footer + Due calc (invoice_id-null, clamped, no double-count) + Payments list; useJobFinancials job-payment fetch. Commit 533a7d1.
+- Sabotage: SAB-CROSS-TENANT (TC-RP-2 red) + SAB-RECORDEDBY-SUB (TC-RP-1/4 red), restored. FE build clean; footer+dialog visually verified.
