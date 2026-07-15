@@ -175,7 +175,7 @@ export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasAct
                     zbJobPayload.assignment_method = 'auto';
                 }
                 const result = await leadsApi.convertLead(createdUUID, {
-                    zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service' },
+                    zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service', description: description || undefined },
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), email: email || undefined },
                     address: { line1: streetAddress, line2: unit, city, state, postal_code: matchedZip || (/^\d/.test(postalCode) ? postalCode : '') },
                     ...(timelineId ? { timeline_id: timelineId } : {}),
