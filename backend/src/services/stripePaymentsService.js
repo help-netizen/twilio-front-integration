@@ -129,8 +129,20 @@ async function ensureAccountForCompany(companyId, company = {}) {
 
 async function connect(companyId, actor, company = {}) {
     if (!provider.isConfigured()) throw new StripePaymentsError('NOT_CONFIGURED', 'Stripe is not configured', 503);
-    const account = await ensureAccountForCompany(companyId, company);
-    const link = await getOnboardingLink(companyId, account);
+    let account;
+    try {
+        account = await ensureAccountForCompany(companyId, company);
+    } catch (err) {
+        err.message = `creating Stripe account: ${err.message}`;
+        throw err;
+    }
+    let link;
+    try {
+        link = await getOnboardingLink(companyId, account);
+    } catch (err) {
+        err.message = `creating onboarding link: ${err.message}`;
+        throw err;
+    }
     await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.connected', target_type: 'stripe_account', target_id: account.stripe_account_id, company_id: companyId, details: {} });
     return { account_id: account.stripe_account_id, onboarding_url: link.url };
 }
