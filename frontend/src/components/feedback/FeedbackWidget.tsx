@@ -9,6 +9,7 @@ import { CheckCircle2, MessageCircle, Paperclip, Send, X } from 'lucide-react';
 import { useAuth } from '../../auth/AuthProvider';
 import { authedFetch } from '../../services/apiClient';
 import { FloatingField } from '../ui/floating-field';
+import { useHasOpenOverlay } from '../ui/OverlayStack';
 import './FeedbackWidget.css';
 
 export type FeedbackBotPhase = 'greeting' | 'chatting' | 'escalated';
@@ -180,6 +181,9 @@ export async function submitAssistantChat(
 
 export function FeedbackWidget() {
     const { user } = useAuth();
+    // Hide the floating button while any dialog / panel / sheet is open, so it never
+    // paints over an overlay's footer actions (e.g. a wizard's "Create job" button).
+    const overlayOpen = useHasOpenOverlay();
     const [open, setOpen] = useState(false);
     const [botState, setBotState] = useState<FeedbackBotState>(createInitialFeedbackBotState);
     const [chatInput, setChatInput] = useState('');
@@ -420,23 +424,25 @@ export function FeedbackWidget() {
                 </section>
             )}
 
-            <button
-                type="button"
-                className="feedback-fab"
-                onClick={() => {
-                    if (open) {
-                        sessionKeyRef.current = null;
-                        setOpen(false);
-                        return;
-                    }
-                    sessionKeyRef.current = crypto.randomUUID();
-                    setOpen(true);
-                }}
-                aria-label={open ? 'Close feedback' : 'Open feedback'}
-                aria-expanded={open}
-            >
-                {open ? <X size={23} /> : <MessageCircle size={23} />}
-            </button>
+            {!(overlayOpen && !open) && (
+                <button
+                    type="button"
+                    className="feedback-fab"
+                    onClick={() => {
+                        if (open) {
+                            sessionKeyRef.current = null;
+                            setOpen(false);
+                            return;
+                        }
+                        sessionKeyRef.current = crypto.randomUUID();
+                        setOpen(true);
+                    }}
+                    aria-label={open ? 'Close feedback' : 'Open feedback'}
+                    aria-expanded={open}
+                >
+                    {open ? <X size={23} /> : <MessageCircle size={23} />}
+                </button>
+            )}
         </div>
     );
 }

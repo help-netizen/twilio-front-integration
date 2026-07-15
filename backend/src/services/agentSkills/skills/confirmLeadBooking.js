@@ -90,16 +90,68 @@ async function run(companyId, _verifiedContext, input) {
         );
     }
 
-    // 5. Hold write — byte-same shape as bookOnLead (VAPI-SLOT-ENGINE-001).
+    // 4.5. Service address — REQUIRED before a booking can land (owner rule: the
+    // agent must collect/confirm the address; an empty lead must be asked). Prefer
+    // the address the customer just confirmed on the call (re-validated
+    // server-side via Geocoding — the model's spoken coords are never trusted);
+    // fall back to a usable address already on the lead. Neither → refuse and ask.
+    let resolvedCoords = (Number.isFinite(src.lat) && Number.isFinite(src.lng))
+        ? { lat: src.lat, lng: src.lng } : null;
+    let addressUpdate = null;
+    const provided = src.serviceAddress && typeof src.serviceAddress === 'object' ? src.serviceAddress : null;
+
+    if (provided && (String(provided.street || '').trim() || String(provided.zip || '').trim())) {
+        let v = null;
+        try {
+            const validateAddress = require('./validateAddress');
+            v = await validateAddress.run(cid, {}, {
+                street: provided.street, apt: provided.apt,
+                city: provided.city, state: provided.state, zip: provided.zip,
+            });
+        } catch { v = null; }
+        if (!v || !v.valid) {
+            return resultShapes.refusal(
+                "I want to make sure the technician comes to the right place — could you give me the full service address again, with the street, city, and ZIP code?",
+                { needsAddress: true }
+            );
+        }
+        resolvedCoords = (Number.isFinite(v.lat) && Number.isFinite(v.lng)) ? { lat: v.lat, lng: v.lng } : resolvedCoords;
+        addressUpdate = {
+            Address: [provided.street, provided.apt].filter(Boolean).join(' ') || provided.street || null,
+            City: provided.city || null,
+            State: provided.state || null,
+            PostalCode: v.correctedZip || provided.zip || null,
+            ...(resolvedCoords ? { Latitude: resolvedCoords.lat, Longitude: resolvedCoords.lng } : {}),
+        };
+    } else {
+        // No address collected on this call — is there a usable one on the lead?
+        const hasStored = !!(lead && String(lead.Address || '').trim()
+            && (String(lead.City || '').trim() || String(lead.PostalCode || '').trim()));
+        if (!hasStored) {
+            return resultShapes.refusal(
+                "Before I lock this in — what's the service address where you'd like the technician to come?",
+                { needsAddress: true }
+            );
+        }
+    }
+
+    // 5. Hold write — byte-same shape as bookOnLead (VAPI-SLOT-ENGINE-001),
+    // plus the collected/validated service address when the customer gave one.
     try {
         const slotEngineService = require('../../slotEngineService');
         const tz = await slotEngineService.resolveTimezone(cid);
         const hold = {
             LeadDateTime: slotEngineService.tzCombine(slot.date, slot.start, tz),
             LeadEndDateTime: slotEngineService.tzCombine(slot.date, slot.end, tz),
-            ...(Number.isFinite(src.lat) && Number.isFinite(src.lng)
-                ? { Latitude: src.lat, Longitude: src.lng } : {}),
+            // OLC-POSTCALL-001: an AI-booked window is TENTATIVE — a human dispatcher
+            // must confirm it. Flip the lead to 'Review' the instant the hold lands
+            // (reliable: this is the tool call, not the end-of-call webhook that may
+            // be missed). The Pulse timeline call entry + the end-of-call review task
+            // carry the summary; the hold already shows on the dispatcher calendar.
+            Status: 'Review',
         };
+        if (addressUpdate) Object.assign(hold, addressUpdate);
+        else if (resolvedCoords) { hold.Latitude = resolvedCoords.lat; hold.Longitude = resolvedCoords.lng; }
         await leadsService.updateLead(leadUuid, hold, cid);
     } catch {
         return resultShapes.refusal(

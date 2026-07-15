@@ -144,6 +144,34 @@ afterEach(() => {
     jest.restoreAllMocks();
 });
 
+describe('YELP-CONVO-FIX · Gemini JSON generation budget', () => {
+    it('disables thinking and reserves 1024 output tokens in the real request payload', async () => {
+        const originalApiKey = process.env.GEMINI_API_KEY;
+        process.env.GEMINI_API_KEY = 'test-key';
+        const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+            ok: true,
+            json: jest.fn().mockResolvedValue({
+                candidates: [{
+                    content: { parts: [{ text: '{"action":"reply","body":"Thanks for the update."}' }] },
+                }],
+            }),
+        });
+
+        try {
+            await svc.runTurn(DEFAULT_COMPANY_ID, convRow(), inbound());
+
+            expect(fetchSpy).toHaveBeenCalledTimes(1);
+            const payload = JSON.parse(fetchSpy.mock.calls[0][1].body);
+            expect(payload.generationConfig.thinkingConfig.thinkingBudget).toBe(0);
+            expect(payload.generationConfig.maxOutputTokens).toBe(1024);
+        } finally {
+            if (originalApiKey === undefined) delete process.env.GEMINI_API_KEY;
+            else process.env.GEMINI_API_KEY = originalApiKey;
+            fetchSpy.mockRestore();
+        }
+    });
+});
+
 // ── C. LLM TOOL-LOOP ──────────────────────────────────────────────────────────
 
 describe('YCB-LOOP-01 · LOOP-tool-dispatch — tool → runSkill(server companyId); result fed back', () => {

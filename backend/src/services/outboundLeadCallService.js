@@ -112,6 +112,8 @@ function localWallClock(date, timezone) {
  * exactly at end = outside). D2/FR-4.
  */
 function isWithinWorkWindow(now, ds) {
+    // OLC-WINDOW-001: 'always' (24/7) mode is in-window at every instant.
+    if (ds && ds.always === true) return true;
     const s = sanitizeDispatchSettings(ds);
     const { dow, minutes } = localWallClock(now, s.timezone);
     if (!s.work_days.includes(dow)) return false;
@@ -134,6 +136,9 @@ function localCalendarDate(date, timezone) {
  * (no candidate in 14 days) → warn + from+24h hard fallback. SC-03/FR-4.
  */
 function nextWindowStart(from, ds) {
+    // OLC-WINDOW-001: 24/7 has no "next" boundary — now is always open. (Defensive;
+    // callers only reach here when isWithinWorkWindow is false, never for 'always'.)
+    if (ds && ds.always === true) return new Date(from.getTime());
     const s = sanitizeDispatchSettings(ds);
     // Lazy require: the worker requires this module back in its tick branch —
     // a top-level cross-require would cycle (architecture pins this direction).
@@ -170,6 +175,30 @@ function clampIntoWorkWindow(date, ds) {
 }
 
 /**
+ * OLC-WINDOW-001 — the EFFECTIVE calling window for a company, from its OLC
+ * settings mode overlaid on the dispatch business hours:
+ *   - 'always' → { always: true } (24/7; the window helpers short-circuit),
+ *   - 'custom' → a synthetic dispatch-settings object: the custom HH:MM..HH:MM
+ *     window on EVERY day, in the company timezone (borrowed from dispatch),
+ *   - 'office_hours' (default / anything else) → the dispatch settings verbatim.
+ * Pure — the caller resolves both `settings` and `ds` and passes them in.
+ */
+function effectiveWindow(settings, ds) {
+    const mode = settings && settings.calling_window_mode;
+    if (mode === 'always') return { always: true };
+    if (mode === 'custom' && settings.custom_start_time && settings.custom_end_time) {
+        const tz = (ds && ds.timezone) || FALLBACK_DISPATCH_SETTINGS.timezone;
+        return {
+            timezone: tz,
+            work_start_time: settings.custom_start_time,
+            work_end_time: settings.custom_end_time,
+            work_days: [0, 1, 2, 3, 4, 5, 6],
+        };
+    }
+    return ds;
+}
+
+/**
  * Ladder math (FR-5/D1), mirroring the parts convention: backoff_schedule
  * [justFailedNo] is the NEXT attempt's token, 0-based (after attempt 1 →
  * index 1). 'immediate' → now; '+Nm'/'+Nh' → now+N; unknown/absent → now
@@ -189,6 +218,50 @@ function computeLeadNextDueAt(justFailedNo, settings, ds, now = new Date()) {
         }
     }
     return clampIntoWorkWindow(target, ds);
+}
+
+/**
+ * Parse the appliance context a lead carries so the agent can reference it
+ * specifically ("your Samsung refrigerator that isn't cooling") instead of a
+ * generic "your appliance" — the owner's trust/naturalness ask.
+ *
+ * Real prod leads store this two ways, both handled:
+ *  - job_type: "Refrigerator Repair" → unit type "Refrigerator".
+ *  - comments: pipe-delimited "Unit: Refrigerator | Brand: Samsung | Age: 5
+ *    years | Problem: not cooling | Fee agreed: Yes | …" (lead-generator ingest).
+ * Free-text lead_notes is the fallback problem when nothing structured is found.
+ * Pure; never throws; placeholder values ("unknown"/"n/a") are dropped.
+ */
+function parseLeadContext(lead) {
+    const out = { applianceType: null, applianceBrand: null, applianceProblem: null };
+    const clean = (v) => {
+        const s = String(v ?? '').trim();
+        if (!s || /^(unknown|n\/?a|none|-|\?)$/i.test(s)) return null;
+        return s;
+    };
+
+    // job_type ("<Unit> Repair/Service/Install") → unit type.
+    if (lead.JobType) {
+        out.applianceType = clean(String(lead.JobType).replace(/\s*(repair|service|maintenance|install(ation)?)\s*$/i, ''));
+    }
+
+    // Structured pipe-delimited comments — "Key: Value | Key: Value".
+    const text = String(lead.Comments || '');
+    const field = (...keys) => {
+        for (const k of keys) {
+            const m = new RegExp(`(?:^|\\|)\\s*${k}\\s*:\\s*([^|]+)`, 'i').exec(text);
+            if (m) { const v = clean(m[1]); if (v) return v; }
+        }
+        return null;
+    };
+    out.applianceType = field('Unit', 'Appliance', 'Type') || out.applianceType;
+    out.applianceBrand = field('Brand', 'Make', 'Manufacturer');
+    out.applianceProblem = field('Problem', 'Issue', 'Symptom', 'Concern');
+
+    // No structured problem? Use free-text lead_notes as the reported issue.
+    if (!out.applianceProblem) out.applianceProblem = clean(lead.Description);
+
+    return out;
 }
 
 // ── §5.2 onLeadCreated — the eligibility gauntlet ────────────────────────────
@@ -255,14 +328,15 @@ async function onLeadCreated({ leadId, companyId }) {
         );
         if (existing.length > 0) return skip(leadId, companyId, 'chain_exists');
 
-        // 7. Enqueue — due now, clamped into the business window (D2).
+        // 7. Enqueue — due now, clamped into the effective calling window
+        //    (OLC-WINDOW-001: office hours / 24-7 / custom, per settings).
         let ds;
         try {
             ds = await scheduleService.getDispatchSettings(companyId);
         } catch {
             ds = { ...FALLBACK_DISPATCH_SETTINGS };
         }
-        const dueAt = clampIntoWorkWindow(new Date(), ds);
+        const dueAt = clampIntoWorkWindow(new Date(), effectiveWindow(settings, ds));
         await db.query(
             `INSERT INTO outbound_call_attempts
                  (company_id, lead_uuid, scenario, contact_id, phone, attempt_no, status, scheduled_at)
@@ -332,17 +406,19 @@ async function processLeadAttempt(attempt) {
         return terminateLead(attempt.id, 'canceled', 'source_disabled');
     }
 
-    // 4. Business window (FR-4/D2) — carry, never drop. Test toggle honored
-    // (same regex as the parts worker).
+    // 4. Calling window (FR-4/D2 + OLC-WINDOW-001) — carry, never drop. The
+    // effective window is office hours / 24-7 / custom per settings. Test toggle
+    // honored (same regex as the parts worker).
     let ds;
     try {
         ds = await scheduleService.getDispatchSettings(companyId);
     } catch {
         ds = { ...FALLBACK_DISPATCH_SETTINGS };
     }
+    const eff = effectiveWindow(settings, ds);
     const ignoreHours = IGNORE_HOURS_RE.test(process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS || '');
-    if (!ignoreHours && !isWithinWorkWindow(now, ds)) {
-        const carryTo = nextWindowStart(now, ds);
+    if (!ignoreHours && !isWithinWorkWindow(now, eff)) {
+        const carryTo = nextWindowStart(now, eff);
         await db.query(
             `UPDATE outbound_call_attempts
              SET status = 'pending', scheduled_at = $2, updated_at = now()
@@ -386,19 +462,20 @@ async function processLeadAttempt(attempt) {
 
     // 6. Place the call.
     const customerName = [lead.FirstName, lead.LastName].filter(Boolean).join(' ') || 'there';
-    const problemDescription =
-        String(lead.Description || lead.Comments || '').trim().slice(0, 300) || undefined;
+    // Structured appliance context so the agent confirms the SPECIFIC job
+    // ("your Samsung refrigerator that isn't cooling — is that right?") before
+    // scheduling — reads human, not robotic (owner's trust ask).
+    const ctx = parseLeadContext(lead);
+    const applianceType = ctx.applianceType ? ctx.applianceType.slice(0, 60) : undefined;
+    const applianceBrand = ctx.applianceBrand ? ctx.applianceBrand.slice(0, 40) : undefined;
+    const applianceProblem = ctx.applianceProblem ? ctx.applianceProblem.slice(0, 120) : undefined;
 
-    let companyName = null;
-    try {
-        const companyProfileService = require('./companyProfileService');
-        const profile = await companyProfileService.getProfile(companyId);
-        companyName = (profile && profile.name) || null;
-    } catch { /* variant B greeting */ }
-    const sourceLabel = lead.JobSource || 'online';
-    const firstMessage = companyName
-        ? `Hi {{customerName}}, this is Sara with ${companyName} — you reached out on ${sourceLabel} about your appliance. I can get you on the schedule right now: we have {{slotLabel}} available — would that work?`
-        : `Hi {{customerName}}, this is Sara — you reached out on ${sourceLabel} about your appliance. I can get you on the schedule right now: we have {{slotLabel}} available — would that work?`;
+    // The greeting is owned by the DEDICATED lead-booking VAPI assistant (its
+    // own static firstMessage + prompt — see VAPI_LEAD_CALL_ASSISTANT_ID). We no
+    // longer compose a per-call firstMessage from the company profile name: that
+    // pulled the legal name ("… LLC") and, on the shared parts assistant, let the
+    // model drift into the part-arrival script. The dedicated assistant carries
+    // the correct spoken brand name and a lead-only prompt.
 
     // lat/lng ride on the slot object → reuses placeCall's TECHSLOT spread.
     const slot = { ...topSlot, ...(hasCoords ? { lat, lng } : {}) };
@@ -413,9 +490,10 @@ async function processLeadAttempt(attempt) {
         customerNumber: attempt.phone,
         slot,
         zip,
-        problemDescription,
+        applianceType,
+        applianceBrand,
+        applianceProblem,
         source: lead.JobSource || undefined,
-        firstMessage,
     });
 
     if (result.ok) {
@@ -504,7 +582,7 @@ async function scheduleLeadRetryOrExhaust(attempt, reason, klass = 'failed') {
         } catch {
             ds = { ...FALLBACK_DISPATCH_SETTINGS };
         }
-        const nextAt = computeLeadNextDueAt(attempt.attempt_no, settings, ds, new Date());
+        const nextAt = computeLeadNextDueAt(attempt.attempt_no, settings, effectiveWindow(settings, ds), new Date());
         await db.query(
             `INSERT INTO outbound_call_attempts
                  (company_id, lead_uuid, scenario, contact_id, phone, attempt_no, status, scheduled_at)
@@ -542,32 +620,61 @@ async function handleLeadEndOfCall(attempt, klass, endedReason, message) {
     try {
         const companyId = attempt.company_id;
         const eventService = require('./eventService');
+        const summary = (message && message.analysis && message.analysis.summary) || null;
 
-        // 1. Booked belt: the hold is the truth even if the mid-call flip failed.
         let lead = null;
         try {
             lead = await leadsService.getLeadByUUID(attempt.lead_uuid, companyId);
         } catch { /* fall through to classification */ }
+
+        // 1. Booked — OLC-POSTCALL-001. The hold on the lead is the truth (the
+        //    confirmLeadBooking flip runs MID-CALL). An AI-booked window is
+        //    TENTATIVE: a human dispatcher must confirm it. So on a booking we
+        //    (a) mark the attempt booked, (b) ensure the lead sits in 'Review',
+        //    and (c) raise a Pulse Action-Required task carrying the call summary +
+        //    slot so it lands in the dispatcher queue. ALL idempotent — this path
+        //    runs on EVERY lead end-of-call (before the parts dialing-only guard),
+        //    so a repeat webhook must never double-write: the attempt flip is
+        //    guarded, Review is skipped when already set, and createLeadCallTask
+        //    carries an exactly-once belt.
         if (lead && lead.LeadDateTime) {
             await db.query(
-                `UPDATE outbound_call_attempts SET status = 'booked', updated_at = now() WHERE id = $1`,
+                `UPDATE outbound_call_attempts SET status = 'booked', updated_at = now()
+                 WHERE id = $1 AND status <> 'booked'`,
                 [attempt.id]
             );
-            console.log(`[outboundLeadCall] booked (belt) attempt=${attempt.id} lead=${attempt.lead_uuid}`);
+            if (String(lead.Status || '').toLowerCase() !== 'review') {
+                try {
+                    await leadsService.updateLead(attempt.lead_uuid, { Status: 'Review' }, companyId);
+                } catch (sErr) {
+                    console.warn('[outboundLeadCall] set Review failed (non-fatal):', sErr && sErr.message);
+                }
+            }
+            await createLeadCallTask(companyId, lead, attempt, 'booked', { summary });
+            try {
+                eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_booked',
+                    { attemptNo: attempt.attempt_no, needsReview: true }, 'system');
+            } catch { /* non-fatal */ }
+            console.log(`[outboundLeadCall] booked → review attempt=${attempt.id} lead=${attempt.lead_uuid}`);
             return;
         }
+
+        // Not booked — the retry/terminal FSM must run EXACTLY once, only for a
+        // still-`dialing` attempt. A repeat end-of-call webhook on an already-
+        // terminal attempt is a no-op here (so we never re-schedule a retry or
+        // double-file a declined task).
+        if (attempt.status !== 'dialing') return;
 
         // 2. Declined — a human said no; terminal, dispatcher follows up (FR-11).
         const outcome = message && message.analysis && message.analysis.structuredData
             && message.analysis.structuredData.outcome;
         if (klass === 'declined' || outcome === 'declined' || outcome === 'callback') {
             await db.query(
-                `UPDATE outbound_call_attempts SET status = 'declined', reason = $2, updated_at = now() WHERE id = $1`,
+                `UPDATE outbound_call_attempts SET status = 'declined', reason = $2, updated_at = now()
+                 WHERE id = $1 AND status = 'dialing'`,
                 [attempt.id, String(endedReason || outcome || 'declined').slice(0, 120)]
             );
-            await createLeadCallTask(companyId, lead, attempt, 'declined', {
-                summary: message && message.analysis && message.analysis.summary,
-            });
+            await createLeadCallTask(companyId, lead, attempt, 'declined', { summary });
             try {
                 eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_declined',
                     { attemptNo: attempt.attempt_no, outcome: outcome || klass }, 'system');
@@ -619,7 +726,20 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
 
         let title;
         let description;
-        if (kind === 'declined') {
+        if (kind === 'booked') {
+            // OLC-POSTCALL-001: an AI-booked window is a TENTATIVE hold a human must
+            // confirm. Surface the slot + call summary so the dispatcher can review,
+            // confirm with the customer, and finalize.
+            const slot = (attempt.slot_json && typeof attempt.slot_json === 'object') ? attempt.slot_json
+                : (() => { try { return JSON.parse(attempt.slot_json); } catch { return null; } })();
+            const windowStr = (slot && slot.label) ? slot.label
+                : (lead && lead.LeadDateTime ? new Date(lead.LeadDateTime).toISOString() : '');
+            title = `Confirm the AI-booked appointment — ${name}`;
+            description = `Sara booked ${name} on this ${sourceLabel} lead${windowStr ? ` for ${windowStr}` : ''}. `
+                + `This is a tentative hold from an automated call — the lead is in Review and the time already shows on the schedule. `
+                + `Please review the call, confirm the time and service address with the customer, then finalize the appointment.`
+                + (extra.summary ? `\n\nCall summary: ${extra.summary}` : '');
+        } else if (kind === 'declined') {
             title = `${name} answered but didn't book — follow up`;
             description = `Sara reached the customer on this ${sourceLabel} lead but they didn't pick a time.`
                 + (extra.summary ? `\n\nCall summary: ${extra.summary}` : '')
@@ -671,6 +791,70 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
     }
 }
 
+// ── OLC-CALLBACK-001 — inbound callback cancels the outbound queue ────────────
+
+/**
+ * A lead Sara is robo-calling CALLED US BACK. Cancel that lead's pending/dialing
+ * outbound lead_call attempts (so Sara doesn't also dial them) and leave a trace
+ * on the lead. Keyed purely on the dialed phone + active lead_call status, so it
+ * needs NO inbound-call company context — it cancels exactly the chains that were
+ * dialing THIS number and derives the company from each matched row (a phone with
+ * an active lead_call chain belongs to the company running that chain). Idempotent
+ * (a repeat inbound event finds nothing active) and SAFE-FAIL by contract — it runs
+ * inside the shared call-ingest path and must never disturb it.
+ *
+ * @param {string} rawPhone the inbound caller's number (E.164 or loose).
+ * @returns {Promise<{canceled:number}>}
+ */
+async function cancelLeadChainsForInboundCallback(rawPhone) {
+    try {
+        const phone = normalizeDialablePhone(rawPhone);
+        if (!phone) return { canceled: 0 };
+
+        const { rows } = await db.query(
+            `UPDATE outbound_call_attempts
+             SET status = 'canceled', reason = 'inbound_callback', updated_at = now()
+             WHERE scenario = 'lead_call' AND phone = $1 AND status IN ('pending', 'dialing')
+             RETURNING id, company_id, lead_uuid`,
+            [phone]
+        );
+        if (!rows.length) return { canceled: 0 };
+
+        // One trace per affected lead (company-scoped from the matched row). The
+        // trace + event ride the SAME UPDATE that cancels, so they are naturally
+        // exactly-once: a later inbound event for the same call finds nothing active.
+        const seen = new Set();
+        for (const r of rows) {
+            if (!r.lead_uuid) continue;
+            const key = `${r.company_id}:${r.lead_uuid}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            const trace = `[AI Phone] ${new Date().toISOString()} — Outbound calls canceled — the customer called us back.`;
+            try {
+                await db.query(
+                    `UPDATE leads
+                     SET comments = COALESCE(NULLIF(comments, '') || E'\\n\\n', '') || $2
+                     WHERE uuid = $1 AND company_id = $3`,
+                    [r.lead_uuid, trace, r.company_id]
+                );
+            } catch (e) {
+                console.warn('[outboundLeadCall] callback-cancel note failed (non-fatal):', e && e.message);
+            }
+            try {
+                const eventService = require('./eventService');
+                eventService.logEvent(r.company_id, 'lead', r.lead_uuid, 'outbound_lead_call_canceled_inbound',
+                    { reason: 'inbound_callback' }, 'system');
+            } catch { /* non-fatal */ }
+        }
+        console.log(`[outboundLeadCall] inbound callback ${phone} → canceled ${rows.length} lead attempt(s)`);
+        return { canceled: rows.length };
+    } catch (err) {
+        console.warn('[outboundLeadCall] cancelLeadChainsForInboundCallback failed (non-fatal):', err && err.message);
+        return { canceled: 0 };
+    }
+}
+
 module.exports = {
     APP_KEY,
     // §5.1 pure helpers (jest)
@@ -680,6 +864,8 @@ module.exports = {
     nextWindowStart,
     clampIntoWorkWindow,
     computeLeadNextDueAt,
+    effectiveWindow,
+    parseLeadContext,
     // §5.2
     onLeadCreated,
     // §5.3-5.6
@@ -687,4 +873,6 @@ module.exports = {
     scheduleLeadRetryOrExhaust,
     handleLeadEndOfCall,
     createLeadCallTask,
+    // OLC-CALLBACK-001
+    cancelLeadChainsForInboundCallback,
 };

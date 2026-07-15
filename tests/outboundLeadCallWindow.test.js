@@ -213,3 +213,82 @@ describe('TC-OLC-010: sabotage — the clamp detector can go red', () => {
         expect(() => assertClamped(unclamped, NY)).toThrow(/not clamped/);
     });
 });
+
+describe('TC-OLC-011: parseLeadContext (appliance context the agent confirms)', () => {
+    it('(a) structured pipe-delimited comments → Unit/Brand/Problem', () => {
+        const out = svc.parseLeadContext({
+            Comments: 'Unit: Refrigerator | Brand: Samsung | Age: 5 years | Problem: not cooling | Fee agreed: Yes',
+        });
+        expect(out).toEqual({ applianceType: 'Refrigerator', applianceBrand: 'Samsung', applianceProblem: 'not cooling' });
+    });
+
+    it('(b) job_type gives the unit when comments have none; the trailing verb is stripped', () => {
+        expect(svc.parseLeadContext({ JobType: 'Dryer Repair' }).applianceType).toBe('Dryer');
+        expect(svc.parseLeadContext({ JobType: 'Washer Installation' }).applianceType).toBe('Washer');
+        // Comments Unit wins over job_type.
+        expect(svc.parseLeadContext({ JobType: 'Dryer Repair', Comments: 'Unit: Oven' }).applianceType).toBe('Oven');
+    });
+
+    it('(c) synonyms — Make/Manufacturer→brand, Issue/Symptom→problem, Appliance/Type→unit', () => {
+        expect(svc.parseLeadContext({ Comments: 'Make: LG | Issue: won\'t drain' }))
+            .toEqual({ applianceType: null, applianceBrand: 'LG', applianceProblem: "won't drain" });
+        expect(svc.parseLeadContext({ Comments: 'Appliance: Microwave | Symptom: sparks' }))
+            .toEqual({ applianceType: 'Microwave', applianceBrand: null, applianceProblem: 'sparks' });
+    });
+
+    it('(d) no structured problem → free-text Description is the reported issue', () => {
+        expect(svc.parseLeadContext({ Description: 'Dishwasher leaks from the door' }).applianceProblem)
+            .toBe('Dishwasher leaks from the door');
+        // A structured Problem beats the Description fallback.
+        expect(svc.parseLeadContext({ Comments: 'Problem: no heat', Description: 'ignore me' }).applianceProblem)
+            .toBe('no heat');
+    });
+
+    it('(e) placeholder junk (unknown / n/a / - / ?) is dropped, not spoken', () => {
+        expect(svc.parseLeadContext({ Comments: 'Unit: unknown | Brand: N/A | Problem: -' }))
+            .toEqual({ applianceType: null, applianceBrand: null, applianceProblem: null });
+        expect(svc.parseLeadContext({ JobType: 'Repair' }).applianceType).toBeNull(); // verb-only → empty → null
+    });
+
+    it('(f) empty / garbage lead → all-null, never throws', () => {
+        expect(svc.parseLeadContext({})).toEqual({ applianceType: null, applianceBrand: null, applianceProblem: null });
+        expect(() => svc.parseLeadContext({ Comments: null, Description: null, JobType: null })).not.toThrow();
+    });
+});
+
+describe('TC-OLC-012: effectiveWindow — office / 24-7 / custom (OLC-WINDOW-001)', () => {
+    // America/New_York = EDT (UTC-4) in July 2026. Build instants in UTC so the
+    // suite is process-TZ independent. 2026-07-12 is a SUNDAY (office excludes it).
+    it('(a) office_hours (or default/unknown) → the dispatch settings verbatim', () => {
+        expect(svc.effectiveWindow({ calling_window_mode: 'office_hours' }, NY)).toBe(NY);
+        expect(svc.effectiveWindow({}, NY)).toBe(NY);
+        expect(svc.effectiveWindow(undefined, NY)).toBe(NY);
+    });
+
+    it('(b) always → {always:true}; in-window at ANY instant; clamp is identity', () => {
+        const eff = svc.effectiveWindow({ calling_window_mode: 'always' }, NY);
+        expect(eff).toEqual({ always: true });
+        const sun3am = new Date('2026-07-12T07:00:00Z'); // Sun 03:00 EDT — outside every office window
+        expect(svc.isWithinWorkWindow(sun3am, eff)).toBe(true);
+        expect(svc.clampIntoWorkWindow(sun3am, eff).getTime()).toBe(sun3am.getTime());
+        expect(svc.computeLeadNextDueAt(1, { backoff_schedule: ['immediate', '+2h'] }, eff, sun3am).getTime())
+            .toBe(new Date(sun3am.getTime() + 2 * 3600 * 1000).getTime()); // +2h, never clamped away
+    });
+
+    it('(c) custom → all-days HH:MM window in the dispatch tz; honors the window, ignores office days', () => {
+        const eff = svc.effectiveWindow(
+            { calling_window_mode: 'custom', custom_start_time: '10:00', custom_end_time: '22:00' }, NY);
+        expect(eff).toMatchObject({
+            timezone: 'America/New_York', work_start_time: '10:00', work_end_time: '22:00',
+            work_days: [0, 1, 2, 3, 4, 5, 6],
+        });
+        expect(svc.isWithinWorkWindow(new Date('2026-07-12T18:00:00Z'), eff)).toBe(true);  // Sun 14:00 EDT — inside
+        expect(svc.isWithinWorkWindow(new Date('2026-07-12T13:00:00Z'), eff)).toBe(false); // Sun 09:00 EDT — before start
+        expect(svc.isWithinWorkWindow(new Date('2026-07-13T02:30:00Z'), eff)).toBe(false); // Sun 22:30 EDT — after end
+    });
+
+    it('(d) custom with a missing bound → falls through to office (defensive)', () => {
+        expect(svc.effectiveWindow({ calling_window_mode: 'custom', custom_start_time: '10:00' }, NY)).toBe(NY);
+        expect(svc.effectiveWindow({ calling_window_mode: 'custom' }, NY)).toBe(NY);
+    });
+});

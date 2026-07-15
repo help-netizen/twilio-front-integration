@@ -31,6 +31,7 @@
 const yelpLeadQueries = require('../db/yelpLeadQueries');
 const yelpConversationQueries = require('../db/yelpConversationQueries');
 const { parseConversationId } = require('./yelpConversationId');
+const { extractYelpReplyBody } = require('./yelpReplyExtract');
 const db = require('../db/connection');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
@@ -416,7 +417,7 @@ async function enqueueYelpConvoGreetingTask(companyId, { claimId, convId, msg, p
     const agentInput = {
         conversation_id: convId,
         inbound_provider_message_id: `${msg.provider_message_id}:greet0`,
-        inbound_body_text: (msg && msg.body_text) || null,
+        inbound_body_text: extractYelpReplyBody((msg && msg.body_text) || '') || null,
         reply_to: parsed.reply_to,
         thread_token: parsed.thread_token,
         lead_id: leadId,
@@ -584,7 +585,7 @@ async function enqueueYelpConvoTurnTask(companyId, { conv, convId, msg, replyTo,
     const agentInput = {
         conversation_id: convId,
         inbound_provider_message_id: msg.provider_message_id,
-        inbound_body_text: (msg && msg.body_text) || null,
+        inbound_body_text: extractYelpReplyBody((msg && msg.body_text) || '') || null,
         reply_to: replyTo,
         thread_token: threadToken,
         lead_id: leadId,

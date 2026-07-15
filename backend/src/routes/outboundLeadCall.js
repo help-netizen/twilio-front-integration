@@ -72,11 +72,14 @@ router.get('/settings', async (req, res) => {
     }
 });
 
-// ── PUT /settings — { enabled_sources: string[] }, validated then upserted ──
+// ── PUT /settings — { enabled_sources: string[], calling_window_mode?,
+//    custom_start_time?, custom_end_time? }, validated then upserted ──────────
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 router.put('/settings', async (req, res) => {
     try {
         const cid = companyId(req);
-        const enabledSources = req.body && req.body.enabled_sources;
+        const body = req.body || {};
+        const enabledSources = body.enabled_sources;
 
         if (!Array.isArray(enabledSources) || enabledSources.length > 50) {
             return res.status(400).json({
@@ -92,6 +95,35 @@ router.put('/settings', async (req, res) => {
                 });
             }
         }
+
+        // OLC-WINDOW-001: calling-window mode + (for 'custom') a HH:MM..HH:MM window.
+        let mode = body.calling_window_mode;
+        if (mode === undefined || mode === null) mode = 'office_hours';
+        if (!outboundLeadCallSettingsService.CALLING_WINDOW_MODES.includes(mode)) {
+            return res.status(400).json({
+                ok: false,
+                error: { code: 'VALIDATION', message: "calling_window_mode must be 'office_hours', 'always', or 'custom'" },
+            });
+        }
+        let customStart = null;
+        let customEnd = null;
+        if (mode === 'custom') {
+            customStart = body.custom_start_time;
+            customEnd = body.custom_end_time;
+            if (!HHMM_RE.test(String(customStart)) || !HHMM_RE.test(String(customEnd))) {
+                return res.status(400).json({
+                    ok: false,
+                    error: { code: 'VALIDATION', message: 'custom hours must be HH:MM (24-hour), e.g. 09:00 and 20:00' },
+                });
+            }
+            if (!(customStart < customEnd)) {
+                return res.status(400).json({
+                    ok: false,
+                    error: { code: 'VALIDATION', message: 'custom start time must be earlier than end time (use the 24/7 mode for round-the-clock)' },
+                });
+            }
+        }
+
         // Normalized dedup: keep the FIRST display label per canonical key.
         const seen = new Set();
         const deduped = [];
@@ -102,7 +134,12 @@ router.put('/settings', async (req, res) => {
             deduped.push(item.trim());
         }
 
-        const settings = await outboundLeadCallSettingsService.saveSources(cid, deduped);
+        const settings = await outboundLeadCallSettingsService.saveSettings(cid, {
+            enabled_sources: deduped,
+            calling_window_mode: mode,
+            custom_start_time: customStart,
+            custom_end_time: customEnd,
+        });
         res.json({ ok: true, data: { settings } });
     } catch (err) {
         console.error('[OutboundLeadCall] PUT /settings failed:', err.message);

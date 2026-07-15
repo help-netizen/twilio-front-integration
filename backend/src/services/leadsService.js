@@ -808,7 +808,12 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
             customerName,
             customerPhone,
             customerEmail,
-            description: overrides.service?.description || leadRow.lead_notes || leadRow.comments || null,
+            description: (overrides.service?.description
+                || overrides.zb_job_payload?.services?.[0]?.custom_service?.description
+                || overrides.zb_job_payload?.services?.[0]?.description
+                || leadRow.lead_notes
+                || leadRow.comments
+                || '').trim() || null,
             initialStartDate,
             initialEndDate,
             initialAssignedTechs,

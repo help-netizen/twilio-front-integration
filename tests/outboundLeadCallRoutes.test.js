@@ -113,6 +113,56 @@ describe('TC-OLC-050/051: PUT /settings validation + dedup', () => {
     });
 });
 
+describe('TC-OLC-055: PUT /settings — calling-window mode (OLC-WINDOW-001)', () => {
+    async function put(body) {
+        return request(appWithAuth(COMPANY)).put('/api/outbound-lead-caller/settings').send(body);
+    }
+    const insParams = () => (db.query.mock.calls.find(([sql]) => /INSERT INTO outbound_lead_call_settings/.test(sql)) || [])[1];
+    beforeEach(() => {
+        db.query.mockImplementation(async (sql, params) => {
+            if (/INSERT INTO outbound_lead_call_settings/.test(sql)) {
+                return { rows: [{
+                    enabled_sources: JSON.parse(params[1]), calling_window_mode: params[2],
+                    custom_start_time: params[3], custom_end_time: params[4],
+                    max_attempts: 3, backoff_schedule: ['immediate', '+30m', '+2h'],
+                }] };
+            }
+            return { rows: [], rowCount: 1 };
+        });
+    });
+
+    it('always mode → 200; persists mode with null custom times', async () => {
+        const res = await put({ enabled_sources: ['Pro Referral'], calling_window_mode: 'always' });
+        expect(res.status).toBe(200);
+        expect(res.body.data.settings.calling_window_mode).toBe('always');
+        expect(insParams().slice(2)).toEqual(['always', null, null]);
+    });
+
+    it('custom mode with valid HH:MM → 200; persists the window', async () => {
+        const res = await put({ enabled_sources: ['Pro Referral'], calling_window_mode: 'custom', custom_start_time: '09:00', custom_end_time: '20:00' });
+        expect(res.status).toBe(200);
+        expect(insParams().slice(2)).toEqual(['custom', '09:00', '20:00']);
+    });
+
+    it('no mode → defaults to office_hours (back-compat with the sources-only client)', async () => {
+        const res = await put({ enabled_sources: ['Pro Referral'] });
+        expect(res.status).toBe(200);
+        expect(insParams().slice(2)).toEqual(['office_hours', null, null]);
+    });
+
+    it.each([
+        ['unknown mode', { enabled_sources: ['X'], calling_window_mode: 'whenever' }],
+        ['custom bad HH:MM', { enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '9am', custom_end_time: '20:00' }],
+        ['custom start >= end', { enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '20:00', custom_end_time: '09:00' }],
+        ['custom missing times', { enabled_sources: ['X'], calling_window_mode: 'custom' }],
+    ])('%s → 400 VALIDATION, no write', async (_l, body) => {
+        const res = await put(body);
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('VALIDATION');
+        expect(db.query.mock.calls.filter(([sql]) => /INSERT INTO outbound_lead_call_settings/.test(sql))).toHaveLength(0);
+    });
+});
+
 describe('TC-OLC-052: tenant isolation', () => {
     it('company A and B never share params; scoping comes ONLY from companyFilter', async () => {
         await request(appWithAuth(COMPANY)).get('/api/outbound-lead-caller/settings');

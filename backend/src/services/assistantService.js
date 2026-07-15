@@ -259,6 +259,7 @@ async function generateViaGemini(prompt, models) {
         generationConfig: {
             temperature: 0.2,
             maxOutputTokens: MAX_OUTPUT_TOKENS,
+            thinkingConfig: { thinkingBudget: 0 },
             candidateCount: 1,
             responseMimeType: 'application/json',
             responseSchema: {

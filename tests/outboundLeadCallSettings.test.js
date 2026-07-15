@@ -115,3 +115,45 @@ describe('TC-OLC-002: coerceStored per-key overlay + get/resolve safe-fail', () 
         expect(out.enabled_sources).toEqual(['Pro Referral']);
     });
 });
+
+describe('TC-OLC-013: calling-window settings (OLC-WINDOW-001)', () => {
+    it('coerceStored defaults window to office_hours; reads a valid custom window', () => {
+        expect(svc.coerceStored({ enabled_sources: ['X'] }).calling_window_mode).toBe('office_hours');
+        const c = svc.coerceStored({ calling_window_mode: 'custom', custom_start_time: '09:00', custom_end_time: '20:00' });
+        expect(c).toMatchObject({ calling_window_mode: 'custom', custom_start_time: '09:00', custom_end_time: '20:00' });
+        expect(svc.coerceStored({ calling_window_mode: 'always' }).calling_window_mode).toBe('always');
+    });
+
+    it('coerceStored DEGRADES a custom mode with an unusable window to office_hours', () => {
+        expect(svc.coerceStored({ calling_window_mode: 'custom', custom_start_time: '20:00', custom_end_time: '09:00' }).calling_window_mode).toBe('office_hours'); // start >= end
+        expect(svc.coerceStored({ calling_window_mode: 'custom', custom_start_time: '9am', custom_end_time: '20:00' }).calling_window_mode).toBe('office_hours'); // bad HH:MM
+        expect(svc.coerceStored({ calling_window_mode: 'custom' }).calling_window_mode).toBe('office_hours'); // missing
+        expect(svc.coerceStored({ calling_window_mode: 'bogus' }).calling_window_mode).toBe('office_hours'); // unknown mode
+    });
+
+    it('isUsableCustomWindow: HH:MM both ends, start < end', () => {
+        expect(svc.isUsableCustomWindow('09:00', '20:00')).toBe(true);
+        expect(svc.isUsableCustomWindow('00:00', '23:59')).toBe(true);
+        expect(svc.isUsableCustomWindow('20:00', '09:00')).toBe(false);
+        expect(svc.isUsableCustomWindow('09:00', '09:00')).toBe(false);
+        expect(svc.isUsableCustomWindow('9:00', '20:00')).toBe(false);
+        expect(svc.isUsableCustomWindow(null, '20:00')).toBe(false);
+    });
+
+    it('saveSettings persists a custom window; NON-custom modes null the custom times', async () => {
+        db.query.mockResolvedValue({ rows: [{ enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '10:00', custom_end_time: '22:00' }] });
+        await svc.saveSettings('co-1', { enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '10:00', custom_end_time: '22:00' });
+        expect(db.query.mock.calls[0][1]).toEqual(['co-1', JSON.stringify(['X']), 'custom', '10:00', '22:00']);
+
+        db.query.mockClear();
+        db.query.mockResolvedValue({ rows: [{ enabled_sources: [], calling_window_mode: 'always' }] });
+        await svc.saveSettings('co-1', { enabled_sources: [], calling_window_mode: 'always', custom_start_time: '10:00', custom_end_time: '22:00' });
+        expect(db.query.mock.calls[0][1]).toEqual(['co-1', JSON.stringify([]), 'always', null, null]); // custom times cleared
+    });
+
+    it('saveSettings downgrades an invalid custom window to office_hours (never persists garbage)', async () => {
+        db.query.mockResolvedValue({ rows: [{ enabled_sources: [], calling_window_mode: 'office_hours' }] });
+        await svc.saveSettings('co-1', { enabled_sources: [], calling_window_mode: 'custom', custom_start_time: '22:00', custom_end_time: '09:00' });
+        expect(db.query.mock.calls[0][1]).toEqual(['co-1', JSON.stringify([]), 'office_hours', null, null]);
+    });
+});

@@ -16,7 +16,28 @@ const DEFAULTS = {
     enabled_sources: ['ProReferral'],
     max_attempts: 3,
     backoff_schedule: ['immediate', '+30m', '+2h'],
+    // OLC-WINDOW-001: when Sara is allowed to dial.
+    //   office_hours → dispatch business hours (the pre-feature behaviour),
+    //   always       → 24/7,
+    //   custom       → custom_start_time..custom_end_time daily (company tz).
+    calling_window_mode: 'office_hours',
+    custom_start_time: null,
+    custom_end_time: null,
 };
+
+// OLC-WINDOW-001 shared vocabulary.
+const CALLING_WINDOW_MODES = ['office_hours', 'always', 'custom'];
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * A custom window is usable only when BOTH ends are HH:MM and start < end
+ * (same-day; overnight windows are what 'always' is for). Lexicographic compare
+ * is chronological for zero-padded 24h. Pure.
+ */
+function isUsableCustomWindow(start, end) {
+    return typeof start === 'string' && typeof end === 'string'
+        && HHMM_RE.test(start) && HHMM_RE.test(end) && start < end;
+}
 
 /**
  * Canonical source key: trims, strips ALL whitespace, lowercases —
@@ -59,6 +80,20 @@ function coerceStored(row) {
     if (Array.isArray(row.backoff_schedule) && row.backoff_schedule.length > 0) {
         out.backoff_schedule = row.backoff_schedule;
     }
+
+    // OLC-WINDOW-001 — mode + custom times. A 'custom' mode with an unusable
+    // window degrades to 'office_hours' so the dialer never freezes on garbage.
+    if (typeof row.calling_window_mode === 'string' && CALLING_WINDOW_MODES.includes(row.calling_window_mode)) {
+        out.calling_window_mode = row.calling_window_mode;
+    }
+    out.custom_start_time = (typeof row.custom_start_time === 'string' && HHMM_RE.test(row.custom_start_time))
+        ? row.custom_start_time : null;
+    out.custom_end_time = (typeof row.custom_end_time === 'string' && HHMM_RE.test(row.custom_end_time))
+        ? row.custom_end_time : null;
+    if (out.calling_window_mode === 'custom' && !isUsableCustomWindow(out.custom_start_time, out.custom_end_time)) {
+        out.calling_window_mode = 'office_hours';
+    }
+
     if (row.updated_at !== undefined) {
         out.updated_at = row.updated_at;
     }
@@ -71,7 +106,8 @@ function coerceStored(row) {
  */
 async function get(companyId) {
     const { rows } = await db.query(
-        `SELECT enabled_sources, max_attempts, backoff_schedule, updated_at
+        `SELECT enabled_sources, max_attempts, backoff_schedule,
+                calling_window_mode, custom_start_time, custom_end_time, updated_at
          FROM outbound_lead_call_settings
          WHERE company_id = $1`,
         [companyId]
@@ -110,12 +146,50 @@ async function saveSources(companyId, enabledSources) {
     return coerceStored(rows[0]);
 }
 
+/**
+ * saveSettings(companyId, fields) — OLC-WINDOW-001 upsert for the full settings
+ * surface: enabled sources + calling-window mode/custom times. Normalizes the
+ * window server-side (defense in depth; the route validates too): a non-'custom'
+ * mode clears the custom times, and a 'custom' mode with an unusable window
+ * degrades to 'office_hours' rather than persisting a window the dialer can't
+ * honor. Returns the coerced stored row.
+ */
+async function saveSettings(companyId, fields = {}) {
+    let mode = CALLING_WINDOW_MODES.includes(fields.calling_window_mode)
+        ? fields.calling_window_mode : 'office_hours';
+    let cs = (typeof fields.custom_start_time === 'string' && HHMM_RE.test(fields.custom_start_time))
+        ? fields.custom_start_time : null;
+    let ce = (typeof fields.custom_end_time === 'string' && HHMM_RE.test(fields.custom_end_time))
+        ? fields.custom_end_time : null;
+    if (mode === 'custom' && !isUsableCustomWindow(cs, ce)) { mode = 'office_hours'; }
+    if (mode !== 'custom') { cs = null; ce = null; }
+    const sources = Array.isArray(fields.enabled_sources) ? fields.enabled_sources : [];
+
+    const { rows } = await db.query(
+        `INSERT INTO outbound_lead_call_settings
+             (company_id, enabled_sources, calling_window_mode, custom_start_time, custom_end_time)
+         VALUES ($1, $2::jsonb, $3, $4, $5)
+         ON CONFLICT (company_id) DO UPDATE SET
+             enabled_sources     = EXCLUDED.enabled_sources,
+             calling_window_mode = EXCLUDED.calling_window_mode,
+             custom_start_time   = EXCLUDED.custom_start_time,
+             custom_end_time     = EXCLUDED.custom_end_time,
+             updated_at          = NOW()
+         RETURNING *`,
+        [companyId, JSON.stringify(sources), mode, cs, ce]
+    );
+    return coerceStored(rows[0]);
+}
+
 module.exports = {
     DEFAULTS,
+    CALLING_WINDOW_MODES,
+    isUsableCustomWindow,
     normalizeSource,
     isSourceEnabled,
     coerceStored,
     get,
     resolve,
     saveSources,
+    saveSettings,
 };

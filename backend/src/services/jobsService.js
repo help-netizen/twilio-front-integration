@@ -145,6 +145,12 @@ function zbJobToColumns(zbJob) {
     return {
         job_number: zbJob.job_number || null,
         service_name: zbJob.service_name || zbJob.services?.[0]?.service_name || null,
+        description: Array.isArray(zbJob.services)
+            ? zbJob.services
+                .map(service => typeof service?.description === 'string' ? service.description.trim() : null)
+                .filter(Boolean)
+                .join('\n') || null
+            : null,
         start_date: zbJob.start_date || null,
         // ZB end_date = start + job duration, but UI shows arrival window (time_slot).
         // Use time_slot.arrival_window_minutes to compute the correct end time.
@@ -273,11 +279,11 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
     const { rows } = await db.query(`
         INSERT INTO jobs (lead_id, contact_id, zenbooker_job_id, blanc_status,
             zb_status, zb_canceled, zb_rescheduled,
-            job_number, service_name, start_date, end_date,
+            job_number, service_name, description, start_date, end_date,
             customer_name, customer_phone, customer_email, address, city,
             territory, invoice_total, invoice_status, assigned_techs, notes,
             zb_raw, company_id, lat, lng, assigned_provider_user_ids)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
         ON CONFLICT (zenbooker_job_id) DO UPDATE SET
             lead_id = COALESCE(EXCLUDED.lead_id, jobs.lead_id),
             contact_id = COALESCE(EXCLUDED.contact_id, jobs.contact_id),
@@ -287,6 +293,7 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
             zb_rescheduled = EXCLUDED.zb_rescheduled,
             job_number = EXCLUDED.job_number,
             service_name = EXCLUDED.service_name,
+            description = COALESCE(NULLIF(jobs.description, ''), EXCLUDED.description),
             start_date = EXCLUDED.start_date,
             end_date = EXCLUDED.end_date,
             customer_name = EXCLUDED.customer_name,
@@ -308,7 +315,8 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
     `, [
         leadId || null, contactId || null, zenbookerJobId, blancStatus,
         cols.zb_status || 'scheduled', cols.zb_canceled || false, cols.zb_rescheduled || false,
-        cols.job_number || null, cols.service_name || null, cols.start_date || null, cols.end_date || null,
+        cols.job_number || null, cols.service_name || null, cols.description || null,
+        cols.start_date || null, cols.end_date || null,
         cols.customer_name || null, cols.customer_phone || null, cols.customer_email || null, cols.address || null,
         cols.city || null,
         cols.territory || null, cols.invoice_total || null, cols.invoice_status || null,

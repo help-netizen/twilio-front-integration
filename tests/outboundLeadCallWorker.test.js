@@ -341,9 +341,14 @@ describe('TC-OLC-023: slot pre-compute failures feed the ladder', () => {
 });
 
 describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
-    it('full-context lead → exact placeCall argument (variant A greeting, tokens NOT interpolated)', async () => {
-        const longDesc = 'x'.repeat(400);
-        getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, Description: longDesc });
+    it('full-context lead → exact placeCall argument (structured appliance context, greeting owned by the dedicated assistant, NO firstMessage override)', async () => {
+        // Real prod-shaped lead: job_type + pipe-delimited comments. The agent must
+        // reference the SPECIFIC job ("your Samsung refrigerator that isn't cooling").
+        getLeadByUUIDSpy.mockResolvedValue({
+            ...LEAD,
+            JobType: 'Refrigerator Repair',
+            Comments: 'Unit: Refrigerator | Brand: Samsung | Age: 5 years | Problem: not cooling | Fee agreed: Yes',
+        });
         await svc.processLeadAttempt(mkLeadAttempt());
 
         expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
@@ -357,11 +362,16 @@ describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
             customerNumber: '+16175551234',
             slot: { ...TOP_SLOT, lat: 42.31, lng: -71.16 },
             zip: '02467',
-            problemDescription: 'x'.repeat(300),
+            applianceType: 'Refrigerator',
+            applianceBrand: 'Samsung',
+            applianceProblem: 'not cooling',
             source: 'Pro Referral',
-            firstMessage: 'Hi {{customerName}}, this is Sara with ABC Homes — you reached out on Pro Referral about your appliance. I can get you on the schedule right now: we have {{slotLabel}} available — would that work?',
         });
-        expect(arg.problemDescription).toHaveLength(300);
+        // problemDescription was replaced by the structured appliance trio.
+        expect(arg).not.toHaveProperty('problemDescription');
+        // The lead greeting/brand name lives on the dedicated VAPI assistant, not
+        // in a per-call override built from the (legal) company profile name.
+        expect(arg).not.toHaveProperty('firstMessage');
 
         // ok:true → correlation stamp + slot audit + Pulse mirror
         const stamp = updates(/SET vapi_call_id = \$2, slot_json = \$3/);
@@ -373,37 +383,30 @@ describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
         }));
     });
 
-    it.each([
-        ['profile throws', () => companyProfileService.getProfile.mockRejectedValue(new Error('x')), /^Hi \{\{customerName\}\}, this is Sara — you reached out on Pro Referral/],
-        ['profile empty', () => companyProfileService.getProfile.mockResolvedValue({}), /^Hi \{\{customerName\}\}, this is Sara — /],
-    ])('variant B when %s', async (_l, prep, re) => {
-        prep();
+    it('no structured context → appliance problem falls back to free-text Description, sliced to 120', async () => {
+        const longDesc = 'x'.repeat(400);
+        getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, JobType: null, Comments: null, Description: longDesc });
         await svc.processLeadAttempt(mkLeadAttempt());
-        expect(outboundCallService.placeCall.mock.calls[0][0].firstMessage).toMatch(re);
+        const arg = outboundCallService.placeCall.mock.calls[0][0];
+        expect(arg.applianceProblem).toBe('x'.repeat(120));
+        expect(arg.applianceType).toBeUndefined(); // no job_type / Unit → not offered
+        expect(arg.applianceBrand).toBeUndefined();
+        expect(arg).not.toHaveProperty('problemDescription');
     });
 
-    it('no source → "online"; no name → "there"', async () => {
+    it('company profile is NOT read for the greeting anymore (dedicated assistant owns it)', async () => {
+        await svc.processLeadAttempt(mkLeadAttempt());
+        expect(companyProfileService.getProfile).not.toHaveBeenCalled();
+        expect(outboundCallService.placeCall.mock.calls[0][0]).not.toHaveProperty('firstMessage');
+    });
+
+    it('no name → "there"; source passed through for prompt context', async () => {
         getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, JobSource: 'Pro Referral', FirstName: null, LastName: null });
         leadResolveSpy.mockResolvedValue({ enabled_sources: ['Pro Referral'], max_attempts: 3, backoff_schedule: [] });
         await svc.processLeadAttempt(mkLeadAttempt());
-        expect(outboundCallService.placeCall.mock.calls[0][0].customerName).toBe('there');
-
-        // no source: source gate must still pass → enable '' is impossible;
-        // simulate a source-enabled-but-empty-label edge via isSourceEnabled spy.
-        jest.clearAllMocks();
-        mockQuery.mockImplementation(async () => ({ rows: [], rowCount: 1 }));
-        recommendSlots.run.mockResolvedValue({ available: true, fallback: false, slots: [{ ...TOP_SLOT }] });
-        outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'v' });
-        marketplaceService.isAppConnected.mockResolvedValue(true);
-        scheduleService.getDispatchSettings.mockResolvedValue({ ...NY_DS });
-        companyProfileService.getProfile.mockResolvedValue({ name: 'ABC Homes' });
-        getLeadByUUIDSpy.mockResolvedValue({ ...LEAD, JobSource: null });
-        const gate = jest.spyOn(leadSettings, 'isSourceEnabled').mockReturnValue(true);
-        await svc.processLeadAttempt(mkLeadAttempt());
         const arg = outboundCallService.placeCall.mock.calls[0][0];
-        expect(arg.firstMessage).toContain('you reached out on online about');
-        expect(arg.source).toBeUndefined();
-        gate.mockRestore();
+        expect(arg.customerName).toBe('there');
+        expect(arg.source).toBe('Pro Referral');
     });
 
     it('recordPlacement throw does NOT reclassify the attempt (stays dialing)', async () => {
@@ -562,7 +565,8 @@ describe('★ TC-OLC-029: PARTS-REGRESSION sabotage gate (mixed batch, golden fi
         // Parts row went through the REAL processAttempt → placeCall body vs golden
         expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
         const partsArg = outboundCallService.placeCall.mock.calls[0][0];
-        for (const k of ['scenario', 'leadUuid', 'zip', 'problemDescription', 'source', 'firstMessage']) {
+        for (const k of ['scenario', 'leadUuid', 'zip', 'problemDescription', 'source', 'firstMessage',
+            'applianceType', 'applianceBrand', 'applianceProblem']) {
             expect(partsArg).not.toHaveProperty(k);
         }
         if (process.env.WRITE_PARTS_GOLDEN) {

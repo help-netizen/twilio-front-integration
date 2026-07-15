@@ -143,6 +143,24 @@ describe('yelp_convo Phase-B — claim-first → runTurn → markReplied (brain 
         expect(mockMarkReplied).toHaveBeenCalledWith(DEFAULT_COMPANY_ID, 'ymsg-REPLY-1');
         expect(out).toMatchObject({ handled: true, conversation_id: CONV_ID, outcome: 'reply' });
     });
+
+    it('claimed reply with no extracted content skips without running or sending', async () => {
+        process.env.YELP_CONVO_ENABLED = 'true';
+
+        const out = await agentHandlers.run(convTask({
+            agent_input: {
+                conversation_id: CONV_ID,
+                inbound_provider_message_id: 'ymsg-EMPTY-1',
+                inbound_body_text: null,
+            },
+        }));
+
+        expect(mockClaimYelpLead).toHaveBeenCalledWith(DEFAULT_COMPANY_ID, 'ymsg-EMPTY-1');
+        expect(mockRunTurn).not.toHaveBeenCalled();
+        expect(mockSendEmail).not.toHaveBeenCalled();
+        expect(mockMarkReplied).not.toHaveBeenCalled();
+        expect(out).toEqual({ skipped: 'no_reply_content', conversation_id: CONV_ID });
+    });
 });
 
 describe('YCB-IDEM-01 [B] · claim {claimed:false} → NO runTurn, NO markReplied, no throw', () => {

@@ -57,6 +57,14 @@
                 "type": "number",
                 "description": "How many days ahead to search. Omit on the first call; increase it (together with excludeSlots) to search deeper when the caller doesn't like any of the offered windows."
               },
+              "targetDay": {
+                "type": "string",
+                "description": "The specific day the customer asked for, as YYYY-MM-DD. Resolve their words ('Thursday', 'tomorrow', 'the 16th') to a concrete date using the Current time before passing it. Pass it whenever the customer names a specific day, so the engine returns that day's windows only."
+              },
+              "targetTime": {
+                "type": "string",
+                "description": "The customer's requested time of day, as HH:MM in 24-hour time (e.g. '14:30' for 2:30pm). Only pass it together with targetDay. The tool then returns exactly ONE window - the closest available to that time."
+              },
               "excludeSlots": {
                 "type": "array",
                 "items": {
@@ -67,14 +75,6 @@
               "durationMinutes": {
                 "type": "number",
                 "description": "Expected appointment length in minutes (optional; default 120)."
-              },
-              "targetDay": {
-                "type": "string",
-                "description": "The specific day the customer asked for, as YYYY-MM-DD. Resolve their words ('Thursday', 'tomorrow', 'the 16th') to a concrete date using the Current time before passing it. Pass it whenever the customer names a specific day, so the engine returns that day's windows only."
-              },
-              "targetTime": {
-                "type": "string",
-                "description": "The customer's requested time of day, as HH:MM in 24-hour time (e.g. '14:30' for 2:30pm). Only pass it together with targetDay. The tool then returns exactly ONE window - the closest available to that time."
               }
             }
           },
@@ -97,13 +97,16 @@
             "properties": {
               "chosenSlot": {
                 "type": "object",
-                "description": "The window the customer CONFIRMED — either the pre-computed window you offered first, or a window recommendSlots returned. Do NOT call this until the customer has agreed to a concrete window.",
                 "required": [
                   "date",
                   "start",
                   "end"
                 ],
                 "properties": {
+                  "end": {
+                    "type": "string",
+                    "description": "Window end time as 'HH:MM' (24-hour)."
+                  },
                   "date": {
                     "type": "string",
                     "description": "Window date as 'YYYY-MM-DD'."
@@ -111,12 +114,9 @@
                   "start": {
                     "type": "string",
                     "description": "Window start time as 'HH:MM' (24-hour)."
-                  },
-                  "end": {
-                    "type": "string",
-                    "description": "Window end time as 'HH:MM' (24-hour)."
                   }
-                }
+                },
+                "description": "The window the customer CONFIRMED — either the pre-computed window you offered first, or a window recommendSlots returned. Do NOT call this until the customer has agreed to a concrete window."
               }
             }
           },
@@ -155,6 +155,10 @@
     "disablePartialTranscripts": false
   },
   "silenceTimeoutSeconds": 30,
+  "serverMessages": [
+    "end-of-call-report",
+    "status-update"
+  ],
   "maxDurationSeconds": 900,
   "metadata": {
     "slug": "parts_visit_scheduler",
@@ -163,6 +167,32 @@
   },
   "backgroundSound": "https://api.albusto.com/public-assets/background_sound.mp3",
   "firstMessageMode": "assistant-speaks-first",
+  "analysisPlan": {
+    "structuredDataPlan": {
+      "enabled": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "description": "booked = an appointment window was confirmed; declined = reached but did not want to book; callback = asked to be called back later; no_booking = reached but ended without a decision.",
+            "type": "string",
+            "enum": [
+              "booked",
+              "declined",
+              "callback",
+              "no_booking"
+            ]
+          }
+        }
+      },
+      "messages": [
+        {
+          "content": "Analyze this outbound scheduling call. From the transcript, set outcome to exactly one of: booked, declined, callback, no_booking.",
+          "role": "system"
+        }
+      ]
+    }
+  },
   "backgroundDenoisingEnabled": true,
   "artifactPlan": {
     "recordingEnabled": true,
@@ -182,17 +212,12 @@
     }
   },
   "server": {
-    "url": "https://api.albusto.com/api/vapi-tools",
+    "url": "https://api.albusto.com/api/vapi/call-status",
     "timeoutSeconds": 20
   },
   "compliancePlan": {
     "hipaaEnabled": false,
     "pciEnabled": false,
     "zdrEnabled": false
-  },
-  "isServerUrlSecretSet": false,
-  "serverMessages": [
-    "end-of-call-report",
-    "status-update"
-  ]
+  }
 }

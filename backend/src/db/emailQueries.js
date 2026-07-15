@@ -270,6 +270,38 @@ async function markThreadRead(threadId, companyId) {
     return result.rows[0] || null;
 }
 
+async function markContactEmailThreadsRead(contactId, companyId) {
+    const result = await db.query(`
+        UPDATE email_threads et SET
+            unread_count = 0,
+            updated_at = now()
+        WHERE et.company_id = $2
+          AND et.unread_count > 0
+          AND EXISTS (
+              SELECT 1
+              FROM contacts c
+              WHERE c.id = $1 AND c.company_id = $2
+          )
+          AND et.id IN (
+              SELECT em.thread_id
+              FROM email_messages em
+              JOIN contact_emails ce ON ce.email_normalized = lower(trim(em.from_email))
+              WHERE em.company_id = $2
+                AND em.direction = 'inbound'
+                AND em.from_email IS NOT NULL
+                AND ce.contact_id = $1
+              UNION ALL
+              SELECT em.thread_id
+              FROM email_messages em
+              WHERE em.company_id = $2
+                AND em.direction = 'outbound'
+                AND em.contact_id = $1
+                AND em.on_timeline = true
+          )
+    `, [contactId, companyId]);
+    return result.rowCount;
+}
+
 // ─── email_messages ──────────────────────────────────────────────────────
 
 async function getMessagesByThread(threadId, companyId) {
@@ -883,6 +915,7 @@ module.exports = {
     getThreadByProviderId,
     upsertThread,
     markThreadRead,
+    markContactEmailThreadsRead,
     // messages
     getMessagesByThread,
     upsertMessage,

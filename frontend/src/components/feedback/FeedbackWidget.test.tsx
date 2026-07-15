@@ -78,6 +78,11 @@ vi.mock('react', async importOriginal => {
     };
 });
 
+const overlayStackState = vi.hoisted(() => ({ open: false }));
+vi.mock('../ui/OverlayStack', () => ({
+    useHasOpenOverlay: () => overlayStackState.open,
+}));
+
 vi.mock('../../services/apiClient', () => ({
     authedFetch: assistantRequest,
 }));
@@ -384,5 +389,23 @@ describe('feedback widget open event', () => {
         markup = renderToStaticMarkup(renderFeedbackWidget());
         expect(markup).toContain('role="dialog"');
         expect(markup).toContain('How can we help?');
+    });
+});
+
+describe('feedback FAB vs open overlays', () => {
+    afterEach(() => {
+        overlayStackState.open = false;
+    });
+
+    it('shows the floating button when no overlay is open', () => {
+        overlayStackState.open = false;
+        expect(renderToStaticMarkup(renderFeedbackWidget())).toContain('feedback-fab');
+    });
+
+    it('hides the floating button while a dialog/panel is open (no overlap with its footer)', () => {
+        overlayStackState.open = true;
+        const markup = renderToStaticMarkup(renderFeedbackWidget());
+        expect(markup).not.toContain('feedback-fab');
+        expect(markup).not.toContain('aria-label="Open feedback"');
     });
 });
