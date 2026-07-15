@@ -8,6 +8,10 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-015 (2026-07-15)** — Sabotage negative-controls run ON TOP of the implementer's UNCOMMITTED diff.
+  Restore by reversing the exact edit (or from a `cp` backup taken first) — NEVER `git checkout <file>`:
+  it reverts to HEAD and silently discards the implementer's uncommitted work along with the sabotage.
+
 - **L-014 (2026-07-13)** — Node 25 on this mac SEGFAULTS when `NODE_USE_SYSTEM_CA=1` is in the env
   (macOS keychain code): `unset NODE_USE_SYSTEM_CA` (or use `--use-bundled-ca`) before node/vite/jest.
   This was the mystery behind earlier Vite exit-139 crashes.
