@@ -8,6 +8,13 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-016 (2026-07-15)** — `codex exec` (gpt-5.6-sol, ultra reasoning) sometimes DRAFTS the full
+  solution in its response but exits WITHOUT calling apply_patch — git shows zero changes even though
+  the log "contains" the code. Don't trust the log/exit-0; verify with `git status`. Fix: `codex exec
+  resume <SID> "you drafted but never applied — apply_patch NOW to <files>, minimal talk"`. Seen twice
+  in one run (backend + frontend). Also: it can burn the whole turn on exploration and stop before
+  writing — a resume with "STOP researching, implement now" recovers it.
+
 - **L-015 (2026-07-15)** — Sabotage negative-controls run ON TOP of the implementer's UNCOMMITTED diff.
   Restore by reversing the exact edit (or from a `cp` backup taken first) — NEVER `git checkout <file>`:
   it reverts to HEAD and silently discards the implementer's uncommitted work along with the sabotage.
