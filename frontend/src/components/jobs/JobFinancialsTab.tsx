@@ -140,16 +140,18 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                         <MetricCell label="Invoiced" value={money(totalInvoiced)} />
                         <MetricCell label="Due" value={money(totalDue)} tone={totalDue > 0 ? 'warning' : 'default'} />
                     </div>
+                    {/* Collect payment — STRIPE-ADHOC-PAY-001 §1 (perm-gated, readiness-driven).
+                        Lives in a footer row INSIDE the summary card (hairline-separated via
+                        mt-px over the card's line background) so it's tied to the numbers,
+                        not an orphaned button floating below. */}
+                    {canCollect && stripeReady && (
+                        <div className="mt-px flex justify-end bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-2.5">
+                            <Button size="sm" onClick={() => setShowCollect(true)}>
+                                <CreditCard className="mr-1 size-4" />Collect payment
+                            </Button>
+                        </div>
+                    )}
                 </div>
-
-                {/* Collect payment — STRIPE-ADHOC-PAY-001 §1 (perm-gated, readiness-driven). */}
-                {canCollect && stripeReady && (
-                    <div className="flex justify-end">
-                        <Button size="sm" onClick={() => setShowCollect(true)}>
-                            <CreditCard className="mr-1 size-4" />Collect payment
-                        </Button>
-                    </div>
-                )}
                 {showCta && (
                     <CloudBanner variant="compact">
                         {canManageIntegrations ? (
