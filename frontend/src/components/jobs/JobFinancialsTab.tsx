@@ -370,10 +370,10 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                             }}
                             onApprove={async () => {
                                 try {
-                                    await approveEstimate(selectedEstimate.id);
+                                    const updated = await approveEstimate(selectedEstimate.id);
                                     toast.success('Estimate approved');
                                     refresh();
-                                    setSelectedEstimate(null);
+                                    setSelectedEstimate(updated);
                                 } catch (err: any) { toast.error(err.message); }
                             }}
                             onDecline={async (reason: string) => {

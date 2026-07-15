@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-07-15 — FINANCE-PANEL-FIXES-001: эстимейт не закрывается после Approved + починка Preview PDF (auth)
+
+Два бага блока Job → Finance. (A) **ESTIMATE-APPROVE-STAY:** после нажатия «Approved» панель эстимейта закрывалась (`setSelectedEstimate(null)`), приходилось открывать заново ради «Create Invoice». Теперь `approveEstimate` возвращает обновлённый эстимейт, и панель остаётся открытой (`setSelectedEstimate(updated)`) — статус Approved, кнопка Create Invoice сразу доступна; decline не изменён. (B) **INVOICE-PDF-AUTH:** «Preview PDF» открывал сырой `/api/invoices/:id/pdf` через `window.open` без Bearer-заголовка → `{"code":"AUTH_REQUIRED"}` (тот же баг был и у эстимейта — `/api/estimates/:id/pdf`). Добавлен общий хелпер `frontend/src/lib/openAuthedPdf.ts`: `authedFetch` (Bearer) → blob → object URL → открыть в новой вкладке; popup-blocker-safe (вкладка открывается синхронно в жесте клика ДО await, затем навигируется на blob), revoke через 60с, toast при ошибке. Обе кнопки Preview PDF (инвойс + эстимейт) переведены на него. Бэкенд PDF-роуты не тронуты (auth корректен). Оркестрация: спека Claude (`Docs/specs/FINANCE-PANEL-FIXES-001.md`), код — Codex (gpt-5.6-sol xhigh), ревью + независимый build-гейт Claude (npm run build exit 0). 4 файла фронта.
+
+---
+
 ## 2026-07-15 — JOB-ESTIMATE-MULTI: несколько эстимейтов на один джоб (UI-паритет с инвойсами)
 
 Блок **Estimate** на карточке Job → Finance раньше давал кнопку создания только в пустом состоянии — после первого эстимейта добавить ещё было нельзя. Блок Invoices при этом всегда показывает persistent «New invoice» при наличии инвойсов. Добавил такую же persistent-кнопку **«New estimate»** в шапку секции Estimates (видна при `estimates.length > 0`), открывающую редактор нового эстимейта. Чисто presentational: модель данных и API уже поддерживали несколько эстимейтов на джоб (как инвойсы) — не хватало только UI-аффорданса. Один файл `frontend/src/components/jobs/JobFinancialsTab.tsx`; пустое состояние и секция Invoices нетронуты. Оркестрация: спека Claude, код — Codex (gpt-5.6-sol xhigh), ревью+build-гейт Claude (npm run build exit 0). Спека: `Docs/specs/JOB-ESTIMATE-MULTI.md`.

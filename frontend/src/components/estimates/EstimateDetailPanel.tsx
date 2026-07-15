@@ -31,6 +31,7 @@ import {
     updateEstimateItem,
     deleteEstimateItem,
 } from '../../services/estimatesApi';
+import { openAuthedPdf } from '../../lib/openAuthedPdf';
 import { toast } from 'sonner';
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -539,7 +540,10 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
             <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-3">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="grid grid-cols-2 gap-2 md:flex">
-                        <Button variant="outline" size="sm" onClick={() => window.open(`/api/estimates/${estimate.id}/pdf`, '_blank', 'noopener,noreferrer')}>
+                        <Button variant="outline" size="sm" onClick={() => {
+                            openAuthedPdf(`/api/estimates/${estimate.id}/pdf`)
+                                .catch(() => toast.error('Could not open the PDF'));
+                        }}>
                             <Eye className="mr-1 size-3.5" />Preview PDF
                         </Button>
                     </div>
