@@ -5,6 +5,7 @@ const integrationsService = require('./integrationsService');
 const provisioningService = require('./marketplaceProvisioningService');
 const emailMailboxService = require('./emailMailboxService');
 const telephonyTenantService = require('./telephonyTenantService');
+const stripePaymentsQueries = require('../db/stripePaymentsQueries');
 const territoryRadiusQueries = require('../db/territoryRadiusQueries');
 const rateMeQueries = require('../db/rateMeQueries');
 const { RELY_UNIT_TYPES, RELY_BRANDS } = require('./relyLeadsCatalog');
@@ -101,6 +102,37 @@ async function buildTelephonyTwilioInstallationOverlay(companyId) {
     };
 }
 
+// STRIPE-TILE: Stripe Payments derives its connected state from the real
+// stripe_connected_accounts row, not accumulated marketplace installation rows.
+const STRIPE_PAYMENTS_APP_KEY = 'stripe-payments';
+
+async function isStripePaymentsConnected(companyId) {
+    try {
+        const account = await stripePaymentsQueries.getAccountByCompany(companyId);
+        return Boolean(account) && account.status !== 'disconnected';
+    } catch {
+        return false;
+    }
+}
+
+async function buildStripePaymentsInstallationOverlay(companyId) {
+    try {
+        const account = await stripePaymentsQueries.getAccountByCompany(companyId);
+        if (!account || account.status === 'disconnected') return null;
+        return {
+            id: null,
+            status: 'connected',
+            installed_at: account.created_at ?? null,
+            disconnected_at: null,
+            provisioning_error: null,
+            last_used_at: account.updated_at ?? null,
+            external_installation_id: null,
+        };
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Whether the given marketplace app is connected (gate-only check) for a company.
  * True iff the app is published AND an active installation exists with status 'connected'.
@@ -117,6 +149,9 @@ async function isAppConnected(companyId, appKey) {
     if (appKey === TELEPHONY_TWILIO_APP_KEY) {
         const state = await telephonyTenantService.getTelephonyState(companyId);
         return state.connected === true;
+    }
+    if (appKey === STRIPE_PAYMENTS_APP_KEY) {
+        return isStripePaymentsConnected(companyId);
     }
     const app = await marketplaceQueries.getPublishedAppByKey(appKey);
     if (!app) return false;
@@ -270,6 +305,11 @@ async function listApps(companyId) {
     const telephonyTwilio = apps.find(app => app.app_key === TELEPHONY_TWILIO_APP_KEY);
     if (telephonyTwilio) {
         telephonyTwilio.installation = await buildTelephonyTwilioInstallationOverlay(companyId);
+    }
+
+    const stripe = apps.find(app => app.app_key === STRIPE_PAYMENTS_APP_KEY);
+    if (stripe) {
+        stripe.installation = await buildStripePaymentsInstallationOverlay(companyId);
     }
 
     return apps;
