@@ -16,7 +16,11 @@ function companyId(req) {
 }
 
 function actor(req) {
-    const id = req.user?.crmUser?.id || req.user?.sub || null;
+    // created_by / audit FKs reference crm_users(id). The Keycloak `sub` is ALSO a
+    // UUID but is NOT a crm_users.id, so falling back to it poisoned the value and
+    // tripped stripe_payment_sessions_created_by_fkey. Use crmUser.id or NULL (the
+    // column is nullable) — never `sub`.
+    const id = req.user?.crmUser?.id || null;
     return { id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id || '') ? id : null };
 }
 

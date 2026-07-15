@@ -11,7 +11,9 @@ const { requirePermission } = require('../middleware/authorization');
 const stripePaymentsService = require('../services/stripePaymentsService');
 
 function companyId(req) { return req.companyFilter?.company_id; }
-function actor(req) { return { id: req.user?.crmUser?.id || req.user?.sub || null }; }
+// created_by references crm_users(id); the Keycloak `sub` is a UUID but NOT a
+// crm_users.id, so it must never be the fallback (FK violation). crmUser.id or NULL.
+function actor(req) { return { id: req.user?.crmUser?.id || null }; }
 function handle(err, req, res) {
     if (err instanceof stripePaymentsService.StripePaymentsError) {
         return res.status(err.httpStatus || 400).json({ ok: false, error: { code: err.code, message: err.message } });

@@ -1037,7 +1037,7 @@ function jobStripeError(err, res) {
 router.post('/:id/stripe-manual-card-session', requirePermission('payments.collect_keyed'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const data = await stripePaymentsService.createManualCardSession(companyId, { id: req.user?.sub }, { jobId: req.params.id, amount: req.body?.amount });
+        const data = await stripePaymentsService.createManualCardSession(companyId, { id: req.user?.crmUser?.id || null }, { jobId: req.params.id, amount: req.body?.amount });
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
 });
@@ -1045,7 +1045,7 @@ router.post('/:id/stripe-manual-card-session', requirePermission('payments.colle
 router.post('/:id/tap-to-pay/payment-intent', requirePermission('payments.collect_terminal'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const data = await stripePaymentsService.createTapToPayIntent(companyId, { id: req.user?.sub }, { jobId: req.params.id, amount: req.body?.amount });
+        const data = await stripePaymentsService.createTapToPayIntent(companyId, { id: req.user?.crmUser?.id || null }, { jobId: req.params.id, amount: req.body?.amount });
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
 });
@@ -1054,7 +1054,7 @@ router.post('/:id/tap-to-pay/payment-intent', requirePermission('payments.collec
 router.post('/:id/stripe-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const data = await stripePaymentsService.ensureJobPaymentLink(companyId, { id: req.user?.sub }, req.params.id, { amount: req.body?.amount });
+        const data = await stripePaymentsService.ensureJobPaymentLink(companyId, { id: req.user?.crmUser?.id || null }, req.params.id, { amount: req.body?.amount });
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
 });
@@ -1070,7 +1070,7 @@ router.get('/:id/stripe-payment-link', requirePermission('payments.view'), async
 router.post('/:id/send-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const data = await stripePaymentsService.sendJobPaymentLink(companyId, { id: req.user?.sub }, req.params.id, { channel: req.body?.channel, amount: req.body?.amount, message: req.body?.message });
+        const data = await stripePaymentsService.sendJobPaymentLink(companyId, { id: req.user?.crmUser?.id || null }, req.params.id, { channel: req.body?.channel, amount: req.body?.amount, message: req.body?.message });
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
 });

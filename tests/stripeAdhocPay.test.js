@@ -156,10 +156,13 @@ describe('ensureJobPaymentLink', () => {
         expect(res).toMatchObject({ url: 'https://checkout/stripe/1', reused: false, session_id: 11 });
     });
 
-    it('TC-LINK-2 idempotency key job-${company}-${job}-${amount}', async () => {
+    it('TC-LINK-2 idempotency key job-${company}-${job}-${amount}-v2 + no varying expires_at', async () => {
         primeCreate();
         await svc.ensureJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', { amount: 180 });
-        expect(provider.createCheckoutSession.mock.calls[0][2]).toMatchObject({ idempotencyKey: `job-${COMPANY}-job-1-180` });
+        // Versioned key retires pre-fix keys; params must stay stable across retries.
+        expect(provider.createCheckoutSession.mock.calls[0][2]).toMatchObject({ idempotencyKey: `job-${COMPANY}-job-1-180-v2` });
+        // Date.now()-derived expiry must NOT be sent to Stripe (it poisoned the key).
+        expect(provider.createCheckoutSession.mock.calls[0][1].expiresAt).toBeUndefined();
     });
 
     it('TC-LINK-3 successUrl == cancelUrl == baseUrl()/pay/thanks', async () => {

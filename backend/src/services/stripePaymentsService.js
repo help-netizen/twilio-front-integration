@@ -25,6 +25,17 @@ const technicianProfilesService = require('./technicianProfilesService');
 
 const APP_KEY = 'stripe-payments';
 
+// STRIPE-CHECKOUT-IDEMPOTENCY-FIX: a stable idempotency key REQUIRES byte-identical
+// request params on every replay, else Stripe rejects with "same key, different
+// parameters". The checkout-link builders used to pass a Date.now()-derived
+// `expires_at` under a stable key — it varied per call and poisoned the key whenever
+// the first attempt failed to persist (e.g. the created_by FK bug) and a retry hit
+// Stripe again. We stopped sending expires_at (Stripe Checkout defaults to a 24h
+// expiry, which is exactly the old intent) and version the key so requests minted
+// under the old param shape don't collide with the new ones. Bump on any future
+// change to the checkout-link request params.
+const CHECKOUT_KEY_VERSION = 'v2';
+
 class StripePaymentsError extends Error {
     constructor(code, message, httpStatus = 400) {
         super(message);
@@ -251,14 +262,17 @@ async function ensurePaymentLink(companyId, actor, invoiceId, { amount } = {}) {
         invoiceNumber: invoice.invoice_number,
         successUrl: `${baseUrl()}/i/${invoice.public_token || ''}?paid=1`,
         cancelUrl: `${baseUrl()}/i/${invoice.public_token || ''}`,
-        expiresAt,
+        // expires_at intentionally NOT sent to Stripe — the Date.now() value varied
+        // per call and poisoned the stable idempotency key (see CHECKOUT_KEY_VERSION).
+        // Stripe Checkout defaults to a 24h expiry, matching the old intent; the DB
+        // row keeps its own expires_at below for the reuse window.
         metadata: {
             company_id: companyId,
             invoice_id: String(invoiceId),
             job_id: invoice.job_id != null ? String(invoice.job_id) : '',
             contact_id: invoice.contact_id != null ? String(invoice.contact_id) : '',
         },
-    }, { idempotencyKey: `inv-${companyId}-${invoiceId}-${payAmount}` });
+    }, { idempotencyKey: `inv-${companyId}-${invoiceId}-${payAmount}-${CHECKOUT_KEY_VERSION}` });
 
     const row = await q.insertSession(companyId, {
         invoice_id: invoiceId,
@@ -323,14 +337,16 @@ async function ensureJobPaymentLink(companyId, actor, jobId, { amount } = {}) {
         currency: 'usd',
         successUrl: `${baseUrl()}/pay/thanks`,
         cancelUrl: `${baseUrl()}/pay/thanks`,
-        expiresAt,
+        // expires_at intentionally NOT sent to Stripe — see the invoice path above
+        // and the CHECKOUT_KEY_VERSION note. Stripe defaults to 24h; the DB row keeps
+        // its own expires_at below for the reuse window.
         metadata: {
             company_id: companyId,
             invoice_id: '',
             job_id: String(ctx.jobId),
             contact_id: ctx.contactId != null ? String(ctx.contactId) : '',
         },
-    }, { idempotencyKey: `job-${companyId}-${jobId}-${payAmount}` });
+    }, { idempotencyKey: `job-${companyId}-${jobId}-${payAmount}-${CHECKOUT_KEY_VERSION}` });
 
     const row = await q.insertSession(companyId, {
         invoice_id: null,
