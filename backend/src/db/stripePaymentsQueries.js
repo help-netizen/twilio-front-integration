@@ -40,6 +40,18 @@ async function insertAccount(companyId, { stripeAccountId, marketplaceInstallati
          ON CONFLICT (company_id) DO UPDATE SET stripe_account_id = EXCLUDED.stripe_account_id,
             marketplace_installation_id = COALESCE(EXCLUDED.marketplace_installation_id,
                 stripe_connected_accounts.marketplace_installation_id),
+            -- Re-connect after a disconnect creates a FRESH Stripe account, so reset
+            -- the readiness state. Without this the row stays status='disconnected'
+            -- forever (computeReadiness short-circuits on it) and the tenant can never
+            -- reconnect — the account is re-created but the page still says "Not connected".
+            status = 'onboarding_incomplete',
+            livemode = false,
+            charges_enabled = false,
+            payouts_enabled = false,
+            details_submitted = false,
+            requirements_currently_due = '[]'::jsonb,
+            requirements_past_due = '[]'::jsonb,
+            capabilities = '{}'::jsonb,
             updated_at = NOW()
          RETURNING *`,
         [companyId, stripeAccountId, marketplaceInstallationId]

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import {
     CheckCircle2, AlertCircle, Loader2, Unplug, ExternalLink, RefreshCw,
@@ -74,6 +74,15 @@ export default function StripePaymentsSettingsPage() {
         onSuccess: () => { setDisconnectOpen(false); qc.invalidateQueries({ queryKey: ['stripe-payments-status'] }); toast.success('Stripe disconnected'); },
         onError: (e: Error) => toast.error(e.message),
     });
+
+    // Stripe redirects back to ?onboarding=return (finished) / =refresh (resumed).
+    // Pull the live account state so the page reflects the just-completed onboarding
+    // instead of the stale stored status. Runs once on mount.
+    useEffect(() => {
+        const p = new URLSearchParams(window.location.search).get('onboarding');
+        if (p === 'return' || p === 'refresh') refreshMut.mutate();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const readiness = status?.readiness ?? 'not_connected';
     const connected = status?.connected;
