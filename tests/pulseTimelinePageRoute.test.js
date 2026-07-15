@@ -202,6 +202,7 @@ function resetState() {
         contact: { ...CONTACT },
         timeline: { ...TIMELINE },
         conversations: [{ ...CONVERSATION }],
+        companyOwnNumbers: [CONVERSATION.proxy_e164],
         data: GOLDEN_DATA,
         timelineExists: true,
         contactExists: true,
@@ -282,9 +283,19 @@ async function dispatchDb(sql, params = []) {
         }
         return { rows: [...numbers].map(n => ({ n })) };
     }
+    if (/SELECT DISTINCT proxy_e164 FROM sms_conversations/i.test(text)) {
+        recordEvent('company_number_lookup', text, params);
+        return { rows: state.companyOwnNumbers.map(proxy_e164 => ({ proxy_e164 })) };
+    }
     if (/FROM sms_conversations/i.test(text)) {
         recordEvent('conversation_lookup', text, params);
-        return { rows: state.conversations };
+        const phoneDigits = new Set(params[0]);
+        return {
+            rows: state.conversations.filter(conversation =>
+                conversation.company_id === params[1]
+                && phoneDigits.has(conversation.customer_e164.replace(/\D/g, ''))
+            ),
+        };
     }
     if (/SELECT c\.\*, to_json\(co\)/i.test(text)) {
         recordEvent('calls', text, params);
@@ -397,7 +408,8 @@ function clearActivity() {
 
 function expectNoFeedLegs() {
     expect(state.events.filter(event => [
-        'discovery', 'conversation_lookup', 'calls', 'sms', 'email_contact', 'email_timeline', 'estimates', 'invoices',
+        'discovery', 'company_number_lookup', 'conversation_lookup', 'calls', 'sms',
+        'email_contact', 'email_timeline', 'estimates', 'invoices',
     ].includes(event.tag))).toEqual([]);
     expect(mockConvQueries.getMessages).not.toHaveBeenCalled();
     expect(mockConvQueries.getMessagesPageDesc).not.toHaveBeenCalled();
@@ -711,6 +723,7 @@ test('TC-TRP-032: every discovery/source leg takes company A only from companyFi
     const byTag = tag => state.events.filter(event => event.tag === tag);
     expect(byTag('calls')[0].params[1]).toBe(COMPANY_A);
     expect(byTag('discovery')[0].params[1]).toBe(COMPANY_A);
+    expect(byTag('company_number_lookup')[0].params[0]).toBe(COMPANY_A);
     expect(byTag('conversation_lookup')[0].params[1]).toBe(COMPANY_A);
     expect(byTag('estimates')[0].params[1]).toBe(COMPANY_A);
     expect(byTag('invoices')[0].params[1]).toBe(COMPANY_A);
@@ -764,5 +777,84 @@ test('TC-TRP-034: a cursor older than history returns a normal empty page; unexp
         expect(failed.body).toEqual({ error: 'Failed to fetch timeline' });
     } finally {
         errorSpy.mockRestore();
+    }
+});
+
+test('TC-TRP-035: company call legs cannot leak proxy-keyed SMS into legacy or paged timelines', async () => {
+    const externalCallPhone = '+15085550222';
+    const secondaryConversation = {
+        ...CONVERSATION,
+        id: '22222222-2222-4222-8222-222222222222',
+        customer_e164: CONTACT.secondary_phone,
+    };
+    const externalConversation = {
+        ...CONVERSATION,
+        id: '33333333-3333-4333-8333-333333333333',
+        customer_e164: externalCallPhone,
+    };
+    const leakedCompanyConversation = {
+        ...CONVERSATION,
+        id: '44444444-4444-4444-8444-444444444444',
+        customer_e164: CONVERSATION.proxy_e164,
+    };
+    state.conversations = [
+        { ...CONVERSATION },
+        secondaryConversation,
+        externalConversation,
+        leakedCompanyConversation,
+    ];
+    state.data = {
+        ...GOLDEN_DATA,
+        calls: GOLDEN_DATA.calls.map((call, index) => index === 0
+            ? { ...call, from_number: externalCallPhone }
+            : { ...call }),
+        messages: [
+            ...GOLDEN_DATA.messages,
+            {
+                ...GOLDEN_DATA.messages[0],
+                id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+                conversation_id: secondaryConversation.id,
+                body: 'Secondary phone SMS',
+                ts: '2026-07-12T13:59:00.000000Z',
+            },
+            {
+                ...GOLDEN_DATA.messages[0],
+                id: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3',
+                conversation_id: externalConversation.id,
+                body: 'External call leg SMS',
+                ts: '2026-07-12T13:58:00.000000Z',
+            },
+            {
+                ...GOLDEN_DATA.messages[0],
+                id: 'dddddddd-dddd-4ddd-8ddd-ddddddddddd4',
+                conversation_id: leakedCompanyConversation.id,
+                body: 'Must not leak',
+                ts: '2026-07-12T13:57:00.000000Z',
+            },
+        ],
+    };
+
+    const expectedConversationIds = [
+        CONVERSATION.id,
+        secondaryConversation.id,
+        externalConversation.id,
+    ];
+    const legacy = await request(stubApp()).get(`/api/pulse/timeline-by-id/${TIMELINE.id}`);
+    expect(legacy.status).toBe(200);
+    expect(legacy.body.conversations.map(conversation => conversation.id)).toEqual(expectedConversationIds);
+    expect(legacy.body.messages.map(message => message.conversation_id))
+        .toEqual(expect.arrayContaining(expectedConversationIds));
+    expect(JSON.stringify(legacy.body)).not.toContain(leakedCompanyConversation.id);
+
+    clearActivity();
+    const paged = await request(stubApp()).get(`/api/pulse/timeline-by-id/${TIMELINE.id}?limit=20`);
+    expect(paged.status).toBe(200);
+    expect(paged.body.meta.conversations.map(conversation => conversation.id)).toEqual(expectedConversationIds);
+    expect(paged.body.page.items.filter(item => item.src === 'sms').map(item => item.data.conversation_id))
+        .toEqual(expect.arrayContaining(expectedConversationIds));
+    expect(JSON.stringify(paged.body)).not.toContain(leakedCompanyConversation.id);
+
+    for (const event of state.events.filter(entry => entry.tag === 'company_number_lookup')) {
+        expect(event.params).toEqual([COMPANY_A]);
     }
 });

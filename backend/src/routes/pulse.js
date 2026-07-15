@@ -323,6 +323,24 @@ function mapInvoiceRow(row, contactId) {
     };
 }
 
+async function addExternalCallPhones(phonesToSearch, callPhones, companyId) {
+    if (callPhones.size === 0) return;
+
+    const { rows } = await db.query(
+        `SELECT DISTINCT proxy_e164 FROM sms_conversations
+         WHERE company_id = $1 AND proxy_e164 IS NOT NULL`,
+        [companyId]
+    );
+    const companyOwnNumberDigits = new Set(
+        rows.map(row => row.proxy_e164.replace(/\D/g, '')).filter(Boolean)
+    );
+    for (const phone of callPhones) {
+        if (!companyOwnNumberDigits.has(phone.replace(/\D/g, ''))) {
+            phonesToSearch.add(phone);
+        }
+    }
+}
+
 async function discoverTimelineConversations(contact, timeline, companyId) {
     const callPhones = new Set();
     if (timeline?.id) {
@@ -349,7 +367,7 @@ async function discoverTimelineConversations(contact, timeline, companyId) {
     if (secondaryPhone) {
         phonesToSearch.add('+' + secondaryPhone.replace(/\D/g, ''));
     }
-    for (const phone of callPhones) phonesToSearch.add(phone);
+    await addExternalCallPhones(phonesToSearch, callPhones, companyId);
 
     if (phonesToSearch.size === 0) return [];
     const phoneDigits = [...phonesToSearch].map(phone => phone.replace(/\D/g, ''));
@@ -548,10 +566,12 @@ async function buildTimelinePage(req, res, contact, timeline, { limit, before })
 
 // Shared legacy timeline builder
 async function buildTimeline(req, res, contact, timeline) {
+    const companyId = tenantCompanyId(req);
+
     // Get calls by timeline_id with recordings + transcripts
     let callRows = [];
     if (timeline?.id) {
-        callRows = await fetchTimelineCalls(timeline.id, tenantCompanyId(req), { window: null });
+        callRows = await fetchTimelineCalls(timeline.id, companyId, { window: null });
     }
 
     // Phone: contact phone (primary) or orphan timeline phone
@@ -579,7 +599,7 @@ async function buildTimeline(req, res, contact, timeline) {
         const normalizedSecondary = '+' + secondaryPhone.replace(/\D/g, '');
         phonesToSearch.add(normalizedSecondary);
     }
-    for (const p of callPhones) phonesToSearch.add(p);
+    await addExternalCallPhones(phonesToSearch, callPhones, companyId);
 
     if (phonesToSearch.size > 0) {
         const phoneArray = [...phonesToSearch];
@@ -589,7 +609,7 @@ async function buildTimeline(req, res, contact, timeline) {
              WHERE regexp_replace(customer_e164, '\\D', '', 'g') = ANY($1)
                AND company_id = $2
              ORDER BY last_message_at DESC NULLS LAST`,
-            [phoneDigits, tenantCompanyId(req)]
+            [phoneDigits, companyId]
         );
         conversations = convResult.rows;
 
@@ -607,7 +627,6 @@ async function buildTimeline(req, res, contact, timeline) {
     const canViewFinancials = req.user?._devMode
         || (req.authz?.permissions || []).includes('financial_data.view');
     if (contact?.id && canViewFinancials) {
-        const companyId = tenantCompanyId(req);
         try {
             if (companyId) {
                 const [estimateRows, invoiceRows] = await Promise.all([
