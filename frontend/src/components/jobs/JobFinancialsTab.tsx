@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
-import { Dialog, DialogContent } from '../ui/dialog';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
 import { Archive, ChevronRight, CreditCard, FileText, Loader2, Lock, Plus, Receipt } from 'lucide-react';
 import { CloudBanner } from '../ui/CloudBanner';
@@ -410,8 +409,7 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
 
             {/* Invoice detail dialog */}
             {selectedInvoice && (
-                <Dialog open={!!selectedInvoice} onOpenChange={(o) => { if (!o) setSelectedInvoice(null); }}>
-                    <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden p-0 md:max-w-3xl">
+                <FloatingDetailPanel open={!!selectedInvoice} onClose={() => setSelectedInvoice(null)} wide>
                         <InvoiceDetailPanel
                             invoice={selectedInvoice}
                             events={invoiceEvents}
@@ -451,8 +449,7 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                                 } catch (err: any) { toast.error(err.message); }
                             }}
                         />
-                    </DialogContent>
-                </Dialog>
+                </FloatingDetailPanel>
             )}
 
             {/* Invoice send dialog — operator confirms recipient/message (no empty-recipient sends) */}
