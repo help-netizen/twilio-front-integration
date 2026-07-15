@@ -365,34 +365,44 @@ function validateRelySettingsInput(body) {
 }
 
 function validateRateMeSettingsInput(body) {
-    const rawUrl = body?.google_review_url;
-    if (rawUrl === null) return { google_review_url: null };
-    if (typeof rawUrl !== 'string') {
-        throw new MarketplaceServiceError(
-            'Google review URL must be a valid HTTPS URL no longer than 500 characters.',
-            'INVALID_GOOGLE_REVIEW_URL',
-            400
-        );
-    }
+    const validateHttpsUrl = (rawUrl, label, code) => {
+        if (rawUrl === null || rawUrl === undefined) return null;
+        const message = `${label} must be a valid HTTPS URL no longer than 500 characters.`;
+        if (typeof rawUrl !== 'string') {
+            throw new MarketplaceServiceError(message, code, 400);
+        }
 
-    const googleReviewUrl = rawUrl.trim();
-    if (!googleReviewUrl) return { google_review_url: null };
+        const normalizedUrl = rawUrl.trim();
+        if (!normalizedUrl) return null;
 
-    let parsed;
-    try {
-        parsed = new URL(googleReviewUrl);
-    } catch {
-        parsed = null;
-    }
-    if (!parsed || parsed.protocol !== 'https:' || googleReviewUrl.length > 500) {
-        throw new MarketplaceServiceError(
-            'Google review URL must be a valid HTTPS URL no longer than 500 characters.',
-            'INVALID_GOOGLE_REVIEW_URL',
-            400
-        );
-    }
+        let parsed;
+        try {
+            parsed = new URL(normalizedUrl);
+        } catch {
+            parsed = null;
+        }
+        if (!normalizedUrl.startsWith('https://')
+            || !parsed
+            || parsed.protocol !== 'https:'
+            || normalizedUrl.length > 500) {
+            throw new MarketplaceServiceError(message, code, 400);
+        }
 
-    return { google_review_url: googleReviewUrl };
+        return normalizedUrl;
+    };
+
+    const google_review_url = validateHttpsUrl(
+        body?.google_review_url,
+        'Google review URL',
+        'INVALID_GOOGLE_REVIEW_URL'
+    );
+    const booking_url = validateHttpsUrl(
+        body?.booking_url,
+        'Booking URL',
+        'INVALID_BOOKING_URL'
+    );
+
+    return { google_review_url, booking_url };
 }
 
 async function resolveSettingsInstallation(companyId, appKey) {
@@ -450,6 +460,7 @@ async function buildRateMeSettingsResponse(companyId, appKey, installation, meta
         installation_id: installation.id,
         settings: {
             google_review_url: metadata?.settings?.google_review_url || null,
+            booking_url: metadata?.settings?.booking_url || null,
         },
         domain: await rateMeQueries.getDomainByCompany(companyId),
         public_host: RATE_ME_PUBLIC_HOST,
@@ -478,6 +489,7 @@ const SETTINGS_HANDLERS = {
         buildEventPayload: (validated) => ({
             app_key: 'rate-me',
             has_google_review_url: Boolean(validated.google_review_url),
+            has_booking_url: Boolean(validated.booking_url),
         }),
     },
 };

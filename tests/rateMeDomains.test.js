@@ -906,7 +906,10 @@ describe('RATE-ME-CRM-001 settings dispatch and authed surface', () => {
         expect(result).toEqual({
             app_key: 'rate-me',
             installation_id: 8,
-            settings: { google_review_url: 'https://g.page/r/abc/review' },
+            settings: {
+                google_review_url: 'https://g.page/r/abc/review',
+                booking_url: null,
+            },
             domain: PENDING_DOMAIN,
             public_host: 'rate.albusto.com',
         });
@@ -935,7 +938,7 @@ describe('RATE-ME-CRM-001 settings dispatch and authed surface', () => {
         for (const [input, expected] of validRows) {
             expect(marketplaceSettingsService.validateRateMeSettingsInput({
                 google_review_url: input,
-            })).toEqual({ google_review_url: expected });
+            })).toEqual({ google_review_url: expected, booking_url: null });
             await expect(marketplaceSettingsService.updateAppSettings(
                 COMPANY_X,
                 'crm-1',
@@ -999,6 +1002,7 @@ describe('RATE-ME-CRM-001 settings dispatch and authed surface', () => {
         expect(companyId).toBe(COMPANY_X);
         expect(installationId).toBe(8);
         expect(Object.keys(stored).sort()).toEqual([
+            'booking_url',
             'google_review_url',
             'updated_at',
             'updated_by',
@@ -1044,6 +1048,170 @@ describe('RATE-ME-CRM-001 settings dispatch and authed surface', () => {
             .not.toContain('g.page');
     });
 
+    describe('RATE-ME-CRM-002 T4 booking_url settings (RM2-T4)', () => {
+        test('TC-RM2-BU-01 · PUT validates, stores, and returns both URL keys', async () => {
+            const input = {
+                google_review_url: 'https://g.page/r/abc/review',
+                booking_url: 'https://book.co/x',
+            };
+
+            expect(marketplaceSettingsService.validateRateMeSettingsInput(input))
+                .toEqual(input);
+
+            const result = await marketplaceSettingsService.updateAppSettings(
+                COMPANY_X,
+                'crm-1',
+                'rate-me',
+                input
+            );
+
+            expect(lastStoredInstallation.metadata.settings).toMatchObject(input);
+            expect(result.settings).toEqual(input);
+        });
+
+        test('TC-RM2-BU-02 · booking_url mirrors HTTPS, length, and type validation', () => {
+            const googleReviewUrl = 'https://g.page/r/abc/review';
+            const url500 = 'https://example.com/'.padEnd(500, 'a');
+            const validRows = [
+                [undefined, null],
+                [null, null],
+                ['', null],
+                ['  ', null],
+                ['  https://book.co/x  ', 'https://book.co/x'],
+                [url500, url500],
+            ];
+
+            for (const [input, expected] of validRows) {
+                expect(marketplaceSettingsService.validateRateMeSettingsInput({
+                    google_review_url: googleReviewUrl,
+                    booking_url: input,
+                })).toEqual({
+                    google_review_url: googleReviewUrl,
+                    booking_url: expected,
+                });
+            }
+
+            const invalidRows = [
+                'http://book.co/x',
+                'javascript:alert(1)',
+                'not a url',
+                `${url500}a`,
+                42,
+            ];
+            for (const input of invalidRows) {
+                expect(() => marketplaceSettingsService.validateRateMeSettingsInput({
+                    google_review_url: googleReviewUrl,
+                    booking_url: input,
+                })).toThrow(expect.objectContaining({
+                    message: 'Booking URL must be a valid HTTPS URL no longer than 500 characters.',
+                    code: 'INVALID_BOOKING_URL',
+                    httpStatus: 400,
+                }));
+            }
+        });
+
+        test('TC-RM2-BU-03 · replace-on-PUT keeps the sibling URL', async () => {
+            await marketplaceSettingsService.updateAppSettings(
+                COMPANY_X,
+                'crm-1',
+                'rate-me',
+                {
+                    google_review_url: 'https://g/x',
+                    booking_url: 'https://b/y',
+                }
+            );
+            expect(currentRateMeInstallation.metadata.settings).toMatchObject({
+                google_review_url: 'https://g/x',
+                booking_url: 'https://b/y',
+            });
+
+            await marketplaceSettingsService.updateAppSettings(
+                COMPANY_X,
+                'crm-1',
+                'rate-me',
+                {
+                    google_review_url: 'https://g/x',
+                    booking_url: null,
+                }
+            );
+            expect(currentRateMeInstallation.metadata.settings).toMatchObject({
+                google_review_url: 'https://g/x',
+                booking_url: null,
+            });
+
+            await marketplaceSettingsService.updateAppSettings(
+                COMPANY_X,
+                'crm-1',
+                'rate-me',
+                {
+                    google_review_url: 'https://g/new',
+                    booking_url: 'https://b/preserved',
+                }
+            );
+            expect(currentRateMeInstallation.metadata.settings).toMatchObject({
+                google_review_url: 'https://g/new',
+                booking_url: 'https://b/preserved',
+            });
+        });
+
+        test('TC-RM2-BU-04 · GET returns google_review_url and booking_url', async () => {
+            currentRateMeInstallation.metadata.settings = {
+                google_review_url: 'https://g.page/r/abc/review',
+                booking_url: 'https://book.co/x',
+            };
+
+            const result = await marketplaceSettingsService.getAppSettings(
+                COMPANY_X,
+                'rate-me'
+            );
+
+            expect(result).toEqual({
+                app_key: 'rate-me',
+                installation_id: 8,
+                settings: {
+                    google_review_url: 'https://g.page/r/abc/review',
+                    booking_url: 'https://book.co/x',
+                },
+                domain: PENDING_DOMAIN,
+                public_host: 'rate.albusto.com',
+            });
+        });
+
+        test('TC-RM2-BU-05 · event records URL presence booleans only', async () => {
+            await marketplaceSettingsService.updateAppSettings(
+                COMPANY_X,
+                'crm-1',
+                'rate-me',
+                {
+                    google_review_url: 'https://g.page/r/abc/review',
+                    booking_url: 'https://book.co/x',
+                }
+            );
+            await marketplaceSettingsService.updateAppSettings(
+                COMPANY_X,
+                'crm-1',
+                'rate-me',
+                { google_review_url: null, booking_url: null }
+            );
+
+            const payloads = mockWriteEvent.mock.calls.map(([event]) => event.payload);
+            expect(payloads).toEqual([
+                {
+                    app_key: 'rate-me',
+                    has_google_review_url: true,
+                    has_booking_url: true,
+                },
+                {
+                    app_key: 'rate-me',
+                    has_google_review_url: false,
+                    has_booking_url: false,
+                },
+            ]);
+            expect(JSON.stringify(payloads)).not.toContain('g.page');
+            expect(JSON.stringify(payloads)).not.toContain('book.co');
+        });
+    });
+
     test('TC-S10-01 · reinstall resets settings while the company domain survives', async () => {
         currentRateMeInstallation = {
             ...RATE_ME_SETTINGS_INSTALLATION,
@@ -1061,6 +1229,7 @@ describe('RATE-ME-CRM-001 settings dispatch and authed surface', () => {
 
         expect(result.installation_id).toBe(9);
         expect(result.settings.google_review_url).toBeNull();
+        expect(result.settings.booking_url).toBeNull();
         expect(result.domain).toEqual({
             ...PENDING_DOMAIN,
             status: 'active',

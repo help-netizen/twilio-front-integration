@@ -6,6 +6,7 @@ import {
 } from '../ui/dropdown-menu';
 import { TagBadge } from './jobHelpers';
 import { OnTheWayModal } from './OnTheWayModal';
+import { JobRateMeBlock } from './JobRateMeBlock';
 import { useAuthz } from '../../hooks/useAuthz';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -172,6 +173,16 @@ export function JobOpsSection({
                     )}
                 </div>
             )}
+
+            <JobRateMeBlock
+                jobId={job.id}
+                customerName={job.customer_name}
+                customerPhone={job.customer_phone}
+                customerEmail={job.customer_email}
+                technicianName={job.assigned_techs?.[0]?.name}
+                canSend={hasPermission('messages.send')}
+                onSent={onNotified}
+            />
 
             {/* ── ONWAY-001: "On the way" modal ── */}
             {showOnWayCta && (

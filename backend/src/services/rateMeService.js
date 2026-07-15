@@ -138,29 +138,96 @@ function googleReviewUrl(metadata) {
     return typeof value === 'string' && value ? value : null;
 }
 
+function bookingUrl(metadata) {
+    const value = metadata?.settings?.booking_url;
+    return typeof value === 'string' && value ? value : null;
+}
+
+function formatVisitDate(startDate, timeZone = 'America/New_York') {
+    if (startDate === null || startDate === undefined) return null;
+    try {
+        return new Intl.DateTimeFormat('en-US', {
+            timeZone: timeZone || 'America/New_York',
+            weekday: 'long',
+            month: 'short',
+            day: 'numeric',
+        }).format(new Date(startDate));
+    } catch (error) {
+        return null;
+    }
+}
+
+function firstName(context) {
+    if (typeof context.contact_first_name === 'string'
+        && context.contact_first_name.trim()) {
+        return context.contact_first_name.trim();
+    }
+    if (typeof context.customer_name !== 'string') return null;
+    return context.customer_name.trim().split(/\s+/)[0] || null;
+}
+
+async function presignLogo(storageKey) {
+    if (!storageKey) return null;
+    try {
+        return await storageService.getPresignedUrl(storageKey);
+    } catch (error) {
+        return null;
+    }
+}
+
 async function getPublicContext(token, hostCompanyId = null) {
+    const context = await rateMeQueries.getTokenContext(token, hostCompanyId);
+    if (context) {
+        const installation = await rateMeQueries.getConnectedRateMeMeta(context.company_id);
+        if (!installation) return null;
+
+        try {
+            await rateMeQueries.stampTokenOpened(context.id);
+        } catch (error) {
+            // Attribution is best-effort and must not fail the public context response.
+        }
+
+        return {
+            company_name: context.company_name,
+            company_logo_url: await presignLogo(context.logo_storage_key),
+            technician_name: context.technician_name || null,
+            first_name: firstName(context),
+            service_label: context.service_name || null,
+            visit_date: formatVisitDate(context.start_date, context.company_timezone),
+            company_phone: context.company_phone || null,
+            company_email: context.company_email || null,
+            booking_url: bookingUrl(installation.metadata),
+            five_star_redirect: Boolean(googleReviewUrl(installation.metadata)),
+            already_rated: Boolean(context.already_rated),
+            expired: false,
+        };
+    }
+
+    const expired = await rateMeQueries.getExpiredTokenBranding(token, hostCompanyId);
+    if (!expired) return null;
+
+    const installation = await rateMeQueries.getConnectedRateMeMeta(expired.company_id);
+    if (!installation) return null;
+
+    return {
+        company_name: expired.company_name,
+        company_logo_url: await presignLogo(expired.logo_storage_key),
+        company_phone: expired.contact_phone || null,
+        company_email: expired.contact_email || null,
+        booking_url: bookingUrl(installation.metadata),
+        expired: true,
+    };
+}
+
+async function recordGoogleClick(token, hostCompanyId = null) {
     const context = await rateMeQueries.getTokenContext(token, hostCompanyId);
     if (!context) return null;
 
     const installation = await rateMeQueries.getConnectedRateMeMeta(context.company_id);
     if (!installation) return null;
 
-    let companyLogoUrl = null;
-    if (context.logo_storage_key) {
-        try {
-            companyLogoUrl = await storageService.getPresignedUrl(context.logo_storage_key);
-        } catch (error) {
-            companyLogoUrl = null;
-        }
-    }
-
-    return {
-        company_name: context.company_name,
-        company_logo_url: companyLogoUrl,
-        technician_name: context.technician_name || null,
-        already_rated: Boolean(context.already_rated),
-        five_star_redirect: Boolean(googleReviewUrl(installation.metadata)),
-    };
+    await rateMeQueries.stampGoogleClick(context.id);
+    return { ok: true };
 }
 
 function normalizeFeedback(feedback) {
@@ -568,7 +635,10 @@ module.exports = {
     RateMeServiceError,
     normalizeDomain,
     mintToken,
+    bookingUrl,
+    formatVisitDate,
     getPublicContext,
+    recordGoogleClick,
     submitRating,
     resolveDomainCompany,
     authorizeAskDomain,

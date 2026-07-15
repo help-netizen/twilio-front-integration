@@ -30,184 +30,358 @@ function between(source, start, end) {
     return source.slice(startIndex, endIndex);
 }
 
-describe('RATE-ME-CRM-001 public RatePage structural contracts', () => {
-    test('TC-U1-01 · happy render canon is CRM-free, mobile-first, and branded', () => {
+const GOOGLE_PROMPT_REPLICA = ['Punctuality', 'Clear explanation', 'Tidy work', 'Fair price', 'Friendliness'];
+const FEEDBACK_PROMPT_REPLICA = ['Timing', 'Communication', 'The repair', 'Pricing'];
+
+describe('RATE-ME-CRM-002 seven-screen public RatePage structural contracts', () => {
+    test('TC-RM2-SR-01 · page-state machine follows the GET and POST branch table', () => {
         const source = read(RATE_PAGE_PATH);
-        const imports = source.match(/^import .*;$/gm)?.join('\n') || '';
+        const contextSource = between(source, 'interface RateContext', 'interface RatingResult');
+        const pageStateSource = between(source, 'type PageState', 'const STAR_VALUES');
+        const loadSource = between(source, 'export default function RatePage()', 'const submitRating');
+        const submitSource = between(source, 'const submitRating', 'const handleStarSelect');
+        const selectSource = between(source, 'const handleStarSelect', 'const handleSend');
+        const contextKeys = [...contextSource.matchAll(/^\s{4}([a-z_]+)\??:/gm)].map(match => match[1]);
+        const loadReplica = (status, data, networkError = false) => {
+            if (networkError) return 'load-error';
+            if (status === 404) return 'invalid';
+            if (data.expired === true) return 'expired';
+            if (data.already_rated === true) return 'already-rated';
+            return 'invitation';
+        };
+        const postReplica = (stars, data) => {
+            if (data.already_recorded) return 'already-rated';
+            if (stars === 5 && data.next === 'google_redirect' && data.redirect_url) return 'google-helper';
+            if (data.next === 'thanks') return stars === 5 ? 'happy' : 'feedback-thanks';
+            return 'error';
+        };
 
-        expect(source).toContain('const response = await fetch(endpoint);');
-        expect(source.match(/fetch\(endpoint\)/g)).toHaveLength(1);
-        expect(source).toContain('fetch(`${endpoint}/rating`');
-        expect(source).not.toContain('authedFetch');
-        expect(imports).not.toMatch(/components\/|hooks\/useRealtimeEvents|@tanstack\/react-query|sonner/);
-        expect(source).toContain("'IBM Plex Sans'");
-        expect(source).toContain("'Manrope'");
-        expect(source).toMatch(/width: 52,[\s\S]*height: 52,/);
-        expect(source).toMatch(/minWidth: 44,[\s\S]*minHeight: 44,/);
-        expect(source).toContain('<h1 style={styles.heading}>How did {technicianName} do?</h1>');
-        expect(source).not.toMatch(/Blanc/);
-        expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+        expect(contextKeys).toEqual([
+            'company_name', 'company_logo_url', 'technician_name', 'first_name',
+            'service_label', 'visit_date', 'company_phone', 'company_email',
+            'booking_url', 'five_star_redirect', 'already_rated', 'expired',
+        ]);
+        [
+            'loading', 'invitation', 'google-helper', 'happy', 'feedback',
+            'feedback-thanks', 'already-rated', 'expired', 'invalid', 'load-error',
+        ].forEach(state => expect(pageStateSource).toContain("'" + state + "'"));
+        expect(loadSource).toContain('if (response.status === 404)');
+        expect(loadSource).toContain('if (payload.data.expired === true)');
+        expect(loadSource).toContain("setPageState('expired')");
+        expect(loadSource).toContain("setPageState('already-rated')");
+        expect(loadSource).toContain("setPageState('invitation')");
+        expect(selectSource).toContain('if (stars === 5)');
+        expect(selectSource).toContain('void submitRating(5);');
+        expect(selectSource).toContain("setPageState('feedback')");
+        expect(selectSource.match(/submitRating\(/g)).toHaveLength(1);
+        expect(submitSource).toContain("setPageState('google-helper')");
+        expect(submitSource).toContain("setPageState(stars === 5 ? 'happy' : 'feedback-thanks')");
+        expect(submitSource).toContain("setPageState('already-rated')");
+        expect(submitSource).toContain('if (submitLock.current) return;');
+        expect(submitSource).toContain('submitLock.current = true;');
+        expect(submitSource).toContain('submitLock.current = false;');
+        expect(loadReplica(404, {})).toBe('invalid');
+        expect(loadReplica(200, { expired: true })).toBe('expired');
+        expect(loadReplica(200, { expired: false, already_rated: true })).toBe('already-rated');
+        expect(loadReplica(200, { expired: false, already_rated: false })).toBe('invitation');
+        expect(loadReplica(0, {}, true)).toBe('load-error');
+        expect(postReplica(5, { next: 'google_redirect', redirect_url: 'https://reviews.example/x' })).toBe('google-helper');
+        expect(postReplica(5, { next: 'thanks' })).toBe('happy');
+        expect(postReplica(3, { next: 'thanks' })).toBe('feedback-thanks');
+        expect(postReplica(2, { already_recorded: true, next: 'thanks' })).toBe('already-rated');
 
-        // Manual: open a minted link at 375 px; confirm one-handed stars and no CRM chrome or login UI.
+        // Manual: walk 5★ with/without Google, 3★, replay, already-rated, expired, 404, and network-error paths.
     });
 
-    test('TC-U2-01 · branding has null-logo and failed-image fallbacks', () => {
+    test('TC-RM2-SR-02 · Screen 1 personalizes copy and uses accessible gold stars', () => {
         const source = read(RATE_PAGE_PATH);
+        const invitationSource = between(source, 'function InvitationView', 'function GoogleHelperView');
         const compact = collapse(source);
+        const greetingReplica = firstName => firstName ? 'Hi ' + firstName + ',' : 'Hi there,';
+        const summaryReplica = (service, date) => [service, date].filter(Boolean).join(' · ');
 
+        expect(invitationSource).toContain("context.first_name ? `Hi ${context.first_name},` : 'Hi there,'");
+        expect(invitationSource).toContain("context.technician_name || 'our technician'");
+        expect(invitationSource).toContain("[context.service_label, context.visit_date].filter(Boolean).join(' · ')");
+        expect(invitationSource).toContain('<BrandHeader context={context} />');
+        expect(invitationSource).toContain('<StarPicker');
+        expect(invitationSource).toContain('Tap a star to rate');
+        expect(invitationSource).not.toMatch(/ContactLinks|RebookingBlock|booking_url|Book Visit/);
+        expect(source).toMatch(/minWidth: 44,[\s\S]*minHeight: 44,/);
+        expect(source).toContain("const STAR_FILLED_COLOR = '#E0A72C';");
+        expect(source).toContain("const STAR_EMPTY_COLOR = '#D2D2D0';");
+        expect(source.match(/fetch\(endpoint\)/g)).toHaveLength(1);
         expect(compact).toContain('{context.company_logo_url && !logoFailed && ( <img');
         expect(source).toContain('onError={() => setLogoFailed(true)}');
         expect(source).toContain('[context.company_logo_url]');
-        expect(source.match(/<img/g)).toHaveLength(1);
+        expect(greetingReplica('Sarah')).toBe('Hi Sarah,');
+        expect(greetingReplica(null)).toBe('Hi there,');
+        expect(summaryReplica('Refrigerator repair', null)).toBe('Refrigerator repair');
+        expect(summaryReplica(null, 'Friday, Jul 12')).toBe('Friday, Jul 12');
+        expect(summaryReplica(null, null)).toBe('');
 
-        // Manual: test both a null logo and a broken presigned URL; both must leave a clean name-only header.
+        // Manual: at 375px verify one-handed stars, fallbacks, logo failure, and omitted subline parts.
     });
 
-    test('TC-U3-01 · five stars posts immediately, locks submission, and replace-redirects', () => {
+    test('TC-RM2-SR-03 · Screen 2 is reached only from a 5-star google_redirect result', () => {
         const source = read(RATE_PAGE_PATH);
+        const contextSource = between(source, 'interface RateContext', 'interface RatingResult');
         const submitSource = between(source, 'const submitRating', 'const handleStarSelect');
-        const selectSource = between(source, 'const handleStarSelect', 'const handleSend');
-        const replaced = [];
-        const replica = data => {
-            if (data.next === 'google_redirect' && data.redirect_url) {
-                replaced.push(data.redirect_url);
-                return 'redirect';
-            }
-            return 'thanks';
+        const renderSource = source.slice(source.indexOf('if (!context) return null;'));
+        const outcomeReplica = data => data.next === 'google_redirect' && data.redirect_url ? 'google-helper' : 'happy';
+
+        expect(contextSource).toContain('five_star_redirect?: boolean;');
+        expect(submitSource).toContain("stars === 5 && payload.data.next === 'google_redirect' && payload.data.redirect_url");
+        expect(submitSource).toContain('setRedirectUrl(payload.data.redirect_url);');
+        expect(submitSource).toContain("setPageState('google-helper');");
+        expect(submitSource).toContain("if (payload.data.next === 'thanks')");
+        expect(submitSource).toContain("setPageState(stars === 5 ? 'happy' : 'feedback-thanks')");
+        expect(renderSource).toContain("if (pageState === 'google-helper')");
+        expect(renderSource.match(/<GoogleHelperView/g)).toHaveLength(1);
+        expect(outcomeReplica({ next: 'google_redirect', redirect_url: 'https://reviews.example/x' })).toBe('google-helper');
+        expect(outcomeReplica({ next: 'thanks' })).toBe('happy');
+
+        // Manual: a company without a Google URL must go straight from 5★ to the happy thank-you.
+    });
+
+    test('TC-RM2-SR-04 · Screen 2 beacons, opens a new tab, then shows happy', () => {
+        const source = read(RATE_PAGE_PATH);
+        const handlerSource = between(source, 'const handleGoogleReview', "if (pageState === 'loading')");
+        const order = [
+            handlerSource.indexOf('fetch('),
+            handlerSource.indexOf('window.open('),
+            handlerSource.indexOf("setPageState('happy')"),
+        ];
+        const actions = [];
+        const replica = () => {
+            actions.push('beacon');
+            actions.push(['open', 'https://reviews.example/x', '_blank', 'noopener']);
+            actions.push('happy');
         };
 
-        expect(selectSource).toContain('if (stars === 5) void submitRating(5);');
-        expect(submitSource).toContain('if (submitLock.current) return;');
-        expect(submitSource).toContain('submitLock.current = true;');
-        expect(source).toContain('disabled={submitting}');
-        expect(submitSource).toContain('window.location.replace(payload.data.redirect_url);');
-        expect(source).not.toMatch(/window\.location\.href\s*=|useNavigate|navigate\(/);
-        expect(replica({ next: 'google_redirect', redirect_url: 'https://reviews.example/x' })).toBe('redirect');
-        expect(replaced).toEqual(['https://reviews.example/x']);
+        expect(handlerSource).toMatch(/fetch\(`\$\{endpoint\}\/click`, \{ method: 'POST', keepalive: true \}\)\.catch\(\(\) => \{\}\);/);
+        expect(handlerSource).toContain("window.open(redirectUrl, '_blank', 'noopener');");
+        expect(handlerSource).toContain("setPageState('happy');");
+        expect(handlerSource).not.toMatch(/submitRating|\/rating/);
+        expect(order[0]).toBeGreaterThanOrEqual(0);
+        expect(order[0]).toBeLessThan(order[1]);
+        expect(order[1]).toBeLessThan(order[2]);
+        expect(source).not.toMatch(/window\.location\.replace|location\.href\s*=|useNavigate|navigate\(/);
+        replica();
+        expect(actions).toEqual([
+            'beacon',
+            ['open', 'https://reviews.example/x', '_blank', 'noopener'],
+            'happy',
+        ]);
 
-        // Manual: tap 5 stars, verify immediate navigation, then Back must not reopen the consumed picker.
+        // Manual: Google opens in a NEW tab while the happy screen remains in the original tab.
     });
 
-    test('TC-U4-01 · five stars without a review link falls back to thanks', () => {
+    test('TC-RM2-SR-05 · Screen 3 has personalized thanks, quiet rebooking, and gated contacts', () => {
         const source = read(RATE_PAGE_PATH);
-        const submitSource = between(source, 'const submitRating', 'const handleStarSelect');
-        const outcomeReplica = data => data.next === 'google_redirect' ? 'redirect' : 'thanks';
+        const happySource = between(source, 'function HappyView', 'interface FeedbackViewProps');
+        const signatureSource = between(source, 'function happySignature', 'function HappyView');
+        const contactsSource = between(source, 'function ContactLinks', 'function RebookingBlock');
+        const quietLinkStyle = between(source, '    quietLink: {', '\n    },');
+        const headingReplica = firstName => "You're the best" + (firstName ? ', ' + firstName : '') + '.';
 
-        expect(submitSource).toContain("payload.data.next === 'thanks'");
-        expect(submitSource).toContain("setPageState('thanks')");
-        expect(source).toContain('Thanks! Your feedback means a lot to us.');
-        expect(outcomeReplica({ next: 'thanks' })).toBe('thanks');
+        expect(happySource).toContain("You're the best{context.first_name ? `, ${context.first_name}` : ''}.");
+        expect(happySource).toContain("Thanks for supporting a local team. We're here whenever an appliance acts up.");
+        expect(signatureSource).toContain('context.technician_name');
+        expect(signatureSource).toContain('context.company_name');
+        expect(happySource).toContain('{context.booking_url && (');
+        expect(happySource).toContain('href={context.booking_url}');
+        expect(happySource).toContain('Book your next visit →');
+        expect(happySource).toContain('<ContactLinks context={context} />');
+        expect(happySource).not.toMatch(/primaryButton|primaryLink|Book Visit/);
+        expect(quietLinkStyle).toContain("color: 'var(--blanc-accent)'");
+        expect(contactsSource).toContain('if (!context.company_phone && !context.company_email) return null;');
+        expect(contactsSource).toContain('{context.company_phone && (');
+        expect(contactsSource).toContain('{context.company_email && (');
+        expect(headingReplica('Sarah')).toBe("You're the best, Sarah.");
+        expect(headingReplica(null)).toBe("You're the best.");
 
-        // Manual: use a company without a Google review link; 5 stars must show thanks without an error.
+        // Manual: null each personalization/contact field independently; no dead or awkward row remains.
     });
 
-    test('TC-U5-01 · one to four stars wait for optional feedback and Send', () => {
+    test('TC-RM2-SR-06 · Screen 4 keeps 1–4 stars private until Send', () => {
         const source = read(RATE_PAGE_PATH);
+        const feedbackSource = between(source, 'function FeedbackView', 'function FeedbackThanksView');
         const selectSource = between(source, 'const handleStarSelect', 'const handleSend');
-        const sendSource = between(source, 'const handleSend', "if (pageState === 'loading')");
-        let selected = null;
-        const selectReplica = stars => { selected = stars; };
-        const sendReplica = feedback => ({ stars: selected, feedback });
+        const sendSource = between(source, 'const handleSend', 'const handleGoogleReview');
+        const bodyReplica = (stars, feedback) => ({ stars, feedback });
 
         expect(selectSource).toContain('setSelectedStars(stars);');
+        expect(selectSource).toContain('if (stars === 5)');
+        expect(selectSource).toContain("setPageState('feedback');");
         expect(selectSource.match(/submitRating\(/g)).toHaveLength(1);
-        expect(selectSource).toContain('stars === 5');
-        expect(source).toContain('selectedStars < 5');
-        expect(source).toContain('What could we have done better?');
-        expect(source).toContain('<textarea');
-        expect(sendSource).toContain('submitRating(selectedStars, selectedStars < 5 ? feedback : undefined)');
+        expect(feedbackSource).toContain('<StarPicker');
+        expect(feedbackSource).toContain('compact onSelect={onSelect}');
+        expect(feedbackSource).toContain('Thanks for being straight with us.');
+        expect(feedbackSource).toContain("won't be posted publicly");
+        expect(feedbackSource).toContain('<textarea');
+        expect(feedbackSource).toContain('placeholder="What could we have done better?"');
+        expect(source).toContain("const FEEDBACK_PROMPTS = ['Timing', 'Communication', 'The repair', 'Pricing'];");
+        expect(feedbackSource).toContain('Private — only {context.company_name} sees this');
+        expect(feedbackSource).toContain('Send to the team');
+        expect(feedbackSource).not.toMatch(/ContactLinks|RebookingBlock|booking_url/);
+        expect(sendSource).toContain('submitRating(selectedStars, feedback);');
         expect(source).not.toMatch(/disabled=\{!feedback|feedback\.trim\(\)/);
+        expect(bodyReplica(2, '')).toEqual({ stars: 2, feedback: '' });
 
-        selectReplica(3);
-        selectReplica(2);
-        expect(sendReplica('')).toEqual({ stars: 2, feedback: '' });
-
-        // Manual: choose 3, change to 2, and Send an empty textarea; only the Send click may POST stars=2.
+        // Manual: choose 3 then 2 and Send empty feedback; only Send may POST stars=2.
     });
 
-    test('TC-U6-01 · already-rated context goes directly to the shared thanks view', () => {
+    test('TC-RM2-SR-07 · Screen 5 offers contacts without rebooking', () => {
         const source = read(RATE_PAGE_PATH);
+        const viewSource = between(source, 'function FeedbackThanksView', 'function alreadyRatedMessage');
+        const successStyle = between(source, '    successMark: {', '\n    },');
 
-        expect(source).toContain("setPageState(payload.data.already_rated ? 'thanks' : 'rating')");
-        expect(source).toContain("if (pageState === 'thanks') return <ThanksView context={context} />;");
-        expect(source.indexOf("if (pageState === 'thanks')")).toBeLessThan(source.indexOf('<StarPicker'));
+        expect(viewSource).toContain('Thank you — we hear you.');
+        expect(viewSource).toContain('A manager from {context.company_name} will reach out to make this right.');
+        expect(viewSource).toContain('Prefer to talk now?');
+        expect(viewSource).toContain('<ContactLinks context={context} />');
+        expect(viewSource).not.toMatch(/booking_url|RebookingBlock|Book Visit|primaryLink/);
+        expect(successStyle).toContain("color: 'var(--blanc-success)'");
 
-        // Manual: open an already-rated token and confirm the picker never appears.
+        // Manual: a 2★ path ends on contacts-only recovery copy with no booking action.
     });
 
-    test('TC-U7-01 · replayed POST is success-class and renders thanks', () => {
+    test('TC-RM2-SR-08 · Screen 6 handles GET and POST replays with rebooking, not stars', () => {
         const source = read(RATE_PAGE_PATH);
+        const viewSource = between(source, 'function alreadyRatedMessage', 'function ExpiredView');
+        const rebookingSource = between(source, 'function RebookingBlock', 'interface InvitationViewProps');
+        const loadSource = between(source, 'export default function RatePage()', 'const submitRating');
         const submitSource = between(source, 'const submitRating', 'const handleStarSelect');
 
-        expect(submitSource).toContain("if (payload.data.already_recorded || payload.data.next === 'thanks')");
-        expect(submitSource).toContain("setPageState('thanks')");
+        expect(loadSource).toContain("setPageState('already-rated')");
+        expect(submitSource).toContain('if (payload.data.already_recorded)');
+        expect(submitSource).toContain("setPageState('already-rated')");
+        expect(viewSource).toContain("You've already rated this visit.");
+        expect(viewSource).toContain('Thanks again');
+        expect(viewSource).toContain('context.first_name');
+        expect(viewSource).toContain('context.technician_name');
+        expect(viewSource).toContain('<RebookingBlock context={context} />');
+        expect(viewSource).not.toContain('<StarPicker');
+        expect(rebookingSource).toContain('Need help again?');
+        expect(rebookingSource).toContain('Book your next service anytime');
+        expect(rebookingSource).toContain('{context.booking_url && (');
+        expect(rebookingSource).toContain('Book Visit');
+        expect(rebookingSource).toContain('<ContactLinks context={context} />');
 
-        // Manual: submit from a stale second tab after another device rated; it must show thanks, not an error.
+        // Manual: GET already-rated and stale-tab POST replay both show Screen 6 with no picker.
     });
 
-    test('TC-U8-01 · POST failures preserve selection and re-enable the same retry path', () => {
+    test('TC-RM2-SR-09 · Screen 7 is branded-expired while 404 stays generic', () => {
         const source = read(RATE_PAGE_PATH);
-        const submitSource = between(source, 'const submitRating', 'const handleStarSelect');
-        const catchSource = between(submitSource, '} catch {', '} finally {');
-        const finallySource = submitSource.slice(submitSource.indexOf('} finally {'));
-        const failureReplica = (status, stars) => ({
-            error: status >= 400 ? 'Something went wrong — please try again.' : null,
-            stars,
-            sendDisabled: false,
-        });
-
-        expect(submitSource).toContain('if (!response.ok || payload.ok === false || !payload.data)');
-        expect(catchSource).toContain('setSubmitError(TRANSIENT_ERROR);');
-        expect(catchSource).not.toMatch(/setSelectedStars|setFeedback|location\.replace|setPageState\('thanks'\)/);
-        expect(finallySource).toContain('submitLock.current = false;');
-        expect(finallySource).toContain('setSubmitting(false);');
-        expect(source).toContain("const showSend = showFeedback || (selectedStars === 5 && submitError !== null);");
-        expect(failureReplica(429, 5)).toEqual({
-            error: 'Something went wrong — please try again.',
-            stars: 5,
-            sendDisabled: false,
-        });
-        expect(failureReplica(500, 2).stars).toBe(2);
-
-        // Manual: block or 429 the POST; selection and feedback stay intact and Send becomes usable again.
-    });
-
-    test('TC-U9-01 · direct-load invalid and transient errors are distinct', () => {
-        const source = read(RATE_PAGE_PATH);
-        const loadSource = between(source, 'useEffect(() => {', 'const submitRating');
-        const invalidView = between(source, "if (pageState === 'invalid')", "if (pageState === 'load-error')");
-        const loadErrorView = between(source, "if (pageState === 'load-error')", 'if (!context) return null;');
+        const expiredSource = between(source, 'function ExpiredView', 'export default function RatePage');
+        const loadSource = between(source, 'export default function RatePage()', 'const submitRating');
+        const invalidSource = between(source, "if (pageState === 'invalid')", "if (pageState === 'load-error')");
+        const loadErrorSource = between(source, "if (pageState === 'load-error')", 'if (!context) return null;');
 
         expect(loadSource).toContain('if (response.status === 404)');
         expect(loadSource).toContain("setPageState('invalid')");
-        expect(loadSource).toContain("setPageState('load-error')");
-        expect(invalidView).toContain('This link is no longer available.');
-        expect(invalidView).not.toContain('Try again');
-        expect(loadErrorView).toContain('{TRANSIENT_ERROR}');
-        expect(loadErrorView).toContain('Try again');
-        expect(loadErrorView).toContain('setReloadKey(value => value + 1)');
+        expect(loadSource).toContain('if (payload.data.expired === true)');
+        expect(loadSource.indexOf('payload.data.expired')).toBeLessThan(loadSource.indexOf('payload.data.already_rated'));
+        expect(expiredSource).toContain('This link has expired.');
+        expect(expiredSource).toContain('Rating links stay active for a while after your visit.');
+        expect(expiredSource).toContain('<RebookingBlock context={context} />');
+        expect(expiredSource).toContain('styles.clockMark');
+        expect(invalidSource).toContain('This link is no longer available.');
+        expect(invalidSource).not.toMatch(/context|BrandHeader|RebookingBlock|ContactLinks|booking_url|company_name/);
+        expect(loadErrorSource).toContain('{TRANSIENT_ERROR}');
+        expect(loadErrorSource).toContain('Try again');
+        expect(loadErrorSource).toContain('setReloadKey(value => value + 1)');
 
-        // Manual: a 404 has no retry; offline/network failure has Try again and can recover.
+        // Manual: expired recognized links rebook; random/foreign tokens show only the generic line.
     });
 
-    test('TC-U10-01 · technician name has the required human fallback', () => {
+    test('TC-RM2-SR-10 · prompt chips on Screens 2 and 4 cannot insert text', () => {
         const source = read(RATE_PAGE_PATH);
-        const headingReplica = name => `How did ${name || 'our technician'} do?`;
+        const chipSource = between(source, 'function PromptChips', 'function ContactLinks');
+        const googleSource = between(source, 'function GoogleHelperView', 'function happySignature');
+        const feedbackSource = between(source, 'function FeedbackView', 'function FeedbackThanksView');
+        const textareaValue = 'Customer-written text';
+        const inertClick = () => undefined;
 
-        expect(source).toContain("const technicianName = context.technician_name || 'our technician';");
-        expect(headingReplica('Alex Petrov')).toBe('How did Alex Petrov do?');
-        expect(headingReplica(null)).toBe('How did our technician do?');
+        expect(source).toContain("const GOOGLE_PROMPTS = ['Punctuality', 'Clear explanation', 'Tidy work', 'Fair price', 'Friendliness'];");
+        expect(source).toContain("const FEEDBACK_PROMPTS = ['Timing', 'Communication', 'The repair', 'Pricing'];");
+        expect(chipSource).toContain('<button key={label} type="button" style={styles.chip}>');
+        expect(chipSource).not.toMatch(/onClick|setFeedback|onFeedbackChange|onChange|concat|label\s*\+/);
+        expect(googleSource).toContain('<PromptChips labels={GOOGLE_PROMPTS} />');
+        expect(googleSource).toContain('Just prompts — your own words matter most.');
+        expect(feedbackSource).toContain('<PromptChips labels={FEEDBACK_PROMPTS} />');
+        expect(source.match(/<PromptChips/g)).toHaveLength(2);
+        [...GOOGLE_PROMPT_REPLICA, ...FEEDBACK_PROMPT_REPLICA].forEach(inertClick);
+        expect(textareaValue).toBe('Customer-written text');
 
-        // Manual: compare named and null-technician tokens; both headings must read naturally.
+        // Manual: click every chip on both screens; typed feedback remains byte-for-byte unchanged.
     });
 
-    test('TC-U11-01 · SPA route, auth bypass, and bare-layout pins are exact', () => {
+    test('TC-RM2-SR-11 · stars are gold and all real actions use violet tokens', () => {
+        const source = read(RATE_PAGE_PATH);
+        const hexValues = source.match(/#[0-9a-fA-F]{6}\b/g) || [];
+        const actionStyleNames = ['primaryButton', 'ghostButton', 'quietLink', 'contactLink', 'primaryLink'];
+
+        expect([...new Set(hexValues)].sort()).toEqual(['#D2D2D0', '#E0A72C']);
+        expect(source).toContain('color: active ? STAR_FILLED_COLOR : STAR_EMPTY_COLOR');
+        actionStyleNames.forEach(styleName => {
+            const styleSource = between(source, '    ' + styleName + ': {', '\n    },');
+            expect(styleSource).toContain('var(--blanc-accent)');
+        });
+        ['Write my Google review', 'Send to the team', 'Book Visit', 'Book your next visit →']
+            .forEach(label => expect(source).toContain(label));
+        expect(source).not.toMatch(/Blanc/);
+        expect(source).toContain("'IBM Plex Sans'");
+        expect(source).toContain("'Manrope'");
+
+        // Manual: light/dark screens show gold stars and violet actions, with no rendered legacy name.
+    });
+
+    test('TC-RM2-SR-12 · booking and contacts obey the seven-screen placement matrix', () => {
+        const source = read(RATE_PAGE_PATH);
+        const invitationSource = between(source, 'function InvitationView', 'function GoogleHelperView');
+        const googleSource = between(source, 'function GoogleHelperView', 'function happySignature');
+        const happySource = between(source, 'function HappyView', 'interface FeedbackViewProps');
+        const feedbackSource = between(source, 'function FeedbackView', 'function FeedbackThanksView');
+        const feedbackThanksSource = between(source, 'function FeedbackThanksView', 'function alreadyRatedMessage');
+        const alreadySource = between(source, 'function AlreadyRatedView', 'function ExpiredView');
+        const expiredSource = between(source, 'function ExpiredView', 'export default function RatePage');
+        const rebookingSource = between(source, 'function RebookingBlock', 'interface InvitationViewProps');
+        const contactsSource = between(source, 'function ContactLinks', 'function RebookingBlock');
+
+        [invitationSource, googleSource, feedbackSource].forEach(screen => {
+            expect(screen).not.toMatch(/ContactLinks|RebookingBlock|booking_url|Book Visit/);
+        });
+        expect(happySource).toContain('{context.booking_url && (');
+        expect(happySource).toContain('Book your next visit →');
+        expect(happySource).toContain('<ContactLinks context={context} />');
+        expect(feedbackThanksSource).toContain('<ContactLinks context={context} />');
+        expect(feedbackThanksSource).not.toMatch(/booking_url|RebookingBlock|Book Visit/);
+        expect(alreadySource).toContain('<RebookingBlock context={context} />');
+        expect(expiredSource).toContain('<RebookingBlock context={context} />');
+        expect(rebookingSource).toContain('{context.booking_url && (');
+        expect(rebookingSource).toContain('<ContactLinks context={context} />');
+        expect(contactsSource).toContain('{context.company_phone && (');
+        expect(contactsSource).toContain('{context.company_email && (');
+
+        // Manual: sweep all screens with each URL/contact null; no dead affordance or empty row renders.
+    });
+
+    test('TC-RM2-SR-13 · SPA bypass and CRM-free raw-fetch boundaries remain pinned', () => {
+        const source = read(RATE_PAGE_PATH);
+        const imports = source.match(/^import .*;$/gm)?.join('\n') || '';
         const appSource = read(APP_PATH);
         const appCompact = collapse(appSource);
         const authSource = read(AUTH_PROVIDER_PATH);
         const layoutSource = read(APP_LAYOUT_PATH);
-        const protectedSources = `${read(API_CLIENT_PATH)}\n${read(REALTIME_PATH)}`;
+        const protectedSources = read(API_CLIENT_PATH) + '\n' + read(REALTIME_PATH);
 
+        expect(source).toContain('const response = await fetch(endpoint);');
+        expect(source).toMatch(/fetch\(`\$\{endpoint\}\/rating`/);
+        expect(source).toMatch(/fetch\(`\$\{endpoint\}\/click`/);
+        expect(source).not.toContain('authedFetch');
+        expect(imports).not.toMatch(/components\/|hooks\/useRealtimeEvents|@tanstack\/react-query|sonner/);
         expect(appCompact).toContain('<Route path="/e/:token" element={<PublicEstimateViewPage />} /> <Route path="/r/:token" element={<RatePage />} />');
         expect(appSource).not.toMatch(/path=["']\*["']/);
         expect(authSource).toContain("const PUBLIC_AUTH_PATHS = ['/signup', '/pay', '/e', '/r/'];");
@@ -215,8 +389,7 @@ describe('RATE-ME-CRM-001 public RatePage structural contracts', () => {
         expect(layoutSource).toContain("location.pathname.startsWith('/r/')");
         expect(protectedSources).not.toMatch(/rate-me|RateMe|\/r\//);
 
-        // Manual: direct-load /r/<token> on an app host; expect no Keycloak redirect or CRM chrome.
-        // Manual empty-token edge: /r/ stays a blank bare page because there is no catch-all route.
+        // Manual: direct-load /r/<token>; expect no Keycloak redirect, CRM chrome, React Query, or SSE.
     });
 });
 
@@ -293,7 +466,8 @@ describe('RATE-ME-CRM-001 settings dialog structural contracts', () => {
         expect(customRadio).toContain('checked={customHosting}');
         expect(customRadio).toContain('setCustomDraftOpen(true)');
         expect(`${albustoRadio}\n${customRadio}`).not.toMatch(/setRateMeDomain|verifyRateMeDomain|removeRateMeDomain|\.mutate\(/);
-        expect(saveHandler).toContain('saveMutation.mutate({ google_review_url: googleReviewUrl.trim() || null });');
+        expect(saveHandler).toContain('google_review_url: googleReviewUrl.trim() || null,');
+        expect(saveHandler).toContain('booking_url: bookingUrl.trim() || null,');
         expect(saveHandler).not.toMatch(/Domain|domain/);
         expect(source).toContain('mutationFn: removeRateMeDomain');
         expect(source).toContain('onClick={() => removeDomainMutation.mutate()}');
@@ -443,5 +617,119 @@ describe('RATE-ME-CRM-001 Caddy and deployment reference contracts', () => {
         orderedSteps.forEach((step, index) => {
             expect(section.indexOf(step)).toBeGreaterThan(index === 0 ? -1 : section.indexOf(orderedSteps[index - 1]));
         });
+    });
+});
+
+// RM2-T7 — APPEND ONLY: T6 owns the harness and TC-RM2-SR-01..13 above.
+describe('RATE-ME-CRM-002 Job-card Rate Me structural contract', () => {
+    test('TC-RM2-SR-14 · Job-card timeline, send-link panel, and authenticated jobs clients are pinned', () => {
+        const blockSource = read('frontend/src/components/jobs/JobRateMeBlock.tsx');
+        const modalSource = read('frontend/src/components/jobs/RateLinkModal.tsx');
+        const jobStatusSource = read('frontend/src/components/jobs/JobStatusTags.tsx');
+        const jobsApiSource = read('frontend/src/services/jobsApi.ts');
+        const actionBand = between(jobStatusSource, '{/* ── JOB-ACTIONS-SLIM-001', '{/* ── ONWAY-001: "On the way" modal');
+
+        expect(blockSource).toContain("queryKey: ['job-rate-status', jobId]");
+        expect(blockSource).toContain('queryFn: () => getRateStatus(jobId)');
+        expect(blockSource).toContain('status.sent_at &&');
+        expect(blockSource).toContain('status.opened_at &&');
+        expect(blockSource).toContain('status.rating?.created_at &&');
+        expect(blockSource).toContain('status.google_click_at &&');
+        expect(blockSource).toContain('Rating link sent · via');
+        expect(blockSource).toContain('label="Opened"');
+        expect(blockSource).toContain('Rated ★');
+        expect(blockSource).toContain('label="Opened Google review"');
+        expect(blockSource).toContain('Send rating link');
+        expect(blockSource).toContain("style={{ backgroundColor: 'var(--blanc-accent)' }}");
+        expect(blockSource).toContain('await statusQuery.refetch();');
+        expect(blockSource).toContain('onSuccess={refreshAfterSend}');
+
+        expect(modalSource).toContain('<DialogContent variant="panel">');
+        expect(modalSource).toContain('<DialogPanelHeader>');
+        expect(modalSource).toContain('<DialogBody className="md:px-8 md:py-7">');
+        expect(modalSource).toContain('className="mx-auto w-full max-w-[740px] space-y-6"');
+        expect(modalSource).toContain('<DialogPanelFooter>');
+        expect(modalSource).not.toContain('variant="dialog"');
+        expect(modalSource).toContain("setChannel('sms')");
+        expect(modalSource).toContain("setChannel('email')");
+        expect(modalSource).toContain("setChannel('copy')");
+        expect(modalSource).toContain('disabled={!hasPhone || sending}');
+        expect(modalSource).toContain('disabled={!hasEmail || sending}');
+        expect(modalSource).toContain('No customer phone on file');
+        expect(modalSource).toContain('No customer email on file');
+        expect(modalSource).toContain('const result = await sendRateLink(jobId, channel);');
+        expect(modalSource).toContain('navigator.clipboard.writeText(result.url)');
+        expect(modalSource).toContain("toast.success('Rating link copied.')");
+        ['WALLET_BLOCKED', 'SMS_FAILED', 'NO_PHONE', 'NO_EMAIL', 'MAIL_DISCONNECTED'].forEach(code => {
+            expect(modalSource).toContain(`code === '${code}'`);
+        });
+        expect(modalSource).toContain('error instanceof RateLinkError');
+
+        expect(actionBand).toContain('<JobRateMeBlock');
+        expect(actionBand).toContain('jobId={job.id}');
+        expect(actionBand).toContain('customerPhone={job.customer_phone}');
+        expect(actionBand).toContain('customerEmail={job.customer_email}');
+        expect(actionBand).toContain("canSend={hasPermission('messages.send')}");
+        expect(actionBand).toContain('onSent={onNotified}');
+
+        expect(jobsApiSource).toContain("import { authedFetch } from './apiClient';");
+        expect(jobsApiSource).toContain('export class RateLinkError extends Error');
+        expect(jobsApiSource).toContain('export async function getRateStatus(jobId: number)');
+        expect(jobsApiSource).toContain('`${JOBS_BASE}/${jobId}/rate-status`');
+        expect(jobsApiSource).toContain('export async function sendRateLink(jobId: number, channel: RateLinkChannel)');
+        expect(jobsApiSource).toContain('`${JOBS_BASE}/${jobId}/rate-link`');
+        expect(jobsApiSource).toContain("method: 'POST'");
+        expect(jobsApiSource).toContain('body: JSON.stringify({ channel })');
+        expect(`${blockSource}\n${modalSource}`).not.toMatch(/Blanc/);
+        expect(`${blockSource}\n${modalSource}`).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+
+        // Manual: open a job, verify reached-only steps, and exercise SMS/Email/Copy plus error toasts.
+    });
+});
+
+// RM2-T8 — APPEND ONLY: settings coverage after T6's screens and T7's SR-14 block.
+describe('RATE-ME-CRM-002 Rate Me settings structural contract', () => {
+    test('TC-RM2-SR-15 · booking URL field and full settings payload are pinned', () => {
+        const dialogSource = read('frontend/src/pages/RateMeSettingsDialog.tsx');
+        const apiSource = read('frontend/src/services/marketplaceApi.ts');
+        const saveHandler = between(dialogSource, 'const handleSave = () => {', 'const handleSaveDomain');
+        const linksSection = between(dialogSource, '<div className="blanc-eyebrow">RATING PAGE LINKS</div>', '</section>');
+        const fullPayloadReplica = (googleReviewUrl, bookingUrl) => ({
+            google_review_url: googleReviewUrl.trim() || null,
+            booking_url: bookingUrl.trim() || null,
+        });
+
+        expect(dialogSource).toContain("const [bookingUrl, setBookingUrl] = useState('');");
+        expect(dialogSource).toContain("setBookingUrl(settingsQuery.data.settings.booking_url || '');");
+        expect(linksSection).toContain('className="grid grid-cols-1 gap-3.5 sm:grid-cols-2"');
+        expect(linksSection).toContain('id="rate-me-google-review-url"');
+        expect(linksSection).toContain('label="Google review link"');
+        expect(linksSection).toContain('id="rate-me-booking-url"');
+        expect(linksSection).toContain('label="Booking page URL"');
+        expect(linksSection).toContain('value={bookingUrl}');
+        expect(linksSection).toContain('onChange={event => setBookingUrl(event.target.value)}');
+        expect(linksSection).toContain("Where 'Book Visit' sends customers from the rating page.");
+        expect(linksSection.match(/Use an HTTPS URL up to 500 characters\./g)).toHaveLength(2);
+
+        expect(saveHandler).toContain('saveMutation.mutate({');
+        expect(saveHandler).toContain('google_review_url: googleReviewUrl.trim() || null,');
+        expect(saveHandler).toContain('booking_url: bookingUrl.trim() || null,');
+        expect(fullPayloadReplica(' https://g.page/r/review ', ' https://book.example/visit ')).toEqual({
+            google_review_url: 'https://g.page/r/review',
+            booking_url: 'https://book.example/visit',
+        });
+        expect(fullPayloadReplica('', '   ')).toEqual({ google_review_url: null, booking_url: null });
+
+        expect(apiSource).toContain('google_review_url: string | null;');
+        expect(apiSource).toContain('booking_url: string | null;');
+        expect(apiSource).toContain("export async function fetchRateMeSettings(): Promise<RateMeSettingsResponse>");
+        expect(apiSource).toContain("saveRateMeSettings(settings: RateMeSettingsResponse['settings'])");
+        expect(apiSource).toContain('body: JSON.stringify(settings)');
+        expect(dialogSource).toContain('<DialogContent variant="panel">');
+        expect(dialogSource).not.toContain('variant="dialog"');
+        expect(`${dialogSource}\n${apiSource}`).not.toMatch(/Blanc/);
+        expect(`${dialogSource}\n${apiSource}`).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+
+        // Manual: save, reopen, and clear Booking URL while confirming the Google link survives each save.
     });
 });

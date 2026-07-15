@@ -19,6 +19,8 @@ const TAG = `RM-${Date.now()}-${process.pid}`;
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const MIGRATION_FILE = '177_rate_me.sql';
 const ROLLBACK_FILE = 'rollback_177_rate_me.sql';
+const ATTRIBUTION_MIGRATION_FILE = '179_rate_token_attribution.sql';
+const ATTRIBUTION_ROLLBACK_FILE = 'rollback_179_rate_token_attribution.sql';
 const QUERY_FILE = path.join(__dirname, '..', 'backend', 'src', 'db', 'rateMeQueries.js');
 
 const fixtureCompanyIds = new Set();
@@ -69,6 +71,20 @@ async function withTxn(work) {
     }
 }
 
+async function withRateMeQueriesUsing(client, work) {
+    const originalQuery = db.query;
+    db.query = (text, params) => client.query(text, params);
+    try {
+        return await work();
+    } finally {
+        db.query = originalQuery;
+    }
+}
+
+function normalizeWhitespace(value) {
+    return value.replace(/\s+/g, ' ').trim();
+}
+
 async function insertCompany(queryable, label) {
     const companyId = randomUUID();
     fixtureCompanyIds.add(companyId);
@@ -102,6 +118,9 @@ beforeAll(async () => {
         const migration = readMigration(MIGRATION_FILE);
         await db.query(migration);
         await db.query(migration);
+        const attributionMigration = readMigration(ATTRIBUTION_MIGRATION_FILE);
+        await db.query(attributionMigration);
+        await db.query(attributionMigration);
         dbReady = true;
     } catch (error) {
         console.warn('\n[rateMe.db] SKIPPED-NEEDS-DB —', error.message, '\n');
@@ -664,5 +683,483 @@ describe('RATE-ME-CRM-001 real-SQL isolation', () => {
                 [[companyA, companyB]]
             );
         }
+    });
+});
+
+describe('RATE-ME-CRM-002 migration 178 and attribution queries · real PostgreSQL', () => {
+    test('TC-RM2-DB-01 · migration columns, double-apply, rollback, and re-apply', async () => {
+        const migration = readMigration(ATTRIBUTION_MIGRATION_FILE);
+        const rollback = readMigration(ATTRIBUTION_ROLLBACK_FILE);
+        const normalizedMigration = normalizeWhitespace(migration);
+
+        expect(path.basename(path.join(MIGRATIONS_DIR, ATTRIBUTION_MIGRATION_FILE)))
+            .toBe('179_rate_token_attribution.sql');
+        expect(path.basename(path.join(MIGRATIONS_DIR, ATTRIBUTION_ROLLBACK_FILE)))
+            .toBe('rollback_179_rate_token_attribution.sql');
+        for (const definition of [
+            'opened_at TIMESTAMPTZ NULL',
+            'google_click_at TIMESTAMPTZ NULL',
+            'sent_at TIMESTAMPTZ NULL',
+            'sent_via TEXT NULL',
+        ]) {
+            expect(normalizedMigration).toContain(
+                `ALTER TABLE rate_tokens ADD COLUMN IF NOT EXISTS ${definition}`
+            );
+        }
+        expect(migration).not.toMatch(/booking_url/i);
+        expect(migration).not.toMatch(/CREATE\s+(?:UNIQUE\s+)?INDEX/i);
+
+        const sentViaDrop = rollback.indexOf('DROP COLUMN IF EXISTS sent_via');
+        const sentAtDrop = rollback.indexOf('DROP COLUMN IF EXISTS sent_at');
+        const clickDrop = rollback.indexOf('DROP COLUMN IF EXISTS google_click_at');
+        const openedDrop = rollback.indexOf('DROP COLUMN IF EXISTS opened_at');
+        expect(sentViaDrop).toBeGreaterThanOrEqual(0);
+        expect(sentViaDrop).toBeLessThan(sentAtDrop);
+        expect(sentAtDrop).toBeLessThan(clickDrop);
+        expect(clickDrop).toBeLessThan(openedDrop);
+
+        if (!dbReady) return skipNeedsDb('TC-RM2-DB-01');
+
+        await withTxn(async client => {
+            const columnsResult = await client.query(
+                `SELECT column_name, data_type, is_nullable
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'rate_tokens'
+                   AND column_name = ANY($1::text[])`,
+                [['opened_at', 'google_click_at', 'sent_at', 'sent_via']]
+            );
+            const columns = new Map(columnsResult.rows.map(row => [row.column_name, row]));
+            for (const timestampColumn of ['opened_at', 'google_click_at', 'sent_at']) {
+                expect(columns.get(timestampColumn)).toMatchObject({
+                    data_type: 'timestamp with time zone',
+                    is_nullable: 'YES',
+                });
+            }
+            expect(columns.get('sent_via')).toMatchObject({
+                data_type: 'text',
+                is_nullable: 'YES',
+            });
+
+            await client.query(rollback);
+            const afterRollback = await client.query(
+                `SELECT column_name
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'rate_tokens'`
+            );
+            const remainingColumns = afterRollback.rows.map(row => row.column_name);
+            expect(remainingColumns).toEqual(expect.arrayContaining([
+                'token',
+                'job_id',
+                'used_at',
+            ]));
+            for (const droppedColumn of [
+                'opened_at',
+                'google_click_at',
+                'sent_at',
+                'sent_via',
+            ]) {
+                expect(remainingColumns).not.toContain(droppedColumn);
+            }
+            const tableSurvives = await client.query(
+                `SELECT to_regclass('public.rate_tokens') IS NOT NULL AS present`
+            );
+            expect(tableSurvives.rows[0].present).toBe(true);
+
+            await client.query(migration);
+            await client.query(migration);
+            const restored = await client.query(
+                `SELECT COUNT(*)::int AS count
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'rate_tokens'
+                   AND column_name = ANY($1::text[])`,
+                [['opened_at', 'google_click_at', 'sent_at', 'sent_via']]
+            );
+            expect(restored.rows[0].count).toBe(4);
+        });
+    });
+
+    test('TC-RM2-DB-02 · live context personalization joins preserve host and expiry filters', async () => {
+        const source = fs.readFileSync(QUERY_FILE, 'utf8');
+        expect(source).toContain(
+            `         WHERE t.token = $1
+           AND ($2::uuid IS NULL OR t.company_id = $2)
+           AND (t.expires_at IS NULL OR t.expires_at > NOW())`
+        );
+        expect(source).toMatch(/LEFT JOIN jobs\s+j ON j\.id = t\.job_id/);
+        expect(source).toMatch(/LEFT JOIN contacts\s+ct ON ct\.id = j\.contact_id/);
+        expect(source).toMatch(/ct\.first_name AS contact_first_name/);
+        expect(source).toMatch(/c\.timezone AS company_timezone/);
+        expect(source).toMatch(/c\.contact_phone AS company_phone/);
+        expect(source).toMatch(/c\.contact_email AS company_email/);
+
+        if (!dbReady) return skipNeedsDb('TC-RM2-DB-02');
+
+        await withTxn(async client => {
+            const companyA = await insertCompany(client, 'rm2-context-a');
+            const companyB = await insertCompany(client, 'rm2-context-b');
+            await client.query(
+                `UPDATE companies
+                 SET timezone = 'America/New_York',
+                     contact_phone = '+16175551234',
+                     contact_email = 'hello@bostonmasters.example'
+                 WHERE id = $1`,
+                [companyA]
+            );
+            const contact = await client.query(
+                `INSERT INTO contacts (company_id, full_name, first_name)
+                 VALUES ($1, 'Sarah Chen', 'Sarah')
+                 RETURNING id`,
+                [companyA]
+            );
+            const job = await client.query(
+                `INSERT INTO jobs
+                    (company_id, contact_id, zenbooker_job_id, service_name,
+                     start_date, customer_name)
+                 VALUES ($1, $2, $3, 'Refrigerator repair',
+                         '2026-07-12T14:00:00.000Z', 'Sarah Chen')
+                 RETURNING id`,
+                [companyA, contact.rows[0].id, `${TAG}-rm2-context`]
+            );
+            const linkedToken = fixtureToken();
+            const detachedToken = fixtureToken();
+            const expiredToken = fixtureToken();
+            await client.query(
+                `INSERT INTO rate_tokens
+                    (company_id, token, job_id, tech_id, tech_name)
+                 VALUES ($1, $2, $3, 'zb-context', 'Alex Snapshot'),
+                        ($1, $4, NULL, 'zb-detached', 'Detached Snapshot')`,
+                [companyA, linkedToken, job.rows[0].id, detachedToken]
+            );
+            await client.query(
+                `INSERT INTO rate_tokens
+                    (company_id, token, job_id, tech_id, expires_at)
+                 VALUES ($1, $2, $3, 'zb-expired-context', NOW() - INTERVAL '1 hour')`,
+                [companyA, expiredToken, job.rows[0].id]
+            );
+
+            await withRateMeQueriesUsing(client, async () => {
+                const context = await rateMeQueries.getTokenContext(linkedToken, null);
+                expect(context).toMatchObject({
+                    company_id: companyA,
+                    service_name: 'Refrigerator repair',
+                    customer_name: 'Sarah Chen',
+                    contact_first_name: 'Sarah',
+                    company_timezone: 'America/New_York',
+                    company_phone: '+16175551234',
+                    company_email: 'hello@bostonmasters.example',
+                    technician_name: 'Alex Snapshot',
+                    already_rated: false,
+                });
+                expect(context.start_date.toISOString()).toBe('2026-07-12T14:00:00.000Z');
+                expect(await rateMeQueries.getTokenContext(linkedToken, companyB))
+                    .toBeUndefined();
+                expect(await rateMeQueries.getTokenContext(expiredToken, null))
+                    .toBeUndefined();
+
+                const detached = await rateMeQueries.getTokenContext(detachedToken, null);
+                expect(detached).toMatchObject({
+                    company_id: companyA,
+                    service_name: null,
+                    start_date: null,
+                    customer_name: null,
+                    contact_first_name: null,
+                });
+            });
+        });
+    });
+
+    test('TC-RM2-DB-03 · expired branding requires an expired host-bound token', async () => {
+        const source = fs.readFileSync(QUERY_FILE, 'utf8');
+        expect(source).toMatch(/async function getExpiredTokenBranding/);
+        expect(source).toMatch(/t\.expires_at IS NOT NULL\s+AND t\.expires_at <= NOW\(\)/);
+        expect(source).toMatch(/\$2::uuid IS NULL OR t\.company_id = \$2/);
+
+        if (!dbReady) return skipNeedsDb('TC-RM2-DB-03');
+
+        await withTxn(async client => {
+            const companyA = await insertCompany(client, 'rm2-expired-a');
+            const companyB = await insertCompany(client, 'rm2-expired-b');
+            await client.query(
+                `UPDATE companies
+                 SET logo_storage_key = 'logos/rm2-expired.png',
+                     contact_phone = '+16175559876',
+                     contact_email = 'expired@bostonmasters.example'
+                 WHERE id = $1`,
+                [companyA]
+            );
+            const expiredToken = fixtureToken();
+            const liveToken = fixtureToken();
+            await client.query(
+                `INSERT INTO rate_tokens
+                    (company_id, token, tech_id, expires_at)
+                 VALUES ($1, $2, 'zb-expired', NOW() - INTERVAL '1 hour'),
+                        ($1, $3, 'zb-live', NOW() + INTERVAL '1 hour')`,
+                [companyA, expiredToken, liveToken]
+            );
+
+            await withRateMeQueriesUsing(client, async () => {
+                const branding = await rateMeQueries.getExpiredTokenBranding(expiredToken, null);
+                expect(branding).toEqual({
+                    company_id: companyA,
+                    company_name: `Rate Me ${TAG} rm2-expired-a`,
+                    logo_storage_key: 'logos/rm2-expired.png',
+                    contact_phone: '+16175559876',
+                    contact_email: 'expired@bostonmasters.example',
+                });
+                expect(Object.keys(branding).sort()).toEqual([
+                    'company_id',
+                    'company_name',
+                    'contact_email',
+                    'contact_phone',
+                    'logo_storage_key',
+                ]);
+                expect(await rateMeQueries.getExpiredTokenBranding(liveToken, null)).toBeNull();
+                expect(await rateMeQueries.getExpiredTokenBranding(expiredToken, companyB))
+                    .toBeNull();
+                expect(await rateMeQueries.getExpiredTokenBranding(fixtureToken(), null))
+                    .toBeNull();
+            });
+        });
+    });
+
+    test('TC-RM2-DB-04 · opened_at is stamped only on the first open', async () => {
+        const source = normalizeWhitespace(fs.readFileSync(QUERY_FILE, 'utf8'));
+        expect(source).toContain(
+            'UPDATE rate_tokens SET opened_at = NOW() WHERE id = $1 AND opened_at IS NULL'
+        );
+
+        if (!dbReady) return skipNeedsDb('TC-RM2-DB-04');
+
+        await withTxn(async client => {
+            const companyId = await insertCompany(client, 'rm2-opened');
+            const token = await client.query(
+                `INSERT INTO rate_tokens (company_id, token, tech_id)
+                 VALUES ($1, $2, 'zb-opened')
+                 RETURNING id`,
+                [companyId, fixtureToken()]
+            );
+            const tokenId = token.rows[0].id;
+
+            const first = await rateMeQueries.stampTokenOpened(tokenId, client);
+            expect(first.opened_at).not.toBeNull();
+            const beforeSecond = await client.query(
+                `SELECT opened_at FROM rate_tokens WHERE id = $1`,
+                [tokenId]
+            );
+            const second = await rateMeQueries.stampTokenOpened(tokenId, client);
+            expect(second).toBeUndefined();
+            const afterSecond = await client.query(
+                `SELECT opened_at FROM rate_tokens WHERE id = $1`,
+                [tokenId]
+            );
+            expect(afterSecond.rows[0].opened_at.getTime())
+                .toBe(beforeSecond.rows[0].opened_at.getTime());
+        });
+    });
+
+    test('TC-RM2-DB-05 · google_click_at is first-click-wins', async () => {
+        const source = normalizeWhitespace(fs.readFileSync(QUERY_FILE, 'utf8'));
+        expect(source).toContain(
+            'UPDATE rate_tokens SET google_click_at = NOW() WHERE id = $1 AND google_click_at IS NULL'
+        );
+
+        if (!dbReady) return skipNeedsDb('TC-RM2-DB-05');
+
+        await withTxn(async client => {
+            const companyId = await insertCompany(client, 'rm2-click');
+            const token = await client.query(
+                `INSERT INTO rate_tokens (company_id, token, tech_id)
+                 VALUES ($1, $2, 'zb-click')
+                 RETURNING id`,
+                [companyId, fixtureToken()]
+            );
+            const tokenId = token.rows[0].id;
+
+            const first = await rateMeQueries.stampGoogleClick(tokenId, client);
+            expect(first.google_click_at).not.toBeNull();
+            const beforeSecond = await client.query(
+                `SELECT google_click_at FROM rate_tokens WHERE id = $1`,
+                [tokenId]
+            );
+            const second = await rateMeQueries.stampGoogleClick(tokenId, client);
+            expect(second).toBeUndefined();
+            const afterSecond = await client.query(
+                `SELECT google_click_at FROM rate_tokens WHERE id = $1`,
+                [tokenId]
+            );
+            expect(afterSecond.rows[0].google_click_at.getTime())
+                .toBe(beforeSecond.rows[0].google_click_at.getTime());
+        });
+    });
+
+    test('TC-RM2-DB-06 · sent stamp overwrites by token only inside its company', async () => {
+        const source = normalizeWhitespace(fs.readFileSync(QUERY_FILE, 'utf8'));
+        expect(source).toContain(
+            'UPDATE rate_tokens SET sent_at = NOW(), sent_via = $3 WHERE token = $1 AND company_id = $2'
+        );
+
+        if (!dbReady) return skipNeedsDb('TC-RM2-DB-06');
+
+        await withTxn(async client => {
+            const companyA = await insertCompany(client, 'rm2-sent-a');
+            const companyB = await insertCompany(client, 'rm2-sent-b');
+            const tokenValue = fixtureToken();
+            const token = await client.query(
+                `INSERT INTO rate_tokens (company_id, token, tech_id)
+                 VALUES ($1, $2, 'zb-sent')
+                 RETURNING id`,
+                [companyA, tokenValue]
+            );
+            const tokenId = token.rows[0].id;
+
+            const first = await rateMeQueries.stampTokenSent(
+                tokenValue,
+                companyA,
+                'sms',
+                client
+            );
+            expect(first).toMatchObject({ sent_via: 'sms' });
+            expect(first.sent_at).not.toBeNull();
+
+            await client.query(
+                `UPDATE rate_tokens
+                 SET sent_at = '2000-01-01T00:00:00.000Z'
+                 WHERE id = $1`,
+                [tokenId]
+            );
+            const second = await rateMeQueries.stampTokenSent(
+                tokenValue,
+                companyA,
+                'email',
+                client
+            );
+            expect(second).toMatchObject({ sent_via: 'email' });
+            expect(second.sent_at.getTime())
+                .toBeGreaterThan(new Date('2000-01-01T00:00:00.000Z').getTime());
+
+            const beforeForeignStamp = await client.query(
+                `SELECT sent_at, sent_via FROM rate_tokens WHERE id = $1`,
+                [tokenId]
+            );
+            const foreignStamp = await rateMeQueries.stampTokenSent(
+                tokenValue,
+                companyB,
+                'copy',
+                client
+            );
+            expect(foreignStamp).toBeUndefined();
+            const afterForeignStamp = await client.query(
+                `SELECT sent_at, sent_via FROM rate_tokens WHERE id = $1`,
+                [tokenId]
+            );
+            expect(afterForeignStamp.rows[0]).toEqual(beforeForeignStamp.rows[0]);
+        });
+    });
+
+    test('TC-RM2-DB-07 · status uses newest token events and job-scoped rating', async () => {
+        const source = normalizeWhitespace(fs.readFileSync(QUERY_FILE, 'utf8'));
+        expect(source).toContain(
+            'FROM rate_tokens WHERE company_id = $1 AND job_id = $2 ORDER BY created_at DESC LIMIT 1'
+        );
+        expect(source).toContain(
+            'FROM technician_ratings WHERE company_id = $1 AND job_id = $2 ORDER BY created_at DESC LIMIT 1'
+        );
+
+        if (!dbReady) return skipNeedsDb('TC-RM2-DB-07');
+
+        await withTxn(async client => {
+            const companyA = await insertCompany(client, 'rm2-status-a');
+            const companyB = await insertCompany(client, 'rm2-status-b');
+            const jobA = await client.query(
+                `INSERT INTO jobs (company_id, zenbooker_job_id)
+                 VALUES ($1, $2)
+                 RETURNING id`,
+                [companyA, `${TAG}-rm2-status-a`]
+            );
+            const jobB = await client.query(
+                `INSERT INTO jobs (company_id, zenbooker_job_id)
+                 VALUES ($1, $2)
+                 RETURNING id`,
+                [companyB, `${TAG}-rm2-status-b`]
+            );
+            const ratedToken = await client.query(
+                `INSERT INTO rate_tokens
+                    (company_id, token, job_id, tech_id, created_at,
+                     sent_at, sent_via, opened_at)
+                 VALUES ($1, $2, $3, 'zb-status-rated',
+                         '2025-01-01T00:00:00.000Z',
+                         '2025-01-01T01:00:00.000Z', 'sms',
+                         '2025-01-01T02:00:00.000Z')
+                 RETURNING id`,
+                [companyA, fixtureToken(), jobA.rows[0].id]
+            );
+            await client.query(
+                `INSERT INTO technician_ratings
+                    (company_id, rate_token_id, job_id, tech_id, stars, created_at)
+                 VALUES ($1, $2, $3, 'zb-status-rated', 5,
+                         '2025-01-01T03:00:00.000Z')`,
+                [companyA, ratedToken.rows[0].id, jobA.rows[0].id]
+            );
+            await client.query(
+                `INSERT INTO rate_tokens
+                    (company_id, token, job_id, tech_id, created_at,
+                     sent_at, sent_via, opened_at, google_click_at)
+                 VALUES ($1, $2, $3, 'zb-status-new',
+                         '2025-01-02T00:00:00.000Z',
+                         '2025-01-02T01:00:00.000Z', 'email',
+                         '2025-01-02T02:00:00.000Z',
+                         '2025-01-02T03:00:00.000Z')`,
+                [companyA, fixtureToken(), jobA.rows[0].id]
+            );
+            const foreignToken = await client.query(
+                `INSERT INTO rate_tokens
+                    (company_id, token, job_id, tech_id, created_at, sent_at, sent_via)
+                 VALUES ($1, $2, $3, 'zb-status-foreign',
+                         '2025-02-01T00:00:00.000Z',
+                         '2025-02-01T01:00:00.000Z', 'copy')
+                 RETURNING id`,
+                [companyB, fixtureToken(), jobB.rows[0].id]
+            );
+            await client.query(
+                `INSERT INTO technician_ratings
+                    (company_id, rate_token_id, job_id, tech_id, stars, created_at)
+                 VALUES ($1, $2, $3, 'zb-status-foreign', 1,
+                         '2025-02-01T02:00:00.000Z')`,
+                [companyB, foreignToken.rows[0].id, jobB.rows[0].id]
+            );
+
+            await withRateMeQueriesUsing(client, async () => {
+                const status = await rateMeQueries.getJobRateStatus(
+                    companyA,
+                    jobA.rows[0].id
+                );
+                expect(status).toMatchObject({
+                    has_token: true,
+                    sent_via: 'email',
+                    rating: { stars: 5 },
+                });
+                expect(status.sent_at.toISOString()).toBe('2025-01-02T01:00:00.000Z');
+                expect(status.opened_at.toISOString()).toBe('2025-01-02T02:00:00.000Z');
+                expect(status.google_click_at.toISOString()).toBe('2025-01-02T03:00:00.000Z');
+                expect(status.rating.created_at.toISOString())
+                    .toBe('2025-01-01T03:00:00.000Z');
+
+                const emptyStatus = {
+                    has_token: false,
+                    sent_at: null,
+                    sent_via: null,
+                    opened_at: null,
+                    google_click_at: null,
+                    rating: null,
+                };
+                expect(await rateMeQueries.getJobRateStatus(companyA, jobB.rows[0].id))
+                    .toEqual(emptyStatus);
+                expect(await rateMeQueries.getJobRateStatus(companyB, jobA.rows[0].id))
+                    .toEqual(emptyStatus);
+            });
+        });
     });
 });

@@ -53,7 +53,10 @@ export function SettingsPageShell({
                 <ArrowLeft className="h-4 w-4" /> {backLabel}
             </button>
 
-            <div className="flex items-start justify-between gap-3">
+            {/* OB-9: stack actions below the title on mobile so page-level buttons
+                (e.g. "Get another number") never overlap the heading at 375px;
+                row layout with right-aligned actions returns at sm+. */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                     {eyebrow && <div className="blanc-eyebrow">{eyebrow}</div>}
                     <h2
@@ -66,7 +69,7 @@ export function SettingsPageShell({
                         <p className="text-sm mt-1" style={{ color: 'var(--blanc-ink-2)' }}>{description}</p>
                     )}
                 </div>
-                {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+                {actions && <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>}
             </div>
 
             {children}

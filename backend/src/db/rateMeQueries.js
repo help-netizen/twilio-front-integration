@@ -18,19 +18,114 @@ async function getTokenContext(token, hostCompanyId = null) {
         `SELECT t.id, t.company_id, t.expires_at, t.used_at,
                 c.name AS company_name, c.logo_storage_key,
                 COALESCE(p.name, t.tech_name) AS technician_name,
-                (r.id IS NOT NULL) AS already_rated
+                (r.id IS NOT NULL) AS already_rated,
+                j.service_name, j.start_date, j.customer_name,
+                ct.first_name AS contact_first_name,
+                c.timezone AS company_timezone,
+                c.contact_phone AS company_phone,
+                c.contact_email AS company_email
          FROM rate_tokens t
          JOIN companies c ON c.id = t.company_id
          LEFT JOIN technician_profiles p
             ON p.company_id = t.company_id
            AND p.tech_id = t.tech_id
          LEFT JOIN technician_ratings r ON r.rate_token_id = t.id
+         LEFT JOIN jobs j ON j.id = t.job_id
+         LEFT JOIN contacts ct ON ct.id = j.contact_id
          WHERE t.token = $1
            AND ($2::uuid IS NULL OR t.company_id = $2)
            AND (t.expires_at IS NULL OR t.expires_at > NOW())`,
         [token, hostCompanyId]
     );
     return rows[0];
+}
+
+async function getExpiredTokenBranding(token, hostCompanyId = null) {
+    const { rows } = await db.query(
+        `SELECT t.company_id, c.name AS company_name, c.logo_storage_key,
+                c.contact_phone, c.contact_email
+         FROM rate_tokens t
+         JOIN companies c ON c.id = t.company_id
+         WHERE t.token = $1
+           AND t.expires_at IS NOT NULL
+           AND t.expires_at <= NOW()
+           AND ($2::uuid IS NULL OR t.company_id = $2)`,
+        [token, hostCompanyId]
+    );
+    return rows[0] || null;
+}
+
+async function stampTokenOpened(rateTokenId, client = db.pool) {
+    const { rows } = await client.query(
+        `UPDATE rate_tokens
+         SET opened_at = NOW()
+         WHERE id = $1
+           AND opened_at IS NULL
+         RETURNING id, opened_at`,
+        [rateTokenId]
+    );
+    return rows[0];
+}
+
+async function stampGoogleClick(rateTokenId, client = db.pool) {
+    const { rows } = await client.query(
+        `UPDATE rate_tokens
+         SET google_click_at = NOW()
+         WHERE id = $1
+           AND google_click_at IS NULL
+         RETURNING id, google_click_at`,
+        [rateTokenId]
+    );
+    return rows[0];
+}
+
+async function stampTokenSent(token, companyId, via, client = db.pool) {
+    const { rows } = await client.query(
+        `UPDATE rate_tokens
+         SET sent_at = NOW(), sent_via = $3
+         WHERE token = $1
+           AND company_id = $2
+         RETURNING id, sent_at, sent_via`,
+        [token, companyId, via]
+    );
+    return rows[0];
+}
+
+async function getJobRateStatus(companyId, jobId) {
+    const [tokenResult, ratingResult] = await Promise.all([
+        db.query(
+            `SELECT sent_at, sent_via, opened_at, google_click_at
+             FROM rate_tokens
+             WHERE company_id = $1
+               AND job_id = $2
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [companyId, jobId]
+        ),
+        db.query(
+            `SELECT stars, created_at
+             FROM technician_ratings
+             WHERE company_id = $1
+               AND job_id = $2
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [companyId, jobId]
+        ),
+    ]);
+    const tokenRow = tokenResult.rows[0];
+    const ratingRow = ratingResult.rows[0];
+
+    return {
+        has_token: Boolean(tokenRow),
+        sent_at: tokenRow?.sent_at || null,
+        sent_via: tokenRow?.sent_via || null,
+        opened_at: tokenRow?.opened_at || null,
+        google_click_at: tokenRow?.google_click_at || null,
+        rating: ratingRow ? {
+            stars: ratingRow.stars,
+            created_at: ratingRow.created_at,
+        } : null,
+    };
 }
 
 async function insertRating({
@@ -166,6 +261,11 @@ async function deleteDomain(companyId) {
 module.exports = {
     insertToken,
     getTokenContext,
+    getExpiredTokenBranding,
+    stampTokenOpened,
+    stampGoogleClick,
+    stampTokenSent,
+    getJobRateStatus,
     insertRating,
     stampTokenUsed,
     getConnectedRateMeMeta,

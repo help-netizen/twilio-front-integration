@@ -147,6 +147,27 @@ router.post('/rate/:token/rating', postRateLimiter, requireRateToken, async (req
     }
 });
 
+// POST /api/public/rate/:token/click
+router.post('/rate/:token/click', postRateLimiter, requireRateToken, async (req, res) => {
+    try {
+        const recorded = await rateMeService.recordGoogleClick(
+            req.params.token,
+            req.rateHost?.companyId ?? null
+        );
+        if (!recorded) {
+            logNotFound(req, 'not_found');
+            return res.status(404).json(UNIFORM_NOT_FOUND);
+        }
+        return res.status(204).end();
+    } catch (error) {
+        console.error('[RateMe] public click error', {
+            name: error?.name || 'Error',
+            code: error?.code || 'UNKNOWN',
+        });
+        return internalError(res);
+    }
+});
+
 // GET /api/public/rate-domain-ask?domain=<host>
 router.get('/rate-domain-ask', async (req, res) => {
     if (!isAskLoopback(req)) return res.status(404).end();

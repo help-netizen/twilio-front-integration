@@ -124,6 +124,62 @@ export async function getJob(id: number): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}`);
 }
 
+// ─── RATE-ME-CRM-002: job attribution + dispatcher send ────────────────────
+
+export type RateLinkChannel = 'sms' | 'email' | 'copy';
+
+export interface JobRateStatus {
+    has_token: boolean;
+    sent_at: string | null;
+    sent_via: RateLinkChannel | null;
+    opened_at: string | null;
+    google_click_at: string | null;
+    rating: { stars: number; created_at: string } | null;
+}
+
+export interface SendRateLinkResult {
+    channel: RateLinkChannel;
+    url?: string;
+    sent_at: string;
+}
+
+/** Error carrying the jobs-envelope code for honest channel-specific feedback. */
+export class RateLinkError extends Error {
+    code: string | null;
+    constructor(message: string, code: string | null) {
+        super(message);
+        this.name = 'RateLinkError';
+        this.code = code;
+    }
+}
+
+export async function getRateStatus(jobId: number): Promise<JobRateStatus> {
+    return jobsRequest<JobRateStatus>(`${JOBS_BASE}/${jobId}/rate-status`);
+}
+
+export async function sendRateLink(jobId: number, channel: RateLinkChannel): Promise<SendRateLinkResult> {
+    const res = await authedFetch(`${JOBS_BASE}/${jobId}/rate-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel }),
+    });
+    let json: {
+        ok?: boolean;
+        data?: SendRateLinkResult;
+        code?: string;
+        message?: string;
+        error?: string;
+    } = {};
+    try { json = await res.json(); } catch { /* non-JSON body */ }
+    if (!res.ok || !json.ok || !json.data) {
+        throw new RateLinkError(
+            json.message || json.error || `Request failed (${res.status})`,
+            json.code || null,
+        );
+    }
+    return json.data;
+}
+
 // ─── Create Job (direct, no lead) ─────────────────────────────────────────────
 
 export interface CreateJobBody {
