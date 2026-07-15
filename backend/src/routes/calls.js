@@ -11,6 +11,7 @@ router.use((req, res, next) => {
     return next(); // writes guarded per-route below
 });
 const queries = require('../db/queries');
+const emailQueries = require('../db/emailQueries');
 const db = require('../db/connection');
 const fetch = require('node-fetch');
 const { generateCallSummary } = require('../services/callSummaryService');
@@ -310,6 +311,7 @@ router.post('/contact/:contactId/mark-unread', requirePermission('pulse.view', '
 router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', 'reports.calls.view'), async (req, res) => {
     try {
         const { timelineId } = req.params;
+        const companyId = req.companyFilter?.company_id;
         const tl = await queries.markTimelineRead(parseInt(timelineId));
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
         // Also mark contact read if linked
@@ -340,28 +342,13 @@ router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', '
         } catch (smsErr) {
             console.warn('[mark-read] SMS conversation mark-read failed:', smsErr.message);
         }
-        // EMAIL-UNREAD-001: also clear the contact's email threads. any_unread in
-        // the unified list includes email_threads.unread_count, which until now
-        // was only cleared from the email workspace — a Pulse timeline whose last
-        // event was an email stayed "unread" forever no matter how many times the
-        // dispatcher opened it. Same contact→threads join the list CTE uses.
-        try {
-            if (tl.contact_id) {
-                const dbConn = require('../db/connection');
-                await dbConn.query(
-                    `UPDATE email_threads et SET unread_count = 0, updated_at = now()
-                     WHERE et.company_id = $2 AND et.unread_count > 0
-                       AND et.id IN (
-                         SELECT em.thread_id
-                         FROM email_messages em
-                         JOIN contact_emails ce ON ce.email_normalized = lower(trim(em.from_email))
-                         WHERE em.company_id = $2 AND em.direction = 'inbound' AND ce.contact_id = $1
-                       )`,
-                    [tl.contact_id, tl.company_id]
-                );
-            }
-        } catch (emailErr) {
-            console.warn('[mark-read] email thread mark-read failed:', emailErr.message);
+        // PULSE-READ-EMAIL-001: clear the same inbound- and outbound-linked email
+        // threads that contribute email_threads.unread_count to the Pulse list.
+        if (tl.contact_id) {
+            await emailQueries.markContactEmailThreadsRead(tl.contact_id, companyId)
+                .catch((emailErr) => {
+                    console.warn('[mark-read] email thread mark-read failed:', emailErr.message);
+                });
         }
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) });
