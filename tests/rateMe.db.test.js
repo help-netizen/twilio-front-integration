@@ -19,8 +19,8 @@ const TAG = `RM-${Date.now()}-${process.pid}`;
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const MIGRATION_FILE = '177_rate_me.sql';
 const ROLLBACK_FILE = 'rollback_177_rate_me.sql';
-const ATTRIBUTION_MIGRATION_FILE = '178_rate_token_attribution.sql';
-const ATTRIBUTION_ROLLBACK_FILE = 'rollback_178_rate_token_attribution.sql';
+const ATTRIBUTION_MIGRATION_FILE = '179_rate_token_attribution.sql';
+const ATTRIBUTION_ROLLBACK_FILE = 'rollback_179_rate_token_attribution.sql';
 const QUERY_FILE = path.join(__dirname, '..', 'backend', 'src', 'db', 'rateMeQueries.js');
 
 const fixtureCompanyIds = new Set();
@@ -693,9 +693,9 @@ describe('RATE-ME-CRM-002 migration 178 and attribution queries · real PostgreS
         const normalizedMigration = normalizeWhitespace(migration);
 
         expect(path.basename(path.join(MIGRATIONS_DIR, ATTRIBUTION_MIGRATION_FILE)))
-            .toBe('178_rate_token_attribution.sql');
+            .toBe('179_rate_token_attribution.sql');
         expect(path.basename(path.join(MIGRATIONS_DIR, ATTRIBUTION_ROLLBACK_FILE)))
-            .toBe('rollback_178_rate_token_attribution.sql');
+            .toBe('rollback_179_rate_token_attribution.sql');
         for (const definition of [
             'opened_at TIMESTAMPTZ NULL',
             'google_click_at TIMESTAMPTZ NULL',

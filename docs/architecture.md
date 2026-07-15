@@ -8086,7 +8086,7 @@ Notes for README: Caddy 2.6.2 — `interval/burst` valid on this version (remove
 
 ---
 
-## RATE-ME-CRM-002 — architecture: personalized 7-screen public rating page + review→job attribution (migration 178) + dispatcher "Send rating link" (SMS/Email/Copy) + `booking_url` rate-me setting — ADDITIVE on deployed 001 (2026-07-14)
+## RATE-ME-CRM-002 — architecture: personalized 7-screen public rating page + review→job attribution (Migration 179) + dispatcher "Send rating link" (SMS/Email/Copy) + `booking_url` rate-me setting — ADDITIVE on deployed 001 (2026-07-14)
 
 > Phase 2 of RATE-ME-CRM-001. **Purely additive UX + data** on the live 001 infra (opaque tokens, `/api/public/rate` surface, `/r/:token` SPA page, `rateHostGate`, the `rate-me` marketplace app + `google_review_url` setting, migration 177 with `rate_tokens.job_id`). **Do NOT break 001**: isolation, the uniform-404 quintet, replay-idempotency (`technician_ratings.rate_token_id UNIQUE`), `google_review_url`, and rely-leads settings all stay byte-identical. All owner decisions in the RM2 context pack + requirements FR-RM2-01..19 are BINDING. Requirement→guard map: SAB-CONTEXT-PII-LEAK, SAB-GOOGLE-SAME-TAB, SAB-BUBBLE-INSERTS-TEXT, SAB-SENDLINK-CROSS-TENANT, SAB-ATTRIBUTION-WRONG-JOB.
 
@@ -8099,8 +8099,8 @@ Notes for README: Caddy 2.6.2 — `interval/burst` valid on this version (remove
 - `backend/src/services/emailService.js` `sendEmail(companyId, { to, cc, subject, body, files, userId, userEmail })` — throws if the mailbox is disconnected.
 - FE: `frontend/src/pages/RatePage.tsx` (rewrite), `frontend/src/components/jobs/JobStatusTags.tsx` `JobOpsSection` (JOB-ACTIONS-SLIM band — already wires `OnTheWayModal`, the exact precedent for a modal-launching action), `frontend/src/components/jobs/OnTheWayModal.tsx` (`Dialog variant="panel"` FORM-CANON precedent), `frontend/src/services/jobsApi.ts` (`authedFetch` via `./apiClient`; `notifyEta`/`EtaNotifyError` precedent), `frontend/src/hooks/useJobDetail.ts` (`afterMutation` refresh), `frontend/src/pages/RateMeSettingsDialog.tsx` + `frontend/src/services/marketplaceApi.ts` (`google_review_url` → add `booking_url`).
 
-### Database — Migration 178 (additive, idempotent, NOT boot-registered)
-Files: `backend/db/migrations/178_rate_token_attribution.sql` + `backend/db/migrations/rollback_178_rate_token_attribution.sql`.
+### Database — Migration 179 (additive, idempotent, NOT boot-registered)
+Files: `backend/db/migrations/179_rate_token_attribution.sql` + `backend/db/migrations/rollback_179_rate_token_attribution.sql`.
 - `178`: `ALTER TABLE rate_tokens ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ NULL; … google_click_at TIMESTAMPTZ NULL; … sent_at TIMESTAMPTZ NULL; … sent_via TEXT NULL;` (four idempotent `ADD COLUMN IF NOT EXISTS`). **No `booking_url` column** (that is a JSONB setting — see below). No index needed (attribution is read by `job_id`, already covered; token lookups by the UNIQUE `token`).
 - `rollback_178`: `ALTER TABLE rate_tokens DROP COLUMN IF EXISTS sent_via; … sent_at; … google_click_at; … opened_at;` (data-loss on down = attribution history only; acceptable, additive columns).
 - **Next-free number = 178, CONFIRMED**: highest on `origin/master` is `177_rate_me.sql`; no `178*` exists locally or on `origin/master`. Parallel-session risk — RE-CHECK at push and `git mv` both ends if 178 was taken (parallel-migration-collision memory).
@@ -8188,10 +8188,10 @@ In `public-rate.js`: `router.post('/rate/:token/click', postRateLimiter, require
 
 ### Files to change / create
 **Backend — change:** `backend/src/db/rateMeQueries.js` (getTokenContext SELECT +joins/fields, WHERE unchanged; +`getExpiredTokenBranding`, `stampTokenOpened`, `stampGoogleClick`, `stampTokenSent`, `getJobRateStatus`) · `backend/src/services/rateMeService.js` (getPublicContext personalization + expired branch + opened_at; +`recordGoogleClick`, `bookingUrl`, `formatVisitDate`) · `backend/src/routes/public-rate.js` (+beacon `POST /rate/:token/click`) · `backend/src/routes/jobs.js` (+`POST /:id/rate-link`, +`GET /:id/rate-status`) · `backend/src/services/marketplaceService.js` (`validateRateMeSettingsInput`+`buildRateMeSettingsResponse`+event payload for `booking_url`).
-**Backend — new:** `backend/db/migrations/178_rate_token_attribution.sql` · `backend/db/migrations/rollback_178_rate_token_attribution.sql`.
+**Backend — new:** `backend/db/migrations/179_rate_token_attribution.sql` · `backend/db/migrations/rollback_179_rate_token_attribution.sql`.
 **Frontend — change:** `frontend/src/pages/RatePage.tsx` (rewrite) · `frontend/src/components/jobs/JobStatusTags.tsx` · `frontend/src/services/jobsApi.ts` · `frontend/src/pages/RateMeSettingsDialog.tsx` · `frontend/src/services/marketplaceApi.ts`.
 **Frontend — new:** `frontend/src/components/jobs/RateLinkModal.tsx` · `frontend/src/components/jobs/JobRateMeBlock.tsx`.
-**PROTECTED — UNTOUCHED (verified):** `src/server.js` (**NO change** — beacon is under the already-mounted `/api/public` + `rateHostGate` allowlist already matches `…/click`; send-link/status are under the already-mounted `/api/jobs`; migration 178 is psql-applied, not code-registered) · `frontend/src/lib/authedFetch.ts` · `frontend/src/hooks/useRealtimeEvents.ts` · `backend/db/` schema (only migration 178).
+**PROTECTED — UNTOUCHED (verified):** `src/server.js` (**NO change** — beacon is under the already-mounted `/api/public` + `rateHostGate` allowlist already matches `…/click`; send-link/status are under the already-mounted `/api/jobs`; Migration 179 is psql-applied, not code-registered) · `frontend/src/lib/authedFetch.ts` · `frontend/src/hooks/useRealtimeEvents.ts` · `backend/db/` schema (only Migration 179).
 
 ### API endpoints (new)
 - `GET  /api/public/rate/:token` — extended context (personalization + `expired`); unchanged route contract, additive fields (public).

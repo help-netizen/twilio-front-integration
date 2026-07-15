@@ -1,6 +1,6 @@
 # RATE-ME-CRM-002 — Functional Specification: humane, conversion-focused Rate Me page (personalized from the job) + review→job attribution + rebooking screens + dispatcher "Send rating link"
 
-> **Status:** spec (Agent 03). **Phase 2 of RATE-ME-CRM-001 — purely ADDITIVE UX + data on the DEPLOYED 001 infra.** Sources: `Docs/requirements.md` §RATE-ME-CRM-002 (FR-RM2-01…19, NFR-RM2-1…11, US-RM2-1…7, SAB list) + `Docs/architecture.md` §RATE-ME-CRM-002 (migration 178, public-context contract, D-EXP, endpoints, gates — **authoritative** where they overlap) + the RM2 context pack. Consumers: Test-Cases (04), Planner (05), Implementer (06).
+> **Status:** spec (Agent 03). **Phase 2 of RATE-ME-CRM-001 — purely ADDITIVE UX + data on the DEPLOYED 001 infra.** Sources: `Docs/requirements.md` §RATE-ME-CRM-002 (FR-RM2-01…19, NFR-RM2-1…11, US-RM2-1…7, SAB list) + `Docs/architecture.md` §RATE-ME-CRM-002 (migration 179, public-context contract, D-EXP, endpoints, gates — **authoritative** where they overlap) + the RM2 context pack. Consumers: Test-Cases (04), Planner (05), Implementer (06).
 > **Do NOT break 001.** Every 001 contract stays byte-identical: the uniform-404 quintet, replay-idempotency (`technician_ratings.rate_token_id UNIQUE`), the host-gate, `google_review_url`, rely-leads settings GET/PUT, and the existing public GET/POST shapes (new fields are additive; existing fields unchanged). Owner decisions are marked **[OWNER]** and are BINDING.
 > Seams verified against live code on 2026-07-14 (this worktree): `getTokenContext` (WHERE clause load-bearing), `getPublicContext`/`submitRating`/`mintToken`, `public-rate.js` limiters/`requireRateToken`, `jobs.js` `POST /:id/eta/notify` (L806-882 wallet-gated SMS), `validateRateMeSettingsInput`/`buildRateMeSettingsResponse`.
 
@@ -13,13 +13,13 @@ RATE-ME-CRM-002 turns the bare 001 rating page into a **humane, conversion-focus
 1. **Personalized public context** — `GET /api/public/rate/:token` gains (server-side, from the token's `job_id`) the customer **first name**, **service label**, **visit date** (formatted in the company timezone), plus per-company **contacts** (`tel:`/`mailto:`) and **booking URL**. PII-minimal: **only the first name** leaves the context.
 2. **Expired vs invalid (D-EXP)** — a recognized, host-binding, connected, **expired** token returns a **branded rebooking** payload (`expired:true`); every truly-invalid class (unknown / malformed / foreign-host / app-disconnected) keeps 001's **uniform 404 with NO company data** — non-oracle.
 3. **5★ new-tab + beacon** — 5★ records (001 `POST /rating` unchanged), then the client fires a **click beacon** `POST /api/public/rate/:token/click` (stamps `google_click_at`) and opens the Google review in a **NEW TAB** (`window.open`), never `location.replace` — the thank-you stays visible.
-4. **Attribution schema (migration 178)** — `rate_tokens` gains `opened_at`, `google_click_at`, `sent_at`, `sent_via` (all nullable). `opened_at` stamps on first GET; `google_click_at` on the beacon; `sent_at`/`sent_via` on dispatcher send.
+4. **Attribution schema (migration 179)** — `rate_tokens` gains `opened_at`, `google_click_at`, `sent_at`, `sent_via` (all nullable). `opened_at` stamps on first GET; `google_click_at` on the beacon; `sent_at`/`sent_via` on dispatcher send.
 5. **Dispatcher send + status (JOBS surface)** — `POST /api/jobs/:id/rate-link` (`messages.send`) mints a fresh token and delivers it via SMS / Email / Copy; `GET /api/jobs/:id/rate-status` (`jobs.view`) feeds the Job-card timeline. Both company-scoped.
 6. **`booking_url` setting** — a rate-me marketplace setting (JSONB in `marketplace_installations.metadata.settings`, NO DB column), added to `validateRateMeSettingsInput`/`buildRateMeSettingsResponse` while **preserving `google_review_url`** on the replace-on-PUT.
 
-**New artifacts:** migration `178_rate_token_attribution.sql` (+ rollback); `frontend/src/components/jobs/RateLinkModal.tsx`; `frontend/src/components/jobs/JobRateMeBlock.tsx`.
+**New artifacts:** migration `179_rate_token_attribution.sql` (+ rollback); `frontend/src/components/jobs/RateLinkModal.tsx`; `frontend/src/components/jobs/JobRateMeBlock.tsx`.
 **Touched:** `backend/src/db/rateMeQueries.js` (join + 5 new fns), `backend/src/services/rateMeService.js` (context extend + expired branch + `recordGoogleClick`/`bookingUrl`/`formatVisitDate`), `backend/src/routes/public-rate.js` (+beacon), `backend/src/routes/jobs.js` (+2 routes), `backend/src/services/marketplaceService.js` (`booking_url`), `frontend/src/pages/RatePage.tsx` (full rewrite), `frontend/src/components/jobs/JobStatusTags.tsx`, `frontend/src/services/jobsApi.ts`, `frontend/src/pages/RateMeSettingsDialog.tsx`, `frontend/src/services/marketplaceApi.ts`.
-**PROTECTED — UNTOUCHED (verified):** `src/server.js` (**NO change** — beacon rides the already-mounted `/api/public` + `rateHostGate` allowlist `/^\/api\/public\/rate(?:\/|-domain-ask)/` already matches `…/click`; send-link/status ride the already-mounted `/api/jobs`; migration 178 is psql-applied, not code-registered), `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/db/` schema (only migration 178). `companies` is read-only (no new column). `submitRating` is UNCHANGED.
+**PROTECTED — UNTOUCHED (verified):** `src/server.js` (**NO change** — beacon rides the already-mounted `/api/public` + `rateHostGate` allowlist `/^\/api\/public\/rate(?:\/|-domain-ask)/` already matches `…/click`; send-link/status ride the already-mounted `/api/jobs`; migration 179 is psql-applied, not code-registered), `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/db/` schema (only migration 179). `companies` is read-only (no new column). `submitRating` is UNCHANGED.
 
 ### Pinned decisions (this spec resolves what requirements/architecture left open)
 
@@ -51,7 +51,7 @@ RATE-ME-CRM-002 turns the bare 001 rating page into a **humane, conversion-focus
 - **Company timezone** — `companies.timezone` (default `'America/New_York'`, mig 043). Source for `visit_date` formatting.
 - **Company contacts** — `companies.contact_phone` / `companies.contact_email` (mig 043), customer-facing, read server-side.
 - **`booking_url`** — `marketplace_installations.metadata.settings.booking_url` (JSONB, per-company; NO DB column).
-- **Attribution columns (mig 178)** — `rate_tokens.opened_at`, `google_click_at`, `sent_at`, `sent_via` (all `TIMESTAMPTZ`/`TEXT`, nullable).
+- **Attribution columns (mig 179)** — `rate_tokens.opened_at`, `google_click_at`, `sent_at`, `sent_via` (all `TIMESTAMPTZ`/`TEXT`, nullable).
 - **Gold** — `#E0A72C` (filled star) / `#D2D2D0` (empty star). **Violet** — `var(--blanc-accent)` `#7F42E1`; soft plaques `var(--blanc-accent-soft)` `#E7DBFD`.
 
 ---
@@ -451,7 +451,7 @@ All stamps are additive columns on `rate_tokens`; none gate serving; a failed st
 
 ## 9. Migration 178 (additive, idempotent, NOT boot-registered)
 
-Files: `backend/db/migrations/178_rate_token_attribution.sql` + `backend/db/migrations/rollback_178_rate_token_attribution.sql`.
+Files: `backend/db/migrations/179_rate_token_attribution.sql` + `backend/db/migrations/rollback_179_rate_token_attribution.sql`.
 - **Up:** four idempotent `ALTER TABLE rate_tokens ADD COLUMN IF NOT EXISTS …` — `opened_at TIMESTAMPTZ NULL`, `google_click_at TIMESTAMPTZ NULL`, `sent_at TIMESTAMPTZ NULL`, `sent_via TEXT NULL`. **No `booking_url` column** (JSONB setting). No new index (attribution read by `job_id`, already covered; token lookups by the UNIQUE `token`).
 - **Down (rollback_178):** `DROP COLUMN IF EXISTS` in reverse (`sent_via` → `sent_at` → `google_click_at` → `opened_at`) — data-loss on down = attribution history only (acceptable, additive).
 - **Numbering:** next-free = **178** (highest on origin/master is `177_rate_me`). Parallel-session risk — RE-CHECK vs origin/master at push and `git mv` both ends if 178 was taken (parallel-migration-collision).
@@ -474,7 +474,7 @@ Files: `backend/db/migrations/178_rate_token_attribution.sql` + `backend/db/migr
 11. **Settings integrity:** `booking_url` validation (null/https/≤500); replace-on-PUT keeps `google_review_url`; rely GET/PUT byte-identical (BU2, BU3, BU6 — settings SAB pin).
 12. **Palette:** gold stars are the ONLY non-violet accent; every other action violet; no "Blanc" in UI; theme-aware (SR10).
 13. **Rebooking/contacts placement:** filled Book Visit on 6 & 7; quiet link on 3; none on 5; none on 1/2/4; contacts on 3/5/6/7; each affordance omitted when its per-company value is null (SR11).
-14. **Protected files untouched:** `src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts`; `backend/db/` touched only by migration 178; `companies` read-only; `submitRating` unchanged.
+14. **Protected files untouched:** `src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts`; `backend/db/` touched only by migration 179; `companies` read-only; `submitRating` unchanged.
 15. **Jobs envelope** `{ok,data}`/`{ok:false,code,message}` for send-link + rate-status; marketplace `{success,…,request_id}` for settings (PD-RM2-11).
 
 ---
