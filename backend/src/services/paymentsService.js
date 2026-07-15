@@ -78,7 +78,7 @@ async function createTransaction(companyId, userId, data) {
     const tx = await paymentsQueries.createTransaction(companyId, {
         ...data,
         status: 'completed',
-        processed_at: new Date().toISOString(),
+        processed_at: data.processed_at || new Date().toISOString(),
         recorded_by: userId,
     });
 

@@ -1025,6 +1025,7 @@ router.get('/:id/rate-status', requirePermission('jobs.view'), async (req, res) 
 // F018 Stripe Payments — collect from job context (manual card / Tap to Pay)
 // =============================================================================
 const stripePaymentsService = require('../services/stripePaymentsService');
+const paymentsService = require('../services/paymentsService');
 
 function jobStripeError(err, res) {
     if (err instanceof stripePaymentsService.StripePaymentsError) {
@@ -1073,6 +1074,46 @@ router.post('/:id/send-payment-link', requirePermission('payments.collect_online
         const data = await stripePaymentsService.sendJobPaymentLink(companyId, { id: req.user?.crmUser?.id || null }, req.params.id, { channel: req.body?.channel, amount: req.body?.amount, message: req.body?.message });
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
+});
+
+function jobPaymentError(err, res) {
+    if (err instanceof paymentsService.PaymentsServiceError) {
+        return res.status(err.httpStatus || 400).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    console.error('[Jobs API] record payment error:', err.message);
+    return res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: err.message } });
+}
+
+router.post('/:id/record-payment', requirePermission('payments.collect_offline'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const job = await jobsService.getJobById(req.params.id, companyId);
+        if (!job) {
+            return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Job not found' } });
+        }
+
+        const actorId = req.user?.crmUser?.id || null;
+        const amount = parseFloat(req.body?.amount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            return res.status(400).json({ ok: false, error: { code: 'VALIDATION', message: 'amount must be greater than 0' } });
+        }
+
+        const payment_method = req.body?.payment_method;
+        if (!['cash', 'check'].includes(payment_method)) {
+            return res.status(400).json({ ok: false, error: { code: 'VALIDATION', message: 'payment_method must be one of: cash, check' } });
+        }
+
+        const processed_at = req.body?.payment_date || req.body?.processed_at || undefined;
+        const data = await paymentsService.recordManualPayment(companyId, actorId, {
+            job_id: req.params.id,
+            amount,
+            payment_method,
+            reference_number: req.body?.reference_number,
+            memo: req.body?.memo,
+            processed_at,
+        });
+        res.json({ ok: true, data });
+    } catch (err) { jobPaymentError(err, res); }
 });
 
 module.exports = router;
