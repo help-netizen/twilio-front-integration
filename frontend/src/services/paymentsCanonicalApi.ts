@@ -59,6 +59,7 @@ export interface TransactionsListParams {
     source?: string;
     contact_id?: number;
     invoice_id?: number;
+    job_id?: number | null;
     search?: string;
     page?: number;
     limit?: number;
@@ -81,6 +82,15 @@ export interface CreateTransactionData {
     amount: string;
     currency?: string;
     reference_number?: string;
+    memo?: string;
+    processed_at?: string;
+}
+
+export interface RecordJobPaymentData {
+    amount: number;
+    payment_method: 'cash' | 'check';
+    reference_number?: string;
+    payment_date?: string;
     memo?: string;
 }
 
@@ -122,6 +132,7 @@ export async function fetchTransactions(filters: TransactionsListParams = {}): P
     if (filters.source) params.set('source', filters.source);
     if (filters.contact_id) params.set('contact_id', String(filters.contact_id));
     if (filters.invoice_id) params.set('invoice_id', String(filters.invoice_id));
+    if (filters.job_id != null) params.set('job_id', String(filters.job_id));
     if (filters.search) params.set('search', filters.search);
     if (filters.page != null) params.set('page', String(filters.page));
     if (filters.limit != null) params.set('limit', String(filters.limit));
@@ -148,6 +159,16 @@ export async function createTransaction(data: CreateTransactionData): Promise<Pa
 
 export async function recordManualPayment(data: CreateTransactionData): Promise<PaymentTransaction> {
     return paymentsRequest<PaymentTransaction>(`${PAYMENTS_BASE}/manual`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+export async function recordJobPayment(
+    jobId: number | string,
+    data: RecordJobPaymentData,
+): Promise<PaymentTransaction> {
+    return paymentsRequest<PaymentTransaction>(`/api/jobs/${jobId}/record-payment`, {
         method: 'POST',
         body: JSON.stringify(data),
     });

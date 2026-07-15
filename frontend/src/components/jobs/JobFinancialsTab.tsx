@@ -4,12 +4,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
-import { Archive, ChevronRight, CreditCard, FileText, Loader2, Lock, Plus, Receipt } from 'lucide-react';
+import { Archive, Banknote, ChevronRight, CreditCard, FileText, Loader2, Lock, Plus, Receipt } from 'lucide-react';
 import { CloudBanner } from '../ui/CloudBanner';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
 import { useAuthz } from '../../hooks/useAuthz';
 import { stripePaymentsApi } from '../../services/stripePaymentsApi';
 import { CollectPaymentDialog } from './CollectPaymentDialog';
+import { JobRecordPaymentDialog } from './JobRecordPaymentDialog';
 import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
 import { InvoiceEditorDialog } from '../invoices/InvoiceEditorDialog';
 import { EstimateDetailPanel } from '../estimates/EstimateDetailPanel';
@@ -40,6 +41,23 @@ function money(v: string | number | null | undefined): string {
     return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function paymentMethodLabel(method: string): string {
+    if (method === 'cash') return 'Cash';
+    if (method === 'check') return 'Check';
+    if (method === 'credit_card') return 'Card';
+    if (method === 'ach') return 'ACH';
+    return method.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function paymentDate(value: string | null): string {
+    if (!value) return '';
+    const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+    if (!year || !month || !day) return value;
+    return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+    });
+}
+
 function MetricCell({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'warning' }) {
     const valueClass = tone === 'warning' ? 'text-[var(--blanc-warning)]' : 'text-[var(--blanc-ink-1)]';
     return (
@@ -61,7 +79,7 @@ interface Props {
 
 export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     const {
-        estimates, invoices, loading,
+        estimates, invoices, jobPayments, loading,
         selectedEstimate, selectedInvoice,
         setSelectedEstimate, setSelectedInvoice,
         refresh, handleCreateEstimate, handleCreateInvoice,
@@ -75,11 +93,13 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     const [detailLoading, setDetailLoading] = useState(false);
     const [showInvoiceSend, setShowInvoiceSend] = useState(false);
     const [showCollect, setShowCollect] = useState(false);
+    const [showRecord, setShowRecord] = useState(false);
 
     // ── STRIPE-ADHOC-PAY-001: collect-payment button/CTA gating ─────────────────
     const navigate = useNavigate();
     const { hasAnyPermission, hasPermission } = useAuthz();
     const canCollect = hasAnyPermission('payments.collect_online', 'payments.collect_offline', 'payments.collect_keyed');
+    const canRecordOffline = hasPermission('payments.collect_offline');
     // Only fetch Stripe readiness when the user could actually collect (FR-BTN-2: no perm → nothing).
     const { data: stripeStatus, isLoading: stripeLoading } = useQuery({
         queryKey: ['stripe-payments-status'],
@@ -117,13 +137,17 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
 
     const totalEstimated = estimates.reduce((s, e) => s + Number(e.total || 0), 0);
     const totalInvoiced = invoices.reduce((s, i) => s + Number(i.total || 0), 0);
-    const totalPaid = invoices.reduce((s, i) => s + Number(i.amount_paid || 0), 0);
+    const jobLedgerPayments = (jobPayments || []).filter(payment => payment.invoice_id == null);
+    const jobLedgerPaid = jobLedgerPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const totalPaid = invoices.reduce((s, i) => s + Number(i.amount_paid || 0), 0) + jobLedgerPaid;
     const totalDue = Math.max(totalInvoiced - totalPaid, 0);
 
     // Collect-payment surface (STRIPE-ADHOC-PAY-001 §1). Perm-gate FIRST: no collect
     // perm → render nothing at all (no button, no CTA). Then split on Stripe readiness.
     const readiness = stripeStatus?.readiness;
     const stripeReady = !!stripeStatus?.configured && !!stripeStatus?.can_collect;
+    const showPayCard = canCollect && stripeReady;
+    const showRecordButton = canRecordOffline;
     // CTA copy per readiness (manage user). not_connected/disconnected → "Connect"; the
     // setup-incomplete states → "Finish setup". payouts_disabled never reaches here (can_collect=true).
     const isConnectState = readiness === 'not_connected' || readiness === 'disconnected';
@@ -140,15 +164,18 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                         <MetricCell label="Invoiced" value={money(totalInvoiced)} />
                         <MetricCell label="Due" value={money(totalDue)} tone={totalDue > 0 ? 'warning' : 'default'} />
                     </div>
-                    {/* Collect payment — STRIPE-ADHOC-PAY-001 §1 (perm-gated, readiness-driven).
-                        Lives in a footer row INSIDE the summary card (hairline-separated via
-                        mt-px over the card's line background) so it's tied to the numbers,
-                        not an orphaned button floating below. */}
-                    {canCollect && stripeReady && (
-                        <div className="mt-px flex justify-end bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-2.5">
-                            <Button size="sm" onClick={() => setShowCollect(true)}>
-                                <CreditCard className="mr-1 size-4" />Collect payment
-                            </Button>
+                    {(showPayCard || showRecordButton) && (
+                        <div className={`mt-px bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-3 ${showPayCard && showRecordButton ? 'grid grid-cols-2 gap-2' : 'flex'}`}>
+                            {showPayCard && (
+                                <Button className="w-full" onClick={() => setShowCollect(true)}>
+                                    <CreditCard className="mr-1.5 size-4" />Pay by Card
+                                </Button>
+                            )}
+                            {showRecordButton && (
+                                <Button variant="outline" className="w-full" onClick={() => setShowRecord(true)}>
+                                    <Banknote className="mr-1.5 size-4" />Record Payment
+                                </Button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -314,6 +341,29 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                                     </div>
                                 </button>
                             ))}
+                        </div>
+                    )}
+                    {jobLedgerPayments.length > 0 && (
+                        <div className="space-y-3 px-4 py-4">
+                            <p className="blanc-eyebrow">Payments</p>
+                            <div className="space-y-2">
+                                {jobLedgerPayments.map(payment => (
+                                    <div
+                                        key={payment.id}
+                                        className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-md bg-[rgba(25,25,25,0.04)] px-3 py-3"
+                                    >
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium">{paymentMethodLabel(payment.payment_method)}</p>
+                                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[var(--blanc-ink-2)]">
+                                                {payment.processed_at && <span>{paymentDate(payment.processed_at)}</span>}
+                                                {payment.processed_at && payment.reference_number && <span aria-hidden="true">·</span>}
+                                                {payment.reference_number && <span>Ref {payment.reference_number}</span>}
+                                            </div>
+                                        </div>
+                                        <span className="font-mono text-sm font-semibold">{money(payment.amount)}</span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </section>
@@ -489,6 +539,14 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
             <CollectPaymentDialog
                 open={showCollect}
                 onOpenChange={setShowCollect}
+                jobId={jobId}
+                outstanding={totalDue}
+                onSuccess={() => refresh()}
+            />
+
+            <JobRecordPaymentDialog
+                open={showRecord}
+                onOpenChange={setShowRecord}
                 jobId={jobId}
                 outstanding={totalDue}
                 onSuccess={() => refresh()}

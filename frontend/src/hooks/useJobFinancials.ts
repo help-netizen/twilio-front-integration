@@ -6,12 +6,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchEstimates, createEstimate, type Estimate, type EstimateCreateData } from '../services/estimatesApi';
 import { fetchInvoices, createInvoice, type Invoice, type InvoiceCreateData } from '../services/invoicesApi';
+import { fetchTransactions, type PaymentTransaction } from '../services/paymentsCanonicalApi';
 import { toast } from 'sonner';
 import { useAuthz } from './useAuthz';
 
 interface UseJobFinancialsReturn {
     estimates: Estimate[];
     invoices: Invoice[];
+    jobPayments: PaymentTransaction[];
     loading: boolean;
     selectedEstimate: Estimate | null;
     selectedInvoice: Invoice | null;
@@ -28,6 +30,7 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
     const canViewFinancials = hasAnyPermission('financial_data.view', 'estimates.view', 'invoices.view');
     const [estimates, setEstimates] = useState<Estimate[]>([]);
     const [invoices, setInvoices] = useState<Invoice[]>([]);
+    const [jobPayments, setJobPayments] = useState<PaymentTransaction[]>([]);
     const [loading, setLoading] = useState(false);
     const [selectedEstimate, setSelectedEstimate] = useState<Estimate | null>(null);
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -42,11 +45,14 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
         Promise.all([
             fetchEstimates({ job_id: jobId, limit: 100 }),
             fetchInvoices({ job_id: jobId, limit: 100 }),
+            fetchTransactions({ job_id: jobId, transaction_type: 'payment', status: 'completed' })
+                .catch(() => ({ transactions: [], total: 0, page: 1, limit: 25 })),
         ])
-            .then(([eRes, iRes]) => {
+            .then(([eRes, iRes, pRes]) => {
                 if (cancelled) return;
                 setEstimates(eRes.estimates);
                 setInvoices(iRes.invoices);
+                setJobPayments(pRes.transactions);
             })
             .catch(() => {
                 if (cancelled) return;
@@ -71,6 +77,7 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
     return {
         estimates,
         invoices,
+        jobPayments,
         loading,
         selectedEstimate,
         selectedInvoice,
