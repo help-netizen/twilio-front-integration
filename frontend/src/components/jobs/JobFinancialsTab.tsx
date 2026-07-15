@@ -201,6 +201,11 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                             <h3 className="text-sm font-semibold">Estimate</h3>
                             <p className="mt-0.5 text-xs text-[var(--blanc-ink-2)]">Customer-facing repair proposal for this job.</p>
                         </div>
+                        {estimates.length > 0 && (
+                            <Button variant="outline" size="sm" onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}>
+                                <Plus className="mr-1 size-4" />New estimate
+                            </Button>
+                        )}
                     </div>
                     {estimates.length === 0 && !loading ? (
                         <div className="px-4 py-8">
