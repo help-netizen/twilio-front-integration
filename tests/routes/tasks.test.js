@@ -301,7 +301,10 @@ describe('POST / — create', () => {
     });
 
     test('parent not found → 404', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [] }); // parentExists → none
+        // TASKS-LEAD-UUID-001: a lead parent resolves via uuid then a numeric-id
+        // fallback — both miss here, so parentExists is false → 404.
+        mockQuery.mockResolvedValueOnce({ rows: [] }); // resolveParentId: lead uuid miss
+        mockQuery.mockResolvedValueOnce({ rows: [] }); // resolveParentId: numeric leads.id fallback miss
         const res = await request(makeApp()).post('/api/tasks').send({ parent_type: 'lead', parent_id: 42, description: 'Call' });
         expect(res.status).toBe(404);
     });

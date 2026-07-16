@@ -79,10 +79,43 @@ const SELECT_TASK = `
 const HAS_ENTITY_PARENT =
     "(t.job_id IS NOT NULL OR t.lead_id IS NOT NULL OR t.estimate_id IS NOT NULL OR t.invoice_id IS NOT NULL OR t.contact_id IS NOT NULL OR (t.thread_id IS NOT NULL AND t.created_by IN ('user', 'agent')))";
 
+/**
+ * Map a caller-supplied parentId to the numeric FK value stored on `tasks`.
+ *
+ * Leads are addressed app-wide by their VARCHAR `uuid` (e.g. "0NMHI5") — the
+ * leads route is `/:uuid` and the FE passes `lead.UUID` everywhere — but
+ * `tasks.lead_id` is a BIGINT FK → `leads.id`. Resolve the uuid (or a numeric id)
+ * to the numeric `leads.id` so the FE can keep sending `lead.uuid`. Returns the
+ * numeric id, or null when no such lead exists in this company. All other parent
+ * types are already numeric and pass through unchanged.
+ */
+async function resolveParentId(companyId, parentType, parentId, client = null) {
+    if (parentType !== 'lead') return parentId;
+    if (parentId === undefined || parentId === null || parentId === '') return null;
+    const query = queryFor(client, db);
+    // The FE addresses leads by uuid, so try uuid first (correct even for an
+    // all-digit uuid), then fall back to a numeric leads.id for internal callers.
+    let { rows } = await query(
+        `SELECT id FROM leads WHERE uuid = $1 AND company_id = $2 LIMIT 1`,
+        [String(parentId), companyId]
+    );
+    if (rows.length === 0 && /^\d+$/.test(String(parentId))) {
+        ({ rows } = await query(
+            `SELECT id FROM leads WHERE id = $1 AND company_id = $2 LIMIT 1`,
+            [Number(parentId), companyId]
+        ));
+    }
+    return rows[0]?.id ?? null;
+}
+
 /** Confirm a parent row exists in this company. Returns boolean. */
 async function parentExists(companyId, parentType, parentId, client = null) {
     requireCompanyId(companyId);
     if (!isValidParentType(parentType)) return false;
+    // Leads: resolve uuid → numeric id (the resolution IS the existence check).
+    if (parentType === 'lead') {
+        return (await resolveParentId(companyId, 'lead', parentId, client)) != null;
+    }
     const p = PARENTS[parentType];
     const query = queryFor(client, db);
     const { rows } = await query(
@@ -98,7 +131,10 @@ async function listEntityTasks(companyId, { parentType, parentId, includeDone = 
     if (!isValidParentType(parentType)) return [];
     const p = PARENTS[parentType];
     const query = queryFor(client, db);
-    const params = [companyId, parentId];
+    // Leads arrive as a uuid; resolve to the numeric leads.id the FK is stored as.
+    const resolvedId = await resolveParentId(companyId, parentType, parentId, client);
+    if (resolvedId === null || resolvedId === undefined) return [];
+    const params = [companyId, resolvedId];
     let statusCond = '';
     if (!includeDone) statusCond = `AND t.status = 'open'`;
     const { rows } = await query(
@@ -222,6 +258,8 @@ async function createTask(companyId, payload, client = null) {
     requireCompanyId(companyId);
     const p = PARENTS[payload.parentType];
     const query = queryFor(client, db);
+    // Leads arrive as a uuid; tasks.lead_id is the numeric leads.id FK. Resolve it.
+    const parentId = await resolveParentId(companyId, payload.parentType, payload.parentId, client);
     const cols = ['company_id', 'title', 'description', 'status', 'created_by', 'owner_user_id', 'author_user_id', 'due_at', p.col];
     const vals = [
         companyId,
@@ -232,7 +270,7 @@ async function createTask(companyId, payload, client = null) {
         payload.owner_user_id || null,
         payload.author_user_id || null,
         payload.due_at || null,
-        payload.parentId,
+        parentId,
     ];
 
     // Additive: only extend cols/vals when the caller opts in, so the legacy
@@ -310,6 +348,7 @@ async function deleteTask(companyId, taskId, client = null) {
 module.exports = {
     PARENT_TYPES,
     isValidParentType,
+    resolveParentId,
     parentExists,
     listEntityTasks,
     buildTaskListFilters,
