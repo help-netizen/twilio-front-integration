@@ -16,6 +16,8 @@ import { dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ } from '../..
 import { serverDate, serverNow } from '../../utils/serverClock';
 import { makePinSvg } from '../../utils/mapPins';
 import { fetchSlotRecommendations, type SlotRecommendation } from '../../services/slotRecommendationsApi';
+import { fetchTimeOff, type TimeOffBlock } from '../../services/scheduleApi';
+import { formatTimeOffPeriod } from '../jobs/timeOffWarning';
 import './CustomTimeModal.css';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -78,6 +80,7 @@ interface TechGroup {
     name: string;
     colorIndex: number;
     jobs: LocalJob[];
+    timeOff: TimeOffBlock[];
     matchesTerritory: boolean;
 }
 
@@ -158,7 +161,7 @@ function snapToGrid(y: number, containerTop: number): number {
  * Build tech groups from ALL providers, merging in jobs.
  * Priority: 1) Techs whose territories include territoryId  2) Least loaded first
  */
-function buildTechGroups(providers: TeamMember[], jobs: LocalJob[], territoryId?: string): TechGroup[] {
+function buildTechGroups(providers: TeamMember[], jobs: LocalJob[], timeOff: TimeOffBlock[], territoryId?: string): TechGroup[] {
     const activeJobs = jobs.filter(j => !EXCLUDED_STATUSES.includes(j.blanc_status || ''));
 
     // Map jobs → tech id
@@ -171,6 +174,12 @@ function buildTechGroups(providers: TeamMember[], jobs: LocalJob[], territoryId?
                 jobsByTech.get(tech.id)!.push(job);
             }
         }
+    }
+
+    const timeOffByTech = new Map<string, TimeOffBlock[]>();
+    for (const block of timeOff) {
+        if (!timeOffByTech.has(block.technician_id)) timeOffByTech.set(block.technician_id, []);
+        timeOffByTech.get(block.technician_id)!.push(block);
     }
 
     // Build groups for ALL providers
@@ -186,6 +195,7 @@ function buildTechGroups(providers: TeamMember[], jobs: LocalJob[], territoryId?
             name: prov.name,
             colorIndex: i % TECH_COLORS.length,
             jobs: techJobs,
+            timeOff: timeOffByTech.get(prov.id) || [],
             matchesTerritory,
         };
     });
@@ -215,11 +225,13 @@ interface TechTimelineProps {
     isSuggested?: boolean;
     /** Engine recommendations for THIS tech on the selected date (T13 overlay bands) */
     recsForTech?: SlotRecommendation[];
+    /** Time-off periods for THIS tech overlapping the selected date */
+    timeOff?: TimeOffBlock[];
     /** Apply a recommendation via the existing pick mechanism */
     onApplyRec?: (rec: SlotRecommendation) => void;
 }
 
-function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz, isSuggested, recsForTech, onApplyRec }: TechTimelineProps) {
+function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz, isSuggested, recsForTech, timeOff, onApplyRec }: TechTimelineProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [hoverMinutes, setHoverMinutes] = useState<number | null>(null);
 
@@ -302,6 +314,45 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
                         >
                             <span className="tech-timeline__job-time">{sTime}–{eTime}</span>
                             <span className="tech-timeline__job-name">{job.customer_name}</span>
+                        </div>
+                    );
+                })}
+
+                {/* Technician time off — clamped to this day's visible working window */}
+                {timeOff?.map((block) => {
+                    const blockStart = new Date(block.starts_at);
+                    const blockEnd = new Date(block.ends_at);
+                    const dayStart = dateInTZ(y, m, d, 0, 0, companyTz);
+                    const nextDay = new Date(Date.UTC(y, m - 1, d + 1));
+                    const dayEnd = dateInTZ(nextDay.getUTCFullYear(), nextDay.getUTCMonth() + 1, nextDay.getUTCDate(), 0, 0, companyTz);
+                    if (!Number.isFinite(blockStart.getTime()) || !Number.isFinite(blockEnd.getTime()) || blockEnd <= dayStart || blockStart >= dayEnd) return null;
+
+                    const startMin = blockStart < dayStart
+                        ? 0
+                        : minutesSinceMidnight(blockStart, companyTz) - HOUR_START * 60;
+                    const endMin = blockEnd >= dayEnd
+                        ? TOTAL_HOURS * 60
+                        : minutesSinceMidnight(blockEnd, companyTz) - HOUR_START * 60;
+                    const top = Math.max(0, Math.min((startMin / 60) * HOUR_HEIGHT, TOTAL_HOURS * HOUR_HEIGHT));
+                    const bottom = Math.max(0, Math.min((endMin / 60) * HOUR_HEIGHT, TOTAL_HOURS * HOUR_HEIGHT));
+                    const height = bottom - top;
+                    if (height <= 0) return null;
+
+                    const fillsWorkingWindow = top === 0 && bottom === TOTAL_HOURS * HOUR_HEIGHT;
+                    const visibleStart = top === 0 ? dateInTZ(y, m, d, HOUR_START, 0, companyTz) : blockStart;
+                    const visibleEnd = bottom === TOTAL_HOURS * HOUR_HEIGHT ? dateInTZ(y, m, d, HOUR_END, 0, companyTz) : blockEnd;
+                    const compactPeriod = fillsWorkingWindow
+                        ? 'All day'
+                        : `${fmtTime(visibleStart, companyTz)}–${fmtTime(visibleEnd, companyTz)}`;
+
+                    return (
+                        <div
+                            key={`timeoff-${block.id}`}
+                            className="tech-timeline__timeoff"
+                            style={{ top, height }}
+                            title={formatTimeOffPeriod(block, companyTz)}
+                        >
+                            <span className="tech-timeline__timeoff-label">Time off · {compactPeriod}</span>
                         </div>
                     );
                 })}
@@ -587,6 +638,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     }, [open]);
     const [techPage, setTechPage] = useState(0);
     const [jobs, setJobs] = useState<LocalJob[]>([]);
+    const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
     const [providers, setProviders] = useState<TeamMember[]>([]);
     const [providerError, setProviderError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -658,7 +710,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         return new Date(y, m - 1, d);
     }, [selectedDate]);
 
-    // Fetch jobs
+    // Fetch jobs and best-effort technician time off for the selected company-local day
     useEffect(() => {
         let cancelled = false;
         async function fetchJobs() {
@@ -670,12 +722,26 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             } catch { if (!cancelled) setJobs([]); }
             finally { if (!cancelled) setLoading(false); }
         }
+        async function fetchDayTimeOff() {
+            const [y, m, d] = selectedDate.split('-').map(Number);
+            const from = dateInTZ(y, m, d, 0, 0, companyTz);
+            const nextDay = new Date(Date.UTC(y, m - 1, d + 1));
+            const to = dateInTZ(nextDay.getUTCFullYear(), nextDay.getUTCMonth() + 1, nextDay.getUTCDate(), 0, 0, companyTz);
+            try {
+                const blocks = await fetchTimeOff({ from: from.toISOString(), to: to.toISOString() });
+                if (!cancelled) setTimeOff(blocks);
+            } catch { if (!cancelled) setTimeOff([]); }
+        }
         fetchJobs();
+        fetchDayTimeOff();
         return () => { cancelled = true; };
-    }, [selectedDate]);
+    }, [selectedDate, companyTz]);
 
-    // Group jobs by tech — all providers, priority sorted
-    const techGroups = useMemo(() => buildTechGroups(providers, jobs, territoryId), [providers, jobs, territoryId]);
+    // Group jobs and time off by tech — all providers, priority sorted
+    const techGroups = useMemo(
+        () => buildTechGroups(providers, jobs, timeOff, territoryId),
+        [providers, jobs, timeOff, territoryId],
+    );
     const totalPages = Math.max(1, Math.ceil(techGroups.length / 2));
     const visibleTechs = techGroups.slice(techPage * 2, techPage * 2 + 2);
 
@@ -966,6 +1032,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                     companyTz={companyTz}
                                                     isSuggested={tech.id === suggestedTechId}
                                                     recsForTech={recsByTech.get(tech.id)}
+                                                    timeOff={tech.timeOff}
                                                     onApplyRec={applyRecommendation}
                                                 />
                                             ))}
