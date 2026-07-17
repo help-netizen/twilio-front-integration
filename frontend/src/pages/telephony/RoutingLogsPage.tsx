@@ -1,8 +1,7 @@
 /**
  * RoutingLogsPage — Call routing logs with sortable columns, grouped by day.
  * Uses real call data from GET /api/calls.
- * Layout: canonical SettingsPageShell; day headings = eyebrow text on the
- * canvas (no surface, no sticky — LAYOUT-CANON rule 7), rows = white tiles.
+ * Day headings follow Pulse DateSeparator pattern (heading label, no lines).
  * Sortable column headers follow Jobs table pattern.
  */
 
@@ -10,10 +9,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, PhoneIncoming, PhoneOutgoing, Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { telephonyApi } from '../../services/telephonyApi';
-import { Button } from '../../components/ui/button';
-import { SettingsPageShell } from '../../components/settings/SettingsPageShell';
 import { DateRangePickerPopover } from '../../components/ui/DateRangePickerPopover';
-import { FloatingDetailPanel } from '../../components/ui/FloatingDetailPanel';
 import type { RoutingLogEntry, UserGroup } from '../../types/telephony';
 import { authedFetch } from '../../services/apiClient';
 
@@ -265,146 +261,218 @@ export default function RoutingLogsPage() {
         }
     };
 
-    // Date range + group filter — shared by the error and loaded states
-    // (initial/reload state renders without them, as before).
-    const filterActions = (
-        <>
-            <DateRangePickerPopover
-                dateFrom={dateFrom}
-                dateTo={dateTo}
-                onDateFromChange={setDateFrom}
-                onDateToChange={setDateTo}
-            />
-            <select
-                value={groupId}
-                onChange={e => setGroupId(e.target.value)}
-                style={{
-                    height: 34,
-                    padding: '0 10px',
-                    borderRadius: 10,
-                    border: '1px solid var(--blanc-line)',
-                    background: 'transparent',
-                    color: 'var(--blanc-ink-2)',
-                    fontSize: 13,
-                }}
-            >
-                <option value="">All groups</option>
-                {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
-            </select>
-        </>
-    );
-
     if (loading) {
         return (
-            <SettingsPageShell eyebrow="Telephony" title="Routing Logs">
+            <div style={{ padding: 24 }}>
+                <PageHeader />
                 <div style={{ padding: 60, textAlign: 'center', color: 'var(--blanc-ink-3)' }}>Loading routing logs...</div>
-            </SettingsPageShell>
+            </div>
         );
     }
 
     if (error) {
         return (
-            <SettingsPageShell eyebrow="Telephony" title="Routing Logs" actions={filterActions}>
+            <div style={{ padding: 24 }}>
+                <PageHeader
+                    dateFrom={dateFrom}
+                    dateTo={dateTo}
+                    onDateFromChange={setDateFrom}
+                    onDateToChange={setDateTo}
+                    groups={groups}
+                    groupId={groupId}
+                    onGroupIdChange={setGroupId}
+                />
                 <div style={{ padding: 60, textAlign: 'center', color: 'var(--blanc-danger, #d44d3c)' }}>{error}</div>
-            </SettingsPageShell>
+            </div>
         );
     }
 
     return (
-        <SettingsPageShell
-            eyebrow="Telephony"
-            title="Routing Logs"
-            description={filtered.length > 0 ? `${filtered.length} calls` : undefined}
-            actions={
-                <>
-                    {filterActions}
-                    <Button variant="outline" size="sm" onClick={() => exportToCsv(sorted)}>
-                        <Download size={14} />
-                        Export CSV
-                    </Button>
-                </>
-            }
-        >
-            <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {/* Column headers — eyebrow text on the canvas, not sticky (LAYOUT-CANON rule 7) */}
-                <div
-                    style={{
-                        display: 'grid',
-                        gridTemplateColumns: gridTemplate,
-                        gap: 0,
-                        padding: '0 14px',
-                    }}
-                >
-                    {COLUMNS.map(col => (
-                        <button
-                            key={col.key}
-                            type="button"
-                            onClick={() => handleHeaderClick(col)}
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 4,
-                                padding: '8px 6px',
-                                background: 'none',
-                                border: 'none',
-                                cursor: col.sortKey ? 'pointer' : 'default',
-                                userSelect: 'none',
-                                fontSize: 11,
-                                fontWeight: 600,
-                                color: 'var(--blanc-ink-3)',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.08em',
-                                justifyContent: col.align === 'right' ? 'flex-end' : col.align === 'center' ? 'center' : 'flex-start',
-                                outline: 'none',
-                                borderRadius: 6,
-                                transition: 'background 0.15s',
-                            }}
-                            onMouseEnter={e => { if (col.sortKey) e.currentTarget.style.background = 'rgba(25, 25, 25, 0.04)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
-                        >
-                            {col.label}
-                            {col.sortKey && (
-                                sortBy === col.sortKey
-                                    ? sortOrder === 'asc'
-                                        ? <ArrowUp size={13} style={{ color: 'var(--blanc-ink-1)' }} />
-                                        : <ArrowDown size={13} style={{ color: 'var(--blanc-ink-1)' }} />
-                                    : <ArrowUpDown size={13} style={{ opacity: 0.3 }} />
-                            )}
-                        </button>
-                    ))}
-                </div>
+        <div style={{ padding: 24 }}>
+            <PageHeader
+                count={filtered.length}
+                onExport={() => exportToCsv(sorted)}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onDateFromChange={setDateFrom}
+                onDateToChange={setDateTo}
+                groups={groups}
+                groupId={groupId}
+                onGroupIdChange={setGroupId}
+            />
 
-                {/* Day groups: heading = eyebrow directly on the canvas (no surface, no sticky),
-                    rows = white tiles with 8px air from the parent */}
-                {dayGroups.map(group => (
-                    <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <div className="blanc-eyebrow" style={{ padding: '8px 14px 0', margin: 0 }}>
-                            {group.heading}
-                        </div>
-
-                        {group.logs.map(log => (
-                            <LogRow
-                                key={log.id}
-                                log={log}
-                                isSelected={selected?.id === log.id}
-                                onClick={() => setSelected(selected?.id === log.id ? null : log)}
-                            />
+            <div style={{ minWidth: 0 }}>
+                    {/* Column headers — sticky */}
+                    <div
+                        style={{
+                            display: 'grid',
+                            gridTemplateColumns: gridTemplate,
+                            gap: 0,
+                            padding: '0 14px',
+                            position: 'sticky',
+                            top: 0,
+                            zIndex: 5,
+                            background: 'var(--blanc-bg, #faf7f2)',
+                            paddingBottom: 4,
+                        }}
+                    >
+                        {COLUMNS.map(col => (
+                            <button
+                                key={col.key}
+                                type="button"
+                                onClick={() => handleHeaderClick(col)}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    padding: '8px 6px',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: col.sortKey ? 'pointer' : 'default',
+                                    userSelect: 'none',
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    color: 'var(--blanc-ink-3)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.08em',
+                                    justifyContent: col.align === 'right' ? 'flex-end' : col.align === 'center' ? 'center' : 'flex-start',
+                                    outline: 'none',
+                                    borderRadius: 6,
+                                    transition: 'background 0.15s',
+                                }}
+                                onMouseEnter={e => { if (col.sortKey) e.currentTarget.style.background = 'rgba(117,106,89,0.06)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                            >
+                                {col.label}
+                                {col.sortKey && (
+                                    sortBy === col.sortKey
+                                        ? sortOrder === 'asc'
+                                            ? <ArrowUp size={13} style={{ color: 'var(--blanc-ink-1)' }} />
+                                            : <ArrowDown size={13} style={{ color: 'var(--blanc-ink-1)' }} />
+                                        : <ArrowUpDown size={13} style={{ opacity: 0.3 }} />
+                                )}
+                            </button>
                         ))}
                     </div>
-                ))}
 
-                {logs.length === 0 && (
-                    <div style={{ padding: 60, textAlign: 'center', color: 'var(--blanc-ink-3)' }}>No routing logs found</div>
-                )}
+                    {/* Day groups */}
+                    {dayGroups.map(group => (
+                        <div key={group.key}>
+                            {/* Day heading */}
+                            <div style={{ padding: '16px 14px 4px' }}>
+                                <h3 style={{
+                                    fontSize: 13,
+                                    fontWeight: 700,
+                                    color: 'var(--blanc-ink-1)',
+                                    fontFamily: 'var(--blanc-font-heading)',
+                                    letterSpacing: '-0.01em',
+                                    margin: 0,
+                                }}>
+                                    {group.heading}
+                                </h3>
+                            </div>
+
+                            {/* Rows */}
+                            {group.logs.map(log => (
+                                <LogRow
+                                    key={log.id}
+                                    log={log}
+                                    isSelected={selected?.id === log.id}
+                                    onClick={() => setSelected(selected?.id === log.id ? null : log)}
+                                />
+                            ))}
+                        </div>
+                    ))}
+
+                    {logs.length === 0 && (
+                        <div style={{ padding: 60, textAlign: 'center', color: 'var(--blanc-ink-3)' }}>No routing logs found</div>
+                    )}
             </div>
 
             {/* Detail drawer — overlay so the list keeps full width (no column crush) */}
             {selected && <DetailPanel log={selected} onClose={() => setSelected(null)} />}
-        </SettingsPageShell>
+        </div>
     );
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────
+
+function PageHeader({ count, onExport, dateFrom, dateTo, onDateFromChange, onDateToChange, groups = [], groupId = '', onGroupIdChange }: {
+    count?: number;
+    onExport?: () => void;
+    dateFrom?: string;
+    dateTo?: string;
+    onDateFromChange?: (d: string) => void;
+    onDateToChange?: (d: string) => void;
+    groups?: UserGroup[];
+    groupId?: string;
+    onGroupIdChange?: (id: string) => void;
+}) {
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+            <h1 style={{
+                fontSize: 22, fontWeight: 700, margin: 0,
+                fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)',
+            }}>
+                Routing Logs
+            </h1>
+            {count != null && count > 0 && (
+                <span style={{
+                    fontSize: 12, fontWeight: 600, color: 'var(--blanc-ink-3)',
+                    background: 'rgba(117, 106, 89, 0.08)', padding: '2px 10px', borderRadius: 12,
+                }}>
+                    {count}
+                </span>
+            )}
+            <div style={{ flex: 1 }} />
+            {onDateFromChange && onDateToChange && (
+                <DateRangePickerPopover
+                    dateFrom={dateFrom}
+                    dateTo={dateTo}
+                    onDateFromChange={onDateFromChange}
+                    onDateToChange={onDateToChange}
+                />
+            )}
+            {onGroupIdChange && (
+                <select
+                    value={groupId}
+                    onChange={e => onGroupIdChange(e.target.value)}
+                    style={{
+                        height: 34,
+                        padding: '0 10px',
+                        borderRadius: 10,
+                        border: '1px solid var(--blanc-line)',
+                        background: 'transparent',
+                        color: 'var(--blanc-ink-2)',
+                        fontSize: 13,
+                    }}
+                >
+                    <option value="">All groups</option>
+                    {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                </select>
+            )}
+            {onExport && (
+                <button
+                    type="button"
+                    onClick={onExport}
+                    style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '6px 14px', borderRadius: 10,
+                        border: '1px solid var(--blanc-line)',
+                        background: 'transparent', cursor: 'pointer',
+                        fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-2)',
+                        transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(117,106,89,0.05)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                    <Download size={14} />
+                    Export CSV
+                </button>
+            )}
+        </div>
+    );
+}
 
 function LogRow({ log, isSelected, onClick }: { log: RoutingLogEntry; isSelected: boolean; onClick: () => void }) {
     const rc = RESULT_CONFIG[log.result] || RESULT_CONFIG.error;
@@ -414,21 +482,23 @@ function LogRow({ log, isSelected, onClick }: { log: RoutingLogEntry; isSelected
         <button
             type="button"
             onClick={onClick}
-            className="blanc-tile"
             style={{
                 display: 'grid',
                 gridTemplateColumns: gridTemplate,
                 alignItems: 'center',
                 width: '100%',
                 padding: '8px 14px',
-                border: 'none',
-                // лавандовое выделение — как .blanc-tile-row-selected
-                background: isSelected ? 'rgba(127, 66, 225, 0.07)' : undefined,
+                borderRadius: 12,
+                border: isSelected ? '1px solid var(--blanc-line)' : '1px solid transparent',
+                background: isSelected ? 'rgba(117, 106, 89, 0.05)' : 'transparent',
                 cursor: 'pointer',
                 textAlign: 'left',
+                transition: 'background 0.15s',
                 outline: 'none',
                 gap: 0,
             }}
+            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'rgba(117,106,89,0.03)'; }}
+            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isSelected ? 'rgba(117,106,89,0.05)' : 'transparent'; }}
         >
             {/* Time */}
             <span style={{ fontSize: 12, color: 'var(--blanc-ink-2)', padding: '0 6px' }}>
@@ -494,15 +564,23 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
     const rc = RESULT_CONFIG[log.result] || RESULT_CONFIG.error;
 
     return (
-        <FloatingDetailPanel open onClose={onClose}>
-        <div style={{ padding: 22, height: '100%', overflowY: 'auto' }}>
-            <div style={{ marginBottom: 14 }}>
+        <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(32,39,52,0.35)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' }}>
+        <div onClick={e => e.stopPropagation()} style={{
+            width: 380, maxWidth: '100%', height: '100%',
+            background: 'var(--blanc-surface-strong, #fffdf9)',
+            borderLeft: '1px solid var(--blanc-line)', padding: 22, overflowY: 'auto',
+        }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                 <span style={{
                     fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-3)',
                     textTransform: 'uppercase', letterSpacing: '0.14em',
                 }}>
                     Call Details
                 </span>
+                <button onClick={onClose} style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--blanc-ink-3)', fontSize: 16, padding: '2px 6px', borderRadius: 6,
+                }}>×</button>
             </div>
 
             {log.contact_name && (
@@ -527,7 +605,7 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
                     <div style={{
                         width: 20, height: 20, borderRadius: 8,
-                        background: 'rgba(25, 25, 25, 0.05)', color: 'var(--blanc-ink-2)',
+                        background: 'rgba(117, 106, 89, 0.08)', color: 'var(--blanc-ink-2)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         fontSize: 10, fontWeight: 700, flexShrink: 0,
                     }}>{i + 1}</div>
@@ -547,6 +625,6 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
                 </div>
             )}
         </div>
-        </FloatingDetailPanel>
+        </div>
     );
 }

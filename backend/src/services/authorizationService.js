@@ -138,13 +138,14 @@ async function resolveEffectivePermissionsAndScopes(companyId, roleKey, membersh
     // Get the role config for this company + role
     const roleConfig = await roleQueries.getRoleConfig(companyId, roleKey);
 
-    // The role config can legitimately be missing for a beat (a brand-new company
-    // mid-onboarding, before 050/bootstrap seeding finishes). Do NOT early-return
-    // empty: a tenant_admin must still receive the mandatory admin baseline below,
-    // or they're locked out of their own company in that window (the onboarding-race
-    // 0-permissions bug). Non-admin roles with no config correctly resolve to [].
-    const rolePermissionKeys = roleConfig ? await roleQueries.getAllowedPermissionKeys(roleConfig.id) : [];
-    const roleScopeMap = roleConfig ? await roleQueries.getScopeMap(roleConfig.id) : {};
+    if (!roleConfig) {
+        // Fallback: no config found, return empty
+        return { permissions: [], scopes: {} };
+    }
+
+    // Get role-level permissions and scopes
+    const rolePermissionKeys = await roleQueries.getAllowedPermissionKeys(roleConfig.id);
+    const roleScopeMap = await roleQueries.getScopeMap(roleConfig.id);
 
     // Get user-level overrides
     const permOverrides = await membershipQueries.getPermissionOverrides(membershipId);

@@ -13,18 +13,10 @@ function getCompanyId(req) {
 }
 
 function getUserId(req) {
-    // created_by/updated_by FK → crm_users(id). Use the resolved CRM user id, NOT the
-    // Keycloak sub — they DIFFER (crm_users.id ≠ keycloak_sub), so writing the sub
-    // violates estimates_created_by_fkey. Falls back to sub only outside normal auth
-    // (dev); null for a non-UUID (dev 'dev-user').
-    const userId = req.user?.crmUser?.id || req.user?.sub || req.user?.id || req.userId || null;
+    const userId = req.user?.sub || req.user?.id || req.userId || null;
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId || '')
         ? userId
         : null;
-}
-
-function getUserEmail(req) {
-    return req.user?.email || req.user?.preferred_username || null;
 }
 
 // =============================================================================
@@ -174,28 +166,12 @@ router.post('/:id/send', requirePermission('estimates.send'), async (req, res) =
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
         const { id } = req.params;
-        const { channel, recipient, message } = req.body || {};
-        const userEmail = getUserEmail(req);
+        const { channel, recipient, message } = req.body;
 
-        const result = await estimatesService.sendEstimate(companyId, userId, id, { channel, recipient, message, userEmail });
+        const result = await estimatesService.sendEstimate(companyId, userId, id, { channel, recipient, message });
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/send error:', err.message);
-        const status = err.httpStatus || 500;
-        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
-    }
-});
-
-// POST /api/estimates/:id/public-link — mint (or reuse) the customer page link
-router.post('/:id/public-link', requirePermission('estimates.send'), async (req, res) => {
-    try {
-        const companyId = getCompanyId(req);
-        const { id } = req.params;
-
-        const { url } = await estimatesService.ensurePublicLink(companyId, id);
-        res.json({ ok: true, data: { url } });
-    } catch (err) {
-        console.error('[Estimates] POST /:id/public-link error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }
@@ -337,18 +313,6 @@ router.post('/:id/items', requirePermission('estimates.create'), async (req, res
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/items error:', err.message);
-        const status = err.httpStatus || 500;
-        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
-    }
-});
-
-// PRICEBOOK-001: bulk add (a Price Book group expanded into its items).
-router.post('/:id/items/bulk', requirePermission('estimates.create'), async (req, res) => {
-    try {
-        const result = await estimatesService.addItems(getCompanyId(req), req.params.id, getUserId(req), req.body?.items);
-        res.status(201).json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Estimates] POST /:id/items/bulk error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }

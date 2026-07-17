@@ -45,8 +45,6 @@ export interface UseJobDetailResult {
     handleCancel: (id: number, reason: string) => Promise<boolean>;
     handleTagsChange: (jobId: number, tagIds: number[]) => void;
     handleJobUpdated: (updatedJob: LocalJob) => void;
-    /** Refresh the job (+ notify parent) after an out-of-band mutation, e.g. ONWAY notify. */
-    afterMutation: (id: number) => void;
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
@@ -227,6 +225,5 @@ export function useJobDetail({ jobId, onJobMutated }: UseJobDetailParams): UseJo
         handleCancel,
         handleTagsChange,
         handleJobUpdated,
-        afterMutation,
     };
 }

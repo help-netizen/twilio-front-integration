@@ -21,8 +21,8 @@ const EventEmitter = require('events');
 
 // ─── Mocks (must be declared before requiring the router) ──────────────────────
 
-jest.mock('../../backend/src/services/territoryService', () => ({
-    isZipInTerritory: jest.fn(),
+jest.mock('../../backend/src/db/serviceTerritoryQueries', () => ({
+    search: jest.fn(),
 }));
 jest.mock('../../backend/src/services/leadsService', () => ({
     createLead: jest.fn(),
@@ -30,27 +30,12 @@ jest.mock('../../backend/src/services/leadsService', () => ({
 jest.mock('../../backend/src/services/scheduleService', () => ({
     getAvailableSlots: jest.fn(),
 }));
-// VAPI-SLOT-ENGINE-001 (T2): recommendSlots gate + engine + tz-combine.
-jest.mock('../../backend/src/services/marketplaceService', () => ({
-    SMART_SLOT_ENGINE_APP_KEY: 'smart-slot-engine',
-    isAppConnected: jest.fn(),
-}));
-jest.mock('../../backend/src/services/slotEngineService', () => ({
-    getRecommendations: jest.fn(),
-    resolveTimezone: jest.fn(),
-    tzCombine: jest.fn(),
-}));
 jest.mock('https', () => ({ get: jest.fn() }));
 
 const https = require('https');
-// SAFE_FALLBACK: the ONLY shape the skill layer leaks on any error/unknown-tool
-// path (imported from the source of truth so these assertions track its wording).
-const { SAFE_FALLBACK } = require('../../backend/src/services/agentSkills/resultShapes');
-const territoryService = require('../../backend/src/services/territoryService');
+const stQueries = require('../../backend/src/db/serviceTerritoryQueries');
 const leadsService = require('../../backend/src/services/leadsService');
 const scheduleService = require('../../backend/src/services/scheduleService');
-const marketplaceService = require('../../backend/src/services/marketplaceService');
-const slotEngineService = require('../../backend/src/services/slotEngineService');
 const vapiToolsRouter = require('../../backend/src/routes/vapi-tools');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -150,17 +135,16 @@ describe('Group 1 — middleware/auth', () => {
         expect(res.status).toBe(401);
     });
 
-    // TC-LQV2-004 (RBAC-AUDIT-001 R2 hardening): missing secret must fail closed.
-    test('no VAPI_TOOLS_SECRET in env → 503, request refused', async () => {
+    // TC-LQV2-004
+    test('no VAPI_TOOLS_SECRET in env → dev mode, request passes', async () => {
         delete process.env.VAPI_TOOLS_SECRET;
-        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
         const res = await request(app)
             .post('/api/vapi-tools')
             .send({ message: { type: 'status-update' } });
-        expect(res.status).toBe(503);
-        expect(res.body).toEqual({ error: 'vapi tools not configured' });
-        expect(errSpy).toHaveBeenCalled();
-        errSpy.mockRestore();
+        expect(res.status).toBe(200);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
     });
 });
 
@@ -181,14 +165,12 @@ describe('Group 2 — dispatcher', () => {
         }
     });
 
-    // TC-LQV2-006 / ASK-DEG-07 (G6): unknown tool → well-formed results[] with the
-    // skill-layer SAFE_FALLBACK (never a `{ error }` leak, never a 500). The tool
-    // name is NOT echoed back to the caller.
-    test('unknown tool name → SAFE_FALLBACK in a well-formed result (no error leak)', async () => {
+    // TC-LQV2-006
+    test('unknown tool name → error in result', async () => {
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('unknownTool', {}));
         expect(res.status).toBe(200);
-        expect(resultOf(res)).toEqual(SAFE_FALLBACK);
+        expect(resultOf(res)).toEqual({ error: 'Unknown tool: unknownTool' });
         expect(res.body.results[0].toolCallId).toBe('tc1');
     });
 
@@ -218,9 +200,7 @@ describe('Group 3 — checkServiceArea', () => {
 
     // TC-LQV2-008
     test('zip in service area → inServiceArea true with area/city/state', async () => {
-        territoryService.isZipInTerritory.mockResolvedValue({
-            inside: true, area: 'Boston', city: 'Boston', state: 'MA', zip: '02101', mode: 'list',
-        });
+        stQueries.search.mockResolvedValue({ zip: '02101', area: 'Boston', city: 'Boston', state: 'MA' });
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', { zip: '02101' }));
         expect(resultOf(res)).toEqual({
@@ -229,13 +209,11 @@ describe('Group 3 — checkServiceArea', () => {
     });
 
     // TC-LQV2-009
-    test('zip outside service area → inServiceArea false (echoes the normalized zip)', async () => {
-        territoryService.isZipInTerritory.mockResolvedValue({
-            inside: false, area: '', city: '', state: '', zip: '03801', mode: 'list',
-        });
+    test('zip outside service area → inServiceArea false', async () => {
+        stQueries.search.mockResolvedValue(null);
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', { zip: '03801' }));
-        expect(resultOf(res)).toEqual({ inServiceArea: false, zip: '03801' });
+        expect(resultOf(res)).toEqual({ inServiceArea: false });
     });
 
     // TC-LQV2-010
@@ -243,21 +221,17 @@ describe('Group 3 — checkServiceArea', () => {
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', {}));
         expect(resultOf(res)).toEqual({ inServiceArea: false, error: 'zip is required' });
-        expect(territoryService.isZipInTerritory).not.toHaveBeenCalled();
+        expect(stQueries.search).not.toHaveBeenCalled();
     });
 
-    // TC-LQV2-011 / ASK-VAPI-22 (G6): a DB error inside the skill degrades to the
-    // skill-layer SAFE_FALLBACK — HTTP 200, graceful, and CRITICALLY the internal
-    // error message ('DB connection failed') is NEVER surfaced to the caller.
-    test('DB error → SAFE_FALLBACK, HTTP 200, no err.message leak', async () => {
-        territoryService.isZipInTerritory.mockRejectedValue(new Error('DB connection failed'));
+    // TC-LQV2-011
+    test('DB error → error in result, HTTP still 200', async () => {
+        stQueries.search.mockRejectedValue(new Error('DB connection failed'));
         const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', { zip: '02101' }));
         expect(res.status).toBe(200);
-        expect(resultOf(res)).toEqual(SAFE_FALLBACK);
-        // The leak (@ old vapi-tools.js:380 `result = { error: err.message }`) is gone.
-        expect(JSON.stringify(res.body)).not.toContain('DB connection failed');
+        expect(resultOf(res)).toEqual({ error: 'DB connection failed' });
         errSpy.mockRestore();
     });
 });
@@ -579,314 +553,6 @@ describe('Group 6 — createLead', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Group 10 — recommendSlots (VAPI-SLOT-ENGINE-001 T2)
-// ════════════════════════════════════════════════════════════════════════════
-
-describe('Group 10 — recommendSlots', () => {
-    const auth = (r) => r.set('x-vapi-secret', SECRET);
-
-    /** A pinned-wrapper recommendation shape (slotEngineService output). */
-    function rec(date, start, end, tech = 'Alex', confidence = 'high') {
-        return {
-            date,
-            time_frame: { start, end },
-            technicians: tech ? [{ id: 't1', name: tech }] : [],
-            confidence,
-        };
-    }
-
-    beforeEach(() => {
-        // Default: app connected + engine ok (individual tests override).
-        marketplaceService.isAppConnected.mockResolvedValue(true);
-        slotEngineService.getRecommendations.mockResolvedValue({ recommendations: [], engine_status: 'ok' });
-        slotEngineService.resolveTimezone.mockResolvedValue('America/New_York');
-    });
-
-    // Gating — app NOT connected → fallback, engine NEVER called.
-    test('app not connected → {available:false,fallback:true}, engine not called', async () => {
-        marketplaceService.isAppConnected.mockResolvedValue(false);
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { zip: '02101' }));
-        expect(resultOf(res)).toEqual({ available: false, slots: [], fallback: true });
-        expect(slotEngineService.getRecommendations).not.toHaveBeenCalled();
-    });
-
-    // Safe-fail — engine_status 'unavailable'.
-    test('engine_status unavailable → fallback', async () => {
-        slotEngineService.getRecommendations.mockResolvedValue({ recommendations: [rec('2026-07-08', '10:00', '13:00')], engine_status: 'unavailable' });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { zip: '02101' }));
-        expect(resultOf(res)).toEqual({ available: false, slots: [], fallback: true });
-    });
-
-    // Safe-fail — empty recommendations.
-    test('empty recommendations → fallback', async () => {
-        slotEngineService.getRecommendations.mockResolvedValue({ recommendations: [], engine_status: 'ok' });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { lat: 42.35, lng: -71.06 }));
-        expect(resultOf(res)).toEqual({ available: false, slots: [], fallback: true });
-    });
-
-    // Safe-fail — getRecommendations throws (never 500, never propagates).
-    test('getRecommendations throws → fallback, HTTP 200', async () => {
-        slotEngineService.getRecommendations.mockRejectedValue(new Error('NEW_JOB_LOCATION_REQUIRED'));
-        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', {}));
-        expect(res.status).toBe(200);
-        expect(resultOf(res)).toEqual({ available: false, slots: [], fallback: true });
-        errSpy.mockRestore();
-    });
-
-    // Happy path — rank order preserved, key + label + fields mapped.
-    test('happy path → maps recs to keyed slots with label + techName + confidence', async () => {
-        slotEngineService.getRecommendations.mockResolvedValue({
-            recommendations: [rec('2026-07-08', '10:00', '13:00', 'Alex', 'high')],
-            engine_status: 'ok',
-        });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { lat: 42.35, lng: -71.06, unitType: 'Refrigerator' }));
-        const out = resultOf(res);
-        expect(out.available).toBe(true);
-        expect(out.slots).toHaveLength(1);
-        expect(out.slots[0]).toEqual({
-            key: '2026-07-08|10:00|13:00',
-            date: '2026-07-08',
-            start: '10:00',
-            end: '13:00',
-            label: 'Wednesday, July 8, 10 AM to 1 PM', // f73636d formatSlotLabel: full weekday/month + 12h
-            techName: 'Alex',
-            confidence: 'high',
-        });
-    });
-
-    // Cap — > 3 recs → sliced to 3.
-    test('more than 3 recs → capped to 3', async () => {
-        slotEngineService.getRecommendations.mockResolvedValue({
-            recommendations: [
-                rec('2026-07-08', '10:00', '13:00'),
-                rec('2026-07-08', '13:00', '16:00'),
-                rec('2026-07-09', '09:00', '12:00'),
-                rec('2026-07-09', '12:00', '15:00'),
-                rec('2026-07-10', '10:00', '13:00'),
-            ],
-            engine_status: 'ok',
-        });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { zip: '02101' }));
-        const out = resultOf(res);
-        expect(out.available).toBe(true);
-        expect(out.slots).toHaveLength(3);
-        expect(out.slots.map(s => s.key)).toEqual([
-            '2026-07-08|10:00|13:00', '2026-07-08|13:00|16:00', '2026-07-09|09:00|12:00',
-        ]);
-    });
-
-    // excludeSlots — offered keys filtered out (deeper mode).
-    test('excludeSlots filters offered keys', async () => {
-        slotEngineService.getRecommendations.mockResolvedValue({
-            recommendations: [
-                rec('2026-07-08', '10:00', '13:00'),
-                rec('2026-07-09', '09:00', '12:00'),
-            ],
-            engine_status: 'ok',
-        });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { zip: '02101', excludeSlots: ['2026-07-08|10:00|13:00'] }));
-        const out = resultOf(res);
-        expect(out.slots.map(s => s.key)).toEqual(['2026-07-09|09:00|12:00']);
-    });
-
-    // Dedup — same window from two techs collapses to one key/offer.
-    test('same window from two techs dedups to one slot', async () => {
-        slotEngineService.getRecommendations.mockResolvedValue({
-            recommendations: [
-                rec('2026-07-08', '10:00', '13:00', 'Alex'),
-                rec('2026-07-08', '10:00', '13:00', 'Sam'),
-            ],
-            engine_status: 'ok',
-        });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { zip: '02101' }));
-        const out = resultOf(res);
-        expect(out.slots).toHaveLength(1);
-        expect(out.slots[0].techName).toBe('Alex'); // first one wins
-    });
-
-    // All recs excluded → fallback (deeper mode exhausted the horizon).
-    test('all recs excluded → fallback', async () => {
-        slotEngineService.getRecommendations.mockResolvedValue({
-            recommendations: [rec('2026-07-08', '10:00', '13:00')],
-            engine_status: 'ok',
-        });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { zip: '02101', excludeSlots: ['2026-07-08|10:00|13:00'] }));
-        expect(resultOf(res)).toEqual({ available: false, slots: [], fallback: true });
-    });
-
-    // Location resolution — lat/lng preferred when both finite.
-    test('lat+lng passed to engine as new_job.lat/lng (no address)', async () => {
-        await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { lat: 42.35, lng: -71.06, unitType: 'Dryer', durationMinutes: 90 }));
-        const [companyId, input] = slotEngineService.getRecommendations.mock.calls[0];
-        expect(typeof companyId).toBe('string');
-        expect(input.new_job).toMatchObject({
-            lat: 42.35, lng: -71.06, job_type: 'Dryer Repair', duration_minutes: 90,
-        });
-        expect(input.new_job).not.toHaveProperty('address');
-    });
-
-    // Location resolution — zip becomes new_job.address when no coords; duration default.
-    test('zip only → new_job.address = zip, default duration + job_type', async () => {
-        await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { zip: '02101' }));
-        const input = slotEngineService.getRecommendations.mock.calls[0][1];
-        expect(input.new_job.address).toBe('02101');
-        expect(input.new_job).not.toHaveProperty('lat');
-        expect(input.new_job.duration_minutes).toBe(120);
-        expect(input.new_job.job_type).toBe('Appliance Repair');
-    });
-
-    // daysAhead extends latest_allowed_date in the getRecommendations input.
-    test('daysAhead → latest_allowed_date set in engine input (company-local)', async () => {
-        // Freeze "now" so today+daysAhead is deterministic.
-        const RealDate = Date;
-        const fixedNow = new RealDate('2026-07-04T12:00:00Z');
-        jest.spyOn(global, 'Date').mockImplementation((...a) => (a.length ? new RealDate(...a) : fixedNow));
-        global.Date.UTC = RealDate.UTC;
-        global.Date.now = () => fixedNow.getTime();
-        try {
-            await auth(request(app).post('/api/vapi-tools'))
-                .send(toolCall('recommendSlots', { zip: '02101', daysAhead: 5 }));
-            const input = slotEngineService.getRecommendations.mock.calls[0][1];
-            // 2026-07-04 (America/New_York) + 5 days = 2026-07-09.
-            expect(input.new_job.latest_allowed_date).toBe('2026-07-09');
-        } finally {
-            global.Date.mockRestore();
-        }
-    });
-
-    // vapiSecretAuth still enforced for the new tool.
-    test('wrong x-vapi-secret → 401 (recommendSlots behind the secret)', async () => {
-        const res = await request(app)
-            .post('/api/vapi-tools')
-            .set('x-vapi-secret', 'wrong')
-            .send(toolCall('recommendSlots', { zip: '02101' }));
-        expect(res.status).toBe(401);
-        expect(slotEngineService.getRecommendations).not.toHaveBeenCalled();
-    });
-
-    // Envelope shape preserved.
-    test('envelope = {results:[{toolCallId, result:JSON.stringify(...)}]}', async () => {
-        slotEngineService.getRecommendations.mockResolvedValue({
-            recommendations: [rec('2026-07-08', '10:00', '13:00')],
-            engine_status: 'ok',
-        });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('recommendSlots', { zip: '02101' }, 'tcX'));
-        expect(res.body.results).toHaveLength(1);
-        expect(res.body.results[0].toolCallId).toBe('tcX');
-        expect(typeof res.body.results[0].result).toBe('string');
-        expect(JSON.parse(res.body.results[0].result).available).toBe(true);
-    });
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// Group 11 — createLead slot-persist (VAPI-SLOT-ENGINE-001 T2)
-// ════════════════════════════════════════════════════════════════════════════
-
-describe('Group 11 — createLead slot-persist', () => {
-    const auth = (r) => r.set('x-vapi-secret', SECRET);
-    const baseArgs = {
-        firstName: 'John', lastName: 'Smith', phone: '+16175551234',
-        zip: '02101', city: 'Boston', state: 'MA', unitType: 'Refrigerator',
-        preferredSlot: 'Tuesday July 8th 10am-1pm', addressValidated: true,
-    };
-
-    beforeEach(() => {
-        slotEngineService.resolveTimezone.mockResolvedValue('America/New_York');
-        // Deterministic tzCombine mock: date+time → a fixed ISO per field.
-        slotEngineService.tzCombine.mockImplementation((date, hhmm) => `${date}T${hhmm}:00.000Z-COMBINED`);
-        leadsService.createLead.mockResolvedValue({ uuid: 'lead-slot-1' });
-    });
-
-    // WITH chosenSlot + coords → all four columns + Comments kept.
-    test('chosenSlot + lat/lng → LeadDateTime/LeadEndDateTime/Latitude/Longitude in body', async () => {
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('createLead', {
-                ...baseArgs,
-                chosenSlot: { date: '2026-07-08', start: '10:00', end: '13:00' },
-                lat: 42.35, lng: -71.06,
-            }));
-        expect(resultOf(res)).toEqual({ success: true, leadId: 'lead-slot-1' });
-        const body = leadsService.createLead.mock.calls[0][0];
-        expect(slotEngineService.tzCombine).toHaveBeenCalledWith('2026-07-08', '10:00', 'America/New_York');
-        expect(slotEngineService.tzCombine).toHaveBeenCalledWith('2026-07-08', '13:00', 'America/New_York');
-        expect(body.LeadDateTime).toBe('2026-07-08T10:00:00.000Z-COMBINED');
-        expect(body.LeadEndDateTime).toBe('2026-07-08T13:00:00.000Z-COMBINED');
-        expect(body.Latitude).toBe(42.35);
-        expect(body.Longitude).toBe(-71.06);
-        // Comments summary still recorded for human context.
-        expect(body.Comments).toContain('Slot: Tuesday July 8th 10am-1pm');
-    });
-
-    // Edge 7 — chosenSlot present, coords absent → only the two datetime columns.
-    test('chosenSlot without lat/lng → only LeadDateTime/LeadEndDateTime (no coords)', async () => {
-        await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('createLead', {
-                ...baseArgs,
-                chosenSlot: { date: '2026-07-08', start: '10:00', end: '13:00' },
-            }));
-        const body = leadsService.createLead.mock.calls[0][0];
-        expect(body.LeadDateTime).toBe('2026-07-08T10:00:00.000Z-COMBINED');
-        expect(body.LeadEndDateTime).toBe('2026-07-08T13:00:00.000Z-COMBINED');
-        expect(body).not.toHaveProperty('Latitude');
-        expect(body).not.toHaveProperty('Longitude');
-    });
-
-    // Back-compat — NO chosenSlot → none of the four keys, tzCombine never called.
-    test('no chosenSlot → body has none of the four slot fields (byte-identical to today)', async () => {
-        await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('createLead', baseArgs));
-        const body = leadsService.createLead.mock.calls[0][0];
-        expect(body).not.toHaveProperty('LeadDateTime');
-        expect(body).not.toHaveProperty('LeadEndDateTime');
-        expect(body).not.toHaveProperty('Latitude');
-        expect(body).not.toHaveProperty('Longitude');
-        expect(slotEngineService.tzCombine).not.toHaveBeenCalled();
-    });
-
-    // Edge 6 — malformed chosenSlot → treated as absent, lead still created, no fields.
-    test('malformed chosenSlot (bad HH:MM) → treated as absent, lead created with NULL slot cols', async () => {
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('createLead', {
-                ...baseArgs,
-                chosenSlot: { date: '2026-07-08', start: '10am', end: '1pm' },
-                lat: 42.35, lng: -71.06,
-            }));
-        expect(resultOf(res)).toEqual({ success: true, leadId: 'lead-slot-1' });
-        const body = leadsService.createLead.mock.calls[0][0];
-        expect(body).not.toHaveProperty('LeadDateTime');
-        expect(body).not.toHaveProperty('LeadEndDateTime');
-        expect(body).not.toHaveProperty('Latitude');
-        expect(body).not.toHaveProperty('Longitude');
-        expect(slotEngineService.tzCombine).not.toHaveBeenCalled();
-    });
-
-    // Edge 6 — chosenSlot missing a field → treated as absent.
-    test('chosenSlot missing end → treated as absent', async () => {
-        await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('createLead', {
-                ...baseArgs,
-                chosenSlot: { date: '2026-07-08', start: '10:00' },
-            }));
-        const body = leadsService.createLead.mock.calls[0][0];
-        expect(body).not.toHaveProperty('LeadDateTime');
-        expect(slotEngineService.tzCombine).not.toHaveBeenCalled();
-    });
-});
-
-// ════════════════════════════════════════════════════════════════════════════
 // Group 7 — Parallel tool calls
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -895,13 +561,9 @@ describe('Group 7 — parallel tool calls', () => {
 
     // TC-LQV2-030
     test('multiple tool calls in one request → all processed in order', async () => {
-        territoryService.isZipInTerritory
-            .mockResolvedValueOnce({
-                inside: true, area: 'Boston', city: 'Boston', state: 'MA', zip: '02101', mode: 'list',
-            })
-            .mockResolvedValueOnce({
-                inside: false, area: '', city: '', state: '', zip: '03801', mode: 'list',
-            });
+        stQueries.search
+            .mockResolvedValueOnce({ zip: '02101', area: 'Boston', city: 'Boston', state: 'MA' })
+            .mockResolvedValueOnce(null);
         const res = await auth(request(app).post('/api/vapi-tools')).send({
             message: {
                 type: 'tool-calls',
@@ -926,9 +588,7 @@ describe('Group 7 — parallel tool calls', () => {
 describe('Group 9 — public mount', () => {
     // TC-LQV2-033
     test('route works without Authorization header (only x-vapi-secret)', async () => {
-        territoryService.isZipInTerritory.mockResolvedValue({
-            inside: true, area: 'Boston', city: 'Boston', state: 'MA', zip: '02101', mode: 'list',
-        });
+        stQueries.search.mockResolvedValue({ zip: '02101', area: 'Boston', city: 'Boston', state: 'MA' });
         const res = await request(app)
             .post('/api/vapi-tools')
             .set('x-vapi-secret', SECRET)

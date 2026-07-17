@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { PulseTimelinePageResponse } from '../types/pulse';
+import type { PulseTimelineResponse } from '../types/pulse';
 import { getAuthHeaders } from '../auth/AuthProvider';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
@@ -18,20 +18,14 @@ apiClient.interceptors.request.use((config) => {
 });
 
 export const pulseApi = {
-    /** Get a newest-to-oldest page of the combined timeline. */
-    getTimelinePage: async (opts: {
-        mode: 'timeline' | 'contact';
-        key: number;
-        before?: string;
-        signal?: AbortSignal;
-    }): Promise<PulseTimelinePageResponse> => {
-        const path = opts.mode === 'timeline'
-            ? `/pulse/timeline-by-id/${opts.key}`
-            : `/pulse/timeline/${opts.key}`;
-        const response = await apiClient.get<PulseTimelinePageResponse>(path, {
-            params: { limit: 20, ...(opts.before ? { before: opts.before } : {}) },
-            signal: opts.signal,
-        });
+    /** Get combined timeline (calls + messages) for a contact */
+    getTimeline: async (contactId: number, signal?: AbortSignal): Promise<PulseTimelineResponse> => {
+        const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline/${contactId}`, { signal });
+        return response.data;
+    },
+    /** Get combined timeline (calls + messages) by timeline ID */
+    getTimelineById: async (timelineId: number, signal?: AbortSignal): Promise<PulseTimelineResponse> => {
+        const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline-by-id/${timelineId}`, { signal });
         return response.data;
     },
     /** Find or create a timeline for a phone number, optionally linking to a contact */

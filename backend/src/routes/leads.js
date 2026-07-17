@@ -9,12 +9,10 @@
 
 const express = require('express');
 const multer = require('multer');
-const { randomUUID } = require('node:crypto');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const leadsService = require('../services/leadsService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
-const notesMutationService = require('../services/notesMutationService');
 const db = require('../db/connection');
 
 const upload = multer({
@@ -156,39 +154,6 @@ router.get('/by-id/:id', requirePermission('leads.view'), async (req, res) => {
 });
 
 // =============================================================================
-// GET /api/leads/by-contact/:contactId — Find newest OPEN lead linked to a contact
-// EMAIL-LEAD-ORIGIN-001. MUST stay ABOVE /:uuid or Express matches it as a uuid.
-// =============================================================================
-router.get('/by-contact/:contactId', requirePermission('leads.view', 'pulse.view'), async (req, res) => {
-    const reqId = requestId();
-    try {
-        const contactId = Number(req.params.contactId);
-        if (!contactId || isNaN(contactId) || contactId < 1) {
-            return res.status(400).json(errorResponse('INVALID_ID', 'Numeric contact ID is required', reqId));
-        }
-
-        const lead = await leadsService.getLeadByContact(contactId, req.companyFilter?.company_id);
-        res.json(successResponse({ lead }, reqId));
-    } catch (err) {
-        handleError(err, reqId, res);
-    }
-});
-
-// =============================================================================
-// GET /api/leads/new-count — count of new/unactioned leads (nav badge).
-// MUST stay ABOVE the /:uuid route or Express matches it as uuid="new-count".
-// =============================================================================
-router.get('/new-count', requirePermission('leads.view'), async (req, res) => {
-    const reqId = requestId();
-    try {
-        const count = await leadsService.countNewLeads(req.companyFilter?.company_id);
-        res.json(successResponse({ count }, reqId));
-    } catch (err) {
-        handleError(err, reqId, res);
-    }
-});
-
-// =============================================================================
 // GET /api/leads/:uuid — Get lead details
 // =============================================================================
 router.get('/:uuid', requirePermission('leads.view'), async (req, res) => {
@@ -218,15 +183,7 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
         const errors = [];
         if (!body.FirstName) errors.push('FirstName is required');
         if (!body.LastName) errors.push('LastName is required');
-        // EMAIL-LEAD-ORIGIN-001: a lead may be born from a phone, an email, OR a
-        // selected contact (email-origin timelines have no phone). Require at
-        // least one identity signal instead of hard-requiring Phone.
-        const hasPhone = body.Phone && String(body.Phone).length >= 5;
-        const hasEmail = !!(body.Email && String(body.Email).trim());
-        const hasContact = !!body.selected_contact_id;
-        if (!hasPhone && !hasEmail && !hasContact) {
-            errors.push('Phone, Email, or a selected contact is required');
-        }
+        if (!body.Phone || body.Phone.length < 5) errors.push('Phone is required (min 5 chars)');
 
         if (errors.length > 0) {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', errors.join('; '), reqId));
@@ -259,9 +216,7 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                 updates.push(`full_name = $${idx++}`); params.push(fullName);
                 updates.push(`first_name = $${idx++}`); params.push(body.FirstName || null);
                 updates.push(`last_name = $${idx++}`); params.push(body.LastName || null);
-                // EMAIL-LEAD-ORIGIN-001: guard the phone write so a BLANK Phone
-                // never nulls an existing contact phone (email-origin submit).
-                if (body.Phone) { updates.push(`phone_e164 = $${idx++}`); params.push(toE164(body.Phone) || body.Phone); }
+                updates.push(`phone_e164 = $${idx++}`); params.push(toE164(body.Phone) || body.Phone);
                 if (body.Email !== undefined) { updates.push(`email = $${idx++}`); params.push(body.Email || null); }
                 if (body.SecondPhone !== undefined) { updates.push(`secondary_phone = $${idx++}`); params.push(toE164(body.SecondPhone) || body.SecondPhone || null); }
                 if (body.SecondPhoneName !== undefined) { updates.push(`secondary_phone_name = $${idx++}`); params.push(body.SecondPhoneName || null); }
@@ -312,20 +267,6 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                         [body.Company, selectedContactId]
                     );
                 } catch { /* non-blocking */ }
-            }
-
-            // JOB-CONTACT-SYNC-001: "attach" means "don't OVERWRITE the contact" —
-            // but filling an EMPTY phone/email slot loses nothing and keeps
-            // inbound calls/SMS matching this contact (orphan-timeline bug).
-            if (body.Phone || body.Email) {
-                try {
-                    const { propagateContactDetails } = require('../services/contactPropagationService');
-                    await propagateContactDetails(companyId, selectedContactId,
-                        { phone: body.Phone || null, email: body.Email || null },
-                        { source: 'lead_attach' });
-                } catch (e) {
-                    console.error(`[LeadsAPI][${reqId}] contact propagation failed (non-blocking):`, e.message);
-                }
             }
 
         } else if (contactUpdateMode === 'only_lead') {
@@ -784,75 +725,26 @@ router.get('/:uuid/history', requirePermission('leads.view'), async (req, res) =
     }
 });
 
-// ─── Note-mutation helpers (shared by PATCH/DELETE note routes, NOTES-001) ────
-
-function isAdminActor(req) {
-    return req.user?._devMode
-        || req.authz?.membership?.role_key === 'tenant_admin'
-        || (req.user?.roles || []).includes('company_admin');
-}
-
-function buildNoteActor(req) {
-    return {
-        sub: req.user?.sub || null,
-        // Real crm_users.id so a non-admin author is recognised when created_by was
-        // stamped with the crm_users.id (NOTE-AUTHOR-FIX-001).
-        crmUserId: req.user?.crmUser?.id || req.user?.sub || null,
-        name: req.user?.name || null,
-        isAdmin: isAdminActor(req),
-    };
-}
-
-function parseRemoveAttachmentIds(raw) {
-    if (raw == null || raw === '') return [];
-    if (Array.isArray(raw)) return raw;
-    if (typeof raw === 'string') {
-        try {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) return parsed;
-            if (parsed == null) return [];
-            return [parsed];
-        } catch {
-            return [raw];
-        }
-    }
-    return [raw];
-}
-
-// Build the GET-shaped, soft-delete-excluded notes list for a lead.
-async function enrichLeadNotes(companyId, leadId, notes, actor = null) {
-    const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'lead', leadId);
-    const byNoteId = {};
-    const byNoteIndex = {};
-    for (const a of attachments) {
-        if (a.noteId) (byNoteId[a.noteId] ||= []).push(a);
-        else (byNoteIndex[a.noteIndex] ||= []).push(a);
-    }
-    return (notes || [])
-        .map((n, i) => ({ n, i }))
-        .filter(({ n }) => !n.deleted_at)
-        .map(({ n, i }) => ({
-            ...n,
-            id: n.id || null,
-            created_by: n.created_by || null,
-            source: n.source || null,
-            zb_note_id: n.zb_note_id || null,
-            attachments: (n.id && byNoteId[n.id]) || byNoteIndex[i] || [],
-            // Server-authoritative edit/delete permission (NOTE-AUTHOR-FIX-001).
-            can_edit: actor
-                ? notesMutationService.canMutateNote(n, { isAdmin: actor.isAdmin, actorSub: actor.sub, actorCrmUserId: actor.crmUserId })
-                : undefined,
-        }));
-}
-
 router.get('/:uuid/notes', requirePermission('leads.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
         if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
 
+        const notes = lead.structured_notes || [];
+        // Enrich with presigned URLs for attachments
         const leadId = lead.SerialId || lead.ClientId;
-        const enriched = await enrichLeadNotes(companyId, leadId, lead.structured_notes || [], buildNoteActor(req));
+        const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'lead', leadId);
+        const attachmentsByNote = {};
+        for (const a of attachments) {
+            if (!attachmentsByNote[a.noteIndex]) attachmentsByNote[a.noteIndex] = [];
+            attachmentsByNote[a.noteIndex].push(a);
+        }
+
+        const enriched = notes.map((n, i) => ({
+            ...n,
+            attachments: attachmentsByNote[i] || [],
+        }));
 
         res.json({ ok: true, data: enriched });
     } catch (err) {
@@ -864,14 +756,13 @@ router.get('/:uuid/notes', requirePermission('leads.view'), async (req, res) => 
 router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || null;
+        const userId = req.user?.sub || null;
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
         if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
 
         const text = (req.body.text || '').trim();
         const files = req.files || [];
-        const attachmentIds = parseRemoveAttachmentIds(req.body.attachment_ids); // tolerant id-array parse
-        if (!text && files.length === 0 && attachmentIds.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
+        if (!text && files.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
 
         const leadId = lead.SerialId || lead.ClientId;
         const existingNotes = lead.structured_notes || [];
@@ -882,21 +773,15 @@ router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attac
         }
 
         const noteIndex = existingNotes.length;
-        const noteId = randomUUID();
         let attachmentsMeta = [];
-        if (attachmentIds.length > 0) {
-            // NOTE-ATTACH-UPLOAD-001: files pre-uploaded (staged) — link them to the note.
-            attachmentsMeta = await noteAttachmentsService.associateStagedAttachments(
-                companyId, 'lead', leadId, attachmentIds, noteId, noteIndex
-            );
-        } else if (files.length > 0) {
+        if (files.length > 0) {
             attachmentsMeta = await noteAttachmentsService.createAttachments(
-                companyId, 'lead', leadId, noteIndex, files, userId, { noteId }
+                companyId, 'lead', leadId, noteIndex, files, userId
             );
         }
 
         const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
-        const note = { id: noteId, text, created: new Date().toISOString(), created_by: userId, ...(author && { author }) };
+        const note = { text, created: new Date().toISOString(), ...(author && { author }) };
         if (attachmentsMeta.length > 0) {
             note.attachments = attachmentsMeta.map(a => ({
                 id: a.id, fileName: a.file_name, contentType: a.content_type, fileSize: a.file_size,
@@ -914,91 +799,6 @@ router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attac
         console.error('[Leads] Add note error:', err.message);
         const status = err.status || 500;
         res.status(status).json({ ok: false, error: err.message });
-    }
-});
-
-// ─── Edit / Delete Note (NOTES-001) ──────────────────────────────────────────
-
-function buildLeadNoteAdapter(companyId, uuid, lead) {
-    const leadId = lead.SerialId || lead.ClientId; // attachment entity_id = serial_id, NOT uuid
-    return {
-        entityType: 'lead',
-        attachmentEntityId: leadId,
-        async loadNotes() {
-            const fresh = await leadsService.getLeadByUUID(uuid, companyId);
-            return fresh.structured_notes || [];
-        },
-        async saveNotes(notes) {
-            await db.query(
-                'UPDATE leads SET structured_notes = $1::jsonb, updated_at = NOW() WHERE uuid = $2 AND company_id = $3',
-                [JSON.stringify(notes), uuid, companyId]
-            );
-        },
-    };
-}
-
-router.patch('/:uuid/notes/:noteId', requirePermission('leads.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
-    const reqId = requestId();
-    try {
-        const companyId = req.companyFilter?.company_id;
-        const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
-        const aggregateId = lead.SerialId || lead.ClientId;
-        const leadId = lead.SerialId || lead.ClientId;
-
-        const adapter = buildLeadNoteAdapter(companyId, req.params.uuid, lead);
-        const { note, oldText, addedNames, removedNames } = await notesMutationService.editNote(
-            adapter,
-            req.params.noteId,
-            {
-                text: req.body.text,
-                removeAttachmentIds: parseRemoveAttachmentIds(req.body.remove_attachment_ids),
-                attachmentIds: parseRemoveAttachmentIds(req.body.attachment_ids),
-                files: req.files || [],
-                actor: buildNoteActor(req),
-                companyId,
-            }
-        );
-
-        eventService.logEvent(companyId, 'lead', aggregateId, 'note_edited', {
-            note_id: note.id, old_text: oldText, new_text: note.text,
-            added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
-        }, 'user', req.user?.sub);
-
-        const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes(), buildNoteActor(req));
-        res.json({ ok: true, data: { notes: enriched } });
-    } catch (err) {
-        if (err.status === 403 || err.status === 404) {
-            return res.status(err.status).json({ ok: false, error: err.message });
-        }
-        handleError(err, reqId, res);
-    }
-});
-
-router.delete('/:uuid/notes/:noteId', requirePermission('leads.edit'), async (req, res) => {
-    const reqId = requestId();
-    try {
-        const companyId = req.companyFilter?.company_id;
-        const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
-        const aggregateId = lead.SerialId || lead.ClientId;
-        const leadId = lead.SerialId || lead.ClientId;
-
-        const adapter = buildLeadNoteAdapter(companyId, req.params.uuid, lead);
-        const { note } = await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
-            actor: buildNoteActor(req),
-            companyId,
-        });
-
-        eventService.logEvent(companyId, 'lead', aggregateId, 'note_deleted', {
-            note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
-        }, 'user', req.user?.sub);
-
-        const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes(), buildNoteActor(req));
-        res.json({ ok: true, data: { notes: enriched } });
-    } catch (err) {
-        if (err.status === 403 || err.status === 404) {
-            return res.status(err.status).json({ ok: false, error: err.message });
-        }
-        handleError(err, reqId, res);
     }
 });
 

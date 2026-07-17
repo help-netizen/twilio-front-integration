@@ -5,9 +5,7 @@
 
 const express = require('express');
 const router = express.Router();
-const db = require('../db/connection');
 const svc = require('../services/telephonyTenantService');
-const territoryGeoService = require('../services/territoryGeoService');
 
 function companyId(req) {
     return req.companyFilter?.company_id;
@@ -21,88 +19,11 @@ function fail(res, err, fallback) {
     res.status(500).json({ ok: false, code: 'INTERNAL_ERROR', error: fallback });
 }
 
-function nullableNumber(value) {
-    if (value == null) return null;
-    const number = Number(value);
-    return Number.isFinite(number) ? number : null;
-}
-
-async function getCompanyLocale(id) {
-    const { rows } = await db.query(
-        `SELECT c.city, c.state, c.zip, z.lat, z.lon,
-                z.city AS geocoded_city, z.state AS geocoded_state
-         FROM companies c
-         LEFT JOIN zip_geocache z ON z.zip = c.zip
-         WHERE c.id = $1`,
-        [id]
-    );
-    const company = rows[0] || null;
-
-    if (company?.zip) {
-        let geography = company;
-        if (company.lat == null || company.lon == null) {
-            try {
-                geography = await territoryGeoService.geocodeZip(company.zip) || company;
-            } catch (err) {
-                console.warn('[TelephonyNumbers] Company ZIP geocoding failed:', err.message);
-            }
-        }
-        return {
-            city: company.city ?? geography.city ?? company.geocoded_city ?? null,
-            state: company.state ?? geography.state ?? company.geocoded_state ?? null,
-            zip: company.zip,
-            lat: nullableNumber(geography.lat),
-            lon: nullableNumber(geography.lon),
-        };
-    }
-
-    const { rows: radii } = await db.query(
-        `SELECT r.zip, r.lat, r.lon, z.city, z.state
-         FROM territory_radii r
-         LEFT JOIN zip_geocache z ON z.zip = r.zip
-         WHERE r.company_id = $1
-         ORDER BY r.position ASC
-         LIMIT 1`,
-        [id]
-    );
-    const radius = radii[0] || null;
-    return {
-        city: radius?.city ?? company?.city ?? null,
-        state: radius?.state ?? company?.state ?? null,
-        zip: radius?.zip ?? null,
-        lat: nullableNumber(radius?.lat),
-        lon: nullableNumber(radius?.lon),
-    };
-}
-
 // GET /api/telephony/numbers/status — connection state
 router.get('/status', async (req, res) => {
     try {
-        const id = companyId(req);
-        const state = await svc.getTelephonyState(id);
-        const { rows } = await db.query(
-            `SELECT settings->>'port_in_prompt' AS port_in_prompt
-             FROM companies
-             WHERE id = $1`,
-            [id]
-        );
-        res.json({ ok: true, state, port_in_prompt: rows[0]?.port_in_prompt || null });
+        res.json({ ok: true, state: await svc.getTelephonyState(companyId(req)) });
     } catch (err) { fail(res, err, 'Failed to load telephony status'); }
-});
-
-// POST /api/telephony/numbers/port-in-prompt/dismiss — persist the shared prompt dismissal
-router.post('/port-in-prompt/dismiss', async (req, res) => {
-    try {
-        const { rows } = await db.query(
-            `UPDATE companies
-             SET settings = COALESCE(settings, '{}'::jsonb)
-                 || jsonb_build_object('port_in_prompt', 'dismissed')
-             WHERE id = $1
-             RETURNING settings->>'port_in_prompt' AS port_in_prompt`,
-            [companyId(req)]
-        );
-        res.json({ ok: true, port_in_prompt: rows[0]?.port_in_prompt || null });
-    } catch (err) { fail(res, err, 'Failed to dismiss port-in prompt'); }
 });
 
 // POST /api/telephony/numbers/connect — create the tenant subaccount
@@ -116,22 +37,10 @@ router.post('/connect', async (req, res) => {
     } catch (err) { fail(res, err, 'Failed to connect telephony'); }
 });
 
-// GET /api/telephony/numbers/locale — company base locale for area-code suggestions
-router.get('/locale', async (req, res) => {
-    try {
-        res.json(await getCompanyLocale(companyId(req)));
-    } catch (err) { fail(res, err, 'Failed to load company locale'); }
-});
-
 // GET /api/telephony/numbers/search?area_code=&contains=&locality=&toll_free=
 router.get('/search', async (req, res) => {
     try {
-        const id = companyId(req);
-        await svc.connectTelephony(id, {
-            actorId: req.user?.crmUser?.id,
-            companyName: req.authz?.company?.name,
-        });
-        const results = await svc.searchNumbers(id, {
+        const results = await svc.searchNumbers(companyId(req), {
             areaCode: req.query.area_code || undefined,
             contains: req.query.contains || undefined,
             locality: req.query.locality || undefined,
@@ -155,13 +64,8 @@ router.get('/', async (req, res) => {
 // POST /api/telephony/numbers/buy — purchase a number
 router.post('/buy', async (req, res) => {
     try {
-        const id = companyId(req);
-        await svc.connectTelephony(id, {
-            actorId: req.user?.crmUser?.id,
-            companyName: req.authz?.company?.name,
-        });
         const { phone_number, friendly_name } = req.body || {};
-        const out = await svc.buyNumber(id, {
+        const out = await svc.buyNumber(companyId(req), {
             phoneNumber: phone_number,
             friendlyName: friendly_name,
             actorId: req.user?.crmUser?.id,

@@ -20,7 +20,6 @@ interface ListViewProps {
     settings: DispatchSettings;
     allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
-    onCopy?: (jobId: number) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
     routeByPair?: Map<string, RouteSegment>;
@@ -47,7 +46,7 @@ function formatDayHeading(day: Date, todayStr: string, _tz: string): string {
 }
 
 export const ListView: React.FC<ListViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, routeByPair,
+    currentDate, items, settings, allProviders = [], onSelectItem, onReassign, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -111,14 +110,14 @@ export const ListView: React.FC<ListViewProps> = ({
     const gridCols = `repeat(${colCount}, minmax(200px, 1fr))`;
 
     return (
-        // PALETTE-V2 + LAYOUT-CANON: сетка = один белый контентный юнит (как таблица
-        // Jobs) — опаковый белый, hairline, r16; frosted-стекло/тень/blur сняты.
         <div
             className="flex flex-col flex-1 overflow-x-auto"
             style={{
-                background: 'var(--blanc-surface-strong)',
-                border: '1px solid var(--sched-line)',
-                borderRadius: 'var(--sched-radius-md)',
+                background: 'var(--sched-surface)',
+                border: '1px solid rgba(255, 255, 255, 0.55)',
+                borderRadius: 'var(--sched-radius-xl)',
+                boxShadow: 'var(--sched-shadow-main)',
+                backdropFilter: 'blur(24px)',
             }}
         >
             {/* Sticky header: provider column names */}
@@ -127,7 +126,7 @@ export const ListView: React.FC<ListViewProps> = ({
                 style={{
                     gridTemplateColumns: gridCols,
                     borderBottom: '1px solid var(--sched-line)',
-                    background: 'var(--blanc-surface-strong)',
+                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))',
                 }}
             >
                 {providerGroups.map(group => {
@@ -234,10 +233,7 @@ export const ListView: React.FC<ListViewProps> = ({
                                                         <ScheduleItemCard
                                                             item={item}
                                                             onClick={onSelectItem}
-                                                            onCopy={onCopy}
                                                             timezone={tz}
-                                                            layout="agenda"
-                                                            detailed
                                                         />
                                                     </div>
                                                     {seg && <RouteConnector segment={seg} unit={unit} />}

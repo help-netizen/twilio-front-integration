@@ -88,10 +88,6 @@ async function updateCompany(companyId, fields) {
         'name', 'slug', 'status', 'timezone', 'locale',
         'contact_email', 'contact_phone', 'billing_email',
         'status_reason', 'suspended_at', 'archived_at',
-        // COMPANY-PROFILE-001: branding + payment (ACH) details.
-        'logo_storage_key',
-        'payment_bank_name', 'payment_account_name', 'payment_account_number',
-        'payment_routing_number', 'payment_swift', 'payment_instructions',
     ];
     const sets = [];
     const params = [];

@@ -60,7 +60,7 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
                     </button>
                 )}
                 {!canSend && mailboxStatus === 'reconnect_required' && (
-                    <ReconnectBanner onNavigate={() => navigate('/settings/integrations/google-email')} />
+                    <ReconnectBanner onNavigate={() => navigate('/settings/email')} />
                 )}
                 {composeMode && (
                     <div className="w-full max-w-xl mt-4">
@@ -101,7 +101,7 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
         <div className="flex-1 flex flex-col h-full overflow-hidden">
             {/* Reconnect banner */}
             {mailboxStatus === 'reconnect_required' && (
-                <ReconnectBanner onNavigate={() => navigate('/settings/integrations/google-email')} />
+                <ReconnectBanner onNavigate={() => navigate('/settings/email')} />
             )}
 
             {/* Thread header */}
@@ -120,7 +120,7 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
                             className="flex items-center gap-1.5 text-sm"
                             onClick={() => { setReplyMode(!replyMode); setComposeMode(false); }}
                             style={{
-                                background: replyMode ? 'rgba(25, 25, 25, 0.06)' : 'transparent',
+                                background: replyMode ? 'rgba(117, 106, 89, 0.08)' : 'transparent',
                                 color: 'var(--blanc-ink-2)', padding: '5px 12px',
                                 borderRadius: '8px', border: '1px solid var(--blanc-line)', cursor: 'pointer',
                             }}
@@ -132,7 +132,7 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
                             className="flex items-center gap-1.5 text-sm"
                             onClick={() => { setComposeMode(!composeMode); setReplyMode(false); }}
                             style={{
-                                background: composeMode ? 'rgba(25, 25, 25, 0.06)' : 'transparent',
+                                background: composeMode ? 'rgba(117, 106, 89, 0.08)' : 'transparent',
                                 color: 'var(--blanc-ink-2)', padding: '5px 12px',
                                 borderRadius: '8px', border: '1px solid var(--blanc-line)', cursor: 'pointer',
                             }}

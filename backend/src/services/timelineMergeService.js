@@ -48,13 +48,6 @@ async function mergeOrphanTimelines(contactId, phones, logPrefix = '[TimelineMer
                 'UPDATE calls SET timeline_id = $1, contact_id = $2 WHERE timeline_id = $3',
                 [mainTlId, contactId, orphan.id]
             );
-            // Re-point OPEN tasks off the orphan BEFORE deleting it. tasks.thread_id
-            // is ON DELETE CASCADE (mig 038), so without this an open Action-Required
-            // task on the orphan would be silently destroyed (ORPHAN-TASK-REHOME-001).
-            await db.query(
-                `UPDATE tasks SET thread_id = $1, updated_at = now() WHERE thread_id = $2 AND status = 'open'`,
-                [mainTlId, orphan.id]
-            );
             await db.query('DELETE FROM timelines WHERE id = $1', [orphan.id]);
             console.log(`${logPrefix} Merged timeline ${orphan.id} (${orphan.phone_e164}) into ${mainTlId} — ${rowCount} calls moved`);
         }
@@ -70,12 +63,6 @@ async function mergeOrphanTimelines(contactId, phones, logPrefix = '[TimelineMer
             const { rowCount } = await db.query(
                 'UPDATE calls SET timeline_id = $1, contact_id = $2 WHERE timeline_id = $3',
                 [mainOrphan.id, contactId, orphan.id]
-            );
-            // Re-point OPEN tasks off the orphan before the CASCADE delete drops
-            // them (ORPHAN-TASK-REHOME-001).
-            await db.query(
-                `UPDATE tasks SET thread_id = $1, updated_at = now() WHERE thread_id = $2 AND status = 'open'`,
-                [mainOrphan.id, orphan.id]
             );
             await db.query('DELETE FROM timelines WHERE id = $1', [orphan.id]);
             console.log(`${logPrefix} Merged extra timeline ${orphan.id} into ${mainOrphan.id} — ${rowCount} calls`);

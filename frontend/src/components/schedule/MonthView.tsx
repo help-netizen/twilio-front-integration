@@ -58,20 +58,20 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, settin
     const todayStr = todayInTZ(tz);
 
     return (
-        // PALETTE-V2 + LAYOUT-CANON: сетка = один белый контентный юнит (как таблица
-        // Jobs) — опаковый белый, hairline, r16; frosted-стекло/тень/blur сняты.
         <div
             className="flex flex-col flex-1 overflow-x-auto"
             style={{
-                background: 'var(--blanc-surface-strong)',
-                border: '1px solid var(--sched-line)',
-                borderRadius: 'var(--sched-radius-md)',
+                background: 'var(--sched-surface)',
+                border: '1px solid rgba(255, 255, 255, 0.55)',
+                borderRadius: 'var(--sched-radius-xl)',
+                boxShadow: 'var(--sched-shadow-main)',
+                backdropFilter: 'blur(24px)',
             }}
         >
             {/* Weekday headers */}
             <div className="grid grid-cols-7 sticky top-0 z-10" style={{
                 borderBottom: '1px solid var(--sched-line)',
-                background: 'var(--blanc-surface-strong)',
+                background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))',
             }}>
                 {WEEKDAY_LABELS.map(label => (
                     <div key={label} className="text-center py-3 text-[11px] font-semibold uppercase" style={{
@@ -108,11 +108,11 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, settin
                                         background: isToday
                                             ? 'var(--sched-today-soft)'
                                             : !inMonth
-                                                ? 'rgba(25, 25, 25, 0.03)'
+                                                ? 'rgba(239, 233, 223, 0.3)'
                                                 : 'transparent',
                                     }}
-                                    onMouseEnter={(e) => { if (!isToday) (e.currentTarget as HTMLElement).style.background = 'rgba(25, 25, 25, 0.04)'; }}
-                                    onMouseLeave={(e) => { if (!isToday) (e.currentTarget as HTMLElement).style.background = !inMonth ? 'rgba(25, 25, 25, 0.03)' : 'transparent'; }}
+                                    onMouseEnter={(e) => { if (!isToday) (e.currentTarget as HTMLElement).style.background = 'rgba(252, 249, 244, 0.6)'; }}
+                                    onMouseLeave={(e) => { if (!isToday) (e.currentTarget as HTMLElement).style.background = !inMonth ? 'rgba(239, 233, 223, 0.3)' : 'transparent'; }}
                                 >
                                     <div className="text-sm mb-1" style={{
                                         ...(isToday ? {

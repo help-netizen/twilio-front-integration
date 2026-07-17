@@ -25,9 +25,8 @@ const LAYER_PEEK = 10; // px visible for each underlying layer
 const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
-    border: '1px solid var(--sched-line)',
-    // PALETTE-V2: inset-блок на белой панели (полупрозрачный белый был невидим)
-    background: 'var(--blanc-surface-muted)',
+    border: '1px solid rgba(118, 106, 89, 0.14)',
+    background: 'rgba(255, 255, 255, 0.5)',
 };
 
 const sectionEyebrow: React.CSSProperties = {
@@ -37,7 +36,7 @@ const sectionEyebrow: React.CSSProperties = {
 
 const sectionRow: React.CSSProperties = {
     display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-    gap: '14px', padding: '10px 0', borderBottom: '1px dashed var(--sched-line)',
+    gap: '14px', padding: '10px 0', borderBottom: '1px dashed rgba(118, 106, 89, 0.16)',
 };
 
 export const SidebarStack: React.FC<SidebarStackProps> = ({
@@ -85,8 +84,9 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
             const d = layer.data as Record<string, any>;
             return (
                 <div className="flex flex-col h-full overflow-hidden" style={{ background: 'var(--sched-surface)' }}>
-                    {/* Header — без тёплой заливки: разделение несёт hairline (PALETTE-V2) */}
+                    {/* Header */}
                     <div className="px-6 py-6 pb-5" style={{
+                        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(242, 235, 223, 0.52))',
                         borderBottom: '1px solid var(--sched-line)',
                     }}>
                         <div className="flex items-center justify-between mb-3">
@@ -143,21 +143,21 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                             <div style={sectionCard}>
                                 <p style={sectionEyebrow}>Opened from</p>
                                 <button type="button" onClick={onPopLayer}
-                                    className="w-full text-left px-3 py-2.5 rounded-xl hover:opacity-80 transition-opacity text-[13px] font-semibold"
-                                    style={{ color: 'var(--sched-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid var(--sched-line)' }}>
+                                    className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-white/60 transition-colors text-[13px] font-semibold"
+                                    style={{ color: 'var(--sched-ink-1)', background: 'rgba(255,255,255,0.4)', border: '1px solid var(--sched-line)' }}>
                                     ← {(d.sourceItem as ScheduleItem).title}
                                 </button>
                             </div>
                         )}
-                        {/* Actions — PALETTE-V2: primary = solid accent pill (был синий градиент) */}
+                        {/* Actions */}
                         <div style={sectionCard}>
                             <p style={sectionEyebrow}>Actions</p>
                             <button type="button"
                                 onClick={() => window.open(`/pulse?search=${encodeURIComponent(d.phone || d.name || '')}`, '_self')}
-                                className="w-full min-h-[44px] text-sm font-bold transition-opacity hover:opacity-85"
+                                className="w-full min-h-[44px] text-sm font-bold"
                                 style={{
-                                    background: 'var(--blanc-accent)', color: '#fff',
-                                    borderRadius: '999px', border: 'none',
+                                    background: 'linear-gradient(180deg, #365fd8, #234aa8)', color: '#fff',
+                                    borderRadius: '14px', boxShadow: '0 12px 24px rgba(36, 74, 168, 0.22)', border: 'none',
                                 }}>
                                 Open in Pulse
                             </button>
@@ -172,9 +172,9 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
             const provColor = getProviderColor(d.id || d.name);
             return (
                 <div className="flex flex-col h-full overflow-hidden" style={{ background: 'var(--sched-surface)' }}>
-                    {/* Header — цвет техника оставлен, тёплый хвост градиента → прозрачный */}
+                    {/* Header */}
                     <div className="px-6 py-6 pb-5" style={{
-                        background: `linear-gradient(180deg, ${provColor.bg}, rgba(255, 255, 255, 0))`,
+                        background: `linear-gradient(180deg, ${provColor.bg}, rgba(242, 235, 223, 0.52))`,
                         borderBottom: '1px solid var(--sched-line)',
                     }}>
                         <div className="flex items-center justify-between mb-3">
@@ -213,8 +213,8 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                             <div style={sectionCard}>
                                 <p style={sectionEyebrow}>Opened from</p>
                                 <button type="button" onClick={onPopLayer}
-                                    className="w-full text-left px-3 py-2.5 rounded-xl hover:opacity-80 transition-opacity text-[13px] font-semibold"
-                                    style={{ color: 'var(--sched-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid var(--sched-line)' }}>
+                                    className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-white/60 transition-colors text-[13px] font-semibold"
+                                    style={{ color: 'var(--sched-ink-1)', background: 'rgba(255,255,255,0.4)', border: '1px solid var(--sched-line)' }}>
                                     ← {(d.sourceItem as ScheduleItem).title}
                                 </button>
                             </div>
@@ -265,7 +265,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                                         onClick={onPopLayer}
                                         className="flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold"
                                         style={{
-                                            background: 'var(--blanc-panel-surface)',
+                                            background: 'rgba(255, 253, 249, 0.96)',
                                             color: 'var(--sched-ink-2)',
                                             borderBottom: '1px solid var(--sched-line)',
                                         }}
@@ -351,13 +351,13 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                             right: 0,
                             width: '380px',
                             zIndex: i + 1,
-                            // PALETTE-V2: опаковая белая панель, hairline (тёплое стекло снято)
-                            background: 'var(--blanc-panel-surface)',
-                            border: '1px solid var(--sched-line)',
+                            background: 'var(--sched-surface)',
+                            border: '1px solid rgba(255, 255, 255, 0.55)',
                             borderRadius: 'var(--sched-radius-xl)',
+                            backdropFilter: 'blur(24px)',
                             boxShadow: isTop
                                 ? 'var(--sched-shadow-main)'
-                                : '-4px 0 16px rgba(25, 25, 25, 0.08)',
+                                : '-4px 0 16px rgba(48, 39, 28, 0.08)',
                             transition: 'transform 0.2s ease-out, opacity 0.2s ease-out',
                             transform: isTop ? 'none' : 'scale(0.98)',
                             opacity: isTop ? 1 : 0.6,

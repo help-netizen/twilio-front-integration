@@ -57,24 +57,11 @@ function generateToken(identity) {
 /**
  * ALB-107 phase 2: mint a token with the tenant subaccount's own creds when
  * the company has softphone setup; legacy/default company uses env creds.
- *
- * ONBTEL-001 C5 (fail-closed): only the DEFAULT company may use master env
- * creds. Any other company (including falsy companyId) without provisioned
- * softphone creds gets a 409 instead of silently minting on the master account.
  */
 async function generateTokenForCompany(companyId, identity) {
     const telephonyTenantService = require('./telephonyTenantService');
-    if (companyId === telephonyTenantService.DEFAULT_COMPANY_ID) {
-        return generateToken(identity);
-    }
-
     const creds = await telephonyTenantService.getSoftphoneCreds(companyId);
-    if (!creds) {
-        throw Object.assign(
-            new Error('SoftPhone is not provisioned for this company — connect telephony and run softphone setup.'),
-            { httpStatus: 409, code: 'SOFTPHONE_NOT_PROVISIONED' }
-        );
-    }
+    if (!creds) return generateToken(identity);
 
     const voiceGrant = new VoiceGrant({
         outgoingApplicationSid: creds.twimlAppSid,

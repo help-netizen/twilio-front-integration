@@ -1,14 +1,11 @@
 import { useState } from 'react';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
 import { Button } from '../ui/button';
-import { FloatingLabel } from '../ui/floating-field';
 import { Clock, SkipForward, AlertTriangle } from 'lucide-react';
 import type { WizardState, Step } from './wizardTypes';
 import { serverDate } from '../../utils/serverClock';
 import { CustomTimeModal } from './CustomTimeModal';
-
-// Canon field skin for raw inputs that FloatingField can't host (date input needs min).
-const dateInputClass =
-    'h-[50px] w-full rounded-xl border-[1.5px] border-input bg-transparent px-3.5 text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 export function WizardStep3(s: WizardState) {
     const [showCustomTime, setShowCustomTime] = useState(false);
@@ -21,12 +18,14 @@ export function WizardStep3(s: WizardState) {
                     <Clock className="w-3.5" /> Custom Time
                 </Button>
             </div>
-            <div className="flex items-end gap-3.5">
-                {/* Native date input always shows its format → label must always float (else it centers over mm/dd/yyyy). */}
-                <FloatingLabel label="Starting Date" htmlFor="wz-date" filled className="flex-1">
-                    <input id="wz-date" type="date" className={dateInputClass} value={s.selectedDate} onChange={(e) => { s.setSelectedDate(e.target.value); s.setSelectedTimeslot(null); s.setTimeslotSkipped(false); }} min={serverDate().toISOString().split('T')[0]} />
-                </FloatingLabel>
-                <Button size="sm" variant="outline" onClick={s.fetchTimeslots} disabled={s.timeslotsLoading} className="shrink-0">{s.timeslotsLoading ? 'Loading…' : 'Refresh'}</Button>
+            <div className="wizard__row wizard__row--align-end">
+                <div className="wizard__field">
+                    <Label htmlFor="wz-date">Starting Date</Label>
+                    <Input id="wz-date" type="date" value={s.selectedDate} onChange={(e) => { s.setSelectedDate(e.target.value); s.setSelectedTimeslot(null); s.setTimeslotSkipped(false); }} min={serverDate().toISOString().split('T')[0]} />
+                </div>
+                <div className="wizard__field" style={{ justifyContent: 'flex-end' }}>
+                    <Button size="sm" variant="outline" onClick={s.fetchTimeslots} disabled={s.timeslotsLoading}>{s.timeslotsLoading ? 'Loading…' : 'Refresh'}</Button>
+                </div>
             </div>
             {s.timeslotsLoading && <p className="text-sm animate-pulse mt-2" style={{ color: 'var(--blanc-ink-3)' }}>Fetching available times…</p>}
             {s.timeslotsError && !s.timeslotsLoading && <p className="text-sm mt-2" style={{ color: 'var(--blanc-danger, #d44d3c)' }}>{s.timeslotsError}</p>}

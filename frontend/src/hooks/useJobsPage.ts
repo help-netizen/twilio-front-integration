@@ -87,7 +87,6 @@ export function useJobsPage() {
         handleBlancStatusChange: detail.handleBlancStatusChange,
         handleTagsChange: detail.handleTagsChange,
         handleAddNote: detail.handleAddNote,
-        afterMutation: detail.afterMutation,
 
         // Export (from useJobsExport)
         ...exportHook,

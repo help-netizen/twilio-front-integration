@@ -2,8 +2,8 @@
 import { useState, useMemo, useCallback } from 'react';
 import usePlacesAutocomplete from 'use-places-autocomplete';
 import { Input } from '../ui/input';
+import { Label } from '../ui/label';
 import { Badge } from '../ui/badge';
-import { FloatingField, FloatingLabel } from '../ui/floating-field';
 import { PhoneInput } from '../ui/PhoneInput';
 import { Loader2 } from 'lucide-react';
 import { parseDescription } from '../addressAutoHelpers';
@@ -73,11 +73,10 @@ function TerritoryInput({ value, onChange, onDisplayChange, onAddressParsed }: {
                 onChange={handleChange}
                 onKeyDown={handleKeyDown}
                 disabled={!ready}
-                placeholder=" "
+                placeholder="e.g. 02101, Boston, or 123 Main St"
                 autoComplete="new-address"
                 name="territory-search-nonautofill"
                 maxLength={100}
-                className="h-[50px] rounded-xl bg-transparent text-[15px] placeholder:text-transparent"
             />
             {showDropdown && (
                 <div role="listbox" className="absolute z-50 mt-1 w-full rounded-md border border-gray-200 bg-[#f3f3f5] shadow-md overflow-hidden">
@@ -122,44 +121,41 @@ export function WizardStep1(s: WizardState) {
             <div className="wizard__section-title" style={{ display: 'inline-flex', alignItems: 'center' }}>
                 Territory Check{territoryBadge}
             </div>
-            <div style={{ marginBottom: 16 }}>
-                <FloatingLabel label="Address, Zip Code, or City *" htmlFor="wz-territory" filled={!!s.territoryQuery}>
-                    <TerritoryInput
-                        value={s.territoryQuery}
-                        onChange={(text) => {
-                            s.setTerritoryQuery(text);
-                            // Raw typing goes directly to territory check (zip or city name)
-                            s.setPostalCode(text);
-                        }}
-                        onDisplayChange={(text) => {
-                            // Only update display text, NOT postalCode (onAddressParsed handles that)
-                            s.setTerritoryQuery(text);
-                        }}
-                        onAddressParsed={(parsed) => {
-                            // Fill address fields for Step 4
-                            s.setStreetAddress(parsed.street);
-                            s.setCity(parsed.city);
-                            s.setState(parsed.state);
-                            // postalCode is dual-purpose: territory check query + zip in Step4
-                            // If we have a real zip, use it (works for both purposes)
-                            // If no zip, use city for territory check — but matchedZip will be
-                            // used for the actual zip field in payloads (see CreateLeadJobWizard)
-                            s.setPostalCode(parsed.zip || parsed.city || '');
-                            if (parsed.lat != null && parsed.lng != null) s.setCoords({ lat: parsed.lat, lng: parsed.lng });
-                        }}
-                    />
-                </FloatingLabel>
+            <div className="wizard__field" style={{ marginBottom: 16 }}>
+                <Label htmlFor="wz-territory">Address, Zip Code, or City *</Label>
+                <TerritoryInput
+                    value={s.territoryQuery}
+                    onChange={(text) => {
+                        s.setTerritoryQuery(text);
+                        // Raw typing goes directly to territory check (zip or city name)
+                        s.setPostalCode(text);
+                    }}
+                    onDisplayChange={(text) => {
+                        // Only update display text, NOT postalCode (onAddressParsed handles that)
+                        s.setTerritoryQuery(text);
+                    }}
+                    onAddressParsed={(parsed) => {
+                        // Fill address fields for Step 4
+                        s.setStreetAddress(parsed.street);
+                        s.setCity(parsed.city);
+                        s.setState(parsed.state);
+                        // postalCode is dual-purpose: territory check query + zip in Step4
+                        // If we have a real zip, use it (works for both purposes)
+                        // If no zip, use city for territory check — but matchedZip will be
+                        // used for the actual zip field in payloads (see CreateLeadJobWizard)
+                        s.setPostalCode(parsed.zip || parsed.city || '');
+                        if (parsed.lat != null && parsed.lng != null) s.setCoords({ lat: parsed.lat, lng: parsed.lng });
+                    }}
+                />
             </div>
             <div className="wizard__section-title" style={{ marginTop: 18 }}>Customer</div>
-            <div className="space-y-3.5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    <FloatingField id="wz-fname" label="First Name" name="lead-fname-nonautofill" value={s.firstName} onChange={(e) => s.setFirstName(e.target.value)} />
-                    <FloatingField id="wz-lname" label="Last Name" name="lead-lname-nonautofill" value={s.lastName} onChange={(e) => s.setLastName(e.target.value)} />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    <PhoneInput id="wz-phone" label="Phone" name="lead-phone-nonautofill" autoComplete="new-password" value={s.phoneNumber} onChange={s.setPhoneNumber} />
-                    <FloatingField id="wz-email" label="Email" type="email" name="lead-email-nonautofill" value={s.email} onChange={(e) => s.setEmail(e.target.value)} />
-                </div>
+            <div className="wizard__row">
+                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-fname">First Name</Label><Input id="wz-fname" name="lead-fname-nonautofill" autoComplete="new-password" value={s.firstName} onChange={(e) => s.setFirstName(e.target.value)} placeholder="John" /></div>
+                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-lname">Last Name</Label><Input id="wz-lname" name="lead-lname-nonautofill" autoComplete="new-password" value={s.lastName} onChange={(e) => s.setLastName(e.target.value)} placeholder="Doe" /></div>
+            </div>
+            <div className="wizard__row">
+                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-phone">Phone</Label><PhoneInput id="wz-phone" name="lead-phone-nonautofill" autoComplete="new-password" value={s.phoneNumber} onChange={s.setPhoneNumber} /></div>
+                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-email">Email</Label><Input id="wz-email" name="lead-email-nonautofill" autoComplete="new-password" type="email" value={s.email} onChange={(e) => s.setEmail(e.target.value)} placeholder="email@example.com" /></div>
             </div>
         </div>
     );

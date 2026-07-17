@@ -28,12 +28,6 @@ const ZENBOOKER_API_BASE_URL = process.env.ZENBOOKER_API_BASE_URL || 'https://ap
 // zenbooker_job_id. Raised from 15s → 30s to cut timeout-caused orphans;
 // override with ZENBOOKER_TIMEOUT_MS without a code change.
 const ZENBOOKER_TIMEOUT_MS = Number(process.env.ZENBOOKER_TIMEOUT_MS) || 30000;
-// The ONE company that owns the shared env ZENBOOKER_API_KEY (the default
-// Zenbooker account). Only this company may fall back to the env key; every other
-// tenant must connect its OWN key or get no Zenbooker client at all. Without this,
-// any tenant without its own key would see the default account's team/jobs/services
-// — a cross-tenant data leak. Configurable via env; defaults to the seed company.
-const ZENBOOKER_DEFAULT_COMPANY_ID = process.env.ZENBOOKER_DEFAULT_COMPANY_ID || '00000000-0000-0000-0000-000000000001';
 
 let client = null;
 
@@ -76,14 +70,8 @@ async function getClientForCompany(companyId) {
     );
     const tenantKey = rows[0]?.zenbooker_api_key;
 
-    // No per-tenant key: the shared env/default Zenbooker account belongs to ONE
-    // company (ZENBOOKER_DEFAULT_COMPANY_ID). NEVER hand it to other tenants —
-    // that leaks the default company's team/jobs/services across tenants. Other
-    // companies that haven't connected their own Zenbooker get null; callers must
-    // degrade to "no Zenbooker for this tenant" (empty data / skip).
-    if (!tenantKey) {
-        return companyId === ZENBOOKER_DEFAULT_COMPANY_ID ? getClient() : null;
-    }
+    // If no per-tenant key, fall back to global
+    if (!tenantKey) return getClient();
 
     // Check cache
     const cached = tenantClients.get(companyId);
@@ -567,7 +555,6 @@ async function retryRequest(requestFn, maxRetries = 3) {
  */
 async function getTeamMembers(params = {}, companyId = null) {
     const client = companyId ? await getClientForCompany(companyId) : getClient();
-    if (!client) return []; // tenant has no Zenbooker connection → empty roster (no cross-tenant fallback)
     const allResults = [];
     let cursor = 0;
     const limit = 100;

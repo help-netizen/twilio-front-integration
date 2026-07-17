@@ -236,7 +236,7 @@ export default function WorkflowEditor({ machineKey, onBack }: WorkflowEditorPro
           onClick={handleValidate}
           disabled={validateScxml.isPending}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg
-            bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.10)] transition-colors
+            bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors
             disabled:opacity-50"
         >
           <ShieldCheck className="w-3.5 h-3.5" /> Validate
@@ -246,7 +246,7 @@ export default function WorkflowEditor({ machineKey, onBack }: WorkflowEditorPro
           onClick={handleSave}
           disabled={!dirty || saveDraft.isPending}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg
-            bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.10)] transition-colors
+            bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors
             disabled:opacity-50"
         >
           <Save className="w-3.5 h-3.5" /> {saveDraft.isPending ? 'Saving...' : 'Save Draft'}
@@ -267,7 +267,7 @@ export default function WorkflowEditor({ machineKey, onBack }: WorkflowEditorPro
         <button
           onClick={handleExport}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg
-            bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.10)] transition-colors"
+            bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors"
         >
           <Download className="w-3.5 h-3.5" /> Export
         </button>
@@ -275,7 +275,7 @@ export default function WorkflowEditor({ machineKey, onBack }: WorkflowEditorPro
         <button
           onClick={handleHistory}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg
-            bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.10)] transition-colors"
+            bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors"
         >
           <History className="w-3.5 h-3.5" /> History
         </button>

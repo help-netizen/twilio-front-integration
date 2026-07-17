@@ -1,26 +1,19 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
-import { Archive, ChevronRight, CreditCard, FileText, Loader2, Lock, Plus, Receipt } from 'lucide-react';
-import { CloudBanner } from '../ui/CloudBanner';
+import { Archive, ChevronRight, FileText, Loader2, Plus, Receipt } from 'lucide-react';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
-import { useAuthz } from '../../hooks/useAuthz';
-import { stripePaymentsApi } from '../../services/stripePaymentsApi';
-import { CollectPaymentDialog } from './CollectPaymentDialog';
 import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
 import { InvoiceEditorDialog } from '../invoices/InvoiceEditorDialog';
 import { EstimateDetailPanel } from '../estimates/EstimateDetailPanel';
 import { InvoiceDetailPanel } from '../invoices/InvoiceDetailPanel';
-import { InvoiceSendDialog } from '../invoices/InvoiceSendDialog';
 import { fetchEstimate, fetchEstimateEvents } from '../../services/estimatesApi';
 import { fetchInvoiceEvents } from '../../services/invoicesApi';
 import type { EstimateEvent } from '../../services/estimatesApi';
 import type { InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
-import { recordPayment, voidInvoice, sendInvoice } from '../../services/invoicesApi';
+import { recordPayment, voidInvoice } from '../../services/invoicesApi';
 import { approveEstimate, archiveEstimate, declineEstimate, restoreEstimate, sendEstimate, linkJobToEstimate, updateEstimate } from '../../services/estimatesApi';
 import { deleteInvoice } from '../../services/invoicesApi';
 import { toast } from 'sonner';
@@ -45,7 +38,7 @@ function MetricCell({ label, value, tone = 'default' }: { label: string; value: 
     const valueClass = tone === 'warning' ? 'text-[var(--blanc-warning)]' : 'text-[var(--blanc-ink-1)]';
     return (
         <div className="min-w-0 bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--blanc-ink-3)]">{label}</p>
+            <p className="blanc-eyebrow">{label}</p>
             <p className={`mt-1 truncate font-mono text-lg font-semibold ${valueClass}`}>{value}</p>
         </div>
     );
@@ -74,20 +67,6 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     const [estimateEvents, setEstimateEvents] = useState<EstimateEvent[]>([]);
     const [invoiceEvents, setInvoiceEvents] = useState<InvoiceEvent[]>([]);
     const [detailLoading, setDetailLoading] = useState(false);
-    const [showInvoiceSend, setShowInvoiceSend] = useState(false);
-    const [showCollect, setShowCollect] = useState(false);
-
-    // ── STRIPE-ADHOC-PAY-001: collect-payment button/CTA gating ─────────────────
-    const navigate = useNavigate();
-    const { hasAnyPermission, hasPermission } = useAuthz();
-    const canCollect = hasAnyPermission('payments.collect_online', 'payments.collect_offline', 'payments.collect_keyed');
-    // Only fetch Stripe readiness when the user could actually collect (FR-BTN-2: no perm → nothing).
-    const { data: stripeStatus, isLoading: stripeLoading } = useQuery({
-        queryKey: ['stripe-payments-status'],
-        queryFn: () => stripePaymentsApi.getStatus().then(r => r.status),
-        enabled: canCollect,
-    });
-    const canManageIntegrations = hasPermission('tenant.integrations.manage');
 
     const openEstimate = async (e: (typeof estimates)[0]) => {
         setDetailLoading(true);
@@ -121,17 +100,6 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     const totalPaid = invoices.reduce((s, i) => s + Number(i.amount_paid || 0), 0);
     const totalDue = Math.max(totalInvoiced - totalPaid, 0);
 
-    // Collect-payment surface (STRIPE-ADHOC-PAY-001 §1). Perm-gate FIRST: no collect
-    // perm → render nothing at all (no button, no CTA). Then split on Stripe readiness.
-    const readiness = stripeStatus?.readiness;
-    const stripeReady = !!stripeStatus?.configured && !!stripeStatus?.can_collect;
-    // CTA copy per readiness (manage user). not_connected/disconnected → "Connect"; the
-    // setup-incomplete states → "Finish setup". payouts_disabled never reaches here (can_collect=true).
-    const isConnectState = readiness === 'not_connected' || readiness === 'disconnected';
-    // Show the CTA card only for a permitted-but-not-ready company with a known readiness
-    // state (loading / configured===false → nothing, matching the invoice silent-absence).
-    const showCta = canCollect && !stripeLoading && !!stripeStatus?.configured && !stripeStatus?.can_collect && !!readiness;
-
     return (
         <div className="flex-1 overflow-y-auto bg-[var(--blanc-panel-surface,#fffdf9)] p-5 text-[var(--blanc-ink-1)]">
             <div className="mx-auto max-w-5xl space-y-5">
@@ -142,53 +110,6 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                         <MetricCell label="Due" value={money(totalDue)} tone={totalDue > 0 ? 'warning' : 'default'} />
                     </div>
                 </div>
-
-                {/* Collect payment — STRIPE-ADHOC-PAY-001 §1 (perm-gated, readiness-driven). */}
-                {canCollect && stripeReady && (
-                    <div className="flex justify-end">
-                        <Button size="sm" onClick={() => setShowCollect(true)}>
-                            <CreditCard className="mr-1 size-4" />Collect payment
-                        </Button>
-                    </div>
-                )}
-                {showCta && (
-                    <CloudBanner variant="compact">
-                        {canManageIntegrations ? (
-                            <>
-                                <h3
-                                    className="text-base font-extrabold text-[var(--blanc-ink-1)] sm:text-lg"
-                                    style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em' }}
-                                >
-                                    {isConnectState ? 'Get paid for this job today' : 'Almost there — finish your Stripe setup'}
-                                </h3>
-                                <p className="mt-1.5 max-w-prose text-sm text-[var(--blanc-ink-2)]">
-                                    {isConnectState
-                                        ? "Charge the card on the spot or text a secure payment link. No invoice needed — money hits your bank in days."
-                                        : 'Stripe needs a few more business details before you can take payments.'}
-                                </p>
-                                <div className="mt-4 flex flex-wrap items-center gap-3">
-                                    <Button
-                                        className="h-11 px-5"
-                                        onClick={() => navigate('/settings/integrations/stripe-payments')}
-                                    >
-                                        {isConnectState ? 'Connect Stripe' : 'Finish setup'}
-                                    </Button>
-                                    {isConnectState && (
-                                        <span className="text-xs text-[var(--blanc-ink-3)]">One-time setup · ~5 min</span>
-                                    )}
-                                </div>
-                            </>
-                        ) : (
-                            <div className="flex items-start gap-3">
-                                <Lock className="mt-0.5 size-4 shrink-0 text-[var(--blanc-ink-3)]" />
-                                <p className="text-sm text-[var(--blanc-ink-2)]">
-                                    Your company isn't set up for payments yet. Ask an account admin to connect Stripe in Settings → Integrations.
-                                </p>
-                            </div>
-                        )}
-                    </CloudBanner>
-                )}
-
 
                 {loading && (
                     <div className="flex items-center justify-center rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] py-6 text-sm text-[var(--blanc-ink-2)]">
@@ -205,7 +126,7 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                     </div>
                     {estimates.length === 0 && !loading ? (
                         <div className="px-4 py-8">
-                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(25,25,25,0.03)] px-4 py-6 text-center">
+                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(117,106,89,0.04)] px-4 py-6 text-center">
                                 <FileText className="mx-auto size-8 text-[var(--blanc-ink-3)]" />
                                 <p className="mt-3 text-sm font-medium">No estimate yet</p>
                                 <p className="mx-auto mt-1 max-w-md text-sm text-[var(--blanc-ink-2)]">
@@ -223,11 +144,11 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                                 return (
                                     <button
                                         key={e.id}
-                                        className={`group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(25,25,25,0.04)] ${archived ? 'grayscale opacity-60' : ''}`}
+                                        className={`group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(117,106,89,0.05)] ${archived ? 'grayscale opacity-60' : ''}`}
                                         onClick={() => openEstimate(e)}
                                     >
                                         <div className="flex min-w-0 items-start gap-3">
-                                            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(25,25,25,0.04)]">
+                                            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(117,106,89,0.05)]">
                                                 <FileText className="size-4 text-[var(--blanc-ink-3)]" />
                                             </div>
                                             <div className="min-w-0">
@@ -269,7 +190,7 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                     </div>
                     {invoices.length === 0 && !loading ? (
                         <div className="px-4 py-8">
-                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(25,25,25,0.03)] px-4 py-6 text-center">
+                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(117,106,89,0.04)] px-4 py-6 text-center">
                                 <Receipt className="mx-auto size-8 text-[var(--blanc-ink-3)]" />
                                 <p className="mt-3 text-sm font-medium">No invoices yet</p>
                                 <p className="mx-auto mt-1 max-w-md text-sm text-[var(--blanc-ink-2)]">
@@ -285,11 +206,11 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                             {invoices.map(i => (
                                 <button
                                     key={i.id}
-                                    className="group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(25,25,25,0.04)]"
+                                    className="group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(117,106,89,0.05)]"
                                     onClick={() => openInvoice(i)}
                                 >
                                     <div className="flex min-w-0 items-start gap-3">
-                                        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(25,25,25,0.04)]">
+                                        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(117,106,89,0.05)]">
                                             <Receipt className="size-4 text-[var(--blanc-ink-3)]" />
                                         </div>
                                         <div className="min-w-0">
@@ -418,7 +339,14 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                             loading={detailLoading}
                             onClose={() => setSelectedInvoice(null)}
                             onEdit={() => {}}
-                            onSend={() => setShowInvoiceSend(true)}
+                            onSend={async () => {
+                                try {
+                                    const { sendInvoice } = await import('../../services/invoicesApi');
+                                    await sendInvoice(selectedInvoice.id, { channel: 'email', recipient: '' });
+                                    toast.success('Invoice sent');
+                                    refresh();
+                                } catch (err: any) { toast.error(err.message); }
+                            }}
                             onVoid={async () => {
                                 try {
                                     await voidInvoice(selectedInvoice.id);
@@ -454,41 +382,6 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                     </DialogContent>
                 </Dialog>
             )}
-
-            {/* Invoice send dialog — operator confirms recipient/message (no empty-recipient sends) */}
-            {selectedInvoice && (
-                <InvoiceSendDialog
-                    open={showInvoiceSend}
-                    onOpenChange={setShowInvoiceSend}
-                    invoiceId={selectedInvoice.id}
-                    contactEmail={selectedInvoice.contact_email || ''}
-                    contactPhone={selectedInvoice.contact_phone || ''}
-                    contactName={selectedInvoice.contact_name || ''}
-                    invoiceNumber={selectedInvoice.invoice_number}
-                    balanceDue={selectedInvoice.balance_due}
-                    total={selectedInvoice.total}
-                    dueDate={selectedInvoice.due_date}
-                    onSend={async (data) => {
-                        try {
-                            await sendInvoice(selectedInvoice.id, data);
-                            toast.success('Invoice sent');
-                            refresh();
-                        } catch (err: any) {
-                            toast.error(err.message);
-                            throw err; // keep the dialog open on failure
-                        }
-                    }}
-                />
-            )}
-
-            {/* Collect payment — arbitrary-amount card charge / link, no invoice (STRIPE-ADHOC-PAY-001) */}
-            <CollectPaymentDialog
-                open={showCollect}
-                onOpenChange={setShowCollect}
-                jobId={jobId}
-                outstanding={totalDue}
-                onSuccess={() => refresh()}
-            />
         </div>
     );
 }

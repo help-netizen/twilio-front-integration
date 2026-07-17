@@ -22,7 +22,6 @@ BEGIN
        blanc:title="Job Workflow">
 
   <state id="Submitted" blanc:label="Submitted">
-    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:label="On the way" blanc:order="0" />
     <transition event="TO_FOLLOW_UP" target="Follow_Up_with_Client" blanc:action="true" blanc:label="Follow up" blanc:order="1" />
     <transition event="TO_WAITING_PARTS" target="Waiting_for_parts" blanc:action="true" blanc:label="Waiting for parts" blanc:order="2" />
     <transition event="TO_CANCELED" target="Canceled" blanc:action="true" blanc:label="Cancel" blanc:order="3" blanc:confirm="true" blanc:confirmText="Are you sure you want to cancel this job?" />
@@ -47,13 +46,7 @@ BEGIN
   </state>
 
   <state id="Rescheduled" blanc:label="Rescheduled">
-    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:label="On the way" blanc:order="0" />
     <transition event="TO_SUBMITTED" target="Submitted" blanc:action="true" blanc:label="Back to Submitted" blanc:order="1" />
-    <transition event="TO_CANCELED" target="Canceled" blanc:action="true" blanc:label="Cancel" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to cancel this job?" />
-  </state>
-
-  <state id="On_the_way" blanc:label="On the way" blanc:statusName="On the way">
-    <transition event="TO_VISIT_COMPLETED" target="Visit_completed" blanc:action="true" blanc:label="Visit completed" blanc:order="1" />
     <transition event="TO_CANCELED" target="Canceled" blanc:action="true" blanc:label="Cancel" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to cancel this job?" />
   </state>
 

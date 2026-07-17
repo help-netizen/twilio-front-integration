@@ -20,27 +20,12 @@ function actor(req) {
     return { id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id || '') ? id : null };
 }
 
-function humanize(err) {
-    if (err.stripeCode || err.httpStatus) return `Stripe: ${err.message}`;
-    return err.message;
-}
-
 function handleError(err, req, res) {
     if (err instanceof stripePaymentsService.StripePaymentsError) {
         return res.status(err.httpStatus || 400).json({ success: false, code: err.code, message: err.message, request_id: req.requestId });
     }
-    console.error(`[StripePayments] ${req.path} error:`, {
-        message: err.message,
-        stripeCode: err.stripeCode,
-        httpStatus: err.httpStatus,
-        stack: err.stack,
-    });
-    return res.status(err.httpStatus || 500).json({
-        success: false,
-        code: err.stripeCode || err.code || 'STRIPE_CONNECT_FAILED',
-        message: humanize(err),
-        request_id: req.requestId,
-    });
+    console.error('[StripePayments] Error:', err.message);
+    return res.status(err.httpStatus || 500).json({ success: false, code: 'INTERNAL_ERROR', message: 'Internal server error.', request_id: req.requestId });
 }
 
 router.get('/status', async (req, res) => {

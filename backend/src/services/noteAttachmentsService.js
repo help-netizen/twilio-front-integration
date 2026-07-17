@@ -28,17 +28,11 @@ const ALLOWED_TYPES = new Set([
  * @param {number|null} noteIndex
  * @param {Array<{buffer: Buffer, mimetype: string, originalname: string, size: number}>} files
  * @param {string|null} userId
- * @param {{noteId?: string|null, existingCount?: number}} [opts]
- *   noteId — stable note id stamped onto note_attachments.note_id (NOTES-001).
- *   existingCount — attachments already on the note; counted toward MAX so the
- *   per-note cap covers surviving + newly added files (used by edit).
  * @returns {Promise<Array<{id: number, fileName: string, contentType: string, fileSize: number}>>}
  */
-async function createAttachments(companyId, entityType, entityId, noteIndex, files, userId, opts = {}) {
+async function createAttachments(companyId, entityType, entityId, noteIndex, files, userId) {
     if (!files || files.length === 0) return [];
-    const noteId = opts.noteId || null;
-    const existingCount = opts.existingCount || 0;
-    if (existingCount + files.length > MAX_FILES_PER_NOTE) {
+    if (files.length > MAX_FILES_PER_NOTE) {
         throw Object.assign(new Error(`Maximum ${MAX_FILES_PER_NOTE} files per note`), { status: 400 });
     }
 
@@ -62,10 +56,10 @@ async function createAttachments(companyId, entityType, entityId, noteIndex, fil
         await storageService.uploadFile(file.buffer, file.mimetype, storageKey);
 
         const row = await db.query(
-            `INSERT INTO note_attachments (company_id, entity_type, entity_id, note_index, note_id, file_name, content_type, file_size, storage_key, uploaded_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            `INSERT INTO note_attachments (company_id, entity_type, entity_id, note_index, file_name, content_type, file_size, storage_key, uploaded_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              RETURNING id, file_name, content_type, file_size`,
-            [companyId, entityType, entityId, noteIndex, noteId, file.originalname, file.mimetype, file.size, storageKey, userId]
+            [companyId, entityType, entityId, noteIndex, file.originalname, file.mimetype, file.size, storageKey, userId]
         );
 
         results.push(row.rows[0]);
@@ -79,10 +73,9 @@ async function createAttachments(companyId, entityType, entityId, noteIndex, fil
  */
 async function getAttachmentsForEntity(companyId, entityType, entityId) {
     const result = await db.query(
-        `SELECT id, note_index, note_id, file_name, content_type, file_size, storage_key, created_at
+        `SELECT id, note_index, file_name, content_type, file_size, storage_key, created_at
          FROM note_attachments
          WHERE company_id = $1 AND entity_type = $2 AND entity_id = $3
-           AND note_index IS NOT NULL
          ORDER BY created_at`,
         [companyId, entityType, entityId]
     );
@@ -98,7 +91,6 @@ async function getAttachmentsForEntity(companyId, entityType, entityId) {
         attachments.push({
             id: row.id,
             noteIndex: row.note_index,
-            noteId: row.note_id,
             fileName: row.file_name,
             contentType: row.content_type,
             fileSize: row.file_size,
@@ -138,94 +130,6 @@ async function deleteAttachment(companyId, attachmentId) {
     return true;
 }
 
-const ENTITY_TABLES = { job: 'jobs', lead: 'leads', contact: 'contacts' };
-
-function validateFile(file) {
-    if (file.size > MAX_FILE_SIZE) {
-        throw Object.assign(new Error(`File "${file.originalname}" exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`), { status: 400 });
-    }
-    if (!ALLOWED_TYPES.has(file.mimetype)) {
-        throw Object.assign(new Error(`File type "${file.mimetype}" is not allowed`), { status: 400 });
-    }
-}
-
-/** Confirm an entity (job/lead/contact) belongs to the company (NOTE-ATTACH-UPLOAD-001 isolation). */
-async function entityExistsInCompany(companyId, entityType, entityId) {
-    const table = ENTITY_TABLES[entityType];
-    if (!table) return false;
-    const { rows } = await db.query(
-        `SELECT 1 FROM ${table} WHERE id = $1 AND company_id = $2 LIMIT 1`,
-        [entityId, companyId]
-    );
-    return rows.length > 0;
-}
-
-/**
- * Stage attachments BEFORE a note exists: upload to S3 + insert rows with
- * note_index = NULL (the "staged" marker — excluded from display, cleaned by cron
- * if abandoned). Returned ids are later passed to associateStagedAttachments.
- */
-async function stageAttachments(companyId, entityType, entityId, files, userId) {
-    if (!files || files.length === 0) return [];
-    const results = [];
-    for (const file of files) {
-        validateFile(file);
-        const storageKey = storageService.generateStorageKey(companyId, entityType, entityId, file.originalname);
-        await storageService.uploadFile(file.buffer, file.mimetype, storageKey);
-        const row = await db.query(
-            `INSERT INTO note_attachments (company_id, entity_type, entity_id, note_index, note_id, file_name, content_type, file_size, storage_key, uploaded_by)
-             VALUES ($1, $2, $3, NULL, NULL, $4, $5, $6, $7, $8)
-             RETURNING id, file_name, content_type, file_size`,
-            [companyId, entityType, entityId, file.originalname, file.mimetype, file.size, storageKey, userId]
-        );
-        results.push(row.rows[0]);
-    }
-    return results;
-}
-
-/**
- * Attach previously-staged uploads to a note: stamp note_id + note_index on rows
- * that are still staged (note_index IS NULL) and owned by this company+entity.
- * Foreign / already-committed / unknown ids are silently ignored.
- */
-async function associateStagedAttachments(companyId, entityType, entityId, attachmentIds, noteId, noteIndex, opts = {}) {
-    const ids = (attachmentIds || []).map(Number).filter(n => Number.isInteger(n) && n > 0);
-    if (ids.length === 0) return [];
-    const existingCount = opts.existingCount || 0;
-    if (existingCount + ids.length > MAX_FILES_PER_NOTE) {
-        throw Object.assign(new Error(`Maximum ${MAX_FILES_PER_NOTE} files per note`), { status: 400 });
-    }
-    const { rows } = await db.query(
-        `UPDATE note_attachments
-            SET note_id = $1, note_index = $2
-          WHERE id = ANY($3::bigint[])
-            AND company_id = $4 AND entity_type = $5 AND entity_id = $6
-            AND note_index IS NULL
-        RETURNING id, file_name, content_type, file_size`,
-        [noteId, noteIndex, ids, companyId, entityType, entityId]
-    );
-    return rows;
-}
-
-/**
- * Cron: delete staged attachments (note_index IS NULL) abandoned for > olderThanHours.
- * Removes the S3 object (best-effort) then the row. Returns the count deleted.
- */
-async function deleteStaleStagedAttachments(olderThanHours = 24) {
-    const { rows } = await db.query(
-        `DELETE FROM note_attachments
-          WHERE note_index IS NULL
-            AND created_at < now() - ($1 || ' hours')::interval
-        RETURNING storage_key`,
-        [String(olderThanHours)]
-    );
-    for (const r of rows) {
-        try { await storageService.deleteFile(r.storage_key); }
-        catch (err) { console.warn('[NoteAttachments] stale S3 delete failed:', err.message); }
-    }
-    return rows.length;
-}
-
 module.exports = {
     MAX_FILE_SIZE,
     MAX_FILES_PER_NOTE,
@@ -233,8 +137,4 @@ module.exports = {
     getAttachmentsForEntity,
     getPresignedUrlForAttachment,
     deleteAttachment,
-    entityExistsInCompany,
-    stageAttachments,
-    associateStagedAttachments,
-    deleteStaleStagedAttachments,
 };

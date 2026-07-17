@@ -9,17 +9,13 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import { overlapsTimeOff } from '../../services/scheduleApi';
-import { filterTimeOffByProviders } from '../../services/scheduleFilters';
-import type { ScheduleItem, DispatchSettings, RouteSegment, TimeOffBlock } from '../../services/scheduleApi';
+import type { ScheduleItem, DispatchSettings, RouteSegment } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { routeSegmentLabel, routeSegmentTone } from '../../utils/routeFormat';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
-    formatTimeInTZ, formatDateTimeInTZ, dateKeyInTZ,
+    formatTimeInTZ, dateKeyInTZ,
 } from '../../utils/companyTime';
-import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '../ui/dialog';
-import { Button } from '../ui/button';
 import { serverDate } from '../../utils/serverClock';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
 import { getProviderColor } from '../../utils/providerColors';
@@ -33,20 +29,11 @@ interface TimelineViewProps {
     settings: DispatchSettings;
     allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
-    onCopy?: (jobId: number) => void;
     onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => void;
     routeByPair?: Map<string, RouteSegment>;
-    /** TECH-DAYOFF-001: day-off blocks for the visible range (grey lane overlay + DnD warning). */
-    timeOff?: TimeOffBlock[];
-    /** TECH-DAYOFF-002: active provider filter — rendered time-off lanes honor it (DnD warnings don't). */
-    providerFilterIds?: string[];
 }
-
-// TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
-// separate non-interactive layer under the job cards.
-const TIME_OFF_BG = 'repeating-linear-gradient(135deg, rgba(25, 25, 25, 0.04) 0 10px, rgba(25, 25, 25, 0.08) 10px 20px)';
 
 const LEG_TONE_COLOR: Record<string, string> = {
     ok: 'var(--sched-ink-2)', pending: 'var(--sched-ink-3)', warn: '#a65312', none: 'var(--sched-ink-3)',
@@ -126,7 +113,7 @@ function layoutItems(items: ScheduleItem[], tz: string, startHour: number): Posi
 }
 
 export const TimelineView: React.FC<TimelineViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReschedule, onReassign, onCreateFromSlot, routeByPair, timeOff, providerFilterIds,
+    currentDate, items, settings, allProviders = [], onSelectItem, onReschedule, onReassign, onCreateFromSlot, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -147,10 +134,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     } | null>(null);
     const colRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const placeholderRef = useRef<HTMLDivElement>(null);
-
-    // TECH-DAYOFF-001 S-11: a drop that lands on the target technician's time
-    // off is parked here until the dispatcher confirms (warning-only, never a block).
-    const [pendingDrop, setPendingDrop] = useState<{ techName: string; period: string; proceed: () => void } | null>(null);
 
     // Close inline placeholder on outside click / Esc
     useEffect(() => {
@@ -221,11 +204,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     const [refY, refM, refD] = dateKey.split('-').map(Number);
     const bodyHeight = totalHours * HOUR_HEIGHT;
 
-    // TECH-DAYOFF-001 S-9: the visible grid window as UTC instants — used to
-    // pick and clip the day-off blocks that intersect this day's grid.
-    const gridStartUtc = dateInTZ(refY, refM, refD, Math.floor(startHour), Math.round((startHour % 1) * 60), tz);
-    const gridEndUtc = dateInTZ(refY, refM, refD, Math.floor(endHour), Math.round((endHour % 1) * 60), tz);
-
     // ── DnD helpers ──────────────────────────────────────────────────────
 
     const pctToMinutes = useCallback((pct: number): number => {
@@ -255,38 +233,19 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         const pct = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
         const newStartMin = pctToMinutes(pct);
         const newEndMin = newStartMin + data.durationMin;
-        const startAt = dateInTZ(refY, refM, refD, Math.floor(newStartMin / 60), newStartMin % 60, tz).toISOString();
-        const endAt = dateInTZ(refY, refM, refD, Math.floor(newEndMin / 60), newEndMin % 60, tz).toISOString();
 
-        // The existing reschedule/reassign path, byte-for-byte — either runs
-        // immediately (no conflict) or after the dispatcher confirms.
-        const proceed = () => {
-            if (onReschedule) {
-                onReschedule(data.entityType, data.entityId, startAt, endAt, data.title);
-            }
-            if (onReassign) {
-                const assigneeId = group.id === '__unassigned' ? null : group.id;
-                const assigneeName = group.id === '__unassigned' ? undefined : group.label;
-                onReassign(data.entityType, data.entityId, assigneeId, assigneeName, data.title);
-            }
-        };
-
-        // TECH-DAYOFF-001 S-11: warning-only confirm when the drop overlaps the
-        // target lane technician's time off (blocks already in memory, 0 requests).
-        const conflicts = group.id === '__unassigned'
-            ? []
-            : overlapsTimeOff(timeOff ?? [], [group.id], startAt, endAt);
-        if (conflicts.length > 0) {
-            const c = conflicts[0];
-            setPendingDrop({
-                techName: c.technician_name,
-                period: `${formatDateTimeInTZ(new Date(c.starts_at), tz)} – ${formatDateTimeInTZ(new Date(c.ends_at), tz)}`,
-                proceed,
-            });
-            return;
+        if (onReschedule) {
+            const startAt = dateInTZ(refY, refM, refD, Math.floor(newStartMin / 60), newStartMin % 60, tz).toISOString();
+            const endAt = dateInTZ(refY, refM, refD, Math.floor(newEndMin / 60), newEndMin % 60, tz).toISOString();
+            onReschedule(data.entityType, data.entityId, startAt, endAt, data.title);
         }
-        proceed();
-    }, [onReschedule, onReassign, pctToMinutes, refY, refM, refD, tz, timeOff]);
+
+        if (onReassign) {
+            const assigneeId = group.id === '__unassigned' ? null : group.id;
+            const assigneeName = group.id === '__unassigned' ? undefined : group.label;
+            onReassign(data.entityType, data.entityId, assigneeId, assigneeName, data.title);
+        }
+    }, [onReschedule, onReassign, pctToMinutes, refY, refM, refD, tz]);
 
     // ── Slot click for create-from-slot ────────────────────────────────────
 
@@ -315,15 +274,14 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     }, [onCreateFromSlot, pctToMinutes, refY, refM, refD, tz]);
 
     return (
-        <>
-        {/* PALETTE-V2 + LAYOUT-CANON: сетка = один белый контентный юнит (как таблица
-            Jobs) — опаковый белый, hairline, r16; frosted-стекло/тень/blur сняты. */}
         <div
             className="flex flex-col overflow-x-auto"
             style={{
-                background: 'var(--blanc-surface-strong)',
-                border: '1px solid var(--sched-line)',
-                borderRadius: 'var(--sched-radius-md)',
+                background: 'var(--sched-surface)',
+                border: '1px solid rgba(255, 255, 255, 0.55)',
+                borderRadius: 'var(--sched-radius-xl)',
+                boxShadow: 'var(--sched-shadow-main)',
+                backdropFilter: 'blur(24px)',
             }}
         >
             {/* Header: date corner + provider columns */}
@@ -331,7 +289,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 className="sticky top-0 z-10 flex"
                 style={{
                     borderBottom: '1px solid var(--sched-line)',
-                    background: 'var(--blanc-surface-strong)',
+                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))',
                 }}
             >
                 {/* Corner: date */}
@@ -387,7 +345,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                             className="flex items-start justify-end pr-2 pt-1"
                             style={{
                                 height: HOUR_HEIGHT,
-                                borderBottom: '1px solid var(--sched-line)',
+                                borderBottom: '1px solid rgba(118, 106, 89, 0.1)',
                                 color: 'var(--sched-ink-1)',
                                 fontSize: '14px',
                             }}
@@ -427,46 +385,10 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     style={{
                                         top: (h - Math.floor(startHour)) * HOUR_HEIGHT,
                                         height: HOUR_HEIGHT,
-                                        borderBottom: '1px solid var(--sched-line)',
+                                        borderBottom: '1px solid rgba(118, 106, 89, 0.1)',
                                     }}
                                 />
                             ))}
-
-                            {/* Time-off blocks (TECH-DAYOFF-001 S-9, INV-10) — a grey layer
-                                UNDER the job cards; pointer-events:none so click/DnD pass
-                                straight through to the grid (the protected DnD chain). */}
-                            {group.id !== '__unassigned' && filterTimeOffByProviders(timeOff ?? [], providerFilterIds)
-                                .filter(b => b.technician_id === group.id
-                                    && new Date(b.starts_at) < gridEndUtc
-                                    && gridStartUtc < new Date(b.ends_at))
-                                .map(b => {
-                                    const bs = new Date(b.starts_at);
-                                    const be = new Date(b.ends_at);
-                                    // Clip to the visible day window (a multi-day period
-                                    // renders as this day's slice).
-                                    const topMin = bs <= gridStartUtc ? 0
-                                        : Math.max(0, minutesSinceMidnight(bs, tz) - startHour * 60);
-                                    const botMin = be >= gridEndUtc ? totalHours * 60
-                                        : Math.min(totalHours * 60, minutesSinceMidnight(be, tz) - startHour * 60);
-                                    const topPx = topMin / 60 * HOUR_HEIGHT;
-                                    const heightPx = Math.max(botMin / 60 * HOUR_HEIGHT - topPx, 18);
-                                    return (
-                                        <div
-                                            key={`timeoff-${b.id}`}
-                                            className="absolute left-0 right-0 z-[2] pointer-events-none select-none overflow-hidden"
-                                            style={{ top: topPx, height: heightPx, background: TIME_OFF_BG }}
-                                        >
-                                            <div className="px-2 pt-1 text-[11px] font-medium truncate" style={{ color: 'var(--sched-ink-3)' }}>
-                                                Time off
-                                            </div>
-                                            {b.note && heightPx >= 48 && (
-                                                <div className="px-2 text-[11px] truncate" style={{ color: 'var(--sched-ink-3)' }}>
-                                                    {b.note}
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
 
                             {/* Past-time overlay */}
                             {isToday && nowPx > 0 && (
@@ -475,7 +397,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                         className="absolute top-0 left-0 right-0 pointer-events-none z-[1]"
                                         style={{
                                             height: Math.min(nowPx, bodyHeight),
-                                            background: 'rgba(25, 25, 25, 0.05)',
+                                            background: 'rgba(58, 48, 39, 0.06)',
                                         }}
                                     />
                                     {nowPx < bodyHeight && (
@@ -530,7 +452,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                             width: `calc(${widthPct}% - 4px)`,
                                         }}
                                     >
-                                        <ScheduleItemCard item={item} compact onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
+                                        <ScheduleItemCard item={item} compact onClick={onSelectItem} timezone={tz} />
                                     </div>
                                     {/* Route leg to the next job — anchored to this card's bottom edge.
                                         pointer-events-none so it never blocks drag/click on the grid. */}
@@ -547,7 +469,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                                 className="text-[9px] font-semibold tabular-nums truncate px-1 rounded"
                                                 style={{
                                                     color: LEG_TONE_COLOR[routeSegmentTone(leg)],
-                                                    background: 'var(--blanc-surface-strong)',
+                                                    background: 'var(--sched-surface, rgba(255,253,249,0.9))',
                                                 }}
                                             >
                                                 ↓ {legLabel}
@@ -600,25 +522,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 </div>
             </div>
         </div>
-
-        {/* TECH-DAYOFF-001 S-11: DnD-onto-time-off confirmation — center modal
-            (canon for short confirmations). Cancel = drop discarded, nothing
-            mutates; Move = the untouched reschedule/reassign path proceeds. */}
-        <Dialog open={!!pendingDrop} onOpenChange={v => { if (!v) setPendingDrop(null); }}>
-            <DialogContent variant="dialog" size="sm">
-                <DialogHeader>
-                    <DialogTitle>Blocked by time off</DialogTitle>
-                    <DialogDescription>
-                        {pendingDrop && `${pendingDrop.techName} has time off ${pendingDrop.period}. Move anyway?`}
-                    </DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                    <Button variant="ghost" onClick={() => setPendingDrop(null)}>Cancel</Button>
-                    <Button onClick={() => { pendingDrop?.proceed(); setPendingDrop(null); }}>Move</Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-        </>
     );
 };
 

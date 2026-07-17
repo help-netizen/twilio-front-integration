@@ -8,7 +8,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import { Shield, Key, Users, Settings, ExternalLink, RefreshCw, Trash2, Globe, Clock, Lock, Fingerprint } from 'lucide-react';
-import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { fmt, fmtDate, PolicyCard } from './SuperAdminHelpers';
 import type { SessionInfo, AuthPolicy } from './SuperAdminHelpers';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -47,62 +46,36 @@ export default function SuperAdminPage() {
     const revokeAllSessions = async () => { setRevoking('all'); try { const userIds = [...new Set(sessions.map(s => s.userId))]; await Promise.all(userIds.map(uid => authedFetch(`${API_BASE}/admin/sessions/user/${uid}`, { method: 'DELETE' }))); setSessions([]); toast.success('All sessions revoked'); } catch { toast.error('Failed to revoke sessions'); } setRevoking(null); };
 
     return (
-        <SettingsPageShell
-            title="Super admin"
-            description="Manage the Albusto platform, tenant companies, and global security policies."
-        >
+        <div className="max-w-6xl mx-auto p-6 space-y-6">
+            <div>
+                <div className="flex items-center gap-2 mb-1">
+                    <Shield className="size-6 text-primary" />
+                    <h2 className="text-2xl font-bold tracking-tight">Super Admin Platform</h2>
+                </div>
+                <p className="text-sm text-muted-foreground">Manage the Blanc platform, tenant companies, and global security policies.</p>
+            </div>
+
             <Tabs defaultValue="companies" className="w-full">
-                <TabsList>
+                <TabsList className="mb-8">
                     <TabsTrigger value="companies">Companies</TabsTrigger>
                     <TabsTrigger value="sessions">Sessions</TabsTrigger>
                     <TabsTrigger value="policy">Auth policy</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="companies" className="space-y-6 pt-4">
+                <TabsContent value="companies" className="space-y-6">
                     <CompaniesManager />
                 </TabsContent>
-
-                <TabsContent value="sessions" className="space-y-6 pt-4">
+                
+                <TabsContent value="sessions" className="space-y-6">
                     <section className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <span className="blanc-eyebrow">Active sessions</span>
-                                <Badge variant="secondary">{sessions.length}</Badge>
-                            </div>
-                            <div className="flex gap-2">
-                                <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}><RefreshCw className={`size-4 mr-2 ${loading ? 'animate-spin' : ''}`} />Refresh</Button>
-                                {sessions.length > 0 && <Button variant="destructive" size="sm" disabled={revoking === 'all'} onClick={() => setConfirmDialog({ open: true, title: 'Revoke All Sessions', description: 'This will log out ALL users immediately. Are you sure?', onConfirm: () => { setConfirmDialog(p => ({ ...p, open: false })); revokeAllSessions(); } })}><Trash2 className="size-4 mr-2" />Revoke All</Button>}
-                            </div>
-                        </div>
+                        <div className="flex items-center justify-between"><div className="flex items-center gap-2"><span className="blanc-eyebrow">Active sessions</span><Badge variant="secondary">{sessions.length}</Badge></div><div className="flex gap-2"><Button variant="outline" size="sm" onClick={fetchData} disabled={loading}><RefreshCw className={`size-4 mr-2 ${loading ? 'animate-spin' : ''}`} />Refresh</Button>{sessions.length > 0 && <Button variant="destructive" size="sm" disabled={revoking === 'all'} onClick={() => setConfirmDialog({ open: true, title: 'Revoke All Sessions', description: 'This will log out ALL users immediately. Are you sure?', onConfirm: () => { setConfirmDialog(p => ({ ...p, open: false })); revokeAllSessions(); } })}><Trash2 className="size-4 mr-2" />Revoke All</Button>}</div></div>
                         {loading ? <div className="space-y-2">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div> : sessions.length === 0 ? <div className="flex-1 flex items-center justify-center py-12"><div className="text-center"><Globe className="size-12 mx-auto mb-3 opacity-20" /><p className="text-lg mb-2">No active sessions</p><p className="text-sm text-muted-foreground">All users are currently logged out.</p></div></div> : (
-                            /* Ряды-тайлы на канвасе (LAYOUT-CANON правило 7): Card-аквариум снесён. */
-                            <Table className="blanc-table-tiles">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead className="px-4">User</TableHead>
-                                        <TableHead className="px-4">IP Address</TableHead>
-                                        <TableHead className="px-4">Started</TableHead>
-                                        <TableHead className="px-4">Last Activity</TableHead>
-                                        <TableHead className="px-4 text-right">Actions</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {sessions.map(s => (
-                                        <TableRow key={s.id}>
-                                            <TableCell className="px-4 py-2.5"><div className="font-medium text-sm">{s.username}</div><div className="text-xs text-muted-foreground">{s.email}</div></TableCell>
-                                            <TableCell className="px-4 py-2.5 font-mono text-sm">{s.ipAddress}</TableCell>
-                                            <TableCell className="px-4 py-2.5 text-sm">{fmtDate(s.start)}</TableCell>
-                                            <TableCell className="px-4 py-2.5 text-sm">{fmtDate(s.lastAccess)}</TableCell>
-                                            <TableCell className="px-4 py-2.5 text-right"><Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={revoking === s.id} onClick={() => setConfirmDialog({ open: true, title: 'Revoke Session', description: `Revoke session for ${s.username || s.email}? They will be logged out.`, onConfirm: () => { setConfirmDialog(p => ({ ...p, open: false })); revokeSession(s.id); } })}><Trash2 className="size-4 mr-1" />Revoke</Button></TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
+                            <Card><Table><TableHeader><TableRow><TableHead>User</TableHead><TableHead>IP Address</TableHead><TableHead>Started</TableHead><TableHead>Last Activity</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{sessions.map(s => <TableRow key={s.id}><TableCell><div className="font-medium text-sm">{s.username}</div><div className="text-xs text-muted-foreground">{s.email}</div></TableCell><TableCell className="font-mono text-sm">{s.ipAddress}</TableCell><TableCell className="text-sm">{fmtDate(s.start)}</TableCell><TableCell className="text-sm">{fmtDate(s.lastAccess)}</TableCell><TableCell className="text-right"><Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={revoking === s.id} onClick={() => setConfirmDialog({ open: true, title: 'Revoke Session', description: `Revoke session for ${s.username || s.email}? They will be logged out.`, onConfirm: () => { setConfirmDialog(p => ({ ...p, open: false })); revokeSession(s.id); } })}><Trash2 className="size-4 mr-1" />Revoke</Button></TableCell></TableRow>)}</TableBody></Table></Card>
                         )}
                     </section>
                 </TabsContent>
-
-                <TabsContent value="policy" className="space-y-6 pt-4">
+                
+                <TabsContent value="policy" className="space-y-6">
                     <section className="space-y-3">
                         <div className="blanc-eyebrow">Quick links</div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -117,6 +90,6 @@ export default function SuperAdminPage() {
             </Tabs>
 
             <Dialog open={confirmDialog.open} onOpenChange={open => setConfirmDialog(p => ({ ...p, open }))}><DialogContent><DialogHeader><DialogTitle>{confirmDialog.title}</DialogTitle><DialogDescription>{confirmDialog.description}</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setConfirmDialog(p => ({ ...p, open: false }))}>Cancel</Button><Button variant="destructive" onClick={confirmDialog.onConfirm}>Confirm</Button></DialogFooter></DialogContent></Dialog>
-        </SettingsPageShell>
+        </div>
     );
 }

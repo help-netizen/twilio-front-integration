@@ -35,15 +35,17 @@ export function ContactsList({
     onPrevPage,
 }: ContactsListProps) {
     return (
-        /* Invisible layout container (LAYOUT-CANON rule 7): fills the page column,
-           no surface of its own. Rhythm to the pagination footer via gap. */
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '8px' }}>
-            {/* List — the single scroll container; parent gap spaces the tiles (rule 2) */}
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            {/* List */}
+            <div style={{ flex: 1, overflow: 'auto' }}>
                 {loading ? (
-                    Array.from({ length: 8 }).map((_, i) => (
-                        <Skeleton key={i} className="h-14 w-full shrink-0 rounded-xl" />
-                    ))
+                    <div style={{ padding: '16px' }}>
+                        {Array.from({ length: 8 }).map((_, i) => (
+                            <div key={i} style={{ marginBottom: '12px' }}>
+                                <Skeleton className="h-14 w-full rounded-lg" />
+                            </div>
+                        ))}
+                    </div>
                 ) : contacts.length === 0 ? (
                     <div style={{
                         padding: '48px 16px',
@@ -56,62 +58,64 @@ export function ContactsList({
                     </div>
                 ) : (
                     contacts.map((contact) => (
-                        /* Contact tile — the only surface above the canvas; the tile
-                           itself is the flex row (no inner wrapper). Selected = warm
-                           active bg (as Pulse) + line-strong inset ring. */
                         <div
                             key={contact.id}
                             onClick={() => onSelectContact(contact)}
-                            className="blanc-tile"
                             style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '12px',
-                                padding: '10px 12px',
+                                padding: '12px 16px',
                                 cursor: 'pointer',
-                                flexShrink: 0,
-                                ...(selectedContactId === contact.id ? {
-                                    background: 'rgba(127, 66, 225, 0.07)',
-                                    boxShadow: 'inset 0 0 0 1px var(--blanc-line-strong)',
-                                } : {}),
+                                borderBottom: '1px solid #f1f5f9',
+                                backgroundColor: selectedContactId === contact.id ? '#eff6ff' : 'transparent',
+                                transition: 'background-color 0.15s',
+                            }}
+                            onMouseEnter={(e) => {
+                                if (selectedContactId !== contact.id) {
+                                    e.currentTarget.style.backgroundColor = '#f8fafc';
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor =
+                                    selectedContactId === contact.id ? '#eff6ff' : 'transparent';
                             }}
                         >
-                            {/* Avatar */}
-                            <div style={{
-                                width: '36px',
-                                height: '36px',
-                                borderRadius: '50%',
-                                backgroundColor: '#e0e7ff',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0,
-                            }}>
-                                <User style={{ width: '18px', height: '18px', color: '#4f46e5' }} />
-                            </div>
-                            {/* Info */}
-                            <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                {/* Avatar */}
                                 <div style={{
-                                    fontWeight: 500,
-                                    fontSize: '14px',
-                                    color: '#111827',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
+                                    width: '36px',
+                                    height: '36px',
+                                    borderRadius: '50%',
+                                    backgroundColor: '#e0e7ff',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
                                 }}>
-                                    {contact.full_name || 'Unknown'}
+                                    <User style={{ width: '18px', height: '18px', color: '#4f46e5' }} />
                                 </div>
-                                <div style={{
-                                    fontSize: '12px',
-                                    color: '#6b7280',
-                                    marginTop: '2px',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                }}>
-                                    {contact.phone_e164
-                                        ? formatPhone(contact.phone_e164)
-                                        : contact.email || '—'}
+                                {/* Info */}
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{
+                                        fontWeight: 500,
+                                        fontSize: '14px',
+                                        color: '#111827',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                    }}>
+                                        {contact.full_name || 'Unknown'}
+                                    </div>
+                                    <div style={{
+                                        fontSize: '12px',
+                                        color: '#6b7280',
+                                        marginTop: '2px',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                    }}>
+                                        {contact.phone_e164
+                                            ? formatPhone(contact.phone_e164)
+                                            : contact.email || '—'}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -119,13 +123,16 @@ export function ContactsList({
                 )}
             </div>
 
-            {/* Pagination — sits directly on the canvas, no card/border chrome */}
+            {/* Pagination */}
             {(offset > 0 || hasMore) && (
                 <div style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    flexShrink: 0,
+                    padding: '8px 16px',
+                    borderTop: '1px solid #e5e7eb',
+                    fontSize: '13px',
+                    color: '#6b7280',
                 }}>
                     <Button
                         variant="outline"

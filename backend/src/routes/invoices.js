@@ -13,18 +13,11 @@ function getCompanyId(req) {
 }
 
 // Return a valid UUID userId or null (dev-mode injects "dev-user" which would break UUID columns).
-// created_by/updated_by FK → crm_users(id): use the resolved CRM user id, NOT the Keycloak sub
-// (they differ — crm_users.id ≠ keycloak_sub — so writing the sub violates the created_by FK).
 function getUserId(req) {
-    const userId = req.user?.crmUser?.id || req.user?.sub || req.user?.id || req.userId || null;
+    const userId = req.user?.sub || req.user?.id || req.userId || null;
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId || '')
         ? userId
         : null;
-}
-
-// Actor email — tags the sender on outbound mail (EMAIL-TIMELINE-001).
-function getUserEmail(req) {
-    return req.user?.email || req.user?.preferred_username || null;
 }
 
 // =============================================================================
@@ -142,10 +135,9 @@ router.post('/:id/send', requirePermission('invoices.send'), async (req, res) =>
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
         const { id } = req.params;
-        const { channel, recipient, message, includePaymentLink } = req.body || {};
-        const userEmail = getUserEmail(req);
+        const { channel, recipient, message } = req.body;
 
-        const result = await invoicesService.sendInvoice(companyId, userId, id, { channel, recipient, message, includePaymentLink, userEmail });
+        const result = await invoicesService.sendInvoice(companyId, userId, id, { channel, recipient, message });
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/send error:', err.message);
@@ -279,18 +271,6 @@ router.post('/:id/items', requirePermission('invoices.create'), async (req, res)
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/items error:', err.message);
-        const status = err.httpStatus || 500;
-        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
-    }
-});
-
-// PRICEBOOK-001: bulk add (a Price Book group expanded into its items).
-router.post('/:id/items/bulk', requirePermission('invoices.create'), async (req, res) => {
-    try {
-        const result = await invoicesService.addItems(getCompanyId(req), req.params.id, getUserId(req), req.body?.items);
-        res.status(201).json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Invoices] POST /:id/items/bulk error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }

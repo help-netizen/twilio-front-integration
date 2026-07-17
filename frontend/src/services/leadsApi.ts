@@ -159,13 +159,6 @@ export async function getLeadByPhone(phone: string): Promise<LeadDetailResponse>
 }
 
 /**
- * Find the newest OPEN lead linked to a contact by contact_id (returns lead or null)
- */
-export async function getLeadByContact(contactId: number): Promise<LeadDetailResponse> {
-    return request<LeadDetailResponse>(`${API_BASE}/by-contact/${contactId}`);
-}
-
-/**
  * Batch lookup leads by phone numbers (1 request instead of N)
  * Returns a map of normalized-phone → Lead
  */

@@ -28,7 +28,6 @@ CROSS JOIN (VALUES
     ('messages.view_internal'), ('messages.view_client'), ('messages.send'),
     ('contacts.view'), ('contacts.edit'),
     ('leads.view'), ('leads.create'), ('leads.edit'), ('leads.convert'),
-    ('lead_source.view'),
     ('jobs.view'), ('jobs.create'), ('jobs.edit'), ('jobs.assign'),
     ('jobs.close'), ('jobs.done_pending_approval'),
     ('schedule.view'), ('schedule.dispatch'),
@@ -40,9 +39,7 @@ CROSS JOIN (VALUES
     ('reports.calls.view'), ('reports.payments.view'), ('reports.financial.view'),
     ('client_job_history.view'),
     ('provider.enabled'), ('phone_calls.use'), ('call_masking.use'),
-    ('gps_tracking.view'), ('gps_tracking.collect'),
-    ('tasks.view'), ('tasks.create'), ('tasks.manage'),
-    ('price_book.view'), ('price_book.manage')
+    ('gps_tracking.view'), ('gps_tracking.collect')
 ) AS p(key)
 WHERE rc.role_key = 'tenant_admin'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;
@@ -58,7 +55,6 @@ CROSS JOIN (VALUES
     ('messages.view_internal'), ('messages.view_client'), ('messages.send'),
     ('contacts.view'), ('contacts.edit'),
     ('leads.view'), ('leads.create'), ('leads.edit'), ('leads.convert'),
-    ('lead_source.view'),
     ('jobs.view'), ('jobs.create'), ('jobs.edit'), ('jobs.assign'),
     ('jobs.close'), ('jobs.done_pending_approval'),
     ('schedule.view'), ('schedule.dispatch'),
@@ -69,9 +65,7 @@ CROSS JOIN (VALUES
     ('reports.dashboard.view'), ('reports.jobs.view'), ('reports.leads.view'),
     ('reports.calls.view'), ('reports.payments.view'), ('reports.financial.view'),
     ('client_job_history.view'),
-    ('phone_calls.use'),
-    ('tasks.view'), ('tasks.create'), ('tasks.manage'),
-    ('price_book.view'), ('price_book.manage')
+    ('phone_calls.use')
 ) AS p(key)
 WHERE rc.role_key = 'manager'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;
@@ -85,16 +79,13 @@ CROSS JOIN (VALUES
     ('messages.view_internal'), ('messages.view_client'), ('messages.send'),
     ('contacts.view'), ('contacts.edit'),
     ('leads.view'), ('leads.create'), ('leads.edit'), ('leads.convert'),
-    ('lead_source.view'),
     ('jobs.view'), ('jobs.create'), ('jobs.edit'), ('jobs.assign'),
     ('jobs.done_pending_approval'),
     ('schedule.view'), ('schedule.dispatch'),
     ('reports.dashboard.view'), ('reports.jobs.view'), ('reports.leads.view'),
     ('reports.calls.view'),
     ('client_job_history.view'),
-    ('phone_calls.use'),
-    ('tasks.view'), ('tasks.create'), ('tasks.manage'),
-    ('price_book.view')
+    ('phone_calls.use')
 ) AS p(key)
 WHERE rc.role_key = 'dispatcher'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;
@@ -109,17 +100,8 @@ CROSS JOIN (VALUES
     ('jobs.view'),
     ('jobs.done_pending_approval'),
     ('schedule.view'),
-    -- PROVIDER-FINANCE-001: full self-serve finance (no refund)
-    ('financial_data.view'),
-    ('estimates.view'), ('estimates.create'), ('estimates.send'),
-    ('invoices.view'), ('invoices.create'), ('invoices.send'),
-    ('payments.view'),
-    ('payments.collect_online'), ('payments.collect_offline'),
-    ('payments.collect_keyed'), ('payments.collect_terminal'),
     ('provider.enabled'),
-    ('phone_calls.use'),
-    ('tasks.view'), ('tasks.create'),
-    ('price_book.view')
+    ('phone_calls.use')
 ) AS p(key)
 WHERE rc.role_key = 'provider'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;

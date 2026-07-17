@@ -5,44 +5,25 @@ import { Copy } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import type { Lead } from '../../types/lead';
-import { getLeadStatusPillStyle, hexToRgba } from './leadStatusStyles';
-import { REJECTED_REASON_COPY } from './leadConstants';
+import { getLeadStatusPillStyle } from './leadStatusStyles';
 
 export function handleCopyPhone(phone: string, e: React.MouseEvent) { e.stopPropagation(); navigator.clipboard.writeText(phone); toast.success('Phone number copied to clipboard'); }
+export function handleCall(phone: string, e: React.MouseEvent) { e.stopPropagation(); window.location.href = `tel:${phone}`; }
 
-// SOURCE-PERM-001: `canViewSource` gates the jobSource cell. `renderCell` is
-// called inside LeadsTable's `visibleColumns.map(...)`, so it can't use the
-// useAuthz() hook itself (rules-of-hooks / variable column count). The caller
-// must compute `canViewSource = hasPermission('lead_source.view')` and pass it.
-// Defaults to `true` so callers that haven't been updated keep prior behavior.
-export function renderCell(columnId: string, lead: Lead, key: string, canViewSource = true) {
+export function renderCell(columnId: string, lead: Lead, key: string) {
     const cellStyle = { padding: '12px 16px' };
 
     switch (columnId) {
         case 'status': {
             const st = getLeadStatusPillStyle(lead.Status);
-            const rejectedReason = lead.rely_filter?.reason
-                ? REJECTED_REASON_COPY[lead.rely_filter.reason] ?? 'Rejected'
-                : 'Rejected';
             return (
                 <TableCell key={key} style={cellStyle}>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                        <span
-                            className="inline-flex items-center px-3 text-xs font-semibold"
-                            style={{ backgroundColor: st.bg, color: st.color, border: `1px solid ${st.border}`, minHeight: 28, borderRadius: 8 }}
-                        >
-                            {lead.Status}
-                        </span>
-                        {lead.rely_filter?.rejected && (
-                            <span
-                                title={rejectedReason}
-                                className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap"
-                                style={{ backgroundColor: hexToRgba('#DC2626', 0.1), color: '#DC2626' }}
-                            >
-                                Rejected
-                            </span>
-                        )}
-                    </div>
+                    <span
+                        className="inline-flex items-center px-3 text-xs font-semibold"
+                        style={{ backgroundColor: st.bg, color: st.color, border: `1px solid ${st.border}`, minHeight: 28, borderRadius: 8 }}
+                    >
+                        {lead.Status}
+                    </span>
                 </TableCell>
             );
         }
@@ -105,7 +86,7 @@ export function renderCell(columnId: string, lead: Lead, key: string, canViewSou
         case 'jobType':
             return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-2)' }} className="text-sm">{lead.JobType || null}</TableCell>;
         case 'jobSource':
-            return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-2)' }} className="text-sm">{canViewSource ? (lead.JobSource || null) : null}</TableCell>;
+            return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-2)' }} className="text-sm">{lead.JobSource || null}</TableCell>;
         case 'created':
             return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-3)' }} className="text-sm">{lead.CreatedDate ? format(new Date(lead.CreatedDate), 'MMM dd, yyyy') : null}</TableCell>;
         case 'serialId':

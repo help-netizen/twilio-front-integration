@@ -11,7 +11,6 @@ router.use((req, res, next) => {
     return next(); // writes guarded per-route below
 });
 const queries = require('../db/queries');
-const emailQueries = require('../db/emailQueries');
 const db = require('../db/connection');
 const fetch = require('node-fetch');
 const { generateCallSummary } = require('../services/callSummaryService');
@@ -106,101 +105,52 @@ router.get('/operations-dashboard', async (req, res) => {
 // =============================================================================
 router.get('/by-contact', async (req, res) => {
     try {
-        // LIST-PAGINATION-001: tenant scope is mandatory. A read with no company
-        // context must never fall through to an unscoped (cross-tenant) query.
+        const { limit = 50, offset = 0, search } = req.query;
         const companyId = req.companyFilter?.company_id;
-        if (!companyId) {
-            return res.status(401).json({ error: 'No company context' });
-        }
+        const calls = await queries.getCallsByTimeline({
+            limit: parseInt(limit),
+            offset: parseInt(offset),
+            companyId,
+            search: search || null,
+        });
+        const total = await queries.getTimelinesWithCallsCount(companyId);
 
-        const limit = parseInt(req.query.limit) || 50;
-        const offset = parseInt(req.query.offset) || 0;
-        const search = req.query.search || null;
-
-        // MAIL-MUTE-001: resolve this company's `from:`-derived muted sender set
-        // (literal emails/domains) from the ~60s-cached Mail Secretary settings, so
-        // an excluded vendor's EMAIL signal drops out of the Pulse list. This is the
-        // ONLY caller that passes non-empty muted sets; every other
-        // getUnifiedTimelinePage caller defaults to [] (byte-identical behavior).
-        // getMutedSenderSet is already fail-open (returns an empty set on error /
-        // inactive Mail Secretary); the extra try/catch here keeps the Pulse list
-        // fail-open at the ROUTE boundary too — a mute-resolution failure must never
-        // 500 or drop rows (FR-10 / S9), it just degrades to today's behavior.
-        let mutedEmails = [];
-        let mutedDomains = [];
-        try {
-            ({ emails: mutedEmails, domains: mutedDomains } =
-                await require('../services/mailAgentService').getMutedSenderSet(companyId));
-        } catch (muteErr) {
-            console.warn('[by-contact] muted-sender resolution failed (non-blocking):', muteErr.message);
-        }
-
-        // ONE unified, SQL-ordered, offset/limit page across calls + SMS + email.
-        // Ordering, unread rollup, dedup (one row per timeline) and `total` all
-        // come from SQL — the route no longer over-fetches or re-sorts in JS.
-        const rows = await queries.getUnifiedTimelinePage({ limit, offset, companyId, search, mutedEmails, mutedDomains });
-
-        // total = COUNT(*) OVER() on the unified set (0 rows ⇒ empty page ⇒ 0).
-        const total = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
-
-        // Pick the first non-SIP phone from candidates.
-        const pickPhone = (...candidates) => {
-            for (const p of candidates) {
-                if (p && !p.startsWith('sip:')) return p;
-            }
-            return candidates.find(Boolean) || '';
-        };
-
-        // Map rows in DB order — NO re-sort, NO dedup (both are done in SQL now).
-        const conversations = rows.map(c => {
+        // Format calls — SMS data already included from SQL
+        let conversations = calls.map(c => {
             const formatted = formatCall(c);
             const tlPhone = c.tl_phone || null;
+            const callTime = new Date(c.started_at || c.created_at);
+            const smsTime = c.sms_last_message_at ? new Date(c.sms_last_message_at) : null;
 
-            const callTime = c.started_at ? new Date(c.started_at).getTime() : null;
-            const smsTime = c.sms_last_message_at ? new Date(c.sms_last_message_at).getTime() : null;
-            const emailTime = c.email_last_message_at ? new Date(c.email_last_message_at).getTime() : null;
+            // Helper: pick the first non-SIP phone from candidates
+            const pickPhone = (...candidates) => {
+                for (const p of candidates) {
+                    if (p && !p.startsWith('sip:')) return p;
+                }
+                return candidates.find(Boolean) || '';
+            };
 
-            // Determine which channel produced the most recent interaction. On an
-            // exact tie the preference is call > sms > email (matches `>` below,
-            // which only switches when a later channel is strictly greater).
-            let last_interaction_at = c.started_at || null;
-            let last_interaction_type = callTime != null ? 'call' : null;
-            let last_interaction_phone = '';
-
-            if (callTime != null) {
-                const isInbound = (c.direction || '').includes('inbound');
-                const candidatePhone = isInbound ? c.from_number : c.to_number;
-                last_interaction_phone = pickPhone(candidatePhone, tlPhone, c.contact?.phone_e164, c.from_number, c.to_number);
-            }
-            if (smsTime != null && (callTime == null || smsTime > callTime)) {
+            let last_interaction_at, last_interaction_type, last_interaction_phone;
+            if (smsTime && smsTime > callTime) {
                 last_interaction_at = c.sms_last_message_at;
                 last_interaction_type = c.sms_last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound';
                 last_interaction_phone = pickPhone(tlPhone, c.contact?.phone_e164, c.from_number, c.to_number);
-            }
-            const bestSoFar = Math.max(callTime ?? -Infinity, smsTime ?? -Infinity);
-            if (emailTime != null && emailTime > bestSoFar) {
-                last_interaction_at = c.email_last_message_at;
-                last_interaction_type = c.email_last_message_direction === 'inbound' ? 'email_inbound' : 'email_outbound';
-                // Email carries no phone; keep the timeline/contact phone if any.
-                last_interaction_phone = pickPhone(tlPhone, c.contact?.phone_e164);
+            } else {
+                last_interaction_at = c.started_at || c.created_at;
+                last_interaction_type = 'call';
+                const isInbound = (c.direction || '').includes('inbound');
+                const candidatePhone = isInbound ? c.from_number : c.to_number;
+                last_interaction_phone = pickPhone(candidatePhone, tlPhone, c.contact?.phone_e164, c.from_number, c.to_number);
             }
 
             return {
                 ...formatted,
                 timeline_id: c.tl_id || c.timeline_id || null,
-                // YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline has no contact,
-                // so formatCall (call-fields only) leaves the row with no name. The unified
-                // query denormalizes tl.display_name / tl.external_source for exactly this
-                // case; carry them through so PulseContactItem can label the row ("Jenna")
-                // + badge its Yelp origin instead of rendering a blank title.
-                display_name: c.display_name || null,
-                external_source: c.external_source || null,
                 tl_phone: tlPhone,
                 tl_has_unread: c.tl_has_unread || false,
-                has_unread: !!c.any_unread,
+                has_unread: c.tl_has_unread || c.sms_has_unread || false,
                 sms_has_unread: c.sms_has_unread || false,
                 sms_conversation_id: c.sms_conversation_id || null,
-                email_thread_id: c.email_thread_id || null,
                 last_interaction_at,
                 last_interaction_type,
                 last_interaction_phone,
@@ -210,30 +160,225 @@ router.get('/by-contact', async (req, res) => {
                 action_required_set_at: c.action_required_set_at || null,
                 snoozed_until: c.snoozed_until || null,
                 owner_user_id: c.owner_user_id || null,
-                // AR-TASK-UNIFY-001: "Action Required" is derived from open tasks.
-                has_open_task: !!c.open_task_id,
-                open_task_count: Number(c.open_task_count) || 0,
                 open_task: c.open_task_id ? {
                     id: c.open_task_id,
                     title: c.open_task_title,
-                    description: c.open_task_description || null,
                     due_at: c.open_task_due_at,
                     priority: c.open_task_priority,
-                    // MAIL-AGENT-001: agent tasks carry the triage comment for the AR bar.
-                    kind: c.open_task_kind || 'user',
-                    agent_output: c.open_task_agent_output || null,
-                    // OUTBOUND-PARTS-CALL-BTN-001: typed action buttons for the AR bar.
-                    actions: c.open_task_actions || null,
-                    // SLOTPICK-001 (SP-03): the task's parent (job) id/type so the Pulse AR
-                    // robot-call button can getJob(jobId) for coords — mirrors TaskCard's
-                    // parent_type/parent_id. Additive.
-                    parent_id: c.open_task_parent_id ?? null,
-                    parent_type: c.open_task_parent_type || null,
                 } : null,
             };
         });
 
-        // Enrich: batch-resolve leads for all phone numbers (1 query instead of N).
+        // Add SMS-only timelines (those with SMS but NO calls)
+        try {
+            const existingDigits = new Set();
+            for (const c of conversations) {
+                const tlPhone = c.tl_phone;
+                if (tlPhone) existingDigits.add(tlPhone.replace(/\D/g, ''));
+                const raw = c.contact?.phone_e164;
+                if (raw) existingDigits.add(raw.replace(/\D/g, ''));
+                const sec = c.contact?.secondary_phone;
+                if (sec) existingDigits.add(sec.replace(/\D/g, ''));
+                if (c.from_number) existingDigits.add(c.from_number.replace(/\D/g, ''));
+                if (c.to_number) existingDigits.add(c.to_number.replace(/\D/g, ''));
+            }
+
+            const dbConn = require('../db/connection');
+            const smsOnlyResult = await dbConn.query(
+                `SELECT sc.*, sc.customer_digits
+                 FROM sms_conversations sc
+                 ORDER BY sc.last_message_at DESC NULLS LAST
+                 LIMIT 200`
+            );
+
+            // Filter to SMS-only (not already covered by call timelines)
+            // Pre-compute contact name matches for search
+            let searchContactDigits = null;
+            if (search) {
+                const searchTerm = search.trim();
+                if (searchTerm.length > 0 && /[a-zA-Z]/.test(searchTerm)) {
+                    const contactMatchResult = await dbConn.query(
+                        `SELECT phone_e164, secondary_phone FROM contacts
+                         WHERE full_name ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1`,
+                        ['%' + searchTerm + '%']
+                    );
+                    searchContactDigits = new Set();
+                    for (const co of contactMatchResult.rows) {
+                        if (co.phone_e164) searchContactDigits.add(co.phone_e164.replace(/\D/g, ''));
+                        if (co.secondary_phone) searchContactDigits.add(co.secondary_phone.replace(/\D/g, ''));
+                    }
+                }
+            }
+            const smsOnlyRows = [];
+            for (const smsRow of smsOnlyResult.rows) {
+                const digits = smsRow.customer_digits;
+                if (!digits || existingDigits.has(digits)) continue;
+                existingDigits.add(digits);
+
+                if (search) {
+                    const searchTerm = search.trim().toLowerCase();
+                    const searchDigits = searchTerm.replace(/\D/g, '');
+                    let matches = false;
+                    if (searchDigits.length > 0 && digits.includes(searchDigits)) matches = true;
+                    if (smsRow.friendly_name && smsRow.friendly_name.toLowerCase().includes(searchTerm)) matches = true;
+                    if (smsRow.customer_e164 && smsRow.customer_e164.toLowerCase().includes(searchTerm)) matches = true;
+                    // Also check if a contact with matching name owns this phone
+                    if (!matches && searchContactDigits && searchContactDigits.has(digits)) matches = true;
+                    if (!matches) continue;
+                }
+                smsOnlyRows.push(smsRow);
+            }
+
+            if (smsOnlyRows.length > 0) {
+                // Batch: find contacts by phone digits (2 queries instead of N*2)
+                const smsDigitsList = smsOnlyRows.map(s => s.customer_digits);
+                const [contactsResult, timelinesResult] = await Promise.all([
+                    dbConn.query(
+                        `SELECT * FROM contacts
+                         WHERE regexp_replace(phone_e164, '[^0-9]', '', 'g') = ANY($1)
+                            OR regexp_replace(secondary_phone, '[^0-9]', '', 'g') = ANY($1)`,
+                        [smsDigitsList]
+                    ),
+                    dbConn.query(
+                        `SELECT t.*, regexp_replace(COALESCE(t.phone_e164, c.phone_e164), '[^0-9]', '', 'g') as tl_digits
+                         FROM timelines t
+                         LEFT JOIN contacts c ON t.contact_id = c.id
+                         WHERE regexp_replace(COALESCE(t.phone_e164, c.phone_e164), '[^0-9]', '', 'g') = ANY($1)`,
+                        [smsDigitsList]
+                    ),
+                ]);
+
+                // Build lookup maps
+                const contactByDigits = {};
+                for (const co of contactsResult.rows) {
+                    const d1 = co.phone_e164 ? co.phone_e164.replace(/\D/g, '') : null;
+                    const d2 = co.secondary_phone ? co.secondary_phone.replace(/\D/g, '') : null;
+                    if (d1) contactByDigits[d1] = co;
+                    if (d2 && !contactByDigits[d2]) contactByDigits[d2] = co;
+                }
+                const timelineByDigits = {};
+                for (const tl of timelinesResult.rows) {
+                    if (tl.tl_digits) timelineByDigits[tl.tl_digits] = tl;
+                }
+
+                for (const smsRow of smsOnlyRows) {
+                    const contact = contactByDigits[smsRow.customer_digits] || null;
+                    let timeline = timelineByDigits[smsRow.customer_digits] || null;
+
+                    // Auto-create timeline for SMS-only entries so Action Required
+                    // and other timeline-dependent actions work
+                    if (!timeline && smsRow.customer_e164) {
+                        try {
+                            timeline = await queries.findOrCreateTimeline(
+                                smsRow.customer_e164,
+                                companyId || null
+                            );
+                        } catch (e) {
+                            console.warn('[by-contact] Auto-create timeline failed for', smsRow.customer_e164, e.message);
+                        }
+                    }
+
+                    conversations.push({
+                        id: null,
+                        call_sid: null,
+                        direction: smsRow.last_message_direction === 'inbound' ? 'inbound' : 'outbound',
+                        from_number: smsRow.customer_e164,
+                        to_number: smsRow.proxy_e164 || '',
+                        status: 'completed',
+                        is_final: true,
+                        started_at: smsRow.last_message_at,
+                        ended_at: null,
+                        duration_sec: null,
+                        created_at: smsRow.created_at,
+                        updated_at: smsRow.updated_at,
+                        contact: contact ? {
+                            id: contact.id,
+                            phone_e164: contact.phone_e164,
+                            full_name: contact.full_name,
+                            email: contact.email,
+                            secondary_phone: contact.secondary_phone,
+                            secondary_phone_name: contact.secondary_phone_name,
+                            company_name: contact.company_name,
+                            created_at: contact.created_at,
+                            updated_at: contact.updated_at,
+                        } : null,
+                        timeline_id: timeline?.id || null,
+                        tl_phone: smsRow.customer_e164,
+                        has_unread: timeline?.has_unread || smsRow.has_unread || false,
+                        is_action_required: timeline?.is_action_required || false,
+                        action_required_reason: timeline?.action_required_reason || null,
+                        snoozed_until: timeline?.snoozed_until || null,
+                        sms_conversation_id: smsRow.id || null,
+                        last_interaction_at: smsRow.last_message_at,
+                        last_interaction_type: smsRow.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound',
+                        last_interaction_phone: smsRow.customer_e164,
+                    });
+                }
+            }
+        } catch (smsOnlyErr) {
+            console.warn('[by-contact] SMS-only timelines failed:', smsOnlyErr.message);
+        }
+
+        // Enrich with has_unread from contacts table (SMS unread already from SQL)
+        try {
+            const dbConn = require('../db/connection');
+            const contactIds = conversations.map(c => c.contact?.id).filter(Boolean);
+            if (contactIds.length > 0) {
+                const contactResult = await dbConn.query(
+                    `SELECT id, has_unread FROM contacts WHERE id = ANY($1)`,
+                    [contactIds]
+                );
+                const contactUnreadMap = {};
+                for (const row of contactResult.rows) {
+                    contactUnreadMap[row.id] = row.has_unread;
+                }
+                for (const conv of conversations) {
+                    const cid = conv.contact?.id;
+                    if (cid && contactUnreadMap[cid]) {
+                        conv.has_unread = true;
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[by-contact] Unread enrichment failed:', e.message);
+        }
+
+        // Dedup by timeline phone digits
+        {
+            const seen = new Map();
+            const deduped = [];
+            for (const conv of conversations) {
+                const raw = conv.tl_phone || conv.contact?.phone_e164 || conv.from_number || '';
+                const digits = raw.replace(/\D/g, '');
+                if (!digits) { deduped.push(conv); continue; }
+                if (!seen.has(digits)) {
+                    seen.set(digits, deduped.length);
+                    deduped.push(conv);
+                }
+                // Keep whichever was first (already sorted by recency)
+            }
+            conversations = deduped;
+        }
+
+        // Final sort: action_required (not snoozed) first, then unread, then by last interaction
+        conversations.sort((a, b) => {
+            // 1. Action Required (not snoozed) — highest priority
+            const now = new Date();
+            const aAR = a.is_action_required && (!a.snoozed_until || new Date(a.snoozed_until) <= now);
+            const bAR = b.is_action_required && (!b.snoozed_until || new Date(b.snoozed_until) <= now);
+            if (aAR !== bAR) return aAR ? -1 : 1;
+            if (aAR && bAR) {
+                return new Date(b.action_required_set_at || 0) - new Date(a.action_required_set_at || 0);
+            }
+            // 2. Unread
+            if (a.has_unread !== b.has_unread) return a.has_unread ? -1 : 1;
+            // 3. By last interaction (most recent first)
+            const ta = new Date(a.last_interaction_at || 0);
+            const tb = new Date(b.last_interaction_at || 0);
+            return tb - ta;
+        });
+
+        // Enrich: batch-resolve leads for all phone numbers (1 query instead of N)
         let leads_map = {};
         try {
             const leadsService = require('../services/leadsService');
@@ -251,8 +396,8 @@ router.get('/by-contact', async (req, res) => {
             conversations,
             leads_map,
             total,
-            limit,
-            offset,
+            limit: parseInt(limit),
+            offset: parseInt(offset),
         });
     } catch (error) {
         console.error('Error fetching calls by contact:', error);
@@ -311,7 +456,6 @@ router.post('/contact/:contactId/mark-unread', requirePermission('pulse.view', '
 router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', 'reports.calls.view'), async (req, res) => {
     try {
         const { timelineId } = req.params;
-        const companyId = req.companyFilter?.company_id;
         const tl = await queries.markTimelineRead(parseInt(timelineId));
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
         // Also mark contact read if linked
@@ -341,14 +485,6 @@ router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', '
             }
         } catch (smsErr) {
             console.warn('[mark-read] SMS conversation mark-read failed:', smsErr.message);
-        }
-        // PULSE-READ-EMAIL-001: clear the same inbound- and outbound-linked email
-        // threads that contribute email_threads.unread_count to the Pulse list.
-        if (tl.contact_id) {
-            await emailQueries.markContactEmailThreadsRead(tl.contact_id, companyId)
-                .catch((emailErr) => {
-                    console.warn('[mark-read] email thread mark-read failed:', emailErr.message);
-                });
         }
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) });
@@ -524,44 +660,6 @@ router.get('/:callSid/recording.mp3', async (req, res) => {
 
         if (!recording || recording.status !== 'completed') {
             return res.status(404).json({ error: 'Recording not available' });
-        }
-
-        // OUTBOUND-CALL-TIMELINE-001 (S8): non-Twilio recordings (e.g. VAPI robot
-        // calls) are persisted as a self-authorizing CDN URL under a synthetic sid
-        // (`vapi_<id>`, written by vapiCallTimelineService finalize), never a Twilio
-        // `RE…` recording sid — there is no Twilio SID to fetch. Stream straight from
-        // recording_url. Same `recording` row getCallMedia already loaded and the same
-        // route auth/company gate apply to both branches — only the fetch source
-        // differs, keyed purely off the sid shape (the tenant check is not weakened).
-        if (!/^RE/i.test(recording.recording_sid || '')) {
-            if (!recording.recording_url) {
-                return res.status(404).json({ error: 'Recording not available' });
-            }
-
-            let upstreamRes;
-            try {
-                // No auth header — VAPI recording URLs are self-authorizing (unlike
-                // the Twilio REST branch below, which needs Basic account auth).
-                upstreamRes = await fetch(recording.recording_url, { redirect: 'follow' });
-            } catch (fetchErr) {
-                console.error(`Recording URL fetch failed: ${fetchErr.message}`);
-                return res.status(502).json({ error: 'Failed to fetch recording' });
-            }
-
-            if (!upstreamRes.ok) {
-                console.error(`Recording URL fetch failed: ${upstreamRes.status}`);
-                return res.status(502).json({ error: 'Failed to fetch recording' });
-            }
-
-            // Content-Type from upstream (VAPI serves wav; fallback audio/wav).
-            // Accept-Ranges/Content-Length passthrough mirror the Twilio branch.
-            res.set('Content-Type', upstreamRes.headers.get('content-type') || 'audio/wav');
-            res.set('Accept-Ranges', 'bytes');
-            if (upstreamRes.headers.get('content-length')) {
-                res.set('Content-Length', upstreamRes.headers.get('content-length'));
-            }
-
-            return upstreamRes.body.pipe(res);
         }
 
         const accountSid = process.env.TWILIO_ACCOUNT_SID;

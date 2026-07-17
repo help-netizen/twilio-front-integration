@@ -6,12 +6,11 @@
  * that displays image attachments.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
     ChevronLeft, ChevronRight as ChevronRightIcon,
-    ExternalLink, RotateCcw,
+    ExternalLink, RotateCcw, X,
 } from 'lucide-react';
-import { Overlay } from '../ui/Overlay';
-import { OverlayClose } from '../ui/OverlayClose';
 
 // ─── Public interfaces ───────────────────────────────────────────────────────
 
@@ -74,30 +73,28 @@ export function FullscreenImageViewer({
     }, []);
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
+        if (e.key === 'Escape') onClose();
         if (e.key === 'ArrowLeft') navigate(-1);
         if (e.key === 'ArrowRight') navigate(1);
         if (e.key === 'ArrowUp') { e.preventDefault(); zoomIn(); }
         if (e.key === 'ArrowDown') { e.preventDefault(); zoomOut(); }
-    }, [navigate, zoomIn, zoomOut]);
+    }, [onClose, navigate, zoomIn, zoomOut]);
 
     useEffect(() => {
         document.addEventListener('keydown', handleKeyDown);
-        return () => document.removeEventListener('keydown', handleKeyDown);
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            document.body.style.overflow = '';
+        };
     }, [handleKeyDown]);
 
     if (!current) return null;
 
-    // Portal + Esc + body-scroll-lock come from the shared Overlay core (variant="lightbox":
-    // scroll-lock on, focus-trap off, no default backdrop, backdrop-close off). This lightbox
-    // is its OWN scrim (the full-screen container), and backdrop close stays bespoke below
-    // (the `target === currentTarget` guard), so we render no core backdrop and don't spread
-    // panelProps — the container markup is unchanged.
-    return (
-        <Overlay open={!!current} onClose={onClose} variant="lightbox" backdrop={false}>
-            {({ z }) => (
+    return createPortal(
         <div
-            className="fixed inset-0 flex flex-col"
-            style={{ background: 'rgba(0,0,0,0.92)', zIndex: z }}
+            className="fixed inset-0 z-[9999] flex flex-col"
+            style={{ background: 'rgba(0,0,0,0.92)' }}
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
             {/* Top bar */}
@@ -115,12 +112,9 @@ export function FullscreenImageViewer({
                     <a href={current.url} target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Open original">
                         <ExternalLink className="size-4 text-white/70" />
                     </a>
-                    <OverlayClose
-                        variant="corner"
-                        onClose={onClose}
-                        className="static p-2 rounded-lg text-white/70 hover:bg-white/10 hover:opacity-100"
-                        style={{ background: 'transparent' }}
-                    />
+                    <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Close">
+                        <X className="size-4 text-white/70" />
+                    </button>
                 </div>
             </div>
 
@@ -174,9 +168,8 @@ export function FullscreenImageViewer({
                     ))}
                 </div>
             )}
-        </div>
-            )}
-        </Overlay>
+        </div>,
+        document.body,
     );
 }
 

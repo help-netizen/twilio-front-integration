@@ -1,32 +1,31 @@
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import {
-    CheckCircle2, AlertCircle, Loader2, Unplug, ExternalLink, RefreshCw,
-    CreditCard, Banknote, ShieldCheck, Lock,
-} from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertCircle, Loader2, CreditCard, Unplug, ExternalLink, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '../components/ui/dialog';
-import { CloudBanner } from '../components/ui/CloudBanner';
-import { SettingsPageShell } from '../components/settings/SettingsPageShell';
-import { SettingsSection } from '../components/settings/SettingsSection';
 import { stripePaymentsApi, type StripePaymentsStatus, type StripeReadiness } from '../services/stripePaymentsApi';
 
-const STATUS_NEUTRAL = 'bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-3)]';
-const STATUS_WARNING = 'bg-[rgba(178,106,29,0.12)] text-[var(--blanc-warning)]';
-const STATUS_SUCCESS = 'bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)]';
+const sectionCard = { background: 'rgba(117,106,89,0.04)', borderRadius: 16, padding: '20px 22px', marginBottom: 16 } as const;
+
+const eyebrow = (text: string) => (
+    <div className="blanc-eyebrow mb-2" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--blanc-ink-3)' }}>
+        {text}
+    </div>
+);
 
 const READINESS_LABEL: Record<StripeReadiness, { text: string; cls: string }> = {
-    not_connected: { text: 'Not connected', cls: STATUS_NEUTRAL },
-    onboarding_incomplete: { text: 'Setup incomplete', cls: STATUS_WARNING },
-    action_required: { text: 'Action required', cls: STATUS_WARNING },
-    payments_disabled: { text: 'Setup incomplete', cls: STATUS_WARNING },
-    payouts_disabled: { text: 'Payouts disabled', cls: STATUS_WARNING },
-    connected_ready: { text: 'Connected', cls: STATUS_SUCCESS },
-    disconnected: { text: 'Disconnected', cls: STATUS_NEUTRAL },
+    not_connected: { text: 'Available', cls: 'bg-stone-100 text-stone-600' },
+    onboarding_incomplete: { text: 'Setup incomplete', cls: 'bg-amber-100 text-amber-700' },
+    action_required: { text: 'Action required', cls: 'bg-amber-100 text-amber-700' },
+    payments_disabled: { text: 'Setup incomplete', cls: 'bg-amber-100 text-amber-700' },
+    payouts_disabled: { text: 'Payouts disabled', cls: 'bg-amber-100 text-amber-700' },
+    connected_ready: { text: 'Connected', cls: 'bg-emerald-100 text-emerald-700' },
+    disconnected: { text: 'Disconnected', cls: 'bg-stone-100 text-stone-500' },
 };
 
 function StatusBadge({ readiness }: { readiness: StripeReadiness }) {
@@ -37,14 +36,15 @@ function StatusBadge({ readiness }: { readiness: StripeReadiness }) {
 function ReadinessRow({ ok, label, warn }: { ok: boolean; label: string; warn?: boolean }) {
     return (
         <div className="flex items-center gap-2 py-1.5" style={{ color: 'var(--blanc-ink-2)' }}>
-            {ok ? <CheckCircle2 className="h-4 w-4 text-[var(--blanc-success)]" />
-                : <AlertCircle className={`h-4 w-4 ${warn ? 'text-[var(--blanc-warning)]' : 'text-[var(--blanc-ink-3)]'}`} />}
+            {ok ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                : <AlertCircle className={`h-4 w-4 ${warn ? 'text-amber-500' : 'text-stone-400'}`} />}
             <span className="text-sm">{label}</span>
         </div>
     );
 }
 
 export default function StripePaymentsSettingsPage() {
+    const navigate = useNavigate();
     const qc = useQueryClient();
     const [disconnectOpen, setDisconnectOpen] = useState(false);
 
@@ -80,145 +80,94 @@ export default function StripePaymentsSettingsPage() {
     const acct = status?.account;
 
     return (
-        <SettingsPageShell
-            backTo="/settings/integrations"
-            backLabel="Integrations"
-            title="Stripe Payments"
-            description="Take card payments on the job, by link, or over the phone"
-            actions={
-                <>
+        <div className="max-w-3xl mx-auto px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
+            <button onClick={() => navigate('/settings/integrations')} className="flex items-center gap-1.5 text-sm mb-6" style={{ color: 'var(--blanc-ink-3)' }}>
+                <ArrowLeft className="h-4 w-4" /> Integrations
+            </button>
+
+            <div className="flex items-start justify-between mb-8">
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center h-11 w-11 rounded-xl" style={{ background: '#635bff' }}>
+                        <CreditCard className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                        <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, inherit)' }}>Stripe Payments</h2>
+                        <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Accept customer payments by Stripe</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
                     {status?.livemode === false && connected && <Badge variant="outline">Test mode</Badge>}
                     <StatusBadge readiness={readiness} />
-                </>
-            }
-        >
+                </div>
+            </div>
+
             {isLoading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
             ) : status?.configured === false ? (
-                <SettingsSection>
+                <div style={sectionCard}>
                     <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                        Stripe isn't set up for this workspace yet. Once platform keys are added, you can connect your account here.
+                        Stripe is not configured on this environment yet. Once the platform Stripe keys are set, you can connect your account here.
                     </p>
-                </SettingsSection>
+                </div>
             ) : (
                 <>
-                    {!connected && (
-                        <CloudBanner variant="hero">
-                                <p className="blanc-eyebrow">PAYMENTS</p>
-                                <h3
-                                    className="mt-2 text-2xl sm:text-[28px]"
-                                    style={{ fontFamily: 'var(--blanc-font-heading)', fontWeight: 800, color: 'var(--blanc-ink-1)' }}
-                                >
-                                    Get paid on the spot
-                                </h3>
-                                <p className="mt-2 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                                    Charge a card at the job, text a payment link, or key it in over the phone. Money lands in your bank in about 2 business days.
-                                </p>
-                                <div className="mt-4 space-y-2.5">
-                                    <div className="flex items-start gap-2.5">
-                                        <CreditCard className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
-                                        <p className="text-sm">
-                                            <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Every way to pay</span>
-                                            <span style={{ color: 'var(--blanc-ink-2)' }}> — Card on site, payment link by text or email</span>
-                                        </p>
-                                    </div>
-                                    <div className="flex items-start gap-2.5">
-                                        <Banknote className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
-                                        <p className="text-sm">
-                                            <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Fast payouts</span>
-                                            <span style={{ color: 'var(--blanc-ink-2)' }}> — Free, to your bank in ~2 business days</span>
-                                        </p>
-                                    </div>
-                                    <div className="flex items-start gap-2.5">
-                                        <ShieldCheck className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
-                                        <p className="text-sm">
-                                            <span className="font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>No monthly fees</span>
-                                            <span style={{ color: 'var(--blanc-ink-2)' }}> — Pay only when you get paid</span>
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="mt-4 flex flex-wrap gap-2">
-                                    {['2.9% + 30¢ per card payment', '$0 monthly', '0% added by Albusto'].map(chip => (
-                                        <span
-                                            key={chip}
-                                            className="rounded-full border border-[rgba(127,66,225,.2)] bg-white/70 px-3 py-1 text-[13px]"
-                                            style={{ color: 'var(--blanc-ink-1)' }}
-                                        >
-                                            {chip}
-                                        </span>
-                                    ))}
-                                </div>
-                                <Button className="mt-5 h-11 px-6" onClick={() => connectMut.mutate()} disabled={connectMut.isPending}>
-                                    {connectMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Connect Stripe
-                                </Button>
-                                <p className="mt-2.5 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    Takes about 5 minutes. Have your business details and bank account handy.
-                                </p>
-                                {/* Approved exception (owner-signed STRIPE-CONNECT-UX-001 mockup): hairline top border + Stripe brand violet #635bff, inside the cloud only. */}
-                                <div
-                                    className="mt-5 flex items-center gap-2 border-t pt-4 text-[13px]"
-                                    style={{ borderColor: 'rgba(127,66,225,.14)', color: 'var(--blanc-ink-2)' }}
-                                >
-                                    <Lock className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                                    <span>Powered by <span className="font-bold" style={{ color: '#635bff' }}>Stripe</span> · Card data never touches Albusto</span>
-                                </div>
-                        </CloudBanner>
-                    )}
-
-                    {connected && readiness !== 'connected_ready' && (
-                        /* R4 (§2 S-4): compact cloud absorbs the old «Resume onboarding» primary */
-                        <CloudBanner variant="compact">
-                            <p className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>
-                                Almost there — finish your Stripe setup
-                            </p>
-                            <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                                Stripe needs a few more business details before you can take payments.
-                            </p>
-                            <Button className="mt-3 h-11 px-5" onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>
-                                {resumeMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Finish setup
-                            </Button>
-                        </CloudBanner>
-                    )}
-
-                    <SettingsSection title="Setup steps">
+                    {/* Setup checklist */}
+                    <div style={sectionCard}>
+                        {eyebrow('Setup checklist')}
                         {(status?.checklist ?? []).map(item => (
                             <div key={item.key} className="flex items-center justify-between py-1.5">
                                 <ReadinessRow ok={item.done} label={item.label} />
                                 {item.deferred && <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Coming soon</span>}
                             </div>
                         ))}
-                    </SettingsSection>
+                    </div>
 
+                    {/* Account readiness */}
                     {connected && acct && (
-                        <SettingsSection title="Account readiness">
+                        <div style={sectionCard}>
+                            {eyebrow('Account readiness')}
                             <ReadinessRow ok={acct.details_submitted} label="Business details submitted" />
                             <ReadinessRow ok={acct.charges_enabled} label="Card payments enabled" warn={!acct.charges_enabled} />
                             <ReadinessRow ok={acct.payouts_enabled} label="Payouts enabled" warn={!acct.payouts_enabled} />
                             {acct.requirements_past_due.length > 0 && (
-                                <p className="mt-2 text-sm text-[var(--blanc-warning)] flex items-start gap-2">
+                                <p className="mt-2 text-sm text-amber-700 flex items-start gap-2">
                                     <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                                     Stripe needs more information to keep payments active.
                                 </p>
                             )}
-                        </SettingsSection>
+                        </div>
                     )}
 
-                    {/* Actions — Connect/Resume primaries live in the clouds above; row renders only when connected */}
-                    {connected && (
-                        <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Actions */}
+                    <div className="flex flex-wrap items-center gap-2.5 mt-6">
+                        {!connected && (
+                            <Button onClick={() => connectMut.mutate()} disabled={connectMut.isPending}>
+                                {connectMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Connect Stripe
+                            </Button>
+                        )}
+                        {connected && readiness !== 'connected_ready' && (
+                            <Button onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>
+                                {resumeMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Resume onboarding
+                            </Button>
+                        )}
+                        {connected && (
                             <Button variant="outline" onClick={() => refreshMut.mutate()} disabled={refreshMut.isPending}>
                                 <RefreshCw className={`h-4 w-4 mr-2 ${refreshMut.isPending ? 'animate-spin' : ''}`} /> Refresh status
                             </Button>
+                        )}
+                        {connected && (
                             <Button variant="outline" onClick={() => window.open('https://dashboard.stripe.com/', '_blank')}>
                                 <ExternalLink className="h-4 w-4 mr-2" /> Open Stripe Dashboard
                             </Button>
-                            <Button variant="ghost" onClick={() => setDisconnectOpen(true)}>
+                        )}
+                        {connected && (
+                            <Button variant="ghost" className="text-stone-500" onClick={() => setDisconnectOpen(true)}>
                                 <Unplug className="h-4 w-4 mr-2" /> Disconnect
                             </Button>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </>
             )}
 
@@ -238,6 +187,6 @@ export default function StripePaymentsSettingsPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </SettingsPageShell>
+        </div>
     );
 }

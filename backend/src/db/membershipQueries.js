@@ -57,35 +57,6 @@ async function getPermissionOverrides(membershipId) {
 }
 
 /**
- * Set (or clear) a single per-member permission override (RBAC-ROLES-EDITOR-001).
- *
- * overrideMode:
- *   'allow' | 'deny' → upsert the override row for (membership_id, permission_key)
- *   null             → DELETE the override row (revert to the role default)
- *
- * Returns the upserted row for allow/deny, or null when clearing.
- */
-async function setPermissionOverride(membershipId, permissionKey, overrideMode) {
-    if (overrideMode === null || overrideMode === undefined) {
-        await db.query(
-            `DELETE FROM company_membership_permission_overrides
-             WHERE membership_id = $1 AND permission_key = $2`,
-            [membershipId, permissionKey]
-        );
-        return null;
-    }
-    const { rows } = await db.query(
-        `INSERT INTO company_membership_permission_overrides (membership_id, permission_key, override_mode)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (membership_id, permission_key)
-         DO UPDATE SET override_mode = EXCLUDED.override_mode
-         RETURNING permission_key, override_mode`,
-        [membershipId, permissionKey, overrideMode]
-    );
-    return rows[0];
-}
-
-/**
  * Get scope overrides for a membership.
  */
 async function getScopeOverrides(membershipId) {
@@ -181,44 +152,13 @@ async function resolveProviderUserIds(companyId, externalIds) {
     return rows.map(r => String(r.user_id)).sort();
 }
 
-/**
- * Resolve one CRM user's Zenbooker team-member id inside one company —
- * the reverse direction of resolveProviderUserIds (TECH-DAYOFF-001, S-8:
- * provider assigned_only sees only his OWN time-off blocks).
- *
- * The bridge is company_user_profiles.zenbooker_team_member_id; users without
- * a mapping resolve to null and callers must treat that as deny-by-default
- * (empty result), never tenant-wide.
- *
- * @param {string} companyId - tenant company id (required)
- * @param {string} userId - crm_users.id
- * @returns {Promise<string|null>} ZB team-member TEXT id, or null when unmapped
- */
-async function getZenbookerTeamMemberIdForUser(companyId, userId) {
-    if (!companyId || !userId) return null;
-    const { rows } = await db.query(
-        `SELECT p.zenbooker_team_member_id
-         FROM company_user_profiles p
-         JOIN company_memberships m ON m.id = p.membership_id
-         WHERE m.company_id = $1
-           AND m.status = 'active'
-           AND m.user_id = $2
-           AND p.zenbooker_team_member_id IS NOT NULL
-         LIMIT 1`,
-        [companyId, String(userId)]
-    );
-    return rows[0] ? String(rows[0].zenbooker_team_member_id) : null;
-}
-
 module.exports = {
     getActiveMembership,
     getMembershipById,
     getPermissionOverrides,
-    setPermissionOverride,
     getScopeOverrides,
     countActiveAdmins,
     getUserProfile,
     getMembershipWithProfile,
     resolveProviderUserIds,
-    getZenbookerTeamMemberIdForUser,
 };

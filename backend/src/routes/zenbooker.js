@@ -121,12 +121,10 @@ router.post('/jobs', requirePermission('jobs.create', 'leads.convert'), async (r
 // GET /api/zenbooker/team-members — Fetch service providers
 router.get('/team-members', requirePermission('schedule.dispatch', 'jobs.assign', 'tenant.company.manage'), async (req, res) => {
     try {
-        // Scope to the caller's company — getTeamMembers returns [] for tenants
-        // that haven't connected their own Zenbooker (no cross-tenant roster leak).
         const members = await zenbookerClient.getTeamMembers({
             service_provider: true,
             deactivated: false,
-        }, req.companyFilter?.company_id);
+        });
         res.json({ ok: true, data: members });
     } catch (err) {
         console.error('[Zenbooker] team-members error:', err.response?.data || err.message);

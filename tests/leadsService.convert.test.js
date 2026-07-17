@@ -15,7 +15,6 @@ jest.mock('../backend/src/services/zenbookerClient', () => ({
     getJob: jest.fn(),
 }));
 jest.mock('../backend/src/services/fsmService', () => ({}));
-jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
 
 const db = require('../backend/src/db/connection');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
@@ -79,21 +78,6 @@ function mockClaimExistingJob(existingJob) {
         .mockResolvedValueOnce({ rows: [] }); // COMMIT
 }
 
-function mockClaimNewJob(jobId = 1131) {
-    mockClient.query
-        .mockResolvedValueOnce({ rows: [] }) // BEGIN
-        .mockResolvedValueOnce({ rows: [] }) // advisory lock
-        .mockResolvedValueOnce({ rows: [] }) // existing local job lookup
-        .mockResolvedValueOnce({ rows: [{ id: jobId }] }) // local job insert
-        .mockResolvedValueOnce({ rows: [] }) // early lead converted update
-        .mockResolvedValueOnce({ rows: [] }); // COMMIT
-}
-
-function insertedJobDescription() {
-    const insertCall = mockClient.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO jobs'));
-    return insertCall?.[1]?.[11];
-}
-
 describe('leadsService.convertLead idempotency', () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -101,64 +85,6 @@ describe('leadsService.convertLead idempotency', () => {
         mockClient.release.mockReset();
         db.pool.connect.mockResolvedValue(mockClient);
         mockLeadLookup();
-        zenbookerClient.createJob.mockResolvedValue({ job_id: 'zb-1131' });
-        zenbookerClient.createJobFromLead.mockResolvedValue({ job_id: 'zb-1131' });
-        zenbookerClient.getJob.mockResolvedValue({
-            job_number: '971346',
-            assigned_providers: [],
-            notes: [],
-            invoice: {},
-        });
-    });
-
-    it('uses the custom Zenbooker service description for the local job', async () => {
-        mockLeadLookup(makeLeadRow({ lead_notes: null }));
-        mockClaimNewJob();
-
-        await leadsService.convertLead('ABC123', {
-            zb_job_payload: {
-                services: [{ custom_service: { description: 'Ge oven. Double. F20. Jb850st1ss' } }],
-            },
-            service: { name: 'X' },
-        }, 'company-1');
-
-        expect(insertedJobDescription()).toBe('Ge oven. Double. F20. Jb850st1ss');
-    });
-
-    it('prefers the service override description over the Zenbooker payload', async () => {
-        mockLeadLookup(makeLeadRow({ lead_notes: null }));
-        mockClaimNewJob();
-
-        await leadsService.convertLead('ABC123', {
-            zb_job_payload: {
-                services: [{ custom_service: { description: 'Zenbooker description' } }],
-            },
-            service: { name: 'X', description: '  Service override description  ' },
-        }, 'company-1');
-
-        expect(insertedJobDescription()).toBe('Service override description');
-    });
-
-    it('falls back to lead notes when no override description is present', async () => {
-        mockLeadLookup(makeLeadRow({ lead_notes: 'Fix appliance from lead notes' }));
-        mockClaimNewJob();
-
-        await leadsService.convertLead('ABC123', {
-            service: { name: 'X' },
-        }, 'company-1');
-
-        expect(insertedJobDescription()).toBe('Fix appliance from lead notes');
-    });
-
-    it('inserts a null description when no description source is present', async () => {
-        mockLeadLookup(makeLeadRow({ lead_notes: null, comments: null }));
-        mockClaimNewJob();
-
-        await leadsService.convertLead('ABC123', {
-            service: { name: 'X' },
-        }, 'company-1');
-
-        expect(insertedJobDescription()).toBeNull();
     });
 
     it('reuses an existing local job when retrying a conversion after Zenbooker failed', async () => {

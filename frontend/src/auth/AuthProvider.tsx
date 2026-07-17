@@ -1,8 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import Keycloak from 'keycloak-js';
-import { classifyRefreshFailure, REFRESH_RETRY_BACKOFF_MS } from './refreshPolicy';
-import { loginRedirectAllowed, clearLoginRedirects } from './loginLoopBreaker';
-import { nextCompany } from './companyIdentity';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,8 +27,6 @@ interface AuthContextType {
     logout: () => void;
     accessDeniedMessage: string | null;
     clearAccessDenied: () => void;
-    /** Re-pull permissions/company/membership from /api/auth/me (e.g. right after onboarding). */
-    refreshAuthz: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -43,7 +38,6 @@ const AuthContext = createContext<AuthContextType>({
     logout: () => { },
     accessDeniedMessage: null,
     clearAccessDenied: () => { },
-    refreshAuthz: async () => { },
 });
 
 // ─── Feature flag ─────────────────────────────────────────────────────────────
@@ -67,11 +61,9 @@ const DEV_PERMISSIONS = [
     'jobs.view', 'jobs.create', 'jobs.edit', 'jobs.assign',
     'jobs.close', 'jobs.done_pending_approval',
     'schedule.view', 'schedule.dispatch',
-    'tasks.view', 'tasks.create', 'tasks.manage',
     'financial_data.view',
     'estimates.view', 'estimates.create', 'estimates.send',
     'invoices.view', 'invoices.create', 'invoices.send',
-    'price_book.view', 'price_book.manage',
     'payments.view', 'payments.collect_online', 'payments.collect_offline', 'payments.refund',
     'reports.dashboard.view', 'reports.jobs.view', 'reports.leads.view',
     'reports.calls.view', 'reports.payments.view', 'reports.financial.view',
@@ -97,76 +89,6 @@ export function getKeycloak(): Keycloak {
     return keycloakInstance;
 }
 
-// GOOGLE-SSO-FIX-001: the public /signup page skips the main kc.init() below
-// (see the `publicPage` guard), so the shared instance has no adapter and no
-// pkceMethod. Calling kc.login() directly therefore throws
-// "Cannot read properties of undefined (reading 'login')", and even if it built
-// a URL the crm-web client (PKCE-required) would reject a challenge-less
-// request. This helper lazily initializes the instance WITHOUT an onLoad (no
-// auto-redirect — it only wires the adapter + PKCE) and then starts the social
-// login. keycloak-js persists the PKCE verifier in callback storage, so the
-// return page's init (onLoad:'login-required', same pkceMethod) completes the
-// code→token exchange.
-let kcInitPromise: Promise<boolean> | null = null;
-export function ensureKeycloakInitialized(): Promise<boolean> {
-    const kc = getKeycloak();
-    if (!kcInitPromise) {
-        kcInitialized = true;
-        kcInitPromise = kc.init({ pkceMethod: 'S256', checkLoginIframe: false });
-    }
-    return kcInitPromise;
-}
-
-export async function loginWithIdp(idpHint: string, redirectUri: string): Promise<void> {
-    await ensureKeycloakInitialized();
-    await getKeycloak().login({ idpHint, redirectUri });
-}
-
-// ─── Silent-refresh orchestrator (PWA-FIX-001 / PWA-05) ──────────────────────
-
-// Local impure sleep — the *decision* (transient vs dead) stays pure in
-// refreshPolicy.ts; timers/redirects live here (spec §3.4).
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-// Single orchestrator behind BOTH silent-refresh seams (the 30s interval and
-// kc.onTokenExpired). On a live token kc.updateToken(60) is a no-op, so a tick
-// costs nothing and never stacks (§4.2). On a refresh FAILURE we classify:
-//   - 'dead'  → redirect to Keycloak exactly once.
-//   - 'transient' → back off (2/5/10s) and retry, up to the budget length; on
-//     budget exhaustion redirect once. Retries chain via awaited recursion — no
-//     synchronous loop (§1.4.2–§1.4.3, §3.4).
-// Duplicate-login safety (§1.4.9): the first successful refresh makes the second
-// updateToken(60) a no-op; on a genuinely dead session kc.login() is an idempotent
-// browser navigation (the second redirect just replaces the first in-flight one).
-async function refreshTokenOrLogin(
-    kc: Keycloak,
-    onRefreshed: () => void,
-    attempt = 0,
-): Promise<void> {
-    try {
-        const refreshed = await kc.updateToken(60);
-        // Apply ONLY when the token actually changed. On a live token updateToken
-        // resolves false → skip (the original 30s interval had NO success handler,
-        // so it must NOT fire a per-tick fetchAuthzContext network call / re-render).
-        // onTokenExpired always has an expired token ⇒ refreshed===true ⇒ applyToken
-        // still runs, preserving that seam's original .then behavior (§1.4.1, §1.4.5, §4.1).
-        if (refreshed) onRefreshed();
-    } catch (err) {
-        const kind = classifyRefreshFailure({
-            hasRefreshToken: !!kc.refreshToken,
-            online: navigator.onLine,
-            error: err,
-        });
-        if (kind === 'dead' || attempt >= REFRESH_RETRY_BACKOFF_MS.length) {
-            console.warn('[Auth] Token refresh failed, redirecting to login');
-            loginOrBreak(() => notifyFatalAuthError());
-            return;
-        }
-        await sleep(REFRESH_RETRY_BACKOFF_MS[attempt]);
-        await refreshTokenOrLogin(kc, onRefreshed, attempt + 1);
-    }
-}
-
 // ─── Extract roles from Keycloak token ──────────────────────────────────────
 
 function extractRoles(kc: Keycloak): string[] {
@@ -188,27 +110,10 @@ function extractRoles(kc: Keycloak): string[] {
 
 // Paths that must render WITHOUT forcing a Keycloak login (ALB-101)
 // /pay/:token is the customer-facing Stripe Pay-now page (F018) — opaque token is the credential.
-// /e/:token is the customer-facing public Estimate view page (SEND-DOC-001) — same model.
-const PUBLIC_AUTH_PATHS = ['/signup', '/pay', '/e', '/r/'];
+const PUBLIC_AUTH_PATHS = ['/signup', '/pay'];
 function isPublicAuthPath() {
     return PUBLIC_AUTH_PATHS.some(p => window.location.pathname.startsWith(p));
 }
-
-// BUG-22b: cross-reload login-redirect loop breaker — see auth/loginLoopBreaker.ts.
-/** Route ALL forced re-login navigations through the loop breaker. */
-function loginOrBreak(onBreak: () => void): void {
-    if (loginRedirectAllowed()) {
-        getKeycloak().login();
-    } else {
-        console.error('[Auth] login-redirect loop detected — halting redirects (BUG-22b)');
-        onBreak();
-    }
-}
-
-// The provider registers its setState here so module-level helpers
-// (refreshTokenOrLogin) can surface the fatal screen without prop drilling.
-let fatalAuthErrorListener: (() => void) | null = null;
-function notifyFatalAuthError() { fatalAuthErrorListener?.(); }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
     const publicPage = isPublicAuthPath();
@@ -219,13 +124,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [token, setToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(FEATURE_AUTH && !publicPage);
     const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
-    // BUG-22b: set when the loop breaker halts a redirect storm — renders a
-    // human error screen instead of the infinite reload/SMS loop.
-    const [fatalAuthError, setFatalAuthError] = useState(false);
-    useEffect(() => {
-        fatalAuthErrorListener = () => setFatalAuthError(true);
-        return () => { fatalAuthErrorListener = null; };
-    }, []);
 
     // PF007 Extended Profile state
     const [platformRole, setPlatformRole] = useState<string>('none');
@@ -240,9 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const handleSessionExpired = () => {
             if (FEATURE_AUTH && !loginPending) {
                 loginPending = true;
-                // BUG-22b: cross-reload loop breaker (loginPending alone resets
-                // on every reload, so a reload-loop sails right through it).
-                loginOrBreak(() => { loginPending = false; setFatalAuthError(true); });
+                getKeycloak().login();
             }
         };
         const handleAccessDenied = (e: Event) => {
@@ -268,15 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (res.ok) {
                 const data = await res.json();
                 setPlatformRole(data.user?.platform_role || 'none');
-                // OB-6 / SOFTPHONE-DROP-001: keep the SAME company object reference
-                // when the id is unchanged. fetchAuthzContext runs on every token
-                // refresh (and BUG-22b's refreshOnResume made that frequent); a fresh
-                // object each time re-triggered every `[company]` effect — including
-                // AppLayout's softphone-groups loader, which briefly set enabled=false
-                // → useTwilioDevice destroyed the Twilio Device mid-call (dropped calls)
-                // and the deviceReady flip re-popped the "Good morning" warm-up modal.
-                // Identity-stable company = Device stays alive; badge fetches stop churning.
-                setCompany((prev: any) => nextCompany(prev, data.company ?? null));
+                setCompany(data.company);
                 setMembership(data.membership);
                 setPermissions(data.permissions || []);
                 setScopes(data.scopes || {});
@@ -287,18 +175,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.error('[Auth] Error fetching auth context', err);
         }
     };
-
-    // ONBOARD-FIX-001 (A): re-pull the authz context on demand (permissions,
-    // company, membership) WITHOUT a full reload. Called right after onboarding so
-    // the SPA reflects the freshly created company + tenant_admin membership —
-    // otherwise the stale post-init context (no company) loops the onboarding gate
-    // and 403s /pulse. The backend resolves from company_memberships, so the
-    // current token is sufficient (no token refresh needed).
-    const refreshAuthz = useCallback(async () => {
-        if (!FEATURE_AUTH) return;
-        const t = getKeycloak().token;
-        if (t) await fetchAuthzContext(t);
-    }, []);
 
     useEffect(() => {
         if (!FEATURE_AUTH) {
@@ -324,7 +200,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
             .then(async (auth) => {
                 if (auth) {
-                    clearLoginRedirects(); // BUG-22b: healthy init resets the loop-breaker ledger
                     const roles = extractRoles(kc);
                     setUser({
                         sub: kc.tokenParsed?.sub || '',
@@ -340,17 +215,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         await fetchAuthzContext(kc.token);
                     }
 
-                    // PWA-FIX-001 (PWA-05): both silent-refresh seams flow through ONE
-                    // orchestrator. applyToken is the byte-exact success side-effect the
-                    // old onTokenExpired ran (setToken + fetchAuthzContext).
-                    const applyToken = () => {
-                        setToken(kc.token || null);
-                        if (kc.token) fetchAuthzContext(kc.token);
+                    setInterval(() => {
+                        kc.updateToken(60).catch(() => {
+                            console.warn('[Auth] Token refresh failed, redirecting to login');
+                            kc.login();
+                        });
+                    }, 30000);
+
+                    kc.onTokenExpired = () => {
+                        kc.updateToken(60).then(() => {
+                            setToken(kc.token || null);
+                            if (kc.token) fetchAuthzContext(kc.token);
+                        }).catch(() => kc.login());
                     };
-
-                    setInterval(() => { void refreshTokenOrLogin(kc, applyToken); }, 30000);
-
-                    kc.onTokenExpired = () => { void refreshTokenOrLogin(kc, applyToken); };
 
                     kc.onAuthRefreshSuccess = () => {
                         setToken(kc.token || null);
@@ -370,37 +247,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // set loading=false), we must not fall through to rendering {children} — the
     // AppLayout chrome would leak to a logged-out user. Force the login redirect.
     useEffect(() => {
-        if (FEATURE_AUTH && !publicPage && !loading && !authenticated && !fatalAuthError) {
-            // BUG-22b: THE loop engine lived here — kc.init failed (e.g. the
-            // code→token exchange dying on iOS), authenticated stayed false, this
-            // fallback redirected to Keycloak, the live SSO bounced straight back,
-            // init failed again… forever. The breaker halts after 2 redirects/30s.
-            loginOrBreak(() => setFatalAuthError(true));
+        if (FEATURE_AUTH && !publicPage && !loading && !authenticated) {
+            getKeycloak().login();
         }
-    }, [loading, authenticated, publicPage, fatalAuthError]);
-
-    // AUTH-SESSION-001: when a backgrounded (mobile) tab becomes visible again, the
-    // 30s refresh interval was suspended and the access token may have expired —
-    // refresh it immediately so the resumed tab never fires an API call with a stale
-    // token. Best-effort: on failure the interval / onTokenExpired / apiClient 401
-    // path still handle a genuinely dead session.
-    useEffect(() => {
-        if (!FEATURE_AUTH) return;
-        const refreshOnResume = () => {
-            if (document.visibilityState !== 'visible') return;
-            const kc = getKeycloak();
-            if (!kc?.authenticated) return;
-            kc.updateToken(60)
-                .then((refreshed) => { if (refreshed) setToken(kc.token || null); })
-                .catch(() => { /* leave recovery to the interval / 401-refresh */ });
-        };
-        document.addEventListener('visibilitychange', refreshOnResume);
-        window.addEventListener('focus', refreshOnResume);
-        return () => {
-            document.removeEventListener('visibilitychange', refreshOnResume);
-            window.removeEventListener('focus', refreshOnResume);
-        };
-    }, []);
+    }, [loading, authenticated, publicPage]);
 
     const hasRole = useCallback((...roles: string[]) => {
         if (!user) return false;
@@ -415,47 +265,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const clearAccessDenied = useCallback(() => setAccessDeniedMessage(null), []);
 
-    // BUG-22b: the loop breaker tripped — show a human dead-end instead of the
-    // infinite reload/SMS storm. "Try again" clears the ledger and retries once.
-    if (fatalAuthError) {
-        return (
-            <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', background: 'var(--blanc-bg, #F1F1F0)', padding: 20,
-                fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
-            }}>
-                <div style={{ textAlign: 'center', maxWidth: 360 }}>
-                    <h2 style={{ margin: '0 0 8px', fontFamily: 'Manrope, sans-serif', fontSize: 20, fontWeight: 600, color: 'var(--blanc-ink-1, #2c2722)' }}>
-                        We couldn't sign you in
-                    </h2>
-                    <p style={{ color: 'var(--blanc-ink-2, #6E6E6E)', fontSize: 14, lineHeight: 1.6, margin: '0 0 18px' }}>
-                        Something keeps interrupting the sign-in on this device. Give it another try —
-                        if it repeats, close this tab and open the app again.
-                    </p>
-                    <button
-                        type="button"
-                        onClick={() => { clearLoginRedirects(); setFatalAuthError(false); getKeycloak().login(); }}
-                        style={{
-                            height: 44, padding: '0 22px', borderRadius: 12, border: 'none', cursor: 'pointer',
-                            background: 'var(--blanc-accent, #7F42E1)', color: '#fff', fontSize: 14, fontWeight: 600,
-                        }}
-                    >
-                        Try again
-                    </button>
-                </div>
-            </div>
-        );
-    }
-
     if (loading) {
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', background: 'var(--blanc-bg, #F1F1F0)', color: 'var(--blanc-ink-2, #6E6E6E)',
+                height: '100vh', background: 'var(--blanc-bg, #efe9df)', color: 'var(--blanc-ink-2, #536070)',
                 fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
             }}>
                 <div style={{ textAlign: 'center' }}>
-                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #6E6E6E)', borderRadius: '50%', margin: '0 auto 12px' }} />
+                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #536070)', borderRadius: '50%', margin: '0 auto 12px' }} />
                     <div style={{ fontSize: 14 }}>Authenticating…</div>
                 </div>
             </div>
@@ -469,11 +287,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', background: 'var(--blanc-bg, #F1F1F0)', color: 'var(--blanc-ink-2, #6E6E6E)',
+                height: '100vh', background: 'var(--blanc-bg, #efe9df)', color: 'var(--blanc-ink-2, #536070)',
                 fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
             }}>
                 <div style={{ textAlign: 'center' }}>
-                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #6E6E6E)', borderRadius: '50%', margin: '0 auto 12px' }} />
+                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #536070)', borderRadius: '50%', margin: '0 auto 12px' }} />
                     <div style={{ fontSize: 14 }}>Redirecting to sign in…</div>
                 </div>
             </div>
@@ -484,7 +302,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         <AuthContext.Provider value={{
             authenticated, user, token, loading, 
             platformRole, company, membership, permissions, scopes,
-            hasRole, logout, accessDeniedMessage, clearAccessDenied, refreshAuthz
+            hasRole, logout, accessDeniedMessage, clearAccessDenied 
         }}>
             {children}
         </AuthContext.Provider>

@@ -34,9 +34,8 @@ const ENTITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
 const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
-    border: '1px solid var(--sched-line)',
-    // PALETTE-V2: inset-блок на белой панели (полупрозрачный белый был невидим)
-    background: 'var(--blanc-surface-muted)',
+    border: '1px solid rgba(118, 106, 89, 0.14)',
+    background: 'rgba(255, 255, 255, 0.5)',
 };
 
 const eyebrow: React.CSSProperties = {
@@ -54,7 +53,7 @@ const infoRow: React.CSSProperties = {
     justifyContent: 'space-between',
     gap: '14px',
     padding: '10px 0',
-    borderBottom: '1px dashed var(--sched-line)',
+    borderBottom: '1px dashed rgba(118, 106, 89, 0.16)',
 };
 
 function getDetailLink(item: ScheduleItem): string {
@@ -79,10 +78,11 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                 borderRadius: isStackedLayer ? 0 : undefined,
             }}
         >
-            {/* Header — без тёплой заливки: разделение несёт hairline (PALETTE-V2) */}
+            {/* Header */}
             <div
                 className="px-6 py-6 pb-5"
                 style={{
+                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(242, 235, 223, 0.52))',
                     borderBottom: '1px solid var(--sched-line)',
                 }}
             >
@@ -97,7 +97,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                     {item.status && (
                         <span
                             className="inline-flex items-center min-h-[28px] px-2.5 rounded-full text-xs font-semibold"
-                            style={{ background: 'var(--blanc-bg-deep)', color: 'var(--sched-ink-2)' }}
+                            style={{ background: 'rgba(255, 255, 255, 0.72)', color: 'var(--sched-ink-2)' }}
                         >
                             {item.status}
                         </span>
@@ -138,9 +138,9 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                         )}
                         {/* Schedule rail visualization */}
                         <div className="grid gap-1.5 mt-3.5" style={{ gridTemplateColumns: '1fr 1.8fr 0.8fr' }}>
-                            <div className="h-2.5 rounded-full" style={{ background: 'var(--sched-line)' }} />
+                            <div className="h-2.5 rounded-full" style={{ background: 'rgba(118, 106, 89, 0.16)' }} />
                             <div className="h-2.5 rounded-full" style={{ background: 'linear-gradient(90deg, rgba(47, 99, 216, 0.78), rgba(47, 99, 216, 0.46))' }} />
-                            <div className="h-2.5 rounded-full" style={{ background: 'var(--sched-line)' }} />
+                            <div className="h-2.5 rounded-full" style={{ background: 'rgba(118, 106, 89, 0.16)' }} />
                         </div>
                     </div>
                 )}
@@ -269,7 +269,8 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                                     key={tag}
                                     className="inline-flex items-center justify-center min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
                                     style={{
-                                        background: 'var(--blanc-bg-deep)',
+                                        background: 'rgba(255, 255, 255, 0.72)',
+                                        border: '1px solid var(--sched-line)',
                                         color: 'var(--sched-ink-2)',
                                     }}
                                 >
@@ -284,15 +285,15 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                 <div style={sectionCard}>
                     <p style={eyebrow}>Actions</p>
                     <div className="space-y-2.5">
-                        {/* PALETTE-V2: primary = solid accent pill (был сине-градиентный кастом) */}
                         <button
                             type="button"
                             onClick={() => navigate(getDetailLink(item))}
-                            className="w-full min-h-[44px] text-sm font-bold transition-opacity hover:opacity-85"
+                            className="w-full min-h-[44px] text-sm font-bold"
                             style={{
-                                background: 'var(--blanc-accent)',
+                                background: 'linear-gradient(180deg, #365fd8, #234aa8)',
                                 color: '#fff',
-                                borderRadius: '999px',
+                                borderRadius: '14px',
+                                boxShadow: '0 12px 24px rgba(36, 74, 168, 0.22)',
                                 border: 'none',
                             }}
                         >
@@ -303,9 +304,9 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                             onClick={() => navigate(`/pulse?search=${encodeURIComponent(item.customer_phone || item.customer_name || '')}`)}
                             className="w-full min-h-[44px] text-sm font-bold"
                             style={{
-                                background: 'transparent',
-                                border: '1px solid var(--sched-line-strong)',
-                                borderRadius: '999px',
+                                background: 'rgba(255, 255, 255, 0.74)',
+                                border: '1px solid rgba(118, 106, 89, 0.14)',
+                                borderRadius: '14px',
                                 color: 'var(--sched-ink-1)',
                             }}
                         >

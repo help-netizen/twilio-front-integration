@@ -24,7 +24,7 @@ export function EmailThreadRow({ thread, isSelected, onClick }: EmailThreadRowPr
             className="px-3 py-2.5 cursor-pointer"
             onClick={onClick}
             style={{
-                background: isSelected ? 'rgba(25, 25, 25, 0.06)' : 'transparent',
+                background: isSelected ? 'rgba(117, 106, 89, 0.08)' : 'transparent',
                 borderBottom: '1px solid var(--blanc-line)',
             }}
         >

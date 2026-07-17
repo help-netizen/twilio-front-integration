@@ -2,9 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { authedFetch } from '../services/apiClient';
 import { MessageSquare, PhoneOff, Voicemail } from 'lucide-react';
-import { Switch } from '../components/ui/switch';
-import { SettingsPageShell } from '../components/settings/SettingsPageShell';
-import { SettingsSection } from '../components/settings/SettingsSection';
 import NotificationsSection from './NotificationsSection';
 
 // Types
@@ -57,37 +54,40 @@ function TriggerRow({
 }) {
     return (
         <div className="flex items-start gap-4 py-4">
-            <div className="shrink-0 mt-0.5" style={{ color: 'var(--blanc-ink-3)' }}>{icon}</div>
+            <div className="shrink-0 mt-0.5 text-gray-500">{icon}</div>
             <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
                     <div>
-                        <div className="font-medium text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{label}</div>
-                        <div className="text-xs mt-0.5" style={{ color: 'var(--blanc-ink-3)' }}>{description}</div>
+                        <div className="font-medium text-sm">{label}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">{description}</div>
                     </div>
-                    <Switch
-                        checked={trigger.enabled}
-                        onCheckedChange={(checked) => onChange({ ...trigger, enabled: checked })}
-                    />
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={trigger.enabled}
+                            onChange={(e) => onChange({ ...trigger, enabled: e.target.checked })}
+                        />
+                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#2f63d8]" />
+                    </label>
                 </div>
                 {trigger.enabled && (
                     <div className="mt-3 flex items-center gap-4 text-xs">
                         <label className="flex items-center gap-1.5">
                             <input
                                 type="checkbox"
-                                className="rounded"
-                                style={{ accentColor: 'var(--blanc-job)' }}
+                                className="rounded border-gray-300 text-[#2f63d8] focus:ring-[#2f63d8]"
                                 checked={trigger.create_task}
                                 onChange={(e) => onChange({ ...trigger, create_task: e.target.checked })}
                             />
-                            <span style={{ color: 'var(--blanc-ink-2)' }}>Create Task</span>
+                            <span className="text-gray-700">Create Task</span>
                         </label>
                         {trigger.create_task && (
                             <>
                                 <label className="flex items-center gap-1.5">
-                                    <span style={{ color: 'var(--blanc-ink-3)' }}>Priority</span>
+                                    <span className="text-gray-500">Priority</span>
                                     <select
-                                        className="text-xs rounded px-1.5 py-0.5"
-                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(25,25,25,0.03)', color: 'var(--blanc-ink-1)' }}
+                                        className="text-xs border rounded px-1.5 py-0.5 bg-white"
                                         value={trigger.task_priority}
                                         onChange={(e) => onChange({ ...trigger, task_priority: e.target.value })}
                                     >
@@ -97,10 +97,9 @@ function TriggerRow({
                                     </select>
                                 </label>
                                 <label className="flex items-center gap-1.5">
-                                    <span style={{ color: 'var(--blanc-ink-3)' }}>SLA</span>
+                                    <span className="text-gray-500">SLA</span>
                                     <select
-                                        className="text-xs rounded px-1.5 py-0.5"
-                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(25,25,25,0.03)', color: 'var(--blanc-ink-1)' }}
+                                        className="text-xs border rounded px-1.5 py-0.5 bg-white"
                                         value={String(trigger.task_sla_minutes)}
                                         onChange={(e) => onChange({ ...trigger, task_sla_minutes: parseInt(e.target.value) })}
                                     >
@@ -143,20 +142,20 @@ export default function ActionRequiredSettingsPage() {
 
     if (isLoading) {
         return (
-            <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
+            <div className="max-w-2xl mx-auto p-6">
                 <div className="animate-pulse space-y-4">
-                    <div className="h-8 rounded w-64" style={{ background: 'rgba(25,25,25,0.06)' }} />
-                    <div className="h-40 rounded" style={{ background: 'rgba(25,25,25,0.03)' }} />
+                    <div className="h-8 bg-gray-200 rounded w-64" />
+                    <div className="h-40 bg-gray-100 rounded" />
                 </div>
-            </SettingsPageShell>
+            </div>
         );
     }
 
     if (error || !config) {
         return (
-            <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
-                <p style={{ color: 'var(--blanc-danger)' }}>Failed to load settings</p>
-            </SettingsPageShell>
+            <div className="max-w-2xl mx-auto p-6">
+                <p className="text-red-500">Failed to load settings</p>
+            </div>
         );
     }
 
@@ -171,39 +170,51 @@ export default function ActionRequiredSettingsPage() {
     };
 
     return (
-        <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
-            <SettingsSection
-                title="Action triggers"
-                description={'When enabled, matching events are flagged "Action Required" — optionally creating a task.'}
-            >
-                <TriggerRow
-                    icon={<MessageSquare className="size-5" />}
-                    label="Inbound SMS"
-                    description="Flag when a customer sends an SMS message"
-                    trigger={config.triggers.inbound_sms}
-                    onChange={(t) => handleTriggerChange('inbound_sms', t)}
-                />
-                <TriggerRow
-                    icon={<PhoneOff className="size-5" />}
-                    label="Missed Call"
-                    description="Flag when an inbound call is missed or unanswered"
-                    trigger={config.triggers.missed_call}
-                    onChange={(t) => handleTriggerChange('missed_call', t)}
-                />
-                <TriggerRow
-                    icon={<Voicemail className="size-5" />}
-                    label="Voicemail"
-                    description="Flag when a caller leaves a voicemail"
-                    trigger={config.triggers.voicemail}
-                    onChange={(t) => handleTriggerChange('voicemail', t)}
-                />
+        <div className="max-w-2xl mx-auto p-6">
+            <div className="blanc-eyebrow">Settings</div>
+            <h1 className="text-2xl font-semibold mt-1 mb-1" style={{ fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1, #202734)' }}>Actions &amp; notifications</h1>
+            <p className="text-sm mb-7" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
+                Flag threads that need attention, and manage browser push alerts.
+            </p>
 
-                {saveMutation.isPending && (
-                    <p className="text-xs mt-2" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>Saving…</p>
-                )}
-            </SettingsSection>
+            <div className="blanc-eyebrow mb-1">Action triggers</div>
+            <p className="text-xs mb-1" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
+                When enabled, matching events are flagged "Action Required" — optionally creating a task.
+            </p>
 
-            <NotificationsSection />
-        </SettingsPageShell>
+            <TriggerRow
+                icon={<MessageSquare className="size-5" />}
+                label="Inbound SMS"
+                description="Flag when a customer sends an SMS message"
+                trigger={config.triggers.inbound_sms}
+                onChange={(t) => handleTriggerChange('inbound_sms', t)}
+            />
+            <TriggerRow
+                icon={<PhoneOff className="size-5" />}
+                label="Missed Call"
+                description="Flag when an inbound call is missed or unanswered"
+                trigger={config.triggers.missed_call}
+                onChange={(t) => handleTriggerChange('missed_call', t)}
+            />
+            <TriggerRow
+                icon={<Voicemail className="size-5" />}
+                label="Voicemail"
+                description="Flag when a caller leaves a voicemail"
+                trigger={config.triggers.voicemail}
+                onChange={(t) => handleTriggerChange('voicemail', t)}
+            />
+
+            {saveMutation.isPending && (
+                <p className="text-xs mt-4" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>Saving…</p>
+            )}
+
+            <div className="mt-9">
+                <div className="blanc-eyebrow mb-1">Notifications</div>
+                <p className="text-xs mb-4" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
+                    Browser push notifications for real-time alerts.
+                </p>
+                <NotificationsSection />
+            </div>
+        </div>
     );
 }

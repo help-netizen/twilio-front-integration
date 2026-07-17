@@ -49,19 +49,6 @@ describe('resolveZbJobId / resolveZbInvoiceId', () => {
         expect(sync.resolveZbInvoiceId({ invoice: { id: 'inv_1' } })).toBe('inv_1');
         expect(sync.resolveZbInvoiceId({})).toBe('');
     });
-
-    // Regression (payment 10754): ZB returned the invoice as a JSON STRING (axios
-    // doesn't parse a non-JSON content-type) — sometimes even malformed JSON — so
-    // `invoice.job_id` was unreachable and the job link was dropped. The resolver
-    // must dig the id out of a string / double-encoded / malformed payload too.
-    it('resolves the job id when the invoice arrives as a (double-encoded/malformed) JSON string', () => {
-        // invoice body delivered as a JSON string (the 10754 shape)
-        expect(sync.resolveZbJobId({}, JSON.stringify({ job_id: 'JOBSTR' }))).toBe('JOBSTR');
-        // MALFORMED JSON ("price":}) — JSON.parse throws, regex still finds the id
-        expect(sync.resolveZbJobId({}, '{"job_id":"JOBBAD","service_order":{"price":}}')).toBe('JOBBAD');
-        // transaction-carried id still wins as a fallback when the string has none
-        expect(sync.resolveZbJobId({ job_id: 'TXFALL' }, '{"status":"paid"}')).toBe('TXFALL');
-    });
 });
 
 // ── assembleRow linkage ──────────────────────────────────────────────────────
@@ -141,27 +128,6 @@ describe('syncPayments resolves jobs beyond the invoice hop', () => {
         expect(zb.getJob).not.toHaveBeenCalled();
         expect(res.unlinked).toBe(1);
         expect(res.unresolved_job_id).toBe(1);
-    });
-
-    // Regression: a re-sync where getJob fails must NOT wipe the work-note
-    // images (and other job-body fields) already stored on the payment. The
-    // upsert guards them behind EXCLUDED.missing_job_link so a body-less run
-    // keeps the existing value instead of overwriting it with empties.
-    it('does not overwrite attachments/job_detail when the job body is missing', async () => {
-        zb.getTransactions.mockResolvedValue([{ id: 't3', status: 'succeeded', amount_collected: '75.00' }]);
-        db.query.mockResolvedValue({ rows: [], rowCount: 1 });
-        db.getClient.mockResolvedValue(fakeTxnClient());
-
-        await sync.syncPayments(COMPANY, '2026-06-01', '2026-06-30');
-
-        const upsert = db.query.mock.calls.find(c => String(c[0]).includes('INSERT INTO zb_payments'));
-        const sql = String(upsert[0]).replace(/\s+/g, ' ');
-        // body-derived columns keep the existing row value on a body-less run
-        expect(sql).toContain('attachments = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.attachments ELSE EXCLUDED.attachments END');
-        expect(sql).toContain('zb_raw_job = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.zb_raw_job ELSE EXCLUDED.zb_raw_job END');
-        expect(sql).toContain('job_detail = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.job_detail ELSE EXCLUDED.job_detail END');
-        // a body-less re-sync never regresses a previously-linked row to "missing"
-        expect(sql).toContain('missing_job_link = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.missing_job_link ELSE false END');
     });
 });
 

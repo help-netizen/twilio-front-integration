@@ -112,35 +112,6 @@ async function getScopeMap(roleConfigId) {
 }
 
 /**
- * Upsert a single role permission (RBAC-ROLES-EDITOR-001).
- * Sets is_allowed for (role_config_id, permission_key), inserting the row if
- * absent. Returns the upserted row.
- */
-async function setRolePermission(roleConfigId, permissionKey, isAllowed) {
-    const { rows } = await db.query(
-        `INSERT INTO company_role_permissions (role_config_id, permission_key, is_allowed)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (role_config_id, permission_key)
-         DO UPDATE SET is_allowed = EXCLUDED.is_allowed, updated_at = NOW()
-         RETURNING id, permission_key, is_allowed`,
-        [roleConfigId, permissionKey, isAllowed]
-    );
-    return rows[0];
-}
-
-/**
- * Lazy-seed safety net (RBAC-ROLES-EDITOR-001): if a company has no role
- * configs yet (e.g. created outside the bootstrap path), seed the 4 defaults.
- * Returns the company's role configs.
- */
-async function ensureRoleConfigs(companyId, createdBy = null) {
-    const existing = await listRoleConfigs(companyId);
-    if (existing.length > 0) return existing;
-    await seedRoleConfigs(companyId, createdBy);
-    return listRoleConfigs(companyId);
-}
-
-/**
  * Insert 4 default role configs for a new company.
  */
 async function seedRoleConfigs(companyId, createdBy = null) {
@@ -174,6 +145,4 @@ module.exports = {
     getAllowedPermissionKeys,
     getScopeMap,
     seedRoleConfigs,
-    setRolePermission,
-    ensureRoleConfigs,
 };

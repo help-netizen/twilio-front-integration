@@ -47,7 +47,7 @@ router.post('/sync', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GET /api/zenbooker/payments/export  — Export data enriched with Albusto job info
+// GET /api/zenbooker/payments/export  — Export data enriched with Blanc job info
 // ═══════════════════════════════════════════════════════════════════════════════
 
 router.get('/export', async (req, res) => {

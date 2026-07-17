@@ -1,15 +1,14 @@
 
 export const BLANC_STATUSES = ['Submitted', 'Waiting for parts', 'Follow Up with Client', 'Visit completed', 'Job is Done', 'Rescheduled', 'Canceled'];
 
-// UI-QA-001: deep-tier hues — keep in sync with jobHelpers.BLANC_STATUS_COLORS.
 export const BLANC_STATUS_COLORS: Record<string, string> = {
-    'Submitted':            '#2F63D8',
-    'Waiting for parts':    '#B45309',
-    'Follow Up with Client':'#7C3AED',
-    'Visit completed':      '#15803D',
+    'Submitted':            '#3B82F6',
+    'Waiting for parts':    '#F59E0B',
+    'Follow Up with Client':'#8B5CF6',
+    'Visit completed':      '#22C55E',
     'Job is Done':          '#6B7280',
-    'Rescheduled':          '#C2410C',
-    'Canceled':             '#DC2626',
+    'Rescheduled':          '#F97316',
+    'Canceled':             '#EF4444',
 };
 
 export function FilterColumn({

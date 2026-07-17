@@ -68,7 +68,7 @@
 }
 
 .wizard__call-btn--disabled {
-    background: rgba(25, 25, 25, 0.09);
+    background: rgba(117, 106, 89, 0.15);
     color: var(--blanc-ink-3);
     cursor: not-allowed;
 }
@@ -122,7 +122,7 @@
 }
 
 .wizard__step-pill--clickable:hover {
-    background: rgba(25, 25, 25, 0.05);
+    background: rgba(117, 106, 89, 0.08);
 }
 
 .wizard__step-pill--done.wizard__step-pill--clickable:hover {
@@ -149,8 +149,34 @@
     display: none;
 }
 
-/* wizard__field / wizard__row удалены (W1-хвост): все шаги мигрированы на
-   floating-канон, этих классов в TSX больше нет. */
+.wizard__field {
+    margin-bottom: 8px;
+}
+
+.wizard__field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--blanc-ink-2);
+    margin-bottom: 4px;
+    display: block;
+}
+
+.wizard__field--wide {
+    flex: 1;
+}
+
+.wizard__input--short {
+    max-width: 160px;
+}
+
+.wizard__row {
+    display: flex;
+    gap: 10px;
+}
+
+.wizard__row--align-end {
+    align-items: flex-end;
+}
 
 .wizard__territory-status {
     min-height: 42px;
@@ -168,9 +194,9 @@
     padding: 9px 12px;
     font-size: 15px;
     font-weight: 500;
-    border: 1.5px solid transparent;
+    border: 1.5px solid rgba(104, 95, 80, 0.28);
     border-radius: 10px;
-    background: var(--blanc-field);
+    background: #fff;
     color: var(--blanc-ink-1);
     box-shadow: none;
     transition: border-color 0.15s, box-shadow 0.15s;
@@ -195,8 +221,8 @@
 .wizard__body [data-slot="select-trigger"] {
     min-height: 42px !important;
     border-radius: 10px !important;
-    border: 1.5px solid transparent !important;
-    background: var(--blanc-field) !important;
+    border: 1.5px solid rgba(104, 95, 80, 0.28) !important;
+    background: #fff !important;
     font-size: 15px !important;
     font-weight: 500 !important;
     padding: 9px 12px !important;
@@ -212,11 +238,11 @@
     display: block;
     width: 100%;
     padding: 9px 12px;
-    border: 1.5px solid transparent;
+    border: 1.5px solid rgba(104, 95, 80, 0.28);
     border-radius: 10px;
     font-size: 15px;
     font-weight: 500;
-    background: var(--blanc-field);
+    background: #fff;
     color: var(--blanc-ink-1);
     outline: none;
     transition: border-color 0.15s;
@@ -235,7 +261,7 @@
     margin-top: 6px;
     padding-right: 4px;
     scrollbar-width: thin;
-    scrollbar-color: var(--blanc-line-strong) transparent;
+    scrollbar-color: rgba(104, 95, 80, 0.2) transparent;
 }
 
 .wizard__day {
@@ -260,7 +286,7 @@
 .wizard__slot {
     padding: 8px 6px;
     border-radius: 10px;
-    border: 1.5px solid var(--blanc-line, rgba(25, 25, 25, 0.08));
+    border: 1.5px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
@@ -398,7 +424,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 8px 20px;
-    background: rgba(25, 25, 25, 0.03);
+    background: rgba(117, 106, 89, 0.04);
     border-radius: 10px;
     margin: 6px 20px;
 }

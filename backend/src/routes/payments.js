@@ -61,7 +61,7 @@ router.get('/', requirePermission('payments.view'), async (req, res) => {
 router.post('/', requirePermission('payments.collect_online'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.sub || req.userId;
         const data = req.body;
 
         const result = await paymentsService.createTransaction(companyId, userId, data);
@@ -96,7 +96,7 @@ router.get('/summary', requirePermission('payments.view'), async (req, res) => {
 router.post('/manual', requirePermission('payments.collect_offline'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.sub || req.userId;
         const data = req.body;
 
         const result = await paymentsService.recordManualPayment(companyId, userId, data);
@@ -131,7 +131,7 @@ router.get('/:id', requirePermission('payments.view'), async (req, res) => {
 router.post('/:id/refund', requirePermission('payments.refund'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.sub || req.userId;
         const { id } = req.params;
         const { amount, reason } = req.body;
 
@@ -165,7 +165,7 @@ router.post('/:id/stripe-refund', requirePermission('payments.refund'), async (r
 router.post('/:id/void', requirePermission('payments.refund'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.sub || req.userId;
         const { id } = req.params;
 
         const result = await paymentsService.voidTransaction(companyId, userId, id);
@@ -200,7 +200,7 @@ router.get('/:id/receipt', requirePermission('payments.view'), async (req, res) 
 router.post('/:id/receipt/send', requirePermission('payments.collect_online', 'payments.collect_offline'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.sub || req.userId;
         const { id } = req.params;
         const { channel, recipient } = req.body;
 

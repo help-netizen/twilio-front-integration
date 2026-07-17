@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { authedFetch } from '../services/apiClient';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
+import { Separator } from '../components/ui/separator';
 import { Skeleton } from '../components/ui/skeleton';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import { Wrench, RefreshCw, MapPin, Phone, Mail } from 'lucide-react';
-import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -63,16 +63,26 @@ export default function ProvidersPage() {
     };
 
     return (
-        <SettingsPageShell
-            title="Service Providers"
-            description="Providers and their assigned service territories (from Zenbooker)."
-            actions={
+        <div className="max-w-5xl mx-auto p-6 space-y-6">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        <Wrench className="size-5 text-muted-foreground" />
+                        <h2 className="text-xl font-semibold">Service Providers</h2>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                        Technicians and their assigned service territories (from Zenbooker).
+                    </p>
+                </div>
                 <Button variant="outline" size="sm" onClick={fetchProviders} disabled={loading}>
                     <RefreshCw className={`size-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                     Refresh
                 </Button>
-            }
-        >
+            </div>
+
+            <Separator />
+
             {/* Content */}
             {loading ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -173,9 +183,9 @@ export default function ProvidersPage() {
                 </div>
             )}
 
-            <div className="text-xs text-muted-foreground text-center">
+            <div className="text-xs text-muted-foreground text-center pt-2">
                 {providers.length} provider{providers.length !== 1 ? 's' : ''} • Data from Zenbooker
             </div>
-        </SettingsPageShell>
+        </div>
     );
 }

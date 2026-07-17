@@ -8,7 +8,6 @@
 const crypto = require('crypto');
 const invoicesQueries = require('../db/invoicesQueries');
 const estimatesQueries = require('../db/estimatesQueries');
-const { toE164 } = require('../utils/phoneUtils');
 
 // =============================================================================
 // Error class
@@ -166,27 +165,14 @@ async function updateInvoice(companyId, userId, id, data) {
         await invoicesQueries.createRevision(id, snapshot, userId);
     }
 
-    // `updateInvoice`'s allowlist ignores `items`, so passing the full `data`
-    // (scalars + items) is safe — only whitelisted scalar columns are written.
     const updated = await invoicesQueries.updateInvoice(id, companyId, data);
     if (!updated) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
-    // INVOICE-EDIT-ITEMS-PERSIST-001 — reconcile line items when (and ONLY when)
-    // the caller sends an `items` array. The full editor always posts the complete
-    // array (no per-item id); an empty array is a valid "clear all items" instruction.
-    // Scalar-only patches from InvoiceDetailPanel.persist() (e.g. { notes }, { tax_rate })
-    // omit `items` entirely — those must NOT touch the persisted items.
-    const itemsReconciled = Array.isArray(data.items);
-    if (itemsReconciled) {
-        await invoicesQueries.replaceInvoiceItems(id, data.items);
-    }
-
-    // Recalculate totals when items were reconciled OR a totals-affecting scalar changed.
+    // Recalculate totals when totals-affecting fields change.
     const TOTALS_AFFECTING = new Set(['tax_rate', 'discount_amount']);
-    const scalarTotalsChanged = Object.keys(data).some(k => TOTALS_AFFECTING.has(k));
-    if (itemsReconciled || scalarTotalsChanged) {
+    if (Object.keys(data).some(k => TOTALS_AFFECTING.has(k))) {
         await invoicesQueries.recalculateInvoiceTotals(id);
     }
 
@@ -241,28 +227,6 @@ async function addItem(companyId, invoiceId, userId, item) {
 }
 
 /**
- * PRICEBOOK-001: bulk add (Price Book group expanded into items).
- * ONE recalc + ONE event vs N round-trips.
- */
-async function addItems(companyId, invoiceId, userId, items) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
-    if (!invoice) {
-        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
-    }
-    const list = Array.isArray(items) ? items : [];
-    if (list.length === 0) return { added: 0, items: [] };
-
-    const created = [];
-    for (const item of list) {
-        created.push(await invoicesQueries.addInvoiceItem(invoiceId, item));
-    }
-    await invoicesQueries.recalculateInvoiceTotals(invoiceId);
-    await invoicesQueries.createEvent(invoiceId, 'items_added', 'user', userId, { count: created.length });
-
-    return { added: created.length, items: created };
-}
-
-/**
  * Update a line item.
  */
 async function updateItem(companyId, invoiceId, userId, itemId, data) {
@@ -314,145 +278,21 @@ async function removeItem(companyId, invoiceId, userId, itemId) {
 // =============================================================================
 
 /**
- * Trim a free-text value to a string ('' when absent).
+ * Send an invoice to a client (MVP: record the delivery, no actual sending).
  */
-function asText(value) {
-    return typeof value === 'string' ? value.trim() : '';
-}
-
-/**
- * Build the HTML email body: the operator `message` (newlines → <br>) followed
- * by an anchor to the branded pay page. The PDF rides along as an attachment.
- */
-function buildEmailBody(message, link) {
-    const safe = String(message || '').replace(/\r\n|\r|\n/g, '<br>');
-    const anchor = link ? `<p><a href="${link}">View &amp; pay your invoice online</a></p>` : '';
-    return `<div>${safe}</div>${anchor}`;
-}
-
-/**
- * Compose the SMS body: the operator `message`; append the link only if it is
- * not already embedded (the dialog default already includes it → usually a no-op).
- */
-function buildSmsBody(message, link) {
-    const base = String(message || '').trim();
-    if (link && !base.includes(link)) {
-        return base ? `${base} ${link}` : link;
-    }
-    return base;
-}
-
-/**
- * SEND-DOC-001 (SD-6) — actually dispatch the invoice by email or SMS, then
- * (and only then) flip status → 'sent' + stamp sent_at and log the `sent` event.
- *
- * Mirrors estimatesService.sendEstimate. The link is the branded **pay page**
- * `/pay/<token>` (derived from ensurePublicLink's token), NOT the `/i/<token>`
- * PDF short link; `includePaymentLink === false` omits it from the body.
- *
- * FIX (flip-first bug): the old stub flipped status to 'sent' + sent_at BEFORE
- * doing any work. Status is now written ONLY after dispatch resolves, so any
- * throw before that point leaves the invoice unchanged (never falsely Sent).
- *
- * Coded errors carry { code, httpStatus } so routes/invoices.js maps them to
- * the SEND-DOC-001 §2.5 matrix; anything unexpected surfaces as 500.
- */
-async function sendInvoice(companyId, userId, id, { channel, recipient, message, includePaymentLink, userEmail } = {}) {
+async function sendInvoice(companyId, userId, id, { channel, recipient, message }) {
     const invoice = await invoicesQueries.getInvoiceById(companyId, id);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
-    const normalizedChannel = channel === 'text' ? 'sms' : channel;
-    if (!['email', 'sms'].includes(normalizedChannel)) {
-        throw new InvoicesServiceError('VALIDATION', 'channel must be email or sms', 400);
-    }
-    const to = asText(recipient);
-    if (!to) {
-        throw new InvoicesServiceError('VALIDATION', 'Recipient is required.', 400);
-    }
-
-    // Branded pay page link, derived from the token ensurePublicLink mints
-    // (ensurePublicLink itself returns the /i/<token> PDF redirect — we want /pay).
-    // Idempotent: ensurePublicLink never re-mints. Omitted when includePaymentLink === false.
-    const { token } = await ensurePublicLink(companyId, id);
-    const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
-    const payPath = `/pay/${token}`;
-    const link = includePaymentLink === false ? '' : (base ? `${base}${payPath}` : payPath);
-
-    if (normalizedChannel === 'email') {
-        // Pre-check: a mailbox that is missing / disconnected / reconnect_required
-        // must surface as 409, never reach Gmail, and never flip status.
-        const emailMailboxService = require('./emailMailboxService');
-        const mailbox = await emailMailboxService.getMailboxStatus(companyId);
-        if (!mailbox || mailbox.status !== 'connected') {
-            throw new InvoicesServiceError('MAILBOX_NOT_CONNECTED', 'Connect Google Email to send.', 409);
-        }
-
-        const number = invoice.invoice_number || `invoice-${id}`;
-        let companyName = '';
-        try {
-            const companyQueries = require('../db/companyQueries');
-            const company = await companyQueries.getCompanyById(companyId);
-            companyName = asText(company?.name);
-        } catch { /* subject falls back to no company suffix */ }
-        const subject = companyName
-            ? `Invoice #${number} from ${companyName}`
-            : `Invoice #${number}`;
-
-        const { buffer } = await generatePdf(companyId, id);
-        const safeFile = String(number).replace(/[^a-z0-9_-]+/gi, '_');
-
-        const emailService = require('./emailService');
-        try {
-            await emailService.sendEmail(companyId, {
-                to,
-                subject,
-                body: buildEmailBody(message, link),
-                files: [{
-                    mimetype: 'application/pdf',
-                    originalname: `Invoice-${safeFile}.pdf`,
-                    buffer,
-                }],
-                userId,
-                userEmail,
-            });
-        } catch (err) {
-            // sendEmail throws a PLAIN Error('Mailbox is not connected') (no statusCode)
-            // or Error('Mailbox requires reconnection') with statusCode 409 — both mean
-            // "mailbox not connected". Map to 409, not 500. Re-throw anything else as-is.
-            const m = err && err.message ? err.message : '';
-            if (err && (err.statusCode === 409 || /mailbox is not connected|requires reconnection/i.test(m))) {
-                throw new InvoicesServiceError('MAILBOX_NOT_CONNECTED', 'Connect Google Email to send.', 409);
-            }
-            throw err;
-        }
-        // NOTE: the outbound contact-timeline stamp (emailQueries.linkMessageToContact)
-        // is intentionally skipped here — same as sendEstimate; the EMAIL-TIMELINE-001
-        // sent-mail projection self-heals the stamp.
-    } else {
-        // SMS — resolve the company sending number BEFORE any side effects.
-        const { resolveCompanyProxyE164 } = require('./messagingHelper');
-        const proxy = await resolveCompanyProxyE164(companyId);
-        if (!proxy) {
-            throw new InvoicesServiceError('NO_PROXY', 'No company sending number is configured.', 422);
-        }
-        const customerE164 = toE164(to);
-        if (!customerE164) {
-            throw new InvoicesServiceError('NO_PHONE', 'A valid phone number is required.', 422);
-        }
-
-        const conversationsService = require('./conversationsService');
-        const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
-        // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
-        await conversationsService.sendMessage(conv.id, { body: buildSmsBody(message, link) });
-    }
-
-    // Dispatch resolved → NOW flip status and record the send (never before).
+    // Update status to sent
     const updated = await invoicesQueries.updateInvoiceStatus(id, companyId, 'sent', 'sent_at');
+
+    // Log event
     await invoicesQueries.createEvent(id, 'sent', 'user', userId, {
-        channel: normalizedChannel,
-        recipient: to,
+        channel: channel || 'email',
+        recipient: recipient || null,
         message: message || null,
     });
 
@@ -635,7 +475,6 @@ module.exports = {
     updateInvoice,
     deleteInvoice,
     addItem,
-    addItems,
     updateItem,
     removeItem,
     sendInvoice,

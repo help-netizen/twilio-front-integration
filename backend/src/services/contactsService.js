@@ -186,35 +186,6 @@ async function getContactLeads(contactId, companyId = null) {
 }
 
 // =============================================================================
-// Contact emails (channel 'email'): primary contacts.email + contact_emails rows
-// Used by the Pulse composer (EMAIL-TIMELINE-001) to offer ALL of a contact's
-// addresses in the "To" dropdown. Returns string[]: primary email first, then
-// additional emails ordered (is_primary, created_at), de-duplicated
-// case-insensitively, [] when the contact has none.
-// =============================================================================
-async function getContactEmails(contactId, primaryEmail = null) {
-    const out = [];
-    const seen = new Set();
-    const push = (e) => {
-        const v = (e || '').trim();
-        if (!v) return;
-        const k = v.toLowerCase();
-        if (seen.has(k)) return;
-        seen.add(k);
-        out.push(v);
-    };
-    push(primaryEmail);
-    if (contactId) {
-        const { rows } = await db.query(
-            'SELECT email FROM contact_emails WHERE contact_id = $1 ORDER BY is_primary DESC, created_at',
-            [contactId]
-        );
-        for (const r of rows) push(r.email);
-    }
-    return out;
-}
-
-// =============================================================================
 // Upsert from Zenbooker customer data
 // =============================================================================
 async function upsertFromZenbooker(customer) {
@@ -254,6 +225,5 @@ module.exports = {
     getContactById,
     getById,
     getContactLeads,
-    getContactEmails,
     upsertFromZenbooker,
 };

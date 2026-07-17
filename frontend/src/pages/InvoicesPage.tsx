@@ -129,8 +129,8 @@ export function InvoicesPage() {
                 </div>
             </div>
 
-            {/* Аквариум снесён (правило 7): невидимый layout-контейнер */}
-            <div className="flex flex-1 flex-col min-h-0">
+            {/* ── Content Card ─────────────────────────────────────────── */}
+            <div className="blanc-page-card">
             {/* ── Left: Invoices List ──────────────────────────────────── */}
             <div className="flex flex-1 flex-col overflow-hidden">
 
@@ -145,23 +145,23 @@ export function InvoicesPage() {
                             No invoices found
                         </div>
                     ) : (
-                        <table className="w-full text-sm blanc-table-tiles">
-                            <thead>
+                        <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-background border-b">
                                 <tr>
-                                    <th className="text-left px-4 py-1">#</th>
-                                    <th className="text-left px-4 py-1">Customer</th>
-                                    <th className="text-left px-4 py-1">Status</th>
-                                    <th className="text-right px-4 py-1">Total</th>
-                                    <th className="text-right px-4 py-1">Balance</th>
-                                    <th className="text-left px-4 py-1">Due Date</th>
-                                    <th className="text-right px-4 py-1 w-10"></th>
+                                    <th className="text-left px-4 py-2 font-medium">#</th>
+                                    <th className="text-left px-4 py-2 font-medium">Customer</th>
+                                    <th className="text-left px-4 py-2 font-medium">Status</th>
+                                    <th className="text-right px-4 py-2 font-medium">Total</th>
+                                    <th className="text-right px-4 py-2 font-medium">Balance</th>
+                                    <th className="text-left px-4 py-2 font-medium">Due Date</th>
+                                    <th className="text-right px-4 py-2 font-medium w-10"></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {page.invoices.map(inv => (
                                     <tr
                                         key={inv.id}
-                                        className={`cursor-pointer ${page.selectedInvoice?.id === inv.id ? 'blanc-tile-row-selected' : ''}`}
+                                        className={`border-b cursor-pointer hover:bg-muted/50 transition-colors ${page.selectedInvoice?.id === inv.id ? 'bg-muted' : ''}`}
                                         onClick={() => page.selectInvoice(inv.id)}
                                     >
                                         <td className="px-4 py-2 font-mono text-xs">{inv.invoice_number}</td>
@@ -210,7 +210,7 @@ export function InvoicesPage() {
 
                 {/* Pagination */}
                 {page.totalPages > 1 && (
-                    <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
+                    <div className="border-t px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
                         <span>{page.total} invoice{page.total !== 1 ? 's' : ''}</span>
                         <div className="flex items-center gap-1">
                             <Button

@@ -119,7 +119,7 @@ function FlowNodeComponent({ data, selected }: { data: FlowNodeData; selected?: 
     return (
         <div style={{
             minWidth: 180, padding: '10px 14px', borderRadius: 10,
-            background: 'var(--blanc-panel-surface)', border: `2px solid ${selected ? 'var(--blanc-accent)' : meta.color}`,
+            background: '#fff', border: `2px solid ${selected ? '#6366f1' : meta.color}`,
             boxShadow: selected ? `0 0 0 3px ${meta.color}33` : '0 1px 4px rgba(0,0,0,0.08)',
             cursor: 'grab', transition: 'box-shadow 0.15s',
         }}>
@@ -127,7 +127,7 @@ function FlowNodeComponent({ data, selected }: { data: FlowNodeData; selected?: 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 16 }}>{meta.icon}</span>
                 <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{data.label}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{data.label}</div>
                     <div style={{ fontSize: 10, color: meta.color, fontWeight: 500 }}>{meta.label}</div>
                 </div>
             </div>
@@ -236,7 +236,7 @@ function InsertableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition
                                 onInsert?.(id, midX, midY);
                             }}
                             onMouseEnter={() => setHovered(true)}
-                            style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid var(--blanc-accent)', background: 'var(--blanc-panel-surface)', color: 'var(--blanc-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.18)', fontSize: 0 }}>
+                            style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid #6366f1', background: '#fff', color: '#6366f1', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.18)', fontSize: 0 }}>
                             <Plus size={16} />
                         </button>
                     </div>
@@ -267,7 +267,7 @@ function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
             type: insertable ? 'insertable' : 'default',
             label: t.label || t.edgeLabel || t.event_key,
             markerEnd: { type: MarkerType.ArrowClosed },
-            style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' },
+            style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
             data: {
                 system: t.system, immutable: t.immutable, deletable: t.deletable, hidden: t.hidden,
                 insertable, insertMode: t.insertMode || (insertable ? DEFAULT_INSERT_MODE : undefined), edgeLabel: t.edgeLabel,
@@ -468,7 +468,7 @@ export default function CallFlowBuilderPage() {
 
     const onConnect = useCallback((p: Connection) => {
         pushSnap();
-        setEdges(eds => addEdge({ ...p, type: 'insertable', markerEnd: { type: MarkerType.ArrowClosed }, label: 'transition', style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' }, data: insertableData() }, eds) as any);
+        setEdges(eds => addEdge({ ...p, type: 'insertable', markerEnd: { type: MarkerType.ArrowClosed }, label: 'transition', style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData() }, eds) as any);
     }, [setEdges, pushSnap]);
 
     const onNodeClick = useCallback((_: React.MouseEvent, n: Node) => { setSelectedNode(n as Node<FlowNodeData>); setSelectedEdge(null); }, []);
@@ -509,9 +509,9 @@ export default function CallFlowBuilderPage() {
                     label: 'AI Agent', kind, provider: 'vapi', config: {}
                 },
             };
-            const eNext: Edge = { id: `e-${Date.now()}-next`, source: id, target: edge.target, type: 'insertable', label: 'Next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' }, data: insertableData(null, { edgeRole: 'next', edgeLabel: 'Next', transitionMode: 'event', event_key: 'vapi.completed vapi.no_target vapi.failed vapi.timeout' }) };
+            const eNext: Edge = { id: `e-${Date.now()}-next`, source: id, target: edge.target, type: 'insertable', label: 'Next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(null, { edgeRole: 'next', edgeLabel: 'Next', transitionMode: 'event', event_key: 'vapi.completed vapi.no_target vapi.failed vapi.timeout' }) };
             // Incoming edge: from original source
-            const eIn: Edge = { id: `e-${Date.now()}-in`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' }, data: insertableData(edge.data) };
+            const eIn: Edge = { id: `e-${Date.now()}-in`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(edge.data) };
             setNodes(nds => [...nds, newNode] as any);
             setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), eIn, eNext] as any);
         } else {
@@ -522,13 +522,13 @@ export default function CallFlowBuilderPage() {
                 id, type: 'flowNode', position: { x: insertTarget.midX - 90, y: insertTarget.midY },
                 data: { label: meta.label, kind, config: defaultConfig, uiTerminal: isTerminal || undefined },
             };
-            const newEdge1: Edge = { id: `e-${Date.now()}-a`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' }, data: insertableData(edge.data) };
+            const newEdge1: Edge = { id: `e-${Date.now()}-a`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(edge.data) };
             if (isTerminal) {
                 // Terminal nodes: only incoming edge, no outgoing
                 setNodes(nds => [...nds, newNode] as any);
                 setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), newEdge1] as any);
             } else {
-                const newEdge2: Edge = { id: `e-${Date.now()}-b`, source: id, target: edge.target, type: 'insertable', label: 'next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' }, data: insertableData(null, { edgeLabel: 'next', transitionMode: 'eventless' }) };
+                const newEdge2: Edge = { id: `e-${Date.now()}-b`, source: id, target: edge.target, type: 'insertable', label: 'next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(null, { edgeLabel: 'next', transitionMode: 'eventless' }) };
                 setNodes(nds => [...nds, newNode] as any);
                 setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), newEdge1, newEdge2] as any);
             }
@@ -557,7 +557,7 @@ export default function CallFlowBuilderPage() {
             const healEdges: Edge[] = [];
             for (const inc of incoming) {
                 for (const out of outgoing) {
-                    healEdges.push({ id: `heal-${Date.now()}-${Math.random()}`, source: inc.source, target: out.target, type: 'insertable', label: inc.label || 'reconnect', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' }, data: insertableData(inc.data) });
+                    healEdges.push({ id: `heal-${Date.now()}-${Math.random()}`, source: inc.source, target: out.target, type: 'insertable', label: inc.label || 'reconnect', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(inc.data) });
                 }
             }
             setNodes(nds => (nds as any[]).filter((n: any) => n.id !== id) as any);
@@ -617,28 +617,28 @@ export default function CallFlowBuilderPage() {
         .filter(k => k !== 'vapi_agent' || vapiConnected === true)
         .map(k => [k, NODE_KIND_META[k]] as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']]);
 
-    if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><div style={{ width: 32, height: 32, border: '3px solid var(--blanc-line)', borderTopColor: 'var(--blanc-accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /></div>;
+    if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><div style={{ width: 32, height: 32, border: '3px solid #e5e7eb', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /></div>;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px)' }}>
             {/* Toolbar */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: 'var(--blanc-panel-surface)', borderBottom: '1px solid var(--blanc-line)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <button onClick={() => navigate('/settings/telephony/user-groups')} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--blanc-accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ArrowLeft size={14} />Back to Groups</button>
-                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{flow?.name || 'Flow Builder'}</span>
+                    <button onClick={() => navigate('/settings/telephony/user-groups')} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#6366f1', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ArrowLeft size={14} />Back to Groups</button>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#111' }}>{flow?.name || 'Flow Builder'}</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button onClick={undo} disabled={!canUndo} title="Undo ⌘Z" style={{ padding: '5px 8px', fontSize: 12, background: canUndo ? 'var(--blanc-field)' : 'var(--blanc-surface-muted)', color: canUndo ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-3)', border: '1px solid var(--blanc-line)', borderRadius: 6, cursor: canUndo ? 'pointer' : 'default', display: 'flex', alignItems: 'center' }}><Undo2 size={13} /></button>
-                    <button onClick={redo} disabled={!canRedo} title="Redo ⌘⇧Z" style={{ padding: '5px 8px', fontSize: 12, background: canRedo ? 'var(--blanc-field)' : 'var(--blanc-surface-muted)', color: canRedo ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-3)', border: '1px solid var(--blanc-line)', borderRadius: 6, cursor: canRedo ? 'pointer' : 'default', display: 'flex', alignItems: 'center' }}><Redo2 size={13} /></button>
-                    <div style={{ width: 1, height: 20, background: 'var(--blanc-line)', margin: '0 4px' }} />
-                    <button onClick={runAutoLayout} title="Auto-layout (ELK)" style={{ padding: '5px 8px', fontSize: 12, background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)', border: '1px solid var(--blanc-line)', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}><LayoutGrid size={13} />Layout</button>
-                    <div style={{ width: 1, height: 20, background: 'var(--blanc-line)', margin: '0 4px' }} />
-                    {errCount > 0 && <span style={{ fontSize: 11, color: 'var(--blanc-danger)', display: 'flex', alignItems: 'center', gap: 3 }}><AlertCircle size={13} />{errCount} errors</span>}
-                    {warnCount > 0 && <span style={{ fontSize: 11, color: 'var(--blanc-warning)', display: 'flex', alignItems: 'center', gap: 3 }}><AlertCircle size={13} />{warnCount} warnings</span>}
-                    {errCount === 0 && warnCount === 0 && <span style={{ fontSize: 11, color: 'var(--blanc-success)', display: 'flex', alignItems: 'center', gap: 3 }}><CheckCircle size={13} />Valid</span>}
-                    <div style={{ width: 1, height: 20, background: 'var(--blanc-line)', margin: '0 4px' }} />
-                    <button onClick={handleSave} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: 'var(--blanc-accent)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}><Save size={13} />{saving ? 'Saving...' : 'Save'}</button>
-                    <button onClick={() => setShowCancelConfirm(true)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)', border: '1px solid var(--blanc-line)', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
+                    <button onClick={undo} disabled={!canUndo} title="Undo ⌘Z" style={{ padding: '5px 8px', fontSize: 12, background: canUndo ? '#f3f4f6' : '#fafafa', color: canUndo ? '#374151' : '#d1d5db', border: '1px solid #e5e7eb', borderRadius: 6, cursor: canUndo ? 'pointer' : 'default', display: 'flex', alignItems: 'center' }}><Undo2 size={13} /></button>
+                    <button onClick={redo} disabled={!canRedo} title="Redo ⌘⇧Z" style={{ padding: '5px 8px', fontSize: 12, background: canRedo ? '#f3f4f6' : '#fafafa', color: canRedo ? '#374151' : '#d1d5db', border: '1px solid #e5e7eb', borderRadius: 6, cursor: canRedo ? 'pointer' : 'default', display: 'flex', alignItems: 'center' }}><Redo2 size={13} /></button>
+                    <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 4px' }} />
+                    <button onClick={runAutoLayout} title="Auto-layout (ELK)" style={{ padding: '5px 8px', fontSize: 12, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}><LayoutGrid size={13} />Layout</button>
+                    <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 4px' }} />
+                    {errCount > 0 && <span style={{ fontSize: 11, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 3 }}><AlertCircle size={13} />{errCount} errors</span>}
+                    {warnCount > 0 && <span style={{ fontSize: 11, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 3 }}><AlertCircle size={13} />{warnCount} warnings</span>}
+                    {errCount === 0 && warnCount === 0 && <span style={{ fontSize: 11, color: '#10b981', display: 'flex', alignItems: 'center', gap: 3 }}><CheckCircle size={13} />Valid</span>}
+                    <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 4px' }} />
+                    <button onClick={handleSave} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}><Save size={13} />{saving ? 'Saving...' : 'Save'}</button>
+                    <button onClick={() => setShowCancelConfirm(true)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
                 </div>
             </div>
 
@@ -646,7 +646,7 @@ export default function CallFlowBuilderPage() {
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
                 {/* Canvas */}
-                <div style={{ flex: 1, background: 'var(--blanc-bg)' }}>
+                <div style={{ flex: 1 }}>
                     <EdgeInsertContext.Provider value={handleEdgeInsert}>
                         <ReactFlow
                             nodes={nodes} edges={edges}
@@ -660,62 +660,62 @@ export default function CallFlowBuilderPage() {
                 </div>
 
                 {/* Inspector */}
-                <div style={{ width: 300, background: 'var(--blanc-panel-surface)', borderLeft: '1px solid var(--blanc-line)', padding: 16, overflowY: 'auto', flexShrink: 0 }}>
+                <div style={{ width: 300, background: '#fff', borderLeft: '1px solid #e5e7eb', padding: 16, overflowY: 'auto', flexShrink: 0 }}>
                     {!selectedNode && !selectedEdge && (
                         <div>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-3)', textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 12 }}>Flow Properties</div>
-                            <div style={{ fontSize: 13, color: 'var(--blanc-ink-1)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--blanc-ink-2)' }}>Nodes</span><strong>{nodes.length}</strong></div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--blanc-ink-2)' }}>Edges</span><strong>{edges.length}</strong></div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Flow Properties</div>
+                            <div style={{ fontSize: 13, color: '#374151', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#6b7280' }}>Nodes</span><strong>{nodes.length}</strong></div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#6b7280' }}>Edges</span><strong>{edges.length}</strong></div>
                             </div>
                             {validation && (validation.errors.length > 0 || validation.warnings.length > 0) && (
                                 <div style={{ marginTop: 16 }}>
-                                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-3)', textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 8 }}>Problems</div>
-                                    {validation.errors.map((e, i) => <div key={i} style={{ fontSize: 11, color: 'var(--blanc-danger)', marginBottom: 4, padding: '4px 8px', background: '#fef2f2', borderRadius: 4 }}>✗ {e.message}</div>)}
-                                    {validation.warnings.map((w, i) => <div key={i} style={{ fontSize: 11, color: 'var(--blanc-warning)', marginBottom: 4, padding: '4px 8px', background: '#fffbeb', borderRadius: 4 }}>⚠ {w.message}</div>)}
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8 }}>Problems</div>
+                                    {validation.errors.map((e, i) => <div key={i} style={{ fontSize: 11, color: '#ef4444', marginBottom: 4, padding: '4px 8px', background: '#fef2f2', borderRadius: 4 }}>✗ {e.message}</div>)}
+                                    {validation.warnings.map((w, i) => <div key={i} style={{ fontSize: 11, color: '#f59e0b', marginBottom: 4, padding: '4px 8px', background: '#fffbeb', borderRadius: 4 }}>⚠ {w.message}</div>)}
                                 </div>
                             )}
                             {/* SCXML */}
                             <div style={{ marginTop: 20 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-3)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>SCXML</div>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>SCXML</div>
                                     <button onClick={() => { navigator.clipboard.writeText(graphToScxml([...nodes as Node<FlowNodeData>[], ...hiddenNodesRef.current], [...edges, ...hiddenEdgesRef.current])); }}
                                         title="Copy SCXML"
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-3)', padding: 2, borderRadius: 4 }}
-                                        onMouseEnter={e => (e.currentTarget.style.color = 'var(--blanc-accent)')}
-                                        onMouseLeave={e => (e.currentTarget.style.color = 'var(--blanc-ink-3)')}>
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: 2, borderRadius: 4 }}
+                                        onMouseEnter={e => (e.currentTarget.style.color = '#6366f1')}
+                                        onMouseLeave={e => (e.currentTarget.style.color = '#9ca3af')}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
                                     </button>
                                 </div>
-                                <pre style={{ fontSize: 9, lineHeight: 1.5, background: 'var(--blanc-surface-muted)', border: '1px solid var(--blanc-line)', borderRadius: 6, padding: 10, overflow: 'auto', maxHeight: 300, whiteSpace: 'pre', color: 'var(--blanc-ink-1)', fontFamily: 'ui-monospace, monospace', margin: 0 }}>{graphToScxml([...nodes as Node<FlowNodeData>[], ...hiddenNodesRef.current], [...edges, ...hiddenEdgesRef.current])}</pre>
+                                <pre style={{ fontSize: 9, lineHeight: 1.5, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, padding: 10, overflow: 'auto', maxHeight: 300, whiteSpace: 'pre', color: '#374151', fontFamily: 'ui-monospace, monospace', margin: 0 }}>{graphToScxml([...nodes as Node<FlowNodeData>[], ...hiddenNodesRef.current], [...edges, ...hiddenEdgesRef.current])}</pre>
                             </div>
                         </div>
                     )}
                     {selectedNode && (
                         <div>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-3)', textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 12 }}>Node Inspector</div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Node Inspector</div>
                             {selectedNode.data?.isProtected && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: '#fefce8', borderRadius: 6, marginBottom: 12, fontSize: 11, color: '#92400e', fontWeight: 500 }}>
                                     <Lock size={12} />System protected — cannot be deleted
                                 </div>
                             )}
                             <div style={{ marginBottom: 12 }}>
-                                <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2)', display: 'block', marginBottom: 4 }}>Name</label>
+                                <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Name</label>
                                 {selectedNode.data?.isProtected
-                                    ? <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-1)', padding: '6px 10px', background: 'var(--blanc-surface-muted)', borderRadius: 6 }}>{selectedNode.data?.label}</div>
-                                    : <input value={String(selectedNode.data?.label || '')} onChange={e => updateNodeName(selectedNode.id, e.target.value)} style={{ width: '100%', padding: '6px 10px', background: 'var(--blanc-field)', border: '1px solid transparent', borderRadius: 6, fontSize: 13 }} />
+                                    ? <div style={{ fontSize: 13, fontWeight: 500, color: '#374151', padding: '6px 10px', background: '#f9fafb', borderRadius: 6 }}>{selectedNode.data?.label}</div>
+                                    : <input value={String(selectedNode.data?.label || '')} onChange={e => updateNodeName(selectedNode.id, e.target.value)} style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
                                 }
                             </div>
                             <div style={{ marginBottom: 12 }}>
-                                <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2)', display: 'block', marginBottom: 4 }}>Kind</label>
+                                <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Kind</label>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
                                     <span>{NODE_KIND_META[(selectedNode.data?.kind as CallFlowNodeKind)]?.icon}</span>
                                     <span style={{ fontWeight: 500 }}>{NODE_KIND_META[(selectedNode.data?.kind as CallFlowNodeKind)]?.label}</span>
                                 </div>
                             </div>
                             <div style={{ marginBottom: 12 }}>
-                                <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2)', display: 'block', marginBottom: 4 }}>ID</label>
-                                <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--blanc-ink-3)' }}>{selectedNode.id}</div>
+                                <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>ID</label>
+                                <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#9ca3af' }}>{selectedNode.id}</div>
                             </div>
                             {/* Kind-specific inspector for non-vapi nodes */}
                             {selectedNode.data?.kind !== 'vapi_agent' && selectedNode.data?.kind !== 'start' && selectedNode.data?.kind !== 'final' && (() => {
@@ -727,7 +727,7 @@ export default function CallFlowBuilderPage() {
                                 };
                                 return (
                                     <div style={{ marginBottom: 12 }}>
-                                        <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2)', display: 'block', marginBottom: 6, borderTop: '1px solid var(--blanc-line)', paddingTop: 10 }}>Configuration</label>
+                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 6, borderTop: '1px solid #e5e7eb', paddingTop: 10 }}>Configuration</label>
                                         <NodeKindInspector
                                             kind={selectedNode.data?.kind as CallFlowNodeKind}
                                             cfg={cfg}
@@ -741,11 +741,11 @@ export default function CallFlowBuilderPage() {
                             })()}
                             {/* ── Vapi Agent Inspector ── */}
                             {selectedNode.data?.kind === 'vapi_agent' && (
-                                <div style={{ marginTop: 8, padding: '12px 14px', background: 'var(--blanc-accent-soft)', border: '1px solid var(--blanc-accent-soft)', borderRadius: 8, fontSize: 12, color: 'var(--blanc-ink-1)', lineHeight: 1.55 }}>
+                                <div style={{ marginTop: 8, padding: '12px 14px', background: '#faf5ff', border: '1px solid #ede9fe', borderRadius: 8, fontSize: 12, color: '#6b21a8', lineHeight: 1.55 }}>
                                     This node hands the call to your <strong>VAPI assistant</strong>.
                                     The greeting, prompt, voice, tools, and max call duration are
                                     configured in VAPI — not here.
-                                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--blanc-line)' }}>
+                                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #ede9fe' }}>
                                         <strong>Routing:</strong> when the assistant finishes, the call ends.
                                         If the assistant can&apos;t be reached (failure or timeout), the call
                                         follows this node&apos;s outgoing edge.
@@ -755,7 +755,7 @@ export default function CallFlowBuilderPage() {
                             {/* Only show delete for non-protected, non-start nodes */}
                             {!selectedNode.data?.isProtected && (
                                 <button onClick={() => setShowDeleteConfirm({ type: 'node', id: selectedNode.id, label: String(selectedNode.data?.label || selectedNode.id) })}
-                                    style={{ marginTop: 12, width: '100%', padding: 8, fontSize: 12, fontWeight: 500, background: '#fef2f2', color: 'var(--blanc-danger)', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                                    style={{ marginTop: 12, width: '100%', padding: 8, fontSize: 12, fontWeight: 500, background: '#fef2f2', color: '#ef4444', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                                     <Trash2 size={13} />Delete Node
                                 </button>
                             )}
@@ -767,26 +767,26 @@ export default function CallFlowBuilderPage() {
                         const isSystemEdge = !!(srcNode?.data?.isProtected && tgtNode?.data?.isProtected);
                         return (
                             <div>
-                                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-3)', textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 12 }}>Edge Inspector</div>
+                                <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Edge Inspector</div>
                                 {isSystemEdge && (
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: '#fefce8', borderRadius: 6, marginBottom: 12, fontSize: 11, color: '#92400e', fontWeight: 500 }}>
                                         <Lock size={12} />System edge — cannot be deleted
                                     </div>
                                 )}
                                 <div style={{ marginBottom: 12 }}>
-                                    <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2)', display: 'block', marginBottom: 4 }}>From → To</label>
-                                    <div style={{ fontSize: 12 }}><span style={{ fontWeight: 500 }}>{getNodeLabel(selectedEdge.source)}</span><span style={{ color: 'var(--blanc-ink-3)' }}> → </span><span style={{ fontWeight: 500 }}>{getNodeLabel(selectedEdge.target)}</span></div>
+                                    <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>From → To</label>
+                                    <div style={{ fontSize: 12 }}><span style={{ fontWeight: 500 }}>{getNodeLabel(selectedEdge.source)}</span><span style={{ color: '#9ca3af' }}> → </span><span style={{ fontWeight: 500 }}>{getNodeLabel(selectedEdge.target)}</span></div>
                                 </div>
                                 <div style={{ marginBottom: 12 }}>
-                                    <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2)', display: 'block', marginBottom: 4 }}>Label / Event Key</label>
+                                    <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Label / Event Key</label>
                                     {isSystemEdge
-                                        ? <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-1)', padding: '6px 10px', background: 'var(--blanc-surface-muted)', borderRadius: 6 }}>{selectedEdge.label || '—'}</div>
-                                        : <input value={String(selectedEdge.label || '')} onChange={e => updateEdgeLabel(selectedEdge.id, e.target.value)} style={{ width: '100%', padding: '6px 10px', background: 'var(--blanc-field)', border: '1px solid transparent', borderRadius: 6, fontSize: 13 }} />
+                                        ? <div style={{ fontSize: 13, fontWeight: 500, color: '#374151', padding: '6px 10px', background: '#f9fafb', borderRadius: 6 }}>{selectedEdge.label || '—'}</div>
+                                        : <input value={String(selectedEdge.label || '')} onChange={e => updateEdgeLabel(selectedEdge.id, e.target.value)} style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
                                     }
                                 </div>
                                 {!isSystemEdge && (
                                     <button onClick={() => setShowDeleteConfirm({ type: 'edge', id: selectedEdge.id, label: `${getNodeLabel(selectedEdge.source)} → ${getNodeLabel(selectedEdge.target)}` })}
-                                        style={{ marginTop: 12, width: '100%', padding: 8, fontSize: 12, fontWeight: 500, background: '#fef2f2', color: 'var(--blanc-danger)', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                                        style={{ marginTop: 12, width: '100%', padding: 8, fontSize: 12, fontWeight: 500, background: '#fef2f2', color: '#ef4444', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                                         <Trash2 size={13} />Delete Edge
                                     </button>
                                 )}
@@ -800,16 +800,16 @@ export default function CallFlowBuilderPage() {
             {
                 showDeleteConfirm && (
                     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowDeleteConfirm(null)}>
-                        <div onClick={e => e.stopPropagation()} style={{ background: 'var(--blanc-panel-surface)', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                                 <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Delete {showDeleteConfirm.type}?</h3>
-                                <button onClick={() => setShowDeleteConfirm(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-2)', padding: 0 }}><X size={18} /></button>
+                                <button onClick={() => setShowDeleteConfirm(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 0 }}><X size={18} /></button>
                             </div>
-                            <p style={{ fontSize: 13, color: 'var(--blanc-ink-2)', margin: '0 0 8px' }}>Delete <strong>{showDeleteConfirm.label}</strong>?</p>
-                            {showDeleteConfirm.type === 'node' && <p style={{ fontSize: 12, color: 'var(--blanc-warning)', margin: '0 0 16px' }}>⚠ All connected edges will also be removed.</p>}
+                            <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 8px' }}>Delete <strong>{showDeleteConfirm.label}</strong>?</p>
+                            {showDeleteConfirm.type === 'node' && <p style={{ fontSize: 12, color: '#f59e0b', margin: '0 0 16px' }}>⚠ All connected edges will also be removed.</p>}
                             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                                <button onClick={() => setShowDeleteConfirm(null)} style={{ padding: '8px 16px', fontSize: 13, background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
-                                <button onClick={confirmDelete} style={{ padding: '8px 16px', fontSize: 13, background: 'var(--blanc-danger)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Delete</button>
+                                <button onClick={() => setShowDeleteConfirm(null)} style={{ padding: '8px 16px', fontSize: 13, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
+                                <button onClick={confirmDelete} style={{ padding: '8px 16px', fontSize: 13, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Delete</button>
                             </div>
                         </div>
                     </div>
@@ -821,12 +821,12 @@ export default function CallFlowBuilderPage() {
             {
                 insertTarget && (
                     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setInsertTarget(null)}>
-                        <div onClick={e => e.stopPropagation()} style={{ background: 'var(--blanc-panel-surface)', borderRadius: 12, padding: 20, maxWidth: 360, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 20, maxWidth: 360, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                                 <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Insert Node</h3>
-                                <button onClick={() => setInsertTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-2)', padding: 0 }}><X size={16} /></button>
+                                <button onClick={() => setInsertTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 0 }}><X size={16} /></button>
                             </div>
-                            <div style={{ fontSize: 11, color: 'var(--blanc-ink-2)', marginBottom: 10 }}>Choose a node type to insert into this branch:</div>
+                            <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 10 }}>Choose a node type to insert into this branch:</div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                                 {paletteKinds.map(([kind, meta]) => {
                                     const isDisabled = DISABLED_KINDS.has(kind);
@@ -836,15 +836,15 @@ export default function CallFlowBuilderPage() {
                                             title={isDisabled ? 'Planned later; not in current scope' : isLocked ? 'Managed separately' : meta.label}
                                             style={{
                                                 display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', fontSize: 12, fontWeight: 500,
-                                                background: isDisabled || isLocked ? 'var(--blanc-field)' : 'var(--blanc-surface-muted)',
-                                                border: `1px solid ${isDisabled || isLocked ? 'var(--blanc-line)' : 'var(--blanc-line-strong)'}`,
+                                                background: isDisabled || isLocked ? '#f3f4f6' : '#f9fafb',
+                                                border: `1px solid ${isDisabled || isLocked ? '#e5e7eb' : '#d1d5db'}`,
                                                 borderRadius: 6, cursor: isDisabled || isLocked ? 'not-allowed' : 'pointer',
-                                                color: isDisabled || isLocked ? 'var(--blanc-ink-3)' : 'var(--blanc-ink-1)', textAlign: 'left',
+                                                color: isDisabled || isLocked ? '#9ca3af' : '#374151', textAlign: 'left',
                                                 opacity: isDisabled || isLocked ? 0.5 : 1,
                                             }}>
                                             <span style={{ fontSize: 14 }}>{meta.icon}</span>
                                             <span>{meta.label}</span>
-                                            {isLocked && <span style={{ fontSize: 9, marginLeft: 'auto', color: 'var(--blanc-ink-3)' }}>🔒</span>}
+                                            {isLocked && <span style={{ fontSize: 9, marginLeft: 'auto', color: '#9ca3af' }}>🔒</span>}
                                         </button>
                                     );
                                 })}
@@ -858,15 +858,15 @@ export default function CallFlowBuilderPage() {
             {
                 showCancelConfirm && (
                     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowCancelConfirm(false)}>
-                        <div onClick={e => e.stopPropagation()} style={{ background: 'var(--blanc-panel-surface)', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                                 <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Discard changes?</h3>
-                                <button onClick={() => setShowCancelConfirm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-2)', padding: 0 }}><X size={18} /></button>
+                                <button onClick={() => setShowCancelConfirm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 0 }}><X size={18} /></button>
                             </div>
-                            <p style={{ fontSize: 13, color: 'var(--blanc-ink-2)', margin: '0 0 16px' }}>Any unsaved changes to this flow will be lost.</p>
+                            <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 16px' }}>Any unsaved changes to this flow will be lost.</p>
                             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                                <button onClick={() => setShowCancelConfirm(false)} style={{ padding: '8px 16px', fontSize: 13, background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Keep Editing</button>
-                                <button onClick={() => navigate('/settings/telephony/user-groups')} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, background: 'var(--blanc-danger)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Discard & Close</button>
+                                <button onClick={() => setShowCancelConfirm(false)} style={{ padding: '8px 16px', fontSize: 13, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Keep Editing</button>
+                                <button onClick={() => navigate('/settings/telephony/user-groups')} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Discard & Close</button>
                             </div>
                         </div>
                     </div>

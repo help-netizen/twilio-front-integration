@@ -2,11 +2,11 @@ import type { CallFlowNodeKind, TelephonyTargetGroupOption, TelephonyTargetUserO
 import { normalizeToE164 } from '../../utils/phoneUtils';
 
 // ── Shared styles ────────────────────────────────────────────────────────────
-const fieldStyle = { width: '100%', padding: '6px 10px', background: 'var(--blanc-field)', border: '1px solid transparent', borderRadius: 6, fontSize: 12, boxSizing: 'border-box' as const } as const;
-const labelStyle = { fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2)', display: 'block', marginBottom: 3 } as const;
+const fieldStyle = { width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, boxSizing: 'border-box' as const } as const;
+const labelStyle = { fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 } as const;
 const row = { marginBottom: 8 } as const;
 const splitRow = { display: 'flex', gap: 8, marginBottom: 8 } as const;
-const checkLabel = { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--blanc-ink-1)', marginBottom: 4, cursor: 'pointer' } as const;
+const checkLabel = { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#374151', marginBottom: 4, cursor: 'pointer' } as const;
 
 type InspectorProps = {
     cfg: Record<string, unknown>;
@@ -36,7 +36,7 @@ function optionLabel(label: string, secondary?: string) {
 export function GreetingInspector({ cfg, updateCfg, isProtected }: InspectorProps) {
     return (<>
         <div style={row}>
-            <label style={labelStyle}>Text <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+            <label style={labelStyle}>Text <span style={{ color: '#ef4444' }}>*</span></label>
             <textarea value={String(cfg.text || '')} onChange={e => updateCfg('text', e.target.value)}
                 rows={3} style={{ ...fieldStyle, resize: 'vertical' }} disabled={isProtected}
                 placeholder="Enter greeting text…" />
@@ -100,7 +100,7 @@ export function QueueInspector({ cfg, updateCfg, isProtected, groupOptions = [] 
         </div>
         {cfg.target_mode === 'user_group' && (
             <div style={row}>
-                <label style={labelStyle}>User Group <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+                <label style={labelStyle}>User Group <span style={{ color: '#ef4444' }}>*</span></label>
                 <select value={selectedGroupId} onChange={e => updateCfg('user_group_id', e.target.value)} style={fieldStyle} disabled={isProtected || groupOptions.length === 0}>
                     <option value="">{groupOptions.length > 0 ? 'Select group' : 'No groups available'}</option>
                     {hasUnknownSelectedGroup && <option value={selectedGroupId}>{selectedGroupId}</option>}
@@ -192,16 +192,16 @@ export function BranchInspector({ cfg, updateCfg, isProtected }: InspectorProps)
     };
 
     return (<>
-        <div style={{ fontSize: 10, color: 'var(--blanc-ink-3)', marginBottom: 8 }}>
+        <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 8 }}>
             {nonElse.length} condition{nonElse.length !== 1 ? 's' : ''} + else • max 10
         </div>
         {nonElse.map((c, i) => (
-            <div key={c.id} style={{ padding: '6px 8px', background: 'var(--blanc-surface-muted)', border: '1px solid var(--blanc-line)', borderRadius: 6, marginBottom: 4 }}>
+            <div key={c.id} style={{ padding: '6px 8px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, marginBottom: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--blanc-ink-2)' }}>#{i + 1}</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: '#6b7280' }}>#{i + 1}</span>
                     {!isProtected && (
                         <button onClick={() => removeCondition(c.id)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-danger)', fontSize: 11, padding: 0 }}>✕</button>
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', fontSize: 11, padding: 0 }}>✕</button>
                     )}
                 </div>
                 <div style={splitRow}>
@@ -226,7 +226,7 @@ export function BranchInspector({ cfg, updateCfg, isProtected }: InspectorProps)
         )}
         {!isProtected && conditions.length < 10 && (
             <button onClick={addCondition}
-                style={{ width: '100%', padding: '6px 0', fontSize: 11, fontWeight: 500, background: 'var(--blanc-field)', border: '1px dashed var(--blanc-line-strong)', borderRadius: 6, cursor: 'pointer', color: 'var(--blanc-accent)', marginTop: 4 }}>
+                style={{ width: '100%', padding: '6px 0', fontSize: 11, fontWeight: 500, background: '#f3f4f6', border: '1px dashed #d1d5db', borderRadius: 6, cursor: 'pointer', color: '#6366f1', marginTop: 4 }}>
                 + Add Condition
             </button>
         )}
@@ -278,7 +278,7 @@ export function TransferInspector({ cfg, updateCfg, isProtected, groupOptions = 
         )}
         {targetType === 'external_number' && (
             <div style={row}>
-                <label style={labelStyle}>External Number <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+                <label style={labelStyle}>External Number <span style={{ color: '#ef4444' }}>*</span></label>
                 <input
                     type="tel"
                     value={formatPhoneDraft(cfg.target_external_number)}
@@ -298,7 +298,7 @@ export function TransferInspector({ cfg, updateCfg, isProtected, groupOptions = 
                     <option value="execute_group_flow">Execute group flow ⚠️</option>
                 </select>
                 {cfg.group_handoff_mode === 'execute_group_flow' && (
-                    <div style={{ fontSize: 10, color: 'var(--blanc-warning)', marginTop: 2 }}>⚠ May replay greeting/hours logic</div>
+                    <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>⚠ May replay greeting/hours logic</div>
                 )}
             </div>
         )}
@@ -330,7 +330,7 @@ export function TransferInspector({ cfg, updateCfg, isProtected, groupOptions = 
         </div>
         {cfg.caller_id_policy === 'explicit_number' && (
             <div style={row}>
-                <label style={labelStyle}>Explicit Caller ID <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+                <label style={labelStyle}>Explicit Caller ID <span style={{ color: '#ef4444' }}>*</span></label>
                 <input
                     type="tel"
                     value={formatPhoneDraft(cfg.explicit_caller_id_number)}
@@ -367,7 +367,7 @@ export function VoicemailInspector({ cfg, updateCfg, isProtected }: InspectorPro
         </div>
         {cfg.greeting_mode === 'tts' && (<>
             <div style={row}>
-                <label style={labelStyle}>Greeting Text <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+                <label style={labelStyle}>Greeting Text <span style={{ color: '#ef4444' }}>*</span></label>
                 <textarea value={String(cfg.greeting_text || '')} onChange={e => updateCfg('greeting_text', e.target.value)}
                     rows={2} style={{ ...fieldStyle, resize: 'vertical' }} placeholder="Leave a message after the beep…" />
             </div>
@@ -391,7 +391,7 @@ export function VoicemailInspector({ cfg, updateCfg, isProtected }: InspectorPro
         </>)}
         {cfg.greeting_mode === 'audio_asset' && (
             <div style={row}>
-                <label style={labelStyle}>Audio Asset <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+                <label style={labelStyle}>Audio Asset <span style={{ color: '#ef4444' }}>*</span></label>
                 <input value={String(cfg.greeting_audio_asset_id || '')} onChange={e => updateCfg('greeting_audio_asset_id', e.target.value)} style={fieldStyle} placeholder="Asset ID (picker coming soon)" />
             </div>
         )}
@@ -446,18 +446,18 @@ export function HangUpInspector({ cfg, updateCfg, isProtected }: InspectorProps)
         </div>
         {cfg.optional_message_mode === 'tts' && (
             <div style={row}>
-                <label style={labelStyle}>Message Text <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+                <label style={labelStyle}>Message Text <span style={{ color: '#ef4444' }}>*</span></label>
                 <textarea value={String(cfg.optional_message_text || '')} onChange={e => updateCfg('optional_message_text', e.target.value)}
                     rows={2} style={{ ...fieldStyle, resize: 'vertical' }} placeholder="Goodbye message…" />
             </div>
         )}
         {cfg.optional_message_mode === 'audio_asset' && (
             <div style={row}>
-                <label style={labelStyle}>Audio Asset <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+                <label style={labelStyle}>Audio Asset <span style={{ color: '#ef4444' }}>*</span></label>
                 <input value={String(cfg.optional_message_audio_asset_id || '')} onChange={e => updateCfg('optional_message_audio_asset_id', e.target.value)} style={fieldStyle} placeholder="Asset ID" />
             </div>
         )}
-        <div style={{ marginTop: 8, padding: '6px 8px', background: 'var(--blanc-surface-muted)', borderRadius: 6, fontSize: 10, color: 'var(--blanc-ink-2)' }}>
+        <div style={{ marginTop: 8, padding: '6px 8px', background: '#f3f4f6', borderRadius: 6, fontSize: 10, color: '#6b7280' }}>
             ⏹ Terminal node — flow ends here
         </div>
     </>);
@@ -469,10 +469,10 @@ export function HangUpInspector({ cfg, updateCfg, isProtected }: InspectorProps)
 export function PlayAudioInspector({ cfg, updateCfg, isProtected }: InspectorProps) {
     return (<>
         <div style={row}>
-            <label style={labelStyle}>Audio Asset <span style={{ color: 'var(--blanc-danger)' }}>*</span></label>
+            <label style={labelStyle}>Audio Asset <span style={{ color: '#ef4444' }}>*</span></label>
             <input value={String(cfg.audio_asset_id || '')} onChange={e => updateCfg('audio_asset_id', e.target.value)}
                 style={fieldStyle} placeholder="Asset ID (picker coming soon)" disabled={isProtected} />
-            <div style={{ fontSize: 10, color: 'var(--blanc-ink-3)', marginTop: 2 }}>Select from Audio Library</div>
+            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>Select from Audio Library</div>
         </div>
         <div style={splitRow}>
             <div style={{ flex: 1 }}>

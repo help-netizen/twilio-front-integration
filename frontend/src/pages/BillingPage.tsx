@@ -1,6 +1,6 @@
 /**
  * BillingPage.tsx — BILLING-UI. Subscription & billing cabinet for the company
- * owner (tenant.company.manage). Albusto design system, money-first:
+ * owner (tenant.company.manage). Blanc design system, money-first:
  * what do I pay, what's my next bill, how much have I used, how do I change.
  * No technical IDs (customer_id / subscription_id) surface here.
  */
@@ -8,8 +8,6 @@ import { useEffect, useState } from 'react';
 import { Loader2, Check, ExternalLink, CreditCard, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../components/ui/button';
-import { SettingsPageShell } from '../components/settings/SettingsPageShell';
-import { SettingsSection } from '../components/settings/SettingsSection';
 import { billingApi, type BillingOverview, type Plan, type WalletInfo } from '../services/billingApi';
 
 const METRIC_LABELS: Record<string, string> = {
@@ -34,7 +32,7 @@ function toneStyle(tone: Tone): React.CSSProperties {
         case 'info': return { background: 'rgba(47,99,216,0.12)', color: 'var(--blanc-info)' };
         case 'danger': return { background: 'rgba(212,77,60,0.12)', color: 'var(--blanc-danger)' };
         case 'warn': return { background: 'rgba(178,106,29,0.12)', color: 'var(--blanc-warning)' };
-        default: return { background: 'rgba(25,25,25,0.08)', color: 'var(--blanc-ink-2)' };
+        default: return { background: 'rgba(117,106,89,0.10)', color: 'var(--blanc-ink-2)' };
     }
 }
 
@@ -64,8 +62,8 @@ function overageFor(plan: Plan | undefined, metric: string, used: number): numbe
     return (used - cap) * rate;
 }
 
-/** KPI tile surface — section-card family (LAYOUT-CANON: surface owns its padding). */
-const KPI = 'rounded-2xl bg-[rgba(25,25,25,0.04)] px-4 py-3.5';
+const CARD_BG = 'rgba(117,106,89,0.05)';
+const KPI: React.CSSProperties = { background: CARD_BG, borderRadius: 16, padding: '14px 16px' };
 
 export default function BillingPage() {
     const [data, setData] = useState<BillingOverview | null>(null);
@@ -142,127 +140,20 @@ export default function BillingPage() {
     const periodResets = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const tone = STATUS_TONE[status] || 'muted';
 
-    // Selectable plans (trial is not a real plan) and the natural upgrade target:
-    // the cheapest plan that costs more than the current monthly base.
-    const visiblePlans = plans.filter(p => p.id !== 'trial');
-    const recommendedPlanId = visiblePlans
-        .filter(p => p.id !== currentPlanId && Number(p.monthly_base_usd) > monthlyBase)
-        .sort((a, b) => Number(a.monthly_base_usd) - Number(b.monthly_base_usd))[0]?.id ?? null;
-
-    /* Usage — during an active trial, Plans take priority so this drops below them */
-    const usageSection = (
-        <SettingsSection flat title="This month's usage" description={`Resets ${fmtDate(periodResets.toISOString())}`}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                {METRIC_ORDER.map(metric => {
-                    const used = Number(usage[metric] || 0);
-                    const cap = Number(currentPlan?.included_units?.[metric] || 0);
-                    const pct = cap > 0 ? (used / cap) * 100 : 0;
-                    const overUnits = cap > 0 ? Math.max(0, used - cap) : 0;
-                    const overCost = overageFor(currentPlan, metric, used);
-                    const over = overUnits > 0;
-                    return (
-                        <div key={metric} style={{
-                            background: 'var(--blanc-surface-strong, #fffdf9)',
-                            border: `1px solid ${over ? 'rgba(212,77,60,0.4)' : 'var(--blanc-line)'}`,
-                            borderRadius: 16, padding: 16,
-                        }}>
-                            <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>{METRIC_LABELS[metric] || metric}</div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 3 }}>
-                                <span style={{ fontSize: 18, fontWeight: 500, color: over ? 'var(--blanc-danger)' : 'var(--blanc-ink-1)' }}>{used.toLocaleString()}</span>
-                                {cap > 0 && <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>/ {cap.toLocaleString()}</span>}
-                            </div>
-                            <div style={{ height: 7, borderRadius: 999, background: 'rgba(25,25,25,0.10)', overflow: 'hidden', marginTop: 8 }}>
-                                <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: usageBarColor(pct), borderRadius: 999, transition: 'width .3s' }} />
-                            </div>
-                            {over && (
-                                <div style={{ fontSize: 12, color: 'var(--blanc-danger)', marginTop: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
-                                    <AlertTriangle size={12} />+{overUnits.toLocaleString()}{overCost > 0 ? ` · projected ${usd(overCost)} overage` : ''}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>
-        </SettingsSection>
-    );
-
-    /* Plans — primary job during a trial, so it rises directly under the KPIs */
-    const plansSection = (
-        <SettingsSection flat title={isTrial ? 'Choose a plan' : 'Change plan'}>
-            {!billing_enabled && (
-                <p style={{ fontSize: 13, color: 'var(--blanc-ink-3)', margin: '0 0 12px' }}>
-                    Online payments aren't enabled yet — <a href="mailto:support@albusto.com" style={{ color: 'var(--blanc-ink-2)' }}>contact us</a> to change plans.
-                </p>
-            )}
-            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 14 }}>
-                {visiblePlans.map(plan => {
-                    const isCurrent = plan.id === currentPlanId;
-                    const base = Number(plan.monthly_base_usd);
-                    const isUpgrade = base > monthlyBase;
-                    const isRecommended = plan.id === recommendedPlanId;
-                    const cta = isCurrent ? 'Current plan' : isUpgrade ? 'Upgrade' : `Switch to ${plan.name}`;
-                    const borderColor = isCurrent || isRecommended ? 'var(--blanc-info)' : 'var(--blanc-line)';
-                    return (
-                        <div key={plan.id} style={{
-                            border: `${isCurrent || isRecommended ? 2 : 1}px solid ${borderColor}`,
-                            borderRadius: 16, padding: 18, background: 'var(--blanc-surface-strong, #fffdf9)',
-                            display: 'flex', flexDirection: 'column', gap: 12,
-                            flex: '1 1 260px', minWidth: 260, maxWidth: 320,
-                        }}>
-                            <div>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                                    <span style={{ fontSize: 17, fontWeight: 600, color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif' }}>{plan.name}</span>
-                                    {isCurrent && <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, ...toneStyle('info') }}>Current</span>}
-                                    {!isCurrent && isRecommended && <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, ...toneStyle('info') }}>Recommended</span>}
-                                </div>
-                                <div style={{ fontSize: 22, fontWeight: 600, marginTop: 2, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
-                                    {usd(base)}<span style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-3)' }}>/mo</span>
-                                </div>
-                            </div>
-                            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {plan.max_phone_numbers != null && (
-                                    <li style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--blanc-ink-2)' }}>
-                                        <Check size={15} style={{ color: 'var(--blanc-success)', flexShrink: 0, marginTop: 1 }} />
-                                        Up to {plan.max_phone_numbers} phone number{plan.max_phone_numbers === 1 ? '' : 's'}
-                                    </li>
-                                )}
-                                {METRIC_ORDER.map(m => plan.included_units?.[m] != null && (
-                                    <li key={m} style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--blanc-ink-2)' }}>
-                                        <Check size={15} style={{ color: 'var(--blanc-success)', flexShrink: 0, marginTop: 1 }} />
-                                        {Number(plan.included_units[m]).toLocaleString()} {METRIC_LABELS[m]?.toLowerCase()}
-                                    </li>
-                                ))}
-                            </ul>
-                            <div style={{ marginTop: 'auto' }}>
-                                <Button
-                                    className="w-full"
-                                    variant={isCurrent ? 'secondary' : isUpgrade ? 'default' : 'outline'}
-                                    disabled={isCurrent || !billing_enabled || busy === plan.id}
-                                    onClick={() => checkout(plan.id)}
-                                >
-                                    {!isCurrent && (isUpgrade ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />)}
-                                    {busy === plan.id ? 'Redirecting…' : cta}
-                                </Button>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-        </SettingsSection>
-    );
-
     return (
-        <SettingsPageShell
-            eyebrow="Billing"
-            title={`${currentPlan?.name || STATUS_LABEL[status]}${!isTrial && currentPlan ? ' plan' : ''}`}
-            actions={
+        <div style={{ padding: '28px 24px', maxWidth: 1120, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 26 }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                <div>
+                    <div className="blanc-eyebrow">Billing</div>
+                    <h1 style={{ fontSize: 26, fontWeight: 600, margin: '4px 0 0', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
+                        {currentPlan?.name || STATUS_LABEL[status]}{!isTrial && currentPlan ? ' plan' : ''}
+                    </h1>
+                </div>
                 <span style={{ fontSize: 12, fontWeight: 600, padding: '4px 12px', borderRadius: 999, ...toneStyle(tone) }}>
                     {STATUS_LABEL[status] || status}
                 </span>
-            }
-        >
-            {/* Collapse the 3-up KPI row to a single column on narrow viewports */}
-            <style>{`@media (max-width: 560px) { .billing-kpis { grid-template-columns: 1fr !important; } }`}</style>
+            </div>
 
             {/* Wallet */}
             {wallet && (
@@ -305,8 +196,8 @@ export default function BillingPage() {
             )}
 
             {/* Money-first KPIs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }} className="billing-kpis">
-                <div className={KPI}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                <div style={KPI}>
                     <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>Monthly cost</div>
                     <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
                         {monthlyBase > 0 ? usd(monthlyBase) : 'Free'}
@@ -314,16 +205,14 @@ export default function BillingPage() {
                     <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>{monthlyBase > 0 ? 'per month' : isTrial ? 'during trial' : ' '}</div>
                 </div>
 
-                <div className={KPI}>
+                <div style={KPI}>
                     <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>{isTrial ? 'Trial' : 'Next bill'}</div>
                     {isTrial ? (
                         <>
-                            {trialDays != null && (
-                                <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
-                                    {`${trialDays} day${trialDays === 1 ? '' : 's'}`}
-                                </div>
-                            )}
-                            {renews && <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>free until {fmtDate(renews)}</div>}
+                            <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
+                                {trialDays != null ? `${trialDays} day${trialDays === 1 ? '' : 's'}` : '—'}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>{renews ? `free until ${fmtDate(renews)}` : 'left'}</div>
                         </>
                     ) : (
                         <>
@@ -335,7 +224,7 @@ export default function BillingPage() {
                     )}
                 </div>
 
-                <div className={KPI} style={needsPayment ? { background: 'rgba(212,77,60,0.10)' } : undefined}>
+                <div style={{ ...KPI, ...(needsPayment ? { background: 'rgba(212,77,60,0.10)' } : {}) }}>
                     <div style={{ fontSize: 12, color: needsPayment ? 'var(--blanc-danger)' : 'var(--blanc-ink-2)', display: 'flex', alignItems: 'center', gap: 5 }}>
                         {needsPayment && <AlertTriangle size={13} />} Payment method
                     </div>
@@ -353,10 +242,108 @@ export default function BillingPage() {
                 </div>
             </div>
 
-            {/* During a trial choosing a plan is the primary job — it goes first */}
-            {isTrial ? <>{plansSection}{usageSection}</> : <>{usageSection}{plansSection}</>}
+            {/* Usage */}
+            <section>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
+                    <div className="blanc-eyebrow">This month's usage</div>
+                    <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>resets {fmtDate(periodResets.toISOString())}</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                    {METRIC_ORDER.map(metric => {
+                        const used = Number(usage[metric] || 0);
+                        const cap = Number(currentPlan?.included_units?.[metric] || 0);
+                        const pct = cap > 0 ? (used / cap) * 100 : 0;
+                        const overUnits = cap > 0 ? Math.max(0, used - cap) : 0;
+                        const overCost = overageFor(currentPlan, metric, used);
+                        const over = overUnits > 0;
+                        return (
+                            <div key={metric} style={{
+                                background: 'var(--blanc-surface-strong, #fffdf9)',
+                                border: `1px solid ${over ? 'rgba(212,77,60,0.4)' : 'var(--blanc-line)'}`,
+                                borderRadius: 16, padding: 16,
+                            }}>
+                                <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>{METRIC_LABELS[metric] || metric}</div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 3 }}>
+                                    <span style={{ fontSize: 18, fontWeight: 500, color: over ? 'var(--blanc-danger)' : 'var(--blanc-ink-1)' }}>{used.toLocaleString()}</span>
+                                    {cap > 0 && <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>/ {cap.toLocaleString()}</span>}
+                                </div>
+                                <div style={{ height: 7, borderRadius: 999, background: 'rgba(117,106,89,0.12)', overflow: 'hidden', marginTop: 8 }}>
+                                    <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: usageBarColor(pct), borderRadius: 999, transition: 'width .3s' }} />
+                                </div>
+                                {over && (
+                                    <div style={{ fontSize: 12, color: 'var(--blanc-danger)', marginTop: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                        <AlertTriangle size={12} />+{overUnits.toLocaleString()}{overCost > 0 ? ` · projected ${usd(overCost)} overage` : ''}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </section>
 
-            <SettingsSection flat title="Billing history">
+            {/* Plans */}
+            <section>
+                <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>{isTrial ? 'Choose a plan' : 'Change plan'}</div>
+                {!billing_enabled && (
+                    <p style={{ fontSize: 13, color: 'var(--blanc-ink-3)', margin: '0 0 12px' }}>
+                        Online payments aren't enabled yet — <a href="mailto:support@albusto.com" style={{ color: 'var(--blanc-ink-2)' }}>contact us</a> to change plans.
+                    </p>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
+                    {plans.filter(p => p.id !== 'trial').map(plan => {
+                        const isCurrent = plan.id === currentPlanId;
+                        const base = Number(plan.monthly_base_usd);
+                        const isUpgrade = base > monthlyBase;
+                        const cta = isCurrent ? 'Current plan' : isUpgrade ? 'Upgrade' : `Switch to ${plan.name}`;
+                        return (
+                            <div key={plan.id} style={{
+                                border: `${isCurrent ? 2 : 1}px solid ${isCurrent ? 'var(--blanc-info)' : 'var(--blanc-line)'}`,
+                                borderRadius: 16, padding: 18, background: 'var(--blanc-surface-strong, #fffdf9)',
+                                display: 'flex', flexDirection: 'column', gap: 12,
+                            }}>
+                                <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                        <span style={{ fontSize: 17, fontWeight: 600, color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif' }}>{plan.name}</span>
+                                        {isCurrent && <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, ...toneStyle('info') }}>Current</span>}
+                                    </div>
+                                    <div style={{ fontSize: 22, fontWeight: 600, marginTop: 2, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
+                                        {usd(base)}<span style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-3)' }}>/mo</span>
+                                    </div>
+                                </div>
+                                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    {plan.max_phone_numbers != null && (
+                                        <li style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--blanc-ink-2)' }}>
+                                            <Check size={15} style={{ color: 'var(--blanc-success)', flexShrink: 0, marginTop: 1 }} />
+                                            Up to {plan.max_phone_numbers} phone number{plan.max_phone_numbers === 1 ? '' : 's'}
+                                        </li>
+                                    )}
+                                    {METRIC_ORDER.map(m => plan.included_units?.[m] != null && (
+                                        <li key={m} style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--blanc-ink-2)' }}>
+                                            <Check size={15} style={{ color: 'var(--blanc-success)', flexShrink: 0, marginTop: 1 }} />
+                                            {Number(plan.included_units[m]).toLocaleString()} {METRIC_LABELS[m]?.toLowerCase()}
+                                        </li>
+                                    ))}
+                                </ul>
+                                <div style={{ marginTop: 'auto' }}>
+                                    <Button
+                                        className="w-full"
+                                        variant={isCurrent ? 'secondary' : isUpgrade ? 'default' : 'outline'}
+                                        disabled={isCurrent || !billing_enabled || busy === plan.id}
+                                        onClick={() => checkout(plan.id)}
+                                    >
+                                        {!isCurrent && (isUpgrade ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />)}
+                                        {busy === plan.id ? 'Redirecting…' : cta}
+                                    </Button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </section>
+
+            {/* Billing history */}
+            <section>
+                <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>Billing history</div>
                 {invoices.length === 0 ? (
                     <p style={{ fontSize: 13.5, color: 'var(--blanc-ink-3)', margin: 0 }}>No charges yet.</p>
                 ) : (
@@ -378,10 +365,12 @@ export default function BillingPage() {
                         })}
                     </div>
                 )}
-            </SettingsSection>
+            </section>
 
+            {/* Wallet activity */}
             {wallet && wallet.ledger.length > 0 && (
-                <SettingsSection flat title="Wallet activity">
+                <section>
+                    <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>Wallet activity</div>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                         {wallet.ledger.slice(0, 12).map((e, i) => (
                             <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 12, alignItems: 'center', padding: '10px 2px' }}>
@@ -393,8 +382,8 @@ export default function BillingPage() {
                             </div>
                         ))}
                     </div>
-                </SettingsSection>
+                </section>
             )}
-        </SettingsPageShell>
+        </div>
     );
 }

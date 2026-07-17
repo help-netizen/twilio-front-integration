@@ -1,22 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
-import {
-    Dialog,
-    DialogContent,
-    DialogTitle,
-    DialogDescription,
-    DialogPanelHeader,
-    DialogBody,
-    DialogPanelFooter,
-} from '../ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
-import { FloatingField } from '../ui/floating-field';
 import { Checkbox } from '../ui/checkbox';
-import { FloatingSelect } from '../ui/floating-select';
-import { SelectItem } from '../ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 import { DEFAULT_TERMS_AND_WARRANTY } from '../estimates/EstimatePreviewDialog';
 import { useDocumentTemplate, findSection } from '../../hooks/useDocumentTemplate';
@@ -49,10 +40,6 @@ function money(value: number | string | null | undefined): string {
 function amount(item: LineItem): number {
     return (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
 }
-
-// Border-only, near-white cell input — sits on the panel surface, no clashing bg.
-const CELL_INPUT =
-    'h-9 rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent text-[14px] text-[var(--blanc-ink-1)] outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)]';
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -234,41 +221,34 @@ export function InvoiceEditorDialog({
 
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
-                <DialogContent variant="panel" size="full">
-                    <DialogPanelHeader>
+            <FloatingDetailPanel open={open} onClose={() => onOpenChange(false)} wide>
+                <div className="flex h-full min-h-0 flex-col bg-[#f3f6f9] text-[#172033]">
+                    {/* Header */}
+                    <div className="shrink-0 border-b border-[#d8e0ea] bg-[#fbfcfe] px-5 py-4 pr-14">
                         <div className="flex items-start justify-between gap-4">
                             <div className="min-w-0">
-                                <DialogTitle
-                                    className="text-[22px] font-semibold leading-tight"
-                                    style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                                >
-                                    {isEdit ? invoice?.invoice_number : 'New invoice'}
-                                </DialogTitle>
-                                <DialogDescription className="sr-only">
-                                    {isEdit ? 'Edit invoice line items and totals' : 'Create a new invoice'}
-                                </DialogDescription>
+                                <p className="font-mono text-sm font-semibold">{isEdit ? invoice?.invoice_number : 'New Invoice'}</p>
                                 {defaultContext && !isEdit && (
-                                    <p className="mt-1 text-xs font-medium text-[var(--blanc-ink-2)]">{defaultContext}</p>
+                                    <p className="mt-1 text-xs font-medium text-[#5f7085]">{defaultContext}</p>
                                 )}
                             </div>
-                            <div className="shrink-0 text-right">
-                                <p className="blanc-eyebrow">Total</p>
-                                <p className="font-mono text-xl font-semibold text-[var(--blanc-ink-1)]">{money(total)}</p>
+                            <div className="text-right shrink-0">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-[#65758b]">Total</p>
+                                <p className="font-mono text-xl font-semibold">{money(total)}</p>
                             </div>
                         </div>
-                    </DialogPanelHeader>
+                    </div>
 
-                    <DialogBody className="md:px-8 md:py-7">
-                        {/* Wide document — line-item grid uses the full panel width (no max-w cap). */}
-                        <div className="w-full space-y-6">
+                    {/* Body — main + aside */}
+                    <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[minmax(0,1fr)_320px]">
+                        <main className="space-y-5 p-5">
                             {/* Summary */}
                             {summary ? (
                                 <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
-                                    <div className="rounded-2xl border border-[var(--blanc-line)]">
+                                    <div className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
                                         <div className="flex items-center justify-between px-4 py-3">
-                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-[var(--blanc-ink-1)]">
-                                                <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium">
+                                                <ChevronDown className={`size-4 transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
                                                 Summary
                                             </CollapsibleTrigger>
                                             <Button type="button" size="sm" variant="ghost" onClick={openSummaryDialog}>
@@ -276,16 +256,16 @@ export function InvoiceEditorDialog({
                                             </Button>
                                         </div>
                                         <CollapsibleContent>
-                                            <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{summary}</div>
+                                            <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{summary}</div>
                                         </CollapsibleContent>
                                     </div>
                                 </Collapsible>
                             ) : (
-                                <div className="rounded-2xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                                    <p className="text-sm font-medium text-[var(--blanc-ink-1)]">Summary</p>
-                                    <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">Add scope, findings, or any context worth highlighting to the customer.</p>
+                                <div className="rounded-md border border-dashed border-[#c4cfdd] bg-[#f8fafc] px-4 py-5">
+                                    <p className="text-sm font-medium">Summary</p>
+                                    <p className="mt-1 text-sm text-[#5f7085]">Add scope, findings, or any context worth highlighting to the customer.</p>
                                     <Button type="button" variant="outline" size="sm" className="mt-3" onClick={openSummaryDialog}>
-                                        <Plus className="mr-1 size-4" /> Add summary
+                                        <Plus className="mr-1 size-4" /> Add Summary
                                     </Button>
                                 </div>
                             )}
@@ -293,62 +273,55 @@ export function InvoiceEditorDialog({
                             {/* Items */}
                             <section className="space-y-3">
                                 <div>
-                                    <p className="blanc-eyebrow">Items</p>
-                                    <p className="text-xs text-[var(--blanc-ink-3)]">Title and unit price are required. Qty defaults to 1.</p>
+                                    <p className="text-sm font-semibold">Items</p>
+                                    <p className="text-xs text-[#5f7085]">Title and unit price are required. Qty defaults to 1.</p>
                                 </div>
 
-                                {/* Column headers for the line-item grid (kept as a grid, not floating per cell) */}
-                                {items.length > 0 && (
-                                    <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3 px-0.5">
-                                        <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Qty</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Unit price</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Taxable</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-right text-[var(--blanc-ink-3)]">Amount</span>
-                                        <span className="w-8" />
-                                    </div>
-                                )}
-
-                                <div className="flex flex-col gap-4">
+                                <div className="flex flex-col divide-y divide-[#d8e0ea]">
                                     {items.map(item => (
-                                        <div key={item.key} className="space-y-2">
+                                        <div key={item.key} className="space-y-2 py-3 first:pt-0 last:pb-0">
                                             <Input
                                                 placeholder="Item title"
                                                 value={item.name}
                                                 onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, name: e.target.value } : i))}
-                                                className={`${CELL_INPUT} h-[42px] font-medium text-[15px]`}
+                                                className="font-medium"
                                             />
                                             <Textarea
                                                 placeholder="Description (optional)"
                                                 value={item.description}
                                                 onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, description: e.target.value } : i))}
                                                 rows={2}
-                                                className="rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent text-sm font-normal text-[var(--blanc-ink-1)] focus-visible:border-[var(--blanc-ink-2)]"
+                                                className="text-sm font-normal"
                                             />
                                             <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3">
-                                                <Input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    value={item.quantity}
-                                                    onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value } : i))}
-                                                    className={CELL_INPUT}
-                                                />
-                                                <Input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    value={item.unit_price}
-                                                    onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: e.target.value } : i))}
-                                                    className={CELL_INPUT}
-                                                />
-                                                <label className="flex items-center gap-2 text-xs text-[var(--blanc-ink-2)] cursor-pointer">
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="text-[10px] uppercase tracking-wider text-[#5f7085]">Qty</span>
+                                                    <Input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        value={item.quantity}
+                                                        onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value } : i))}
+                                                    />
+                                                </div>
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="text-[10px] uppercase tracking-wider text-[#5f7085]">Unit price</span>
+                                                    <Input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        value={item.unit_price}
+                                                        onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: e.target.value } : i))}
+                                                    />
+                                                </div>
+                                                <label className="flex items-center gap-2 text-xs text-[#5f7085] cursor-pointer">
                                                     <Checkbox
                                                         checked={item.taxable}
                                                         onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
                                                     />
                                                     Taxable
                                                 </label>
-                                                <p className="font-mono text-sm font-semibold text-right whitespace-nowrap text-[var(--blanc-ink-1)]">{money(amount(item))}</p>
+                                                <p className="font-mono text-sm font-semibold text-right whitespace-nowrap">{money(amount(item))}</p>
                                                 <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
                                                     <Trash2 className="size-4" />
                                                 </Button>
@@ -364,23 +337,23 @@ export function InvoiceEditorDialog({
                             </section>
 
                             {/* Totals */}
-                            <section className="space-y-3 rounded-2xl p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                                <p className="blanc-eyebrow">Totals</p>
+                            <section className="space-y-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
+                                <p className="text-sm font-semibold">Totals</p>
                                 <div className="flex justify-between text-sm">
-                                    <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
-                                    <span className="font-mono text-[var(--blanc-ink-1)]">{money(subtotal)}</span>
+                                    <span className="text-[#5f7085]">Subtotal</span>
+                                    <span className="font-mono">{money(subtotal)}</span>
                                 </div>
                                 {discountActive ? (
                                     <div className="flex items-center gap-2 text-sm">
-                                        <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                        <span className="text-[var(--blanc-ink-3)]">$</span>
+                                        <span className="text-[#5f7085]">Discount</span>
+                                        <span className="text-[#65758b]">$</span>
                                         <Input
                                             type="number"
                                             min="0"
                                             step="0.01"
                                             value={discountAmount}
                                             onChange={e => setDiscountAmount(e.target.value)}
-                                            className={`${CELL_INPUT} w-24 text-right tabular-nums`}
+                                            className="w-24 h-8 text-right tabular-nums"
                                         />
                                         <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountActive(false); setDiscountAmount('0'); }} title="Remove discount">
                                             <Trash2 className="size-4" />
@@ -389,12 +362,12 @@ export function InvoiceEditorDialog({
                                     </div>
                                 ) : (
                                     <button type="button" className="text-sm text-blue-600" onClick={() => { setDiscountActive(true); setDiscountAmount('0'); }}>
-                                        Add discount
+                                        Add Discount
                                     </button>
                                 )}
                                 {discountError && <p className="text-xs text-red-600">{discountError}</p>}
                                 <div className="grid grid-cols-[1fr_auto] items-center gap-3 text-sm">
-                                    <Label className="text-[var(--blanc-ink-2)]">Tax rate</Label>
+                                    <Label className="text-[#5f7085]">Tax rate</Label>
                                     <Input
                                         type="number"
                                         min="0"
@@ -402,152 +375,117 @@ export function InvoiceEditorDialog({
                                         value={taxRate}
                                         onChange={e => setTaxRate(e.target.value)}
                                         onBlur={() => { const n = Number(taxRate); if (Number.isFinite(n)) setTaxRate(n.toFixed(2)); }}
-                                        className={`${CELL_INPUT} w-24 text-right tabular-nums`}
+                                        className="w-24 h-8 text-right tabular-nums"
                                     />
                                 </div>
                                 <div className="flex justify-between text-sm">
-                                    <span className="text-[var(--blanc-ink-2)]">Tax</span>
-                                    <span className="font-mono text-[var(--blanc-ink-1)]">{money(taxAmount)}</span>
+                                    <span className="text-[#5f7085]">Tax</span>
+                                    <span className="font-mono">{money(taxAmount)}</span>
                                 </div>
-                                <div className="flex justify-between pt-2 text-base font-semibold text-[var(--blanc-ink-1)]" style={{ borderTop: '1px solid var(--blanc-line)' }}>
+                                <div className="flex justify-between border-t pt-2 text-base font-semibold">
                                     <span>Total</span>
                                     <span className="font-mono">{money(total)}</span>
                                 </div>
                             </section>
 
-                            {/* Document settings */}
-                            <section className="space-y-3">
-                                <FloatingSelect
-                                    label="Payment terms"
-                                    value={paymentTerms || '_none'}
-                                    onValueChange={v => setPaymentTerms(v === '_none' ? '' : v)}
-                                >
-                                    <SelectItem value="_none">None</SelectItem>
-                                    <SelectItem value="Due on Receipt">Due on Receipt</SelectItem>
-                                    <SelectItem value="Net 15">Net 15</SelectItem>
-                                    <SelectItem value="Net 30">Net 30</SelectItem>
-                                    <SelectItem value="Net 60">Net 60</SelectItem>
-                                </FloatingSelect>
-                                <p className="text-xs text-[var(--blanc-ink-3)]">
-                                    Due date is set automatically from the invoice template default. You can adjust it on the invoice after creation.
-                                </p>
-                            </section>
-
                             {/* Terms & Warranty */}
                             <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
-                                <div className="rounded-2xl border border-[var(--blanc-line)]">
-                                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-[var(--blanc-ink-1)]">
-                                        <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
+                                <div className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
+                                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium">
+                                        <ChevronDown className={`size-4 transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
                                         Terms & Warranty
                                     </CollapsibleTrigger>
                                     <CollapsibleContent>
-                                        <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{termsBody}</div>
+                                        <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{termsBody}</div>
                                     </CollapsibleContent>
                                 </div>
                             </Collapsible>
-                        </div>
-                    </DialogBody>
+                        </main>
 
-                    <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-                        <Button type="button" onClick={handleSave} disabled={saving || !canSave}>
-                            {saving ? 'Saving...' : isEdit ? 'Save invoice' : 'Create invoice'}
-                        </Button>
-                    </DialogPanelFooter>
-                </DialogContent>
-            </Dialog>
+                        {/* Aside */}
+                        <aside className="space-y-5 border-t border-[#d8e0ea] bg-[#eef3f8] p-5 md:border-l md:border-t-0">
+                            <section className="grid gap-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
+                                <p className="text-sm font-semibold">Document settings</p>
+                                <div className="flex flex-col gap-1">
+                                    <Label className="text-xs text-[#5f7085]">Payment terms</Label>
+                                    <Select value={paymentTerms || '_none'} onValueChange={v => setPaymentTerms(v === '_none' ? '' : v)}>
+                                        <SelectTrigger className="h-9">
+                                            <SelectValue placeholder="Select terms" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="_none">None</SelectItem>
+                                            <SelectItem value="Due on Receipt">Due on Receipt</SelectItem>
+                                            <SelectItem value="Net 15">Net 15</SelectItem>
+                                            <SelectItem value="Net 30">Net 30</SelectItem>
+                                            <SelectItem value="Net 60">Net 60</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <p className="text-xs text-[#5f7085]">
+                                    Due date is set automatically from the invoice template default. You can adjust it on the invoice after creation.
+                                </p>
+                            </section>
+                        </aside>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="shrink-0 border-t border-[#d8e0ea] bg-[#fbfcfe] px-5 py-3">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+                            <Button type="button" onClick={handleSave} disabled={saving || !canSave}>
+                                {saving ? 'Saving...' : isEdit ? 'Save Invoice' : 'Create Invoice'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            </FloatingDetailPanel>
 
             {/* Summary edit dialog */}
             <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
-                <DialogContent variant="panel">
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            Summary
-                        </DialogTitle>
-                        <DialogDescription className="sr-only">Edit the invoice summary</DialogDescription>
-                    </DialogPanelHeader>
-                    <DialogBody className="md:px-8 md:py-7">
-                        <div className="mx-auto w-full max-w-[740px] space-y-6">
-                            <FloatingField
-                                textarea
-                                rows={10}
-                                id="invoice-summary"
-                                label="Notes for the customer…"
-                                value={summaryDraft}
-                                onChange={event => setSummaryDraft(event.target.value)}
-                            />
-                        </div>
-                    </DialogBody>
-                    <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
-                        <Button type="button" onClick={saveSummary}>Save summary</Button>
-                    </DialogPanelFooter>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader><DialogTitle>Summary</DialogTitle></DialogHeader>
+                    <Textarea value={summaryDraft} onChange={e => setSummaryDraft(e.target.value)} rows={10} placeholder="Notes for the customer..." />
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
+                        <Button type="button" onClick={saveSummary}>Save Summary</Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 
             {/* Item create/edit dialog (used by combobox "Create new" path) */}
             <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
-                <DialogContent variant="panel">
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            {editingItemKey ? 'Edit custom item' : 'Add custom item'}
-                        </DialogTitle>
-                        <DialogDescription className="sr-only">Define a custom line item</DialogDescription>
-                    </DialogPanelHeader>
-                    <DialogBody className="md:px-8 md:py-7">
-                        <div className="mx-auto w-full max-w-[740px] space-y-6">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <FloatingField
-                                    containerClassName="sm:col-span-2"
-                                    id="item-title"
-                                    label="Title"
-                                    value={itemDraft.name}
-                                    onChange={event => setItemDraft(prev => ({ ...prev, name: event.target.value }))}
-                                />
-                                <FloatingField
-                                    containerClassName="sm:col-span-2"
-                                    textarea
-                                    rows={4}
-                                    id="item-description"
-                                    label="Description"
-                                    value={itemDraft.description}
-                                    onChange={event => setItemDraft(prev => ({ ...prev, description: event.target.value }))}
-                                />
-                                <FloatingField
-                                    id="item-qty"
-                                    label="Qty"
-                                    type="number"
-                                    inputMode="decimal"
-                                    value={itemDraft.quantity}
-                                    onChange={event => setItemDraft(prev => ({ ...prev, quantity: event.target.value }))}
-                                />
-                                <FloatingField
-                                    id="item-unit-price"
-                                    label="Unit price"
-                                    type="number"
-                                    inputMode="decimal"
-                                    value={itemDraft.unit_price}
-                                    onChange={event => setItemDraft(prev => ({ ...prev, unit_price: event.target.value }))}
-                                />
-                                <label className="sm:col-span-2 flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
-                                    <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
-                                    Service is taxable
-                                </label>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader><DialogTitle>{editingItemKey ? 'Edit custom item' : 'Add custom item'}</DialogTitle></DialogHeader>
+                    <div className="space-y-4">
+                        <div>
+                            <Label>Title <span className="text-red-600">*</span></Label>
+                            <Input value={itemDraft.name} onChange={e => setItemDraft(prev => ({ ...prev, name: e.target.value }))} autoFocus />
+                        </div>
+                        <div>
+                            <Label>Description</Label>
+                            <Textarea value={itemDraft.description} onChange={e => setItemDraft(prev => ({ ...prev, description: e.target.value }))} rows={4} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <Label>Qty</Label>
+                                <Input type="number" min="0.01" step="any" value={itemDraft.quantity} onChange={e => setItemDraft(prev => ({ ...prev, quantity: e.target.value }))} />
+                            </div>
+                            <div>
+                                <Label>Unit price <span className="text-red-600">*</span></Label>
+                                <Input type="number" min="0" step="0.01" value={itemDraft.unit_price} onChange={e => setItemDraft(prev => ({ ...prev, unit_price: e.target.value }))} />
                             </div>
                         </div>
-                    </DialogBody>
-                    <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
+                        <div className="flex items-center gap-2">
+                            <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
+                            <Label>Service is taxable</Label>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
                         <Button type="button" onClick={saveItem} disabled={!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0}>
-                            Save item
+                            Save Item
                         </Button>
-                    </DialogPanelFooter>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </>

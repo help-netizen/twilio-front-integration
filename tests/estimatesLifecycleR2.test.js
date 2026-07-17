@@ -114,9 +114,15 @@ describe('estimatesService PF002-R2 lifecycle', () => {
             .rejects.toMatchObject({ code: 'VALIDATION', message: 'В эстимейте нет items' });
     });
 
-    // NOTE: the old 'send is a workflow stub' case was removed — SEND-DOC-001 made
-    // sendEstimate a real dispatcher (requires a recipient; emits 'sent', flips status).
-    // Real send behavior is covered comprehensively in tests/sendDocEstimate.test.js.
+    it('send is a workflow stub and does not mutate status', async () => {
+        mockQueries.getEstimateById.mockResolvedValue(estimate());
+        mockQueries.getEstimateItems.mockResolvedValue([item()]);
+
+        await service.sendEstimate(COMPANY_ID, USER_ID, EST_ID, { channel: 'text' });
+
+        expect(mockQueries.updateEstimateStatus).not.toHaveBeenCalled();
+        expect(mockQueries.createEvent).toHaveBeenCalledWith(EST_ID, 'send_stub_requested', 'user', USER_ID, { channel: 'sms' });
+    });
 
     it('approve stores an approved snapshot and uses approved status', async () => {
         mockQueries.getEstimateById.mockResolvedValue(estimate({ status: 'viewed' }));

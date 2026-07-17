@@ -31,35 +31,25 @@ import { ConversationPage } from './pages/ConversationPage';
 import { LeadsPage } from './pages/LeadsPage';
 import { ContactsPage } from './pages/ContactsPage';
 import { PulsePage } from './pages/PulsePage';
-import WelcomePage from './pages/WelcomePage';
 import { MessagesPage } from './pages/MessagesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
-import CompanySettingsPage from './pages/CompanySettingsPage';
 import VapiSettingsPage from './pages/VapiSettingsPage';
 import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
-import MailSecretarySettingsPage from './pages/MailSecretarySettingsPage';
-import OutboundLeadCallerSettingsPage from './pages/OutboundLeadCallerSettingsPage';
 import PublicInvoicePayPage from './pages/PublicInvoicePayPage';
-import PublicPayThanksPage from './pages/PublicPayThanksPage';
-import PublicEstimateViewPage from './pages/PublicEstimateViewPage';
-import RatePage from './pages/RatePage';
 import TechnicianPhotosPage from './pages/TechnicianPhotosPage';
 import ApiDocsPage from './pages/ApiDocsPage';
 import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
 import SuperAdminPage from './pages/SuperAdminPage';
 import AdminCompanyDetailPage from './pages/AdminCompanyDetailPage';
 import CompanyUsersPage from './pages/CompanyUsersPage';
-import RolesAccessPage from './pages/RolesAccessPage';
 import QuickMessagesPage from './pages/QuickMessagesPage';
 import PaymentsPage from './pages/PaymentsPage';
 import ProvidersPage from './pages/ProvidersPage';
 import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
 import AutomationPage from './pages/AutomationPage';
 import BillingPage from './pages/BillingPage';
-import GoogleEmailSettingsPage from './pages/GoogleEmailSettingsPage';
-import TelephonyTwilioSettingsPage from './pages/TelephonyTwilioSettingsPage';
+import EmailSettingsPage from './pages/EmailSettingsPage';
 import DocumentTemplatesPage from './pages/DocumentTemplatesPage';
-import PriceBookPage from './pages/PriceBookPage';
 import DocumentTemplateEditorPage from './pages/DocumentTemplateEditorPage';
 import { EmailPage } from './pages/EmailPage';
 import ServiceTerritoriesPage from './pages/ServiceTerritoriesPage';
@@ -67,7 +57,6 @@ import JobsPage from './pages/JobsPage';
 import { SchedulePage } from './pages/SchedulePage';
 import EstimatesPage from './pages/EstimatesPage';
 import InvoicesPage from './pages/InvoicesPage';
-import TasksPage from './pages/TasksPage';
 import TransactionsPage from './pages/TransactionsPage';
 import RouteManagerOverviewPage from './pages/telephony/RouteManagerOverviewPage';
 import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
@@ -81,12 +70,10 @@ import UserGroupsPage from './pages/telephony/UserGroupsPage';
 import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 
 import TelephonyLayout from './components/telephony/TelephonyLayout';
-import SettingsLayout from './components/settings/SettingsLayout';
 import { EventNotification } from './components/EventNotification';
 import NotificationReminderBanner from './components/NotificationReminderBanner';
 import SSEPushBridge from './components/SSEPushBridge';
 import { Toaster } from './components/ui/sonner';
-import { OverlayStackProvider } from './components/ui/OverlayStack';
 import './App.css';
 
 const queryClient = new QueryClient({
@@ -103,20 +90,15 @@ function App() {
     <AuthProvider>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
-          <OverlayStackProvider>
           <OnboardingGate />
           <TwoFactorGate />
           <AppLayout>
             <Routes>
               <Route path="/signup" element={<SignupPage />} />
-              <Route path="/pay/thanks" element={<PublicPayThanksPage />} />
               <Route path="/pay/:token" element={<PublicInvoicePayPage />} />
-              <Route path="/e/:token" element={<PublicEstimateViewPage />} />
-              <Route path="/r/:token" element={<RatePage />} />
               <Route path="/onboarding" element={<OnboardingPage />} />
               <Route path="/" element={<Navigate to="/pulse" replace />} />
               <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
-              <Route path="/welcome" element={<ProtectedRoute permissions={['pulse.view']}><WelcomePage /></ProtectedRoute>} />
               <Route path="/pulse/contact/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
               <Route path="/pulse/timeline/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
               <Route path="/calls" element={<ProtectedRoute permissions={['messages.view_internal']}><HomePage /></ProtectedRoute>} />
@@ -128,55 +110,40 @@ function App() {
               <Route path="/jobs" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/jobs/:jobId" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/schedule" element={<ProtectedRoute permissions={['schedule.view']}><SchedulePage /></ProtectedRoute>} />
-              <Route path="/tasks" element={<ProtectedRoute permissions={['tasks.view']}><TasksPage /></ProtectedRoute>} />
               <Route path="/estimates" element={<ProtectedRoute permissions={['estimates.view']}><EstimatesPage /></ProtectedRoute>} />
               <Route path="/invoices" element={<ProtectedRoute permissions={['invoices.view']}><InvoicesPage /></ProtectedRoute>} />
               <Route path="/contacts" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               <Route path="/contacts/:contactId" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
-              <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
-              <Route path="/settings/email" element={<Navigate to="/settings/integrations/google-email" replace />} />
-
-              {/* Fullscreen settings surfaces — stay OUTSIDE SettingsLayout: API docs,
-                  the document-template editor (its list page is inside), telephony/*
-                  (own sidebar, below) and the workflow builder. */}
+              <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
+              <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
               <Route path="/settings/api-docs" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ApiDocsPage /></ProtectedRoute>} />
-              <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
-
-              {/* Settings — persistent left sub-nav (UI-AUDIT-001 W4, variant C).
-                  Pathless layout route: SettingsLayout renders the sidebar + <Outlet/>;
-                  the per-route ProtectedRoute guards are unchanged. */}
-              <Route element={<SettingsLayout />}>
-                <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
-                <Route path="/settings/roles" element={<ProtectedRoute permissions={['tenant.roles.manage']}><RolesAccessPage /></ProtectedRoute>} />
-                <Route path="/settings/billing" element={<ProtectedRoute permissions={['tenant.company.manage']}><BillingPage /></ProtectedRoute>} />
-                <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/lead-form" element={<ProtectedRoute permissions={['tenant.company.manage']}><LeadFormSettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/quick-messages" element={<ProtectedRoute permissions={['tenant.company.manage']}><QuickMessagesPage /></ProtectedRoute>} />
-                <Route path="/settings/price-book" element={<ProtectedRoute permissions={['price_book.manage']}><PriceBookPage /></ProtectedRoute>} />
-                <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
-                <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
-                <Route path="/settings/automation" element={<ProtectedRoute permissions={['tenant.company.manage']}><AutomationPage /></ProtectedRoute>} />
-                <Route path="/settings/providers" element={<ProtectedRoute permissions={['tenant.company.manage']}><ProvidersPage /></ProtectedRoute>} />
-                <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
-                <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
-                <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/integrations/mail-secretary" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><MailSecretarySettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/integrations/outbound-lead-caller" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><OutboundLeadCallerSettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/integrations/google-email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><GoogleEmailSettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/integrations/telephony-twilio" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><TelephonyTwilioSettingsPage /></ProtectedRoute>} />
-                <Route path="/settings/admin" element={<ProtectedRoute platformRoles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
-                <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute platformRoles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />
-              </Route>
+              
+              <Route path="/settings/lead-form" element={<ProtectedRoute permissions={['tenant.company.manage']}><LeadFormSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/quick-messages" element={<ProtectedRoute permissions={['tenant.company.manage']}><QuickMessagesPage /></ProtectedRoute>} />
               
               <Route path="/payments" element={<ProtectedRoute permissions={['payments.view']}><PaymentsPage /></ProtectedRoute>} />
               <Route path="/payments/:paymentId" element={<ProtectedRoute permissions={['payments.view']}><PaymentsPage /></ProtectedRoute>} />
               <Route path="/transactions" element={<ProtectedRoute permissions={['payments.view']}><TransactionsPage /></ProtectedRoute>} />
               
+              <Route path="/settings/providers" element={<ProtectedRoute permissions={['tenant.company.manage']}><ProvidersPage /></ProtectedRoute>} />
+              
+              <Route path="/settings/automation" element={<ProtectedRoute permissions={['tenant.company.manage']}><AutomationPage /></ProtectedRoute>} />
+              <Route path="/settings/billing" element={<ProtectedRoute permissions={['tenant.company.manage']}><BillingPage /></ProtectedRoute>} />
+              <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
+              <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
+              
+              <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
+              <Route path="/settings/email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><EmailSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
+              <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
               <Route path="/email" element={<ProtectedRoute permissions={['messages.view_internal']}><EmailPage /></ProtectedRoute>} />
+              <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
+              <Route path="/settings/admin" element={<ProtectedRoute platformRoles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
+              <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute platformRoles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />
 
               {/* Telephony — Configuration (with sidebar) */}
               <Route path="/settings/telephony" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
@@ -203,7 +170,6 @@ function App() {
           <NotificationReminderBanner />
           <SSEPushBridge />
           <Toaster />
-          </OverlayStackProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </AuthProvider>

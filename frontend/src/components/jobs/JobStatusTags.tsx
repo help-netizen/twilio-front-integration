@@ -1,13 +1,10 @@
-import { useState } from 'react';
 import { Plus, Navigation, Play, CheckCircle2 } from 'lucide-react';
 import type { LocalJob, JobTag } from '../../services/jobsApi';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { TagBadge } from './jobHelpers';
-import { OnTheWayModal } from './OnTheWayModal';
-import { JobRateMeBlock } from './JobRateMeBlock';
-import { useAuthz } from '../../hooks/useAuthz';
+import { ActionsBlock } from '../workflows/ActionsBlock';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -19,28 +16,30 @@ interface JobOpsSectionProps {
     onMarkInProgress: (id: number) => void;
     onMarkComplete: (id: number) => void;
     onCancel: (id: number) => void;
-    /** Refresh the job after the "On the way" notification (afterMutation). */
-    onNotified?: (id: number) => void;
 }
 
-// ONWAY-001 — pre-visit statuses where the "On the way" CTA is offered.
-// JOB-FSM-PART-ARRIVED-FORWARD-001: "Part arrived" is a pre-visit source too — the
-// part is in, the tech heads out to finish the job, so the customer gets the ETA notice.
-export const ONWAY_SOURCE_STATUSES = ['Submitted', 'Rescheduled', 'Part arrived'];
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
+const SECONDARY_BTN: React.CSSProperties = {
+    color: 'var(--blanc-ink-3)',
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
+};
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobOpsSection({
     job, allTags, onTagsChange,
-    onMarkEnroute, onMarkInProgress, onMarkComplete, onNotified,
+    onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
 }: JobOpsSectionProps) {
     const isActionable = !job.zb_canceled && job.zb_status !== 'complete';
-    const { hasPermission } = useAuthz();
-    const [onWayOpen, setOnWayOpen] = useState(false);
-
-    // ONWAY-001: primary CTA only from a pre-visit status, and only with messages.send.
-    const showOnWayCta =
-        ONWAY_SOURCE_STATUSES.includes(job.blanc_status) && hasPermission('messages.send');
 
     return (
         <div className="px-5 pb-4 space-y-3">
@@ -108,46 +107,13 @@ export function JobOpsSection({
                 </DropdownMenu>
             </div>
 
-            {/* ── ONWAY-001: primary "On the way" CTA (pre-visit statuses) ── */}
-            {showOnWayCta && (
-                <button onClick={() => setOnWayOpen(true)}
-                    className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
-                    style={{
-                        minHeight: 40, borderRadius: 12,
-                        background: 'linear-gradient(180deg, #f5874a 0%, #e06020 100%)',
-                        color: '#fff', border: 'none',
-                        boxShadow: '0 4px 12px rgba(224,96,32,0.25)',
-                        cursor: 'pointer',
-                    }}>
-                    <Navigation className="size-4" /> On the way
-                </button>
-            )}
-
-            {/* ── JOB-ACTIONS-SLIM-001: curated framed primary actions per state ── */}
+            {/* ── Zenbooker Actions ── */}
             {isActionable && (
-                <div className="flex items-stretch gap-2 max-md:flex-wrap">
-                    {/* Submitted/scheduled → On the way (secondary outline) + Start job.
-                        Suppressed when the ONWAY-001 primary CTA above already offers
-                        "On the way" (same action) — otherwise a Submitted/Rescheduled
-                        job with messages.send shows the button twice. Kept as the
-                        fallback when the CTA is absent (no send perm, or a `scheduled`
-                        job whose blanc_status isn't a pre-visit source status). */}
-                    {job.zb_status === 'scheduled' && !showOnWayCta && (
-                        <button onClick={() => onMarkEnroute(job.id)}
-                            className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
-                            style={{
-                                minHeight: 40, borderRadius: 12,
-                                background: '#fff',
-                                color: 'var(--blanc-ink-1)',
-                                border: '1px solid var(--blanc-line)',
-                                cursor: 'pointer',
-                            }}>
-                            <Navigation className="size-4" /> On the way
-                        </button>
-                    )}
+                <div className="space-y-2">
+                    {/* Primary CTA — full width, tall */}
                     {(job.zb_status === 'scheduled' || job.zb_status === 'en-route') && (
                         <button onClick={() => onMarkInProgress(job.id)}
-                            className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
+                            className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
                             style={{
                                 minHeight: 40, borderRadius: 12,
                                 background: 'linear-gradient(180deg, #f5874a 0%, #e06020 100%)',
@@ -155,12 +121,12 @@ export function JobOpsSection({
                                 boxShadow: '0 4px 12px rgba(224,96,32,0.25)',
                                 cursor: 'pointer',
                             }}>
-                            <Play className="size-4" /> Start job
+                            <Play className="size-4" /> Start Job
                         </button>
                     )}
                     {job.zb_status === 'in-progress' && (
                         <button onClick={() => onMarkComplete(job.id)}
-                            className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
+                            className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
                             style={{
                                 minHeight: 40, borderRadius: 12,
                                 background: 'linear-gradient(180deg, #4ade80 0%, #22c55e 100%)',
@@ -168,31 +134,54 @@ export function JobOpsSection({
                                 boxShadow: '0 4px 12px rgba(34,197,94,0.25)',
                                 cursor: 'pointer',
                             }}>
-                            <CheckCircle2 className="size-4" /> Complete job
+                            <CheckCircle2 className="size-4" /> Complete Job
                         </button>
                     )}
+
+                    {/* Secondary actions — small text links */}
+                    <div className="flex items-center gap-4 max-md:gap-2 max-md:flex-wrap">
+                        {/* En-route */}
+                        {job.zb_status === 'en-route' ? (
+                            <span style={{ ...SECONDARY_BTN, opacity: 0.5, cursor: 'default' }} className="max-md:min-h-[44px] max-md:px-2">
+                                <Navigation className="size-3" /> En-route
+                            </span>
+                        ) : job.zb_status === 'scheduled' ? (
+                            <button style={SECONDARY_BTN} className="hover:opacity-70 transition-opacity max-md:min-h-[44px] max-md:px-2"
+                                onClick={() => onMarkEnroute(job.id)}>
+                                <Navigation className="size-3" /> En-route
+                            </button>
+                        ) : null}
+
+                        {/* In Progress indicator */}
+                        {job.zb_status === 'in-progress' && (
+                            <span style={{ ...SECONDARY_BTN, opacity: 0.5, cursor: 'default' }} className="max-md:min-h-[44px] max-md:px-2">
+                                <Play className="size-3" /> In Progress
+                            </span>
+                        )}
+
+                        {/* Complete — only as secondary when primary is Start Job */}
+                        {(job.zb_status === 'scheduled' || job.zb_status === 'en-route') && (
+                            <button style={SECONDARY_BTN} className="hover:opacity-70 transition-opacity max-md:min-h-[44px] max-md:px-2"
+                                onClick={() => onMarkComplete(job.id)}>
+                                <CheckCircle2 className="size-3" /> Complete
+                            </button>
+                        )}
+
+                        {/* Cancel */}
+                        <button
+                            style={{ ...SECONDARY_BTN, color: '#dc2626', marginLeft: 'auto' }}
+                            className="hover:opacity-70 transition-opacity max-md:min-h-[44px] max-md:px-2"
+                            onClick={() => onCancel(job.id)}
+                            title="Cancel job"
+                        >
+                            Cancel
+                        </button>
+                    </div>
                 </div>
             )}
 
-            <JobRateMeBlock
-                jobId={job.id}
-                customerName={job.customer_name}
-                customerPhone={job.customer_phone}
-                customerEmail={job.customer_email}
-                technicianName={job.assigned_techs?.[0]?.name}
-                canSend={hasPermission('messages.send')}
-                onSent={onNotified}
-            />
-
-            {/* ── ONWAY-001: "On the way" modal ── */}
-            {showOnWayCta && (
-                <OnTheWayModal
-                    open={onWayOpen}
-                    onClose={() => setOnWayOpen(false)}
-                    job={job}
-                    onDone={() => onNotified?.(job.id)}
-                />
-            )}
+            {/* ── FSM Status Transitions ── */}
+            <ActionsBlock machineKey="job" entityId={job.id} currentState={job.blanc_status} />
         </div>
     );
 }

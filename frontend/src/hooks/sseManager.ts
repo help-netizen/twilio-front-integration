@@ -100,14 +100,6 @@ function connect() {
             'timeline.unread', 'contact.unread', 'call.holding',
             'agent.status.changed', 'group.call.queued', 'group.call.accepted',
             'group.call.ended',
-            // LEADS-NEW-BADGE-001: lead events for the "new leads" nav badge.
-            // Must be listed here too — the EventSource only fires native
-            // listeners for names in this array (useRealtimeEvents just routes them).
-            'lead.created', 'lead.updated',
-            // TASKS-COUNT-BADGE-001: coarse ping for the "open tasks" nav badge.
-            // Must be listed here too (EventSource only fires native listeners for
-            // names in this array; useRealtimeEvents just routes them).
-            'task.changed',
         ];
 
         for (const eventType of namedEvents) {

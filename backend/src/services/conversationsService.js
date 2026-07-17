@@ -153,26 +153,6 @@ async function sendMessage(conversationId, { body, author = 'agent', mediaSid, f
         timestamp: twilioMsg.dateCreated || new Date().toISOString(),
     });
 
-    // EMAIL-UNREAD-002: an outbound SMS reply marks the whole timeline read
-    // (same owner rule as email replies). Resolution mirrors the inbound path:
-    // phone → contact (no create) → timeline (upsert-safe). Non-blocking.
-    if (conv.customer_e164 && conv.company_id) {
-        try {
-            const contact = await queries.findContactByPhoneOrSecondary(conv.customer_e164, conv.company_id);
-            const timeline = await queries.findOrCreateTimeline(conv.customer_e164, conv.company_id);
-            if (timeline && timeline.id) {
-                const { markReadAfterReply } = require('./replyReadService');
-                await markReadAfterReply(conv.company_id, {
-                    timelineId: timeline.id,
-                    contactId: contact ? contact.id : null,
-                    replyAt: twilioMsg.dateCreated || null,
-                });
-            }
-        } catch (e) {
-            console.warn('[ConvService] reply-read after outbound SMS failed:', e.message);
-        }
-    }
-
     // SSE push
     realtimeService.publishMessageAdded(dbMsg, conv);
     const updatedConv = await convQueries.getConversationById(conv.id);
@@ -354,19 +334,6 @@ async function handleMessageAdded(payload) {
         timestamp: payload.DateCreated || new Date().toISOString(),
         isInbound,
     });
-
-    // LIST-PAGINATION-001: guarantee every SMS conversation has a timeline at
-    // INGEST time (inbound AND outbound). The Pulse sidebar query is now purely
-    // read-only and no longer auto-creates timelines for SMS-only threads, so
-    // the write must happen here or SMS-only conversations would never surface.
-    // Idempotent (findOrCreateTimeline is upsert-safe); non-blocking.
-    if (conv.customer_e164 && conv.company_id) {
-        try {
-            await queries.findOrCreateTimeline(conv.customer_e164, conv.company_id);
-        } catch (e) {
-            console.warn('[ConvService] SMS timeline ensure failed for', conv.customer_e164, e.message);
-        }
-    }
 
     // Mark contact unread for inbound SMS (if contact exists — do NOT create)
     if (isInbound && conv.customer_e164) {

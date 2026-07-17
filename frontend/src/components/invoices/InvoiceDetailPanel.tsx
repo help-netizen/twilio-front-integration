@@ -11,6 +11,7 @@ import {
     Pencil,
     Send,
     Trash2,
+    X,
 } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -29,7 +30,6 @@ import { EstimateItemDialog, type ItemDraft } from '../estimates/EstimateItemDia
 import ManualCardDialog from './ManualCardDialog';
 import { EstimateSummaryDialog } from '../estimates/EstimateSummaryDialog';
 import { ItemPresetSearchCombobox } from '../estimates/ItemPresetSearchCombobox';
-import { expandGroup } from '../../services/priceBookApi';
 import {
     createEstimateItemPreset,
     recordEstimateItemPresetUsage,
@@ -43,15 +43,12 @@ import type {
 } from '../../services/invoicesApi';
 import {
     addInvoiceItem,
-    addInvoiceItemsBulk,
     deleteInvoiceItem,
     fetchInvoice,
     fetchInvoicePayments,
     updateInvoice,
     updateInvoiceItem,
 } from '../../services/invoicesApi';
-import { useAuthz } from '../../hooks/useAuthz';
-import { TaskStack } from '../tasks/TaskStack';
 import { toast } from 'sonner';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -70,10 +67,6 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
 function money(value: string | number | null | undefined): string {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
-// Border-only, near-white control input — sits on the warm panel surface, no clashing bg.
-const TOTALS_INPUT =
-    'h-8 rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent text-[var(--blanc-ink-1)] outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)]';
 
 function fmtDate(value: string | null | undefined): string {
     if (!value) return '-';
@@ -118,7 +111,7 @@ export function InvoiceDetailPanel({
     invoice: initialInvoice,
     events,
     loading,
-    onClose: _onClose,
+    onClose,
     onSend,
     onVoid,
     onRecordPayment,
@@ -127,24 +120,7 @@ export function InvoiceDetailPanel({
 }: Props) {
     // Local copy so we can apply optimistic updates while saving.
     const [invoice, setInvoice] = useState<Invoice>(initialInvoice);
-    const [hydrating, setHydrating] = useState(!initialInvoice.items);
-    // Sync from the prop AND hydrate the full record. Callers frequently pass a
-    // list row WITHOUT its line items — the Financials tabs (Job/Lead) and the
-    // Invoices list all hand us `i.*` (no `items`). Without this fetch a freshly
-    // opened invoice renders "This invoice has no items" until an item mutation
-    // triggers a refetch, even though the items are persisted (they were never lost).
-    // Fetching also enriches contact_email/phone and pulls the freshest totals.
-    useEffect(() => {
-        setInvoice(initialInvoice);
-        if (initialInvoice.items) { setHydrating(false); return; }
-        let cancelled = false;
-        setHydrating(true);
-        fetchInvoice(initialInvoice.id)
-            .then(fresh => { if (!cancelled) setInvoice(fresh); })
-            .catch(() => { /* keep the row we have — item mutations still refetch */ })
-            .finally(() => { if (!cancelled) setHydrating(false); });
-        return () => { cancelled = true; };
-    }, [initialInvoice]);
+    useEffect(() => { setInvoice(initialInvoice); }, [initialInvoice]);
 
     // Default to expanded whenever the invoice has summary/notes content — saves a click
     // for the common "open invoice to read it" path.
@@ -195,16 +171,12 @@ export function InvoiceDetailPanel({
         }
     }, [paymentOpen, invoice.balance_due]);
 
-    const { hasPermission, hasAnyPermission } = useAuthz();
     const isVoid = invoice.status === 'void' || invoice.status === 'refunded';
     const readOnly = isVoid;
     // Send is always available for non-void invoices (re-sends are a normal workflow).
-    // Permission-gated: only roles with invoices.send may dispatch.
-    const canSend = hasPermission('invoices.send') && (!invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded'));
+    const canSend = !invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded');
     const canVoid = !isVoid;
-    // Permission-gated: only roles that can collect a payment (online or offline) see the buttons.
-    const canCollectPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
-    const canRecordPayment = canCollectPayment && !isVoid && Number(invoice.balance_due) > 0;
+    const canRecordPayment = !isVoid && Number(invoice.balance_due) > 0;
 
     // F018: Stripe "Collect payment" — create a payment link and copy/send it.
     // Readiness is enforced by the backend (returns NOT_READY if Stripe isn't set up).
@@ -269,22 +241,6 @@ export function InvoiceDetailPanel({
             recordEstimateItemPresetUsage(preset.id).catch(() => {});
             await refreshAfterItemChange();
             toast.success(`Added "${preset.name}"`);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Add failed');
-        }
-    };
-
-    /** Combobox: picked a Price Book group → expand into its items (single bulk add). */
-    const pickGroup = async (groupId: number) => {
-        try {
-            const items = await expandGroup(groupId);
-            if (items.length === 0) { toast.info('That group has no active items'); return; }
-            await addInvoiceItemsBulk(invoice.id, items.map(i => ({
-                name: i.name, description: i.description, quantity: i.quantity,
-                unit: i.unit || undefined, unit_price: i.unit_price, taxable: i.taxable,
-            })) as any);
-            await refreshAfterItemChange();
-            toast.success(`Added ${items.length} item(s) from group`);
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Add failed');
         }
@@ -452,8 +408,8 @@ export function InvoiceDetailPanel({
     const balanceDueNum = Number(invoice.balance_due) || 0;
 
     return (
-        <div className={`flex h-full min-h-0 flex-col bg-[var(--blanc-panel-surface,#fffdf9)] text-[var(--blanc-ink-1)] ${isVoid ? 'grayscale opacity-60' : ''}`}>
-            <div className="shrink-0 border-b border-[var(--blanc-line)] px-5 py-4 pr-14">
+        <div className={`flex h-full min-h-0 flex-col bg-[#f3f6f9] text-[#172033] ${isVoid ? 'grayscale opacity-60' : ''}`}>
+            <div className="shrink-0 border-b border-[#d8e0ea] bg-[#fbfcfe] px-5 py-4 pr-14">
                 <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -467,42 +423,43 @@ export function InvoiceDetailPanel({
                                     {invoice.invoice_number}
                                 </a>
                             ) : (
-                                <span className="font-mono text-sm font-semibold text-[var(--blanc-ink-1)]">{invoice.invoice_number}</span>
+                                <span className="font-mono text-sm font-semibold">{invoice.invoice_number}</span>
                             )}
                             <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">{invoice.status}</Badge>
                             {invoice.estimate_id && (
                                 <Badge variant="outline" title={`From estimate #${invoice.estimate_id}`}>Estimate #{invoice.estimate_id}</Badge>
                             )}
                         </div>
-                        <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{invoice.contact_name || 'No customer linked'}</p>
+                        <p className="mt-1 text-sm text-[#5f7085]">{invoice.contact_name || 'No customer linked'}</p>
                     </div>
                     <div className="flex items-start gap-3">
                         <div className="text-right">
-                            <p className="blanc-eyebrow">Balance Due</p>
-                            <p className={`font-mono text-xl font-semibold ${balanceDueNum > 0 ? 'text-[var(--blanc-ink-1)]' : 'text-emerald-700'}`}>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#65758b]">Balance Due</p>
+                            <p className={`font-mono text-xl font-semibold ${balanceDueNum > 0 ? '' : 'text-emerald-700'}`}>
                                 {money(invoice.balance_due)}
                             </p>
-                            <p className="text-[11px] text-[var(--blanc-ink-3)]">of {money(invoice.total)}</p>
+                            <p className="text-[11px] text-[#65758b]">of {money(invoice.total)}</p>
                         </div>
+                        <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
+                            <X className="size-4" />
+                        </Button>
                     </div>
                 </div>
             </div>
 
             <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_310px]">
                 <main className="min-h-0 space-y-6 overflow-y-auto p-5">
-                    {/* Tasks — TASKS-001 */}
-                    <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
                     {/* Summary (stored in `notes` field; labeled "Summary" to match estimates) */}
-                    <section className="rounded-2xl border border-[var(--blanc-line)]">
+                    <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
                         <div className="flex items-center justify-between px-4 py-3">
                             <button
                                 type="button"
                                 onClick={() => setNotesOpen(o => !o)}
-                                className="flex flex-1 items-center gap-2 text-left text-sm font-medium text-[var(--blanc-ink-1)]"
+                                className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
                             >
-                                <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${notesOpen ? 'rotate-180' : ''}`} />
+                                <ChevronDown className={`size-4 text-[#65758b] transition-transform ${notesOpen ? 'rotate-180' : ''}`} />
                                 Summary
-                                {!invoice.notes && <span className="text-xs font-normal text-[var(--blanc-ink-3)]">— add notes</span>}
+                                {!invoice.notes && <span className="text-xs font-normal text-[#5f7085]">— add notes</span>}
                             </button>
                             {!readOnly && (
                                 <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={() => setNotesDialogOpen(true)} title="Edit summary">
@@ -511,7 +468,7 @@ export function InvoiceDetailPanel({
                             )}
                         </div>
                         {notesOpen && invoice.notes && (
-                            <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</div>
+                            <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{invoice.notes}</div>
                         )}
                     </section>
 
@@ -519,8 +476,8 @@ export function InvoiceDetailPanel({
                     <section>
                         <div className="mb-3 flex items-end justify-between gap-3">
                             <div>
-                                <p className="blanc-eyebrow">Items</p>
-                                <p className="text-xs text-[var(--blanc-ink-3)]">Line items billed on the invoice.</p>
+                                <p className="text-sm font-semibold">Items</p>
+                                <p className="text-xs text-[#5f7085]">Line items billed on the invoice.</p>
                             </div>
                         </div>
                         {hasItems ? (
@@ -528,18 +485,18 @@ export function InvoiceDetailPanel({
                                 {invoice.items!.map(item => (
                                     <div
                                         key={item.id}
-                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-xl border border-[var(--blanc-line)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:border-[var(--blanc-ink-3)]'}`}
+                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-white'}`}
                                         onClick={() => { if (!readOnly) openEditItem(item); }}
                                     >
                                         <div className="min-w-0">
-                                            <p className="font-medium text-[var(--blanc-ink-1)]">{item.name}</p>
-                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
-                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--blanc-ink-3)]">
+                                            <p className="font-medium">{item.name}</p>
+                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-[#4f6176]">{item.description}</p>}
+                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#5f7085]">
                                                 <span>{Number(item.quantity)} x {money(item.unit_price)}</span>
                                                 {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
                                             </div>
                                         </div>
-                                        <p className="font-mono font-semibold whitespace-nowrap text-[var(--blanc-ink-1)]">{money((item as any).amount ?? Number(item.quantity) * Number(item.unit_price))}</p>
+                                        <p className="font-mono font-semibold whitespace-nowrap">{money((item as any).amount ?? Number(item.quantity) * Number(item.unit_price))}</p>
                                         {!readOnly && (
                                             <>
                                                 <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
@@ -553,10 +510,6 @@ export function InvoiceDetailPanel({
                                     </div>
                                 ))}
                             </div>
-                        ) : hydrating ? (
-                            <div className="flex items-center gap-2 rounded-md border border-[var(--blanc-line)] px-4 py-3 text-sm text-[var(--blanc-ink-3)]">
-                                <Loader2 className="size-4 animate-spin" /> Loading items…
-                            </div>
                         ) : (
                             <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                                 This invoice has no items. Add at least one priced item before sending.
@@ -567,23 +520,22 @@ export function InvoiceDetailPanel({
                                 <ItemPresetSearchCombobox
                                     onPickPreset={pickPreset}
                                     onCreateNew={startCreateFromName}
-                                    onPickGroup={pickGroup}
                                 />
                             </div>
                         )}
                     </section>
 
                     {/* Totals */}
-                    <section className="rounded-2xl p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
+                    <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
                         <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
-                                <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
-                                <span className="font-mono text-[var(--blanc-ink-1)]">{money(invoice.subtotal)}</span>
+                                <span className="text-[#5f7085]">Subtotal</span>
+                                <span className="font-mono">{money(invoice.subtotal)}</span>
                             </div>
                             {hasDiscount ? (
                                 <div className="flex items-center gap-2 text-sm">
-                                    <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                    <span className="text-[var(--blanc-ink-3)]">$</span>
+                                    <span className="text-[#5f7085]">Discount</span>
+                                    <span className="text-[#65758b]">$</span>
                                     <Input
                                         type="number"
                                         min="0"
@@ -592,7 +544,7 @@ export function InvoiceDetailPanel({
                                         onChange={e => setDiscountAmount(e.target.value)}
                                         onBlur={() => persist({ discount_amount: discountAmount || '0' } as any)}
                                         disabled={readOnly}
-                                        className={`${TOTALS_INPUT} w-24 text-right tabular-nums`}
+                                        className="w-24 h-8 text-right tabular-nums"
                                     />
                                     <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" disabled={readOnly} onClick={() => { setHasDiscount(false); setDiscountAmount('0'); persist({ discount_amount: '0' } as any); }} title="Remove discount">
                                         <Trash2 className="size-4" />
@@ -605,7 +557,7 @@ export function InvoiceDetailPanel({
                                 </button>
                             )}
                             <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                                <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
+                                <Label className="text-sm text-[#5f7085]">Tax rate</Label>
                                 <Input
                                     type="number"
                                     min="0"
@@ -619,53 +571,53 @@ export function InvoiceDetailPanel({
                                         persist({ tax_rate: formatted } as any);
                                     }}
                                     disabled={readOnly}
-                                    className={`${TOTALS_INPUT} w-24 text-right tabular-nums`}
+                                    className="w-24 h-8 text-right tabular-nums"
                                 />
                             </div>
                             <div className="flex justify-between">
-                                <span className="text-[var(--blanc-ink-2)]">Tax</span>
-                                <span className="font-mono text-[var(--blanc-ink-1)]">{money(invoice.tax_amount)}</span>
+                                <span className="text-[#5f7085]">Tax</span>
+                                <span className="font-mono">{money(invoice.tax_amount)}</span>
                             </div>
-                            <div className="flex justify-between pt-2 text-base font-semibold text-[var(--blanc-ink-1)]" style={{ borderTop: '1px solid var(--blanc-line)' }}>
+                            <div className="flex justify-between border-t pt-2 text-base font-semibold">
                                 <span>Total</span>
                                 <span className="font-mono">{money(invoice.total)}</span>
                             </div>
                             <div className="flex justify-between text-sm">
-                                <span className="text-[var(--blanc-ink-2)]">Amount paid</span>
+                                <span className="text-[#5f7085]">Amount paid</span>
                                 <span className="font-mono text-emerald-700">{money(invoice.amount_paid)}</span>
                             </div>
-                            <div className="flex justify-between pt-2 text-base font-semibold text-[var(--blanc-ink-1)]" style={{ borderTop: '1px solid var(--blanc-line)' }}>
+                            <div className="flex justify-between border-t pt-2 text-base font-semibold">
                                 <span>Balance Due</span>
                                 <span className={`font-mono ${balanceDueNum <= 0 ? 'text-emerald-700' : ''}`}>{money(invoice.balance_due)}</span>
                             </div>
                             {totalNum > 0 && (
                                 <div>
-                                    <div className="w-full rounded-full h-1.5" style={{ background: 'rgba(25,25,25,0.10)' }}>
+                                    <div className="w-full bg-[#eef3f8] rounded-full h-1.5">
                                         <div
                                             className="bg-emerald-600 h-1.5 rounded-full transition-all"
                                             style={{ width: `${paymentProgress}%` }}
                                         />
                                     </div>
-                                    <p className="text-[11px] text-[var(--blanc-ink-3)] mt-1 text-right">{paymentProgress.toFixed(0)}% paid</p>
+                                    <p className="text-[11px] text-[#65758b] mt-1 text-right">{paymentProgress.toFixed(0)}% paid</p>
                                 </div>
                             )}
                         </div>
                     </section>
                 </main>
 
-                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] p-5 md:border-l md:border-t-0" style={{ background: 'rgba(25,25,25,0.04)' }}>
+                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[#d8e0ea] bg-[#eef3f8] p-5 md:border-l md:border-t-0">
                     {/* Document settings */}
                     <section className="space-y-2 text-sm">
-                        <p className="blanc-eyebrow">Document settings</p>
+                        <p className="text-sm font-semibold">Document settings</p>
                         <div className="grid grid-cols-[auto_1fr] items-center gap-2">
-                            <Label className="text-[var(--blanc-ink-2)]">Due date</Label>
+                            <Label className="text-[#5f7085]">Due date</Label>
                             <Input
                                 type="date"
                                 value={dueDate}
                                 onChange={e => setDueDate(e.target.value)}
                                 onBlur={() => persist({ due_date: dueDate || null } as any)}
                                 disabled={readOnly}
-                                className={`${TOTALS_INPUT}`}
+                                className="h-8"
                             />
                         </div>
                     </section>
@@ -685,11 +637,11 @@ export function InvoiceDetailPanel({
                     {/* Payments list */}
                     {payments.length > 0 && (
                         <section className="space-y-2 text-sm">
-                            <p className="blanc-eyebrow">Payments</p>
+                            <p className="text-sm font-semibold">Payments</p>
                             <div className="space-y-1">
                                 {payments.map((tx: any) => (
                                     <div key={tx.id} className="flex justify-between text-xs">
-                                        <span className="text-[var(--blanc-ink-2)] capitalize">
+                                        <span className="text-[#5f7085] capitalize">
                                             {fmtDate(tx.transaction_date || tx.created_at)}
                                             {(tx.payment_method || tx.metadata?.payment_method) && ` · ${tx.payment_method || tx.metadata?.payment_method}`}
                                         </span>
@@ -702,14 +654,14 @@ export function InvoiceDetailPanel({
 
                     {events.length > 0 && (
                         <section className="space-y-2 text-sm">
-                            <p className="blanc-eyebrow">History</p>
+                            <p className="text-sm font-semibold">History</p>
                             <div className="space-y-2">
                                 {events.map(evt => (
                                     <div key={evt.id} className="flex items-start gap-2 text-xs">
-                                        <Clock className="mt-0.5 size-3 shrink-0 text-[var(--blanc-ink-3)]" />
+                                        <Clock className="mt-0.5 size-3 shrink-0 text-[#65758b]" />
                                         <div>
-                                            <span className="font-medium capitalize text-[var(--blanc-ink-1)]">{evt.event_type.replace(/_/g, ' ')}</span>
-                                            <p className="text-[var(--blanc-ink-2)]">{fmtDateTime(evt.created_at)}</p>
+                                            <span className="font-medium capitalize">{evt.event_type.replace(/_/g, ' ')}</span>
+                                            <p className="text-[#5f7085]">{fmtDateTime(evt.created_at)}</p>
                                         </div>
                                     </div>
                                 ))}
@@ -719,7 +671,7 @@ export function InvoiceDetailPanel({
                 </aside>
             </div>
 
-            <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-bg,#F1F1F0)] px-5 py-3">
+            <div className="shrink-0 border-t border-[#d8e0ea] bg-[#fbfcfe] px-5 py-3">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="grid grid-cols-2 gap-2 md:flex">
                         <Button variant="outline" size="sm" onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, '_blank', 'noopener,noreferrer')}>

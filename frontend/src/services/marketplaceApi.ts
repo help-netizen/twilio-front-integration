@@ -67,45 +67,6 @@ export interface MarketplaceInstallation {
     last_used_at: string | null;
 }
 
-export interface RelyLeadsSettings {
-    zone: {
-        mode: 'company' | 'custom';
-        custom_zips: string[];
-    };
-    unit_types: string[];
-    brands: string[];
-}
-
-export interface RelyLeadsSettingsResponse {
-    settings: RelyLeadsSettings;
-    catalogs: {
-        unit_types: string[];
-        brands: string[];
-    };
-    territory: {
-        active_mode: 'list' | 'radius';
-        has_data: boolean;
-    };
-}
-
-export interface RateMeDomain {
-    domain: string;
-    status: 'pending' | 'verified' | 'active' | 'failed';
-    verified_at: string | null;
-    activated_at: string | null;
-    last_checked_at: string | null;
-    last_error: string | null;
-}
-
-export interface RateMeSettingsResponse {
-    settings: {
-        google_review_url: string | null;
-        booking_url: string | null;
-    };
-    domain: RateMeDomain | null;
-    public_host: string;
-}
-
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
     const res = await authedFetch(url, {
         headers: { 'Content-Type': 'application/json' },
@@ -152,48 +113,4 @@ export async function retryMarketplaceProvisioning(installationId: number): Prom
         { method: 'POST', body: JSON.stringify({}) }
     );
     return data.installation;
-}
-
-export async function fetchRelyLeadsSettings(): Promise<RelyLeadsSettingsResponse> {
-    return request<RelyLeadsSettingsResponse>(`${API_BASE}/apps/rely-leads/settings`);
-}
-
-export async function saveRelyLeadsSettings(settings: RelyLeadsSettings): Promise<RelyLeadsSettingsResponse> {
-    return request<RelyLeadsSettingsResponse>(`${API_BASE}/apps/rely-leads/settings`, {
-        method: 'PUT',
-        body: JSON.stringify(settings),
-    });
-}
-
-export async function fetchRateMeSettings(): Promise<RateMeSettingsResponse> {
-    return request<RateMeSettingsResponse>(`${API_BASE}/apps/rate-me/settings`);
-}
-
-export async function saveRateMeSettings(settings: RateMeSettingsResponse['settings']): Promise<RateMeSettingsResponse> {
-    return request<RateMeSettingsResponse>(`${API_BASE}/apps/rate-me/settings`, {
-        method: 'PUT',
-        body: JSON.stringify(settings),
-    });
-}
-
-export async function setRateMeDomain(domain: string): Promise<RateMeDomain> {
-    const data = await request<{ domain: RateMeDomain }>(`${API_BASE}/apps/rate-me/domain`, {
-        method: 'PUT',
-        body: JSON.stringify({ domain }),
-    });
-    return data.domain;
-}
-
-export async function verifyRateMeDomain(): Promise<RateMeDomain> {
-    const data = await request<{ domain: RateMeDomain }>(`${API_BASE}/apps/rate-me/domain/verify`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-    });
-    return data.domain;
-}
-
-export async function removeRateMeDomain(): Promise<void> {
-    await request<{ success: true }>(`${API_BASE}/apps/rate-me/domain`, {
-        method: 'DELETE',
-    });
 }

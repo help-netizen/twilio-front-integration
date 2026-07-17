@@ -7,39 +7,30 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, Mail, TrendingUp, Briefcase, MapPin, Check, Plus } from 'lucide-react';
+import { Phone, Mail, TrendingUp, Briefcase, MapPin, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { Switch } from '../ui/switch';
 import { Label } from '../ui/label';
 import { Skeleton } from '../ui/skeleton';
 import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
-import { useAuthz } from '../../hooks/useAuthz';
 import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
 import { EditContactDialog } from './EditContactDialog';
-import { useContactConflictFlow } from './useContactConflictFlow';
-import { MergeContactsDialog } from './MergeContactsDialog';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import type { Contact, ContactLead } from '../../types/contact';
 import { getLeadStatusColor, getJobStatusStyle, AddressCard } from './PulseContactHelpers';
-import { TaskStack } from '../tasks/TaskStack';
-import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogTitle, DialogDescription } from '../ui/dialog';
-import { CreateLeadJobWizard } from '../conversations/CreateLeadJobWizard';
 
-interface PulseContactPanelProps { contact: Contact; leads: ContactLead[]; loading: boolean; timelineId?: number | null; onAddressesChanged?: () => void; onContactChanged?: () => void; onTasksChanged?: () => void; }
+interface PulseContactPanelProps { contact: Contact; leads: ContactLead[]; loading: boolean; onAddressesChanged?: () => void; onContactChanged?: () => void; }
 
 const ZENBOOKER_BASE_URL = 'https://zenbooker.com';
 
 /* No background cards — clean flat layout, content breathes */
 
-export function PulseContactPanel({ contact, leads, loading, timelineId, onAddressesChanged, onContactChanged, onTasksChanged }: PulseContactPanelProps) {
+export function PulseContactPanel({ contact, leads, loading, onAddressesChanged, onContactChanged }: PulseContactPanelProps) {
     const navigate = useNavigate();
-    const { hasPermission } = useAuthz();
-    const canViewSource = hasPermission('lead_source.view');
     const [editOpen, setEditOpen] = useState(false);
-    const [createLeadOpen, setCreateLeadOpen] = useState(false);
     const [onlyOpenLeads, setOnlyOpenLeads] = useState(true);
     const [notes, setNotes] = useState(contact.notes || '');
 
@@ -50,9 +41,6 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
     const [emailError, setEmailError] = useState(false);
     const [emailSaving, setEmailSaving] = useState(false);
     const emailInputRef = useRef<HTMLInputElement>(null);
-    // CONTACT-MERGE-001 (CM1-T4, S8): inline scalar-email save through the same
-    // 409 → MergeContactsDialog → one-retry flow as EditContactDialog.
-    const conflictFlow = useContactConflictFlow();
 
     useEffect(() => { setNotes(contact.notes || ''); }, [contact.notes]);
     useEffect(() => {
@@ -84,13 +72,9 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
         if (!trimmed || !isValidEmail(trimmed)) { setEmailError(true); return; }
         setEmailSaving(true);
         try {
-            // Decision E: payload stays scalar { email } — the server includes it in
-            // conflict detection. Cancel keeps the draft in the inline editor (S8).
-            const result = await conflictFlow.save(contact.id, { email: trimmed });
-            if (result.status === 'saved') {
-                setEditingEmail(false);
-                onContactChanged?.();
-            }
+            await contactsApi.updateContact(contact.id, { email: trimmed });
+            setEditingEmail(false);
+            onContactChanged?.();
         } catch { toast.error('Failed to save email'); }
         finally { setEmailSaving(false); }
     };
@@ -126,14 +110,12 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
 
                     {/* Phone + Email */}
                     <div className="space-y-2">
-                        {contact.phone_e164 && (
-                            <div className="flex items-center gap-2">
-                                <Phone className="size-4 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                                <a href={`tel:${contact.phone_e164}`} className="text-[15px] font-semibold text-foreground no-underline hover:underline">{formatPhone(contact.phone_e164)}</a>
-                                <ClickToCallButton phone={contact.phone_e164 || ''} contactName={contact.full_name || undefined} />
-                                <OpenTimelineButton phone={contact.phone_e164 || ''} contactId={contact.id} />
-                            </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                            <Phone className="size-4 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
+                            <a href={`tel:${contact.phone_e164}`} className="text-[15px] font-semibold text-foreground no-underline hover:underline">{formatPhone(contact.phone_e164)}</a>
+                            <ClickToCallButton phone={contact.phone_e164 || ''} contactName={contact.full_name || undefined} />
+                            <OpenTimelineButton phone={contact.phone_e164 || ''} contactId={contact.id} />
+                        </div>
                         {contact.secondary_phone && (
                             <div className="flex items-center gap-2">
                                 <Phone className="size-4 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
@@ -173,32 +155,20 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
                     </div>
                 </div>
 
-                {/* Right: Notes + Tasks — identity-adjacent, aligned with name */}
-                <div className="space-y-3">
-                    {/* Notes — sticky note */}
-                    <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
-                        <h4 className="blanc-eyebrow mb-2">Notes</h4>
-                        <textarea
-                            ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
-                            className="w-full text-sm resize-none bg-transparent border-none outline-none leading-6"
-                            style={{ minHeight: 36, color: notes ? 'var(--blanc-ink-1)' : undefined }}
-                            value={notes}
-                            onChange={e => setNotes(e.target.value)}
-                            onBlur={handleSaveNotes}
-                            onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
-                            placeholder="Add notes…"
-                            rows={2}
-                        />
-                    </div>
-                    {/* Tasks — the timeline's task stack; an open task = Action Required */}
-                    {timelineId ? (
-                        <TaskStack
-                            parentType="timeline"
-                            parentId={timelineId}
-                            title="Tasks"
-                            onTasksChanged={onTasksChanged}
-                        />
-                    ) : null}
+                {/* Right: Notes — sticky note, aligned with name */}
+                <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
+                    <h4 className="blanc-eyebrow mb-2">Notes</h4>
+                    <textarea
+                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
+                        className="w-full text-sm resize-none bg-transparent border-none outline-none leading-6"
+                        style={{ minHeight: 36, color: notes ? 'var(--blanc-ink-1)' : undefined }}
+                        value={notes}
+                        onChange={e => setNotes(e.target.value)}
+                        onBlur={handleSaveNotes}
+                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
+                        placeholder="Add notes…"
+                        rows={2}
+                    />
                 </div>
             </div>
 
@@ -210,21 +180,13 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
                         <h4 className="blanc-eyebrow" style={{ marginBottom: 0 }}>Leads & Jobs</h4>
                         <Switch id="pulse-leads-only-open" checked={onlyOpenLeads} onCheckedChange={setOnlyOpenLeads} />
                         <Label htmlFor="pulse-leads-only-open" className="cursor-pointer text-xs">Only Open</Label>
-                        <button onClick={() => setCreateLeadOpen(true)} className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors shrink-0" style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-3)' }} onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(104,95,80,0.3)')} onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}>
-                            <Plus className="size-3.5" /> Create Lead
-                        </button>
                     </div>
 
                     {!jobsLoaded && <div className="text-xs text-muted-foreground py-2">Loading…</div>}
 
                     {jobsLoaded && !hasActivity && (
-                        <div className="flex flex-col items-center gap-3 py-6">
-                            <div className="text-muted-foreground text-sm">
-                                {onlyOpenLeads ? 'No open leads or jobs' : 'No leads or jobs'}
-                            </div>
-                            <button onClick={() => setCreateLeadOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }} onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(104,95,80,0.3)')} onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}>
-                                <Plus className="size-4" /> Create Lead
-                            </button>
+                        <div className="text-center text-muted-foreground text-sm py-6">
+                            {onlyOpenLeads ? 'No open leads or jobs' : 'No leads or jobs'}
                         </div>
                     )}
 
@@ -237,7 +199,7 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
                                             <TrendingUp className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
                                             <div className="min-w-0">
                                                 <div className="text-sm font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{lead.job_type || 'Lead'}</div>
-                                                <div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>{lead.created_at ? format(new Date(lead.created_at), 'MMM dd, yyyy') : '—'}{canViewSource && lead.job_source && ` · ${lead.job_source}`}</div>
+                                                <div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>{lead.created_at ? format(new Date(lead.created_at), 'MMM dd, yyyy') : '—'}{lead.job_source && ` · ${lead.job_source}`}</div>
                                             </div>
                                         </div>
                                         <span className="px-2 py-0.5 rounded-md text-xs font-semibold shrink-0" style={{ backgroundColor: `${getLeadStatusColor(lead.status)}15`, color: getLeadStatusColor(lead.status) }}>{lead.status}</span>
@@ -286,39 +248,6 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
             </div>
 
             <EditContactDialog contact={contact} open={editOpen} onOpenChange={setEditOpen} onSuccess={() => onContactChanged?.()} />
-
-            {/* CONTACT-MERGE-001: conflict confirmation for the inline scalar-email save. */}
-            <MergeContactsDialog
-                conflict={conflictFlow.activeConflict}
-                onConfirm={conflictFlow.confirm}
-                onCancel={conflictFlow.cancel}
-            />
-
-            {/* Create Lead for this contact — right-side panel (overlay canon). A phoneless
-                (email-only) contact gets the LEAD-ONLY flow; a contact WITH a phone gets the
-                full wizard incl. job. On success we refresh the panel + card so the new lead
-                surfaces (card re-resolves to LeadDetailPanel via getLeadByContact). */}
-            <Dialog open={createLeadOpen} onOpenChange={setCreateLeadOpen}>
-                <DialogContent variant="panel">
-                    <DialogPanelHeader>
-                        <DialogTitle className="text-[22px] font-semibold leading-tight" style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}>
-                            Create lead
-                        </DialogTitle>
-                        <DialogDescription className="sr-only">Create a new lead for {contact.full_name || 'this contact'}</DialogDescription>
-                    </DialogPanelHeader>
-                    <DialogBody className="md:px-8 md:py-7">
-                        <div className="mx-auto w-full max-w-[740px]">
-                            <CreateLeadJobWizard
-                                contactId={contact.id}
-                                email={contact.email || undefined}
-                                phone={contact.phone_e164 || ''}
-                                timelineId={timelineId || undefined}
-                                onLeadCreated={() => { setCreateLeadOpen(false); onContactChanged?.(); onTasksChanged?.(); }}
-                            />
-                        </div>
-                    </DialogBody>
-                </DialogContent>
-            </Dialog>
         </div>
     );
 }

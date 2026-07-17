@@ -9,11 +9,6 @@ import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
-import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '../ui/dialog';
-import { Button } from '../ui/button';
-import { fetchTimeOff, overlapsTimeOff } from '../../services/scheduleApi';
-import { getCompanyTimezone, formatTimeOffPeriod } from './timeOffWarning';
-import { JobTechnicianControl } from './JobTechnicianControl';
 import { useNavigate } from 'react-router-dom';
 import { googleMapsUrl } from '../../utils/routeFormat';
 
@@ -25,16 +20,12 @@ interface JobInfoSectionsProps {
     onJobUpdated?: (updatedJob: LocalJob) => void;
 }
 
-// The slot shape CustomTimeModal confirms with (unchanged — named here so the
-// TECH-DAYOFF-001 pending-confirm state can hold it).
-type RescheduleSlot = { type: 'arrival_window'; start: string; end: string; formatted: string; techId?: string };
-
 // ─── Shared tile styles (mirrors ScheduleSidebar) ────────────────────────────
 
 const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
-    border: '1px solid var(--blanc-line)',
+    border: '1px solid rgba(117, 106, 89, 0.14)',
     background: 'rgba(255, 255, 255, 0.5)',
 };
 
@@ -52,7 +43,7 @@ const infoRow: React.CSSProperties = {
     alignItems: 'center',
     gap: '10px',
     padding: '10px 0',
-    borderBottom: '1px dashed rgba(25, 25, 25, 0.12)',
+    borderBottom: '1px dashed rgba(117, 106, 89, 0.16)',
 };
 
 const infoLabel: React.CSSProperties = {
@@ -101,52 +92,15 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
 
     const territoryId = job.zb_raw?.territory?.id || job.zb_raw?.service_territory?.id || undefined;
 
-    // TECH-DAYOFF-001 S-13 (warning-only): after the time is picked and BEFORE
-    // the existing reschedule call, run a targeted time-off check for each of
-    // the job's CURRENT assigned techs on the chosen interval. A conflict opens
-    // a confirm modal (center dialog canon); confirming runs the untouched
-    // reschedule path. A failed fetch skips the warning (best-effort) and
-    // reschedules as before — never blocks.
-    const [pendingReschedule, setPendingReschedule] = useState<{ techName: string; period: string; slot: RescheduleSlot } | null>(null);
-
-    const handleRescheduleConfirm = async (slot: RescheduleSlot) => {
+    const handleRescheduleConfirm = async (slot: { type: 'arrival_window'; start: string; end: string; formatted: string; techId?: string }) => {
         setShowReschedule(false);
-        const techs = job.assigned_techs || [];
-        if (techs.length > 0) {
-            try {
-                const [perTech, tz] = await Promise.all([
-                    Promise.all(techs.map(t => fetchTimeOff({ from: slot.start, to: slot.end, technician_id: t.id }))),
-                    getCompanyTimezone(),
-                ]);
-                const conflicts = overlapsTimeOff(perTech.flat(), techs.map(t => t.id), slot.start, slot.end);
-                if (conflicts.length > 0) {
-                    const c = conflicts[0];
-                    setPendingReschedule({ techName: c.technician_name, period: formatTimeOffPeriod(c, tz), slot });
-                    return;
-                }
-            } catch (err) {
-                console.warn('[JobInfoSections] time-off warning check failed (skipped)', err);
-            }
-        }
-        await performReschedule(slot);
-    };
-
-    // The pre-existing reschedule path, byte-for-byte — runs either directly
-    // (no day-off conflict) or after the dispatcher confirms in the modal.
-    const performReschedule = async (slot: RescheduleSlot) => {
         setRescheduling(true);
         try {
             const arrivalMinutes = Math.round((new Date(slot.end).getTime() - new Date(slot.start).getTime()) / 60000);
-            // OUTBOUND-PARTS-CALL-TECHSLOT-001 (req 3) — a job with 2+ assigned
-            // technicians reschedules TIME-ONLY: omit tech_id so the backend's
-            // `if (tech_id)` reassign block (jobs.js reschedule) never runs and BOTH
-            // techs stay assigned. Single/zero-tech jobs keep JOB-TECH-ASSIGN-001
-            // behavior — picking another tech's lane still reassigns.
-            const multiTech = (job.assigned_techs || []).length >= 2;
             const updated = await rescheduleJob(job.id, {
                 start_date: slot.start,
                 arrival_window_minutes: arrivalMinutes,
-                ...(multiTech ? {} : { tech_id: slot.techId }),
+                tech_id: slot.techId,
             });
             toast.success('Job rescheduled', { description: slot.formatted });
             onJobUpdated?.(updated);
@@ -158,7 +112,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
     };
 
     // Reschedule is always available when a schedule exists — Zenbooker's reschedule
-    // endpoint accepts calls regardless of ZB status (complete/canceled), and Albusto may
+    // endpoint accepts calls regardless of ZB status (complete/canceled), and Blanc may
     // legitimately be in an open operational state while ZB is still terminal
     // (operator-reopen scenario, see jobsService.js syncFromZenbooker override).
     const canReschedule = !!job.start_date;
@@ -224,7 +178,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
 
                     {/* Schedule */}
                     {job.start_date && (
-                        <div style={{ paddingBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, marginBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, borderBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
+                        <div style={{ paddingBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, marginBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, borderBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? '1px dashed rgba(117,106,89,0.16)' : undefined }}>
                             <div className="flex items-center justify-between mb-2">
                                 <p style={{ ...eyebrow, marginBottom: 0 }}>Scheduled</p>
                                 {canReschedule && (
@@ -257,7 +211,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                     )}
 
                     {/* Location — SCHED-ROUTE-001 FR-002/FR-003: clickable Maps link + inline edit */}
-                    <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
+                    <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(117,106,89,0.16)' : undefined }}>
                         <div className="flex items-center gap-1.5 mb-1">
                             <p style={{ ...eyebrow, marginBottom: 0 }}>Location</p>
                             {job.territory && (
@@ -322,8 +276,27 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                         )}
                     </div>
 
-                    {/* Technician — assign / change / unassign WITHOUT rescheduling (JOB-TECH-ASSIGN-001) */}
-                    <JobTechnicianControl job={job} onJobUpdated={onJobUpdated} />
+                    {/* Providers */}
+                    {job.assigned_techs && job.assigned_techs.length > 0 && (
+                        <div>
+                            <p style={{ ...eyebrow, marginBottom: 8 }}>Providers</p>
+                            <div className="flex flex-wrap gap-2">
+                                {job.assigned_techs.map((t: any) => (
+                                    <span
+                                        key={t.id}
+                                        className="inline-flex items-center gap-1 min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
+                                        style={{
+                                            background: 'rgba(117, 106, 89, 0.07)',
+                                            border: '1px solid rgba(117, 106, 89, 0.14)',
+                                            color: 'var(--blanc-ink-1)',
+                                        }}
+                                    >
+                                        {t.name}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -336,40 +309,12 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                 newJobDuration={120}
                 territoryId={territoryId}
                 excludeJobId={job.id}
-                // OUTBOUND-PARTS-CALL-TECHSLOT-001 (req 3) — reschedule recommendations
-                // default to the job's CURRENT tech: first of a stable by-id sort
-                // (deterministic for 2+ tech jobs). No assigned techs → undefined
-                // (legacy all-tech recs). The timelines still show ALL techs so the
-                // dispatcher can override; the submit path above is unchanged.
-                recommendTechId={[...(job.assigned_techs || [])].sort((a, b) => String(a.id).localeCompare(String(b.id)))[0]?.id}
                 initialSlot={job.start_date && job.end_date && job.assigned_techs?.[0]?.id ? {
                     techId: job.assigned_techs[0].id,
                     start: job.start_date,
                     end: job.end_date,
                 } : undefined}
             />
-
-            {/* TECH-DAYOFF-001 S-13: reschedule-onto-time-off confirmation — center
-                modal (canon for short confirmations). Cancel = nothing mutates;
-                Reschedule = the untouched reschedule path proceeds. */}
-            <Dialog open={!!pendingReschedule} onOpenChange={v => { if (!v) setPendingReschedule(null); }}>
-                <DialogContent variant="dialog" size="sm">
-                    <DialogHeader>
-                        <DialogTitle>Blocked by time off</DialogTitle>
-                        <DialogDescription>
-                            {pendingReschedule && `${pendingReschedule.techName} has time off ${pendingReschedule.period}. Reschedule anyway?`}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button variant="ghost" onClick={() => setPendingReschedule(null)}>Cancel</Button>
-                        <Button onClick={() => {
-                            const p = pendingReschedule;
-                            setPendingReschedule(null);
-                            if (p) void performReschedule(p.slot);
-                        }}>Reschedule</Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
         </div>
     );
 }

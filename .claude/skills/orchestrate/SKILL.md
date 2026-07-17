@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Full pipeline orchestrator for Blanc Contact Center development. First interviews the customer to clarify scope and edge cases (Step 0.5), then runs the 9-agent chain: Product → Architect → SpecWriter → TestCases → Planner → Implementer → Tester → Reviewer → ProjectSpec. Accepts a feature request and drives it through the complete development lifecycle. Use when the user wants to implement a feature end-to-end, run the full agent pipeline, or orchestrate development workflow."
+description: "Full pipeline orchestrator for Blanc Contact Center development. Runs 9-agent chain: Product → Architect → SpecWriter → TestCases → Planner → Implementer → Tester → Reviewer → ProjectSpec. Accepts a feature request and drives it through the complete development lifecycle. Use when the user wants to implement a feature end-to-end, run the full agent pipeline, or orchestrate development workflow."
 user-invocable: true
 argument-hint: "<feature request or bug description>"
 ---
@@ -51,42 +51,6 @@ Print the summary and mode to the user before proceeding.
 
 ---
 
-## Step 0.5: Requirements Interview (clarify with the customer)
-
-**Before any agent formalizes requirements, interview the customer (the user) to close ambiguities and decide boundary/edge cases.** The sub-agents cannot talk to the user — YOU, the orchestrator, own this conversation. This is the cheapest place to get the task right: a wrong assumption fixed here costs one question; fixed after the Planner it costs a re-run of the whole chain.
-
-### 0.5.1 Investigate first, then find the "white spots"
-
-Read the relevant code and `Docs/*` first. Then list everything that is still **ambiguous or undecided AND would change the design** depending on the answer:
-
-- **Scope boundaries** — what is explicitly in vs out of this change.
-- **Edge cases** — empty / zero / first-run / maximum states, duplicates, concurrency, partial failure, what happens to existing data.
-- **Error & validation rules** — what is rejected, what the user sees, what is retried vs surfaced.
-- **Permissions & multi-tenant** — who is allowed; `company_id` scoping (see project-context.md).
-- **Data & lifecycle** — required vs optional fields, defaults, migrations, deletion/soft-delete.
-- **UX decisions** — entry points, copy/wording, mobile behavior, confirm-vs-silent, where it lives in the UI.
-- **Integrations** — expected Twilio / Front / Zenbooker behavior and how failures are handled.
-- **Non-functional** — limits, performance, idempotency, backwards compatibility.
-
-Do **NOT** ask about anything you can answer yourself from the code, docs, or established project conventions. Investigate first; ask only what is genuinely the customer's call. A request like "do it like X" authorizes the obvious reading — surface only the real forks.
-
-### 0.5.2 Ask
-
-Put the open questions to the user with the **AskUserQuestion** tool:
-- Multiple-choice when there's a sensible default — make it the first option and mark it **"(Recommended)"**; use free-form for genuinely open questions.
-- Keep it tight: at most ~4 questions per round, one or two rounds total. Lead with the decisions that most change the design.
-- If the user defers ("use your judgment" / "на твоё усмотрение"), record the recommended default as the decision and move on. Don't re-ask what's already answered.
-
-### 0.5.3 Record the decisions
-
-Collect the answers into a short **"Clarified requirements & decisions"** list (question → decision, one line each). This list is **input to the Product Agent (Step 1)** and travels with the request through the entire pipeline. Print it back to the user as confirmation before continuing.
-
-Re-open the interview later **only** if a downstream agent (Architect, Spec Writer, Planner) surfaces a genuinely new boundary question that wasn't visible here — ask it the same way, then continue.
-
-**Auto-run mode:** still interview, but ask **only the blocking** questions in a single consolidated round. If there are none, note "no open questions" and proceed without pausing.
-
----
-
 ## Step 1: Product Agent (01)
 
 Read and follow instructions in: `docs/agents/agent-01-product-requirements.md`
@@ -94,7 +58,6 @@ Read and follow instructions in: `docs/agents/agent-01-product-requirements.md`
 **Pass to agent:**
 - User request text: `$ARGUMENTS`
 - Summary from Step 0.4
-- **Clarified requirements & decisions from Step 0.5** (treat these as binding — they override any conflicting assumption)
 - Current contents of `Docs/requirements.md`
 
 **Expected output:**
@@ -186,44 +149,9 @@ Read and follow instructions in: `docs/agents/agent-05-planner.md`
 
 ---
 
-## Step 6: Implementation Loop (per task) — DELEGATED TO GPT
-
-**Implementation and unit tests are written by GPT (Codex, gpt-5.6-sol, reasoning xhigh), not by Claude.**
-Read and follow the full protocol: `.claude/skills/orchestrate/gpt-implementer.md`.
-Claude acts as architect/reviewer only — this keeps quality high while saving Claude tokens.
+## Step 6: Implementation Loop (per task)
 
 For **each task** from the plan in `Docs/tasks.md`, execute this cycle:
-
-### 6-GPT: Implementer session (code + tests)
-
-Per `gpt-implementer.md`:
-- Compose a SHORT brief (pointers to spec/files, scope, acceptance criteria, verify commands).
-- For M/L tasks: plan-first turn (GPT replies with a plan, you approve/adjust), then implement.
-- Invoke `codex exec` (workspace-write, `-C` this worktree); capture the `session id`.
-- GPT writes the code AND the Jest tests (the 6a/6b agent roles below collapse into GPT's session),
-  runs build/tests itself, and reports in the fixed format.
-
-### 6-Review: Claude Reviewer
-
-Per the review procedure in `gpt-implementer.md`:
-- `git status`/`git diff` review + independent build/test gates (exit codes).
-- Checklist priority: tenant scoping → correctness vs spec → security → design canon → test realness → scope.
-- Verdict **ACCEPT** → mark task done in `Docs/tasks.md`, commit, next task.
-- Verdict **FIX** → `codex exec resume <SID>` with a numbered fix list. Max 3 fix rounds,
-  then Claude finishes the remainder itself and notes why.
-- **Teaching:** any generalizable mistake → append to `docs/agents/gpt-lessons.md`; second
-  occurrence → tighten `AGENTS.md`.
-
-### 6-Hygiene (mandatory, owner directive)
-
-After each task: kill orphaned codex processes, stop preview/dev servers started for
-verification, clean scratchpad artifacts (commands in `gpt-implementer.md`).
-
-**If step-by-step:** Confirm with user after each task completes.
-
----
-
-### Legacy single-model loop (fallback ONLY if Codex is unavailable)
 
 ### 6a: Implementer Agent (06)
 
@@ -330,8 +258,7 @@ If tests fail during implementation:
 ## Rules
 
 **Prohibited:**
-- Writing code directly (delegate to the GPT Implementer via `gpt-implementer.md`; exceptions in its
-  "When NOT to delegate" section: trivial 1-3 line fixes, prod emergencies, live-preview UI iteration)
+- Writing code directly (delegate to Implementer)
 - Making architecture decisions (delegate to Architect)
 - Changing requirements without Product agent
 - Combining multiple tasks into one
@@ -350,7 +277,6 @@ If tests fail during implementation:
 ## Checklist
 
 - [ ] Step 0: Summary created, mode determined
-- [ ] Step 0.5: Customer interview done, decisions recorded and confirmed
 - [ ] Step 1: Product agent done, requirements.md updated
 - [ ] Step 2: Architect agent done, architecture.md updated
 - [ ] Step 3: Spec Writer done, specs saved to Docs/specs/
@@ -361,61 +287,3 @@ If tests fail during implementation:
 - [ ] Step 8: changelog.md updated
 - [ ] Step 9: Project Spec Updater done, project-spec.md updated
 - [ ] Step 10: Final report generated
-
----
-
-## Amendments — 2026-07-03 (validated on the EMAIL-OUTBOUND-001 run)
-
-These refinements were proven on a full pipeline run and are now part of the process:
-
-1. **Parallel waves in Step 6.** The Planner SHOULD mark tasks with disjoint file
-   sets as one parallel wave; the orchestrator runs their Implementer agents
-   concurrently (T1 ∥ T2 halved wall-clock time with zero conflicts). Tasks
-   sharing files stay sequential.
-2. **Compact agent returns; artifacts go to files.** Every agent writes its
-   artifact directly to Docs/* and returns only a short structured summary
-   (IDs, counts, deviations). Never paste whole documents back — the
-   orchestrator's context is the scarcest resource in a long run.
-3. **Orchestrator may execute verification gates.** Running EXPLAIN plans,
-   timing probes, and re-running test suites is "validating correctness"
-   (Allowed), not implementation. Performance gates on hot queries benefit
-   from the orchestrator's accumulated context; code changes remain delegated.
-4. **Reviewer must reproduce, not read.** The Reviewer re-runs the reported
-   verification (jest, harness, EXPLAIN) independently and adds its own
-   sabotage control before issuing verdicts. "Reports say it passed" is not
-   evidence.
-5. **Verification harnesses need a negative control.** A self-seeding
-   verify-script must demonstrate it FAILS when the feature is sabotaged
-   (stash the change → expect FAIL → restore). Prevents vacuous-pass suites.
-6. **Carry verified technical context INTO agent briefings.** The orchestrator
-   passes code-verified facts (exact predicates, index names, guard idioms,
-   migration numbering) into each agent's prompt. Agents verify against code
-   rather than re-discovering from scratch — and they catch briefing errors
-   (the ON CONFLICT partial-index arbiter was caught exactly this way).
-7. **Small-data EXPLAIN caveat.** On a near-empty dev table the planner
-   legitimately seq-scans; prove plan SHAPE with `SET enable_seqscan = off`
-   (indexes usable) and defer the volume gate to a prod copy in the deploy
-   window. A dev-DB seq-scan is not automatically a failed gate.
-8. **Filesystem note.** `Docs/` and `docs/` are the same directory on this
-   macOS checkout (case-insensitive FS) — don't treat the two spellings as
-   divergent paths, and never create a sibling that differs only by case.
-
-## Amendments — 2026-07-13 (paid for by the BUG-22 prod incident)
-
-9. **Manual test in the REAL state, not the dev bypass.** A feature touching
-   auth/2FA/billing/telephony state MUST be hand-driven in a state that matches
-   prod (real flag values, real gate conditions) before deploy. The dev-mode
-   preview (FEATURE_AUTH=false, fresh dev DB) silently skips those paths — the
-   ONBOARDING-UX-001 preview looked perfect while the 2FA login-loop shipped.
-   When prod state can't be reached locally, build a stand (mock OIDC / stub
-   API returning the prod-shaped responses) — see scratchpad stub-2fa pattern.
-10. **Verify the deploy ARTIFACT, not the procedure.** After a prod deploy,
-   prove the change is in the running container: `docker exec albusto-app-1
-   grep -l '<string-literal-from-the-change>' /app/public/assets/*.js` (grep a
-   STRING, minification renames identifiers) + the served `index-*.js` hash
-   changed. Build context is `/opt/albusto/app/` (compose `context: ./app`) —
-   rsync to the /opt/albusto ROOT deploys into a ghost tree.
-11. **Never declare a prod fix done from one plausible cause.** BUG-22 had two
-   layers (axios client + the unguarded kc.login() fallback); the first fix
-   deployed cleanly and changed nothing. Reproduce first, fix what the stand
-   proves, and re-run the stand on the final code.

@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const marketplaceService = require('../services/marketplaceService');
-const rateMeService = require('../services/rateMeService');
 
 function companyId(req) {
     return req.companyFilter?.company_id;
@@ -12,8 +11,7 @@ function actorId(req) {
 }
 
 function handleError(err, req, res) {
-    if (err instanceof marketplaceService.MarketplaceServiceError
-        || err instanceof rateMeService.RateMeServiceError) {
+    if (err instanceof marketplaceService.MarketplaceServiceError) {
         return res.status(err.httpStatus || 400).json({
             success: false,
             code: err.code,
@@ -44,84 +42,6 @@ router.get('/installations', async (req, res) => {
         const includeInactive = String(req.query.include_inactive || '').toLowerCase() === 'true';
         const installations = await marketplaceService.listInstallations(companyId(req), includeInactive);
         res.json({ success: true, installations, request_id: req.requestId });
-    } catch (err) {
-        handleError(err, req, res);
-    }
-});
-
-router.get('/apps/:appKey/settings', async (req, res) => {
-    try {
-        const result = await marketplaceService.getAppSettings(
-            companyId(req),
-            req.params.appKey
-        );
-        res.json({ success: true, ...result, request_id: req.requestId });
-    } catch (err) {
-        handleError(err, req, res);
-    }
-});
-
-router.put('/apps/:appKey/settings', async (req, res) => {
-    try {
-        const result = await marketplaceService.updateAppSettings(
-            companyId(req),
-            actorId(req),
-            req.params.appKey,
-            req.body,
-            { requestId: req.requestId }
-        );
-        res.json({ success: true, ...result, request_id: req.requestId });
-    } catch (err) {
-        handleError(err, req, res);
-    }
-});
-
-router.put('/apps/rate-me/domain', async (req, res) => {
-    try {
-        const domain = await rateMeService.setCustomDomain(
-            companyId(req),
-            actorId(req),
-            req.body?.domain
-        );
-        res.json({ success: true, domain, request_id: req.requestId });
-    } catch (err) {
-        handleError(err, req, res);
-    }
-});
-
-router.post('/apps/rate-me/domain/verify', async (req, res) => {
-    try {
-        const domain = await rateMeService.verifyDomain(
-            companyId(req),
-            actorId(req)
-        );
-        res.json({ success: true, domain, request_id: req.requestId });
-    } catch (err) {
-        handleError(err, req, res);
-    }
-});
-
-router.delete('/apps/rate-me/domain', async (req, res) => {
-    try {
-        await rateMeService.removeDomain(companyId(req), actorId(req));
-        res.json({ success: true, request_id: req.requestId });
-    } catch (err) {
-        handleError(err, req, res);
-    }
-});
-
-router.post('/apps/rate-me/tokens', async (req, res) => {
-    try {
-        const token = await rateMeService.mintToken(companyId(req), {
-            jobId: req.body?.job_id,
-            techId: req.body?.tech_id,
-            techName: req.body?.tech_name,
-        });
-        res.status(201).json({
-            success: true,
-            token,
-            request_id: req.requestId,
-        });
     } catch (err) {
         handleError(err, req, res);
     }

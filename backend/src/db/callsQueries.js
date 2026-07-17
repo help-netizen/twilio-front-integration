@@ -312,15 +312,9 @@ async function getActiveCalls(companyId = null) {
 }
 
 async function getNonFinalCalls(windowHours = 6) {
-    // Twilio-sid guard (OUTBOUND-CALL-TIMELINE-001 S5): only real Twilio CallSids
-    // (CA…) can be reconciled against the Twilio REST API. Synthetic outbound-robot
-    // rows keyed `vapi:%` would 404 on fetch (noise) or be wrongly finalized, so
-    // they are excluded from the hot reconcile feed. Existing CA rows behave
-    // byte-identically (all Twilio-sourced rows already start with CA).
     const result = await db.query(
         `SELECT * FROM calls
          WHERE is_final = false
-           AND call_sid LIKE 'CA%'
            AND created_at >= now() - interval '1 hour' * $1
          ORDER BY created_at ASC`,
         [windowHours]

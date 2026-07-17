@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
-import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 import { PhoneInput, toE164 } from '../ui/PhoneInput';
-import { FloatingField } from '../ui/floating-field';
-import { FloatingSelect } from '../ui/floating-select';
-import { SelectItem } from '../ui/select';
+import { Textarea } from '../ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
 import * as leadsApi from '../../services/leadsApi';
 import type { Lead, CreateLeadInput } from '../../types/lead';
@@ -19,7 +19,7 @@ interface CreateLeadDialogProps {
     onSuccess: (lead: Lead) => void;
 }
 
-export const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
+const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
@@ -91,113 +91,146 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
     return (
         <>
             <Dialog open={open} onOpenChange={onOpenChange}>
-                <DialogContent variant="panel">
+                <DialogContent className="cld-dialog max-w-[560px] max-h-[88vh] p-0 overflow-hidden flex flex-col">
                     {/* ── Header ── */}
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            New lead
-                        </DialogTitle>
+                    <DialogHeader className="cld-header">
+                        <DialogTitle className="cld-header__title">New Lead</DialogTitle>
                         <DialogDescription className="sr-only">Create a new lead</DialogDescription>
-                    </DialogPanelHeader>
+                    </DialogHeader>
 
                     {/* ── Scrollable body ── */}
-                    <form id="create-lead-form" onSubmit={handleSubmit} className="contents">
-                        <DialogBody className="md:px-8 md:py-7">
-                          <div className="mx-auto w-full max-w-[740px] space-y-6">
+                    <form onSubmit={handleSubmit} className="cld-body">
 
-                            {/* ── Contact ── */}
-                            <div className="space-y-3.5" ref={cs.dropdownRef}>
-                                {cs.renderSelectedBadge(selectedContactId, handleRemoveContact)}
-                                {cs.renderSoftWarning()}
+                        {/* ── Contact ── */}
+                        <div className="cld-section" ref={cs.dropdownRef}>
+                            {cs.renderSelectedBadge(selectedContactId, handleRemoveContact)}
+                            {cs.renderSoftWarning()}
 
-                                <div className="relative grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                    <FloatingField id="cld-first" label="First Name" value={formData.FirstName} onChange={(e) => cs.handleFieldChange('FirstName', e.target.value)} />
-                                    <FloatingField id="cld-last" label="Last Name" value={formData.LastName} onChange={(e) => cs.handleFieldChange('LastName', e.target.value)} />
-                                    {cs.renderDropdown('name')}
+                            <div className="cld-row" style={{ position: 'relative' }}>
+                                <div className="cld-field">
+                                    <label className="cld-label">First Name<span className="cld-label__req">*</span></label>
+                                    <Input value={formData.FirstName} onChange={(e) => cs.handleFieldChange('FirstName', e.target.value)} required />
                                 </div>
-
-                                <div className="relative grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                    <PhoneInput id="cld-phone" label="Phone" value={formData.Phone} onChange={(f) => cs.handleFieldChange('Phone', f)} required />
-                                    <FloatingField id="cld-email" label="Email" type="email" value={formData.Email} onChange={(e) => cs.handleFieldChange('Email', e.target.value)} />
-                                    {cs.renderDropdown('phone')}{cs.renderDropdown('email')}
+                                <div className="cld-field">
+                                    <label className="cld-label">Last Name<span className="cld-label__req">*</span></label>
+                                    <Input value={formData.LastName} onChange={(e) => cs.handleFieldChange('LastName', e.target.value)} required />
                                 </div>
-
-                                {/* Progressive disclosure: secondary phone + company */}
-                                {(showSecondary || companyVisible) && (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                        {showSecondary && (
-                                            <PhoneInput id="cld-second-phone" label="Secondary Phone" value={formData.SecondPhone || ''} onChange={(f) => setFormData({ ...formData, SecondPhone: f })} />
-                                        )}
-                                        {showSecondary && (
-                                            <FloatingField id="cld-second-name" label="Secondary Name" value={formData.SecondPhoneName || ''} onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })} />
-                                        )}
-                                        {companyVisible && !showSecondary && (
-                                            <FloatingField id="cld-company" label="Company" value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
-                                        )}
-                                    </div>
-                                )}
-                                {companyVisible && showSecondary && (
-                                    <FloatingField id="cld-company" label="Company" value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
-                                )}
-
-                                {(!showSecondary || !companyVisible) && (
-                                    <div className="cld-extras">
-                                        {!showSecondary && <button type="button" className="cld-extras__btn" onClick={() => setShowSecondary(true)}>+ Secondary phone</button>}
-                                        {!companyVisible && <button type="button" className="cld-extras__btn" onClick={() => setShowCompany(true)}>+ Company</button>}
-                                    </div>
-                                )}
+                                {cs.renderDropdown('name')}
                             </div>
 
-                            {/* ── Address ── */}
+                            <div className="cld-row" style={{ position: 'relative' }}>
+                                <div className="cld-field">
+                                    <label className="cld-label">Phone<span className="cld-label__req">*</span></label>
+                                    <PhoneInput value={formData.Phone} onChange={(f) => cs.handleFieldChange('Phone', f)} required />
+                                </div>
+                                <div className="cld-field">
+                                    <label className="cld-label">Email</label>
+                                    <Input type="email" value={formData.Email} onChange={(e) => cs.handleFieldChange('Email', e.target.value)} />
+                                </div>
+                                {cs.renderDropdown('phone')}{cs.renderDropdown('email')}
+                            </div>
+
+                            {/* Progressive disclosure: secondary phone + company */}
+                            {(showSecondary || companyVisible) && (
+                                <div className="cld-row">
+                                    {showSecondary && (
+                                        <div className="cld-field">
+                                            <label className="cld-label">Secondary Phone</label>
+                                            <PhoneInput value={formData.SecondPhone || ''} onChange={(f) => setFormData({ ...formData, SecondPhone: f })} />
+                                        </div>
+                                    )}
+                                    {showSecondary && (
+                                        <div className="cld-field">
+                                            <label className="cld-label">Secondary Name</label>
+                                            <Input value={formData.SecondPhoneName || ''} onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })} placeholder="e.g. Tenant, Wife" />
+                                        </div>
+                                    )}
+                                    {companyVisible && !showSecondary && (
+                                        <div className="cld-field">
+                                            <label className="cld-label">Company</label>
+                                            <Input value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {companyVisible && showSecondary && (
+                                <div className="cld-row">
+                                    <div className="cld-field">
+                                        <label className="cld-label">Company</label>
+                                        <Input value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
+                                    </div>
+                                </div>
+                            )}
+
+                            {(!showSecondary || !companyVisible) && (
+                                <div className="cld-extras">
+                                    {!showSecondary && <button type="button" className="cld-extras__btn" onClick={() => setShowSecondary(true)}>+ Secondary phone</button>}
+                                    {!companyVisible && <button type="button" className="cld-extras__btn" onClick={() => setShowCompany(true)}>+ Company</button>}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ── Address ── */}
+                        <div className="cld-section">
                             <AddressAutocomplete
+                                header={<div className="cld-eyebrow">Address</div>}
                                 idPrefix="create-lead"
                                 defaultUseDetails={true}
-                                hideDetailsToggle
                                 savedAddresses={cs.savedAddresses}
                                 onSelectSaved={(id) => cs.setSelectedAddrId(id)}
                                 value={{ street: formData.Address || '', apt: formData.Unit || '', city: formData.City || '', state: formData.State || '', zip: formData.PostalCode || '' }}
                                 onChange={(addr) => { cs.setSelectedAddrId(null); setFormData({ ...formData, Address: addr.street, Unit: addr.apt || '', City: addr.city, State: addr.state, PostalCode: addr.zip, Latitude: addr.lat ?? null, Longitude: addr.lng ?? null }); }}
                             />
+                        </div>
 
-                            {/* ── Job ── */}
-                            <div className="space-y-3.5">
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                    <FloatingSelect id="cld-job-type" label="Job type" value={formData.JobType} onValueChange={(v) => setFormData({ ...formData, JobType: v })}>
-                                        {jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                                    </FloatingSelect>
-                                    <FloatingSelect id="cld-job-source" label="Lead source" value={formData.JobSource} onValueChange={(v) => setFormData({ ...formData, JobSource: v })}>
-                                        {JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                                    </FloatingSelect>
+                        {/* ── Job ── */}
+                        <div className="cld-section">
+                            <div className="cld-eyebrow">Job</div>
+                            <div className="cld-row">
+                                <div className="cld-field">
+                                    <label className="cld-label">Type <span style={{ color: 'var(--blanc-danger, #e53e3e)' }}>*</span></label>
+                                    <Select value={formData.JobType} onValueChange={(v) => setFormData({ ...formData, JobType: v })}>
+                                        <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                                        <SelectContent>{jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                                    </Select>
                                 </div>
-                                <FloatingField id="cld-description" label="Description" textarea rows={3} value={formData.Description} onChange={(e) => setFormData({ ...formData, Description: e.target.value })} />
+                                <div className="cld-field">
+                                    <label className="cld-label">Source</label>
+                                    <Select value={formData.JobSource} onValueChange={(v) => setFormData({ ...formData, JobSource: v })}>
+                                        <SelectTrigger><SelectValue placeholder="Select source" /></SelectTrigger>
+                                        <SelectContent>{JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                                    </Select>
+                                </div>
                             </div>
+                            <div className="cld-field">
+                                <label className="cld-label">Description</label>
+                                <Textarea value={formData.Description} onChange={(e) => setFormData({ ...formData, Description: e.target.value })} rows={2} placeholder="Additional notes..." />
+                            </div>
+                        </div>
 
-                            {/* ── Custom metadata (only if fields configured) ── */}
-                            {customFields.length > 0 && (
-                                <div className="space-y-3.5">
-                                    <div className="cld-eyebrow">Additional info</div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                        {customFields.map(field => {
-                                            const isLong = field.field_type === 'textarea' || field.field_type === 'richtext';
-                                            return isLong
-                                                ? <FloatingField key={field.id} id={`cld-meta-${field.api_name}`} label={field.display_name} textarea rows={3} className="sm:col-span-2" value={formData.Metadata?.[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} />
-                                                : <FloatingField key={field.id} id={`cld-meta-${field.api_name}`} label={field.display_name} type={field.field_type === 'number' ? 'number' : 'text'} inputMode={field.field_type === 'number' ? 'decimal' : undefined} value={formData.Metadata?.[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} />;
-                                        })}
-                                    </div>
+                        {/* ── Custom metadata (only if fields configured) ── */}
+                        {customFields.length > 0 && (
+                            <div className="cld-section">
+                                <div className="cld-eyebrow">Additional info</div>
+                                <div className="cld-row">
+                                    {customFields.map(field => (
+                                        <div key={field.id} className={`cld-field ${field.field_type === 'textarea' || field.field_type === 'richtext' ? 'cld-field--full' : ''}`}>
+                                            <label className="cld-label">{field.display_name}</label>
+                                            {field.field_type === 'textarea' || field.field_type === 'richtext'
+                                                ? <Textarea value={formData.Metadata?.[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} rows={2} />
+                                                : <Input type={field.field_type === 'number' ? 'number' : 'text'} value={formData.Metadata?.[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} />
+                                            }
+                                        </div>
+                                    ))}
                                 </div>
-                            )}
-
-                          </div>
-                        </DialogBody>
+                            </div>
+                        )}
 
                         {/* ── Footer ── */}
-                        <DialogPanelFooter>
+                        <div className="cld-footer" style={{ padding: '14px 0 4px' }}>
                             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>Cancel</Button>
                             <Button type="submit" disabled={loading}>{loading ? 'Creating...' : 'Create Lead'}</Button>
-                        </DialogPanelFooter>
+                        </div>
                     </form>
                 </DialogContent>
             </Dialog>

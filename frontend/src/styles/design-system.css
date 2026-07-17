@@ -1,5 +1,5 @@
 /* ===================================================================
-   Albusto Design System v2.0
+   Blanc Design System v2.0
    ===================================================================
    Single source of truth for the warm beige aesthetic.
    Extracted from the Schedule page redesign, promoted app-wide.
@@ -30,45 +30,22 @@
    ═══════════════════════════════════════════════════════════════════ */
 :root {
     /* ── Backgrounds ── */
-    /* PALETTE-V2 (W2): нейтральный канвас вместо кофейного крема.
-       Контраст-тюнинг (фидбек владельца 2026-07-03): канвас на щелчок глубже,
-       чтобы белые поверхности и шапка отделялись, а глаз не искал элементы. */
-    --blanc-bg: #F1F1F0;
-    --blanc-bg-deep: #E8E8E6;
+    --blanc-bg: #efe9df;
+    --blanc-bg-deep: #e3dacd;
 
     /* ── Surfaces (frosted glass) ── */
-    --blanc-surface: rgba(255, 255, 255, 0.88);
-    --blanc-surface-strong: #FFFFFF;
-    --blanc-surface-muted: #F6F6F6;
-    /* Form drawer surface: a near-white with just a whisper of warmth — whiter than
-       surface-strong (which reads creamy) but softer than pure #fff. Fields share it
-       and are drawn by border only, so floating labels notch the outline seamlessly. */
-    --blanc-panel-surface: #FFFFFF;
-    /* Right-side "layer" geometry — shared by create-form drawers (DialogContent
-       variant="panel") AND view cards (FloatingDetailPanel) so they are ONE system:
-       same width, both glued to the right edge below the app header. */
-    --blanc-layer-width: min(760px, calc(100vw - 100px));
-    --blanc-layer-top: 64px;
+    --blanc-surface: rgba(252, 249, 244, 0.84);
+    --blanc-surface-strong: #fdf8f0;
+    --blanc-surface-muted: #f4ede2;
 
     /* ── Borders ── */
-    /* PALETTE-V2 (W2): hairline — плоскость без сноса бордеров в компонентах */
-    --blanc-line: rgba(25, 25, 25, 0.08);
-    --blanc-line-strong: rgba(25, 25, 25, 0.20);
+    --blanc-line: rgba(117, 106, 89, 0.18);
+    --blanc-line-strong: rgba(97, 86, 71, 0.28);
 
     /* ── Text (Ink) ── */
-    /* PALETTE-V2 (W2): нейтральные чернила — конец конфликта температур */
-    --blanc-ink-1: #191919;
-    --blanc-ink-2: #6E6E6E;
-    --blanc-ink-3: #8A8A8A; /* UI-QA-001: lifted from #9A9A9A — hints stayed tertiary but readable */
-
-    /* ── PALETTE-V2 (docs/specs/PALETTE-V2.md) — новые роли ──
-       Введены в W1 заранее; до W2 их никто не использует в разметке (wiring
-       кнопок/полей — часть W2). Значения уже целевые («Т2 · Приложение»):
-       accent — единственный action-цвет, accent-soft — плашки Action Required
-       и инфо-выделение, field — заливка полей ввода в filled-каноне. */
-    --blanc-accent: #7F42E1;
-    --blanc-accent-soft: #E7DBFD;
-    --blanc-field: #F0F0F0;
+    --blanc-ink-1: #202734;
+    --blanc-ink-2: #536070;
+    --blanc-ink-3: #7d8796;
 
     /* ── Entity Colors ── */
     --blanc-job: #2f63d8;
@@ -79,10 +56,8 @@
     --blanc-task-soft: rgba(228, 247, 239, 0.98);
 
     /* ── Semantic ── */
-    /* UI-QA-001: was a warm cream wash from the old palette — today/selection
-       is the lavender accent-tint family on the neutral canvas. */
-    --blanc-today-soft: rgba(231, 219, 253, 0.4);
-    --blanc-danger: #F0503F;
+    --blanc-today-soft: rgba(255, 247, 231, 0.9);
+    --blanc-danger: #d44d3c;
     --blanc-success: #1b8b63;
     --blanc-warning: #b26a1d;
     --blanc-info: #2f63d8;
@@ -98,13 +73,6 @@
     --blanc-radius-md: 16px;
     --blanc-radius-lg: 22px;
     --blanc-radius-xl: 28px;
-
-    /* ── Mobile bottom-sheet height (single knob) ──
-       Canonical sheet heights so two different "standard" sheets are pixel-
-       identical: BottomSheet size="standard" pins to --blanc-sheet-h, size="full"
-       pins to --blanc-sheet-h-full. Both FIXED — internal body scrolls. */
-    --blanc-sheet-h: 85dvh;
-    --blanc-sheet-h-full: 92dvh;
 
     /* ── Glass blur ── */
     --blanc-glass-blur: blur(20px);
@@ -158,6 +126,8 @@
     --card-foreground: var(--blanc-ink-1);
     --popover: var(--blanc-surface-strong);
     --popover-foreground: var(--blanc-ink-1);
+    --primary: var(--blanc-job);
+    --primary-foreground: #ffffff;
     --secondary: var(--blanc-surface-strong);
     --secondary-foreground: var(--blanc-ink-1);
     --muted: var(--blanc-surface-muted);
@@ -167,15 +137,10 @@
     --destructive: var(--blanc-danger);
     --destructive-foreground: #ffffff;
     --border: var(--blanc-line);
-    --input: rgba(25, 25, 25, 0.20);
+    --input: rgba(104, 95, 80, 0.28);
     --input-background: #ffffff;
-    --switch-background: rgba(25, 25, 25, 0.16);
-    /* PALETTE-V2 (W2): primary-действие = фиолетовый акцент (было фабричное
-       #030213 из tailwind.css — здесь оверрайдим, фабричный файл не трогаем) */
-    --primary: var(--blanc-accent);
-    --primary-foreground: #ffffff;
-    /* PALETTE-V2 (W2): фокус-кольцо = акцент (было job-синее в фиолетовом мире) */
-    --ring: var(--blanc-accent);
+    --switch-background: rgba(117, 106, 89, 0.2);
+    --ring: var(--blanc-job);
     --chart-1: var(--blanc-lead);
     --chart-2: var(--blanc-task);
     --chart-3: var(--blanc-job);
@@ -220,8 +185,7 @@ h1, h2, h3 {
 /* ── Table header overrides — light eyebrow style like Schedule ── */
 table thead th,
 [data-slot="table-head"] {
-    /* UI-QA-001: headers are structural — ink-2 passes AA on canvas (ink-3 sat at 2.5–3.1) */
-    color: var(--blanc-ink-2) !important;
+    color: var(--blanc-ink-3) !important;
     font-size: 12px !important;
     font-weight: 600 !important;
     letter-spacing: 0.06em !important;
@@ -233,10 +197,9 @@ table thead tr {
     border-bottom: 1px solid var(--blanc-line) !important;
 }
 
-/* ── Table row hover — neutral highlight (UI-QA-001: was a warm #fff7e7 wash
-   left over from the old palette — dirty on the neutral canvas) ── */
+/* ── Table row hover — warm highlight ── */
 table tbody tr:hover {
-    background: rgba(25, 25, 25, 0.03) !important;
+    background: rgba(255, 247, 231, 0.5) !important;
 }
 
 /* ── Outline/secondary button overrides — light like Schedule controls ── */
@@ -250,35 +213,16 @@ table tbody tr:hover {
 
 /* Header: frosted glass */
 .app-header {
-    /* Контраст-тюнинг: непрозрачный белый вместо полупрозрачного тумана —
-       зона навигации чётко отделена от канваса hairline-границей. */
-    background: #FFFFFF !important;
-    border-bottom: 1px solid rgba(25, 25, 25, 0.10) !important;
-}
-
-/* Навигация в шапке (итерация 2 по фидбеку: чёрный pill был «слишком тяжёлым»).
-   Сегмент-контрол: мягкая подложка-стрип на белой шапке, активный = белый pill
-   с hairline (паттерн чипов Точки), неактивные — ink-2 (видимые, но тихие).
-   Скоуп строго .app-header — прочие Tabs не трогаем. */
-.app-header [role="tablist"] {
-    background: var(--blanc-field) !important;
-}
-
-.app-header [role="tab"] {
-    color: var(--blanc-ink-2);
-    font-weight: 500;
-}
-
-.app-header [role="tab"][data-state="active"] {
-    color: var(--blanc-ink-1);
-    font-weight: 600;
+    background: linear-gradient(135deg, rgba(255, 253, 249, 0.92), rgba(249, 244, 238, 0.88)) !important;
+    backdrop-filter: blur(20px);
+    border-bottom-color: var(--blanc-line) !important;
 }
 
 /* Main content area: warm gradient background */
 .app-main {
     background:
         radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 28%),
-        linear-gradient(180deg, #FBFBFB 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%) !important;
+        linear-gradient(180deg, #f7f3ec 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%) !important;
 }
 
 /* Logo */
@@ -363,25 +307,24 @@ table tbody tr:hover {
     font-size: 15px !important;
     font-weight: 600 !important;
     gap: 10px !important;
-    /* Единая форма тулбар-контролов: pill (было r16 — разнобой со скруглениями чипов) */
-    border-radius: 999px !important;
+    border-radius: 16px !important;
 }
 
-/* Icon-only buttons in page header — 42px square, Albusto style */
+/* Icon-only buttons in page header — 42px square, Blanc style */
 .blanc-page-header [data-slot="button"][class*="size-9"] {
     min-height: 42px !important;
     height: 42px !important;
     width: 42px !important;
-    border-radius: 999px !important;
-    border: 1px solid var(--blanc-line) !important;
-    background: var(--blanc-panel-surface) !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(104, 95, 80, 0.14) !important;
+    background: var(--blanc-surface-strong) !important;
     color: var(--blanc-ink-2) !important;
-    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px !important;
+    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px !important;
 }
 
 /* Toolbar area — frosted glass controls bar, matches CalendarControls in Schedule */
 .blanc-page-toolbar {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(246, 246, 246, 0.9));
+    background: linear-gradient(135deg, rgba(255, 253, 249, 0.94), rgba(249, 244, 238, 0.9));
     border: 1px solid rgba(104, 95, 80, 0.16);
     border-radius: 24px;
     backdrop-filter: blur(20px);
@@ -397,26 +340,26 @@ table tbody tr:hover {
 
 /* Search input: transparent so it blends into the frosted glass background */
 .blanc-page-toolbar [data-slot="input"] {
-    background: var(--blanc-field) !important;
-    border: 1px solid transparent !important;
+    background: transparent !important;
+    border: 1px solid rgba(104, 95, 80, 0.22) !important;
     box-shadow: none !important;
-    border-radius: 999px !important;
+    border-radius: 14px !important;
     min-height: 40px !important;
     color: var(--blanc-ink-1) !important;
 }
 
 .blanc-page-toolbar [data-slot="input"]:focus {
-    box-shadow: 0 0 0 3px rgba(127, 66, 225, 0.15) !important;
-    border-color: rgba(127, 66, 225, 0.4) !important;
+    box-shadow: 0 0 0 3px rgba(47, 99, 216, 0.15) !important;
+    border-color: rgba(47, 99, 216, 0.4) !important;
 }
 
 /* Select triggers and non-primary buttons: slightly lifted */
 .blanc-page-toolbar [data-slot="select-trigger"],
 .blanc-page-toolbar [data-slot="button"]:not([class*="bg-primary"]) {
-    background: var(--blanc-panel-surface) !important;
-    border: 1px solid var(--blanc-line) !important;
-    box-shadow: 0 2px 6px rgba(25, 25, 25, 0.05) !important;
-    border-radius: 999px !important;
+    background: rgba(255, 255, 255, 0.55) !important;
+    border: 1px solid rgba(104, 95, 80, 0.16) !important;
+    box-shadow: 0 2px 6px rgba(48, 39, 28, 0.05) !important;
+    border-radius: 14px !important;
     min-height: 40px !important;
     color: var(--blanc-ink-1) !important;
 }
@@ -490,21 +433,20 @@ table tbody tr:hover {
     align-self: center;
 }
 
-/* Control chip — 42px touch target, Albusto style */
+/* Control chip — 42px touch target, Blanc style */
 .blanc-control-chip {
     min-height: 42px;
     padding: 0 18px;
     font-size: 14px;
     font-weight: 600;
-    /* PALETTE-V2 (W2): чипы = pill, hairline-бордер */
-    border-radius: 999px;
+    border-radius: 14px;
     white-space: nowrap;
     cursor: pointer;
     transition: all 0.15s ease;
-    border: 1px solid var(--blanc-line);
+    border: 1px solid rgba(104, 95, 80, 0.14);
     background: var(--blanc-surface-strong);
     color: var(--blanc-ink-2);
-    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px;
+    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px;
 }
 
 .blanc-control-chip:hover {
@@ -514,12 +456,10 @@ table tbody tr:hover {
 
 .blanc-control-chip[data-active],
 .blanc-control-chip.active {
-    /* UI-QA-001: was a heavy black pill — active state joins the lavender
-       selection family (same as nav/selected rows), not a b&w contrast crank. */
-    background: var(--blanc-accent-soft);
-    color: var(--blanc-accent);
+    background: var(--blanc-ink-1);
+    color: #fff;
     border-color: transparent;
-    box-shadow: none;
+    box-shadow: rgba(48, 39, 28, 0.12) 0px 6px 16px;
 }
 
 /* Icon-only control chip */
@@ -529,13 +469,13 @@ table tbody tr:hover {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 999px;
-    border: 1px solid var(--blanc-line);
+    border-radius: 14px;
+    border: 1px solid rgba(104, 95, 80, 0.14);
     background: var(--blanc-surface-strong);
     color: var(--blanc-ink-2);
     cursor: pointer;
     transition: opacity 0.15s ease;
-    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px;
+    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px;
 }
 
 .blanc-control-chip-icon:hover {
@@ -548,18 +488,17 @@ table tbody tr:hover {
     padding: 0 18px;
     font-size: 14px;
     font-weight: 600;
-    border-radius: 999px;
+    border-radius: 14px;
     white-space: nowrap;
     cursor: pointer;
     transition: opacity 0.15s ease;
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    /* PALETTE-V2 (W2): primary-чип = фиолетовый акцент (был job-синий info) */
-    background: var(--blanc-accent);
+    background: var(--blanc-info);
     color: #fff;
     border: none;
-    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px;
+    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px;
 }
 
 .blanc-control-chip-primary:hover {
@@ -569,17 +508,17 @@ table tbody tr:hover {
 /* Unified header — action buttons inside controls group, scaled to match */
 .blanc-controls-group [data-slot="button"] {
     min-height: 42px !important;
-    border-radius: 999px !important;
+    border-radius: 14px !important;
     font-size: 14px !important;
     font-weight: 600 !important;
 }
 
 .blanc-controls-group [data-slot="select-trigger"] {
     min-height: 42px !important;
-    border-radius: 999px !important;
+    border-radius: 14px !important;
     border: 1px solid rgba(104, 95, 80, 0.14) !important;
     background: var(--blanc-surface-strong) !important;
-    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px !important;
+    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px !important;
 }
 
 /* ── Unified header mobile ──────────────────────────────────────── */
@@ -619,7 +558,7 @@ table tbody tr:hover {
 }
 
 .blanc-page-card tbody tr {
-    border-bottom: 1px solid rgba(25, 25, 25, 0.06) !important;
+    border-bottom: 1px solid rgba(117, 106, 89, 0.08) !important;
 }
 
 .blanc-page-card tbody tr:last-child {
@@ -628,7 +567,7 @@ table tbody tr:hover {
 
 /* Table header: eyebrow style */
 .blanc-page-card thead th {
-    color: var(--blanc-ink-2) !important; /* UI-QA-001: structural — AA */
+    color: var(--blanc-ink-3) !important;
     font-size: 11px !important;
     font-weight: 600 !important;
     text-transform: uppercase !important;
@@ -677,10 +616,12 @@ table tbody tr:hover {
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── Pulse Page ── */
+.pulse-sidebar-card {
+    background: var(--blanc-surface-strong) !important;
+}
+
 .pulse-contact-item-active {
-    /* PALETTE-V2: выделение = лавандовый тинт акцента (был тёплый today-soft,
-       на нейтральном канвасе читался чужеродно) */
-    background: rgba(127, 66, 225, 0.07) !important;
+    background: rgba(255, 247, 231, 0.7) !important;
 }
 
 /* Pulse: suppress the big page-header button scaling in the Pulse back button */
@@ -706,7 +647,7 @@ table tbody tr:hover {
 .blanc-page-bg {
     background:
         radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 28%),
-        linear-gradient(180deg, #FBFBFB 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%);
+        linear-gradient(180deg, #f7f3ec 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%);
     font-family: var(--blanc-font-body);
     color: var(--blanc-ink-1);
     min-height: 100vh;
@@ -723,7 +664,7 @@ table tbody tr:hover {
 
 /* Lighter frosted glass for controls/toolbars */
 .blanc-surface-controls {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(246, 246, 246, 0.9));
+    background: linear-gradient(135deg, rgba(255, 253, 249, 0.94), rgba(249, 244, 238, 0.9));
     border: 1px solid rgba(104, 95, 80, 0.16);
     border-radius: 24px;
     backdrop-filter: var(--blanc-glass-blur);
@@ -739,73 +680,12 @@ table tbody tr:hover {
 }
 
 /* Eyebrow label (uppercase category label) */
-/* ── LAYOUT-CANON правило 7: контентный тайл на канвасе ──
-   Белая поверхность БЕЗ бордера и тени — разделение светом на сером канвасе.
-   Родитель-список невидим и раздаёт gap 8px; padding тайл задаёт сам.
-   Первый потребитель — Pulse (.pulse-tile, локальный близнец), второй — Contacts;
-   новые списки используют ЭТОТ класс, а не копию. */
-.blanc-tile {
-    background: var(--blanc-panel-surface);
-    border-radius: 14px;
-    transition: box-shadow 0.15s ease;
-}
-
-.blanc-tile:hover {
-    box-shadow: inset 0 0 0 1px var(--blanc-line-strong);
-}
-
-/* ── LAYOUT-CANON правило 7: таблица «ряды-тайлы» ──
-   Аквариум вокруг таблицы снесён: шапка = eyebrow-текст прямо на канвасе
-   (НЕ sticky — финал владельца по заголовкам групп), каждый ряд = белая
-   полоса-тайл с воздухом 8px через border-spacing (разметка <table> цела).
-   Первые потребители — Jobs и Leads; Estimates/Invoices/Payments — следом. */
-.blanc-table-tiles {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0 8px;
-}
-
-.blanc-table-tiles thead th {
-    background: transparent;
-    border: none;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--blanc-ink-2); /* UI-QA-001: column headers are structural — AA on canvas */
-}
-
-.blanc-table-tiles tbody td {
-    background: var(--blanc-panel-surface);
-}
-
-.blanc-table-tiles tbody td:first-child {
-    border-top-left-radius: 12px;
-    border-bottom-left-radius: 12px;
-}
-
-.blanc-table-tiles tbody td:last-child {
-    border-top-right-radius: 12px;
-    border-bottom-right-radius: 12px;
-}
-
-.blanc-table-tiles tbody tr:hover td {
-    background: #FAFAFA;
-}
-
-.blanc-table-tiles tbody tr.blanc-tile-row-selected td {
-    /* лавандовое выделение — как активный тайл Pulse/Contacts */
-    background: rgba(127, 66, 225, 0.07);
-}
-
 .blanc-eyebrow {
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    /* UI-QA-001: eyebrows are structural labels you read (section/table/group
-       headers) — ink-2 passes AA on canvas; ink-3 stays for optional hints. */
-    color: var(--blanc-ink-2);
+    color: var(--blanc-ink-3);
     margin-bottom: 8px;
 }
 
@@ -822,39 +702,6 @@ table tbody tr:hover {
 .blanc-heading-lg { font-size: clamp(34px, 4vw, 44px); }
 .blanc-heading-md { font-size: clamp(28px, 3vw, 36px); }
 .blanc-heading-sm { font-size: 20px; }
-
-/* STRIPE-CONNECT-UX-001: violet-cloud connect surface (used via ui/CloudBanner) */
-.blanc-cloud {
-    position: relative;
-    overflow: hidden;
-    border: 1px solid rgba(127, 66, 225, .16);
-    border-radius: 22px;
-    background:
-        radial-gradient(58% 90% at 12% 18%, rgba(127,66,225,.16), transparent 62%),
-        radial-gradient(48% 74% at 88% 8%, rgba(231,219,253,.95), transparent 66%),
-        radial-gradient(70% 100% at 78% 96%, rgba(127,66,225,.12), transparent 58%),
-        radial-gradient(36% 52% at 40% 78%, rgba(231,219,253,.7), transparent 70%),
-        #FFFFFF;
-}
-.blanc-cloud::before,
-.blanc-cloud::after {
-    content: '';
-    position: absolute;
-    border-radius: 50%;
-    pointer-events: none;
-}
-.blanc-cloud::before {
-    width: 240px; height: 240px;
-    top: -60px; right: -40px;
-    background: rgba(127, 66, 225, .10);
-    filter: blur(42px);
-}
-.blanc-cloud::after {
-    width: 280px; height: 280px;
-    bottom: -80px; left: -30px;
-    background: rgba(231, 219, 253, .8);
-    filter: blur(48px);
-}
 
 /* Warm page container (max-width + padding) */
 .blanc-container {
@@ -925,26 +772,29 @@ table tbody tr:hover {
     display: none;
 }
 
-/* Desktop: docked flush to the right edge, below the app header, full height — the
-   same right-side "layer" mechanic as the form drawer (dialog.tsx panel variant).
-   Self-positioned (previously a wrapper provided the fixed anchoring); width matches
-   --blanc-layer-width so the OverlayClose `slideover` × (anchored via
-   PANEL_CLOSE_RIGHT.default) lands exactly at the panel's left edge. */
-.blanc-floating-panel {
+/* Close zone wraps panel + hover close button */
+.blanc-floating-close-zone {
     position: fixed;
-    top: var(--blanc-layer-top);
-    right: 0;
-    bottom: 0;
-    z-index: 80; /* === OVERLAY_Z.panel (overlayLayout.ts) — non-modal right view card */
+    top: 80px;
+    right: clamp(16px, 3vw, 30px);
+    bottom: 30px;
+    z-index: 80;
+    pointer-events: none;
+    /* extra width for close button hover area */
+    padding-left: 44px;
+    display: flex;
+    align-items: flex-start;
+}
+
+.blanc-floating-panel {
+    position: relative;
     width: 420px;
+    height: 100%;
     pointer-events: auto;
-    /* Solid near-white — same surface as form drawers (no frosted glass), so all
-       "layers" (forms + view panels) read as one consistent surface. */
-    background: var(--blanc-panel-surface, #FFFFFF);
-    /* Glued to the right edge → border + rounding only on the LEFT side (like the form drawer). */
-    border: 1px solid var(--blanc-line);
-    border-right: 0;
-    border-radius: 24px 0 0 0;
+    background: var(--blanc-surface);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    border-radius: var(--blanc-radius-xl);
+    backdrop-filter: var(--blanc-glass-blur-strong);
     box-shadow: var(--blanc-shadow-main);
     display: flex;
     flex-direction: column;
@@ -952,72 +802,70 @@ table tbody tr:hover {
     animation: blancFadeIn 0.15s ease-out;
 }
 
-/* Wide variant — heavier content. The slideover close × tracks this width via the
-   `anchorRight` prop FloatingDetailPanel passes (not the shared size table). */
 .blanc-floating-panel--wide {
-    width: var(--blanc-layer-width);
+    width: min(760px, calc(100vw - 100px));
+}
+
+/* Invisible bridge that keeps pointer-events alive between panel and close button */
+.blanc-floating-hover-bridge {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 44px;
+    height: 80px;
+    pointer-events: auto;
+}
+
+/* Hover close button to the left of the panel */
+.blanc-floating-close-btn {
+    position: absolute;
+    left: 8px;
+    top: 12px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    pointer-events: auto;
+    transition: opacity 0.15s, background 0.15s, box-shadow 0.15s;
 }
 
 @media (max-width: 768px) {
-    /* Mobile: full-screen panel, dark backdrop handled by .blanc-floating-backdrop */
-    .blanc-floating-panel,
-    .blanc-floating-panel--wide {
+    /* Mobile: full-screen panel, no backdrop needed */
+    .blanc-floating-backdrop {
+        display: none;
+    }
+    .blanc-floating-close-zone {
         top: 0;
         right: 0;
         bottom: 0;
         left: 0;
+        padding-left: 0;
+        z-index: 120;
+        justify-content: flex-start;
+    }
+    .blanc-floating-panel,
+    .blanc-floating-panel--wide {
         width: 100vw;
         height: 100dvh;
         max-height: 100dvh;
-        /* Mobile full-cover. Intentionally 120 (between OVERLAY_Z.panel 80 and modal 140)
-           — preserved as-is; no scale tier maps here and changing it would alter z-order. */
-        z-index: 120;
         border-radius: 0;
         transform: none;
         animation: blancFadeIn 0.15s ease-out;
         box-shadow: none;
     }
-}
-
-/* ── Comfortable form fields (panel drawers) ──
-   Taller, roomier controls than the dense table/list defaults — the panel has
-   the width to afford it. Scoped so it never touches compact toolbars/tables. */
-.blanc-form-comfortable input:not([type="checkbox"]):not([type="radio"]),
-.blanc-form-comfortable textarea,
-.blanc-form-comfortable [role="combobox"] {
-    min-height: 46px;
-    font-size: 15px;
-    border-radius: 12px;
-    padding-top: 0.625rem;
-    padding-bottom: 0.625rem;
-}
-.blanc-form-comfortable textarea {
-    min-height: 92px;
-    line-height: 1.5;
-}
-/* Label sitting to the LEFT of its field, vertically centered against it. */
-.blanc-field-row {
-    display: grid;
-    grid-template-columns: 104px minmax(0, 1fr);
-    align-items: center;
-    gap: 16px;
-}
-.blanc-field-row--top {
-    align-items: start;
-}
-.blanc-field-row--top > label {
-    padding-top: 13px;
-}
-.blanc-field-label {
-    font-size: 13px;
-    color: var(--blanc-ink-2);
-    font-weight: 500;
-    line-height: 1.3;
+    .blanc-floating-close-btn,
+    .blanc-floating-hover-bridge {
+        display: none;
+    }
 }
 
 /* Warm table styles */
 .blanc-table-header {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(246, 246, 246, 0.5));
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42));
     border-bottom: 1px solid var(--blanc-line);
 }
 
@@ -1027,11 +875,11 @@ table tbody tr:hover {
 }
 
 .blanc-table-row:hover {
-    background: rgba(25, 25, 25, 0.03);
+    background: rgba(252, 249, 244, 0.6);
 }
 
 .blanc-table-row-selected {
-    background: rgba(127, 66, 225, 0.07); /* UI-QA-001: selection = lavender canon */
+    background: var(--blanc-today-soft);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1068,11 +916,48 @@ table tbody tr:hover {
    11. MOBILE OVERLAY PATTERNS (shared across all pages)
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Mobile bottom sheets are now the canonical <BottomSheet> component
-   (components/ui/BottomSheet.tsx) — the old `.blanc-mobile-sheet` copy-paste
-   pattern (container + header + backdrop) was removed in favour of one
-   fixed-height source of truth. The blancSlideUp / blancFadeIn keyframes above
-   are kept (still used by BottomSheet + dialog.tsx). */
+/* Bottom-sheet container for custom dropdowns on mobile */
+.blanc-mobile-sheet {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 101;
+    background: var(--blanc-surface-strong);
+    border-top: 1px solid var(--blanc-line);
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -8px 32px rgba(47, 39, 28, 0.12);
+    padding: 8px 0 env(safe-area-inset-bottom, 8px);
+    max-height: 70vh;
+    overflow-y: auto;
+    animation: blancSlideUp 0.25s ease-out;
+}
+
+.blanc-mobile-sheet-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px 8px;
+    border-bottom: 1px solid var(--blanc-line);
+}
+
+.blanc-mobile-sheet-header h3 {
+    font-family: var(--blanc-font-heading);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--blanc-ink-1);
+    margin: 0;
+}
+
+/* Semi-transparent backdrop for mobile sheets */
+.blanc-mobile-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(32, 39, 52, 0.4);
+    backdrop-filter: blur(2px);
+    animation: blancFadeIn 0.15s ease-out;
+}
 
 /* Touch-visible: elements that should be visible on touch devices */
 @media (max-width: 767px) {
@@ -1105,24 +990,5 @@ table tbody tr:hover {
 @media (max-width: 760px) {
     .schedule-filter-field {
         min-width: 100% !important;
-    }
-}
-
-/* ── iOS focus-zoom guard ─────────────────────────────────────────────
-   iOS Safari auto-zooms into any focused text field whose font-size is
-   < 16px, which shifts the whole viewport and pushes the right edge of the
-   page off-screen (reported on "+ Add note" and every form field). Force
-   text-entry controls to 16px on mobile so focusing them never triggers a
-   zoom. Base ui/input + ui/textarea already do this via `text-base md:text-sm`;
-   this net covers the custom canon (FloatingField/PhoneInput @ 15px) and any
-   raw `text-sm/xs` input. Pinch-zoom stays enabled — we do NOT lock the
-   viewport meta (accessibility). The large page search input opts out
-   (.blanc-search-input is intentionally 22–32px). 767px complements
-   Tailwind's `md:` (min-width:768px) exactly. */
-@media (max-width: 767px) {
-    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not(.blanc-search-input),
-    textarea,
-    select {
-        font-size: 16px !important;
     }
 }

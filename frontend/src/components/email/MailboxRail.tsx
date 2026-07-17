@@ -40,7 +40,7 @@ export function MailboxRail({ mailbox, activeView, onViewChange, onSync, isSynci
                         className="flex items-center gap-2.5 w-full px-3 py-1.5 text-sm text-left"
                         onClick={() => onViewChange(key)}
                         style={{
-                            background: activeView === key ? 'rgba(25, 25, 25, 0.06)' : 'transparent',
+                            background: activeView === key ? 'rgba(117, 106, 89, 0.08)' : 'transparent',
                             color: activeView === key ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-2)',
                             fontWeight: activeView === key ? 500 : 400,
                             border: 'none', cursor: 'pointer', borderRadius: '6px',

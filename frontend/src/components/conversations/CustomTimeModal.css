@@ -37,7 +37,7 @@
     max-width: 220px;
     height: 36px;
     padding: 4px 14px;
-    border: 1px solid var(--blanc-line);
+    border: 1px solid var(--border, #27303f);
     border-radius: 6px;
     background: transparent;
     cursor: pointer;
@@ -61,7 +61,7 @@
     flex-shrink: 0;
     font-size: 12px;
     font-weight: 500;
-    color: var(--blanc-ink-3);
+    color: var(--muted-foreground, #94a3b8);
     white-space: nowrap;
     padding-left: 2px;
 }
@@ -74,10 +74,6 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-}
-/* With the recommendations panel: [recs | timelines | map] */
-.ctm-body--with-recs {
-    grid-template-columns: 216px 1fr 1fr;
 }
 
 /* ── Timelines panel (left) ── */
@@ -131,36 +127,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.ctm-tech-bar__suggested {
-    flex-shrink: 0;
-    margin-left: 4px;
-    padding: 1px 8px;
-    border-radius: 999px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #fff;
-    background: var(--blanc-job, #2f63d8);
-}
-/* Suggested technician lane (Copy job) — subtle tint behind the accent border */
-.tech-timeline__col--suggested .tech-timeline__grid {
-    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 6%, transparent);
-}
-/* Recommended pill (slot engine) — subtler than Suggested: outlined, not filled */
-.ctm-tech-bar__recommended {
-    flex-shrink: 0;
-    margin-left: 4px;
-    padding: 1px 7px;
-    border-radius: 999px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    color: var(--blanc-job, #2f63d8);
-    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--blanc-job, #2f63d8) 35%, transparent);
-}
 .ctm-tech-bar__arrow {
     display: flex;
     align-items: center;
@@ -172,11 +138,11 @@
     border-radius: 6px;
     background: transparent;
     cursor: pointer;
-    color: var(--blanc-ink-2);
+    color: var(--foreground, #e2e8f0);
     transition: background 0.15s;
 }
 .ctm-tech-bar__arrow:hover:not(:disabled) {
-    background: var(--blanc-line);
+    background: var(--muted, #1e293b);
 }
 .ctm-tech-bar__arrow:disabled {
     opacity: 0.25;
@@ -189,7 +155,7 @@
     align-items: center;
     justify-content: center;
     height: 200px;
-    color: var(--blanc-ink-3);
+    color: var(--muted-foreground, #64748b);
     font-size: 13px;
 }
 
@@ -229,7 +195,7 @@
     text-align: right;
     font-size: 10px;
     font-weight: 500;
-    color: var(--blanc-ink-3);
+    color: var(--muted-foreground, #64748b);
     transform: translateY(-6px);
     user-select: none;
     line-height: 1;
@@ -244,6 +210,60 @@
 
 
 
+/* Footer: dots + legend */
+.ctm-timelines__footer {
+    flex-shrink: 0;
+    padding: 6px 0 0;
+}
+
+/* Page dots */
+.ctm-timelines__dots {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px 0;
+}
+.ctm-timelines__dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    border: 1px solid var(--border, #334155);
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.15s;
+}
+.ctm-timelines__dot--active {
+    background: var(--primary, #3b82f6);
+    border-color: var(--primary, #3b82f6);
+}
+
+/* Legend */
+.ctm-timelines__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 4px 0 0 44px;
+    font-size: 11px;
+    color: var(--muted-foreground, #64748b);
+}
+.ctm-timelines__legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.ctm-timelines__legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 6px;
+    color: #fff;
+    line-height: 1;
+}
+
 /* ── Individual timeline column ── */
 .tech-timeline__col {
     flex: 1;
@@ -256,14 +276,14 @@
 .tech-timeline__grid {
     position: relative;
     cursor: crosshair;
-    border-left: 1px solid var(--blanc-line);
+    border-left: 1px solid var(--border, #27303f);
 }
 .tech-timeline__hour-line {
     position: absolute;
     left: 0;
     right: 0;
     height: 0;
-    border-top: 1px solid var(--blanc-line);
+    border-top: 1px solid var(--border, #1e293b);
     pointer-events: none;
 }
 
@@ -331,58 +351,32 @@
     color: #16a34a;
 }
 
-/* Recommendation overlay band (slot engine) — translucent, clickable */
-.tech-timeline__rec-band {
-    position: absolute;
-    left: 4px;
-    right: 4px;
-    border: 1.5px dashed color-mix(in srgb, var(--blanc-job, #2f63d8) 60%, transparent);
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 12%, transparent);
-    z-index: 2;
-    cursor: pointer;
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-end;
-    padding: 2px 4px;
-    transition: background 0.12s;
-}
-.tech-timeline__rec-band:hover {
-    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 22%, transparent);
-}
-.tech-timeline__rec-band-label {
-    font-size: 9px;
-    font-weight: 700;
-    color: var(--blanc-job, #2f63d8);
-    line-height: 1;
-}
-
 /* ── Map (right panel) ── */
 .ctm-map {
     position: relative;
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid var(--blanc-line);
+    border: 1px solid var(--border, #27303f);
     min-height: 0;
 }
 .ctm-map__overlay {
     position: absolute;
     top: 8px;
     left: 8px;
-    background: var(--blanc-surface-strong, #FFFFFF);
+    background: var(--background, #0f172a);
     opacity: 0.85;
     backdrop-filter: blur(4px);
     border-radius: 6px;
     padding: 4px 10px;
     font-size: 12px;
-    color: var(--blanc-ink-3);
+    color: var(--muted-foreground, #64748b);
     z-index: 10;
 }
 .ctm-map__legend {
     position: absolute;
     bottom: 8px;
     left: 8px;
-    background: var(--blanc-surface-strong, #FFFFFF);
+    background: var(--background, #0f172a);
     opacity: 0.92;
     backdrop-filter: blur(4px);
     border-radius: 6px;
@@ -392,7 +386,7 @@
     flex-wrap: wrap;
     gap: 8px;
     font-size: 11px;
-    color: var(--blanc-ink-3);
+    color: var(--muted-foreground, #64748b);
 }
 .ctm-map__legend-item {
     display: flex;
@@ -462,240 +456,30 @@
     font-weight: 500;
 }
 
-/* ── Recommendations side panel (slot engine) ── */
-.ctm-recs {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-    border-radius: 16px;
-    background: rgba(25, 25, 25, 0.03);
-    padding: 12px 10px 10px;
-}
-.ctm-recs__header {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--blanc-ink-3, #94a3b8);
-    padding: 0 4px 8px;
-    flex-shrink: 0;
-}
-.ctm-recs__loading {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--blanc-ink-3, #94a3b8);
-    padding: 4px;
-}
-.ctm-recs__list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    overflow-y: auto;
-    min-height: 0;
-    padding: 2px;
-}
-.ctm-rec-card {
-    position: relative;
-    text-align: left;
-    border: 1px solid var(--blanc-line, rgba(25, 25, 25, 0.08));
-    border-radius: 12px;
-    background: var(--blanc-panel-surface, #FFFFFF);
-    padding: 9px 11px 9px 18px;
-    cursor: pointer;
-    transition: border-color 0.12s, background 0.12s;
-}
-/* Temperature mini-bar — vertical track on the left edge, fill anchored bottom */
-.ctm-rec-card__temp {
-    position: absolute;
-    left: 6px;
-    top: 9px;
-    bottom: 9px;
-    width: 5px;
-    border-radius: 999px;
-    background: var(--blanc-line, rgba(25, 25, 25, 0.08));
-    overflow: hidden;
-}
-.ctm-rec-card__temp-fill {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    border-radius: 999px;
-}
-.ctm-rec-card:hover {
-    border-color: color-mix(in srgb, var(--blanc-job, #2f63d8) 40%, var(--blanc-line, rgba(25, 25, 25, 0.20)));
-}
-.ctm-rec-card--active {
-    border-color: var(--blanc-job, #2f63d8);
-    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 6%, var(--blanc-panel-surface, #FFFFFF));
-}
-.ctm-rec-card__top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-}
-.ctm-rec-card__date {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--blanc-ink-3, #94a3b8);
-}
-.ctm-rec-card__time {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--blanc-ink-1, #1e293b);
-    margin-top: 2px;
-}
-.ctm-rec-card__tech {
-    font-size: 12px;
-    color: var(--blanc-ink-2, #475569);
-    margin-top: 1px;
-}
-.ctm-rec-card__meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 5px;
-}
-.ctm-rec-card__flag {
-    font-size: 10px;
-    font-weight: 600;
-    color: #8a4b16;
-    background: rgba(178, 106, 29, 0.16);
-    border-radius: 999px;
-    padding: 1px 8px;
-}
-.ctm-rec-card__sub {
-    font-size: 11px;
-    color: var(--blanc-ink-3, #94a3b8);
-    margin-top: 5px;
-    line-height: 1.35;
-}
-
-/* ── Mobile bottom sheet (JOB-SLOT-SHEET-001) ─────────────────────────────────
-   On phones the picker renders inside the canonical BottomSheet (size="full"),
-   not the desktop dialog. Layout is a fixed column: date nav → recommendations
-   strip (horizontal swipe) → hour grid taking ALL remaining height. The map is
-   the second pane of the Times ⇄ Map toggle instead of a permanent 320px block. */
-
-/* The sheet body must not scroll itself — the hour grid owns its scroll.
-   (!important because BottomSheet sets overflow-y via an inline style.) */
-.ctm-sheet-scroll {
-    overflow: hidden !important;
-}
-.ctm-sheet {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    padding: 0 14px;
-}
-.ctm-sheet .ctm-date-nav {
-    flex-shrink: 0;
-    margin-bottom: 8px;
-    gap: 2px;
-}
-/* Keep 44px touch targets, but let the row fit a 375px phone:
-   arrows 40px + flexible trigger + compact toggle. */
-.ctm-sheet .ctm-date-nav__arrow {
-    width: 40px;
-    height: 44px;
-}
-.ctm-sheet .ctm-date-nav__trigger {
-    min-width: 0;
-    flex: 1 1 auto;
-    padding-left: 8px;
-    padding-right: 8px;
-}
-.ctm-sheet .ctm-date-nav__trigger .ctm-date-nav__text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-/* Recommendations: compact horizontal strip — swipe sideways, grid keeps the height */
-.ctm-sheet .ctm-recs {
-    flex-shrink: 0;
-    margin-bottom: 8px;
-    padding: 10px 10px 8px;
-}
-.ctm-sheet .ctm-recs__list {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 4px;
-}
-.ctm-sheet .ctm-rec-card {
-    min-width: 150px;
-    max-width: 176px;
-    flex-shrink: 0;
-}
-/* The one-line "why" fits desktop cards; on a phone strip it is noise —
-   the choice signal stays (temperature bar, date, time, tech). */
-.ctm-sheet .ctm-rec-card__sub {
-    display: none;
-}
-.ctm-sheet .ctm-timelines {
-    flex: 1 1 auto;
-    min-height: 0;
-}
-.ctm-sheet .ctm-tech-bar__arrow {
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
-}
-/* Map pane fills the same area the grid does */
-.ctm-sheet .ctm-map {
-    flex: 1 1 auto;
-    min-height: 0;
-}
-
-/* Times ⇄ Map segmented toggle (mobile only) */
-.ctm-pane-toggle {
-    margin-left: auto;
-    display: inline-flex;
-    background: rgba(25, 25, 25, 0.05);
-    border-radius: 999px;
-    padding: 2px;
-    flex-shrink: 0;
-}
-.ctm-pane-toggle__btn {
-    border: none;
-    background: transparent;
-    font: inherit;
-    font-size: 12px;
-    line-height: 1;
-    padding: 8px 10px;
-    border-radius: 999px;
-    color: var(--blanc-ink-2, #5b5346);
-    cursor: pointer;
-}
-.ctm-pane-toggle__btn--active {
-    background: var(--blanc-surface-strong, #fffdf9);
-    color: var(--blanc-ink-1, #191919);
-    font-weight: 600;
-    box-shadow: 0 1px 2px rgba(40, 33, 22, 0.12);
-}
-
-/* Sheet footer: warning line above a full-width action row */
-.ctm-footer--sheet {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px 14px;
-}
-.ctm-footer--sheet .ctm-footer__territory-warn {
-    margin-right: 0;
-}
-.ctm-footer__actions {
-    display: flex;
-    gap: 10px;
-}
-.ctm-footer__actions button {
-    min-height: 44px;
-    font-size: 15px;
+/* ── Responsive ── */
+@media (max-width: 767px) {
+    .ctm-dialog {
+        padding: 16px 12px !important;
+    }
+    .ctm-body {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 320px;
+        gap: 8px;
+    }
+    .ctm-footer {
+        padding-top: 8px;
+    }
+    .ctm-footer button {
+        min-height: 44px;
+        font-size: 15px;
+    }
+    .ctm-tech-bar__arrow {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+    }
+    .ctm-date-nav__arrow {
+        width: 44px;
+        height: 44px;
+    }
 }

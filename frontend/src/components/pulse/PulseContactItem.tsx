@@ -2,9 +2,8 @@
  * PulseContactItem — a single contact row in the Pulse sidebar.
  * Layout: avatar/initials + interaction badge | name + time | phone | status badges
  */
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { callsApi } from '../../services/api';
 import { formatPhoneDisplay as formatPhoneNumber, isAnonymousPhone } from '../../utils/phoneUtils';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
@@ -12,12 +11,11 @@ import { useAuth } from '../../auth/AuthProvider';
 import type { Lead } from '../../types/lead';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
-    MessageSquare, MessageSquareReply, Mail, MailCheck, MoreVertical,
+    MessageSquare, MessageSquareReply, MoreVertical,
     EyeOff, Clock, CheckCircle2, AlertTriangle, Bot,
 } from 'lucide-react';
 import type { Call } from '../../types/models';
 import { tomorrowAtInTZ } from '../../utils/companyTime';
-import { isAiAnsweredBy } from './pulseHelpers';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -44,6 +42,8 @@ export const REASON_LABELS: Record<string, string> = {
     estimate_approved: 'Estimate approved', time_confirmed: 'Time confirmed',
 };
 
+const AI_ANSWERED_BY_MARKERS = ['ai', 'vapi', 'bot', 'assistant'];
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatExactTime(date: Date, tz: string): string {
@@ -68,6 +68,11 @@ function formatRelativeOrDate(date: Date, tz: string): string {
         return `${hours}h ago`;
     }
     return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz });
+}
+
+function isAiAnsweredBy(answeredBy: string | null | undefined): boolean {
+    const normalized = (answeredBy || '').toLowerCase();
+    return AI_ANSWERED_BY_MARKERS.some(marker => normalized.includes(marker));
 }
 
 /** Get initials from a name or phone */
@@ -112,23 +117,20 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
         ? call.contact.full_name : null;
     const primaryText = isAnon
         ? 'Anonymous'
-        // YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline has no company/
-        // lead/contact — fall back to its denormalized display_name before the phone.
-        : (company || leadName || contactName || (call as any).display_name || formatPhoneNumber(displayPhone));
+        : (company || leadName || contactName || formatPhoneNumber(displayPhone));
     const showSecondaryPhone = !isAnon && !!(company || leadName || contactName);
 
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
     const interactionType = call.last_interaction_type || 'call';
 
-    const openTask = (call as any).open_task || null;
-    const openTaskCount = (call as any).open_task_count || 0;
-    // AR-TASK-UNIFY-001: "Action Required" = the thread has an open task.
-    const isActionRequired = (call as any).has_open_task ?? !!openTask;
+    const isActionRequired = (call as any).is_action_required || false;
     const arReason = (call as any).action_required_reason || null;
     const snoozedUntil = (call as any).snoozed_until;
     const isSnoozed = snoozedUntil && new Date(snoozedUntil) > new Date();
+    const openTask = (call as any).open_task || null;
     const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
 
     const callDirection = call.direction === 'inbound' ? 'inbound'
         : call.direction?.startsWith('outbound') ? 'outbound'
@@ -143,6 +145,15 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
 
     // Neutral icon container — same for all contacts, no visual noise
 
+    useEffect(() => {
+        if (!menuOpen) return;
+        const handler = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [menuOpen]);
+
     return (
         <button
             onClick={() => {
@@ -154,15 +165,16 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                         .catch((err) => { console.error('[Pulse] Failed to mark timeline read:', tlId, err); });
                 }
             }}
-            className={`pulse-tile w-full text-left relative group${isActive ? ' pulse-contact-item-active' : ''}`}
+            className={`w-full text-left px-3 py-2.5 transition-colors border-b relative group ${isActive ? 'pulse-contact-item-active' : (isMissedIncoming ? 'hover:brightness-95' : 'hover:bg-muted/40')}`}
             style={{
                 outline: 'none',
+                borderBottomColor: 'var(--blanc-line)',
                 ...(isMissedIncoming && !isActive ? { background: 'rgba(244, 63, 94, 0.08)' } : {}),
             }}
         >
             {/* Unread indicator */}
             {hasUnread && (
-                <div className="absolute left-0 top-3 bottom-3 w-[3px] rounded-full" style={{ backgroundColor: 'var(--blanc-info)' }} />
+                <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r" style={{ backgroundColor: 'var(--blanc-info)' }} />
             )}
 
             <div className="flex items-start gap-2.5">
@@ -171,11 +183,6 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                     {(() => {
                         if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
                         if (interactionType === 'sms_outbound') return <MessageSquare className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
-                        // EMAIL-UNREAD-001: emails get their own channel icons — the backend
-                        // has emitted email_inbound/email_outbound since LIST-PAGINATION-001,
-                        // but the list fell through to call icons for them.
-                        if (interactionType === 'email_inbound') return <Mail className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
-                        if (interactionType === 'email_outbound') return <MailCheck className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
                         if (isAiAnsweredLatestCall) return <Bot className="size-[18px]" style={{ color: '#dc2626' }} aria-label="AI bot answered this call" />;
                         if (callDirection === 'internal') return <ArrowLeftRight className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
                         if (callDirection === 'inbound') return <PhoneIncoming className="size-[18px]" style={{ color: callColor }} />;
@@ -214,21 +221,16 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                     {isActionRequired && !isSnoozed && (
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-orange-100 text-orange-800">
-                                <AlertTriangle className="size-2.5" /> Task
+                                <AlertTriangle className="size-2.5" /> AR
                             </span>
-                            {(openTask?.title || arReason) && (
-                                <span className="text-[10px] truncate max-w-[150px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    {openTask?.title || REASON_LABELS[arReason] || arReason}
-                                </span>
-                            )}
-                            {openTaskCount > 1 && (
-                                <span className="text-[10px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    +{openTaskCount - 1}
+                            {arReason && (
+                                <span className="text-[10px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    {REASON_LABELS[arReason] || arReason}
                                 </span>
                             )}
                             {openTask?.due_at && (
                                 <span className="text-[10px]" style={{ color: 'var(--blanc-danger)' }}>
-                                    Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: companyTz })}
+                                    Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                                 </span>
                             )}
                         </div>
@@ -240,32 +242,26 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                 style={{ background: 'rgba(118,106,89,0.1)', color: 'var(--blanc-ink-2)' }}
                             >
                                 <Clock className="size-2.5" />
-                                Snoozed {new Date(snoozedUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: companyTz })}
+                                Snoozed {new Date(snoozedUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                             </span>
                         </div>
                     )}
                 </div>
 
-                {/* ⋮ menu — visible on hover or when active. Канонный DropdownMenu: тир z-150,
-                    dismiss из коробки (самодельный absolute z-50 + click-outside снесены,
-                    W3-аудит); на мобиле — канонный BottomSheet из враппера. Toggle открытия —
-                    у Radix-триггера; stopPropagation остаётся, чтобы тайл не навигировал. */}
-                <div className="shrink-0">
-                    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-                        <DropdownMenuTrigger asChild>
-                            <div
-                                role="button"
-                                tabIndex={0}
-                                onClick={(e) => e.stopPropagation()}
-                                onKeyDown={(e) => { if (e.key === 'Enter') e.stopPropagation(); }}
-                                className={`p-1.5 rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center ${menuOpen ? 'bg-muted/80' : 'max-md:opacity-70 md:opacity-0 md:group-hover:opacity-100'} ${isActive ? '!opacity-100' : ''}`}
-                                title="More options"
-                            >
-                                <MoreVertical className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
-                            </div>
-                        </DropdownMenuTrigger>
-                        {/* overflow-visible: вложенное snooze-подменю (md:right-full) выходит за рамку контента */}
-                        <DropdownMenuContent align="end" sideOffset={4} className="min-w-[180px] overflow-visible p-0 py-1 rounded-xl">
+                {/* ⋮ menu — visible on hover or when active */}
+                <div className="shrink-0 relative" ref={menuRef}>
+                    <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(prev => !prev); } }}
+                        className={`p-1.5 rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center ${menuOpen ? 'bg-muted/80' : 'max-md:opacity-70 md:opacity-0 md:group-hover:opacity-100'} ${isActive ? '!opacity-100' : ''}`}
+                        title="More options"
+                    >
+                        <MoreVertical className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
+                    </div>
+                    {menuOpen && (
+                        <div className="absolute right-0 top-full mt-1 z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[180px]">
                             <div role="button" tabIndex={0}
                                 onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); }}
                                 onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); } }}
@@ -285,7 +281,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                     onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); }}
                                     onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); } }}
                                     className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-green-50 cursor-pointer w-full" style={{ color: 'var(--blanc-success)' }}>
-                                    <CheckCircle2 className="size-3.5" /> Mark done
+                                    <CheckCircle2 className="size-3.5" /> Mark Handled
                                 </div>
                             )}
                             {isActionRequired && (
@@ -309,8 +305,8 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                     )}
                                 </div>
                             )}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                        </div>
+                    )}
                 </div>
             </div>
         </button>

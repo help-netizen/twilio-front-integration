@@ -128,7 +128,7 @@ async function listUsers(companyId, opts = {}) {
     const { rows } = await db.query(
         `SELECT u.id, u.email, u.full_name, u.last_login_at, u.created_at,
                 COALESCE(m.role_key, m.role) as membership_role, m.role_key, m.role as legacy_role, m.status as membership_status,
-                m.id as membership_id, m.company_id,
+                m.company_id,
                 COALESCE(p.phone_calls_allowed, false) as phone_calls_allowed,
                 COALESCE(p.is_provider, false) as is_provider,
                 p.schedule_color,

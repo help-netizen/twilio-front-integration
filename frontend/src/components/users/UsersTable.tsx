@@ -1,3 +1,4 @@
+import { Card } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Skeleton } from '../ui/skeleton';
@@ -48,9 +49,9 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
         return (
             <div className="flex items-center justify-center py-16">
                 <div className="text-center">
-                    <Users className="size-12 mx-auto mb-3 opacity-20 text-[var(--blanc-ink-3)]" />
-                    <p className="text-lg mb-1 text-[var(--blanc-ink-1)]">No users found</p>
-                    <p className="text-sm text-[var(--blanc-ink-3)]">
+                    <Users className="size-12 mx-auto mb-3 opacity-20" />
+                    <p className="text-lg mb-1">No users found</p>
+                    <p className="text-sm text-muted-foreground">
                         {filtered ? 'Try adjusting your filters.' : (emptyHint || 'Add your first user to get started.')}
                     </p>
                 </div>
@@ -59,20 +60,19 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
     }
 
     return (
-        // Ряды-тайлы на канвасе (LAYOUT-CANON правило 7, .blanc-table-tiles): аквариум-Card снесён,
-        // шапка = eyebrow-текст прямо на канвасе, каждый ряд — белая полоса-тайл.
-        <Table className="blanc-table-tiles">
-            <TableHeader>
-                <TableRow>
-                    <TableHead className="px-4">User</TableHead>
-                    <TableHead className="px-4">Role</TableHead>
-                    <TableHead className="px-4">Status</TableHead>
-                    <TableHead className="px-4">Access</TableHead>
-                    <TableHead className="px-4">Last login</TableHead>
-                    <TableHead className="px-4 text-right">Actions</TableHead>
-                </TableRow>
-            </TableHeader>
-            <TableBody>
+        <Card className="overflow-x-auto">
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead>User</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Access</TableHead>
+                        <TableHead>Last login</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
                     {users.map(u => {
                         const r = ROLE_LABELS[roleKeyOf(u)] || ROLE_LABELS.dispatcher;
                         const Icon = r.icon;
@@ -80,35 +80,28 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                         const busy = actionLoading === u.id;
                         return (
                             <TableRow key={u.id}>
-                                <TableCell className="px-4 py-2.5">
-                                    <div className="font-medium text-sm flex items-center gap-2 text-[var(--blanc-ink-1)]">
+                                <TableCell>
+                                    <div className="font-medium text-sm flex items-center gap-2">
                                         <span style={{ backgroundColor: u.schedule_color || 'var(--blanc-ink-3, #7d8796)' }} className="size-2.5 rounded-full flex-shrink-0" />
                                         {u.full_name}
                                     </div>
-                                    <div className="text-xs text-[var(--blanc-ink-3)] pl-[18px]">{u.email}</div>
+                                    <div className="text-xs text-muted-foreground pl-[18px]">{u.email}</div>
                                 </TableCell>
-                                <TableCell className="px-4 py-2.5">
-                                    <Badge variant="outline" className="font-medium border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(25,25,25,0.03)]"><Icon className="size-3 mr-1.5 text-[var(--blanc-ink-3)]" />{r.label}</Badge>
+                                <TableCell>
+                                    <Badge variant={r.color} className="font-medium"><Icon className="size-3 mr-1.5" />{r.label}</Badge>
                                 </TableCell>
-                                <TableCell className="px-4 py-2.5">
-                                    <Badge
-                                        variant="outline"
-                                        className={active
-                                            ? 'border-[var(--blanc-line)] text-[var(--blanc-success)] bg-[rgba(27,139,99,0.1)]'
-                                            : 'border-[var(--blanc-line)] text-[var(--blanc-ink-3)] bg-[rgba(25,25,25,0.03)]'}
-                                    >
-                                        {active ? 'Active' : 'Disabled'}
-                                    </Badge>
+                                <TableCell>
+                                    <Badge variant={active ? 'outline' : 'destructive'}>{active ? 'Active' : 'Disabled'}</Badge>
                                 </TableCell>
-                                <TableCell className="px-4 py-2.5">
+                                <TableCell>
                                     <div className="flex gap-1.5 flex-wrap">
-                                        {u.phone_calls_allowed && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(25,25,25,0.03)]"><Phone className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Softphone</Badge>}
-                                        {u.is_provider && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(25,25,25,0.03)]"><Truck className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Provider</Badge>}
-                                        {u.location_tracking_enabled && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(25,25,25,0.03)]"><MapPin className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Tracking</Badge>}
+                                        {u.phone_calls_allowed && <Badge variant="secondary" className="text-[10px] px-1.5"><Phone className="size-2.5 mr-1" />Softphone</Badge>}
+                                        {u.is_provider && <Badge variant="secondary" className="text-[10px] px-1.5"><Truck className="size-2.5 mr-1" />Provider</Badge>}
+                                        {u.location_tracking_enabled && <Badge variant="secondary" className="text-[10px] px-1.5"><MapPin className="size-2.5 mr-1" />Tracking</Badge>}
                                     </div>
                                 </TableCell>
-                                <TableCell className="px-4 py-2.5 text-sm text-[var(--blanc-ink-2)]">{fmtDate(u.last_login_at)}</TableCell>
-                                <TableCell className="px-4 py-2.5 text-right">
+                                <TableCell className="text-sm">{fmtDate(u.last_login_at)}</TableCell>
+                                <TableCell className="text-right">
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
                                             <Button variant="ghost" className="h-8 w-8 p-0" disabled={busy} aria-label={`Actions for ${u.full_name}`}>
@@ -126,7 +119,7 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                                             )}
                                             <DropdownMenuItem
                                                 onClick={() => onToggleStatus(u)}
-                                                className={active ? 'text-[var(--blanc-danger)]' : 'text-[var(--blanc-success)]'}
+                                                className={active ? 'text-destructive' : 'text-green-600'}
                                             >
                                                 {active ? <><Ban className="size-4 mr-2" /> Disable</> : <><CheckCircle2 className="size-4 mr-2" /> Enable</>}
                                             </DropdownMenuItem>
@@ -136,7 +129,8 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                             </TableRow>
                         );
                     })}
-            </TableBody>
-        </Table>
+                </TableBody>
+            </Table>
+        </Card>
     );
 }

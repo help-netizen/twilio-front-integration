@@ -8,10 +8,6 @@ const router = express.Router();
 const db = require('../db/connection');
 const queries = require('../db/queries');
 const convQueries = require('../db/conversationsQueries');
-const contactsService = require('../services/contactsService');
-const emailQueries = require('../db/emailQueries');
-const { toTimelineBody } = require('../services/email/emailTimelineBody');
-const timelinePage = require('../services/timelinePage');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -49,43 +45,6 @@ async function getTimelineInCompany(timelineId, companyId) {
     return rows[0] || null;
 }
 
-function validateTimelinePageQuery(req, res) {
-    const hasLimit = req.query.limit != null;
-    const hasBefore = req.query.before != null;
-
-    if (!hasLimit) {
-        if (hasBefore) {
-            res.status(400).json({ error: 'Invalid cursor' });
-            return null;
-        }
-        return { paged: false };
-    }
-
-    const rawLimit = req.query.limit;
-    if (typeof rawLimit !== 'string' || !/^[1-9]\d*$/.test(rawLimit)) {
-        res.status(400).json({ error: 'Invalid limit' });
-        return null;
-    }
-
-    if (hasBefore) {
-        try {
-            timelinePage.parseCursor(req.query.before);
-        } catch (error) {
-            if (error?.code === 'INVALID_CURSOR') {
-                res.status(400).json({ error: 'Invalid cursor' });
-                return null;
-            }
-            throw error;
-        }
-    }
-
-    return {
-        paged: true,
-        limit: Math.min(parseInt(rawLimit, 10), 50),
-        before: hasBefore ? req.query.before : null,
-    };
-}
-
 // =============================================================================
 // GET /api/pulse/timeline/:contactId — combined calls + SMS for a contact
 // Also supports /api/pulse/timeline-by-id/:timelineId for timeline-first routing
@@ -98,9 +57,6 @@ router.get('/timeline-by-id/:timelineId', async (req, res) => {
         if (isNaN(timelineId)) {
             return res.status(400).json({ error: 'Invalid timelineId' });
         }
-
-        const pageOptions = validateTimelinePageQuery(req, res);
-        if (!pageOptions) return;
 
         // Get timeline info (tenant-scoped: foreign timelines look missing)
         const timeline = await getTimelineInCompany(timelineId, tenantCompanyId(req));
@@ -124,9 +80,6 @@ router.get('/timeline-by-id/:timelineId', async (req, res) => {
             if (!visible) return res.status(404).json({ error: 'Timeline not found' });
         }
 
-        if (pageOptions.paged) {
-            return await buildTimelinePage(req, res, contact, timeline, pageOptions);
-        }
         return await buildTimeline(req, res, contact, timeline);
     } catch (error) {
         console.error('[Pulse] GET /timeline-by-id/:timelineId error:', error);
@@ -141,9 +94,6 @@ router.get('/timeline/:contactId', async (req, res) => {
         if (isNaN(contactId)) {
             return res.status(400).json({ error: 'Invalid contactId' });
         }
-
-        const pageOptions = validateTimelinePageQuery(req, res);
-        if (!pageOptions) return;
 
         // Get contact info (tenant-scoped)
         const contactResult = await db.query(
@@ -166,9 +116,6 @@ router.get('/timeline/:contactId', async (req, res) => {
         );
         const timeline = tlResult.rows[0] || null;
 
-        if (pageOptions.paged) {
-            return await buildTimelinePage(req, res, contact, timeline, pageOptions);
-        }
         return await buildTimeline(req, res, contact, timeline);
     } catch (error) {
         console.error('[Pulse] GET /timeline/:contactId error:', error);
@@ -176,382 +123,61 @@ router.get('/timeline/:contactId', async (req, res) => {
     }
 });
 
-function cursorPredicateFor(kind, cursor) {
-    const mode = timelinePage.predicateModeFor(kind, cursor);
-    return mode ? { mode, ts: cursor.ts, id: cursor.id } : null;
-}
-
-async function fetchTimelineCalls(timelineId, companyId, { window = null } = {}) {
-    const params = [timelineId, companyId];
-    let cursorClause = '';
-    let windowClause = '';
-    let outerOrder = 'ORDER BY c.started_at DESC NULLS LAST';
-
-    if (window) {
-        if (window.predicate?.mode === 'tuple') {
-            params.push(window.predicate.ts, window.predicate.id);
-            cursorClause = `AND (COALESCE(started_at, created_at), id) < ($3::timestamptz, $4::bigint)`;
-        } else if (window.predicate) {
-            params.push(window.predicate.ts);
-            const operator = window.predicate.mode === 'lte' ? '<=' : '<';
-            cursorClause = `AND COALESCE(started_at, created_at) ${operator} $3::timestamptz`;
-        }
-        params.push(window.limit);
-        windowClause = `ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-                        LIMIT $${params.length}`;
-        outerOrder = 'ORDER BY COALESCE(c.started_at, c.created_at) DESC, c.id DESC';
-    }
-
-    const result = await db.query(
-        `SELECT c.*, to_json(co) as contact,
-            COALESCE(r.recording_sid, cr.recording_sid) as recording_sid,
-            COALESCE(r.status, cr.status) as recording_status,
-            COALESCE(r.duration_sec, cr.duration_sec) as recording_duration_sec,
-            COALESCE(t.status, ct.status) as transcript_status,
-            COALESCE(t.text, ct.text) as transcript_text,
-            COALESCE(t.raw_payload, ct.raw_payload) as transcript_raw_payload
-         FROM (
-             SELECT *,
-                    to_char(COALESCE(started_at, created_at) AT TIME ZONE 'UTC',
-                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
-             FROM calls
-             WHERE timeline_id = $1
-               AND company_id = $2
-               AND parent_call_sid IS NULL
-               ${cursorClause}
-             ${windowClause}
-         ) c
-         LEFT JOIN contacts co ON c.contact_id = co.id
-         -- Direct recording on this call
-         LEFT JOIN LATERAL (
-             SELECT recording_sid, status, duration_sec
-             FROM recordings
-             WHERE recordings.call_sid = c.call_sid
-             ORDER BY completed_at DESC NULLS LAST, updated_at DESC
-             LIMIT 1
-         ) r ON true
-         -- Fallback: recording on child legs (for parent inbound calls)
-         LEFT JOIN LATERAL (
-             SELECT rec.recording_sid, rec.status, rec.duration_sec
-             FROM calls child
-             JOIN recordings rec ON rec.call_sid = child.call_sid
-             WHERE child.parent_call_sid = c.call_sid
-             ORDER BY rec.completed_at DESC NULLS LAST, rec.updated_at DESC
-             LIMIT 1
-         ) cr ON r.recording_sid IS NULL
-         -- Direct transcript on this call
-         LEFT JOIN LATERAL (
-             SELECT status, text, raw_payload
-             FROM transcripts
-             WHERE transcripts.call_sid = c.call_sid
-             ORDER BY updated_at DESC
-             LIMIT 1
-         ) t ON true
-         -- Fallback: transcript on child legs
-         LEFT JOIN LATERAL (
-             SELECT tr.status, tr.text, tr.raw_payload
-             FROM calls child
-             JOIN transcripts tr ON tr.call_sid = child.call_sid
-             WHERE child.parent_call_sid = c.call_sid
-             ORDER BY tr.updated_at DESC
-             LIMIT 1
-         ) ct ON t.status IS NULL
-         ${outerOrder}`,
-        params
-    );
-    return result.rows;
-}
-
-function mapSmsRow(conv, row) {
-    const message = { ...row };
-    // `ts` is a paging transport column, never part of the legacy SMS DTO.
-    delete message.ts;
-    return {
-        ...message,
-        conversation_id: conv.id,
-        from_number: row.direction === 'inbound' ? conv.customer_e164 : conv.proxy_e164,
-        to_number: row.direction === 'inbound' ? conv.proxy_e164 : conv.customer_e164,
-        media: typeof row.media === 'string' ? JSON.parse(row.media) : row.media,
-    };
-}
-
-function projectEmailRow(row) {
-    return {
-        id: row.id,
-        type: 'email',
-        direction: row.direction,
-        is_outbound: row.is_outbound,
-        from_email: row.from_email,
-        from_name: row.from_name,
-        to_email: row.to_recipients_json,
-        subject: row.subject,
-        // Quote-strip the STORED body for display only (storage untouched).
-        body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
-        // RAW HTML body (un-quote-stripped, un-sanitized) — sanitized client-side.
-        body_html: row.body_html || null,
-        sent_at: row.gmail_internal_at,
-        thread_id: row.thread_id,
-        sent_by_user_email: row.sent_by_user_email,
-    };
-}
-
-function mapEstimateRow(row, contactId) {
-    return {
-        id: `estimate-${row.id}`,
-        type: 'estimate_created',
-        reference: row.reference,
-        status: row.status,
-        amount: row.total,
-        occurred_at: row.occurred_at,
-        contact_id: contactId,
-    };
-}
-
-function mapInvoiceRow(row, contactId) {
-    return {
-        id: `invoice-${row.id}`,
-        type: row.amount_paid && Number(row.amount_paid) >= Number(row.total)
-            ? 'invoice_paid'
-            : row.amount_paid && Number(row.amount_paid) > 0
-                ? 'invoice_partial_payment'
-                : 'invoice_created',
-        reference: row.reference,
-        status: row.status,
-        amount: row.total,
-        occurred_at: row.occurred_at,
-        contact_id: contactId,
-    };
-}
-
-async function discoverTimelineConversations(contact, timeline, companyId) {
-    const callPhones = new Set();
-    if (timeline?.id) {
-        const { rows } = await db.query(
-            `SELECT DISTINCT from_number AS n FROM calls
-             WHERE timeline_id = $1 AND company_id = $2
-               AND parent_call_sid IS NULL AND from_number IS NOT NULL
-             UNION
-             SELECT DISTINCT to_number FROM calls
-             WHERE timeline_id = $1 AND company_id = $2
-               AND parent_call_sid IS NULL AND to_number IS NOT NULL`,
-            [timeline.id, companyId]
-        );
-        for (const row of rows) {
-            if (row.n) callPhones.add(row.n);
-        }
-    }
-
-    const rawPhone = contact?.phone_e164 || timeline?.phone_e164;
-    const normalizedPhone = rawPhone ? '+' + rawPhone.replace(/\D/g, '') : null;
-    const phonesToSearch = new Set();
-    if (normalizedPhone) phonesToSearch.add(normalizedPhone);
-    const secondaryPhone = contact?.secondary_phone;
-    if (secondaryPhone) {
-        phonesToSearch.add('+' + secondaryPhone.replace(/\D/g, ''));
-    }
-    for (const phone of callPhones) phonesToSearch.add(phone);
-
-    if (phonesToSearch.size === 0) return [];
-    const phoneDigits = [...phonesToSearch].map(phone => phone.replace(/\D/g, ''));
-    const { rows } = await db.query(
-        `SELECT * FROM sms_conversations
-         WHERE regexp_replace(customer_e164, '\\D', '', 'g') = ANY($1)
-           AND company_id = $2
-         ORDER BY last_message_at DESC NULLS LAST`,
-        [phoneDigits, companyId]
-    );
-    return rows;
-}
-
-async function fetchEstimatePage(contactId, companyId, { limit, predicate }) {
-    const params = [contactId, companyId];
-    let cursorClause = '';
-    if (predicate?.mode === 'tuple') {
-        params.push(predicate.ts, predicate.id);
-        cursorClause = `AND (created_at, id) < ($3::timestamptz, $4::bigint)`;
-    } else if (predicate) {
-        params.push(predicate.ts);
-        const operator = predicate.mode === 'lte' ? '<=' : '<';
-        cursorClause = `AND created_at ${operator} $3::timestamptz`;
-    }
-    params.push(limit);
-    const { rows } = await db.query(
-        `SELECT id, estimate_number AS reference, status, total, created_at AS occurred_at,
-                to_char(created_at AT TIME ZONE 'UTC',
-                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
-         FROM estimates
-         WHERE contact_id = $1 AND company_id = $2
-           ${cursorClause}
-         ORDER BY created_at DESC, id DESC
-         LIMIT $${params.length}`,
-        params
-    );
-    return rows;
-}
-
-async function fetchInvoicePage(contactId, companyId, { limit, predicate }) {
-    const params = [contactId, companyId];
-    let cursorClause = '';
-    if (predicate?.mode === 'tuple') {
-        params.push(predicate.ts, predicate.id);
-        cursorClause = `AND (created_at, id) < ($3::timestamptz, $4::bigint)`;
-    } else if (predicate) {
-        params.push(predicate.ts);
-        const operator = predicate.mode === 'lte' ? '<=' : '<';
-        cursorClause = `AND created_at ${operator} $3::timestamptz`;
-    }
-    params.push(limit);
-    const { rows } = await db.query(
-        `SELECT id, invoice_number AS reference, status, total, amount_paid,
-                created_at AS occurred_at,
-                to_char(created_at AT TIME ZONE 'UTC',
-                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
-         FROM invoices
-         WHERE contact_id = $1 AND company_id = $2
-           ${cursorClause}
-         ORDER BY created_at DESC, id DESC
-         LIMIT $${params.length}`,
-        params
-    );
-    return rows;
-}
-
-async function buildTimelinePage(req, res, contact, timeline, { limit, before }) {
-    let cursor = null;
-    if (before != null) {
-        try {
-            cursor = timelinePage.parseCursor(before);
-        } catch (error) {
-            if (error?.code === 'INVALID_CURSOR') {
-                return res.status(400).json({ error: 'Invalid cursor' });
-            }
-            throw error;
-        }
-    }
-
-    const companyId = tenantCompanyId(req);
-    const conversations = await discoverTimelineConversations(contact, timeline, companyId);
-    const conversationById = new Map(conversations.map(conv => [String(conv.id), conv]));
-    const legPromises = [];
-
-    if (timeline?.id) {
-        legPromises.push((async () => {
-            const rows = await fetchTimelineCalls(timeline.id, companyId, {
-                window: { limit, predicate: cursorPredicateFor('call', cursor) },
-            });
-            return {
-                kind: 'call',
-                rows: rows.map(row => ({ ts: row.ts, id: String(row.id), data: formatCall(row) })),
-            };
-        })());
-    }
-
-    if (conversations.length > 0) {
-        legPromises.push((async () => {
-            const rows = await convQueries.getMessagesPageDesc(
-                conversations.map(conv => conv.id),
-                companyId,
-                { limit, cursorPred: cursorPredicateFor('sms', cursor) }
-            );
-            return {
-                kind: 'sms',
-                rows: rows.map(row => ({
-                    ts: row.ts,
-                    id: row.id,
-                    data: mapSmsRow(conversationById.get(String(row.conversation_id)), row),
-                })),
-            };
-        })());
-    }
-
-    if (contact?.id || timeline?.id) {
-        legPromises.push((async () => {
-            const options = { limit, cursorPred: cursorPredicateFor('email', cursor) };
-            const rows = contact?.id
-                ? await emailQueries.getTimelineEmailPageByContact(companyId, contact.id, options)
-                : await emailQueries.getTimelineEmailPageByTimeline(companyId, timeline.id, options);
-            return {
-                kind: 'email',
-                rows: rows.map(row => ({
-                    ts: row.ts,
-                    id: String(row.id),
-                    data: projectEmailRow(row),
-                })),
-            };
-        })());
-    }
-
-    const canViewFinancials = req.user?._devMode
-        || (req.authz?.permissions || []).includes('financial_data.view');
-    if (contact?.id && canViewFinancials) {
-        legPromises.push((async () => {
-            const rows = await fetchEstimatePage(contact.id, companyId, {
-                limit,
-                predicate: cursorPredicateFor('estimate', cursor),
-            });
-            return {
-                kind: 'estimate',
-                rows: rows.map(row => ({
-                    ts: row.ts,
-                    id: String(row.id),
-                    data: mapEstimateRow(row, contact.id),
-                })),
-            };
-        })());
-        legPromises.push((async () => {
-            const rows = await fetchInvoicePage(contact.id, companyId, {
-                limit,
-                predicate: cursorPredicateFor('invoice', cursor),
-            });
-            return {
-                kind: 'invoice',
-                rows: rows.map(row => ({
-                    ts: row.ts,
-                    id: String(row.id),
-                    data: mapInvoiceRow(row, contact.id),
-                })),
-            };
-        })());
-    }
-
-    const legs = await Promise.all(legPromises);
-    const { items, nextCursor, hasMore } = timelinePage.mergePage(legs, limit, cursor);
-    const response = {
-        page: {
-            items,
-            next_cursor: nextCursor,
-            has_more: hasMore,
-        },
-    };
-
-    if (before == null) {
-        let contactOut = contact || null;
-        if (contact?.id) {
-            try {
-                const contactEmails = await contactsService.getContactEmails(contact.id, contact.email);
-                contactOut = { ...contact, contact_emails: contactEmails };
-            } catch (err) {
-                console.error('[Pulse] contact emails query error:', err.message);
-            }
-        }
-        response.meta = {
-            timeline_id: timeline?.id || null,
-            display_name: timeline?.display_name || null,
-            external_source: timeline?.external_source || null,
-            contact: contactOut,
-            conversations,
-        };
-    }
-
-    res.json(response);
-}
-
-// Shared legacy timeline builder
+// Shared timeline builder
 async function buildTimeline(req, res, contact, timeline) {
     // Get calls by timeline_id with recordings + transcripts
     let callRows = [];
     if (timeline?.id) {
-        callRows = await fetchTimelineCalls(timeline.id, tenantCompanyId(req), { window: null });
+        const callResult = await db.query(
+            `SELECT c.*, to_json(co) as contact,
+                COALESCE(r.recording_sid, cr.recording_sid) as recording_sid,
+                COALESCE(r.status, cr.status) as recording_status,
+                COALESCE(r.duration_sec, cr.duration_sec) as recording_duration_sec,
+                COALESCE(t.status, ct.status) as transcript_status,
+                COALESCE(t.text, ct.text) as transcript_text,
+                COALESCE(t.raw_payload, ct.raw_payload) as transcript_raw_payload
+             FROM calls c
+             LEFT JOIN contacts co ON c.contact_id = co.id
+             -- Direct recording on this call
+             LEFT JOIN LATERAL (
+                 SELECT recording_sid, status, duration_sec
+                 FROM recordings
+                 WHERE recordings.call_sid = c.call_sid
+                 ORDER BY completed_at DESC NULLS LAST, updated_at DESC
+                 LIMIT 1
+             ) r ON true
+             -- Fallback: recording on child legs (for parent inbound calls)
+             LEFT JOIN LATERAL (
+                 SELECT rec.recording_sid, rec.status, rec.duration_sec
+                 FROM calls child
+                 JOIN recordings rec ON rec.call_sid = child.call_sid
+                 WHERE child.parent_call_sid = c.call_sid
+                 ORDER BY rec.completed_at DESC NULLS LAST, rec.updated_at DESC
+                 LIMIT 1
+             ) cr ON r.recording_sid IS NULL
+             -- Direct transcript on this call
+             LEFT JOIN LATERAL (
+                 SELECT status, text, raw_payload
+                 FROM transcripts
+                 WHERE transcripts.call_sid = c.call_sid
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+             ) t ON true
+             -- Fallback: transcript on child legs
+             LEFT JOIN LATERAL (
+                 SELECT tr.status, tr.text, tr.raw_payload
+                 FROM calls child
+                 JOIN transcripts tr ON tr.call_sid = child.call_sid
+                 WHERE child.parent_call_sid = c.call_sid
+                 ORDER BY tr.updated_at DESC
+                 LIMIT 1
+             ) ct ON t.status IS NULL
+             WHERE c.timeline_id = $1
+               AND c.parent_call_sid IS NULL
+             ORDER BY c.started_at DESC NULLS LAST`,
+            [timeline.id]
+        );
+        callRows = callResult.rows;
     }
 
     // Phone: contact phone (primary) or orphan timeline phone
@@ -598,7 +224,13 @@ async function buildTimeline(req, res, contact, timeline) {
         );
         for (let i = 0; i < conversations.length; i++) {
             const conv = conversations[i];
-            messages.push(...allMsgs[i].map(message => mapSmsRow(conv, message)));
+            messages.push(...allMsgs[i].map(m => ({
+                ...m,
+                conversation_id: conv.id,
+                from_number: m.direction === 'inbound' ? conv.customer_e164 : conv.proxy_e164,
+                to_number: m.direction === 'inbound' ? conv.proxy_e164 : conv.customer_e164,
+                media: typeof m.media === 'string' ? JSON.parse(m.media) : m.media,
+            })));
         }
     }
 
@@ -627,8 +259,28 @@ async function buildTimeline(req, res, contact, timeline) {
                     ),
                 ]);
                 financialEvents = [
-                    ...estimateRows.rows.map(row => mapEstimateRow(row, contact.id)),
-                    ...invoiceRows.rows.map(row => mapInvoiceRow(row, contact.id)),
+                    ...estimateRows.rows.map(r => ({
+                        id: `estimate-${r.id}`,
+                        type: 'estimate_created',
+                        reference: r.reference,
+                        status: r.status,
+                        amount: r.total,
+                        occurred_at: r.occurred_at,
+                        contact_id: contact.id,
+                    })),
+                    ...invoiceRows.rows.map(r => ({
+                        id: `invoice-${r.id}`,
+                        type: r.amount_paid && Number(r.amount_paid) >= Number(r.total)
+                            ? 'invoice_paid'
+                            : r.amount_paid && Number(r.amount_paid) > 0
+                                ? 'invoice_partial_payment'
+                                : 'invoice_created',
+                        reference: r.reference,
+                        status: r.status,
+                        amount: r.total,
+                        occurred_at: r.occurred_at,
+                        contact_id: contact.id,
+                    })),
                 ];
             }
         } catch (err) {
@@ -636,47 +288,11 @@ async function buildTimeline(req, res, contact, timeline) {
         }
     }
 
-    // Email messages projected onto this timeline. A contact-linked timeline reads
-    // by contact_id (EMAIL-TIMELINE-001 §6). A CONTACTLESS conv-id timeline
-    // (YELP-TIMELINE-DEDUP-001) has no contact, so it reads by timeline_id — its
-    // email_messages carry contact_id NULL, timeline_id set. Both queries are
-    // company-scoped and filter on on_timeline = true; the row shape is identical.
-    let emailMessages = [];
-    const emailCompanyId = tenantCompanyId(req);
-    if (emailCompanyId && (contact?.id || timeline?.id)) {
-        try {
-            const emailRows = contact?.id
-                ? await emailQueries.getTimelineEmailByContact(emailCompanyId, contact.id)
-                : await emailQueries.getTimelineEmailByTimeline(emailCompanyId, timeline.id);
-            emailMessages = emailRows.map(projectEmailRow);
-        } catch (err) {
-            console.error('[Pulse] timeline email query error:', err.message);
-        }
-    }
-
-    // Surface ALL of the contact's email addresses so the Pulse composer's "To"
-    // dropdown can offer each one (EMAIL-TIMELINE-001 / TASK-ET-14). Union of the
-    // primary contacts.email + contact_emails rows, deduped, primary first.
-    let contactOut = contact || null;
-    if (contact?.id) {
-        try {
-            const contactEmails = await contactsService.getContactEmails(contact.id, contact.email);
-            contactOut = { ...contact, contact_emails: contactEmails };
-        } catch (err) {
-            console.error('[Pulse] contact emails query error:', err.message);
-        }
-    }
-
     res.json({
         calls, messages, conversations,
-        email_messages: emailMessages,
         financial_events: financialEvents,
         timeline_id: timeline?.id || null,
-        // YELP-TIMELINE-DEDUP-001: label + badge for a contactless conv-id timeline
-        // (contact is NULL, so the header falls back to these).
-        display_name: timeline?.display_name || null,
-        external_source: timeline?.external_source || null,
-        contact: contactOut,
+        contact: contact || null,
     });
 }
 
@@ -832,9 +448,6 @@ router.post('/ensure-timeline', async (req, res) => {
                 [contactId, companyId]
             );
             if (existing.rows[0]) {
-                // Heal a shadow orphan on this contact's number(s) whose open
-                // task the Pulse dedup would hide (ORPHAN-TASK-REHOME-001).
-                await queries.reassignShadowOrphanOpenTasks(existing.rows[0].id, contactId, companyId);
                 return res.json({
                     timelineId: existing.rows[0].id,
                     contactId,
@@ -870,9 +483,6 @@ router.post('/ensure-timeline', async (req, res) => {
                             `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now() WHERE id = $2`,
                             [contactId, orphan.rows[0].id]
                         );
-                        // Re-home an open task stranded on a SECOND shadow orphan
-                        // (the contact's other number) onto this adopted row.
-                        await queries.reassignShadowOrphanOpenTasks(orphan.rows[0].id, contactId, companyId);
                         console.log(`[Pulse] ensure-timeline: adopted orphan timeline ${orphan.rows[0].id} for contact ${contactId}`);
                         return res.json({
                             timelineId: orphan.rows[0].id,

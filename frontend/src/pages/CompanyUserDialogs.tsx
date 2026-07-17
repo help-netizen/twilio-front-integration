@@ -1,10 +1,8 @@
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogPanelHeader, DialogPanelFooter } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { FloatingField } from '../components/ui/floating-field';
-import { FloatingSelect } from '../components/ui/floating-select';
 import { Switch } from '../components/ui/switch';
 import { Copy, Link2, Unlink } from 'lucide-react';
 import { toast } from 'sonner';
@@ -35,7 +33,7 @@ function ZenbookerLinkField({ value, onChange }: { value: string | null; onChang
     const linkedName = roster?.find(m => m.id === value)?.name;
 
     return (
-        <div className="space-y-2 rounded-xl p-3" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
+        <div className="space-y-2 rounded-xl p-3" style={{ background: 'rgba(117, 106, 89, 0.04)' }}>
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <span className={`inline-block size-2 rounded-full ${linked ? 'bg-green-500' : 'bg-amber-400'}`} />
@@ -78,7 +76,7 @@ function ZenbookerLinkField({ value, onChange }: { value: string | null; onChang
                     </Select>
                     <p className="text-[12px] text-muted-foreground">
                         {linked
-                            ? 'Jobs assigned to this provider in Zenbooker are visible to this user.'
+                            ? 'Jobs assigned to this technician in Zenbooker are visible to this user.'
                             : 'Without a link, a provider with "assigned jobs only" sees no jobs.'}
                     </p>
                 </>
@@ -92,55 +90,31 @@ interface CreateDialogProps { open: boolean; setOpen: (v: boolean) => void; crea
 export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, creating, tempPassword, setTempPassword, handleCreate }: CreateDialogProps) {
     return (
         <Dialog open={open} onOpenChange={o => { if (!o) setTempPassword(null); setOpen(o); }}>
-            <DialogContent variant="panel">
-                <DialogPanelHeader>
-                    <DialogTitle
-                        className="text-[22px] font-semibold leading-tight"
-                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                    >
-                        {tempPassword ? 'User created' : 'Add new user'}
-                    </DialogTitle>
-                    <DialogDescription className="sr-only">{tempPassword ? 'Share the temporary password with the user. It will only be shown once.' : 'The user will receive a temporary password and must change it on first login.'}</DialogDescription>
-                </DialogPanelHeader>
-
+            <DialogContent>
+                <DialogHeader><DialogTitle>{tempPassword ? 'User Created' : 'Add New User'}</DialogTitle><DialogDescription>{tempPassword ? 'Share the temporary password with the user. It will only be shown once.' : 'The user will receive a temporary password and must change it on first login.'}</DialogDescription></DialogHeader>
                 {tempPassword ? (
-                    <>
-                        <DialogBody className="md:px-8 md:py-7">
-                            <div className="mx-auto w-full max-w-[740px] space-y-6">
-                                <div className="rounded-xl p-4" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
-                                    <div className="blanc-eyebrow">Temporary password</div>
-                                    <div className="flex items-center gap-2 mt-1"><code className="text-lg font-mono font-semibold flex-1">{tempPassword}</code><Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(tempPassword); toast.success('Copied!'); }}><Copy className="size-4" /></Button></div>
-                                    <p className="text-[12px] text-muted-foreground mt-2">Share the temporary password with the user. It will only be shown once.</p>
-                                </div>
-                            </div>
-                        </DialogBody>
-                        <DialogPanelFooter>
-                            <Button onClick={() => { setOpen(false); setTempPassword(null); }}>Done</Button>
-                        </DialogPanelFooter>
-                    </>
+                    <div className="space-y-4 py-2">
+                        <div className="rounded-lg border bg-muted/50 p-4"><Label className="text-xs text-muted-foreground">Temporary Password</Label><div className="flex items-center gap-2 mt-1"><code className="text-lg font-mono font-semibold flex-1">{tempPassword}</code><Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(tempPassword); toast.success('Copied!'); }}><Copy className="size-4" /></Button></div></div>
+                        <DialogFooter><Button onClick={() => { setOpen(false); setTempPassword(null); }}>Done</Button></DialogFooter>
+                    </div>
                 ) : (
-                    <>
-                        <DialogBody className="md:px-8 md:py-7">
-                            <div className="mx-auto w-full max-w-[740px] space-y-6">
-                                <div className="space-y-3.5">
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                        <FloatingField id="user-name" label="Full name" value={createForm.full_name} onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))} />
-                                        <FloatingField id="user-email" label="Email" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
-                                    </div>
-                                    <FloatingSelect label="System role" value={createForm.role_key} onValueChange={v => setCreateForm(f => ({ ...f, role_key: v }))}>
-                                        <SelectItem value="tenant_admin">Admin</SelectItem>
-                                        <SelectItem value="manager">Manager</SelectItem>
-                                        <SelectItem value="dispatcher">Dispatcher</SelectItem>
-                                        <SelectItem value="provider">Field Provider</SelectItem>
-                                    </FloatingSelect>
-                                </div>
-                            </div>
-                        </DialogBody>
-                        <DialogPanelFooter>
-                            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-                            <Button onClick={handleCreate} disabled={creating}>{creating ? 'Creating…' : 'Create user'}</Button>
-                        </DialogPanelFooter>
-                    </>
+                    <div className="space-y-4 py-2">
+                        <div className="space-y-2"><Label htmlFor="user-name">Full Name *</Label><Input id="user-name" placeholder="John Doe" value={createForm.full_name} onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))} /></div>
+                        <div className="space-y-2"><Label htmlFor="user-email">Email *</Label><Input id="user-email" type="email" placeholder="john@company.com" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} /></div>
+                        <div className="space-y-2">
+                            <Label>System Role</Label>
+                            <Select value={createForm.role_key} onValueChange={v => setCreateForm(f => ({ ...f, role_key: v }))}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="tenant_admin">Admin</SelectItem>
+                                    <SelectItem value="manager">Manager</SelectItem>
+                                    <SelectItem value="dispatcher">Dispatcher</SelectItem>
+                                    <SelectItem value="provider">Field Provider</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={handleCreate} disabled={creating}>{creating ? 'Creating…' : 'Create User'}</Button></DialogFooter>
+                    </div>
                 )}
             </DialogContent>
         </Dialog>
@@ -162,38 +136,27 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogContent variant="panel">
-                <DialogPanelHeader>
-                    <DialogTitle
-                        className="text-[22px] font-semibold leading-tight"
-                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                    >
-                        Edit user profile
-                    </DialogTitle>
-                    <DialogDescription className="sr-only">
-                        Update role and operational settings for {user.full_name}.
+            <DialogContent className="max-w-xl">
+                <DialogHeader>
+                    <DialogTitle>Edit User Profile</DialogTitle>
+                    <DialogDescription>
+                        Update role and operational settings for <strong>{user.full_name}</strong>.
                     </DialogDescription>
-                </DialogPanelHeader>
-
-                <DialogBody className="md:px-8 md:py-7">
-                  <div className="mx-auto w-full max-w-[740px] space-y-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                        {/* Role */}
-                        <FloatingSelect label="Role" value={form.role_key} onValueChange={v => setForm(f => ({ ...f, role_key: v }))}>
-                            <SelectItem value="tenant_admin">Admin</SelectItem>
-                            <SelectItem value="manager">Manager</SelectItem>
-                            <SelectItem value="dispatcher">Dispatcher</SelectItem>
-                            <SelectItem value="provider">Field Provider</SelectItem>
-                        </FloatingSelect>
-
-                        {/* Schedule color — native color picker, kept as a labeled control */}
-                        <div className="space-y-2">
-                            <div className="blanc-eyebrow">Schedule color</div>
-                            <div className="flex items-center gap-3">
-                                <Input type="color" className="w-14 h-9 p-1 cursor-pointer bg-transparent" value={form.schedule_color} onChange={e => setForm(f => ({ ...f, schedule_color: e.target.value }))} />
-                                <div className="text-sm font-mono text-muted-foreground uppercase">{form.schedule_color}</div>
-                            </div>
-                        </div>
+                </DialogHeader>
+                
+                <div className="space-y-6 py-4">
+                    {/* Role Selection */}
+                    <div className="space-y-2">
+                        <div className="blanc-eyebrow">Role</div>
+                        <Select value={form.role_key} onValueChange={v => setForm(f => ({ ...f, role_key: v }))}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="tenant_admin">Admin</SelectItem>
+                                <SelectItem value="manager">Manager</SelectItem>
+                                <SelectItem value="dispatcher">Dispatcher</SelectItem>
+                                <SelectItem value="provider">Field Provider</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
 
                     <div className="space-y-4">
@@ -238,15 +201,22 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                             <Switch checked={form.call_masking_enabled} onCheckedChange={v => setForm(f => ({ ...f, call_masking_enabled: v }))} />
                         </div>
                     </div>
-                  </div>
-                </DialogBody>
 
-                <DialogPanelFooter>
-                    <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+                    <div className="space-y-2">
+                        <div className="blanc-eyebrow">Schedule color</div>
+                        <div className="flex items-center gap-3">
+                            <Input type="color" className="w-14 h-9 p-1 cursor-pointer" value={form.schedule_color} onChange={e => setForm(f => ({ ...f, schedule_color: e.target.value }))} />
+                            <div className="text-sm font-mono text-muted-foreground uppercase">{form.schedule_color}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
                     <Button onClick={handleUpdate} disabled={loading === user.id}>
-                        {loading === user.id ? 'Saving…' : 'Save changes'}
+                        {loading === user.id ? 'Saving…' : 'Save Changes'}
                     </Button>
-                </DialogPanelFooter>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );
@@ -259,7 +229,7 @@ export function ConfirmActionDialog({ confirmDialog, setConfirmDialog }: Confirm
         <Dialog open={confirmDialog.open} onOpenChange={open => setConfirmDialog((prev: any) => ({ ...prev, open }))}>
             <DialogContent>
                 <DialogHeader><DialogTitle>{confirmDialog.title}</DialogTitle><DialogDescription>{confirmDialog.description}</DialogDescription></DialogHeader>
-                <DialogFooter><Button variant="ghost" onClick={() => setConfirmDialog((prev: any) => ({ ...prev, open: false }))}>Cancel</Button><Button variant="destructive" onClick={confirmDialog.onConfirm}>Confirm</Button></DialogFooter>
+                <DialogFooter><Button variant="outline" onClick={() => setConfirmDialog((prev: any) => ({ ...prev, open: false }))}>Cancel</Button><Button variant="destructive" onClick={confirmDialog.onConfirm}>Confirm</Button></DialogFooter>
             </DialogContent>
         </Dialog>
     );

@@ -1,28 +1,111 @@
-/* ─── Lead Form Settings — sortable rows ──────────────────────────────────────
-   The page skeleton is SettingsPageShell/SettingsSection (UI-AUDIT-001 W4);
-   list wrappers and forms are inline Tailwind on the page. Only the shared
-   sortable row / field-badge / tag styles used by Sortable*.tsx remain here. */
+/* ─── Lead Form Settings Page ─────────────────────────────────────────────── */
+.lfsp-page {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.lfsp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 32px;
+}
+
+.lfsp-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: #111;
+    margin: 0 0 4px;
+}
+
+.lfsp-subtitle {
+    font-size: 14px;
+    color: #888;
+    margin: 0;
+}
+
+/* Save button */
+.lfsp-save-btn {
+    padding: 8px 24px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    color: #888;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: not-allowed;
+    transition: all 0.2s;
+}
+
+.lfsp-save-btn.lfsp-save-dirty {
+    background: #2563eb;
+    color: #fff;
+    border-color: #2563eb;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3);
+}
+
+.lfsp-save-btn.lfsp-save-dirty:hover {
+    background: #1d4ed8;
+}
+
+.lfsp-save-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Section */
+.lfsp-section {
+    margin-bottom: 40px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 24px;
+}
+
+.lfsp-section-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #111;
+    margin: 0 0 4px;
+}
+
+.lfsp-section-desc {
+    font-size: 13px;
+    color: #888;
+    margin: 0 0 16px;
+}
+
+/* Sortable list */
+.lfsp-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
 
 .lfsp-sortable-item {
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 10px 14px;
-    background: var(--blanc-surface-strong);
-    border: 1px solid var(--blanc-line);
-    border-radius: 10px;
-    transition: border-color 0.15s;
+    background: #fafbfc;
+    border: 1px solid #f0f0f0;
+    border-radius: 8px;
+    transition: box-shadow 0.15s, border-color 0.15s;
 }
 
 .lfsp-sortable-item:hover {
-    border-color: var(--blanc-line-strong);
+    border-color: #d1d5db;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
 .lfsp-drag-handle {
     cursor: grab;
-    color: var(--blanc-ink-3);
-    display: inline-flex;
-    align-items: center;
+    color: #bbb;
+    font-size: 16px;
     user-select: none;
     flex-shrink: 0;
 }
@@ -35,33 +118,30 @@
     flex: 1;
     font-size: 14px;
     font-weight: 500;
-    color: var(--blanc-ink-2);
+    color: #374151;
 }
 
 .lfsp-remove-btn {
     background: none;
     border: none;
     cursor: pointer;
-    color: var(--blanc-ink-3);
-    display: inline-flex;
-    align-items: center;
+    font-size: 14px;
     padding: 2px 6px;
-    border-radius: 8px;
-    opacity: 0.6;
-    transition: opacity 0.15s, background 0.15s, color 0.15s;
+    border-radius: 4px;
+    opacity: 0.5;
+    transition: opacity 0.15s, background 0.15s;
     flex-shrink: 0;
 }
 
 .lfsp-remove-btn:hover {
     opacity: 1;
-    color: var(--blanc-danger);
-    background: rgba(212, 77, 60, 0.1);
+    background: #fee2e2;
 }
 
 /* Field item layout */
 .lfsp-field-item {
     display: grid;
-    grid-template-columns: 24px 1fr 90px auto 32px;
+    grid-template-columns: 24px 1fr 1fr 90px auto 32px;
     gap: 10px;
     align-items: center;
 }
@@ -69,7 +149,19 @@
 .lfsp-field-display {
     font-size: 14px;
     font-weight: 500;
-    color: var(--blanc-ink-2);
+    color: #374151;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lfsp-field-api {
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+    color: #6b7280;
+    background: #f3f4f6;
+    padding: 2px 8px;
+    border-radius: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -78,10 +170,10 @@
 .lfsp-field-type-badge {
     font-size: 11px;
     font-weight: 600;
-    color: var(--blanc-ink-2);
-    background: rgba(25, 25, 25, 0.05);
+    color: #6366f1;
+    background: #eef2ff;
     padding: 3px 10px;
-    border-radius: 10px;
+    border-radius: 12px;
     text-align: center;
     white-space: nowrap;
 }
@@ -91,7 +183,7 @@
     font-size: 11px;
     font-weight: 600;
     padding: 3px 10px;
-    border-radius: 10px;
+    border-radius: 12px;
     border: none;
     cursor: pointer;
     white-space: nowrap;
@@ -100,22 +192,22 @@
 }
 
 .lfsp-searchable-pill.lfsp-searchable-on {
-    background: rgba(25, 25, 25, 0.05);
-    color: var(--blanc-ink-2);
+    background: #dcfce7;
+    color: #16a34a;
 }
 
 .lfsp-searchable-pill.lfsp-searchable-on:hover:not(:disabled) {
-    background: rgba(25, 25, 25, 0.08);
+    background: #bbf7d0;
 }
 
 .lfsp-searchable-pill.lfsp-searchable-off {
-    background: rgba(25, 25, 25, 0.04);
-    color: var(--blanc-ink-3);
+    background: #f3f4f6;
+    color: #9ca3af;
 }
 
 .lfsp-searchable-pill.lfsp-searchable-off:hover:not(:disabled) {
-    background: rgba(25, 25, 25, 0.07);
-    color: var(--blanc-ink-2);
+    background: #e5e7eb;
+    color: #6b7280;
 }
 
 .lfsp-searchable-pill:disabled {
@@ -123,31 +215,144 @@
     cursor: not-allowed;
 }
 
-.lfsp-lock {
-    color: var(--blanc-ink-3);
-    display: inline-flex;
+/* Searchable checkbox in add-field form */
+.lfsp-searchable-checkbox {
+    display: flex;
     align-items: center;
-    justify-content: center;
-    opacity: 0.6;
+    gap: 6px;
+    font-size: 13px;
+    color: #374151;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.lfsp-searchable-checkbox input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: #2563eb;
+    cursor: pointer;
+}
+
+.lfsp-lock {
+    font-size: 14px;
+    text-align: center;
+    opacity: 0.4;
     flex-shrink: 0;
 }
 
-/* Inline input — reused by the tag rename field inside SortableTag */
+/* Add row */
+.lfsp-add-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
 .lfsp-input {
     flex: 1;
     padding: 8px 12px;
-    border: 1px solid var(--blanc-line);
-    border-radius: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
     font-size: 14px;
-    background: var(--blanc-surface-strong);
-    color: var(--blanc-ink-1);
     outline: none;
     transition: border-color 0.15s;
 }
 
 .lfsp-input:focus {
-    border-color: var(--blanc-job);
-    box-shadow: 0 0 0 3px rgba(47, 99, 216, 0.12);
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.lfsp-add-btn {
+    padding: 8px 16px;
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.lfsp-add-btn:hover {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+}
+
+.lfsp-cancel-btn {
+    padding: 8px 12px;
+    background: none;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.lfsp-cancel-btn:hover {
+    background: #f9fafb;
+}
+
+/* New field form — two rows */
+.lfsp-new-field-form {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 14px;
+}
+
+/* New field row — inputs */
+.lfsp-new-field-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.lfsp-new-field-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.lfsp-new-field-buttons {
+    display: flex;
+    gap: 6px;
+}
+
+.lfsp-api-preview {
+    min-width: 140px;
+    padding: 8px 12px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+    color: #6b7280;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lfsp-select {
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+    background: #fff;
+    cursor: pointer;
+    min-width: 130px;
+}
+
+.lfsp-select:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 /* ─── Job Tags ────────────────────────────────────────────────────────────── */
@@ -159,7 +364,7 @@
 
 .lfsp-tag-archived {
     opacity: 0.55;
-    background: rgba(25, 25, 25, 0.03);
+    background: #f9fafb;
 }
 
 .lfsp-tag-color-wrapper {
@@ -188,10 +393,11 @@
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 4px;
-    background: var(--blanc-surface-strong);
-    border: 1px solid var(--blanc-line);
-    border-radius: 10px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
     padding: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
     z-index: 100;
     min-width: 110px;
 }
@@ -201,7 +407,7 @@
     height: 22px;
     border-radius: 50%;
     cursor: pointer;
-    transition: transform 0.1s;
+    transition: transform 0.1s, box-shadow 0.1s;
     padding: 0;
 }
 
@@ -210,14 +416,14 @@
 }
 
 .lfsp-swatch-active {
-    box-shadow: 0 0 0 2px var(--blanc-surface-strong), 0 0 0 4px var(--blanc-job);
+    box-shadow: 0 0 0 2px #fff, 0 0 0 4px #2563eb;
 }
 
 .lfsp-tag-badge-preview {
     display: inline-flex;
     align-items: center;
     padding: 2px 10px;
-    border-radius: 10px;
+    border-radius: 12px;
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
@@ -231,7 +437,7 @@
 }
 
 .lfsp-tag-name-editable:hover {
-    border-bottom-color: var(--blanc-line-strong);
+    border-bottom-color: #93c5fd;
 }
 
 .lfsp-tag-name-input {
@@ -243,11 +449,26 @@
 .lfsp-tag-archived-label {
     font-size: 10px;
     font-weight: 600;
-    color: var(--blanc-ink-3);
-    background: rgba(25, 25, 25, 0.05);
+    color: #9ca3af;
+    background: #f3f4f6;
     padding: 2px 8px;
     border-radius: 10px;
     text-transform: uppercase;
     letter-spacing: 0.3px;
     flex-shrink: 0;
+}
+
+.lfsp-tag-add-row {
+    align-items: center;
+}
+
+.lfsp-tag-new-palette {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+}
+
+.lfsp-swatch-small {
+    width: 18px;
+    height: 18px;
 }

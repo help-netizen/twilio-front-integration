@@ -20,19 +20,12 @@ function createGmailClient(accessToken) {
 
 // ─── MIME helpers ────────────────────────────────────────────────────────
 
-function buildMimeMessage({ from, to, cc, subject, body, textBody, inReplyTo, references, files }) {
+function buildMimeMessage({ from, to, cc, subject, body, inReplyTo, references, files }) {
     const boundary = `blanc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const hasAttachments = files && files.length > 0;
-    // YELP-REPLY-FORMAT-001: when a plain-text alternative is supplied, the body is a
-    // multipart/alternative [text/plain, text/html] pair — some reply-by-email parsers
-    // (Yelp) cannot handle a lone text/html part. Absent textBody nothing changes.
-    const hasAlternative = textBody != null && textBody !== '';
-    const altBoundary = `blanc_alt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const contentType = hasAttachments
         ? `multipart/mixed; boundary="${boundary}"`
-        : hasAlternative
-            ? `multipart/alternative; boundary="${altBoundary}"`
-            : 'text/html; charset=utf-8';
+        : 'text/html; charset=utf-8';
 
     const headers = [
         `From: ${from}`,
@@ -45,28 +38,13 @@ function buildMimeMessage({ from, to, cc, subject, body, textBody, inReplyTo, re
     if (references) headers.push(`References: ${references}`);
     headers.push(`Content-Type: ${contentType}`);
 
-    // The [text/plain, text/html] alternative pair (used bare or nested in mixed).
-    const alternativePart =
-        `--${altBoundary}\r\n` +
-        `Content-Type: text/plain; charset=utf-8\r\n\r\n` +
-        `${textBody}\r\n\r\n` +
-        `--${altBoundary}\r\n` +
-        `Content-Type: text/html; charset=utf-8\r\n\r\n` +
-        `${body}\r\n\r\n` +
-        `--${altBoundary}--\r\n`;
-
     let message = headers.join('\r\n') + '\r\n\r\n';
 
     if (hasAttachments) {
-        // Body part (the alternative pair when textBody is present, lone html otherwise)
+        // Body part
         message += `--${boundary}\r\n`;
-        if (hasAlternative) {
-            message += `Content-Type: multipart/alternative; boundary="${altBoundary}"\r\n\r\n`;
-            message += alternativePart + '\r\n';
-        } else {
-            message += `Content-Type: text/html; charset=utf-8\r\n\r\n`;
-            message += body + '\r\n\r\n';
-        }
+        message += `Content-Type: text/html; charset=utf-8\r\n\r\n`;
+        message += body + '\r\n\r\n';
 
         // Attachment parts
         for (const file of files) {
@@ -78,8 +56,6 @@ function buildMimeMessage({ from, to, cc, subject, body, textBody, inReplyTo, re
         }
 
         message += `--${boundary}--\r\n`;
-    } else if (hasAlternative) {
-        message += alternativePart;
     } else {
         message += body;
     }
@@ -89,7 +65,7 @@ function buildMimeMessage({ from, to, cc, subject, body, textBody, inReplyTo, re
 
 // ─── Send new email ──────────────────────────────────────────────────────
 
-async function sendEmail(companyId, { to, cc, subject, body, textBody, files, userId, userEmail, inReplyTo, references, threadId }) {
+async function sendEmail(companyId, { to, cc, subject, body, files, userId, userEmail }) {
     const accessToken = await emailMailboxService.getValidAccessToken(companyId);
     const mailboxData = await emailQueries.getMailboxWithTokens(companyId);
 
@@ -109,18 +85,12 @@ async function sendEmail(companyId, { to, cc, subject, body, textBody, files, us
         cc,
         subject,
         body,
-        textBody,
         files,
-        inReplyTo,
-        references,
     });
 
     const sendRes = await gmail.users.messages.send({
         userId: 'me',
-        // When threadId is supplied (e.g. a Yelp relay reply), send INSIDE the
-        // original Gmail thread; combined with In-Reply-To/References this makes
-        // the reply a proper MIME reply that Yelp's reply-by-email can parse.
-        requestBody: threadId ? { raw, threadId } : { raw },
+        requestBody: { raw },
     });
 
     const sentMessageId = sendRes.data.id;

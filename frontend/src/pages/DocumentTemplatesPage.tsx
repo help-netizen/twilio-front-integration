@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { listTemplates } from '../services/documentTemplatesApi';
 import type { DocumentTemplate } from '../types/documentTemplates';
-import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 
 const DOCUMENT_TYPE_LABELS: Record<string, string> = {
     estimate: 'Estimate',
@@ -34,10 +33,10 @@ export default function DocumentTemplatesPage() {
     }, []);
 
     return (
-        <SettingsPageShell
-            title="Document Templates"
-            description="Customize estimates, invoices, and work orders"
-        >
+        <div className="p-6 max-w-3xl">
+            <h2 className="text-2xl font-heading mb-1">Document Templates</h2>
+            <p className="blanc-eyebrow mb-6">Customize estimates, invoices, and work orders</p>
+
             {loading && <div className="text-sm text-[color:var(--blanc-ink-3)]">Loading…</div>}
             {error && <div className="text-sm text-[color:var(--blanc-danger,#be123c)]">{error}</div>}
 
@@ -71,6 +70,6 @@ export default function DocumentTemplatesPage() {
                     ))}
                 </div>
             )}
-        </SettingsPageShell>
+        </div>
     );
 }

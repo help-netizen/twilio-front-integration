@@ -10,19 +10,11 @@ import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { RouteConnector } from './RouteConnector';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import { overlapsTimeOff } from '../../services/scheduleApi';
-import { filterTimeOffByProviders } from '../../services/scheduleFilters';
-import type { ScheduleItem, DispatchSettings, RouteSegment, TimeOffBlock } from '../../services/scheduleApi';
+import type { ScheduleItem, DispatchSettings, RouteSegment } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
-import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../../utils/companyTime';
+import { todayInTZ, dateKeyInTZ, dateInTZ } from '../../utils/companyTime';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
 import { getProviderColor } from '../../utils/providerColors';
-import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '../ui/dialog';
-import { Button } from '../ui/button';
-
-// TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
-// separate non-interactive layer alongside the job cards.
-const TIME_OFF_BG = 'repeating-linear-gradient(135deg, rgba(25, 25, 25, 0.04) 0 10px, rgba(25, 25, 25, 0.08) 10px 20px)';
 
 function parseTime(t: string): number {
     const [h, m] = t.split(':').map(Number);
@@ -35,14 +27,9 @@ interface TimelineWeekViewProps {
     settings: DispatchSettings;
     allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
-    onCopy?: (jobId: number) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => void;
     routeByPair?: Map<string, RouteSegment>;
-    /** TECH-DAYOFF-001: day-off blocks for the visible range (grey cell strips + DnD warning). */
-    timeOff?: TimeOffBlock[];
-    /** TECH-DAYOFF-002: active provider filter — rendered time-off strips honor it (DnD warnings don't). */
-    providerFilterIds?: string[];
 }
 
 interface ProviderGroup {
@@ -52,7 +39,7 @@ interface ProviderGroup {
 }
 
 export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, onCreateFromSlot, routeByPair, timeOff, providerFilterIds,
+    currentDate, items, settings, allProviders = [], onSelectItem, onReassign, onCreateFromSlot, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -70,10 +57,6 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
         providerName?: string;
     } | null>(null);
     const placeholderRef = useRef<HTMLDivElement>(null);
-
-    // TECH-DAYOFF-001 S-11: a drop that lands on the target technician's time
-    // off is parked here until the dispatcher confirms (warning-only, never a block).
-    const [pendingDrop, setPendingDrop] = useState<{ techName: string; period: string; proceed: () => void } | null>(null);
 
     // Close placeholder on outside click / Esc
     useEffect(() => {
@@ -140,34 +123,8 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
         if (!data || !onReassign) return;
         const assigneeId = group.id === '__unassigned' ? null : group.id;
         const assigneeName = group.id === '__unassigned' ? undefined : group.label;
-
-        // The existing reassign path, byte-for-byte — either runs immediately
-        // (no conflict) or after the dispatcher confirms.
-        const proceed = () => {
-            onReassign(data.entityType, data.entityId, assigneeId, assigneeName, data.title);
-        };
-
-        // TECH-DAYOFF-001 S-11: this view reassigns without changing the time,
-        // so the checked interval is the item's CURRENT start/end against the
-        // target lane technician's time off (blocks in memory, 0 requests).
-        const item = items.find(i => i.entity_type === data.entityType && i.entity_id === data.entityId);
-        const startIso = item?.start_at ?? null;
-        const endIso = item?.end_at
-            ?? (startIso ? new Date(new Date(startIso).getTime() + data.durationMin * 60000).toISOString() : null);
-        const conflicts = (group.id === '__unassigned' || !startIso || !endIso)
-            ? []
-            : overlapsTimeOff(timeOff ?? [], [group.id], startIso, endIso);
-        if (conflicts.length > 0) {
-            const c = conflicts[0];
-            setPendingDrop({
-                techName: c.technician_name,
-                period: `${formatDateTimeInTZ(new Date(c.starts_at), tz)} – ${formatDateTimeInTZ(new Date(c.ends_at), tz)}`,
-                proceed,
-            });
-            return;
-        }
-        proceed();
-    }, [onReassign, items, timeOff, tz]);
+        onReassign(data.entityType, data.entityId, assigneeId, assigneeName, data.title);
+    }, [onReassign]);
 
     // ── Slot click for create-from-slot ────────────────────────────────────
 
@@ -194,15 +151,14 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
     const gridCols = `140px repeat(${colCount}, minmax(140px, 1fr))`;
 
     return (
-        <>
-        {/* PALETTE-V2 + LAYOUT-CANON: сетка = один белый контентный юнит (как таблица
-            Jobs) — опаковый белый, hairline, r16; frosted-стекло/тень/blur сняты. */}
         <div
             className="flex flex-col flex-1 overflow-x-auto"
             style={{
-                background: 'var(--blanc-surface-strong)',
-                border: '1px solid var(--sched-line)',
-                borderRadius: 'var(--sched-radius-md)',
+                background: 'var(--sched-surface)',
+                border: '1px solid rgba(255, 255, 255, 0.55)',
+                borderRadius: 'var(--sched-radius-xl)',
+                boxShadow: 'var(--sched-shadow-main)',
+                backdropFilter: 'blur(24px)',
             }}
         >
             {/* Header row: corner + provider names */}
@@ -211,7 +167,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                 style={{
                     gridTemplateColumns: gridCols,
                     borderBottom: '1px solid var(--sched-line)',
-                    background: 'var(--blanc-surface-strong)',
+                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))',
                 }}
             >
                 {/* Corner cell */}
@@ -264,13 +220,6 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                 const dayKey = dayKeys[dayIdx];
                 const isToday = dayKey === todayStr;
 
-                // TECH-DAYOFF-001 S-9: this company-local day as UTC instants —
-                // used to pick and clip the day-off strips for each cell.
-                const [cy, cm, cd] = dayKey.split('-').map(Number);
-                const dayStartUtc = dateInTZ(cy, cm, cd, 0, 0, tz);
-                const nextUtcDay = new Date(Date.UTC(cy, cm - 1, cd + 1));
-                const dayEndUtc = dateInTZ(nextUtcDay.getUTCFullYear(), nextUtcDay.getUTCMonth() + 1, nextUtcDay.getUTCDate(), 0, 0, tz);
-
                 return (
                     <div
                         key={dayKey}
@@ -279,7 +228,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                             gridTemplateColumns: gridCols,
                             minHeight: '80px',
                             borderBottom: '1px solid var(--sched-line)',
-                            background: isToday ? 'rgba(231, 219, 253, 0.18)' : 'transparent',
+                            background: isToday ? 'rgba(255, 247, 231, 0.4)' : 'transparent',
                         }}
                     >
                         {/* Day label */}
@@ -318,29 +267,6 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                     onDragLeave={() => setDropHighlightCol(null)}
                                     onClick={(e) => handleSlotClick(dayKey, group, e)}
                                 >
-                                    {/* Time-off strips (TECH-DAYOFF-001 S-9, INV-10) — grey,
-                                        non-interactive; a multi-day period shows this day's slice. */}
-                                    {group.id !== '__unassigned' && filterTimeOffByProviders(timeOff ?? [], providerFilterIds)
-                                        .filter(b => b.technician_id === group.id
-                                            && new Date(b.starts_at) < dayEndUtc
-                                            && dayStartUtc < new Date(b.ends_at))
-                                        .map(b => {
-                                            const bs = new Date(b.starts_at);
-                                            const be = new Date(b.ends_at);
-                                            const allDay = bs <= dayStartUtc && be >= dayEndUtc;
-                                            const from = bs <= dayStartUtc ? dayStartUtc : bs;
-                                            const to = be >= dayEndUtc ? dayEndUtc : be;
-                                            return (
-                                                <div
-                                                    key={`timeoff-${b.id}`}
-                                                    className="rounded-md px-2 py-1 text-[11px] font-medium truncate pointer-events-none select-none"
-                                                    style={{ background: TIME_OFF_BG, color: 'var(--sched-ink-3)' }}
-                                                >
-                                                    Time off{allDay ? '' : ` · ${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
-                                                </div>
-                                            );
-                                        })}
-
                                     {cellItems.map((item, itemIdx) => {
                                         const isDraggable = item.entity_type !== 'lead';
                                         let durationMin = 60;
@@ -373,7 +299,6 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                                         item={item}
                                                         compact
                                                         onClick={onSelectItem}
-                                                        onCopy={onCopy}
                                                         timezone={tz}
                                                     />
                                                 </div>
@@ -409,24 +334,5 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                 );
             })}
         </div>
-
-        {/* TECH-DAYOFF-001 S-11: DnD-onto-time-off confirmation — center modal
-            (canon for short confirmations). Cancel = drop discarded, nothing
-            mutates; Move = the untouched reassign path proceeds. */}
-        <Dialog open={!!pendingDrop} onOpenChange={v => { if (!v) setPendingDrop(null); }}>
-            <DialogContent variant="dialog" size="sm">
-                <DialogHeader>
-                    <DialogTitle>Blocked by time off</DialogTitle>
-                    <DialogDescription>
-                        {pendingDrop && `${pendingDrop.techName} has time off ${pendingDrop.period}. Move anyway?`}
-                    </DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                    <Button variant="ghost" onClick={() => setPendingDrop(null)}>Cancel</Button>
-                    <Button onClick={() => { pendingDrop?.proceed(); setPendingDrop(null); }}>Move</Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-        </>
     );
 };

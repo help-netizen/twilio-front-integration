@@ -1,12 +1,10 @@
-import { ExternalLink, ChevronDown, RotateCcw, MoreVertical, Copy } from 'lucide-react';
+import { ExternalLink, ChevronDown, RotateCcw } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { BLANC_STATUSES, BLANC_STATUS_COLORS } from './jobHelpers';
-import { ONWAY_SOURCE_STATUSES } from './JobStatusTags';
 import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
-import { useAuthz } from '../../hooks/useAuthz';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -16,7 +14,6 @@ interface JobDetailHeaderProps {
     navigate: (path: string) => void;
     onBlancStatusChange: (id: number, s: string) => void;
     onCancel: (id: number) => void;
-    onCopy?: () => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -30,38 +27,27 @@ function hexToRgba(hex: string, alpha: number) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: JobDetailHeaderProps) {
-    const { hasPermission } = useAuthz();
-    const canViewSource = hasPermission('lead_source.view');
+export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange, onCancel }: JobDetailHeaderProps) {
     const { data: fsmData } = useFsmStates('job', true);
     const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : BLANC_STATUSES;
     const initialState = fsmData?.initialState || null;
     const { data: fsmActions } = useFsmActions('job', job.blanc_status);
     const allowedTargets = new Set(fsmActions?.map(a => a.target) || []);
-    // ONWAY-DEDUP-001: JobOpsSection shows the ONWAY-001 CTA (customer-ETA flow)
-    // with this exact predicate. When it's present, drop the plain FSM "On the way"
-    // item here so the panel doesn't offer two "On the way" affordances. Without
-    // messages.send the CTA is absent, so the plain item stays (their only path).
-    const showOnWayCta =
-        ONWAY_SOURCE_STATUSES.includes(job.blanc_status) && hasPermission('messages.send');
-    const reachable = allStatuses.filter(
-        s => s !== job.blanc_status && allowedTargets.has(s) && !(showOnWayCta && s === 'On the way'),
-    );
+    const reachable = allStatuses.filter(s => s !== job.blanc_status && allowedTargets.has(s));
     const unreachable = allStatuses.filter(s => s !== job.blanc_status && !allowedTargets.has(s));
     const canReset = initialState && job.blanc_status !== initialState;
 
-    // Title = the job type (service), matching the list tile (JobMobileCard) so
-    // the card and the list read consistently. The customer stays in the Contact
-    // row below, so the service is no longer duplicated in the eyebrow.
-    const mainTitle = job.service_name || 'Job';
+    const customerName = contactInfo?.name || job.customer_name;
+    const showServiceInEyebrow = !!job.service_name && !!customerName;
+    const mainTitle = customerName || job.service_name || 'Job';
 
     const statusColor = BLANC_STATUS_COLORS[job.blanc_status] || '#9CA3AF';
     const statusBg = hexToRgba(statusColor, 0.1);
 
     return (
         <div className="px-5 pt-5 pb-3">
-            {/* Eyebrow: JOB · #629656 (service moved to the title) */}
-            <div className="mb-2 flex items-start justify-between gap-2 max-md:pr-14">
+            {/* Eyebrow: JOB · #629656 · Dryer */}
+            <div className="mb-2">
                 <span
                     className="text-[10px] font-semibold uppercase tracking-widest inline-flex items-center gap-1.5 select-text"
                     style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.12em' }}
@@ -69,6 +55,17 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
                     Job
                     {(job.job_number || job.id) && (
                         <span className="font-mono">#{job.job_number || job.id}</span>
+                    )}
+                    {showServiceInEyebrow && (
+                        <span style={{
+                                color: 'var(--blanc-ink-3)',
+                                fontWeight: 500,
+                                textTransform: 'none',
+                                letterSpacing: 'normal',
+                                fontSize: 11,
+                            }}>
+                                {job.service_name}
+                        </span>
                     )}
                     {job.zenbooker_job_id && (
                         <span className="inline-flex items-center gap-0.5">
@@ -88,29 +85,9 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
                         </span>
                     )}
                 </span>
-
-                {onCopy && (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <button
-                                type="button"
-                                aria-label="Job actions"
-                                className="inline-flex items-center justify-center transition-opacity hover:opacity-70 -mr-1 -mt-1 shrink-0"
-                                style={{ width: 28, height: 28, borderRadius: 8, color: 'var(--blanc-ink-3)' }}
-                            >
-                                <MoreVertical className="size-4" />
-                            </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={onCopy}>
-                                <Copy className="size-4 mr-2" />Copy job
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                )}
             </div>
 
-            {/* Job type (service) — large heading */}
+            {/* Customer name — large heading */}
             <h2
                 className="text-2xl font-bold leading-tight mb-3"
                 style={{
@@ -119,12 +96,21 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
                     letterSpacing: '-0.03em',
                 }}
             >
-                {mainTitle}
+                {contactInfo ? (
+                    <button
+                        onClick={() => navigate(`/contacts/${contactInfo.id}`)}
+                        className="hover:opacity-70 transition-opacity text-left"
+                    >
+                        {mainTitle}
+                    </button>
+                ) : (
+                    mainTitle
+                )}
             </h2>
 
             {/* Status pill + source — same row, Lead card style */}
             <div className="flex items-center gap-2 flex-wrap">
-                {/* Albusto status — large pill dropdown */}
+                {/* Blanc status — large pill dropdown */}
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <button
@@ -171,7 +157,7 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
                                 <DropdownMenuItem
                                     onClick={() => onBlancStatusChange(job.id, initialState!)}
                                     className="flex items-center gap-2 text-xs font-medium mx-1 mb-1 rounded-md"
-                                    style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)' }}
+                                    style={{ background: 'rgba(117,106,89,0.06)', color: 'var(--blanc-ink-2)' }}
                                 >
                                     <RotateCcw className="size-3" />
                                     Reset to {initialState}
@@ -182,11 +168,11 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
                 </DropdownMenu>
 
                 {/* Source — static pill, same height */}
-                {canViewSource && job.job_source && (
+                {job.job_source && (
                     <span
                         className="inline-flex items-center px-4 text-sm font-medium"
                         style={{
-                            background: 'rgba(25,25,25,0.06)',
+                            background: 'rgba(117,106,89,0.08)',
                             color: 'var(--blanc-ink-2)',
                             border: '1px solid var(--blanc-line)',
                             minHeight: 42,

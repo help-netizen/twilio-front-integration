@@ -1,10 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '../ui/dialog';
-import { BottomSheet } from '../ui/BottomSheet';
-import { useIsMobile } from '../../hooks/useIsMobile';
 import { Button } from '../ui/button';
-import { ChevronLeft, ChevronRight, CalendarIcon, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarIcon } from 'lucide-react';
 import { Calendar } from '../ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { listJobs, updateJobCoords } from '../../services/jobsApi';
@@ -14,8 +11,6 @@ import type { TeamMember } from '../../services/zenbookerApi';
 import { useAuth } from '../../auth/AuthProvider';
 import { dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ } from '../../utils/companyTime';
 import { serverDate, serverNow } from '../../utils/serverClock';
-import { makePinSvg } from '../../utils/mapPins';
-import { fetchSlotRecommendations, type SlotRecommendation } from '../../services/slotRecommendationsApi';
 import './CustomTimeModal.css';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -51,26 +46,6 @@ interface CustomTimeModalProps {
     excludeJobId?: number;
     /** Pre-populate the green badge with an existing timeslot (for reschedule) */
     initialSlot?: { techId: string; start: string; end: string };
-    /**
-     * Preferred technician (e.g. copied from a duplicated job). When set AND no
-     * slot is chosen yet, this tech's lane is visually emphasized ("Preselected")
-     * so the user knows where to pick a time. Does NOT auto-create a slot.
-     */
-    preselectTechId?: string;
-    /**
-     * OUTBOUND-PARTS-CALL-TECHSLOT-001 — scope the RECOMMENDATIONS column to this
-     * one technician (sent as `technician_id` in the recs request). The technician
-     * TIMELINES still show ALL techs, so the dispatcher can override by clicking
-     * any lane. Omitted → all-tech recommendations (new-job flows unchanged).
-     */
-    recommendTechId?: string;
-    /**
-     * OUTBOUND-PARTS-CALL-SLOTPICK-001 — additive header/CTA overrides so the same
-     * modal can front a different flow (e.g. picking the robot call's slot). Both
-     * omitted → byte-identical to the reschedule/new-job callers.
-     */
-    title?: string;
-    confirmLabel?: string;
 }
 
 interface TechGroup {
@@ -106,46 +81,6 @@ function getRelativeDayHint(dateStr: string, tz: string): string | null {
 
 // fmtTime and minutesSinceMidnight are now imported from companyTime.ts
 const fmtTime = formatTimeInTZ;
-
-/** Parse 'HH:MM' → [hour, minute]. Returns null on malformed input. */
-function parseHHMM(s?: string): [number, number] | null {
-    if (!s) return null;
-    const m = s.match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return null;
-    return [Number(m[1]), Number(m[2])];
-}
-
-/**
- * Build company-tz start/end Date objects from a recommendation's date
- * ('YYYY-MM-DD') + time_frame ('HH:MM'). Returns null if either is malformed.
- */
-function recToSlotDates(rec: SlotRecommendation, tz: string): { start: Date; end: Date } | null {
-    const dm = rec.date?.split('-').map(Number);
-    if (!dm || dm.length !== 3 || dm.some(isNaN)) return null;
-    const [y, mo, d] = dm;
-    const startHM = parseHHMM(rec.time_frame?.start);
-    const endHM = parseHHMM(rec.time_frame?.end);
-    if (!startHM || !endHM) return null;
-    return {
-        start: dateInTZ(y, mo, d, startHM[0], startHM[1], tz),
-        end: dateInTZ(y, mo, d, endHM[0], endHM[1], tz),
-    };
-}
-
-/** Fallback reason shown on a rec card when the engine returns no explanation. */
-const REC_FALLBACK_REASON = 'Good fit for this route';
-
-/**
- * Map a recommendation's raw score/confidence to a temperature mini-bar.
- * Pure: reads only `score` (magnitude → fill height) and `confidence` (→ color + label).
- * The tier is the engine's confidence enum — never re-derived from score here.
- */
-function tempFromRec({ score, confidence }: { score: number; confidence: string }): { fillPct: number; colorVar: string; label: string } {
-    const fillPct = Math.max(0, Math.min(Math.round(score), 100));
-    if (confidence === 'high') return { fillPct, colorVar: 'var(--blanc-success, #1b8b63)', label: 'Best match' };
-    if (confidence === 'medium') return { fillPct, colorVar: 'var(--blanc-job, #2f63d8)', label: 'Good fit' };
-    return { fillPct, colorVar: 'var(--blanc-warning, #b26a1d)', label: 'Worth a look' };
-}
 
 function snapToGrid(y: number, containerTop: number): number {
     const offsetY = Math.max(0, y - containerTop);
@@ -211,15 +146,9 @@ interface TechTimelineProps {
     onSelectSlot: (slot: SelectedSlot) => void;
     matchesTerritory: boolean;
     companyTz: string;
-    /** Emphasize this lane as the preselected technician (no slot picked yet) */
-    isSuggested?: boolean;
-    /** Engine recommendations for THIS tech on the selected date (T13 overlay bands) */
-    recsForTech?: SlotRecommendation[];
-    /** Apply a recommendation via the existing pick mechanism */
-    onApplyRec?: (rec: SlotRecommendation) => void;
 }
 
-function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz, isSuggested, recsForTech, onApplyRec }: TechTimelineProps) {
+function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz }: TechTimelineProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [hoverMinutes, setHoverMinutes] = useState<number | null>(null);
 
@@ -254,14 +183,11 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
     const selectedHeight = isSelected ? ((minutesSinceMidnight(selectedSlot!.end, companyTz) - minutesSinceMidnight(selectedSlot!.start, companyTz)) / 60) * HOUR_HEIGHT : 0;
 
     return (
-        <div className={`tech-timeline__col${isSuggested ? ' tech-timeline__col--suggested' : ''}`}>
+        <div className="tech-timeline__col">
             <div
                 ref={containerRef}
                 className="tech-timeline__grid"
-                style={{
-                    height: TOTAL_HOURS * HOUR_HEIGHT,
-                    ...(isSuggested && { border: '2px solid var(--blanc-job)', borderRadius: 8 }),
-                }}
+                style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
                 onClick={handleClick}
@@ -302,33 +228,6 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
                         >
                             <span className="tech-timeline__job-time">{sTime}–{eTime}</span>
                             <span className="tech-timeline__job-name">{job.customer_name}</span>
-                        </div>
-                    );
-                })}
-
-                {/* Recommendation overlay bands (T13) — translucent, clickable */}
-                {recsForTech?.map((rec, i) => {
-                    const dates = recToSlotDates(rec, companyTz);
-                    if (!dates) return null;
-                    const startMin = minutesSinceMidnight(dates.start, companyTz) - HOUR_START * 60;
-                    const endMin = minutesSinceMidnight(dates.end, companyTz) - HOUR_START * 60;
-                    if (endMin <= 0 || startMin >= TOTAL_HOURS * 60) return null; // out of visible range
-                    const top = Math.max(0, (startMin / 60) * HOUR_HEIGHT);
-                    const bottom = Math.min(TOTAL_HOURS * HOUR_HEIGHT, (endMin / 60) * HOUR_HEIGHT);
-                    const height = Math.max(bottom - top, 18);
-                    return (
-                        <div
-                            key={`rec-${rec.rank}-${i}`}
-                            className="tech-timeline__rec-band"
-                            role="button"
-                            tabIndex={0}
-                            style={{ top, height }}
-                            title={`Recommended ${fmtTime(dates.start, companyTz)}–${fmtTime(dates.end, companyTz)}${rec.explanation ? ` · ${rec.explanation}` : ''}`}
-                            aria-label={`Recommended ${fmtTime(dates.start, companyTz)}–${fmtTime(dates.end, companyTz)}`}
-                            onClick={(e) => { e.stopPropagation(); onApplyRec?.(rec); }}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onApplyRec?.(rec); } }}
-                        >
-                            <span className="tech-timeline__rec-band-label">#{rec.rank}</span>
                         </div>
                     );
                 })}
@@ -444,6 +343,16 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
         markersRef.current = [];
     }, []);
 
+    // Create colored SVG marker icon
+    const makePinSvg = useCallback((num: number, color: string) => {
+        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40">
+                <path d="M14 0C6.27 0 0 6.27 0 14c0 10.5 14 26 14 26s14-15.5 14-26C28 6.27 21.73 0 14 0z" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+                <text x="14" y="19" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="Arial">${num}</text>
+            </svg>
+        `);
+    }, []);
+
     // Place markers
     useEffect(() => {
         if (!mapInstanceRef.current) return;
@@ -497,8 +406,8 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
                     });
                     const infoContent = `<div style="font-size:13px;max-width:220px">
                         <div style="font-weight:700;margin-bottom:3px;color:${color}">${group.name} #${num} — ${job.customer_name || `Job #${job.id}`}</div>
-                        ${timeStr ? `<div style="color:#6b7280">${timeStr}</div>` : ''}
-                        ${job.service_name ? `<div style="color:#6b7280">${job.service_name}</div>` : ''}
+                        ${timeStr ? `<div style="color:#6b7280">🕓 ${timeStr}</div>` : ''}
+                        ${job.service_name ? `<div style="color:#6b7280">🔧 ${job.service_name}</div>` : ''}
                         ${job.address ? `<div style="color:#9ca3af;font-size:11px;margin-top:2px">${job.address}</div>` : ''}
                     </div>`;
                     const infoWindow = new google.maps.InfoWindow({ content: infoContent });
@@ -520,7 +429,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
                 mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
             }
         })();
-    }, [jobs, techGroups, resolvedNewJobCoords, clearMarkers, geocodeAddress]);
+    }, [jobs, techGroups, resolvedNewJobCoords, clearMarkers, geocodeAddress, makePinSvg]);
 
     return (
         <div className="ctm-map">
@@ -549,17 +458,9 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId, recommendTechId, title = 'Pick a time', confirmLabel }: CustomTimeModalProps) {
+export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot }: CustomTimeModalProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
-    const navigate = useNavigate();
-
-    // JOB-SLOT-SHEET-001: on mobile the picker lives in the canonical BottomSheet
-    // (the 3-pane desktop dialog can't fit a phone). The map becomes an on-demand
-    // pane there — Times ⇄ Map — instead of permanently eating half the screen.
-    const isMobile = useIsMobile();
-    const [mobilePane, setMobilePane] = useState<'times' | 'map'>('times');
-    useEffect(() => { if (open) setMobilePane('times'); }, [open]);
 
     const getInitialDate = () => {
         if (initialSlot?.start) return new Intl.DateTimeFormat('en-CA', { timeZone: companyTz }).format(new Date(initialSlot.start));
@@ -592,61 +493,13 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const [loading, setLoading] = useState(false);
     const durationMin = newJobDuration || DEFAULT_DURATION_MIN;
 
-    // ── SLOT-ENGINE-001 — recommendations whenever we have a location ──
-    // Works for a new job AND for reschedule/edit (which carry the job's coords).
-    // excludeJobId keeps the job being moved out of the engine's snapshot below.
-    const canRecommend = !!(newJobCoords || newJobAddress);
-    const [recsEnabled, setRecsEnabled] = useState(false);
-    const [recs, setRecs] = useState<SlotRecommendation[]>([]);
-    const [recsLoading, setRecsLoading] = useState(false);
-    const [recsUnavailable, setRecsUnavailable] = useState(false);
-    const [recsCoverage, setRecsCoverage] = useState<{ technicians_total: number; technicians_with_base: number } | null>(null);
-
-    useEffect(() => {
-        if (!open || !canRecommend) return;
-        let cancelled = false;
-        setRecsLoading(true);
-        fetchSlotRecommendations({
-            lat: newJobCoords?.lat,
-            lng: newJobCoords?.lng,
-            address: newJobAddress,
-            duration_minutes: durationMin,
-            territory_id: territoryId,
-            exclude_job_id: excludeJobId,
-            // TECHSLOT-001 — when set, only this tech's windows are recommended
-            // (undefined is stripped by fetchSlotRecommendations → legacy body).
-            technician_id: recommendTechId,
-        })
-            .then(r => {
-                if (!cancelled) {
-                    setRecsEnabled(r.enabled);
-                    setRecs(r.recommendations || []);
-                    setRecsUnavailable(!!r.enabled && r.engine_status === 'unavailable');
-                    setRecsCoverage(r.coverage ?? null);
-                }
-            })
-            .finally(() => { if (!cancelled) setRecsLoading(false); });
-        return () => { cancelled = true; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, canRecommend, newJobCoords?.lat, newJobCoords?.lng, newJobAddress, excludeJobId, recommendTechId]);
-
-    // Apply a recommendation via the EXISTING pick mechanism (setSelectedDate + setSelectedSlot).
-    const applyRecommendation = useCallback((rec: SlotRecommendation) => {
-        const dates = recToSlotDates(rec, companyTz);
-        if (!dates) return;
-        const techId = rec.technicians?.[0]?.id;
-        if (!techId) return;
-        if (rec.date && rec.date !== selectedDate) setSelectedDate(rec.date);
-        setSelectedSlot({ techId, start: dates.start, end: dates.end });
-    }, [companyTz, selectedDate]);
-
     // Fetch providers once
     useEffect(() => {
         let cancelled = false;
         getTeamMembers().then(members => {
             if (!cancelled) setProviders(members);
         }).catch((err) => {
-            if (!cancelled) setProviderError("Couldn't load technicians — try again");
+            if (!cancelled) setProviderError('Failed to load technicians');
             console.error('[CustomTimeModal] getTeamMembers error:', err);
         });
         return () => { cancelled = true; };
@@ -678,41 +531,6 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const techGroups = useMemo(() => buildTechGroups(providers, jobs, territoryId), [providers, jobs, territoryId]);
     const totalPages = Math.max(1, Math.ceil(techGroups.length / 2));
     const visibleTechs = techGroups.slice(techPage * 2, techPage * 2 + 2);
-
-    // Preselected tech (e.g. copied from a duplicated job): only highlight while no
-    // slot has been picked yet, and only if that tech actually exists in the list.
-    const suggestedTechId =
-        !selectedSlot && preselectTechId && techGroups.some(g => g.id === preselectTechId)
-            ? preselectTechId
-            : undefined;
-
-    // Recommendations scoped to the currently selected date (T13).
-    const recsForSelectedDate = useMemo(
-        () => (canRecommend && recsEnabled ? recs.filter(r => r.date === selectedDate) : []),
-        [canRecommend, recsEnabled, recs, selectedDate],
-    );
-    // Set of tech ids that appear in a recommendation for the selected date → "Recommended" pill.
-    const recommendedTechIds = useMemo(() => {
-        const s = new Set<string>();
-        for (const r of recsForSelectedDate) for (const t of r.technicians || []) if (t.id) s.add(t.id);
-        return s;
-    }, [recsForSelectedDate]);
-    // Recommendations grouped by tech id (for that tech's overlay bands on this date).
-    const recsByTech = useMemo(() => {
-        const m = new Map<string, SlotRecommendation[]>();
-        for (const r of recsForSelectedDate) {
-            const techId = r.technicians?.[0]?.id;
-            if (!techId) continue;
-            if (!m.has(techId)) m.set(techId, []);
-            m.get(techId)!.push(r);
-        }
-        return m;
-    }, [recsForSelectedDate]);
-
-    // Panel renders for a new job while loading, or once the engine is enabled
-    // (covering loading / unavailable / empty / list). When the engine is disabled
-    // and not loading, the panel stays absent and the modal behaves as today.
-    const showRecPanel = canRecommend && (recsLoading || recsEnabled);
 
     // Reset page when date changes; only clear slot if it doesn't match the new date
     useEffect(() => {
@@ -758,146 +576,56 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         setSelectedDate(nextStr);
     };
 
-    // ── Shared fragments — one source for both containers (desktop dialog /
-    //    mobile bottom sheet), so the 7 call sites stay on a single component. ──
-    const dateNav = (
-        <div className="ctm-date-nav">
-            <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={prevDate} disabled={selectedDate <= today}>
-                <ChevronLeft className="w-4" />
-            </Button>
-            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-                <PopoverTrigger asChild>
-                    <button type="button" className="ctm-date-nav__trigger">
-                        <CalendarIcon className="w-4 h-4 opacity-60" />
-                        <span className="ctm-date-nav__text">{formatDateLabel(dateObj)}</span>
-                    </button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="center">
-                    <Calendar
-                        mode="single"
-                        selected={dateObj}
-                        onSelect={(day) => { if (day) { const ds = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`; setSelectedDate(ds); setCalendarOpen(false); } }}
-                        disabled={{ before: new Date(today + 'T00:00:00') }}
-                        defaultMonth={dateObj}
-                    />
-                </PopoverContent>
-            </Popover>
-            <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={nextDate}>
-                <ChevronRight className="w-4" />
-            </Button>
-            {!isMobile && getRelativeDayHint(selectedDate, companyTz) && (
-                <span className="ctm-date-nav__hint">{getRelativeDayHint(selectedDate, companyTz)}</span>
-            )}
-            {isMobile && (
-                <div className="ctm-pane-toggle" role="tablist" aria-label="Times or map">
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={mobilePane === 'times'}
-                        className={`ctm-pane-toggle__btn${mobilePane === 'times' ? ' ctm-pane-toggle__btn--active' : ''}`}
-                        onClick={() => setMobilePane('times')}
-                    >
-                        Times
-                    </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={mobilePane === 'map'}
-                        className={`ctm-pane-toggle__btn${mobilePane === 'map' ? ' ctm-pane-toggle__btn--active' : ''}`}
-                        onClick={() => setMobilePane('map')}
-                    >
-                        Map
-                    </button>
+    return (
+        <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+            <DialogContent className="md:max-w-5xl max-h-[90vh] ctm-dialog" aria-describedby={undefined}>
+                <DialogTitle className="sr-only">Schedule Time Slot</DialogTitle>
+
+                {/* Date navigation */}
+                <div className="ctm-date-nav">
+                    <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={prevDate} disabled={selectedDate <= today}>
+                        <ChevronLeft className="w-4" />
+                    </Button>
+                    <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+                        <PopoverTrigger asChild>
+                            <button type="button" className="ctm-date-nav__trigger">
+                                <CalendarIcon className="w-4 h-4 opacity-60" />
+                                <span className="ctm-date-nav__text">{formatDateLabel(dateObj)}</span>
+                            </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="center">
+                            <Calendar
+                                mode="single"
+                                selected={dateObj}
+                                onSelect={(day) => { if (day) { const ds = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`; setSelectedDate(ds); setCalendarOpen(false); } }}
+                                disabled={{ before: new Date(today + 'T00:00:00') }}
+                                defaultMonth={dateObj}
+                            />
+                        </PopoverContent>
+                    </Popover>
+                    <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={nextDate}>
+                        <ChevronRight className="w-4" />
+                    </Button>
+                    {getRelativeDayHint(selectedDate, companyTz) && (
+                        <span className="ctm-date-nav__hint">{getRelativeDayHint(selectedDate, companyTz)}</span>
+                    )}
                 </div>
-            )}
-        </div>
-    );
 
-    /* ── Recommendations panel (NEW jobs, engine enabled) ── */
-    const recsPanel = showRecPanel ? (
-        <div className="ctm-recs">
-                            <div className="ctm-recs__header">Recommended times</div>
-                            {recsLoading ? (
-                                <div className="ctm-recs__loading">
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Finding best times…
-                                </div>
-                            ) : recsUnavailable ? (
-                                <div className="ctm-recs__loading">Suggestions aren&apos;t available right now</div>
-                            ) : recs.length === 0 ? (
-                                <div className="ctm-recs__loading">No nearby openings — try another day</div>
-                            ) : (
-                                <div className="ctm-recs__list">
-                                    {recs.map((rec, i) => {
-                                        const dates = recToSlotDates(rec, companyTz);
-                                        const tech = rec.technicians?.[0];
-                                        const isActive = !!selectedSlot && !!tech && selectedSlot.techId === tech.id
-                                            && !!dates && selectedSlot.start.getTime() === dates.start.getTime();
-                                        const sub = rec.explanation || REC_FALLBACK_REASON;
-                                        const { fillPct, colorVar, label } = tempFromRec(rec);
-                                        const dayLabel = (() => {
-                                            const [yy, mm, dd] = rec.date.split('-').map(Number);
-                                            return new Date(yy, mm - 1, dd).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                                        })();
-                                        return (
-                                            <button
-                                                type="button"
-                                                key={`rec-card-${rec.rank}-${i}`}
-                                                className={`ctm-rec-card${isActive ? ' ctm-rec-card--active' : ''}`}
-                                                title={`${label} · score ${Math.round(rec.score)}`}
-                                                aria-label={`${label} · score ${Math.round(rec.score)}`}
-                                                onClick={() => applyRecommendation(rec)}
-                                            >
-                                                <span className="ctm-rec-card__temp" aria-hidden="true">
-                                                    <span className="ctm-rec-card__temp-fill" style={{ height: `${fillPct}%`, background: colorVar }} />
-                                                </span>
-                                                <div className="ctm-rec-card__top">
-                                                    <span className="ctm-rec-card__date">{dayLabel}</span>
-                                                </div>
-                                                <div className="ctm-rec-card__time">
-                                                    {rec.time_frame.start}–{rec.time_frame.end}
-                                                </div>
-                                                {tech?.name && <div className="ctm-rec-card__tech">{tech.name}</div>}
-                                                {rec.requires_dispatch_confirmation && (
-                                                    <div className="ctm-rec-card__meta">
-                                                        <span className="ctm-rec-card__flag">Address needs confirming</span>
-                                                    </div>
-                                                )}
-                                                {sub && <div className="ctm-rec-card__sub">{sub}</div>}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                            {recsCoverage && recsCoverage.technicians_with_base < recsCoverage.technicians_total && (
-                                <button
-                                    type="button"
-                                    className="ctm-recs__coverage"
-                                    onClick={() => { onClose(); navigate('/settings/technicians'); }}
-                                    style={{ marginTop: 8, padding: '8px 4px 2px', textAlign: 'left', fontSize: 11, lineHeight: 1.4, color: 'var(--blanc-ink-3)', borderTop: '1px solid var(--blanc-line)', background: 'transparent', cursor: 'pointer', width: '100%' }}
-                                >
-                                    {recsCoverage.technicians_total - recsCoverage.technicians_with_base} of {recsCoverage.technicians_total} technicians have no base address, so they may be missing from suggestions. <span style={{ color: 'var(--blanc-job)', fontWeight: 600 }}>Add bases →</span>
-                                </button>
-                            )}
-        </div>
-    ) : null;
-
-    /* ── Technician timelines (the hour grid) ── */
-    const timelinesPanel = (
-        <div className="ctm-timelines">
+                <div className="ctm-body">
+                    {/* ── Left: Technician Timelines ── */}
+                    <div className="ctm-timelines">
                         {/* Tech name bar */}
                         {visibleTechs.length > 0 && (
                             <div className="ctm-tech-bar-container">
                                 <div className="ctm-tech-bar-spacer">
                                     {totalPages > 1 && (
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
+                                        <button
                                             className="ctm-tech-bar__arrow"
                                             onClick={() => setTechPage(p => Math.max(0, p - 1))}
                                             disabled={techPage === 0}
                                         >
                                             <ChevronLeft className="w-4" />
-                                        </Button>
+                                        </button>
                                     )}
                                 </div>
                                 <div className="ctm-tech-bar">
@@ -905,33 +633,25 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                         <div key={tech.id} className="ctm-tech-bar__item">
                                             <span className="ctm-tech-bar__dot" style={{ background: TECH_COLORS[tech.colorIndex].bg }} />
                                             <span className="ctm-tech-bar__name">{tech.name}</span>
-                                            {tech.id === suggestedTechId && (
-                                                <span className="ctm-tech-bar__suggested">Preselected</span>
-                                            )}
-                                            {tech.id !== suggestedTechId && recommendedTechIds.has(tech.id) && (
-                                                <span className="ctm-tech-bar__recommended">Recommended</span>
-                                            )}
                                         </div>
                                     ))}
                                 </div>
                                 {totalPages > 1 && (
                                     <div className="ctm-tech-bar-spacer ctm-tech-bar-spacer--right">
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
+                                        <button
                                             className="ctm-tech-bar__arrow"
                                             onClick={() => setTechPage(p => Math.min(totalPages - 1, p + 1))}
                                             disabled={techPage >= totalPages - 1}
                                         >
                                             <ChevronRight className="w-4" />
-                                        </Button>
+                                        </button>
                                     </div>
                                 )}
                             </div>
                         )}
 
                         {techGroups.length === 0 && !loading && (
-                            <div className="ctm-timelines__empty">{providerError || 'No technicians available'}</div>
+                            <div className="ctm-timelines__empty">{providerError || 'No technicians found'}</div>
                         )}
 
                         {techGroups.length > 0 && (
@@ -964,9 +684,6 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                     onSelectSlot={setSelectedSlot}
                                                     matchesTerritory={tech.matchesTerritory}
                                                     companyTz={companyTz}
-                                                    isSuggested={tech.id === suggestedTechId}
-                                                    recsForTech={recsByTech.get(tech.id)}
-                                                    onApplyRec={applyRecommendation}
                                                 />
                                             ))}
                                         </div>
@@ -975,75 +692,27 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                             </div>
                         )}
 
-        </div>
-    );
-
-    /* ── Map ── */
-    const mapPanel = (
-        <JobMap
-            jobs={jobs}
-            techGroups={techGroups}
-            newJobCoords={newJobCoords}
-            newJobAddress={newJobAddress}
-            loading={loading}
-            companyTz={companyTz}
-        />
-    );
-
-    const territoryWarn = selectedSlot && !techGroups.find(g => g.id === selectedSlot.techId)?.matchesTerritory
-        ? <span className="ctm-footer__territory-warn">⚠ This technician doesn&apos;t serve this area</span>
-        : null;
-    const confirmButton = (
-        <Button onClick={handleConfirm} disabled={!selectedSlot} className={isMobile ? 'flex-1' : undefined}>
-            {selectedSlot
-                ? (confirmLabel ?? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}`)
-                : 'Select a time'}
-        </Button>
-    );
-
-    // ── Mobile: the canonical bottom sheet. Times pane (recommendations strip +
-    //    hour grid) fills the height; the map is the second pane on demand. ──
-    if (isMobile) {
-        return (
-            <BottomSheet
-                open={open}
-                onClose={onClose}
-                size="full"
-                title={title}
-                bodyClassName="ctm-sheet-scroll"
-                footer={
-                    <div className="ctm-footer--sheet">
-                        {territoryWarn}
-                        <div className="ctm-footer__actions">
-                            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-                            {confirmButton}
-                        </div>
                     </div>
-                }
-            >
-                <div className="ctm-sheet">
-                    {dateNav}
-                    {mobilePane === 'map' ? mapPanel : (<>{recsPanel}{timelinesPanel}</>)}
-                </div>
-            </BottomSheet>
-        );
-    }
 
-    // ── Desktop: unchanged three-pane dialog. ──
-    return (
-        <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-            <DialogContent className="md:max-w-5xl max-h-[90vh] ctm-dialog" aria-describedby={undefined}>
-                <DialogTitle className="sr-only">{title}</DialogTitle>
-                {dateNav}
-                <div className={`ctm-body${showRecPanel ? ' ctm-body--with-recs' : ''}`}>
-                    {recsPanel}
-                    {timelinesPanel}
-                    {mapPanel}
+                    {/* ── Right: Map ── */}
+                    <JobMap
+                        jobs={jobs}
+                        techGroups={techGroups}
+                        newJobCoords={newJobCoords}
+                        newJobAddress={newJobAddress}
+                        loading={loading}
+                        companyTz={companyTz}
+                    />
                 </div>
+
                 <DialogFooter className="ctm-footer">
-                    {territoryWarn}
+                    {selectedSlot && !techGroups.find(g => g.id === selectedSlot.techId)?.matchesTerritory && (
+                        <span className="ctm-footer__territory-warn">⚠ This technician does not serve this territory</span>
+                    )}
                     <Button variant="ghost" onClick={onClose}>Cancel</Button>
-                    {confirmButton}
+                    <Button onClick={handleConfirm} disabled={!selectedSlot}>
+                        {selectedSlot ? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}` : 'Select a timeslot'}
+                    </Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

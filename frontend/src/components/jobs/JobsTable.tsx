@@ -2,13 +2,9 @@ import { Button } from '../ui/button';
 import {
     ChevronLeft, ChevronRight, Loader2,
     ArrowUpDown, ArrowUp, ArrowDown,
-    MoreVertical, Copy,
 } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import type { ColumnDef } from './jobHelpers';
-import {
-    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from '../ui/dropdown-menu';
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
@@ -27,7 +23,6 @@ interface JobsTableProps {
     hasMore: boolean;
     limit: number;
     onLoadJobs: (offset: number) => void;
-    onCopyJob?: (job: LocalJob) => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -47,7 +42,6 @@ export function JobsTable({
     hasMore,
     limit,
     onLoadJobs,
-    onCopyJob,
 }: JobsTableProps) {
     const handleHeaderClick = (col: ColumnDef) => {
         if (!col.sortKey) return;
@@ -78,18 +72,18 @@ export function JobsTable({
 
     return (
         <>
-            {/* Table — ряды-тайлы на канвасе (LAYOUT-CANON правило 7, .blanc-table-tiles) */}
+            {/* Table */}
             <div className="flex-1 overflow-auto">
-                <table className="w-full text-sm blanc-table-tiles">
-                    <thead>
-                        <tr className="text-left">
+                <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10" style={{ background: 'var(--blanc-surface-strong)', boxShadow: '0 1px 0 0 var(--blanc-line)' }}>
+                        <tr className="border-b text-left">
                             {visibleFields.map(fk => {
                                 const col = allColumns[fk];
                                 if (!col) return null;
                                 return (
                                     <th
                                         key={fk}
-                                        className={`px-4 py-1 ${col.width || ''} ${col.sortKey ? 'cursor-pointer select-none' : ''}`}
+                                        className={`px-4 py-2.5 font-medium ${col.width || ''} ${col.sortKey ? 'cursor-pointer select-none hover:bg-muted/30 transition-colors' : ''}`}
                                         onClick={() => handleHeaderClick(col)}
                                     >
                                         <span className="inline-flex items-center gap-1">
@@ -105,14 +99,13 @@ export function JobsTable({
                                     </th>
                                 );
                             })}
-                            {onCopyJob && <th className="px-2 py-1 w-10" aria-label="Actions" />}
                         </tr>
                     </thead>
                     <tbody>
                         {jobs.map(job => (
                             <tr
                                 key={job.id}
-                                className={`cursor-pointer ${selectedJobId === job.id ? 'blanc-tile-row-selected' : ''}`}
+                                className={`border-b hover:bg-muted/30 cursor-pointer transition-colors ${selectedJobId === job.id ? 'bg-muted/50' : ''}`}
                                 onClick={() => onSelectJob(job)}
                             >
                                 {visibleFields.map(fk => {
@@ -120,36 +113,14 @@ export function JobsTable({
                                     if (!col) return null;
                                     return <td key={fk} className="px-4 py-2.5">{col.render(job)}</td>;
                                 })}
-                                {onCopyJob && (
-                                    <td className="px-2 py-2.5 w-10" onClick={e => e.stopPropagation()}>
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <button
-                                                    type="button"
-                                                    aria-label="Job actions"
-                                                    className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
-                                                    style={{ width: 28, height: 28, borderRadius: 8, color: 'var(--blanc-ink-3)' }}
-                                                    onClick={e => e.stopPropagation()}
-                                                >
-                                                    <MoreVertical className="size-4" />
-                                                </button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end">
-                                                <DropdownMenuItem onClick={() => onCopyJob(job)}>
-                                                    <Copy className="size-4 mr-2" />Copy job
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
-                                    </td>
-                                )}
                             </tr>
                         ))}
                     </tbody>
                 </table>
             </div>
 
-            {/* Pagination — плоско на канвасе, без карты и границы */}
-            <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
+            {/* Pagination */}
+            <div className="border-t px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
                 <span>{totalCount > 0 ? `${offset + 1}–${offset + jobs.length} from ${totalCount} jobs` : '0 jobs'}</span>
                 <div className="flex items-center gap-1">
                     <Button variant="ghost" size="sm" disabled={offset === 0} onClick={() => onLoadJobs(Math.max(0, offset - limit))}>

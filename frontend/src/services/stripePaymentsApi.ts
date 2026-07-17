@@ -111,32 +111,3 @@ export const invoiceStripeApi = {
         return json.data;
     },
 };
-
-// Job (ad-hoc) payment links (mounted under /api/jobs/:id/...). Mirrors invoiceStripeApi;
-// `amount` is dollars (number), passed through verbatim exactly like the invoice API.
-export const jobStripeApi = {
-    createLink: async (jobId: number | string, amount?: number): Promise<{ url: string; expires_at: string | null; reused: boolean }> => {
-        const res = await authedFetch(`/api/jobs/${jobId}/stripe-payment-link`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount }),
-        });
-        const json = await res.json();
-        if (!res.ok || json.ok === false) throw new Error(json.error?.message || `Request failed: ${res.status}`);
-        return json.data;
-    },
-    getLink: async (jobId: number | string): Promise<InvoicePaymentLink> => {
-        const res = await authedFetch(`/api/jobs/${jobId}/stripe-payment-link`);
-        const json = await res.json();
-        if (!res.ok || json.ok === false) throw new Error(json.error?.message || `Request failed: ${res.status}`);
-        return json.data;
-    },
-    sendLink: async (jobId: number | string, body: { channel?: string; amount?: number; message?: string }): Promise<{ sent: boolean; url: string; channel?: string }> => {
-        const res = await authedFetch(`/api/jobs/${jobId}/send-payment-link`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
-        const json = await res.json();
-        if (!res.ok || json.ok === false) throw new Error(json.error?.message || `Request failed: ${res.status}`);
-        return json.data;
-    },
-    manualCardSession: (jobId: number | string, amount?: number): Promise<ManualCardSession> =>
-        postData(`/api/jobs/${jobId}/stripe-manual-card-session`, { amount }),
-};

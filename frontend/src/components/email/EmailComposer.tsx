@@ -58,7 +58,7 @@ export function EmailComposer({ mode, threadId, defaultTo, defaultSubject, onSen
     const canSend = to.trim().length > 0 && (mode === 'reply' || subject.trim().length > 0) && (body.trim().length > 0 || files.length > 0);
 
     return (
-        <div style={{ borderTop: '1px solid var(--blanc-line)', background: 'rgba(25, 25, 25, 0.02)' }}>
+        <div style={{ borderTop: '1px solid var(--blanc-line)', background: 'rgba(117, 106, 89, 0.02)' }}>
             <div className="px-4 py-3 space-y-2">
                 {/* To */}
                 <div className="flex items-center gap-2">
@@ -135,7 +135,7 @@ export function EmailComposer({ mode, threadId, defaultTo, defaultSubject, onSen
                             <span
                                 key={i}
                                 className="flex items-center gap-1 text-xs px-2 py-1"
-                                style={{ background: 'rgba(25, 25, 25, 0.06)', borderRadius: '6px', color: 'var(--blanc-ink-2)' }}
+                                style={{ background: 'rgba(117, 106, 89, 0.06)', borderRadius: '6px', color: 'var(--blanc-ink-2)' }}
                             >
                                 <Paperclip className="size-3" />
                                 {f.name}

@@ -23,7 +23,6 @@ function makeApp(companyId = 'company-1') {
     app.use(express.json());
     app.use((req, _res, next) => {
         req.companyFilter = { company_id: companyId };
-        req.authz = { permissions: ['tenant.telephony.manage'] };
         next();
     });
     app.use('/api/phone-numbers', phoneNumbersRouter);

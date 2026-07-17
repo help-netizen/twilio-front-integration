@@ -113,13 +113,13 @@ export const ENDPOINTS: Endpoint[] = [
 
 // ─── Helper Components ────────────────────────────────────────────────────────
 const METHOD_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-    GET: { bg: 'rgba(27, 139, 99, 0.10)', text: 'var(--blanc-success)', border: 'rgba(27, 139, 99, 0.30)' },
-    POST: { bg: 'rgba(47, 99, 216, 0.10)', text: 'var(--blanc-info)', border: 'rgba(47, 99, 216, 0.30)' },
-    DELETE: { bg: 'rgba(240, 80, 63, 0.10)', text: 'var(--blanc-danger)', border: 'rgba(240, 80, 63, 0.30)' },
+    GET: { bg: '#e8f5e9', text: '#2e7d32', border: '#a5d6a7' },
+    POST: { bg: '#e3f2fd', text: '#1565c0', border: '#90caf9' },
+    DELETE: { bg: '#fce4ec', text: '#c62828', border: '#ef9a9a' },
 };
 
 export function MethodBadge({ method }: { method: string }) {
-    const c = METHOD_COLORS[method] || { bg: 'var(--blanc-field)', text: 'var(--blanc-ink-1)', border: 'var(--blanc-line-strong)' };
+    const c = METHOD_COLORS[method] || { bg: '#eee', text: '#333', border: '#ccc' };
     return <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: '4px', fontWeight: 700, fontSize: '12px', fontFamily: 'monospace', letterSpacing: '0.5px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>{method}</span>;
 }
 
@@ -140,19 +140,19 @@ export function CodeBlock({ code, lang = 'bash' }: { code: string; lang?: string
 export function FieldsTable({ fields, title }: { fields: Field[]; title: string }) {
     return (
         <div style={{ marginTop: '16px' }}>
-            <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--blanc-ink-2)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>{title}</h4>
-            <div style={{ border: '1px solid var(--blanc-line)', borderRadius: '8px', overflow: 'hidden' }}>
+            <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>{title}</h4>
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                    <thead><tr style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
-                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontWeight: 600, color: 'var(--blanc-ink-1)' }}>Field</th>
-                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontWeight: 600, color: 'var(--blanc-ink-1)' }}>Type</th>
-                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontWeight: 600, color: 'var(--blanc-ink-1)' }}>Description</th>
+                    <thead><tr style={{ background: '#f9fafb' }}>
+                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #e5e7eb', fontWeight: 600, color: '#374151' }}>Field</th>
+                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #e5e7eb', fontWeight: 600, color: '#374151' }}>Type</th>
+                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #e5e7eb', fontWeight: 600, color: '#374151' }}>Description</th>
                     </tr></thead>
                     <tbody>{fields.map((f, i) => (
-                        <tr key={f.name} style={{ background: i % 2 === 0 ? 'var(--blanc-panel-surface)' : 'rgba(25, 25, 25, 0.02)' }}>
-                            <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontFamily: 'monospace', fontSize: '12px', whiteSpace: 'nowrap' }}>{f.name}{f.required && <span style={{ color: 'var(--blanc-danger)', marginLeft: '4px', fontSize: '10px', fontWeight: 700 }}>REQUIRED</span>}</td>
-                            <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)' }}>{f.type}</td>
-                            <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}>{f.description}</td>
+                        <tr key={f.name} style={{ background: i % 2 === 0 ? '#fff' : '#fafbfc' }}>
+                            <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', fontFamily: 'monospace', fontSize: '12px', whiteSpace: 'nowrap' }}>{f.name}{f.required && <span style={{ color: '#dc2626', marginLeft: '4px', fontSize: '10px', fontWeight: 700 }}>REQUIRED</span>}</td>
+                            <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#6b7280' }}>{f.type}</td>
+                            <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#374151' }}>{f.description}</td>
                         </tr>
                     ))}</tbody>
                 </table>
@@ -164,19 +164,19 @@ export function FieldsTable({ fields, title }: { fields: Field[]; title: string 
 export function ErrorsTable({ errors }: { errors: ErrorCode[] }) {
     return (
         <div style={{ marginTop: '16px' }}>
-            <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--blanc-ink-2)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Error Codes</h4>
-            <div style={{ border: '1px solid var(--blanc-line)', borderRadius: '8px', overflow: 'hidden' }}>
+            <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Error Codes</h4>
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                    <thead><tr style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
-                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontWeight: 600, color: 'var(--blanc-ink-1)' }}>HTTP</th>
-                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontWeight: 600, color: 'var(--blanc-ink-1)' }}>Code</th>
-                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontWeight: 600, color: 'var(--blanc-ink-1)' }}>Description</th>
+                    <thead><tr style={{ background: '#f9fafb' }}>
+                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #e5e7eb', fontWeight: 600, color: '#374151' }}>HTTP</th>
+                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #e5e7eb', fontWeight: 600, color: '#374151' }}>Code</th>
+                        <th style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #e5e7eb', fontWeight: 600, color: '#374151' }}>Description</th>
                     </tr></thead>
                     <tbody>{errors.map((e, i) => (
-                        <tr key={e.code} style={{ background: i % 2 === 0 ? 'var(--blanc-panel-surface)' : 'rgba(25, 25, 25, 0.02)' }}>
-                            <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontFamily: 'monospace', fontWeight: 600, color: e.http >= 500 ? 'var(--blanc-danger)' : e.http >= 400 ? 'var(--blanc-warning)' : 'var(--blanc-success)' }}>{e.http}</td>
-                            <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', fontFamily: 'monospace', fontSize: '12px' }}>{e.code}</td>
-                            <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}>{e.description}</td>
+                        <tr key={e.code} style={{ background: i % 2 === 0 ? '#fff' : '#fafbfc' }}>
+                            <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', fontFamily: 'monospace', fontWeight: 600, color: e.http >= 500 ? '#dc2626' : e.http >= 400 ? '#d97706' : '#059669' }}>{e.http}</td>
+                            <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', fontFamily: 'monospace', fontSize: '12px' }}>{e.code}</td>
+                            <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#374151' }}>{e.description}</td>
                         </tr>
                     ))}</tbody>
                 </table>

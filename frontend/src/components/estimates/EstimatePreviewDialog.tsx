@@ -1,4 +1,4 @@
-import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogTitle, DialogDescription } from '../ui/dialog';
+import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
 import type { Estimate, EstimateItem } from '../../services/estimatesApi';
 import { useDocumentTemplate } from '../../hooks/useDocumentTemplate';
 import { TemplateLivePreview, type PreviewEstimate } from '../documents/TemplateLivePreview';
@@ -52,25 +52,20 @@ export function EstimatePreviewDialog({ open, onOpenChange, estimate }: Props) {
     const descriptor = useDocumentTemplate('estimate', open);
     const data = mapEstimateForPreview(estimate);
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent variant="panel" size="full">
-                <DialogPanelHeader>
-                    <DialogTitle
-                        className="font-mono text-sm font-semibold"
-                        style={{ color: 'var(--blanc-ink-1)' }}
-                    >
-                        {estimate.estimate_number}
-                    </DialogTitle>
-                    <DialogDescription className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Preview</DialogDescription>
-                </DialogPanelHeader>
-                <DialogBody>
+        <FloatingDetailPanel open={open} onClose={() => onOpenChange(false)} wide>
+            <div className="flex h-full min-h-0 flex-col bg-white text-[#172033]">
+                <div className="shrink-0 border-b border-[#d8e0ea] bg-[#fbfcfe] px-5 py-4 pr-14">
+                    <p className="font-mono text-sm font-semibold">{estimate.estimate_number}</p>
+                    <p className="text-xs text-[#5f7085] mt-0.5">Preview</p>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-5">
                     {descriptor ? (
                         <TemplateLivePreview descriptor={descriptor} estimate={data} />
                     ) : (
-                        <div className="py-12 text-center text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Loading template…</div>
+                        <div className="py-12 text-center text-sm text-neutral-500">Loading template…</div>
                     )}
-                </DialogBody>
-            </DialogContent>
-        </Dialog>
+                </div>
+            </div>
+        </FloatingDetailPanel>
     );
 }

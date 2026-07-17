@@ -38,14 +38,3 @@ build/
 twilio-backup/
 contacts/contacts.html
 contacts/contacts.md
-.ds-sync/
-ds-bundle/
-.design-sync/.cache/
-.design-sync/learnings/
-.design-sync/node_modules
-frontend/dist/albusto-ds.css
-frontend/index.d.ts
-frontend/node_modules/albusto-ui
-
-# UI-AUDIT-001 W0: локальные скриншот-базы (git хранит только список роутов)
-docs/ui-baseline/

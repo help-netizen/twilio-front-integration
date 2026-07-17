@@ -3,7 +3,6 @@ const queries = require('../db/queries');
 const groupRouting = require('../services/groupRouting');
 const callFlowRuntime = require('../services/callFlowRuntime');
 const walletService = require('../services/walletService');
-const telephonyTenantService = require('../services/telephonyTenantService');
 const db = require('../db/connection');
 
 /** Resolve the owning company for one of our Twilio numbers (inbound `To`). */
@@ -330,36 +329,14 @@ async function handleVoiceInbound(req, res) {
     </Dial>
 </Response>`;
         } else {
-            // C1 (ONBTEL-001): resolve the owning company exactly ONCE —
-            // AccountSid first (master account → DEFAULT company, connected
-            // subaccount → its company), then fall back to the inbound `To`
-            // number (ALB-107 "AccountSid → To" canon). The short-circuit `||`
-            // means a SID hit skips the To lookup entirely; a DB error in
-            // either lookup counts as null for that lookup only.
-            const companyId =
-                await telephonyTenantService.resolveCompanyByAccountSid(req.body.AccountSid).catch(() => null)
-                || await companyIdForNumber(To).catch(() => null);
-
-            if (companyId === null) {
-                // Unknown account AND unknown number → fail-closed Reject: a
-                // company-less call must never reach the generic voicemail.
-                // No recordMissedInbound (no company → no orphan timeline).
-                console.warn(`[${traceId}] inbound_call.rejected`, { event: 'inbound_call.rejected', reason: 'unknown_number', call_sid: CallSid, account_sid: req.body.AccountSid, to: To, from: From });
-                res.type('text/xml');
-                return res.send('<Response><Reject/></Response>');
-            }
-
             // Wallet gate (−$5 grace floor): block inbound calls when the
             // company can't pay. Reject BEFORE answering so Twilio never starts
             // the per-minute meter — the caller gets a busy signal and we log a
             // missed call in the timeline. (Mirrors the outbound/SMS gate.)
-            // C4 (ONBTEL-001): uses the company resolved above — guaranteed
-            // non-null here, so the gate can no longer be skipped via a null
-            // lookup. isServiceBlocked stays fail-open on error so a transient
-            // wallet failure never drops legitimate routing.
-            if (await walletService.isServiceBlocked(companyId).catch(() => false)) {
+            const blockedCompanyId = await companyIdForNumber(To).catch(() => null);
+            if (blockedCompanyId && await walletService.isServiceBlocked(blockedCompanyId).catch(() => false)) {
                 console.log(`[${traceId}] Inbound blocked — wallet at grace floor; rejecting ${From} → ${To}`);
-                await recordMissedInbound({ callSid: CallSid, from: From, to: To, companyId, payload: req.body })
+                await recordMissedInbound({ callSid: CallSid, from: From, to: To, companyId: blockedCompanyId, payload: req.body })
                     .catch(e => console.warn(`[${traceId}] missed-call log failed (non-blocking):`, e.message));
                 res.type('text/xml');
                 return res.send('<Response><Reject reason="busy"/></Response>');

@@ -8,8 +8,6 @@ import { Plus, Briefcase } from 'lucide-react';
 import { Input } from '../ui/input';
 import { Button } from '../ui/button';
 import { formatTimeInTZ } from '../../utils/companyTime';
-import { useIsMobile } from '../../hooks/useIsMobile';
-import { BottomSheet } from '../ui/BottomSheet';
 
 interface SlotContextMenuProps {
     /** Pixel position (relative to viewport) */
@@ -33,16 +31,12 @@ export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
     const [title, setTitle] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const isMobile = useIsMobile();
 
     useEffect(() => {
         if (showInput && inputRef.current) inputRef.current.focus();
     }, [showInput]);
 
     useEffect(() => {
-        // Desktop popover only: outside-click / Esc dismissal. On mobile the BottomSheet
-        // owns dismissal (backdrop / Esc / drag) via useOverlayDismiss.
-        if (isMobile) return;
         const handleClickOutside = (e: MouseEvent) => {
             if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
                 onClose();
@@ -57,7 +51,7 @@ export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
             document.removeEventListener('mousedown', handleClickOutside);
             document.removeEventListener('keydown', handleEsc);
         };
-    }, [onClose, isMobile]);
+    }, [onClose]);
 
     const timeLabel = `${formatTimeInTZ(new Date(startAt), timezone)} – ${formatTimeInTZ(new Date(endAt), timezone)}`;
 
@@ -68,8 +62,20 @@ export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
         onClose();
     };
 
-    const menuBody = (
-        <>
+    return (
+        <div
+            ref={containerRef}
+            className="fixed z-50 bg-white border rounded-lg shadow-lg py-1 min-w-[220px]"
+            style={{
+                top: Math.min(anchorRect.top, window.innerHeight - 160),
+                left: Math.min(anchorRect.left, window.innerWidth - 240),
+            }}
+        >
+            <div className="px-3 py-1.5 text-[11px] text-gray-400 font-medium">
+                {timeLabel}
+                {providerName && <span className="ml-1">· {providerName}</span>}
+            </div>
+
             {!showInput ? (
                 <button
                     type="button"
@@ -103,40 +109,6 @@ export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
                     </div>
                 </div>
             )}
-        </>
-    );
-
-    // Mobile: render as the canonical bottom sheet (grab handle + drag). The time/provider
-    // line becomes the sheet title; the actions live in the body.
-    if (isMobile) {
-        return (
-            <BottomSheet
-                open
-                onClose={onClose}
-                size="auto"
-                title={providerName ? `${timeLabel} · ${providerName}` : timeLabel}
-            >
-                {menuBody}
-            </BottomSheet>
-        );
-    }
-
-    // Desktop: the fixed-position popover, unchanged.
-    return (
-        <div
-            ref={containerRef}
-            className="fixed z-50 bg-[var(--blanc-panel-surface)] border rounded-lg shadow-lg py-1 min-w-[220px]"
-            style={{
-                top: Math.min(anchorRect.top, window.innerHeight - 160),
-                left: Math.min(anchorRect.left, window.innerWidth - 240),
-            }}
-        >
-            <div className="px-3 py-1.5 text-[11px] text-gray-400 font-medium">
-                {timeLabel}
-                {providerName && <span className="ml-1">· {providerName}</span>}
-            </div>
-
-            {menuBody}
         </div>
     );
 };

@@ -6,17 +6,6 @@
 
 **Every element must justify its presence.** If it doesn't help the user complete a task — remove it. Don't decorate — design.
 
-### Layers & overlays — THE canonical pattern (always use this)
-
-**Every entity view/edit surface is a right-side slide-over "layer" (шторка), never a center modal.** This is the app's core interaction model — job view, lead card, estimate/invoice editors, forms all slide in from the right. New UIs MUST follow it. Full spec: `docs/specs/FORM-CANON.md`. Gold-standard examples: `EstimateItemDialog.tsx`, `NewJobModal.tsx`, `TaskFormDialog.tsx`.
-
-- **Component:** `<Dialog><DialogContent variant="panel">` with `DialogPanelHeader` (pinned title) → `DialogBody className="md:px-8 md:py-7"` (scrollable; inner `<div className="mx-auto w-full max-w-[740px] space-y-6">`) → `DialogPanelFooter` (sticky; `<Button variant="ghost">Cancel</Button>` + primary `<Button>Save</Button>`). On mobile this variant **automatically becomes a bottom-sheet** — no extra code. Read-only detail views may instead use `ui/FloatingDetailPanel`.
-- **Center modals (`variant="dialog"`) are ONLY for confirmations / short alerts** ("Delete this?"), never for viewing or editing entities.
-- **Fields = floating-label canon (filled, PALETTE-V2):** `FloatingField` (text/number/textarea), `FloatingSelect` (+ `SelectItem`), `PhoneInput` (phones). No stacked/side `<Label>` above fields. Fields are **filled** (`var(--blanc-field)` fill, transparent border, floated label INSIDE the fill) — the primitives do this themselves; never add call-site backgrounds/borders/label patches. Toggles/checkboxes use `Checkbox` and are NOT floated (label beside).
-- **Field rhythm:** groups separated by `space-y-6`; fields within a group `space-y-3.5`; short pairs `grid grid-cols-1 sm:grid-cols-2 gap-3.5`.
-- **Close affordance** is built in (OverlayClose / OVERLAY-CLOSE-CANON) — don't hand-roll close buttons. `Escape`/backdrop handled by the shared overlay logic.
-- **Tokens only** (see Design System below); never hardcode hex outside the `--blanc-*` set.
-
 ### Hierarchy & Composition
 
 - **Entity name/title — always large** (`h2`, `text-2xl`, font `--blanc-font-heading`). This is the entry point — the eye catches it first.
@@ -26,8 +15,8 @@
 
 ### Section Separation
 
-- **No horizontal lines (`<hr>`, `border-top`, `<Separator>`).** They look like noise and don't fit the clean neutral design system.
-- **Sections are separated by spacing and layout**, not borders. If a section card is needed, use subtle background `rgba(25, 25, 25, 0.03)` (or `var(--blanc-surface-muted)` on white), border-radius 16px, padding 14-16px. But prefer flat layout when possible. **Containers are invisible** (LAYOUT-CANON rule 7): list/area wrappers carry no bg/border/radius/shadow — surface belongs to content tiles only.
+- **No horizontal lines (`<hr>`, `border-top`, `<Separator>`).** They look like noise and don't fit the warm design system.
+- **Sections are separated by spacing and layout**, not borders. If a section card is needed, use subtle background `rgba(117, 106, 89, 0.04)`, border-radius 16px, padding 14-16px. But prefer flat layout when possible.
 - **Section headers** — `.blanc-eyebrow` (11px, uppercase, letter-spacing). Keep them to a minimum. If two sections can merge — merge them.
 
 ### Simplification
@@ -55,14 +44,11 @@
 - No "designer-y" words in UI when direct ones exist ("Activity" -> "Leads & Jobs")
 - No overloaded cards: emojis, unnecessary badges, small details that don't help make decisions
 
-### Design System — Albusto PALETTE-V2
+### Design System (Blanc)
 
-Source of truth: `frontend/src/styles/design-system.css` (`--blanc-*` are internal token names only — NEVER ship the word "Blanc" in UI; product is Albusto). Palette is a **neutral canvas, NOT warm cream** — it migrated off the old beige aesthetic; ignore the stale "warm beige" comment at the top of that file.
-
-- Canvas: `--blanc-bg` #F1F1F0 (neutral light gray), `--blanc-bg-deep` #E8E8E6. Surfaces (white / frosted-glass): `--blanc-surface-strong` #FFFFFF, `--blanc-surface` rgba(255,255,255,.88), `--blanc-surface-muted` #F6F6F6.
-- Text (neutral ink): `--blanc-ink-1` #191919, `--blanc-ink-2` #6E6E6E, `--blanc-ink-3` #8A8A8A.
-- **Action color = the single violet accent: `--blanc-accent` #7F42E1** (all primary buttons/links). `--blanc-accent-soft` #E7DBFD (lavender — Action-Required plaques, soft highlights). Field fill: `--blanc-field` #F0F0F0.
-- Borders: `--blanc-line` rgba(25,25,25,.08), `--blanc-line-strong` rgba(25,25,25,.20).
-- Entity colors: job #2f63d8 · lead #b26a1d · task/success #1b8b63 · danger #F0503F.
-- Radii: 10 / 16 / 22 / 28px. Fonts: IBM Plex Sans (body), Manrope (headings).
+- Backgrounds: `--blanc-bg`, `--blanc-surface-strong` (#fffdf9)
+- Text: `--blanc-ink-1` (primary), `--blanc-ink-2` (secondary), `--blanc-ink-3` (hints)
+- Borders: `--blanc-line` (rgba 117,106,89 / 0.18)
+- Radii: 10 / 16 / 22 / 28px
+- Fonts: IBM Plex Sans (body), Manrope (headings)
 - Eyebrow label: `.blanc-eyebrow` (11px, uppercase, 0.14em letter-spacing, `--blanc-ink-3`)

@@ -56,15 +56,6 @@ function describeEvent(eventType, data) {
         case 'synced': return 'Synced from Zenbooker';
         case 'updated': return data.fields ? `Updated: ${data.fields.join(', ')}` : 'Updated';
         case 'note_added': return 'Note added';
-        case 'note_edited': {
-            const added = Array.isArray(data.added) ? data.added.length : 0;
-            const removed = Array.isArray(data.removed) ? data.removed.length : 0;
-            const parts = [];
-            if (added) parts.push(`+${added} file${added === 1 ? '' : 's'}`);
-            if (removed) parts.push(`−${removed} file${removed === 1 ? '' : 's'}`);
-            return parts.length ? `Note edited (${parts.join(', ')})` : 'Note edited';
-        }
-        case 'note_deleted': return 'Note deleted';
         default: return eventType.replace(/_/g, ' ');
     }
 }
@@ -89,22 +80,20 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
             type: 'event',
             event_type: e.event_type,
             description: describeEvent(e.event_type, e.event_data || {}),
-            actor: e.event_data?.actor_name || (e.actor_type === 'system' || e.actor_type === 'webhook' ? 'Albusto' : 'Unknown'),
+            actor: e.event_data?.actor_name || (e.actor_type === 'system' || e.actor_type === 'webhook' ? 'Blanc' : 'Unknown'),
             created_at: e.created_at.toISOString(),
             data: e.event_data || {},
         }));
 
-    // 3. Convert notes to history items.
-    //    Soft-deleted notes leave the thread (their note_deleted/note_edited
-    //    audit events remain, sourced from domain_events above).
-    const noteItems = (entityNotes || []).filter(n => !n?.deleted_at).map((note, i) => ({
+    // 3. Convert notes to history items
+    const noteItems = (entityNotes || []).map((note, i) => ({
         id: `note_${i}`,
         type: 'note',
         event_type: 'note',
         text: note.text || '',
-        author: note.author || (note.migrated ? 'Albusto' : null),
+        author: note.author || (note.migrated ? 'Blanc' : null),
         attachments: note.attachments || [],
-        actor: note.author || (note.migrated ? 'Albusto' : ''),
+        actor: note.author || (note.migrated ? 'Blanc' : ''),
         created_at: note.created || null,
         data: {},
     }));

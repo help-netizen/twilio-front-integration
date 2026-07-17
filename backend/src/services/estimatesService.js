@@ -3,10 +3,8 @@
  * PF002-R2 Estimates Composer Refresh
  */
 
-const crypto = require('crypto');
 const estimatesQueries = require('../db/estimatesQueries');
 const { renderEstimatePdf } = require('./estimatePdfService');
-const { toE164 } = require('../utils/phoneUtils');
 
 class EstimatesServiceError extends Error {
     constructor(code, message, httpStatus = 500) {
@@ -280,27 +278,6 @@ async function addItem(companyId, estimateId, userId, item) {
     return newItem;
 }
 
-// PRICEBOOK-001: bulk add (e.g. a Price Book group expanded into its items).
-// One status-reset + ONE recalc + ONE event, vs N round-trips of addItem.
-async function addItems(companyId, estimateId, userId, items) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
-    if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
-    assertNotArchived(estimate);
-
-    const list = Array.isArray(items) ? items : [];
-    if (list.length === 0) return { added: 0, items: [] };
-
-    await resetStatusAfterItemEdit(companyId, userId, estimate);
-    const created = [];
-    for (const item of list) {
-        created.push(await estimatesQueries.addEstimateItem(estimateId, normalizeItem(item)));
-    }
-    await estimatesQueries.recalculateEstimateTotals(estimateId);
-    await estimatesQueries.createEvent(estimateId, 'items_added', 'user', userId, { count: created.length });
-
-    return { added: created.length, items: created };
-}
-
 async function updateItem(companyId, estimateId, userId, itemId, data) {
     const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
@@ -348,36 +325,7 @@ async function assertHasItems(estimateId) {
     return items;
 }
 
-/**
- * Build the HTML email body: the operator `message` (newlines → <br>) followed
- * by an anchor to the public estimate page. The PDF rides along as an attachment.
- */
-function buildEmailBody(message, link) {
-    const safe = String(message || '').replace(/\r\n|\r|\n/g, '<br>');
-    const anchor = link ? `<p><a href="${link}">View your estimate online</a></p>` : '';
-    return `<div>${safe}</div>${anchor}`;
-}
-
-/**
- * Compose the SMS body: the operator `message`; append the link only if it is
- * not already embedded (the dialog default already includes it → usually a no-op).
- */
-function buildSmsBody(message, link) {
-    const base = String(message || '').trim();
-    if (link && !base.includes(link)) {
-        return base ? `${base} ${link}` : link;
-    }
-    return base;
-}
-
-/**
- * SEND-DOC-001 (SD-5) — actually dispatch the estimate by email or SMS, then
- * (and only then) flip status → 'sent' + stamp sent_at and log the `sent` event.
- *
- * Coded errors carry { code, httpStatus } so routes/estimates.js maps them to
- * the SEND-DOC-001 §2.5 matrix; anything unexpected surfaces as 500.
- */
-async function sendEstimate(companyId, userId, id, { channel, recipient, message, userEmail } = {}) {
+async function sendEstimate(companyId, userId, id, { channel } = {}) {
     const estimate = await estimatesQueries.getEstimateById(companyId, id);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
@@ -385,95 +333,10 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
 
     const normalizedChannel = channel === 'text' ? 'sms' : channel;
     if (!['email', 'sms'].includes(normalizedChannel)) {
-        throw new EstimatesServiceError('VALIDATION', 'channel must be email or sms', 400);
-    }
-    const to = asText(recipient);
-    if (!to) {
-        throw new EstimatesServiceError('VALIDATION', 'Recipient is required.', 400);
+        throw new EstimatesServiceError('VALIDATION', 'channel must be email or text', 400);
     }
 
-    // Public page link is shared by both channels (idempotent — never re-mints).
-    const { url: link } = await ensurePublicLink(companyId, id);
-
-    if (normalizedChannel === 'email') {
-        // Pre-check: a mailbox that is missing / disconnected / reconnect_required
-        // must surface as 409, never reach Gmail, and never flip status.
-        const emailMailboxService = require('./emailMailboxService');
-        const mailbox = await emailMailboxService.getMailboxStatus(companyId);
-        if (!mailbox || mailbox.status !== 'connected') {
-            throw new EstimatesServiceError('MAILBOX_NOT_CONNECTED', 'Connect Google Email to send.', 409);
-        }
-
-        const number = estimate.estimate_number || `estimate-${id}`;
-        let companyName = '';
-        try {
-            const companyQueries = require('../db/companyQueries');
-            const company = await companyQueries.getCompanyById(companyId);
-            companyName = asText(company?.name);
-        } catch { /* subject falls back to no company suffix */ }
-        const subject = companyName
-            ? `Estimate ${number} from ${companyName}`
-            : `Estimate ${number}`;
-
-        const { buffer } = await generatePdf(companyId, id);
-        const safeFile = String(number).replace(/[^a-z0-9_-]+/gi, '_');
-
-        const emailService = require('./emailService');
-        try {
-            await emailService.sendEmail(companyId, {
-                to,
-                subject,
-                body: buildEmailBody(message, link),
-                files: [{
-                    mimetype: 'application/pdf',
-                    originalname: `Estimate-${safeFile}.pdf`,
-                    buffer,
-                }],
-                userId,
-                userEmail,
-            });
-        } catch (err) {
-            // sendEmail throws a PLAIN Error('Mailbox is not connected') (no statusCode)
-            // or Error('Mailbox requires reconnection') with statusCode 409 — both mean
-            // "mailbox not connected". Map to 409, not 500. Re-throw anything else as-is.
-            const m = err && err.message ? err.message : '';
-            if (err && (err.statusCode === 409 || /mailbox is not connected|requires reconnection/i.test(m))) {
-                throw new EstimatesServiceError('MAILBOX_NOT_CONNECTED', 'Connect Google Email to send.', 409);
-            }
-            throw err;
-        }
-        // NOTE: outbound contact-timeline stamp (emailQueries.linkMessageToContact)
-        // is intentionally skipped here — it needs a resolved timeline_id which is not
-        // trivially available on the estimate row, and the invoice path doesn't stamp
-        // either. The EMAIL-TIMELINE-001 sent-mail projection self-heals the stamp.
-    } else {
-        // SMS — resolve the company sending number BEFORE any side effects.
-        const { resolveCompanyProxyE164 } = require('./messagingHelper');
-        const proxy = await resolveCompanyProxyE164(companyId);
-        if (!proxy) {
-            throw new EstimatesServiceError('NO_PROXY', 'No company sending number is configured.', 422);
-        }
-        const customerE164 = toE164(to);
-        if (!customerE164) {
-            throw new EstimatesServiceError('NO_PHONE', 'A valid phone number is required.', 422);
-        }
-
-        const conversationsService = require('./conversationsService');
-        const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
-        // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
-        await conversationsService.sendMessage(conv.id, { body: buildSmsBody(message, link) });
-    }
-
-    // Dispatch resolved → NOW flip status and record the send (never before).
-    await estimatesQueries.updateEstimate(id, companyId, {
-        status: 'sent',
-        sent_at: new Date().toISOString(),
-    });
-    await estimatesQueries.createEvent(id, 'sent', 'user', userId, {
-        channel: normalizedChannel,
-        recipient: to,
-    });
-
+    await estimatesQueries.createEvent(id, 'send_stub_requested', 'user', userId, { channel: normalizedChannel });
     return getEstimate(companyId, id);
 }
 
@@ -676,75 +539,6 @@ async function generatePdf(companyId, id) {
     };
 }
 
-// =============================================================================
-// Public link (SEND-DOC-001) — mirrors invoicesService ensurePublicLink /
-// getPublicInvoice / generatePdfByPublicToken.
-// =============================================================================
-
-/**
- * Return (creating if necessary) a public link for the estimate. Idempotent —
- * subsequent calls return the same token + URL. Re-send never re-mints.
- */
-async function ensurePublicLink(companyId, id) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
-    if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
-
-    let token = estimate.public_token;
-    if (!token) {
-        // 8 bytes of entropy → 11 url-safe chars. 2^64 keyspace is plenty for unguessability.
-        token = crypto.randomBytes(8).toString('base64url');
-        await estimatesQueries.setPublicToken(estimate.id, companyId, token);
-    }
-
-    const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
-    // Customer-facing SPA page: GET /e/:token (PublicEstimateViewPage).
-    const path = `/e/${token}`;
-    return { token, url: base ? `${base}${path}` : path };
-}
-
-/**
- * Customer-safe view of an estimate resolved by its `public_token`.
- * No auth/scoping — the token is the credential. Returns null when not found
- * (route maps to 404). Exposes ONLY doc-safe fields — never internal IDs,
- * contact email/phone, costs/margins, or other tenant data.
- */
-async function getPublicEstimate(publicToken) {
-    const estimate = await estimatesQueries.getEstimateByPublicToken(publicToken);
-    if (!estimate) return null;
-    const items = await estimatesQueries.getEstimateItems(estimate.id);
-
-    return {
-        estimate_number: estimate.estimate_number,
-        status: estimate.status,
-        currency: estimate.currency || 'USD',
-        company_name: estimate.company_name || null,
-        contact_name: estimate.contact_name || null,
-        summary: estimate.summary || null,
-        notes: estimate.notes || null,
-        items: items.map((item) => ({
-            title: item.name,
-            description: item.description || null,
-            qty: Number(item.quantity),
-            unit_price: Number(item.unit_price),
-            line_total: Number(item.amount),
-        })),
-        subtotal: Number(estimate.subtotal),
-        discount_amount: Number(estimate.discount_amount),
-        tax_amount: Number(estimate.tax_amount),
-        total: Number(estimate.total),
-    };
-}
-
-/**
- * Render the PDF for an estimate resolved by its `public_token`.
- * No auth/scoping — the token is the credential. Reuses generatePdf.
- */
-async function generatePdfByPublicToken(publicToken) {
-    const estimate = await estimatesQueries.getEstimateByPublicToken(publicToken);
-    if (!estimate) throw new EstimatesServiceError('NOT_FOUND', 'Estimate not found', 404);
-    return generatePdf(estimate.company_id, estimate.id);
-}
-
 module.exports = {
     listEstimates,
     getEstimate,
@@ -753,7 +547,6 @@ module.exports = {
     archiveEstimate,
     restoreEstimate,
     addItem,
-    addItems,
     updateItem,
     removeItem,
     sendEstimate,
@@ -765,8 +558,5 @@ module.exports = {
     getRevisions,
     getEvents,
     generatePdf,
-    ensurePublicLink,
-    getPublicEstimate,
-    generatePdfByPublicToken,
     EstimatesServiceError,
 };

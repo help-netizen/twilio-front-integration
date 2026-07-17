@@ -5,8 +5,8 @@
  * - POST /wh/:key          — Receive Zenbooker webhooks (per-company, key in URL)
  * - GET  /webhook-url      — Get webhook URL for the current company
  * - POST /webhook-url/regenerate — Regenerate webhook key
- * - POST /contacts/:contactId/create-customer — Create Zenbooker customer from Albusto contact
- * - POST /contacts/:contactId/sync — Sync Albusto contact to Zenbooker
+ * - POST /contacts/:contactId/create-customer — Create Zenbooker customer from Blanc contact
+ * - POST /contacts/:contactId/sync — Sync Blanc contact to Zenbooker
  */
 
 const express = require('express');
@@ -267,7 +267,7 @@ router.post('/contacts/:contactId/create-customer', authenticate, requireCompany
 });
 
 // =============================================================================
-// POST /contacts/:contactId/sync — Sync Albusto contact to Zenbooker
+// POST /contacts/:contactId/sync — Sync Blanc contact to Zenbooker
 // =============================================================================
 router.post('/contacts/:contactId/sync', authenticate, requireCompanyAccess, async (req, res) => {
     const reqId = requestId();
@@ -307,21 +307,13 @@ router.get('/jobs', authenticate, requireCompanyAccess, async (req, res) => {
 
         const zenbookerClient = require('../services/zenbookerClient');
 
-        // Scope to the caller's company — use ITS Zenbooker client, never the
-        // shared/default account. Tenants without their own connection get []
-        // (prevents reading another tenant's Zenbooker jobs/customers).
-        const zbClient = await zenbookerClient.getClientForCompany(req.companyFilter?.company_id);
-        if (!zbClient) {
-            return res.json({ ok: true, data: [] });
-        }
-
         // Fetch jobs for this customer (paginated)
         const allJobs = [];
         let cursor = 0;
         const limit = 100;
 
         while (true) {
-            const jobRes = await zbClient.get('/jobs', {
+            const jobRes = await zenbookerClient.getClient().get('/jobs', {
                 params: { customer: customerId, limit, cursor },
             });
             const data = jobRes.data;

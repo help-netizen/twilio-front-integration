@@ -68,9 +68,8 @@ describe('Twilio webhook handlers', () => {
         process.env.NODE_ENV = 'development';
         process.env.TWILIO_AUTH_TOKEN = 'test_auth_token';
         mockInsertInboxEvent.mockResolvedValue({ id: 123 });
-        // Defaults: number maps to no company / not blocked. NOTE (ONBTEL-001
-        // C1): an inbound call whose company cannot be resolved is now
-        // fail-closed REJECTED — inbound routing tests must resolve a company.
+        // Defaults: number maps to no company / not blocked, so the wallet gate
+        // is a no-op unless a test overrides these.
         mockDbQuery.mockResolvedValue({ rows: [] });
         mockIsServiceBlocked.mockResolvedValue(false);
         mockFindOrCreateTimeline.mockResolvedValue({ id: 'tl_1', contact_id: 'c_1' });
@@ -138,11 +137,6 @@ describe('Twilio webhook handlers', () => {
 
     describe('handleVoiceInbound F017 no-group guard', () => {
         test('routes inbound calls without an assigned group to voicemail only', async () => {
-            // ONBTEL-001 C1: the number must resolve to a company (via the To
-            // fallback here) — otherwise the call is fail-closed rejected, which
-            // is covered by tests/twilioInboundIsolation.test.js. This test's
-            // point stays: resolved company + NO group → generic voicemail.
-            mockDbQuery.mockResolvedValue({ rows: [{ company_id: 'company_1' }] });
             mockResolveGroupForNumber.mockResolvedValue(null);
             const req = makeReq({
                 CallSid: 'CA_no_group',

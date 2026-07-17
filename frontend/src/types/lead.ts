@@ -46,14 +46,6 @@ export type Lead = {
     Team?: Array<{ id: string | number; name: string }> | null;
     WorkizLink?: string | null;
     Metadata?: Record<string, string> | null;
-    rely_filter?: {
-        rejected?: boolean;
-        reason?: 'out_of_area' | 'unit_not_serviced' | 'brand_not_serviced';
-        evaluated_at?: string;
-        zip?: string | null;
-        unit?: string | null;
-        brand?: string | null;
-    } | null;
     ContactId?: number | null;
     ContactName?: string | null;
 };

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Clock, Loader2, Layers } from 'lucide-react';
+import { Plus, Clock, Loader2 } from 'lucide-react';
 import { searchEstimateItemPresets, type EstimateItemPreset } from '../../services/estimateItemPresetsApi';
-import { listGroups, type PriceBookGroup } from '../../services/priceBookApi';
 
 interface Props {
     disabled?: boolean;
@@ -9,21 +8,17 @@ interface Props {
     onPickPreset: (preset: EstimateItemPreset) => void | Promise<void>;
     /** Called when user chooses to create a brand-new item. Combobox passes the typed name. */
     onCreateNew: (name: string) => void | Promise<void>;
-    /** PRICEBOOK-001: when set, the dropdown also offers Price Book groups; picking
-     *  one expands it into its items on the parent (bulk add). */
-    onPickGroup?: (groupId: number) => void | Promise<void>;
 }
 
 function money(value: number): string {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, onPickGroup }: Props) {
+export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }: Props) {
     const [query, setQuery] = useState('');
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [presets, setPresets] = useState<EstimateItemPreset[]>([]);
-    const [groups, setGroups] = useState<PriceBookGroup[]>([]);
     const [highlighted, setHighlighted] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const boxRef = useRef<HTMLDivElement>(null);
@@ -39,9 +34,6 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                 if (!cancelled) {
                     setPresets(items);
                     setHighlighted(0);
-                }
-                if (onPickGroup) {
-                    try { const gs = await listGroups({ search: query.trim() }); if (!cancelled) setGroups(gs.slice(0, 5)); } catch { /* */ }
                 }
             } catch {
                 // Silent — combobox stays open with "no items"
@@ -82,11 +74,6 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
         setQuery('');
         setOpen(false);
     };
-    const pickGroup = async (groupId: number) => {
-        if (onPickGroup) await onPickGroup(groupId);
-        setQuery('');
-        setOpen(false);
-    };
     const activateAt = async (idx: number) => {
         if (idx < presets.length) await pickPreset(presets[idx]);
         else if (canCreate) await createNew();
@@ -95,7 +82,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
     return (
         <div ref={boxRef} className="relative w-full max-w-md">
             <div className="relative">
-                <Plus className="absolute left-3 top-1/2 -translate-y-1/2 size-4 pointer-events-none" style={{ color: 'var(--blanc-ink-3)' }} />
+                <Plus className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#5f7085] pointer-events-none" />
                 <input
                     ref={inputRef}
                     type="text"
@@ -119,49 +106,29 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                             setOpen(false);
                         }
                     }}
-                    className="h-9 w-full rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent pl-9 pr-3 text-sm text-[var(--blanc-ink-1)] outline-none focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
+                    className="h-9 w-full rounded-[10px] border-[1.5px] border-[#d8e0ea] bg-white pl-9 pr-3 text-sm outline-none focus-visible:border-[#172033] disabled:opacity-50"
                 />
             </div>
 
             {open && (
-                <div className="absolute left-0 right-0 top-full mt-1 z-30 max-h-80 overflow-y-auto rounded-xl border border-[var(--blanc-line)] shadow-md" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
+                <div className="absolute left-0 right-0 top-full mt-1 z-30 max-h-80 overflow-y-auto rounded-xl border border-[#d8e0ea] bg-white shadow-md">
                     {loading && presets.length === 0 && (
-                        <div className="flex items-center gap-2 px-4 py-3 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
+                        <div className="flex items-center gap-2 px-4 py-3 text-xs text-[#5f7085]">
                             <Loader2 className="size-3.5 animate-spin" />
                             Searching…
                         </div>
                     )}
                     {!loading && presets.length === 0 && !trimmed && (
-                        <div className="px-4 py-3 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
+                        <div className="px-4 py-3 text-xs text-[#5f7085]">
                             No saved items yet. Type a name to create one.
                         </div>
                     )}
                     {!loading && presets.length === 0 && trimmed && !canCreate && (
-                        <div className="px-4 py-3 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>No matches.</div>
-                    )}
-
-                    {onPickGroup && groups.length > 0 && (
-                        <>
-                            <div className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>
-                                <Layers className="size-3" /> Groups
-                            </div>
-                            {groups.map(g => (
-                                <button key={`g${g.id}`} type="button"
-                                    onMouseDown={(e) => { e.preventDefault(); pickGroup(g.id); }}
-                                    className="w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 hover:bg-[rgba(25,25,25,0.06)]">
-                                    <div className="min-w-0">
-                                        <div className="font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{g.name}</div>
-                                        <div className="text-xs truncate" style={{ color: 'var(--blanc-ink-3)' }}>{g.item_count ?? 0} item(s) — adds all</div>
-                                    </div>
-                                    <div className="text-sm font-mono whitespace-nowrap shrink-0" style={{ color: 'var(--blanc-ink-1)' }}>{money(Number(g.total) || 0)}</div>
-                                </button>
-                            ))}
-                            {presets.length > 0 && <div className="border-t border-[var(--blanc-line)]" />}
-                        </>
+                        <div className="px-4 py-3 text-xs text-[#5f7085]">No matches.</div>
                     )}
 
                     {!trimmed && presets.length > 0 && (
-                        <div className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>
+                        <div className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[#5f7085]">
                             <Clock className="size-3" /> Frequently used
                         </div>
                     )}
@@ -172,22 +139,23 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                             type="button"
                             onMouseDown={(e) => { e.preventDefault(); pickPreset(p); }}
                             onMouseEnter={() => setHighlighted(idx)}
-                            className="w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 transition-colors"
-                            style={{ background: highlighted === idx ? 'rgba(25,25,25,0.06)' : 'transparent' }}
+                            className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 ${
+                                highlighted === idx ? 'bg-[#f3f6f9]' : 'hover:bg-[#f3f6f9]'
+                            }`}
                         >
                             <div className="min-w-0">
-                                <div className="font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{p.name}</div>
+                                <div className="font-medium truncate">{p.name}</div>
                                 {p.description && (
-                                    <div className="text-xs truncate" style={{ color: 'var(--blanc-ink-3)' }}>{p.description}</div>
+                                    <div className="text-xs text-[#5f7085] truncate">{p.description}</div>
                                 )}
                             </div>
-                            <div className="text-sm font-mono whitespace-nowrap shrink-0" style={{ color: 'var(--blanc-ink-1)' }}>{money(p.default_unit_price)}</div>
+                            <div className="text-sm font-mono whitespace-nowrap shrink-0">{money(p.default_unit_price)}</div>
                         </button>
                     ))}
 
                     {canCreate && (
                         <>
-                            {presets.length > 0 && <div className="border-t border-[var(--blanc-line)]" />}
+                            {presets.length > 0 && <div className="border-t border-[#d8e0ea]" />}
                             <button
                                 type="button"
                                 onMouseDown={(e) => { e.preventDefault(); createNew(); }}
@@ -201,7 +169,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                                     <div className="text-blue-600 font-medium">
                                         Create new “{trimmed}”
                                     </div>
-                                    <div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    <div className="text-xs text-[#5f7085]">
                                         Will be saved to the catalog for future estimates
                                     </div>
                                 </div>

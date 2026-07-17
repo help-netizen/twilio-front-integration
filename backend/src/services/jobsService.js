@@ -1,21 +1,19 @@
 /**
  * Jobs Service
  *
- * Local Albusto storage for Jobs with Zenbooker sync.
+ * Local Blanc storage for Jobs with Zenbooker sync.
  * A Job is created when a Lead is converted (status = 'Converted').
  *
  * FSM:
- *   blanc_status  — parent status in Albusto (Submitted, Waiting for parts, etc.)
+ *   blanc_status  — parent status in Blanc (Submitted, Waiting for parts, etc.)
  *   zb_status     — Zenbooker substatus (scheduled, en-route, complete)
  *   zb_rescheduled, zb_canceled — Zenbooker boolean flags
  */
 
-const { randomUUID } = require('node:crypto');
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventService = require('./eventService');
-const eventBus = require('./eventBus');
 const membershipQueries = require('../db/membershipQueries');
 const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 
@@ -26,48 +24,41 @@ const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 const BLANC_STATUSES = [
     'Submitted',
     'Waiting for parts',
-    'Part arrived',
     'Follow Up with Client',
     'Visit completed',
     'Job is Done',
     'Rescheduled',
     'Canceled',
-    'On the way',
 ];
 
-/** Manual transitions allowed in Albusto UI (§7) */
+/** Manual transitions allowed in Blanc UI (§7) */
 const ALLOWED_TRANSITIONS = {
-    'Submitted': ['Follow Up with Client', 'Waiting for parts', 'Canceled', 'On the way'],
-    'Waiting for parts': ['Submitted', 'Follow Up with Client', 'Canceled', 'Part arrived'],
-    // JOB-FSM-PART-ARRIVED-FORWARD-001: non-blocking — forward (On the way / Visit
-    // completed), lateral (Rescheduled), back (Waiting for parts / Submitted), plus the
-    // original Follow Up / Canceled. Mirrors the published-graph fix in migration 160.
-    'Part arrived': ['On the way', 'Visit completed', 'Rescheduled', 'Waiting for parts', 'Follow Up with Client', 'Submitted', 'Canceled'],
+    'Submitted': ['Follow Up with Client', 'Waiting for parts', 'Canceled'],
+    'Waiting for parts': ['Submitted', 'Follow Up with Client', 'Canceled'],
     'Follow Up with Client': ['Waiting for parts', 'Submitted', 'Canceled'],
     'Visit completed': ['Follow Up with Client', 'Job is Done', 'Canceled'],
     'Job is Done': ['Canceled'],
-    'Rescheduled': ['Submitted', 'Canceled', 'On the way'],
+    'Rescheduled': ['Submitted', 'Canceled'],
     'Canceled': [],  // terminal
-    'On the way': ['Visit completed', 'Canceled'],
 };
 
 /**
- * Albusto → Zenbooker outbound sync matrix (§6).
+ * Blanc → Zenbooker outbound sync matrix (§6).
  * Handled inline in updateBlancStatus. Documented here for reference:
  *
  *   Submitted             → no ZB action (operator-driven reopen; see note below)
- *   Waiting for parts     → no ZB action (Albusto-only operational state)
- *   Visit completed       → no ZB action (Albusto-only operational state)
+ *   Waiting for parts     → no ZB action (Blanc-only operational state)
+ *   Visit completed       → no ZB action (Blanc-only operational state)
  *   Job is Done           → markJobComplete                             (finalized)
  *   Canceled              → cancelJob
- *   Follow Up with Client → no ZB action (Albusto-only operational state)
+ *   Follow Up with Client → no ZB action (Blanc-only operational state)
  *   Rescheduled           → no ZB action (operator-driven reopen; see note below)
  *
  * Reopen limitation: Zenbooker API has NO endpoint to un-cancel or un-complete
  * a job. rescheduleJob only updates start_date + sets the rescheduled flag —
  * it does NOT reset status=complete or canceled=true back to scheduled.
- * For operator-driven reopens (Albusto → Submitted or Rescheduled on a job that
- * is still complete/canceled in ZB), Albusto maintains its own state and the
+ * For operator-driven reopens (Blanc → Submitted or Rescheduled on a job that
+ * is still complete/canceled in ZB), Blanc maintains its own state and the
  * inbound syncFromZenbooker logic preserves it (see "operator reopen override").
  *
  * All ZB calls are skipped if the ZB job is already in the target state, to
@@ -99,7 +90,6 @@ function rowToJob(row) {
         customer_phone: row.customer_phone,
         customer_email: row.customer_email,
         address: row.address,
-        city: row.city || null,
         territory: row.territory,
         invoice_total: row.invoice_total,
         invoice_status: row.invoice_status,
@@ -119,7 +109,7 @@ function rowToJob(row) {
         created_at: row.created_at ? row.created_at.toISOString() : null,
         updated_at: row.updated_at ? row.updated_at.toISOString() : null,
 
-        // Coordinates stored in Albusto DB
+        // Coordinates stored in Blanc DB
         lat: row.lat || null,
         lng: row.lng || null,
 
@@ -145,12 +135,6 @@ function zbJobToColumns(zbJob) {
     return {
         job_number: zbJob.job_number || null,
         service_name: zbJob.service_name || zbJob.services?.[0]?.service_name || null,
-        description: Array.isArray(zbJob.services)
-            ? zbJob.services
-                .map(service => typeof service?.description === 'string' ? service.description.trim() : null)
-                .filter(Boolean)
-                .join('\n') || null
-            : null,
         start_date: zbJob.start_date || null,
         // ZB end_date = start + job duration, but UI shows arrival window (time_slot).
         // Use time_slot.arrival_window_minutes to compute the correct end time.
@@ -167,7 +151,6 @@ function zbJobToColumns(zbJob) {
         address: zbJob.service_address?.formatted ||
             [zbJob.service_address?.street, zbJob.service_address?.city,
             zbJob.service_address?.state, zbJob.service_address?.zip].filter(Boolean).join(', ') || null,
-        city: zbJob.service_address?.city || null,
         territory: zbJob.territory?.name || null,
         invoice_total: zbJob.invoice?.total || null,
         invoice_status: zbJob.invoice?.status || null,
@@ -279,11 +262,11 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
     const { rows } = await db.query(`
         INSERT INTO jobs (lead_id, contact_id, zenbooker_job_id, blanc_status,
             zb_status, zb_canceled, zb_rescheduled,
-            job_number, service_name, description, start_date, end_date,
-            customer_name, customer_phone, customer_email, address, city,
+            job_number, service_name, start_date, end_date,
+            customer_name, customer_phone, customer_email, address,
             territory, invoice_total, invoice_status, assigned_techs, notes,
             zb_raw, company_id, lat, lng, assigned_provider_user_ids)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
         ON CONFLICT (zenbooker_job_id) DO UPDATE SET
             lead_id = COALESCE(EXCLUDED.lead_id, jobs.lead_id),
             contact_id = COALESCE(EXCLUDED.contact_id, jobs.contact_id),
@@ -293,14 +276,12 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
             zb_rescheduled = EXCLUDED.zb_rescheduled,
             job_number = EXCLUDED.job_number,
             service_name = EXCLUDED.service_name,
-            description = COALESCE(NULLIF(jobs.description, ''), EXCLUDED.description),
             start_date = EXCLUDED.start_date,
             end_date = EXCLUDED.end_date,
             customer_name = EXCLUDED.customer_name,
             customer_phone = EXCLUDED.customer_phone,
             customer_email = EXCLUDED.customer_email,
             address = EXCLUDED.address,
-            city = EXCLUDED.city,
             territory = EXCLUDED.territory,
             invoice_total = EXCLUDED.invoice_total,
             invoice_status = EXCLUDED.invoice_status,
@@ -315,10 +296,8 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
     `, [
         leadId || null, contactId || null, zenbookerJobId, blancStatus,
         cols.zb_status || 'scheduled', cols.zb_canceled || false, cols.zb_rescheduled || false,
-        cols.job_number || null, cols.service_name || null, cols.description || null,
-        cols.start_date || null, cols.end_date || null,
+        cols.job_number || null, cols.service_name || null, cols.start_date || null, cols.end_date || null,
         cols.customer_name || null, cols.customer_phone || null, cols.customer_email || null, cols.address || null,
-        cols.city || null,
         cols.territory || null, cols.invoice_total || null, cols.invoice_status || null,
         cols.assigned_techs || '[]', cols.notes || '[]',
         cols.zb_raw || '{}', companyId || null, cols.lat || null, cols.lng || null,
@@ -383,245 +362,6 @@ async function createManualJob(companyId, input = {}) {
             .catch(e => console.error('[JobsService] zb sync enqueue failed (non-fatal):', e.message));
     }
     return job;
-}
-
-/**
- * Create a Job directly (no lead → job conversion path). Mirrors the ZenBooker
- * create + sync-back block of leadsService.convertLead, but starting from a small
- * structured input instead of a lead row.
- *
- * input = {
- *   contact: { contact_id:number } | { name:string, phone:string, email?:string },
- *   address: { line1?, line2?, city?, state?, postal_code?, lat?, lng? },
- *   slot:    { start:ISO, end:ISO, tech_id?:string|null },
- *   job_type: string,
- *   description?: string,
- * }
- *
- * Steps:
- *   a. Resolve the contact (existing id is company-scoped; otherwise dedupe).
- *   b. Build the ZB payload (territory from ZIP, custom service, arrival window).
- *   c. Try to create the ZB job. On success: fetch detail (retry once for
- *      job_number) and persist via createJob({ zbData }). On failure: create a
- *      local job with the input data and surface a zb_warning.
- *
- * @param {string} companyId  — ONLY from req.companyFilter (never req.companyId)
- * @param {Object} input
- * @returns {Promise<{ job_id:number, zenbooker_job_id:string|null, zb_warning:string|null }>}
- */
-async function createDirectJob(companyId, input = {}) {
-    if (!companyId) {
-        const err = new Error('createDirectJob requires companyId');
-        err.httpStatus = 403;
-        throw err;
-    }
-
-    const contactDedupeService = require('./contactDedupeService');
-    const contactInput = input.contact || {};
-    const address = input.address || {};
-    const slot = input.slot || {};
-    const jobType = input.job_type || 'General Service';
-    const description = input.description || '';
-    // Shared lead/job fields (same data model as the New Lead form): lead source
-    // + Additional-info custom fields, persisted onto the local job's metadata jsonb.
-    const leadSource = (input.lead_source || '').trim();
-    const customMeta = (input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata))
-        ? input.metadata : {};
-
-    // ── a. Resolve contact ────────────────────────────────────────────────────
-    let contactId = null;
-    if (contactInput.contact_id != null) {
-        // Existing contact — must belong to this company (tenant isolation).
-        const { rows } = await db.query(
-            'SELECT id FROM contacts WHERE id = $1 AND company_id = $2',
-            [contactInput.contact_id, companyId]
-        );
-        if (rows.length === 0) {
-            const err = new Error('Contact not found');
-            err.httpStatus = 404;
-            throw err;
-        }
-        contactId = rows[0].id;
-    } else {
-        // New/unknown contact — split name on first space, dedupe-resolve.
-        const name = (contactInput.name || '').trim();
-        const spaceIdx = name.indexOf(' ');
-        const firstName = spaceIdx === -1 ? name : name.slice(0, spaceIdx);
-        const lastName = spaceIdx === -1 ? null : name.slice(spaceIdx + 1).trim() || null;
-        const resolved = await contactDedupeService.resolveContact({
-            first_name: firstName || null,
-            last_name: lastName,
-            phone: contactInput.phone || null,
-            email: contactInput.email || null,
-        }, companyId);
-        contactId = resolved.contact_id || null;
-    }
-
-    // ── b. Build ZB payload ───────────────────────────────────────────────────
-    // Contact display data for the customer block + local fallback insert.
-    let customerName = contactInput.name || null;
-    let customerPhone = contactInput.phone || null;
-    let customerEmail = contactInput.email || null;
-    if (contactInput.contact_id != null && contactId) {
-        const { rows } = await db.query(
-            'SELECT full_name, phone_e164, email FROM contacts WHERE id = $1 AND company_id = $2',
-            [contactId, companyId]
-        );
-        if (rows[0]) {
-            customerName = rows[0].full_name || customerName;
-            customerPhone = rows[0].phone_e164 || customerPhone;
-            customerEmail = rows[0].email || customerEmail;
-        }
-    }
-
-    const territoryId = await zenbookerClient.findTerritoryByPostalCode(address.postal_code);
-
-    const customer = {};
-    if (customerName) customer.name = customerName;
-    if (customerPhone) customer.phone = customerPhone;
-    if (customerEmail) customer.email = customerEmail;
-
-    // zenbookerClient.createJob → ensureAddressState backfills state from the ZIP.
-    const zbAddress = { country: 'US' };
-    if (address.line1) zbAddress.line1 = address.line1;
-    if (address.line2) zbAddress.line2 = address.line2;
-    if (address.city) zbAddress.city = address.city;
-    if (address.state) zbAddress.state = address.state;
-    if (address.postal_code) zbAddress.postal_code = address.postal_code;
-
-    const zbPayload = {
-        territory_id: territoryId,
-        customer,
-        address: zbAddress,
-        services: [{
-            custom_service: {
-                name: jobType,
-                description,
-                price: 0,
-                duration: 120,
-                taxable: false,
-            },
-        }],
-        timeslot: { type: 'arrival_window', start: slot.start, end: slot.end },
-        sms_notifications: true,
-        email_notifications: true,
-    };
-    if (slot.tech_id) {
-        // ZB rejects assigned_providers + assignment_method:'auto' together.
-        zbPayload.assigned_providers = [slot.tech_id];
-    } else {
-        zbPayload.assignment_method = 'auto';
-    }
-
-    // ── c. Create ZB job; persist local job either way ────────────────────────
-    let zenbookerJobId = null;
-    let zbWarning = null;
-    let localJob = null;
-
-    try {
-        const zbResult = await zenbookerClient.createJob(zbPayload);
-        zenbookerJobId = zbResult.job_id;
-
-        // ZB may not assign job_number immediately — retry once after a short delay.
-        let detail = await zenbookerClient.getJob(zenbookerJobId);
-        if (!detail?.job_number) {
-            await new Promise(r => setTimeout(r, 2000));
-            detail = await zenbookerClient.getJob(zenbookerJobId);
-        }
-
-        localJob = await createJob({ contactId, zenbookerJobId, zbData: detail, companyId });
-        console.log(`[CreateDirectJob] Zenbooker job ${zenbookerJobId} created → local job ${localJob.id}`);
-    } catch (err) {
-        // ZB nests the reason under error.message (e.g. INVALID_ADDRESS).
-        const errData = err.response?.data;
-        zbWarning = errData?.error?.message || errData?.message || err.message;
-        console.error('[CreateDirectJob] Zenbooker create error:', errData || err.message);
-
-        // No ZB link — persist a local-only job with the input data
-        // (mirror of claimLocalJobForConversion's local insert shape).
-        const addressStr = [address.line1, address.line2, address.city, address.state, address.postal_code]
-            .filter(Boolean).join(', ') || null;
-        // No geocode in this path; the structured create input already carries the
-        // city, so persist it directly (TILE-CITY-001).
-        const cityValue = address.city || null;
-        const assignedTechs = slot.tech_id ? JSON.stringify([{ id: slot.tech_id }]) : '[]';
-        const { rows } = await db.query(`
-            INSERT INTO jobs (
-                contact_id, company_id, blanc_status, service_name,
-                customer_name, customer_phone, customer_email, address, city,
-                start_date, end_date, assigned_techs
-            ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
-            RETURNING *
-        `, [
-            contactId, companyId, jobType,
-            customerName, customerPhone, customerEmail, addressStr, cityValue,
-            slot.start || null, slot.end || null, assignedTechs,
-        ]);
-        localJob = rowToJob(rows[0]);
-        console.log(`[CreateDirectJob] Local job ${localJob.id} created without ZB link: ${zbWarning}`);
-    }
-
-    // Merge shared fields into the local job's metadata (best-effort; never blocks
-    // the create). lead_source lives under metadata.lead_source alongside the
-    // Additional-info custom fields, mirroring the New Lead form's data shape.
-    const jobMetadata = { ...customMeta };
-    if (leadSource) jobMetadata.lead_source = leadSource;
-    if (localJob && Object.keys(jobMetadata).length > 0) {
-        try {
-            await db.query(
-                `UPDATE jobs SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb, updated_at = now()
-                 WHERE id = $2 AND company_id = $3`,
-                [JSON.stringify(jobMetadata), localJob.id, companyId]
-            );
-        } catch (e) {
-            console.error('[CreateDirectJob] metadata merge failed (non-fatal):', e.message);
-        }
-    }
-
-    // [CHANGE START] REPAIR-ADVISOR-001 (T6): post-commit domain event for the
-    // AI Repair Advisor subscriber (kb-diagnostics). Additive only — fire-and-forget
-    // so a failing bus never breaks the create; emit itself also never throws into
-    // the producer (§3.2). The human create-path always emits.
-    eventBus.emit(
-        companyId,
-        'job.created',
-        { id: localJob.id, jobId: localJob.id, companyId },
-        { actorType: 'user', aggregateType: 'job', aggregateId: localJob.id }
-    ).catch(() => {});
-    // [CHANGE END]
-
-    // JOB-CONTACT-SYNC-001: the form's phone/email must also land on the linked
-    // contact (dedupe can match by name alone; the picked contact may be a bare
-    // ZB import) — otherwise inbound calls/SMS never match and the Pulse
-    // timeline stays orphaned. Fill-empty-only; never blocks the create.
-    if (contactId && (contactInput.phone || contactInput.email)) {
-        try {
-            const { propagateContactDetails } = require('./contactPropagationService');
-            await propagateContactDetails(companyId, contactId,
-                { phone: contactInput.phone || null, email: contactInput.email || null },
-                { source: 'job_create' });
-        } catch (e) {
-            console.error('[CreateDirectJob] contact propagation failed (non-fatal):', e.message);
-        }
-    }
-
-    // SCHED-ROUTE-VIS-001 (FR-1, S-1..S-3): best-effort route recalc for the
-    // direct-create path — single point covering BOTH branches (ZB-success and
-    // local fallback; localJob is resolved either way). Job is new, so no
-    // beforeTechDays. Fire-and-forget: a failing recalc never breaks the create.
-    {
-        const routeSeg = require('./routeSegmentService');
-        routeSeg.recalcForJob(companyId, localJob.id, { coordsChanged: true })
-            .catch(e => console.error('[CreateDirectJob] route recalc failed (non-fatal):', e.message));
-        // Address present without coords → async geocode; the job_geocode handler
-        // re-runs recalc itself once coordinates land (agentHandlers, existing).
-        if (localJob.address && String(localJob.address).trim() && (localJob.lat == null || localJob.lng == null)) {
-            routeSeg.enqueueGeocode(companyId, localJob.id)
-                .catch(e => console.error('[CreateDirectJob] geocode enqueue failed (non-fatal):', e.message));
-        }
-    }
-
-    return { job_id: localJob.id, zenbooker_job_id: zenbookerJobId, zb_warning: zbWarning };
 }
 
 /**
@@ -860,33 +600,24 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         }
     }
 
-    // Fetch actual paid + outstanding amounts from invoices for all jobs in batch.
-    // Exclude void/refunded invoices (not real money owed) so they can't skew the
-    // totals. A job present in this map has local invoices → both amounts are
-    // strings; a job absent from it has no local invoice → amount_paid/balance_due
-    // stay null, which is the signal the tile uses to fall back to Zenbooker.
-    let paymentsMap = {};
+    // Fetch actual paid amounts from invoices for all jobs in batch
+    let amountPaidMap = {};
     if (jobIds.length > 0 && companyId) {
         const { rows: paidRows } = await db.query(`
-            SELECT i.job_id,
-                   SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS total_paid,
-                   SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS total_due
+            SELECT i.job_id, SUM(COALESCE(i.amount_paid, 0)) AS total_paid
             FROM invoices i
             WHERE i.job_id = ANY($1) AND i.company_id = $2
             GROUP BY i.job_id
         `, [jobIds, companyId]);
         for (const pr of paidRows) {
-            paymentsMap[pr.job_id] = { total_paid: pr.total_paid, total_due: pr.total_due };
+            amountPaidMap[pr.job_id] = pr.total_paid;
         }
     }
 
     const results = rows.map(r => {
         const job = rowToJob(r);
         job.tags = tagsMap[r.id] || [];
-        const pay = paymentsMap[r.id];
-        // No local invoice → leave both null so the tile uses the Zenbooker fallback.
-        job.amount_paid = pay ? pay.total_paid : null;
-        job.balance_due = pay ? pay.total_due : null;
+        job.amount_paid = amountPaidMap[r.id] || null;
         return job;
     });
 
@@ -899,72 +630,9 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     };
 }
 
-/**
- * Sum a single job's LOCAL invoice money (dollars), company-scoped, EXCLUDING
- * void/voided/refunded — the SAME exclusion set as listJobs' payments rollup
- * (see ~L815). Used by the outbound "part arrived" call flow so the voice agent
- * can answer "how much do I owe?" without a live DB lookup during the call.
- *
- * Returns dollar Numbers (pg NUMERIC comes back as strings → coerced), or null
- * for ALL three fields when the job has NO local invoice row — mirroring
- * listJobs' "absent from paymentsMap" signal. NEVER invents 0 for a job that has
- * no invoice (a job whose only invoices are void/refunded still counts as having
- * invoices → sums to 0, not null, exactly as listJobs behaves).
- *
- * @param {number|string} jobId    Job whose invoices to sum.
- * @param {string}        companyId Tenant scope (mandatory; missing → null result).
- * @returns {Promise<{ balanceDue:number|null, total:number|null, amountPaid:number|null }>}
- */
-async function getJobBalanceDue(jobId, companyId) {
-    const NONE = { balanceDue: null, total: null, amountPaid: null };
-    // Company scoping is mandatory — without it we neither query nor guess.
-    if (!jobId || !companyId) return NONE;
-
-    const { rows } = await db.query(`
-        SELECT
-            SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.total, 0)       ELSE 0 END) AS total,
-            SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS amount_paid,
-            SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS balance_due
-        FROM invoices i
-        WHERE i.job_id = $1 AND i.company_id = $2
-        GROUP BY i.job_id
-    `, [jobId, companyId]);
-
-    // GROUP BY yields NO row when the job has no local invoice → the "no invoice"
-    // signal (all null). Any invoice row present → one row of numeric sums.
-    if (rows.length === 0) return NONE;
-    const r = rows[0];
-    const num = (v) => (v == null ? null : Number(v));
-    return { balanceDue: num(r.balance_due), total: num(r.total), amountPaid: num(r.amount_paid) };
-}
-
 // =============================================================================
 // FSM — Manual status transitions
 // =============================================================================
-
-/**
- * OUTBOUND-PARTS-CALL-CANCEL-001 (CC-02) — the leave-hook seam, symmetric to the
- * onPartArrived enter-hook below. Fired (fire-and-forget — NEVER awaited into the
- * caller's failure path) after ANY committed write that takes a job OUT of
- * 'Part arrived': updateBlancStatus, cancelJob, markComplete, and the
- * syncFromZenbooker `zb_canceled` false→true flip (the sync cannot exit the
- * status via blanc_status — 'Part arrived' ∉ autoStatuses, preserved below).
- * Cancels the queued robot call (pending flip / dialing marker), writes the FR-3
- * job note and stamps the task — all inside
- * partsCallService.cancelScheduledRobotCalls, which is idempotent and never
- * throws. Same idiom as the enter-hook (lazy-require against the circular dep,
- * sync try/catch + async .catch, console.warn only — a cancel failure must never
- * fail the status change, S1/S10).
- */
-function fireRobotCallLeaveHook(jobId, companyId, newStatus) {
-    try {
-        require('./partsCallService')
-            .cancelScheduledRobotCalls({ jobId }, companyId, { kind: 'status_change', newStatus })
-            .catch(err => console.warn('[jobsService] robot-call leave-hook failed (non-blocking):', err.message));
-    } catch (err) {
-        console.warn('[jobsService] robot-call leave-hook failed (non-blocking):', err.message);
-    }
-}
 
 async function updateBlancStatus(jobId, newStatus, companyId) {
     const job = await getJobById(jobId);
@@ -1002,17 +670,13 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
         }
     }
 
-    // $1 (blanc_status, varchar) must NOT be reused in the CASE comparison —
-    // Postgres then deduces two types for it ("inconsistent types deduced for
-    // parameter $1") and the whole UPDATE fails for every status change. Pass the
-    // canceled flag as its own boolean param.
     await db.query(
         `UPDATE jobs
          SET blanc_status = $1,
-             zb_canceled = CASE WHEN $2 THEN true ELSE zb_canceled END,
+             zb_canceled = CASE WHEN $1 = 'Canceled' THEN true ELSE zb_canceled END,
              updated_at = NOW()
-         WHERE id = $3`,
-        [newStatus, newStatus === 'Canceled', jobId]
+         WHERE id = $2`,
+        [newStatus, jobId]
     );
 
     // Outbound sync to Zenbooker — full mapping with no-op guards (§6).
@@ -1022,7 +686,7 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
     // Note: Submitted and Rescheduled intentionally do NOT call ZB. Zenbooker
     // has no API to un-cancel or un-complete a job (reschedule only updates
     // start_date + rescheduled flag, not status/canceled). For operator-driven
-    // reopens, Albusto diverges intentionally; the inbound sync preserves the
+    // reopens, Blanc diverges intentionally; the inbound sync preserves the
     // override (see syncFromZenbooker "operator reopen override").
     if (job.zenbooker_job_id) {
         try {
@@ -1037,33 +701,10 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
                     console.log(`[JobsService] Outbound: job ${jobId} → Canceled (ZB cancel)`);
                 }
             }
-            // Submitted, Rescheduled, Follow Up with Client, Part arrived — no ZB action
-            // (Part arrived is an Albusto-only operational state, like Waiting for parts)
+            // Submitted, Rescheduled, Follow Up with Client — no ZB action
         } catch (err) {
             console.error(`[JobsService] Outbound sync error for ${newStatus}:`, err.response?.data || err.message);
         }
-    }
-
-    // Fail-safe trigger seam (OUTBOUND-PARTS-CALL-001 §B.2 / S13): entering
-    // 'Part arrived' fires the idempotent auto-task creation. Fire-and-forget —
-    // NEVER awaited, NEVER rolls back or blocks the already-committed transition
-    // (mirrors eventService.logEvent discipline). Lazy-require partsCallService to
-    // avoid a circular dependency (partsCallService → tasksQueries).
-    if (newStatus === 'Part arrived' && job.blanc_status !== 'Part arrived') {
-        try {
-            require('./partsCallService')
-                .onPartArrived(jobId, companyId)
-                .catch(err => console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message));
-        } catch (err) {
-            console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message);
-        }
-    }
-
-    // CANCEL-001 leave-hook (CC-02 S1/S2): the job just left 'Part arrived' — any
-    // queued robot call must not survive the exit. companyId can be null on the
-    // legacy no-company path → fall back to the job row's own tenant.
-    if (job.blanc_status === 'Part arrived' && newStatus !== 'Part arrived') {
-        fireRobotCallLeaveHook(jobId, companyId || job.company_id, newStatus);
     }
 
     return { ...job, blanc_status: newStatus, _prev_status: job.blanc_status };
@@ -1078,58 +719,36 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
  * Creates or updates the local job, recalculates blanc_status.
  */
 /**
- * Merge incoming Zenbooker notes with existing local notes, preserving Albusto-side
+ * Merge incoming Zenbooker notes with existing local notes, preserving Blanc-side
  * metadata (author, created, attachments) when a match is found.
  *
  * Match priority:
  *   1. by zb_note_id captured from previous addNote response
  *   2. by raw ZB id (for idempotent re-sync after a merge has already happened)
- *   3. by text match against any not-yet-correlated local note (no zb_note_id) —
- *      INCLUDING freshly-created in-app notes, which carry a local `id` but no ZB
- *      id until their `job.note_added` echo arrives. Matching by text preserves
- *      that local id so the client's edit/delete keep working (NOTES-ID-STABLE-001;
- *      previously the echo re-id'd the note and edits 404'd until a page refresh).
- * Finally, Albusto-authored notes ZB hasn't echoed yet are carried forward instead
- * of dropped (a sync firing before the echo must not lose or re-id a fresh note).
+ *   3. by text match against a local note that has an `author` but no ZB id yet
+ *      (covers the transition period / existing data predating id capture)
  */
 function mergeNotes(localNotes, zbNotes) {
     const byZbId = new Map();          // zb id → local note
     const unmatchedLocalByText = [];   // [{ note, used }]
-    const matched = new Set();         // local notes folded into a ZB note (by ref)
     for (const ln of (localNotes || [])) {
         const lid = ln.zb_note_id || ln.id;
         if (lid) byZbId.set(String(lid), ln);
-        // Any not-yet-correlated local note (no zb_note_id) with text is a text-match
-        // candidate — including in-app notes that already have a local `id`
-        // (NOTES-ID-STABLE-001). No `author` gate: it must stay aligned with the
-        // `unechoed` filter below, else an author-less local note would be appended
-        // AND left un-text-matched → a persistent duplicate.
-        if (!ln.zb_note_id && ln.text) {
+        if (!ln.zb_note_id && !ln.id && ln.author && ln.text) {
             unmatchedLocalByText.push({ note: ln, used: false });
         }
     }
 
-    // Always carry these Albusto-side fields forward when a ZB note matches a local
-    // one. When the local note was edited (edited_at set) we keep the local text —
-    // otherwise an edit would silently revert on the next re-sync (NOTES-001).
-    const preserveLocal = (ln) => ({
-        ...(ln.author ? { author: ln.author } : {}),
-        ...(ln.created ? { created: ln.created } : {}),
-        ...(ln.attachments && ln.attachments.length ? { attachments: ln.attachments } : {}),
-        ...(ln.id ? { id: ln.id } : {}),
-        ...(ln.created_by ? { created_by: ln.created_by } : {}),
-        ...(ln.deleted_at ? { deleted_at: ln.deleted_at, deleted_by: ln.deleted_by || null } : {}),
-        ...(ln.edited_at ? { edited_at: ln.edited_at, edited_by: ln.edited_by || null, text: ln.text } : {}),
-    });
-
-    const merged = (zbNotes || []).map(zn => {
+    return (zbNotes || []).map(zn => {
         const znId = zn.id ? String(zn.id) : null;
         if (znId && byZbId.has(znId)) {
             const ln = byZbId.get(znId);
-            matched.add(ln);
             return {
                 ...zn,
-                ...preserveLocal(ln),
+                // Preserve Blanc metadata
+                ...(ln.author ? { author: ln.author } : {}),
+                ...(ln.created ? { created: ln.created } : {}),
+                ...(ln.attachments && ln.attachments.length ? { attachments: ln.attachments } : {}),
                 zb_note_id: znId,
             };
         }
@@ -1138,11 +757,11 @@ function mergeNotes(localNotes, zbNotes) {
             for (const entry of unmatchedLocalByText) {
                 if (!entry.used && String(entry.note.text || '').trim() === znText) {
                     entry.used = true;
-                    matched.add(entry.note);
                     return {
                         ...zn,
-                        ...preserveLocal(entry.note),
                         author: entry.note.author,
+                        ...(entry.note.created ? { created: entry.note.created } : {}),
+                        ...(entry.note.attachments && entry.note.attachments.length ? { attachments: entry.note.attachments } : {}),
                         ...(znId ? { zb_note_id: znId } : {}),
                     };
                 }
@@ -1150,21 +769,13 @@ function mergeNotes(localNotes, zbNotes) {
         }
         return zn;
     });
-
-    // Carry forward Albusto-authored notes ZB hasn't echoed yet: created in-app
-    // (local id + created_by), not soft-deleted, and never correlated to a ZB id
-    // (a correlated note ZB no longer returns is a genuine ZB-side delete → drop).
-    const unechoed = (localNotes || []).filter(ln =>
-        ln && ln.id && ln.created_by && !ln.deleted_at && !ln.zb_note_id && !matched.has(ln)
-    );
-    return [...merged, ...unechoed];
 }
 
 async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = '') {
     const cols = zbJobToColumns(zbData);
     const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled, eventType);
 
-    // Try to match ZB customer → Albusto contact
+    // Try to match ZB customer → Blanc contact
     let contactId = null;
     const zbCustomerId = zbData.customer?.id ? String(zbData.customer.id) : null;
     if (zbCustomerId) {
@@ -1181,23 +792,6 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
     // Check if job exists
     const existing = await getJobByZbId(zbJobId);
 
-    // JOB-CONTACT-SYNC-001: ZB imports routinely create bare contacts (no
-    // phone/email) while the ZB job carries them — then inbound calls never
-    // match and Pulse timelines stay orphaned (prod case: job 1359 / timeline
-    // 2911). Enrich the matched contact from the ZB customer data.
-    // Fill-empty-only + never-steal; cheap no-op guard for the bulk-sync path.
-    const propagationCompanyId = companyId || existing?.company_id || null;
-    if (contactId && propagationCompanyId && (cols.customer_phone || cols.customer_email)) {
-        try {
-            const { propagateContactDetails } = require('./contactPropagationService');
-            await propagateContactDetails(propagationCompanyId, contactId,
-                { phone: cols.customer_phone || null, email: cols.customer_email || null },
-                { source: 'zb_sync' });
-        } catch (e) {
-            console.error('[JobsService] contact propagation failed (non-fatal):', e.message);
-        }
-    }
-
     if (existing) {
         // Preserve manually-set blanc_status (e.g. "Waiting for parts", "Follow Up with Client")
         // when the inbound ZB webhook was triggered by our own outbound sync.
@@ -1205,9 +799,9 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
         const autoStatuses = ['Submitted', 'Visit completed', 'Rescheduled', 'Canceled'];
         let shouldUpdateBlancStatus = autoStatuses.includes(existing.blanc_status);
 
-        // Operator-reopen override: Albusto can be reset to Submitted/Rescheduled by an
+        // Operator-reopen override: Blanc can be reset to Submitted/Rescheduled by an
         // operator even when the ZB job is still canceled or complete. Zenbooker has no
-        // API to un-cancel or un-complete, so Albusto maintains this divergence on purpose.
+        // API to un-cancel or un-complete, so Blanc maintains this divergence on purpose.
         // Without this override the next inbound webhook would snap blanc back to
         // Canceled / Visit completed.
         if (
@@ -1219,8 +813,8 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 
         const effectiveBlancStatus = shouldUpdateBlancStatus ? newBlancStatus : existing.blanc_status;
 
-        // Merge notes: keep Albusto-side metadata (author, created, attachments) for notes
-        // that originated in Albusto and were echoed back by Zenbooker.
+        // Merge notes: keep Blanc-side metadata (author, created, attachments) for notes
+        // that originated in Blanc and were echoed back by Zenbooker.
         const incomingZbNotes = JSON.parse(cols.notes || '[]');
         const mergedNotes = mergeNotes(existing.notes || [], incomingZbNotes);
         cols.notes = JSON.stringify(mergedNotes);
@@ -1232,20 +826,6 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
         const effectiveTechs = incomingTechs.length === 0 ? (existing.assigned_techs || []) : incomingTechs;
         const effectiveCompanyId = companyId || existing.company_id || null;
         const assignedProviderUserIds = await resolveAssignedProviderUserIds(effectiveCompanyId, effectiveTechs);
-
-        // SCHED-ROUTE-VIS-001 (FR-1, S-5/S-6): capture the tech-day pairs this
-        // job occupies BEFORE the UPDATE so a moved job repairs the day it left.
-        const routeSeg = require('./routeSegmentService');
-        let beforeTechDays = [];
-        try {
-            const routeQueries = require('../db/routeQueries');
-            const tz = await routeQueries.getCompanyTimezone(effectiveCompanyId);
-            beforeTechDays = await routeQueries.getTechDaysForJob(effectiveCompanyId, existing.id, tz);
-        } catch { /* non-fatal */ }
-        // coordsChanged ONLY on a real numeric delta — webhook echoes (S-6) and
-        // null-coords partial payloads (E-11) must NOT churn surviving pairs.
-        const coordsChanged = cols.lat != null && cols.lng != null &&
-            (Number(cols.lat) !== Number(existing.lat) || Number(cols.lng) !== Number(existing.lng));
 
         // Update existing job + link contact if not already linked
         await db.query(`
@@ -1260,7 +840,6 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                 customer_phone = COALESCE($10, customer_phone),
                 customer_email = COALESCE($11, customer_email),
                 address = COALESCE($12, address),
-                city = COALESCE($25, city),
                 territory = COALESCE($13, territory),
                 invoice_total = COALESCE($14, invoice_total),
                 invoice_status = COALESCE($15, invoice_status),
@@ -1283,44 +862,18 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
             cols.assigned_techs, cols.notes, cols.zb_raw,
             zbJobId, contactId, cols.lat, cols.lng, companyId,
             assignedProviderUserIds,
-            cols.city ?? null,
         ]);
-
-        // CANCEL-001 leave-hook (CC-02 S3): the sync can never move a job out of
-        // 'Part arrived' via blanc_status (∉ autoStatuses — preserved above), so
-        // the ONLY sync-borne exit is the zb_canceled false→true FLIP (written
-        // unconditionally by the UPDATE). Fire exactly on that flip, scoped to
-        // the row being synced.
-        if (existing.blanc_status === 'Part arrived' && !existing.zb_canceled && cols.zb_canceled) {
-            fireRobotCallLeaveHook(existing.id, effectiveCompanyId, 'Canceled (Zenbooker)');
-        }
 
         if (!shouldUpdateBlancStatus) {
             console.log(`[JobsService] Synced job ${zbJobId}: preserved manual blanc_status "${existing.blanc_status}" (ZB would set "${newBlancStatus}")`);
         } else {
             console.log(`[JobsService] Synced job ${zbJobId}: blanc_status ${existing.blanc_status} → ${effectiveBlancStatus}`);
         }
-
-        // SCHED-ROUTE-VIS-001 (FR-1, S-5/S-6): best-effort recalc after the
-        // UPDATE — fire-and-forget, never blocks/fails the sync.
-        routeSeg.recalcForJob(effectiveCompanyId, existing.id, { beforeTechDays, coordsChanged })
-            .catch(e => console.error('[JobsService] zb-sync recalc failed (non-fatal):', e.message));
-
         return { updated: true, job_id: existing.id, blanc_status: effectiveBlancStatus };
     } else {
         // Create new job linked to contact
         const job = await createJob({ zenbookerJobId: zbJobId, zbData, companyId, contactId });
         console.log(`[JobsService] Created local job for zb_id=${zbJobId}, id=${job.id}, contact=${contactId}`);
-
-        // SCHED-ROUTE-VIS-001 (FR-1, S-4): ZB-ingested new job → best-effort
-        // recalc; async geocode when the address arrived without coordinates.
-        const routeSeg = require('./routeSegmentService');
-        routeSeg.recalcForJob(companyId || job.company_id, job.id, { coordsChanged: true })
-            .catch(e => console.error('[JobsService] zb-create recalc failed (non-fatal):', e.message));
-        if (job.address && String(job.address).trim() && (job.lat == null || job.lng == null)) {
-            routeSeg.enqueueGeocode(companyId || job.company_id, job.id)
-                .catch(e => console.error('[JobsService] zb-create geocode enqueue failed (non-fatal):', e.message));
-        }
 
         // ZB auto-assigns providers asynchronously — re-fetch after delay to catch it
         if ((!zbData.assigned_providers || zbData.assigned_providers.length === 0) && !zbData.unable_to_auto_assign) {
@@ -1338,11 +891,6 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                             [JSON.stringify(zbRefresh.assigned_providers), JSON.stringify(zbRefresh), refreshedMirror, zbJobId]
                         );
                         console.log(`[JobsService] Delayed re-fetch: auto-assigned ${zbRefresh.assigned_providers.length} provider(s) for job ${job.id}`);
-                        // SCHED-ROUTE-VIS-001 (FR-1, S-7): techs just landed via the
-                        // delayed auto-assign — recalc. Pure addition of techs, so no
-                        // beforeTechDays/coordsChanged needed.
-                        routeSeg.recalcForJob(companyId || job.company_id, job.id, {})
-                            .catch(e => console.error('[JobsService] delayed-assign recalc failed (non-fatal):', e.message));
                     }
                 } catch (err) {
                     console.warn(`[JobsService] Delayed re-fetch error for ${zbJobId}:`, err.message);
@@ -1358,11 +906,11 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 // Notes
 // =============================================================================
 
-async function addNote(jobId, text, attachments = [], author = null, createdBy = null, noteId = null) {
+async function addNote(jobId, text, attachments = [], author = null) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    const note = { id: noteId || randomUUID(), text, created: new Date().toISOString(), created_by: createdBy || null };
+    const note = { text, created: new Date().toISOString() };
     if (author) note.author = author;
     if (attachments.length > 0) {
         note.attachments = attachments.map(a => ({
@@ -1442,12 +990,6 @@ async function cancelJob(jobId) {
         'UPDATE jobs SET zb_canceled = true, blanc_status = $1, updated_at = NOW() WHERE id = $2',
         ['Canceled', jobId]
     );
-    // CANCEL-001 leave-hook (CC-02 S2): this writer sets blanc_status DIRECTLY
-    // (bypasses updateBlancStatus — fsm.js /apply + the jobs.js cancel route), so
-    // it needs its own exit hook. Pre-state from the job loaded above.
-    if (job.blanc_status === 'Part arrived') {
-        fireRobotCallLeaveHook(jobId, job.company_id, 'Canceled');
-    }
     return { ...job, blanc_status: 'Canceled', zb_canceled: true };
 }
 
@@ -1505,11 +1047,6 @@ async function markComplete(jobId) {
         "UPDATE jobs SET zb_status = 'complete', blanc_status = 'Visit completed', updated_at = NOW() WHERE id = $1",
         [jobId]
     );
-    // CANCEL-001 leave-hook (CC-02 S2): direct blanc_status writer, same as
-    // cancelJob above — a completed visit ends the robot-call plan.
-    if (job.blanc_status === 'Part arrived') {
-        fireRobotCallLeaveHook(jobId, job.company_id, 'Visit completed');
-    }
     return { ...job, zb_status: 'complete', blanc_status: 'Visit completed' };
 }
 
@@ -1674,14 +1211,11 @@ async function updateJobLocation(companyId, jobId, { address, lat, lng, normaliz
 module.exports = {
     createJob,
     createManualJob,
-    createDirectJob,
     getJobById,
     getJobByZbId,
     listJobs,
-    getJobBalanceDue,
     updateBlancStatus,
     syncFromZenbooker,
-    mergeNotes,
     addNote,
     cancelJob,
     markEnroute,

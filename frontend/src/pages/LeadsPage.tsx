@@ -3,8 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { LeadsTable } from '../components/leads/LeadsTable';
 import { LeadsFilters } from '../components/leads/LeadsFilters';
-import { LeadsMobileBar } from '../components/leads/LeadsMobileBar';
-import { LeadsMobileList } from '../components/leads/LeadsMobileList';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { CreateLeadDialog } from '../components/leads/CreateLeadDialog';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
@@ -18,9 +16,6 @@ import { serverNow, serverDate } from '../utils/serverClock';
 import { DEFAULT_COLUMNS } from '../types/lead';
 import { createLeadActions } from '../hooks/useLeadsActions';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
-import { MobileListPage } from '../components/layout/MobileListPage';
-import { useIsMobile } from '../hooks/useIsMobile';
-import { useAuthz } from '../hooks/useAuthz';
 
 const STORAGE_KEY = 'leads-table-columns';
 
@@ -39,36 +34,17 @@ export function LeadsPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
-    const [rejectedOnly, setRejectedOnly] = useState(false);
     const [hasMore, setHasMore] = useState(false);
     const [sortBy, setSortBy] = useState<string>('CreatedDate');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const { customFields: allSettingsFields } = useLeadFormSettings();
     const searchableFields = useMemo(() => allSettingsFields.filter(f => f.is_searchable && !f.is_system).map(f => ({ api_name: f.api_name })), [allSettingsFields]);
-    const isMobile = useIsMobile();
-    const { company, hasPermission } = useAuthz();
-    const canCreateLead = hasPermission('leads.create');
 
     const loadLeads = async (newFilters?: LeadsListParams) => {
         setLoading(true);
         try { const params = newFilters || filters; const response = await leadsApi.listLeads(params); setLeads(response.data.results); setHasMore(response.data.pagination.has_more); }
         catch (error) { toast.error('Failed to load leads', { description: error instanceof Error ? error.message : 'Unknown error' }); }
         finally { setLoading(false); }
-    };
-
-    // Mobile "Load more" — append the next page (does NOT touch filters.offset, so
-    // the desktop replace-on-offset effect and prev/next pagination stay untouched).
-    const loadMoreLeads = async () => {
-        setLoading(true);
-        try {
-            const resp = await leadsApi.listLeads({ ...filters, offset: leads.length });
-            setLeads(prev => [...prev, ...resp.data.results]);
-            setHasMore(resp.data.pagination.has_more);
-        } catch (error) {
-            toast.error('Failed to load more leads', { description: error instanceof Error ? error.message : 'Unknown error' });
-        } finally {
-            setLoading(false);
-        }
     };
 
     useEffect(() => { loadLeads(); }, [filters.start_date, filters.end_date, filters.only_open, filters.status, filters.offset]);
@@ -84,7 +60,6 @@ export function LeadsPage() {
         if (searchQuery.trim()) { const q = searchQuery.toLowerCase(); result = result.filter(lead => { const fn = `${lead.FirstName || ''} ${lead.LastName || ''}`.toLowerCase(); if (fn.includes(q) || lead.Company?.toLowerCase().includes(q) || lead.Phone?.includes(q) || lead.Email?.toLowerCase().includes(q) || String(lead.SerialId)?.includes(q)) return true; if (lead.Metadata && searchableFields.length > 0) { for (const f of searchableFields) { const v = (lead.Metadata as any)[f.api_name]; if (v && String(v).toLowerCase().includes(q)) return true; } } return false; }); }
         if (sourceFilter.length > 0) result = result.filter(l => l.JobSource && sourceFilter.includes(l.JobSource));
         if (jobTypeFilter.length > 0) result = result.filter(l => l.JobType && jobTypeFilter.includes(l.JobType));
-        if (rejectedOnly) result = result.filter(l => l.rely_filter?.rejected === true);
         // Client-side sort
         result = [...result].sort((a, b) => {
             const av = (a as any)[sortBy] ?? '';
@@ -93,7 +68,7 @@ export function LeadsPage() {
             return sortOrder === 'asc' ? cmp : -cmp;
         });
         return result;
-    }, [leads, searchQuery, sourceFilter, jobTypeFilter, rejectedOnly, searchableFields, sortBy, sortOrder]);
+    }, [leads, searchQuery, sourceFilter, jobTypeFilter, searchableFields, sortBy, sortOrder]);
 
     const handleFiltersChange = (nf: Partial<LeadsListParams>) => setFilters(prev => ({ ...prev, ...nf, offset: 0 }));
     const handleNextPage = () => { if (hasMore) setFilters(prev => ({ ...prev, offset: (prev.offset || 0) + (prev.records || 100) })); };
@@ -103,8 +78,44 @@ export function LeadsPage() {
 
     const actions = createLeadActions(leads, selectedLead, setLeads, setSelectedLead, setEditingLead, setConvertingLead, setCreateDialogOpen);
 
-    const detailAndDialogs = (
-        <>
+    return (
+        <div className="blanc-page-wrapper">
+            {/* Unified header: title + search + controls in one row */}
+            <div className="blanc-unified-header">
+                <h1 className="blanc-header-title">Leads</h1>
+
+                <div className="blanc-search-wrapper">
+                    <input
+                        type="text"
+                        placeholder="type to find anything..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="blanc-search-input"
+                    />
+                </div>
+
+                <div className="blanc-controls-group">
+                    <LeadsFilters filters={filters} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
+                    <button
+                        onClick={() => setSettingsDialogOpen(true)}
+                        className="blanc-control-chip-icon"
+                        title="Column settings"
+                    >
+                        <Settings className="size-4" />
+                    </button>
+                    <button
+                        onClick={() => setCreateDialogOpen(true)}
+                        className="blanc-control-chip-primary"
+                    >
+                        <Plus className="size-4" />Create Lead
+                    </button>
+                </div>
+            </div>
+            <div className="blanc-page-card">
+                <div className="flex-1 flex flex-col overflow-x-auto">
+                    <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }} />
+                </div>
+            </div>
             <FloatingDetailPanel open={!!selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} wide>
                 <LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} />
             </FloatingDetailPanel>
@@ -112,87 +123,6 @@ export function LeadsPage() {
             {editingLead && <EditLeadDialog lead={editingLead} open={!!editingLead} onOpenChange={open => !open && setEditingLead(null)} onSuccess={actions.handleUpdateLead} />}
             <ColumnSettingsDialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen} columns={columns} onSave={handleSaveColumns} />
             {convertingLead && <ConvertToJobDialog lead={convertingLead} open={!!convertingLead} onOpenChange={open => !open && setConvertingLead(null)} onSuccess={actions.handleConvertSuccess} />}
-        </>
-    );
-
-    if (isMobile) {
-        return (
-            <>
-                <MobileListPage
-                    stickyBar={
-                        <LeadsMobileBar
-                            searchQuery={searchQuery} setSearchQuery={setSearchQuery}
-                            filters={filters} onFiltersChange={handleFiltersChange}
-                            sourceFilter={sourceFilter} onSourceFilterChange={setSourceFilter}
-                            jobTypeFilter={jobTypeFilter} onJobTypeFilterChange={setJobTypeFilter}
-                            rejectedOnly={rejectedOnly} onToggleRejected={() => setRejectedOnly(current => !current)}
-                            sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }}
-                            onNewLead={() => setCreateDialogOpen(true)}
-                            canCreateLead={canCreateLead}
-                        />
-                    }
-                >
-                    <LeadsMobileList
-                        filteredLeads={filteredLeads}
-                        loading={loading}
-                        hasMore={hasMore}
-                        onLoadMore={loadMoreLeads}
-                        onSelectLead={handleSelectLead}
-                        timezone={company?.timezone}
-                    />
-                </MobileListPage>
-                {detailAndDialogs}
-            </>
-        );
-    }
-
-    // Desktop only — mobile early-returns above.
-    return (
-        <div className="blanc-page-wrapper">
-            {!isMobile && (
-                <>
-                    {/* Unified header: title + search + controls in one row */}
-                    <div className="blanc-unified-header">
-                        <h1 className="blanc-header-title">Leads</h1>
-
-                        <div className="blanc-search-wrapper">
-                            <input
-                                type="text"
-                                placeholder="type to find anything..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="blanc-search-input"
-                            />
-                        </div>
-
-                        <div className="blanc-controls-group">
-                            <LeadsFilters filters={filters} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} rejectedOnly={rejectedOnly} onFiltersChange={handleFiltersChange} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} onToggleRejected={() => setRejectedOnly(current => !current)} />
-                            <button
-                                onClick={() => setSettingsDialogOpen(true)}
-                                className="blanc-control-chip-icon"
-                                title="Column settings"
-                            >
-                                <Settings className="size-4" />
-                            </button>
-                            {canCreateLead && (
-                                <button
-                                    onClick={() => setCreateDialogOpen(true)}
-                                    className="blanc-control-chip-primary"
-                                >
-                                    <Plus className="size-4" />Create Lead
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                    {/* Аквариум .blanc-page-card снесён (правило 7): невидимый layout-контейнер */}
-                    <div className="flex flex-1 flex-col min-h-0">
-                        <div className="flex-1 flex flex-col overflow-x-auto">
-                            <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }} />
-                        </div>
-                    </div>
-                </>
-            )}
-            {detailAndDialogs}
         </div>
     );
 }

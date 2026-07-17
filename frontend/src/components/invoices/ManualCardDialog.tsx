@@ -2,16 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { Button } from '../ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle } from '../ui/dialog';
-import { invoiceStripeApi, jobStripeApi } from '../../services/stripePaymentsApi';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { invoiceStripeApi } from '../../services/stripePaymentsApi';
 import { loadStripe } from '../../utils/loadStripe';
 
 interface Props {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    invoiceId?: number;
-    jobId?: number | string;
-    amount?: number;
+    invoiceId: number;
     onSuccess?: () => void;
 }
 
@@ -20,7 +18,7 @@ interface Props {
  * Stripe-rendered, never touch Albusto). The backend creates a direct-charge
  * PaymentIntent; the canonical ledger is updated by the webhook on success.
  */
-export default function ManualCardDialog({ open, onOpenChange, invoiceId, jobId, amount, onSuccess }: Props) {
+export default function ManualCardDialog({ open, onOpenChange, invoiceId, onSuccess }: Props) {
     const mountRef = useRef<HTMLDivElement>(null);
     const stripeRef = useRef<any>(null);
     const elementsRef = useRef<any>(null);
@@ -35,9 +33,7 @@ export default function ManualCardDialog({ open, onOpenChange, invoiceId, jobId,
         (async () => {
             setLoading(true); setError(null);
             try {
-                const session = jobId != null
-                    ? await jobStripeApi.manualCardSession(jobId, amount)
-                    : await invoiceStripeApi.manualCardSession(invoiceId!, amount);
+                const session = await invoiceStripeApi.manualCardSession(invoiceId);
                 const stripe = await loadStripe(session.account_id);
                 if (cancelled) return;
                 const elements = stripe.elements({ clientSecret: session.client_secret });
@@ -53,7 +49,7 @@ export default function ManualCardDialog({ open, onOpenChange, invoiceId, jobId,
             }
         })();
         return () => { cancelled = true; };
-    }, [open, invoiceId, jobId, amount]);
+    }, [open, invoiceId]);
 
     const submit = async () => {
         if (!stripeRef.current || !elementsRef.current) return;
@@ -73,35 +69,23 @@ export default function ManualCardDialog({ open, onOpenChange, invoiceId, jobId,
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent variant="panel">
-                <DialogPanelHeader>
-                    <DialogTitle
-                        className="text-[22px] font-semibold leading-tight"
-                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                    >
-                        Enter card manually
-                    </DialogTitle>
-                    <DialogDescription className="sr-only">Charge a card via Stripe's secure form</DialogDescription>
-                </DialogPanelHeader>
-
-                <DialogBody className="md:px-8 md:py-7">
-                  <div className="mx-auto w-full max-w-[740px] space-y-6">
-                    <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Enter card manually</DialogTitle>
+                    <DialogDescription>
                         Card details are entered securely in Stripe's form. Albusto never sees the card number.
                         Keyed entry may carry different fees/risk than a card-present payment.
-                    </p>
-                    {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-6"><Loader2 className="h-4 w-4 animate-spin" /> Preparing secure form…</div>}
-                    <div ref={mountRef} className="min-h-[40px]" />
-                    {error && <p className="text-sm text-red-600">{error}</p>}
-                  </div>
-                </DialogBody>
-
-                <DialogPanelFooter>
-                    <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button>
+                    </DialogDescription>
+                </DialogHeader>
+                {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-6"><Loader2 className="h-4 w-4 animate-spin" /> Preparing secure form…</div>}
+                <div ref={mountRef} className="min-h-[40px]" />
+                {error && <p className="text-sm text-red-600">{error}</p>}
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button>
                     <Button onClick={submit} disabled={!ready || submitting}>
                         {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Charge card
                     </Button>
-                </DialogPanelFooter>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );

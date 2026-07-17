@@ -11,18 +11,12 @@ import { useEffect, useRef, useState } from 'react';
 import { ShieldCheck, Loader2 } from 'lucide-react';
 import { getAuthHeaders } from '../../auth/AuthProvider';
 import { subscribeTwoFactor, completeTwoFactor } from '../../services/twoFactorGate';
-import { useIsMobile } from '../../hooks/useIsMobile';
-import { BottomSheet } from '../ui/BottomSheet';
 
 // Direct fetch with auth headers — the /api/auth/* endpoints are 2FA-exempt, so
 // they never re-trigger the gate (no recursion through authedFetch).
-// `credentials: 'include'` is REQUIRED: trust-device sets the httpOnly `albusto_td`
-// cookie, and it must be (a) sent on these requests and (b) accepted from the
-// response — otherwise the device never sticks and the 401 gate re-opens in a loop.
 function authFetch(path: string, body?: unknown): Promise<Response> {
     return fetch(path, {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: body ? JSON.stringify(body) : undefined,
     });
@@ -35,17 +29,16 @@ const overlay: React.CSSProperties = {
 };
 const card: React.CSSProperties = {
     width: 420, maxWidth: '100%', background: '#fffdf9',
-    border: '1px solid var(--blanc-line)', borderRadius: 22,
+    border: '1px solid rgba(117,106,89,0.18)', borderRadius: 22,
     padding: '28px 28px 24px', boxShadow: '0 20px 60px rgba(60,54,44,0.12)',
 };
 const input: React.CSSProperties = {
     width: '100%', height: 46, borderRadius: 12, padding: '0 14px',
-    border: '1px solid var(--blanc-line-strong)', fontSize: 20, letterSpacing: '0.5em',
+    border: '1px solid rgba(117,106,89,0.28)', fontSize: 20, letterSpacing: '0.5em',
     textAlign: 'center', fontVariantNumeric: 'tabular-nums', boxSizing: 'border-box',
 };
 
 export default function TwoFactorGate() {
-    const isMobile = useIsMobile();
     const [active, setActive] = useState(false);
     const [phoneHint, setPhoneHint] = useState('');
     const [code, setCode] = useState('');
@@ -53,34 +46,15 @@ export default function TwoFactorGate() {
     const [error, setError] = useState<string | null>(null);
     const [resendIn, setResendIn] = useState(0);
     const codeRef = useRef<HTMLInputElement>(null);
-    // Guards the auto-send so it fires AT MOST ONCE per gate-open (no SMS storm on
-    // re-render / StrictMode double-invoke / repeated requireTwoFactor calls).
-    const autoSentRef = useRef(false);
 
     // Show/hide when the gate is required.
     useEffect(() => subscribeTwoFactor((on) => {
         setActive(on);
         if (on) { setCode(''); setError(null); }
-        else { autoSentRef.current = false; }   // re-arm auto-send for the next open
     }), []);
 
-    // Auto-send a code exactly once when the gate opens.
-    useEffect(() => {
-        if (active && !autoSentRef.current) {
-            autoSentRef.current = true;
-            void send();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [active]);
-
-    // On mobile the sheet's focus-trap moves focus to the panel on open, stealing it
-    // from the OTP input's autoFocus. Re-focus the input right after open (send() also
-    // re-focuses once the SMS returns, but that can lag on the network).
-    useEffect(() => {
-        if (!active || !isMobile) return;
-        const t = setTimeout(() => codeRef.current?.focus(), 60);
-        return () => clearTimeout(t);
-    }, [active, isMobile]);
+    // Auto-send a code as soon as the gate opens.
+    useEffect(() => { if (active) void send(); /* eslint-disable-next-line */ }, [active]);
 
     // Resend countdown.
     useEffect(() => {
@@ -94,16 +68,6 @@ export default function TwoFactorGate() {
         try {
             const r = await authFetch('/api/auth/otp/send');
             const j = await r.json().catch(() => ({}));
-            // Rate limited: not a hard error. Show the wait, start the countdown
-            // from retry_after_sec, and DON'T auto-resend (button stays disabled
-            // while resendIn > 0). Combined with the backend throttle this makes
-            // an SMS storm impossible.
-            if (r.status === 429 || j.code === 'OTP_RATE_LIMITED') {
-                if (j.phone_hint) setPhoneHint(j.phone_hint);
-                setError(j.message || 'Too many attempts — please wait a moment.');
-                setResendIn(Math.max(1, Number(j.retry_after_sec) || 60));
-                return;
-            }
             if (!r.ok) throw new Error(j.message || 'Could not send the code');
             setPhoneHint(j.phone_hint || 'your phone');
             setResendIn(j.resend_after_sec || 30);
@@ -136,49 +100,21 @@ export default function TwoFactorGate() {
 
     if (!active) return null;
 
-    // Shared inner content — identical on desktop card and mobile sheet.
-    const body = (
-        <>
-            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'Manrope, sans-serif', color: '#2c2722' }}>Confirm it's you</div>
-            <p style={{ margin: '8px 0 18px', fontSize: 14, color: 'rgba(60,54,44,0.65)', display: 'flex', gap: 7, alignItems: 'center' }}>
-                <ShieldCheck size={15} /> For your security, enter the 6-digit code we texted to {phoneHint || 'your phone'}.
-            </p>
-            <input ref={codeRef} style={input} inputMode="numeric" autoComplete="one-time-code"
-                autoFocus value={code} onChange={(e) => onCodeChange(e.target.value)} placeholder="••••••" />
-            {error && <div style={{ color: '#b3422f', fontSize: 13, marginTop: 10 }}>{error}</div>}
-            {busy && <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}><Loader2 size={18} className="animate-spin" /></div>}
-            <button type="button" disabled={resendIn > 0 || busy} onClick={() => void send()}
-                style={{ marginTop: 16, background: 'none', border: 'none', cursor: resendIn > 0 ? 'default' : 'pointer', color: resendIn > 0 ? 'rgba(60,54,44,0.4)' : '#3c362c', fontSize: 13, fontWeight: 600 }}>
-                {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
-            </button>
-        </>
-    );
-
-    // Mobile: canonical bottom sheet. The gate is a hard block until verified, so it stays
-    // NON-dismissible — no close X, no drag-to-dismiss, and onClose is a no-op (there is no
-    // user-cancel path; completeTwoFactor() from a successful verify is what tears it down).
-    if (isMobile) {
-        return (
-            <BottomSheet
-                open
-                onClose={() => {}}
-                size="auto"
-                showHeader={false}
-                hideCloseButton
-                showGrabHandle={false}
-                dragToDismiss={false}
-                ariaLabel="Confirm it's you"
-            >
-                {body}
-            </BottomSheet>
-        );
-    }
-
-    // Desktop: the centered 420px card, unchanged.
     return (
         <div style={overlay}>
             <div style={card}>
-                {body}
+                <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'Manrope, sans-serif', color: '#2c2722' }}>Confirm it's you</div>
+                <p style={{ margin: '8px 0 18px', fontSize: 14, color: 'rgba(60,54,44,0.65)', display: 'flex', gap: 7, alignItems: 'center' }}>
+                    <ShieldCheck size={15} /> For your security, enter the 6-digit code we texted to {phoneHint || 'your phone'}.
+                </p>
+                <input ref={codeRef} style={input} inputMode="numeric" autoComplete="one-time-code"
+                    autoFocus value={code} onChange={(e) => onCodeChange(e.target.value)} placeholder="••••••" />
+                {error && <div style={{ color: '#b3422f', fontSize: 13, marginTop: 10 }}>{error}</div>}
+                {busy && <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}><Loader2 size={18} className="animate-spin" /></div>}
+                <button type="button" disabled={resendIn > 0 || busy} onClick={() => void send()}
+                    style={{ marginTop: 16, background: 'none', border: 'none', cursor: resendIn > 0 ? 'default' : 'pointer', color: resendIn > 0 ? 'rgba(60,54,44,0.4)' : '#3c362c', fontSize: 13, fontWeight: 600 }}>
+                    {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
+                </button>
             </div>
         </div>
     );

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
-import { Undo2, Ban, Send, Receipt } from 'lucide-react';
+import { X, Undo2, Ban, Send, Receipt } from 'lucide-react';
 import type { PaymentTransaction, PaymentReceipt, SendReceiptData, RefundData } from '../../services/paymentsCanonicalApi';
 import { RefundDialog } from './RefundDialog';
 
@@ -55,7 +55,7 @@ interface Props {
 
 // -- Component ----------------------------------------------------------------
 
-export function TransactionDetailPanel({ transaction, receipt, onClose: _onClose, onRefund, onVoid, onSendReceipt }: Props) {
+export function TransactionDetailPanel({ transaction, receipt, onClose, onRefund, onVoid, onSendReceipt }: Props) {
     const [refundOpen, setRefundOpen] = useState(false);
     const [sendingReceipt, setSendingReceipt] = useState(false);
     const [receiptChannel, setReceiptChannel] = useState<'email' | 'sms'>('email');
@@ -95,8 +95,8 @@ export function TransactionDetailPanel({ transaction, receipt, onClose: _onClose
     return (
         <div className="flex flex-col h-full overflow-y-auto">
             {/* Header */}
-            <div className="border-b p-4 flex items-center justify-between max-md:pr-14">
-                <div className="flex items-center gap-2 flex-wrap">
+            <div className="border-b p-4 flex items-center justify-between">
+                <div className="flex items-center gap-2">
                     <span className="font-semibold text-sm">Transaction #{transaction.id}</span>
                     <Badge variant={TYPE_VARIANT[transaction.transaction_type] || 'secondary'} className="capitalize">
                         {transaction.transaction_type}
@@ -105,6 +105,9 @@ export function TransactionDetailPanel({ transaction, receipt, onClose: _onClose
                         {transaction.status}
                     </Badge>
                 </div>
+                <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
+                    <X className="size-4" />
+                </Button>
             </div>
 
             <div>

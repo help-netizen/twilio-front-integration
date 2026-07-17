@@ -139,18 +139,6 @@ async function reconcileCall(twilioPayload, source) {
         }
     }
 
-    // OLC-CALLBACK-001: a lead Sara is robo-calling just called US back → cancel
-    // its outbound lead_call queue (so Sara doesn't also dial) and note the lead.
-    // Keyed on the caller's number + active lead_call status, so it needs no
-    // company context here; idempotent + safe-fail (never disturbs call ingest).
-    // Lazy require avoids any cycle (outboundLeadCallService never requires this).
-    if (processed.direction === 'inbound' && externalParty?.formatted) {
-        try {
-            await require('./outboundLeadCallService')
-                .cancelLeadChainsForInboundCallback(externalParty.formatted);
-        } catch (e) { /* non-fatal */ }
-    }
-
     // Reconcile parent call from child legs (same logic as inboxWorker)
     const { reconcileParentCall } = require('./inboxWorker');
     if (normalized.parentCallSid && isFinal) {

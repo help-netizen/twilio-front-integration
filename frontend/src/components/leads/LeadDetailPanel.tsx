@@ -18,8 +18,6 @@ import { MetadataSection, LeadDetailFooter } from './LeadDetailSections';
 import { LeadInfoSections } from './LeadInfoSections';
 import { LeadFinancialsTab } from './LeadFinancialsTab';
 import { LEAD_STATUS_COLORS, hexToRgba } from './leadStatusStyles';
-import { REJECTED_REASON_COPY } from './leadConstants';
-import { useAuthz } from '../../hooks/useAuthz';
 
 interface LeadDetailPanelProps {
     lead: Lead | null;
@@ -141,7 +139,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
                 {/* ═══ RIGHT COLUMN (desktop) — Details & Finance ═══ */}
                 <div
                     className="w-full md:w-1/2 flex-col overflow-y-auto hidden md:flex"
-                    style={{ borderLeft: '1px solid var(--blanc-line)' }}
+                    style={{ borderLeft: '1px solid rgba(117, 106, 89, 0.07)' }}
                 >
                     <Tabs value={rightTab} onValueChange={v => setRightTab(v as 'details' | 'financials')} className="flex flex-col h-full">
                         <div className="shrink-0" style={{ padding: '8px 16px 0' }}>
@@ -185,8 +183,6 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
     onUpdateStatus: (uuid: string, status: string) => void;
     onUpdateSource: (uuid: string, source: string) => void;
 }) {
-    const { hasPermission } = useAuthz();
-    const canViewSource = hasPermission('lead_source.view');
     const { data: fsmData } = useFsmStates('lead', true);
     const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : (LEAD_STATUSES as unknown as string[]);
     const initialState = fsmData?.initialState || null;
@@ -195,9 +191,6 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
     const reachable = allStatuses.filter(s => s !== lead.Status && allowedTargets.has(s));
     const unreachable = allStatuses.filter(s => s !== lead.Status && !allowedTargets.has(s));
     const canReset = initialState && lead.Status !== initialState;
-    const rejectedReason = lead.rely_filter?.reason
-        ? REJECTED_REASON_COPY[lead.rely_filter.reason] ?? 'Rejected'
-        : 'Rejected';
 
     return (
         <>
@@ -258,7 +251,7 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                                 <DropdownMenuItem
                                     onClick={() => onUpdateStatus(lead.UUID, initialState!)}
                                     className="flex items-center gap-2 text-xs font-medium mx-1 mb-1 rounded-md"
-                                    style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)' }}
+                                    style={{ background: 'rgba(117,106,89,0.06)', color: 'var(--blanc-ink-2)' }}
                                 >
                                     <RotateCcw className="size-3" />
                                     Reset to {initialState}
@@ -268,47 +261,31 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                     </DropdownMenuContent>
                 </DropdownMenu>
 
-                {canViewSource && (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <button
-                                type="button"
-                                className="inline-flex items-center gap-1.5 px-4 text-sm font-medium transition-colors focus:outline-none"
-                                style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}
-                            >
-                                {lead.JobSource || 'No Source'}<ChevronDown className="size-3.5" />
-                            </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start">
-                            {JOB_SOURCES.map(source => (
-                                <DropdownMenuItem key={source} onClick={() => onUpdateSource(lead.UUID, source)} className={source === lead.JobSource ? 'bg-accent' : ''}>
-                                    {source}
-                                </DropdownMenuItem>
-                            ))}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                )}
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <button
+                            type="button"
+                            className="inline-flex items-center gap-1.5 px-4 text-sm font-medium transition-colors focus:outline-none"
+                            style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}
+                        >
+                            {lead.JobSource || 'No Source'}<ChevronDown className="size-3.5" />
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                        {JOB_SOURCES.map(source => (
+                            <DropdownMenuItem key={source} onClick={() => onUpdateSource(lead.UUID, source)} className={source === lead.JobSource ? 'bg-accent' : ''}>
+                                {source}
+                            </DropdownMenuItem>
+                        ))}
+                    </DropdownMenuContent>
+                </DropdownMenu>
 
                 {lead.SubStatus && (
-                    <span className="inline-flex items-center px-4 text-sm font-medium" style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}>
+                    <span className="inline-flex items-center px-4 text-sm font-medium" style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}>
                         {lead.SubStatus}
                     </span>
                 )}
-
-                {lead.rely_filter?.rejected && (
-                    <span
-                        title={rejectedReason}
-                        className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap"
-                        style={{ background: hexToRgba('#DC2626', 0.1), color: '#DC2626' }}
-                    >
-                        Rejected
-                    </span>
-                )}
             </div>
-
-            {lead.rely_filter?.rejected && (
-                <p className="text-[13px] mt-2" style={{ color: '#DC2626' }}>{rejectedReason}</p>
-            )}
         </>
     );
 }

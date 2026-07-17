@@ -1,25 +1,25 @@
 /**
  * Job FSM Sync Service
  *
- * Bi-directional sync between Albusto Job statuses and Zenbooker Job statuses.
+ * Bi-directional sync between Blanc Job statuses and Zenbooker Job statuses.
  *
  * Data model:
- *   - A "Job" in Albusto = lead row with converted_to_job=true, status='Converted'
- *   - Albusto parent status → leads.sub_status
+ *   - A "Job" in Blanc = lead row with converted_to_job=true, status='Converted'
+ *   - Blanc parent status → leads.sub_status
  *   - Zenbooker job ID   → leads.zenbooker_job_id
  *
- * ─── Inbound (Zenbooker → Albusto) ────────────────────────────────────────────
- *   Webhook events are mapped to Albusto sub_status using priority rules:
+ * ─── Inbound (Zenbooker → Blanc) ────────────────────────────────────────────
+ *   Webhook events are mapped to Blanc sub_status using priority rules:
  *     1. canceled=true  → "Canceled"     (highest priority)
  *     2. rescheduled=true → "Rescheduled"
  *     3. status=complete  → "Visit completed"
  *     4. status=scheduled / en-route → "Submitted"
  *
- * ─── Outbound (Albusto → Zenbooker) ───────────────────────────────────────────
- *   When Albusto sub_status changes via PATCH /api/leads/:uuid:
+ * ─── Outbound (Blanc → Zenbooker) ───────────────────────────────────────────
+ *   When Blanc sub_status changes via PATCH /api/leads/:uuid:
  *     - "Submitted"         → no Zenbooker API call (already scheduled)
- *     - "Waiting for parts" → no Zenbooker API call (Albusto-only operational state)
- *     - "Visit completed"   → no Zenbooker API call (Albusto-only operational state)
+ *     - "Waiting for parts" → no Zenbooker API call (Blanc-only operational state)
+ *     - "Visit completed"   → no Zenbooker API call (Blanc-only operational state)
  *     - "Job is Done"       → markJobComplete
  *     - "Canceled"          → cancelJob
  *     - others              → no automatic Zenbooker action
@@ -32,7 +32,7 @@ const zenbookerClient = require('./zenbookerClient');
 // Constants
 // =============================================================================
 
-/** Valid Albusto (parent) Job statuses */
+/** Valid Blanc (parent) Job statuses */
 const BLANC_JOB_STATUSES = [
     'Submitted',
     'Waiting for parts',
@@ -44,7 +44,7 @@ const BLANC_JOB_STATUSES = [
 ];
 
 /**
- * Zenbooker webhook event → Albusto sub_status mapping.
+ * Zenbooker webhook event → Blanc sub_status mapping.
  * Priority order: canceled > rescheduled > status-based.
  */
 const EVENT_TO_STATUS = {
@@ -57,12 +57,12 @@ const EVENT_TO_STATUS = {
 };
 
 // =============================================================================
-// Inbound: Zenbooker → Albusto
+// Inbound: Zenbooker → Blanc
 // =============================================================================
 
 /**
  * Handle an inbound job webhook event from Zenbooker.
- * Finds the matching Albusto lead by zenbooker_job_id and updates sub_status.
+ * Finds the matching Blanc lead by zenbooker_job_id and updates sub_status.
  *
  * @param {Object} payload - Webhook payload { event, data, ... }
  * @returns {{ updated: boolean, lead_uuid?: string, sub_status?: string }}
@@ -76,7 +76,7 @@ async function handleJobWebhook(payload) {
         return { updated: false, reason: 'missing_job_id' };
     }
 
-    // 1. Find matching Albusto lead
+    // 1. Find matching Blanc lead
     const { rows } = await db.query(
         `SELECT uuid, sub_status FROM leads
          WHERE zenbooker_job_id = $1 AND converted_to_job = true
@@ -85,7 +85,7 @@ async function handleJobWebhook(payload) {
     );
 
     if (rows.length === 0) {
-        console.log(`[JobSync] No Albusto lead found for zenbooker_job_id=${jobId}, event=${event}`);
+        console.log(`[JobSync] No Blanc lead found for zenbooker_job_id=${jobId}, event=${event}`);
         return { updated: false, reason: 'lead_not_found' };
     }
 
@@ -137,7 +137,7 @@ async function handleJobWebhook(payload) {
         return { updated: false, reason: 'already_current' };
     }
 
-    // 5. Update Albusto sub_status
+    // 5. Update Blanc sub_status
     await db.query(
         `UPDATE leads SET sub_status = $1, updated_at = NOW()
          WHERE uuid = $2`,
@@ -188,15 +188,15 @@ async function refreshAssigneeMirrorFromAssignment(zbJobId, eventData) {
 }
 
 // =============================================================================
-// Outbound: Albusto → Zenbooker
+// Outbound: Blanc → Zenbooker
 // =============================================================================
 
 /**
- * Sync a Albusto sub_status change to Zenbooker.
+ * Sync a Blanc sub_status change to Zenbooker.
  * Called after PATCH /api/leads/:uuid when SubStatus changed on a converted lead.
  *
  * @param {string} leadUuid - Lead UUID
- * @param {string} newSubStatus - New Albusto sub_status value
+ * @param {string} newSubStatus - New Blanc sub_status value
  * @returns {{ synced: boolean, action?: string }}
  */
 async function syncBlancStatusToZenbooker(leadUuid, newSubStatus) {
@@ -214,12 +214,12 @@ async function syncBlancStatusToZenbooker(leadUuid, newSubStatus) {
 
     const jobId = rows[0].zenbooker_job_id;
 
-    // 2. Map Albusto sub_status → Zenbooker API call
+    // 2. Map Blanc sub_status → Zenbooker API call
     try {
         switch (newSubStatus) {
             case 'Job is Done':
                 // §6: Only the final "Job is Done" maps to Zenbooker "complete".
-                // "Waiting for parts" and "Visit completed" are Albusto-only operational
+                // "Waiting for parts" and "Visit completed" are Blanc-only operational
                 // states and do NOT trigger ZB markComplete.
                 await zenbookerClient.markJobComplete(jobId);
                 console.log(`[JobSync] Outbound: lead ${leadUuid} → markJobComplete (job=${jobId})`);

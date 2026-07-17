@@ -34,14 +34,3 @@ export function callToCallData(call: any): CallData {
         answeredBy: call.answered_by || undefined,
     };
 }
-
-// =============================================================================
-// AI-answered detection — single source of truth for the sidebar marker
-// (PulseContactItem) and the thread-feed tile marker (PulseCallListItem).
-// =============================================================================
-const AI_ANSWERED_BY_MARKERS = ['ai', 'vapi', 'bot', 'assistant'];
-
-export function isAiAnsweredBy(answeredBy: string | null | undefined): boolean {
-    const normalized = (answeredBy || '').toLowerCase();
-    return AI_ANSWERED_BY_MARKERS.some(marker => normalized.includes(marker));
-}

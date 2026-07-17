@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Plus, Trash2, Zap, X } from 'lucide-react';
 import type { AutomationRule, Catalog, RuleAction } from '../../services/automationApi';
 
-const LINE = 'var(--blanc-line, var(--blanc-line))';
+const LINE = 'var(--blanc-line, rgba(117,106,89,0.18))';
 const input: React.CSSProperties = {
     height: 38, borderRadius: 10, padding: '0 10px', border: `1px solid ${LINE}`,
     fontSize: 14, background: '#fff', color: 'var(--blanc-ink-1, #202734)', boxSizing: 'border-box',
@@ -15,7 +15,7 @@ const eyebrow: React.CSSProperties = {
     fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.13em',
     color: 'var(--blanc-ink-3, #7d8796)', fontWeight: 500,
 };
-const block: React.CSSProperties = { padding: 16, background: 'rgba(25,25,25,0.04)', borderRadius: 16 };
+const block: React.CSSProperties = { padding: 16, background: 'rgba(117,106,89,0.05)', borderRadius: 16 };
 const kw = { color: 'var(--blanc-ink-3, #7d8796)', fontWeight: 500, padding: '0 2px' } as React.CSSProperties;
 
 // Human labels for the raw operators stored on the rule.
@@ -34,7 +34,7 @@ interface Cond { field: string; op: string; value?: any }
 
 function Segmented<T extends string>({ value, options, onChange }: { value: T; options: Array<[T, string]>; onChange: (v: T) => void }) {
     return (
-        <span style={{ display: 'inline-flex', background: 'rgba(25,25,25,0.08)', borderRadius: 10, padding: 3 }}>
+        <span style={{ display: 'inline-flex', background: 'rgba(117,106,89,0.1)', borderRadius: 10, padding: 3 }}>
             {options.map(([v, lbl]) => (
                 <button key={v} type="button" onClick={() => onChange(v)} style={{
                     fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer', padding: '6px 14px', borderRadius: 8,

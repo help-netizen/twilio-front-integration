@@ -1,108 +1,146 @@
-# Albusto — Contact Center & Field-Service CRM
+# Twilio-Front Integration
 
-Multi-tenant CRM and contact center for home-services companies. One workspace
-for every customer conversation (calls, SMS, email) and the work it produces
-(leads, jobs, schedules, estimates, invoices, payments), with AI woven into the
-operational flow — call summaries, live transcription, inbound and outbound
-voice agents (the latter schedules the finish visit once a part arrives), and
-an email-triage agent that turns important letters into dispatcher tasks.
+Integration server for syncing Twilio call history into Front as an Application Channel.
 
-> Historical note: this repository started in 2024 as a small "Twilio → Front"
-> channel sync — hence its name. The Front integration is long gone; the repo
-> now hosts the entire Albusto platform.
+## Features
 
-## What's inside
+- ✅ Sync Twilio call records (inbound/outbound) to Front
+- ✅ Real-time webhook support from Twilio
+- ✅ Webhook integration with Front Channel API
+- ✅ JWT-based authentication for Front API
+- ✅ Markdown formatting for call details
+- ✅ Threading calls by phone number
+- ✅ Signature verification for security
 
-- **Pulse** — the unified inbox. One paginated timeline list across calls, SMS,
-  and email per contact (both directions — including threads where the
-  dispatcher wrote first), unread tracking, Action-Required tasks pinned on
-  top, per-thread timeline with call recordings + transcripts, SMS chat, and
-  email.
-- **Telephony** — Twilio-backed multi-tenant phone system as a marketplace
-  app: numbers (A2P onboarding), user groups, call-flow builder, audio
-  library, routing logs, after-hours/autonomous mode, browser softphone
-  (desktop), AI voice agent (VAPI) for inbound qualification.
-- **CRM & field service** — leads, jobs (Zenbooker sync), visual schedule with
-  slot recommendations (standalone slot-engine service), estimates & invoices
-  (public pay pages, Stripe incl. Tap to Pay), price book, tasks across every
-  entity, role-based access (4 roles, ~56 permissions, in-app access grid).
-- **AI** — Gemini call summaries and text polish; Mail Secretary (marketplace
-  app) that reads every inbound email, decides whether a dispatcher task is
-  needed, explains why, and can create contacts for email-only leads; live
-  call transcription (AssemblyAI bridge).
-- **Marketplace** — per-company apps with install/provision lifecycle
-  (google-email, telephony-twilio, stripe-payments, vapi-ai, smart-slot-engine,
-  mail-secretary).
-- **Field-tech iOS app** — native technician app in a separate repo
-  (`albusto-mobile`): offline-first schedule/jobs, statuses, notes/photos,
-  estimates & invoices with Price Book, tasks, search (backend contract:
-  `/api/sync`, `/api/devices`).
-
-## Stack
-
-| Layer | Technology |
-|---|---|
-| Backend | Node.js / Express 5 (CommonJS), PostgreSQL (`pg`), SSE for realtime |
-| Frontend | Vite + React + TypeScript, shadcn/ui, React Router v6, React Query |
-| Auth | Keycloak (OIDC, multi-tenant realms, Google SSO) |
-| Integrations | Twilio (Voice/SMS), Gmail (Pub/Sub push), Zenbooker, Stripe, Google Places, VAPI, Gemini, AssemblyAI |
-| Tests | Jest (backend), instrumented browser checks (frontend) |
-| Deploy | Docker Compose on a VPS (app + Keycloak + Postgres + slot-engine) |
-
-## Repository layout
+## Architecture
 
 ```
-src/                  runtime shell: Express boot, route mounting, SSE, schedulers
-backend/src/          application modules (routes / services / db queries)
-backend/db/migrations plain-SQL migrations, numbered, with rollback_* twins
-frontend/src/         React SPA (pages / components / hooks / services)
-slot-engine/          standalone slot-recommendation service
-voice-agent/          VAPI assistant configuration
-Docs/                 living project docs — see below
-scripts/              operational and verification scripts
-tests/                backend Jest suites
+Twilio API ←→ Integration Server ←→ Front Channel API
+              ↑ webhooks from both
 ```
 
-## Documentation
+## Setup
 
-The living documents (kept current by the development pipeline):
+### Prerequisites
 
-- `Docs/project-spec.md` — high-level system spec
-- `Docs/requirements.md` / `Docs/architecture.md` — per-feature fragments
-- `Docs/specs/` + `Docs/test-cases/` — detailed feature specs and test plans
-- `Docs/changelog.md` — what shipped, newest first
-- `CLAUDE.md` — UI design canon (layers, tokens, list shells)
-- `.claude/skills/orchestrate/` — the 9-agent development pipeline used for
-  feature work
+- Node.js 18+
+- Twilio account with API credentials
+- Front app with Application Channel configured
+- PostgreSQL (for production)
+
+### Installation
+
+```bash
+npm install
+```
+
+### Configuration
+
+1. Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
+
+2. Fill in your credentials in `.env`:
+```env
+FRONT_APP_UID=your_app_uid
+FRONT_APP_SECRET=your_app_secret
+TWILIO_ACCOUNT_SID=ACxxxxx
+TWILIO_AUTH_TOKEN=xxxxx
+```
+
+3. Set up your webhook URLs in:
+   - **Front App Settings** → Webhook URL: `https://your-server.com/webhooks/front/channel`
+   - **Twilio Console** → Phone Number → Voice Webhooks:
+     - Status Callback: `https://your-server.com/webhooks/twilio/status`
+     - Call Comes In: `https://your-server.com/webhooks/twilio/incoming`
 
 ## Development
 
-```bash
-npm install                        # root (backend deps)
-node src/server.js                 # backend on :3000 (dev auth bypass without FEATURE_AUTH_ENABLED)
+### Run locally
 
-cd frontend && npm install
-FRONTEND_PORT=3001 VITE_PROXY_TARGET=http://localhost:3000 npx vite
+```bash
+npm run dev
 ```
 
-- Local Postgres database: `postgresql://localhost/twilio_calls` (override via
-  `DATABASE_URL`). Apply migrations from `backend/db/migrations/` in order.
-- Backend tests: `npx jest --testPathIgnorePatterns "/node_modules/"` from the
-  repo root (add `--forceExit`; the suite holds an open handle).
-- Frontend production check: `cd frontend && npm run build` (strict tsc).
-- Real-behavior verification scripts live in `scripts/` (e.g.
-  `node scripts/verify-email-outbound-001.js`) — they run against the real
-  local DB, self-seed and self-clean.
+Server will start on http://localhost:3000
 
-## Production
+### Test webhooks locally with ngrok
 
-Docker Compose on a VPS: `app` (this repo), `keycloak`, `postgres`,
-`slot-engine`, fronted by Caddy (`app.` / `api.` / `auth.` subdomains).
-Deploys ship the git tree via rsync, rebuild the app image, apply pending
-SQL migrations, and force-logout Keycloak sessions (stale SPA chunks
-otherwise break logged-in browsers). Production configuration lives in
-`.env` on the server — never in the repo.
+```bash
+# Install ngrok
+npm install -g ngrok
 
-The product name in anything user-facing is **Albusto**. Internal design
-tokens use the historical `--blanc-*` prefix — that name never ships in UI
-text.
+# Start ngrok tunnel
+ngrok http 3000
+
+# Use the ngrok URL in your Front/Twilio webhook settings
+```
+
+## API Endpoints
+
+### Health Check
+```
+GET /health
+```
+
+### Webhooks
+```
+POST /webhooks/front/channel    - Receives events from Front
+POST /webhooks/twilio/status    - Receives call status from Twilio
+POST /webhooks/twilio/incoming  - Receives incoming call notifications
+```
+
+## Project Structure
+
+```
+twilio-front-integration/
+├── src/
+│   ├── server.js                 # Main Express app
+│   ├── routes/
+│   │   ├── health.js            # Health check endpoints
+│   │   └── webhooks.js          # Webhook handlers
+│   ├── services/
+│   │   ├── jwtService.js        # JWT token generation
+│   │   ├── frontAPI.js          # Front Channel API client
+│   │   └── callFormatter.js     # Twilio call → Front message
+│   ├── db/
+│   │   └── models.js            # Database models (TODO)
+│   └── utils/
+│       └── logger.js            # Logging utilities (TODO)
+├── tests/
+│   └── *.test.js                # Unit tests (TODO)
+├── .env.example                  # Environment template
+├── .gitignore
+├── package.json
+└── README.md
+```
+
+## Next Steps
+
+1. ✅ Core services implemented (JWT, Front API, Call Formatter)
+2. ✅ Basic webhook handlers
+3. 🔲 Implement sync service for full call synchronization
+4. 🔲 Add database layer (PostgreSQL)
+5. 🔲 Add polling service for historical calls
+6. 🔲 Add tests
+7. 🔲 Add proper logging (Winston)
+8. 🔲 Deploy to production
+
+## Testing
+
+```bash
+# Run tests (when implemented)
+npm test
+
+# Run tests with coverage
+npm run test:coverage
+```
+
+## Deployment
+
+See [deployment guide](./DEPLOYMENT.md) for production deployment instructions.
+
+## License
+
+ISC

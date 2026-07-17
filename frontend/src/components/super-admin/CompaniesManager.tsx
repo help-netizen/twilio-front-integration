@@ -89,26 +89,26 @@ export function CompaniesManager() {
                 </Button>
             </div>
 
-            {/* Ряды-тайлы на канвасе (LAYOUT-CANON правило 7, .blanc-table-tiles): аквариум снесён. */}
-            <Table className="blanc-table-tiles">
+            <div className="rounded-md border">
+                <Table>
                     <TableHeader>
                         <TableRow>
-                            <TableHead className="px-4">Company</TableHead>
-                            <TableHead className="px-4">Status</TableHead>
-                            <TableHead className="px-4">Users</TableHead>
-                            <TableHead className="px-4">Created</TableHead>
-                            <TableHead className="px-4 text-right">Actions</TableHead>
+                            <TableHead>Company</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Users</TableHead>
+                            <TableHead>Created</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {loading && companies.length === 0 ? (
                             [...Array(3)].map((_, i) => (
                                 <TableRow key={i}>
-                                    <TableCell className="px-4 py-2.5"><Skeleton className="h-10 w-full" /></TableCell>
-                                    <TableCell className="px-4 py-2.5"><Skeleton className="h-6 w-16" /></TableCell>
-                                    <TableCell className="px-4 py-2.5"><Skeleton className="h-6 w-12" /></TableCell>
-                                    <TableCell className="px-4 py-2.5"><Skeleton className="h-6 w-24" /></TableCell>
-                                    <TableCell className="px-4 py-2.5"><Skeleton className="h-8 w-8 ml-auto" /></TableCell>
+                                    <TableCell><Skeleton className="h-10 w-full" /></TableCell>
+                                    <TableCell><Skeleton className="h-6 w-16" /></TableCell>
+                                    <TableCell><Skeleton className="h-6 w-12" /></TableCell>
+                                    <TableCell><Skeleton className="h-6 w-24" /></TableCell>
+                                    <TableCell><Skeleton className="h-8 w-8 ml-auto" /></TableCell>
                                 </TableRow>
                             ))
                         ) : companies.length === 0 ? (
@@ -119,8 +119,8 @@ export function CompaniesManager() {
                             </TableRow>
                         ) : (
                             companies.map((c) => (
-                                <TableRow key={c.id} className="cursor-pointer" onClick={() => navigate(`/settings/admin/companies/${c.id}`)}>
-                                    <TableCell className="px-4 py-2.5">
+                                <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/settings/admin/companies/${c.id}`)}>
+                                    <TableCell>
                                         <div className="font-medium">{c.name}</div>
                                         <div className="text-sm text-muted-foreground flex items-center gap-2">
                                             {c.slug}
@@ -133,21 +133,21 @@ export function CompaniesManager() {
                                             </Button>
                                         </div>
                                     </TableCell>
-                                    <TableCell className="px-4 py-2.5">
+                                    <TableCell>
                                         <Badge variant={c.status === 'active' ? 'default' : c.status === 'suspended' ? 'destructive' : 'secondary'}>
                                             {c.status}
                                         </Badge>
                                     </TableCell>
-                                    <TableCell className="px-4 py-2.5">
+                                    <TableCell>
                                         <div className="flex items-center text-sm text-muted-foreground">
                                             <Users className="mr-1 h-3 w-3" />
                                             {c.active_users}
                                         </div>
                                     </TableCell>
-                                    <TableCell className="px-4 py-2.5 text-sm">
+                                    <TableCell className="text-sm">
                                         {new Date(c.created_at).toLocaleDateString()}
                                     </TableCell>
-                                    <TableCell className="px-4 py-2.5 text-right" onClick={e => e.stopPropagation()}>
+                                    <TableCell className="text-right" onClick={e => e.stopPropagation()}>
                                         <DropdownMenu>
                                             <DropdownMenuTrigger asChild>
                                                 <Button variant="ghost" className="h-8 w-8 p-0">
@@ -183,7 +183,8 @@ export function CompaniesManager() {
                             ))
                         )}
                     </TableBody>
-            </Table>
+                </Table>
+            </div>
 
             <CreateCompanyDialog 
                 open={createOpen} 

@@ -1,24 +1,13 @@
 /// <reference types="google.maps" />
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import usePlacesAutocomplete, { getDetails } from "use-places-autocomplete";
-import { FloatingField } from "./ui/floating-field";
+import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Checkbox } from "./ui/checkbox";
 import { Loader2, MapPin } from "lucide-react";
 import type { SavedAddress } from "../services/contactsApi";
-import { US_STATES, EMPTY_ADDRESS, hasFirstSpaceGate, parseAddressComponents, parseDescription, stateFromZip } from "./addressAutoHelpers";
-
-/**
- * Fill the State from the ZIP when an emitted address has a ZIP but no state (a place
- * pick whose description omitted the state, a saved/typed ZIP). Applied synchronously
- * AT THE POINT OF CHANGE — NOT a reactive effect — so it derives exactly once per emit
- * and can never loop (the earlier effect-based version white-screened the New Job form).
- * Never overrides a state that's already set; unknown ZIP → '' (manual pick).
- */
-function withDerivedState(f: AddressFields): AddressFields {
-    return (!f.state && /^\d{5}/.test(f.zip || "")) ? { ...f, state: stateFromZip(f.zip) || "" } : f;
-}
+import { US_STATES, EMPTY_ADDRESS, hasFirstSpaceGate, parseAddressComponents, parseDescription } from "./addressAutoHelpers";
 import type { AddressFields, SuggestionItem } from "./addressAutoHelpers";
 
 export type { AddressFields, SuggestionItem };
@@ -26,9 +15,9 @@ export { EMPTY_ADDRESS };
 
 function Spinner() { return <Loader2 className="size-4 animate-spin" />; }
 
-interface AddressAutocompleteProps { value: AddressFields; onChange: (fields: AddressFields) => void; idPrefix?: string; streetLabel?: string; header?: React.ReactNode; defaultUseDetails?: boolean; savedAddresses?: SavedAddress[]; onSelectSaved?: (addressId: number) => void; hideDetailsToggle?: boolean; }
+interface AddressAutocompleteProps { value: AddressFields; onChange: (fields: AddressFields) => void; idPrefix?: string; streetLabel?: string; header?: React.ReactNode; defaultUseDetails?: boolean; savedAddresses?: SavedAddress[]; onSelectSaved?: (addressId: number) => void; }
 
-export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr", streetLabel = "Street Address", header, defaultUseDetails = false, savedAddresses = [], onSelectSaved, hideDetailsToggle = false }: AddressAutocompleteProps) {
+export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr", streetLabel = "Street Address", header, defaultUseDetails = false, savedAddresses = [], onSelectSaved }: AddressAutocompleteProps) {
     const [gateReady, setGateReady] = useState(false);
     const [activeIndex, setActiveIndex] = useState(-1);
     const [detailsLoading, setDetailsLoading] = useState(false);
@@ -59,13 +48,13 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
 
     const selectSuggestion = useCallback(async (item: SuggestionItem) => {
         clearSuggestions(); setActiveIndex(-1); setGateReady(false);
-        if (!item.place_id || !useDetails) { const parsed = parseDescription(item.description); onChange(withDerivedState(parsed)); setSearchValue(parsed.street, false); return; }
+        if (!item.place_id || !useDetails) { const parsed = parseDescription(item.description); onChange(parsed); setSearchValue(parsed.street, false); return; }
         setSearchValue(item.description, false); setDetailsLoading(true);
         try {
             const result = await getDetails({ placeId: item.place_id, fields: ["address_components", "geometry"] });
-            if (result && typeof result === "object" && "address_components" in result && result.address_components) { const parsed = parseAddressComponents(result.address_components, result.geometry); onChange(withDerivedState(parsed)); setSearchValue(parsed.street, false); }
-            else { const parsed = parseDescription(item.description); onChange(withDerivedState(parsed)); setSearchValue(parsed.street, false); }
-        } catch (err) { console.error("Place Details error:", err); const parsed = parseDescription(item.description); onChange(withDerivedState(parsed)); setSearchValue(parsed.street, false); }
+            if (result && typeof result === "object" && "address_components" in result && result.address_components) { const parsed = parseAddressComponents(result.address_components, result.geometry); onChange(parsed); setSearchValue(parsed.street, false); }
+            else { const parsed = parseDescription(item.description); onChange(parsed); setSearchValue(parsed.street, false); }
+        } catch (err) { console.error("Place Details error:", err); const parsed = parseDescription(item.description); onChange(parsed); setSearchValue(parsed.street, false); }
         finally { setDetailsLoading(false); }
     }, [setSearchValue, clearSuggestions, onChange, useDetails]);
 
@@ -77,26 +66,18 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
         else if (e.key === "Escape") { clearSuggestions(); setActiveIndex(-1); }
     }
 
-    function handleFieldChange(field: keyof AddressFields, val: string) { onChange(withDerivedState({ ...address, [field]: val })); }
-    function handleSelectSavedAddress(addr: SavedAddress) { const fields: AddressFields = { street: addr.street_line1, apt: addr.street_line2 || '', city: addr.city, state: addr.state, zip: addr.postal_code, lat: addr.lat, lng: addr.lng }; onChange(withDerivedState(fields)); setSearchValue(addr.street_line1, false); setShowSaved(false); clearSuggestions(); setGateReady(false); onSelectSaved?.(addr.id); }
+    function handleFieldChange(field: keyof AddressFields, val: string) { onChange({ ...address, [field]: val }); }
+    function handleSelectSavedAddress(addr: SavedAddress) { const fields: AddressFields = { street: addr.street_line1, apt: addr.street_line2 || '', city: addr.city, state: addr.state, zip: addr.postal_code, lat: addr.lat, lng: addr.lng }; onChange(fields); setSearchValue(addr.street_line1, false); setShowSaved(false); clearSuggestions(); setGateReady(false); onSelectSaved?.(addr.id); }
 
     const showDropdown = gateReady && (loading || status === "OK") && (loading || suggestions.length > 0);
 
-    // PALETTE-V2 (W2): filled-канон — floated-лейбл живёт ВНУТРИ заливки (top 6px), без фонового патча.
-    const floatLabel = "pointer-events-none absolute left-3 z-10 px-1 bg-transparent font-normal text-[var(--blanc-ink-3)] transition-all duration-150 top-1/2 -translate-y-1/2 text-[15px] peer-focus:top-[6px] peer-focus:translate-y-0 peer-focus:text-[11px] peer-[:not(:placeholder-shown)]:top-[6px] peer-[:not(:placeholder-shown)]:translate-y-0 peer-[:not(:placeholder-shown)]:text-[11px]";
-
     return (
-        <div className="space-y-3.5">
-            {!hideDetailsToggle && (
-                <div className="flex items-center justify-between">
-                    <div>{header}</div>
-                    <div className="flex items-center gap-2"><Checkbox id={`${idPrefix}-use-details`} checked={useDetails} onCheckedChange={(checked: boolean) => setUseDetails(checked)} /><Label htmlFor={`${idPrefix}-use-details`}><span className="text-xs text-muted-foreground">Place Details API<span className="text-[10px] ml-1 opacity-60">(more precise)</span></span></Label></div>
-                </div>
-            )}
+        <div className="space-y-3">
+            <div className="flex items-center justify-between"><div>{header}</div><div className="flex items-center gap-2"><Checkbox id={`${idPrefix}-use-details`} checked={useDetails} onCheckedChange={(checked: boolean) => setUseDetails(checked)} /><Label htmlFor={`${idPrefix}-use-details`}><span className="text-xs text-muted-foreground">Place Details API<span className="text-[10px] ml-1 opacity-60">(more precise)</span></span></Label></div></div>
             <div className="flex gap-3">
                 <div className="relative flex-1 min-w-0">
-                    <input id={`${idPrefix}-street`} value={searchValue} onChange={handleInputChange} onKeyDown={handleKeyDown} onFocus={(e) => { const input = e.target; requestAnimationFrame(() => { const len = input.value.length; input.setSelectionRange(len, len); }); if (hasSaved) setShowSaved(true); }} onBlur={() => setTimeout(() => setShowSaved(false), 200)} disabled={!ready} placeholder=" " autoComplete="off" data-lpignore="true" data-1p-ignore="true" className="peer h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3.5 pt-[22px] pb-[6px] text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none placeholder:text-transparent transition-colors focus:border-[var(--blanc-line-strong)] disabled:cursor-not-allowed disabled:opacity-50" />
-                    <label htmlFor={`${idPrefix}-street`} className={floatLabel}>{streetLabel}</label>
+                    <Label htmlFor={`${idPrefix}-street`} className="mb-1.5">{streetLabel}</Label>
+                    <Input id={`${idPrefix}-street`} value={searchValue} onChange={handleInputChange} onKeyDown={handleKeyDown} onFocus={(e) => { const input = e.target; requestAnimationFrame(() => { const len = input.value.length; input.setSelectionRange(len, len); }); if (hasSaved) setShowSaved(true); }} onBlur={() => setTimeout(() => setShowSaved(false), 200)} disabled={!ready} placeholder="Start typing address…" autoComplete="off" />
                     {!ready && <div className="mt-1.5 flex items-center gap-1.5"><Spinner /><span className="text-xs text-muted-foreground">Loading Google Maps…</span></div>}
                     {cyrillicWarning && <div className="absolute z-50 mt-1 w-full rounded-md border border-amber-300 bg-amber-50 shadow-md px-3 py-2 text-sm text-amber-800">⚠️ English only — please delete Cyrillic characters</div>}
                     {(showDropdown || (showSaved && hasSaved)) && !cyrillicWarning && (
@@ -107,16 +88,13 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
                         </div>
                     )}
                 </div>
-                <FloatingField containerClassName="w-[104px] shrink-0" id={`${idPrefix}-apt`} label="Apt" value={address.apt} onChange={e => handleFieldChange("apt", e.target.value)} />
+                <div className="space-y-1.5 w-[100px] shrink-0"><Label htmlFor={`${idPrefix}-apt`}>Apt/Unit</Label><Input id={`${idPrefix}-apt`} value={address.apt} onChange={e => handleFieldChange("apt", e.target.value)} placeholder="4B" /></div>
             </div>
             {detailsLoading && <div className="flex items-center gap-2"><Spinner /><span className="text-xs text-muted-foreground">Loading address details…</span></div>}
-            <div className="grid grid-cols-[2fr_104px_1fr] gap-3">
-                <FloatingField id={`${idPrefix}-city`} label="City" value={address.city} onChange={e => handleFieldChange("city", e.target.value)} />
-                <div className="relative">
-                    <Select value={address.state} onValueChange={(val: string) => handleFieldChange("state", val)}><SelectTrigger className="h-[50px] data-[size=default]:h-[50px] rounded-xl border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 pt-[22px] pb-[6px] text-[15px]"><SelectValue /></SelectTrigger><SelectContent>{US_STATES.map(st => <SelectItem key={st} value={st}>{st}</SelectItem>)}</SelectContent></Select>
-                    <label className="pointer-events-none absolute left-3 top-[6px] z-10 px-1 bg-transparent text-[11px] font-normal text-[var(--blanc-ink-3)]">State</label>
-                </div>
-                <FloatingField id={`${idPrefix}-zip`} label="Zip" value={address.zip} onChange={e => handleFieldChange("zip", e.target.value)} />
+            <div className="grid grid-cols-[2fr_72px_1fr] gap-3">
+                <div className="space-y-1.5 min-w-0"><Label htmlFor={`${idPrefix}-city`}>City</Label><Input id={`${idPrefix}-city`} value={address.city} onChange={e => handleFieldChange("city", e.target.value)} placeholder="Boston" /></div>
+                <div className="space-y-1.5"><Label>State</Label><Select value={address.state} onValueChange={(val: string) => handleFieldChange("state", val)}><SelectTrigger className="px-2 bg-[#f3f3f5]"><SelectValue placeholder="ST" /></SelectTrigger><SelectContent>{US_STATES.map(st => <SelectItem key={st} value={st}>{st}</SelectItem>)}</SelectContent></Select></div>
+                <div className="space-y-1.5 min-w-0"><Label htmlFor={`${idPrefix}-zip`}>Zip</Label><Input id={`${idPrefix}-zip`} value={address.zip} onChange={e => handleFieldChange("zip", e.target.value)} placeholder="02101" /></div>
             </div>
         </div>
     );

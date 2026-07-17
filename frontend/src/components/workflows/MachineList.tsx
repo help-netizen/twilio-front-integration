@@ -10,7 +10,7 @@ function formatDate(iso: string): string {
 function MachineCard({ machine, onSelect }: { machine: FsmMachine; onSelect: () => void }) {
     return (
         <div
-            className="border border-[var(--blanc-line)] rounded-xl p-4 hover:border-[rgba(25,25,25,0.24)] transition-colors"
+            className="border border-[var(--blanc-line)] rounded-xl p-4 hover:border-[rgba(117,106,89,0.3)] transition-colors"
         >
             <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
@@ -45,7 +45,7 @@ function MachineCard({ machine, onSelect }: { machine: FsmMachine; onSelect: () 
                 </div>
                 <button
                     onClick={onSelect}
-                    className="shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg border border-[var(--blanc-line)] hover:border-[rgba(25,25,25,0.24)] text-[var(--blanc-ink-1)] transition-colors"
+                    className="shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg border border-[var(--blanc-line)] hover:border-[rgba(117,106,89,0.3)] text-[var(--blanc-ink-1)] transition-colors"
                 >
                     Open Editor
                 </button>
@@ -74,7 +74,7 @@ export default function MachineList() {
                 </p>
                 <button
                     onClick={() => refetch()}
-                    className="text-sm font-medium px-3 py-1.5 rounded-lg border border-[var(--blanc-line)] hover:border-[rgba(25,25,25,0.24)] text-[var(--blanc-ink-1)] transition-colors"
+                    className="text-sm font-medium px-3 py-1.5 rounded-lg border border-[var(--blanc-line)] hover:border-[rgba(117,106,89,0.3)] text-[var(--blanc-ink-1)] transition-colors"
                 >
                     Retry
                 </button>

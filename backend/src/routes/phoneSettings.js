@@ -9,8 +9,6 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const { getTwilioClient } = require('../services/twilioClient');
-const telephonyTenantService = require('../services/telephonyTenantService');
-const { requirePermission } = require('../middleware/authorization');
 
 // ─── Ensure table exists (auto-migration) ────────────────────────────────────
 const ENSURE_TABLE_SQL = `
@@ -19,7 +17,7 @@ CREATE TABLE IF NOT EXISTS phone_number_settings (
     company_id      UUID REFERENCES companies(id),
     phone_number    TEXT NOT NULL UNIQUE,
     friendly_name   TEXT,
-    routing_mode    VARCHAR(20) NOT NULL DEFAULT 'sip',   -- 'sip' = Bria, 'client' = Albusto SoftPhone
+    routing_mode    VARCHAR(20) NOT NULL DEFAULT 'sip',   -- 'sip' = Bria, 'client' = Blanc SoftPhone
     client_identity TEXT,                                  -- Twilio Client identity when routing_mode='client'
     group_id        TEXT REFERENCES user_groups(id) ON DELETE SET NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -77,7 +75,7 @@ function getCompanyId(req) {
  * Returns all phone numbers with their routing config.
  * Also syncs with Twilio account's phone numbers.
  */
-router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         await ensureTable();
         const companyId = getCompanyId(req);
@@ -98,12 +96,7 @@ router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) =
             console.error('[PhoneSettings] Twilio API error:', twilioErr.message);
         }
 
-        // Upsert all Twilio numbers into our settings table.
-        // C2b (ONBTEL-001): this sync lists the MASTER account, so the rows it
-        // inserts/claims are bound to the DEFAULT company (the account's actual
-        // owner) — never the requesting tenant. $1 is both the INSERT value and
-        // EXCLUDED.company_id in the COALESCE claim, so one bind closes both
-        // the listing leak and the NULL-row claim for foreign tenants.
+        // Upsert all Twilio numbers into our settings table
         for (const num of twilioNumbers) {
             await db.query(`
                 INSERT INTO phone_number_settings (company_id, phone_number, friendly_name)
@@ -111,7 +104,7 @@ router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) =
                 ON CONFLICT (phone_number) DO UPDATE
                 SET friendly_name = EXCLUDED.friendly_name,
                     company_id = COALESCE(phone_number_settings.company_id, EXCLUDED.company_id)
-            `, [telephonyTenantService.DEFAULT_COMPANY_ID, num.phone_number, num.friendly_name]);
+            `, [companyId, num.phone_number, num.friendly_name]);
         }
 
         // Fetch all settings
@@ -137,7 +130,7 @@ router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) =
  * PUT /api/phone-settings/:id
  * Update routing_mode and client_identity for a phone number.
  */
-router.put('/:id', requirePermission('tenant.telephony.manage'), async (req, res) => {
+router.put('/:id', async (req, res) => {
     try {
         await ensureTable();
         const companyId = getCompanyId(req);

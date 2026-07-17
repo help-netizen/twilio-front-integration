@@ -25,36 +25,6 @@ function registerSubscribers() {
         await billingService.recordUsageEvent(event).catch(() => {});
     });
 
-    // AI Repair Advisor (REPAIR-ADVISOR-001): on a human-path job.created, offload a
-    // detached, best-effort KB diagnostics run. The handler MUST return immediately —
-    // dispatchToSubscribers awaits subscribers sequentially, so awaiting the ~30s RAG
-    // round-trip here would stall siblings (rules-engine/billing-meter) for the whole
-    // company. Lazy require avoids boot-order cycles (mirrors billing-meter above).
-    eventBus.subscribe('kb-diagnostics', 'job.created', (event) => {
-        const companyId = event.company_id;
-        const jobId = event.payload && event.payload.id;
-        if (!jobId || !companyId) return;
-        const kbDiagnosticsService = require('./kbDiagnosticsService');
-        setImmediate(() => {
-            kbDiagnosticsService.runForJob({ jobId, companyId })
-                .catch((err) => console.warn('[kb-diagnostics] runForJob failed:', err && err.message));
-        });
-    });
-
-    // Outbound Lead Caller (OUTBOUND-LEAD-CALL-001): on lead.created, run the
-    // eligibility gauntlet and enqueue the first call attempt. Handler returns
-    // immediately (setImmediate) — dispatchToSubscribers awaits sequentially.
-    eventBus.subscribe('outbound-lead-caller', 'lead.created', (event) => {
-        const companyId = event.company_id;
-        const leadId = event.payload && event.payload.id;
-        if (!leadId || !companyId) return;
-        const outboundLeadCallService = require('./outboundLeadCallService');
-        setImmediate(() => {
-            outboundLeadCallService.onLeadCreated({ leadId, companyId })
-                .catch((err) => console.warn('[outbound-lead-caller] onLeadCreated failed:', err && err.message));
-        });
-    });
-
     console.log(`[eventBus] ${eventBus._subscribers.length} subscriber(s) registered`);
 }
 

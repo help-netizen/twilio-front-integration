@@ -8,9 +8,10 @@
  * via the existing reassign DnD).
  */
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { FloatingField } from '../ui/floating-field';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
 import { AddressAutocomplete } from '../AddressAutocomplete';
 import { EMPTY_ADDRESS, type AddressFields } from '../addressAutoHelpers';
 import { formatTimeInTZ } from '../../utils/companyTime';
@@ -67,42 +68,39 @@ export function NewJobModal({ open, startAt, endAt, timezone, providerId, provid
 
     return (
         <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
-            <DialogContent variant="panel">
-                <DialogPanelHeader>
-                    <DialogTitle
-                        className="text-[22px] font-semibold leading-tight"
-                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                    >
-                        New job
-                    </DialogTitle>
+            <DialogContent className="max-w-md">
+                <DialogHeader>
+                    <DialogTitle>New job</DialogTitle>
                     <DialogDescription>
                         {timeLabel}{providerName ? ` · ${providerName}` : ''}
                     </DialogDescription>
-                </DialogPanelHeader>
+                </DialogHeader>
 
-                <DialogBody className="md:px-8 md:py-7">
-                  <div className="mx-auto w-full max-w-[740px] space-y-6">
-                    <FloatingField
-                        id="njm-title"
-                        label="Title"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-                    />
+                <div className="space-y-3 py-1">
+                    <div className="space-y-1.5">
+                        <Label htmlFor="njm-title" className="text-sm font-medium">Title</Label>
+                        <Input
+                            id="njm-title"
+                            value={title}
+                            autoFocus
+                            placeholder="e.g. Dishwasher repair"
+                            onChange={(e) => setTitle(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+                        />
+                    </div>
                     <AddressAutocomplete
+                        header={<Label className="text-sm font-medium">Address</Label>}
                         idPrefix="njm"
                         defaultUseDetails
-                        hideDetailsToggle
                         value={addr}
                         onChange={setAddr}
                     />
-                  </div>
-                </DialogBody>
+                </div>
 
-                <DialogPanelFooter>
+                <DialogFooter>
                     <Button variant="ghost" onClick={close}>Cancel</Button>
                     <Button onClick={submit}>Create job</Button>
-                </DialogPanelFooter>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );

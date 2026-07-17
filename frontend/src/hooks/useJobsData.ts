@@ -1,8 +1,7 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
 import { useAuthz } from './useAuthz';
-import { useIsMobile } from './useIsMobile';
 import * as jobsApi from '../services/jobsApi';
 import type { LocalJob, JobsListParams, JobTag } from '../services/jobsApi';
 import {
@@ -47,30 +46,24 @@ export function useJobsData() {
     // Custom fields from shared settings hook
     const { customFields } = useLeadFormSettings();
     const { hasPermission } = useAuthz();
-    const isMobile = useIsMobile();
     // Tag catalog and list-field settings live under tenant management APIs —
     // don't even request them without the backing permission (PF007).
     const canManageCompany = hasPermission('tenant.company.manage');
-    // When the operator can't see lead/job source, drop the job_source column
-    // from the table model entirely so it can't be rendered OR column-picked.
-    const canViewSource = hasPermission('lead_source.view');
 
     // ─── Derived data ────────────────────────────────────────────────
 
     const allColumns = useMemo<Record<string, ColumnDef>>(() => {
         const cols: Record<string, ColumnDef> = { ...STATIC_COLUMNS };
-        if (!canViewSource) delete cols.job_source;
         for (const cf of customFields) {
             if (cf.is_system) continue;
             cols[`meta:${cf.api_name}`] = makeMetaColumn(cf.api_name, cf.display_name);
         }
         return cols;
-    }, [customFields, canViewSource]);
+    }, [customFields]);
 
     const allFieldKeys = useMemo(() => {
-        const staticKeys = canViewSource ? STATIC_FIELD_KEYS : STATIC_FIELD_KEYS.filter(k => k !== 'job_source');
-        return [...staticKeys, ...customFields.filter(f => !f.is_system).map(f => `meta:${f.api_name}`)];
-    }, [customFields, canViewSource]);
+        return [...STATIC_FIELD_KEYS, ...customFields.filter(f => !f.is_system).map(f => `meta:${f.api_name}`)];
+    }, [customFields]);
 
     const filteredJobs = useMemo(() => {
         let result = jobs;
@@ -113,54 +106,6 @@ export function useJobsData() {
             setLoading(false);
         }
     }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, endDate, statusFilter, jobTypeFilter, providerFilter, tagFilter]);
-
-    // JOBS-MOBILE-001: fetch the NEXT page and APPEND (mobile "Load more").
-    // Mirrors loadJobs' param building but never replaces the list — desktop
-    // prev/next (loadJobs) is left untouched.
-    const loadMoreJobs = useCallback(async () => {
-        const nextOffset = offset + LIMIT;
-        setLoading(true);
-        try {
-            const params: JobsListParams = {
-                limit: LIMIT,
-                offset: nextOffset,
-            };
-            if (searchQuery.trim()) params.search = searchQuery.trim();
-            if (sortBy) params.sort_by = sortBy;
-            if (sortOrder) params.sort_order = sortOrder;
-            if (onlyOpen) params.only_open = true;
-            if (startDate) params.start_date = startDate;
-            if (endDate) params.end_date = endDate;
-            if (statusFilter.length > 0) params.blanc_status = statusFilter.join(',');
-            if (jobTypeFilter.length > 0) params.service_name = jobTypeFilter.join(',');
-            if (providerFilter.length > 0) params.provider = providerFilter.join(',');
-            if (tagFilter.length > 0) params.tag_ids = tagFilter.join(',');
-
-            const data = await jobsApi.listJobs(params);
-            setJobs(prev => [...prev, ...(data.results || [])]);
-            setHasMore(data.has_more);
-            setTotalCount(data.total);
-            setOffset(nextOffset);
-        } catch (error) {
-            toast.error('Failed to load more jobs', {
-                description: error instanceof Error ? error.message : 'Unknown error',
-            });
-        } finally {
-            setLoading(false);
-        }
-    }, [offset, searchQuery, sortBy, sortOrder, onlyOpen, startDate, endDate, statusFilter, jobTypeFilter, providerFilter, tagFilter]);
-
-    // JOBS-MOBILE-001: on mobile, default the sort to start_date desc on first
-    // mount so date-grouped paging is coherent. Runs once and never clobbers a
-    // user's later sort change.
-    const mobileSortApplied = useRef(false);
-    useEffect(() => {
-        if (isMobile && !mobileSortApplied.current) {
-            mobileSortApplied.current = true;
-            setSortBy('start_date');
-            setSortOrder('desc');
-        }
-    }, [isMobile]);
 
     // Load tag catalog on mount (management API — permission-gated)
     useEffect(() => {
@@ -223,7 +168,6 @@ export function useJobsData() {
 
         // Actions
         loadJobs,
-        loadMoreJobs,
         saveVisibleFields,
     };
 }

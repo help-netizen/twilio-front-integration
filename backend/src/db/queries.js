@@ -30,7 +30,8 @@ module.exports = {
     findOrCreateTimeline: timelinesQueries.findOrCreateTimeline,
     findOrCreateAnonymousTimeline: timelinesQueries.findOrCreateAnonymousTimeline,
     ANONYMOUS_PHONE_SENTINEL: timelinesQueries.ANONYMOUS_PHONE_SENTINEL,
-    getUnifiedTimelinePage: timelinesQueries.getUnifiedTimelinePage,
+    getCallsByTimeline: timelinesQueries.getCallsByTimeline,
+    getTimelinesWithCallsCount: timelinesQueries.getTimelinesWithCallsCount,
 
     // ── Action Required + Tasks ──────────────────────────────────────
     setActionRequired: timelinesQueries.setActionRequired,
@@ -40,7 +41,6 @@ module.exports = {
     assignThread: timelinesQueries.assignThread,
     createTask: timelinesQueries.createTask,
     getOpenTaskByThread: timelinesQueries.getOpenTaskByThread,
-    reassignShadowOrphanOpenTasks: timelinesQueries.reassignShadowOrphanOpenTasks,
 
     // ── Calls ────────────────────────────────────────────────────────
     upsertCall: callsQueries.upsertCall,

@@ -2,9 +2,8 @@ import { useState } from 'react';
 import { Button } from './button';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { Calendar } from './calendar';
-import { CalendarIcon } from 'lucide-react';
+import { CalendarIcon, X } from 'lucide-react';
 import { format } from 'date-fns';
-import { BottomSheet } from './BottomSheet';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -90,7 +89,6 @@ export function DateRangePickerPopover({
 
     const isMobile = isMobileViewport();
 
-    // mobile only — desktop popover unchanged
     if (isMobile) {
         return (
             <>
@@ -98,14 +96,25 @@ export function DateRangePickerPopover({
                     <CalendarIcon className="size-4" />
                     {label}
                 </Button>
-                <BottomSheet open={open} onClose={() => setOpen(false)} title="Date Range" size="full">
-                    <div className="flex flex-wrap gap-1.5 mb-3">
-                        {presetButtons}
-                    </div>
-                    <div className="flex flex-col items-center">
-                        {calendars}
-                    </div>
-                </BottomSheet>
+                {open && (
+                    <>
+                        <div className="blanc-mobile-sheet-backdrop" onClick={() => setOpen(false)} />
+                        <div className="blanc-mobile-sheet" style={{ maxHeight: '85vh' }}>
+                            <div className="blanc-mobile-sheet-header">
+                                <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Date Range</span>
+                                <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-4" /></button>
+                            </div>
+                            <div className="px-4 pb-2">
+                                <div className="flex flex-wrap gap-1.5 mb-3">
+                                    {presetButtons}
+                                </div>
+                                <div className="flex flex-col items-center">
+                                    {calendars}
+                                </div>
+                            </div>
+                        </div>
+                    </>
+                )}
             </>
         );
     }

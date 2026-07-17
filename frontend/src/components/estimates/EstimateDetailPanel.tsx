@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
+import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, RotateCcw, Send, Trash2, X, XCircle } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -14,20 +14,16 @@ import { EstimateSendDialog } from './EstimateSendDialog';
 import { EstimateItemDialog, type ItemDraft } from './EstimateItemDialog';
 import { EstimateSummaryDialog } from './EstimateSummaryDialog';
 import { ItemPresetSearchCombobox } from './ItemPresetSearchCombobox';
-import { expandGroup } from '../../services/priceBookApi';
 import {
     createEstimateItemPreset,
     recordEstimateItemPresetUsage,
     type EstimateItemPreset,
 } from '../../services/estimateItemPresetsApi';
-import { useAuthz } from '../../hooks/useAuthz';
-import { TaskStack } from '../tasks/TaskStack';
 import type { Estimate, EstimateEvent, EstimateItem, EstimateSendData, EstimateDiscountType } from '../../services/estimatesApi';
 import {
     convertEstimateToInvoice,
     updateEstimate,
     addEstimateItem,
-    addEstimateItemsBulk,
     updateEstimateItem,
     deleteEstimateItem,
 } from '../../services/estimatesApi';
@@ -68,10 +64,8 @@ interface Props {
     onChanged?: (estimate: Estimate) => void;
 }
 
-export function EstimateDetailPanel({ estimate: initialEstimate, events, loading, onClose: _onClose, onSend, onApprove, onDecline, onArchive, onRestore, onLinkJob, onInvoiceCreated, onChanged }: Props) {
+export function EstimateDetailPanel({ estimate: initialEstimate, events, loading, onClose, onSend, onApprove, onDecline, onArchive, onRestore, onLinkJob, onInvoiceCreated, onChanged }: Props) {
     const navigate = useNavigate();
-    const { hasPermission } = useAuthz();
-    const canSend = hasPermission('estimates.send');
     // Local copy so we can apply optimistic updates while saving.
     const [estimate, setEstimate] = useState<Estimate>(initialEstimate);
     useEffect(() => { setEstimate(initialEstimate); }, [initialEstimate]);
@@ -143,22 +137,6 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
             recordEstimateItemPresetUsage(preset.id).catch(() => {});
             await refreshAfterItemChange();
             toast.success(`Added "${preset.name}"`);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Add failed');
-        }
-    };
-
-    /** Combobox: picked a Price Book group → expand into its items (single bulk add). */
-    const pickGroup = async (groupId: number) => {
-        try {
-            const items = await expandGroup(groupId);
-            if (items.length === 0) { toast.info('That group has no active items'); return; }
-            await addEstimateItemsBulk(estimate.id, items.map(i => ({
-                name: i.name, description: i.description, quantity: i.quantity,
-                unit: i.unit || undefined, unit_price: i.unit_price, taxable: i.taxable,
-            })) as any);
-            await refreshAfterItemChange();
-            toast.success(`Added ${items.length} item(s) from group`);
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Add failed');
         }
@@ -314,17 +292,18 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 </div>
                 <div className="flex items-start gap-3">
                     <div className="text-right">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--blanc-ink-3)]">Total</p>
+                        <p className="blanc-eyebrow">Total</p>
                         <p className="font-mono text-xl font-semibold">{money(estimate.total)}</p>
                     </div>
+                    <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
+                        <X className="size-4" />
+                    </Button>
                 </div>
                 </div>
             </div>
 
             <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_310px]">
                 <main className="min-h-0 space-y-6 overflow-y-auto p-5">
-                    {/* Tasks — TASKS-001 */}
-                    <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
                     {/* Summary */}
                     <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
                         <div className="flex items-center justify-between px-4 py-3">
@@ -361,7 +340,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 {estimate.items!.map(item => (
                                     <div
                                         key={item.id}
-                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-white'}`}
+                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-[rgba(117,106,89,0.04)]'}`}
                                         onClick={() => { if (!readOnly) openEditItem(item); }}
                                     >
                                         <div className="min-w-0">
@@ -396,7 +375,6 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <ItemPresetSearchCombobox
                                     onPickPreset={pickPreset}
                                     onCreateNew={startCreateFromName}
-                                    onPickGroup={pickGroup}
                                 />
                             </div>
                         )}
@@ -477,7 +455,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     </section>
                 </main>
 
-                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] bg-[rgba(25,25,25,0.04)] p-5 md:border-l md:border-t-0">
+                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] bg-[rgba(117,106,89,0.05)] p-5 md:border-l md:border-t-0">
                     <section className="space-y-2 text-sm">
                         <p className="text-sm font-semibold">Document settings</p>
                         <label className="flex items-center justify-between cursor-pointer">
@@ -546,15 +524,13 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     <div className="flex flex-wrap gap-2 md:justify-end">
                         {!archived ? (
                             <>
-                                {canSend && (
-                                    <Button
-                                        variant={estimate.status === 'draft' || estimate.status === 'sent' || estimate.status === 'viewed' ? 'default' : 'outline'}
-                                        size="sm"
-                                        onClick={() => { if (requireItems()) setSendOpen(true); }}
-                                    >
-                                        <Send className="mr-1 size-3.5" />Send
-                                    </Button>
-                                )}
+                                <Button
+                                    variant={estimate.status === 'draft' || estimate.status === 'sent' || estimate.status === 'viewed' ? 'default' : 'outline'}
+                                    size="sm"
+                                    onClick={() => { if (requireItems()) setSendOpen(true); }}
+                                >
+                                    <Send className="mr-1 size-3.5" />Send
+                                </Button>
                                 {estimate.status !== 'approved' && (
                                     <Button
                                         variant={estimate.status === 'sent' || estimate.status === 'viewed' ? 'default' : 'outline'}
@@ -632,9 +608,6 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 onOpenChange={setSendOpen}
                 estimateId={estimate.id}
                 contactEmail={estimate.contact_email || ''}
-                contactPhone={estimate.contact_phone || ''}
-                estimateNumber={estimate.estimate_number}
-                contactName={estimate.contact_name || ''}
                 onSend={async data => {
                     await onSend(data);
                 }}
@@ -645,7 +618,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     <DialogHeader><DialogTitle>Decline estimate</DialogTitle></DialogHeader>
                     <Textarea value={declineReason} onChange={event => setDeclineReason(event.target.value)} rows={4} placeholder="Reason or comment" />
                     <DialogFooter>
-                        <Button variant="ghost" onClick={() => setDeclineOpen(false)}>Cancel</Button>
+                        <Button variant="outline" onClick={() => setDeclineOpen(false)}>Cancel</Button>
                         <Button onClick={submitDecline} disabled={!declineReason.trim()}>Decline</Button>
                     </DialogFooter>
                 </DialogContent>

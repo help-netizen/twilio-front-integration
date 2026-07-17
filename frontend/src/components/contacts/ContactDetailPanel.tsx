@@ -14,7 +14,6 @@ import { Switch } from '../ui/switch';
 import type { Contact, ContactLead } from '../../types/contact';
 import * as contactsApi from '../../services/contactsApi';
 import { pulseApi } from '../../services/pulseApi';
-import { useAuthz } from '../../hooks/useAuthz';
 import { ContactInfoSections } from './ContactInfoSections';
 import { EditContactDialog } from './EditContactDialog';
 import { JobsList } from './ContactJobsList';
@@ -94,7 +93,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                         </div>
 
                         {/* Name + action icons */}
-                        <div className="flex items-center gap-2 mb-1 max-md:pr-14">
+                        <div className="flex items-center gap-2 mb-1">
                             <h2
                                 className="text-2xl font-bold leading-tight truncate"
                                 style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)', letterSpacing: '-0.03em' }}
@@ -132,7 +131,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                 {/* ═══ RIGHT COLUMN (desktop) ═══ */}
                 <div
                     className="w-full md:w-1/2 flex-col overflow-y-auto hidden md:flex"
-                    style={{ borderLeft: '1px solid var(--blanc-line)' }}
+                    style={{ borderLeft: '1px solid rgba(117, 106, 89, 0.07)' }}
                 >
                     <div className="p-4 space-y-5">
                         <NotesHistoryTabs entityType="contact" entityId={contact.id} />
@@ -165,8 +164,6 @@ function ActivitySection({ leads, contactId, onlyOpen, onOnlyOpenChange }: {
     onOnlyOpenChange: (v: boolean) => void;
 }) {
     const navigate = useNavigate();
-    const { hasPermission } = useAuthz();
-    const canViewSource = hasPermission('lead_source.view');
 
     return (
         <div>
@@ -200,7 +197,7 @@ function ActivitySection({ leads, contactId, onlyOpen, onOnlyOpenChange }: {
                                     </div>
                                     <div className="text-[12px] mt-1" style={{ color: 'var(--blanc-ink-3)' }}>
                                         {new Date(lead.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                        {canViewSource && lead.job_source && ` · ${lead.job_source}`}
+                                        {lead.job_source && ` · ${lead.job_source}`}
                                     </div>
                                 </div>
                                 <ChevronRight className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />

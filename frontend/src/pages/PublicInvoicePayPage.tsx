@@ -101,7 +101,7 @@ export default function PublicInvoicePayPage() {
         finally { setPaying(false); }
     };
 
-    const card = { width: 460, maxWidth: '94vw', background: '#fffdf9', border: '1px solid var(--blanc-line)', borderRadius: 24, padding: 30 } as const;
+    const card = { width: 460, maxWidth: '94vw', background: '#fffdf9', border: '1px solid rgba(117,106,89,0.18)', borderRadius: 24, padding: 30 } as const;
     const wrap = { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#faf8f4', fontFamily: 'IBM Plex Sans, system-ui, sans-serif', color: '#2b2b2b', padding: 16 } as const;
 
     if (loading) return <div style={wrap}><div style={{ display: 'flex', gap: 8, color: '#8a7d68' }}><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div></div>;
@@ -123,13 +123,13 @@ export default function PublicInvoicePayPage() {
                         <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 22, margin: '6px 0 14px', lineHeight: 1.3 }}>{info.thank_you}</h1>
 
                         {info.technician && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderTop: '1px solid rgba(25,25,25,0.10)', borderBottom: '1px solid rgba(25,25,25,0.10)', marginBottom: 16 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderTop: '1px solid rgba(117,106,89,0.12)', borderBottom: '1px solid rgba(117,106,89,0.12)', marginBottom: 16 }}>
                                 {info.technician.photo_url
                                     ? <img src={info.technician.photo_url} alt={info.technician.name || ''} style={{ width: 52, height: 52, borderRadius: '50%', objectFit: 'cover' }} />
                                     : <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#efe7d8', color: '#8a7d68', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>{initials(info.technician.name)}</div>}
                                 <div>
-                                    <div style={{ fontSize: 12, color: '#a99e8a' }}>Your provider</div>
-                                    <div style={{ fontWeight: 600 }}>{info.technician.name || 'Our provider'}</div>
+                                    <div style={{ fontSize: 12, color: '#a99e8a' }}>Your technician</div>
+                                    <div style={{ fontWeight: 600 }}>{info.technician.name || 'Our technician'}</div>
                                 </div>
                             </div>
                         )}
@@ -148,13 +148,13 @@ export default function PublicInvoicePayPage() {
                                         return (
                                             <button key={amt}
                                                 onClick={() => active ? (setTipMode('none'), setTip(0)) : (setTipMode('preset'), setTip(amt), setCustomTip(''))}
-                                                style={{ flex: 1, padding: '12px 6px', borderRadius: 12, cursor: 'pointer', fontWeight: 700, border: active ? '2px solid #635bff' : '1px solid var(--blanc-line-strong)', background: active ? '#f3f1ff' : '#fff' }}>
+                                                style={{ flex: 1, padding: '12px 6px', borderRadius: 12, cursor: 'pointer', fontWeight: 700, border: active ? '2px solid #635bff' : '1px solid rgba(117,106,89,0.25)', background: active ? '#f3f1ff' : '#fff' }}>
                                                 {money(amt, info.currency)}
                                             </button>
                                         );
                                     })}
                                     <button onClick={() => setTipMode('custom')}
-                                        style={{ flex: 1, padding: '12px 6px', borderRadius: 12, cursor: 'pointer', fontWeight: 700, border: tipMode === 'custom' ? '2px solid #635bff' : '1px solid var(--blanc-line-strong)', background: tipMode === 'custom' ? '#f3f1ff' : '#fff' }}>
+                                        style={{ flex: 1, padding: '12px 6px', borderRadius: 12, cursor: 'pointer', fontWeight: 700, border: tipMode === 'custom' ? '2px solid #635bff' : '1px solid rgba(117,106,89,0.25)', background: tipMode === 'custom' ? '#f3f1ff' : '#fff' }}>
                                         Other
                                     </button>
                                 </div>

@@ -1,4 +1,4 @@
-import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import type { Lead } from '../../types/lead';
 import { useConvertToJob, type Step } from './useConvertToJob';
@@ -12,38 +12,26 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent variant="panel">
-                <DialogPanelHeader>
-                    <DialogTitle
-                        className="text-[22px] font-semibold leading-tight"
-                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                    >
-                        Convert to job — {lead?.FirstName} {lead?.LastName}
-                    </DialogTitle>
-                    <DialogDescription className="sr-only">Convert a lead into a scheduled job</DialogDescription>
-                </DialogPanelHeader>
-
-                <DialogBody className="md:px-8 md:py-7">
-                    <div className="mx-auto w-full max-w-[740px] space-y-6">
-                        <StepIndicator step={h.step} />
-                        {h.step === 1 && <ConvertStep1 {...stepProps} />}
-                        {h.step === 2 && <ConvertStep2 {...stepProps} />}
-                        {h.step === 3 && <ConvertStep3 {...stepProps} />}
-                        {h.step === 4 && <ConvertStep4 {...stepProps} />}
-                    </div>
-                </DialogBody>
-
-                <DialogPanelFooter className="justify-between">
+            <DialogContent className="max-w-xl max-h-[85vh] flex flex-col overflow-hidden">
+                <DialogHeader><DialogTitle>Convert to Job — {lead?.FirstName} {lead?.LastName}</DialogTitle></DialogHeader>
+                <div className="flex-1 overflow-y-auto pr-1">
+                    <StepIndicator step={h.step} />
+                    {h.step === 1 && <ConvertStep1 {...stepProps} />}
+                    {h.step === 2 && <ConvertStep2 {...stepProps} />}
+                    {h.step === 3 && <ConvertStep3 {...stepProps} />}
+                    {h.step === 4 && <ConvertStep4 {...stepProps} />}
+                </div>
+                <DialogFooter className="flex justify-between pt-4 border-t shrink-0">
                     <div>{h.step > 1 && <Button variant="outline" onClick={() => h.setStep((h.step - 1) as Step)} disabled={h.submitting}>Back</Button>}</div>
                     <div className="flex gap-2">
                         <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={h.submitting}>Cancel</Button>
                         {h.step < 4 ? (
                             <Button onClick={() => h.setStep((h.step + 1) as Step)} disabled={(h.step === 1 && !h.canProceedStep1) || (h.step === 2 && !h.canProceedStep2) || (h.step === 3 && !h.canProceedStep3)}>Next</Button>
                         ) : (
-                            <Button onClick={h.handleSubmit} disabled={h.submitting || !h.selectedTimeslot}>{h.submitting ? 'Creating…' : 'Create job'}</Button>
+                            <Button onClick={h.handleSubmit} disabled={h.submitting || !h.selectedTimeslot}>{h.submitting ? 'Creating…' : 'Create Job'}</Button>
                         )}
                     </div>
-                </DialogPanelFooter>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );

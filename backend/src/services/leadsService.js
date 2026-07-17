@@ -8,7 +8,6 @@
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
-const eventBus = require('./eventBus');
 
 // =============================================================================
 // UUID Generation (Workiz-style 6-char alphanumeric)
@@ -105,8 +104,6 @@ function rowToLead(row) {
 // Extract custom metadata fields from flat request body
 // Looks up registered api_names in lead_custom_fields, picks matching keys
 // =============================================================================
-const RESERVED_METADATA_KEYS = ['rely_filter'];
-
 async function extractCustomMetadata(fields) {
     const { rows: registeredFields } = await db.query(
         `SELECT api_name FROM lead_custom_fields WHERE is_system = false`
@@ -124,10 +121,6 @@ async function extractCustomMetadata(fields) {
             meta[key] = String(fields[key]);
         }
     }
-
-    // RELY-LEADS-SETTINGS-001: server-owned metadata namespaces cannot be set
-    // through either an external Metadata object or a registered flat api_name.
-    for (const key of RESERVED_METADATA_KEYS) delete meta[key];
 
     return Object.keys(meta).length > 0 ? meta : null;
 }
@@ -316,7 +309,7 @@ async function getLeadById(id, companyId = null) {
 // =============================================================================
 // Create Lead
 // =============================================================================
-async function createLead(fields, companyId = null, { systemMetadata = null } = {}) {
+async function createLead(fields, companyId = null) {
     const uuid = await generateUniqueUUID();
     const columns = mapFieldsToColumns(fields);
 
@@ -346,9 +339,8 @@ async function createLead(fields, companyId = null, { systemMetadata = null } = 
 
     // Handle custom metadata fields (flat api_name keys + Metadata object)
     const meta = await extractCustomMetadata(fields);
-    const merged = { ...(meta || {}), ...(systemMetadata || {}) };
-    if (Object.keys(merged).length > 0) {
-        columns.metadata = JSON.stringify(merged);
+    if (meta) {
+        columns.metadata = JSON.stringify(meta);
     }
 
     const colNames = Object.keys(columns);
@@ -362,27 +354,6 @@ async function createLead(fields, companyId = null, { systemMetadata = null } = 
     `;
 
     const { rows } = await db.query(sql, values);
-    emitLeadChange('lead.created', columns.company_id, columns.status || 'Submitted', rows[0].id);
-    // OUTBOUND-LEAD-CALL-001: post-insert domain event (REPAIR-ADVISOR pattern,
-    // convertLead precedent). Fire-and-forget: a failing bus never breaks the
-    // create. This single emit site covers ALL ingestion paths — UI routes,
-    // external integrations, Yelp, Sara's createLead skill — they all funnel
-    // through this function. The SSE emitLeadChange above is untouched.
-    eventBus.emit(
-        columns.company_id,
-        'lead.created',
-        {
-            id: rows[0].id,
-            uuid: rows[0].uuid,
-            first_name: columns.first_name || null,
-            last_name: columns.last_name || null,
-            phone: columns.phone || null,
-            job_type: columns.job_type || null,
-            job_source: columns.job_source || null,
-            status: columns.status || 'Submitted',
-        },
-        { actorType: 'system', aggregateType: 'lead', aggregateId: rows[0].id }
-    ).catch(() => {});
     return {
         UUID: rows[0].uuid,
         SerialId: rows[0].serial_id,
@@ -463,9 +434,6 @@ async function updateLead(uuid, fields, companyId = null) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
 
-    // Only a status change can move a lead in/out of the "new" set → refresh badge.
-    if (columns.status) emitLeadChange('lead.updated', companyId, columns.status, rows[0].id);
-
     return {
         UUID: rows[0].uuid,
         ClientId: String(rows[0].id),
@@ -492,7 +460,6 @@ async function markLost(uuid, companyId = null) {
     if (rows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
-    emitLeadChange('lead.updated', companyId, 'Lost', rows[0].id);
     return { message: 'Lead marked as lost' };
 }
 
@@ -515,7 +482,6 @@ async function activateLead(uuid, companyId = null) {
     if (rows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
-    emitLeadChange('lead.updated', companyId, 'Submitted', rows[0].id);
     return { message: 'Lead activated' };
 }
 
@@ -771,7 +737,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         }
     }
 
-    // 2. Claim or create the local job row in Albusto.
+    // 2. Claim or create the local job row in Blanc.
     // This makes conversion idempotent: a retry after Zenbooker/network failure
     // reuses the same local job instead of inserting a duplicate.
     const serviceName = overrides.service?.name || lead.JobType || 'General Service';
@@ -808,12 +774,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
             customerName,
             customerPhone,
             customerEmail,
-            description: (overrides.service?.description
-                || overrides.zb_job_payload?.services?.[0]?.custom_service?.description
-                || overrides.zb_job_payload?.services?.[0]?.description
-                || leadRow.lead_notes
-                || leadRow.comments
-                || '').trim() || null,
+            description: overrides.service?.description || leadRow.lead_notes || leadRow.comments || null,
             initialStartDate,
             initialEndDate,
             initialAssignedTechs,
@@ -974,7 +935,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
                 JSON.stringify(jobDetail || {}),
             ]);
 
-            // Link ZB customer to Albusto contact
+            // Link ZB customer to Blanc contact
             if (contactId) {
                 const zbCustomerId = jobDetail?.customer?.id;
                 if (zbCustomerId) {
@@ -1055,23 +1016,6 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     } catch (noteErr) {
         console.error(`[ConvertLead] Note sync error (non-blocking):`, noteErr.message);
     }
-
-    emitLeadChange('lead.updated', companyId, 'Converted', leadRow.id);
-
-    // [CHANGE START] REPAIR-ADVISOR-001 (T6): post-commit domain event for the
-    // AI Repair Advisor subscriber — ONLY when a NEW local job was created during
-    // this conversion. The reuse/claim-existing branch (localJobCreated===false)
-    // stays note-free so a retry never produces a duplicate advisor note (§3.2).
-    // Fire-and-forget: a failing bus never breaks the conversion.
-    if (localJobCreated) {
-        eventBus.emit(
-            companyId,
-            'job.created',
-            { id: localJobId, jobId: localJobId, companyId },
-            { actorType: 'user', aggregateType: 'job', aggregateId: localJobId }
-        ).catch(() => {});
-    }
-    // [CHANGE END]
 
     return {
         UUID: lead.UUID,
@@ -1197,101 +1141,6 @@ async function getLeadByPhone(phone, companyId = null) {
 }
 
 // =============================================================================
-// Get Lead by contact_id (newest OPEN match) — EMAIL-LEAD-ORIGIN-001
-// Byte-for-byte the shape of getLeadByPhone, keyed on l.contact_id (uses
-// idx_leads_contact_id) so a phoneless email-origin contact card can detect an
-// already-linked lead and show LeadDetailPanel instead of re-offering the wizard.
-// =============================================================================
-async function getLeadByContact(contactId, companyId = null) {
-    if (!contactId) return null;
-
-    const conditions = [
-        `l.contact_id = $1`,
-        `l.status NOT IN ('Lost', 'Converted')`,
-    ];
-    const params = [contactId];
-    if (companyId) {
-        conditions.push(`l.company_id = $2`);
-        params.push(companyId);
-    }
-
-    const sql = `
-        SELECT l.*,
-            COALESCE(
-                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
-                FILTER (WHERE lta.id IS NOT NULL), '[]'
-            ) AS team
-        FROM leads l
-        LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
-        WHERE ${conditions.join(' AND ')}
-        GROUP BY l.id
-        ORDER BY l.id DESC
-        LIMIT 1
-    `;
-
-    const { rows } = await db.query(sql, params);
-    if (rows.length === 0) return null;
-
-    // If the lead's contact already has a job, skip the lead so PulsePage
-    // shows the contact panel instead of the stale lead card.
-    const lead = rows[0];
-    if (lead.contact_id) {
-        const { rows: jobRows } = await db.query(
-            `SELECT 1 FROM jobs WHERE contact_id = $1 LIMIT 1`,
-            [lead.contact_id]
-        );
-        if (jobRows.length > 0) return null;
-    }
-
-    return rowToLead(lead);
-}
-
-// =============================================================================
-// Get OPEN leads by contact_id — NON-SUPPRESSING (AGENT-SKILLS-002 §3.1-A)
-// Company-scoped, ALL open leads for the contact, newest-first. Unlike
-// getLeadByContact (@1157) this does NOT hide the lead when the contact also has
-// a job — that suppression is exactly the "contact with both a lead and a job"
-// case the voice agent must SURFACE (lead-aware overview + bookOnLead). Used by
-// getCustomerOverview (surfacing) and bookOnLead (find-the-lead-to-update).
-//
-// "Open" = the shipped terminal set (Lost / Converted) excluded, matched
-// case-insensitively (getLeadByContact/getLeadsByPhone use the exact-case tokens;
-// we compare UPPER(status) so a lower/mixed-case row can never look "open" by
-// accident). Ordered newest proposed-slot first (lead_date_time DESC NULLS LAST),
-// id DESC as a stable tiebreak → caller takes [0] as "the" open lead.
-// =============================================================================
-async function getOpenLeadsByContact(contactId, companyId = null) {
-    if (!contactId) return [];
-
-    const conditions = [
-        `l.contact_id = $1`,
-        `UPPER(l.status) NOT IN ('LOST', 'CONVERTED')`,
-    ];
-    const params = [contactId];
-    if (companyId) {
-        conditions.push(`l.company_id = $2`);
-        params.push(companyId);
-    }
-
-    const sql = `
-        SELECT l.*, c.full_name AS contact_name,
-            COALESCE(
-                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
-                FILTER (WHERE lta.id IS NOT NULL), '[]'
-            ) AS team
-        FROM leads l
-        LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
-        LEFT JOIN contacts c ON c.id = l.contact_id
-        WHERE ${conditions.join(' AND ')}
-        GROUP BY l.id, c.full_name
-        ORDER BY l.lead_date_time DESC NULLS LAST, l.id DESC
-    `;
-
-    const { rows } = await db.query(sql, params);
-    return rows.map(rowToLead);
-}
-
-// =============================================================================
 // Get Available Lead Transitions (FSM-aware)
 // =============================================================================
 async function getLeadTransitions(companyId, currentStatus, userRoles) {
@@ -1306,56 +1155,11 @@ async function getLeadTransitions(companyId, currentStatus, userRoles) {
 // =============================================================================
 // Exports
 // =============================================================================
-// =============================================================================
-// LEADS-NEW-BADGE-001 — "new / unactioned" lead counter + live events
-// =============================================================================
-
-// Statuses that count as "new / not yet actioned" for the nav badge. The DB
-// default on creation is 'Submitted'; 'New'/'Review' are the other pre-contact
-// states. Single source of truth — the count query and any UI reuse this.
-const NEW_LEAD_STATUSES = ['Submitted', 'New', 'Review'];
-
-// Company-scoped count of new/unactioned leads (excludes lost). Used by the
-// GET /api/leads/new-count endpoint that feeds the nav badge.
-async function countNewLeads(companyId) {
-    if (!companyId) return 0;
-    const { rows } = await db.query(
-        `SELECT COUNT(*)::int AS count FROM leads
-         WHERE company_id = $1 AND lead_lost = false AND status = ANY($2::text[])
-           AND NOT COALESCE(metadata @> '{"rely_filter":{"rejected":true}}'::jsonb, false)`,
-        [companyId, NEW_LEAD_STATUSES]
-    );
-    return rows[0]?.count || 0;
-}
-
-// Notify connected clients so the "new leads" badge refreshes live. Payload is
-// intentionally MINIMAL (company_id + status only, NO PII) because
-// realtimeService.broadcast fans out to every connected client regardless of
-// tenant; the client refetches its own company-scoped count and filters by
-// company_id. Best-effort — a broadcast failure never breaks the lead write.
-function emitLeadChange(eventType, companyId, status, leadId = null) {
-    if (!companyId) return;
-    try {
-        require('./realtimeService').broadcast(eventType, {
-            company_id: companyId,
-            status: status || null,
-            lead_id: leadId != null ? String(leadId) : null,
-        });
-    } catch (err) {
-        console.warn('[leadsService] lead event broadcast failed:', err.message);
-    }
-}
-
 module.exports = {
     listLeads,
-    RESERVED_METADATA_KEYS,
-    NEW_LEAD_STATUSES,
-    countNewLeads,
     getLeadByUUID,
     getLeadById,
     getLeadByPhone,
-    getLeadByContact,
-    getOpenLeadsByContact,
     getLeadsByPhones,
     createLead,
     updateLead,

@@ -8,7 +8,6 @@ const crypto = require('crypto');
 const db = require('../db/connection');
 const realtimeService = require('./realtimeService');
 const groupRouting = require('./groupRouting');
-const telephonyTenantService = require('./telephonyTenantService');
 const { buildSoftphoneIdentity } = require('./softphoneIdentity');
 const { toE164 } = require('../utils/phoneUtils');
 
@@ -534,20 +533,7 @@ async function renderNodeById(callSid, nodeId, traceId = 'call-flow') {
 }
 
 async function startExecution({ callSid, fromNumber, toNumber, group, flow, baseUrl, traceId }) {
-    // TELEPHONY-AUTONOMOUS-MODE-001: a company-wide Autonomous mode forces EVERY
-    // inbound call down its After-Hours branch. When OFF (default) behavior is
-    // identical to today — the group's configured hours decide. Single indexed
-    // PK lookup, cheap per call.
-    // Fail-open: this override adds a SECOND per-call DB read before the hours
-    // check. If it errors, degrade to normal-hours routing (fall through to
-    // groupRouting.isBusinessHours) rather than rejecting the call.
-    const autonomous = await telephonyTenantService.getAutonomousMode(group.company_id).catch(() => false);
-    const businessHours = autonomous ? false : await groupRouting.isBusinessHours(group);
-    if (autonomous) {
-        console.log('[CallFlowRuntime] autonomous mode → forcing after-hours', {
-            callSid, companyId: group.company_id,
-        });
-    }
+    const businessHours = await groupRouting.isBusinessHours(group);
     const context = {
         callSid,
         companyId: group.company_id,

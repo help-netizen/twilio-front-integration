@@ -1,5 +1,5 @@
 /**
- * Jobs API Client — Local Albusto Jobs
+ * Jobs API Client — Local Blanc Jobs
  * Frontend fetch wrapper for /api/jobs endpoints (local DB).
  */
 
@@ -38,12 +38,10 @@ export interface LocalJob {
     customer_phone?: string;
     customer_email?: string;
     address?: string;
-    city?: string | null;
     territory?: string;
     invoice_total?: string;
     invoice_status?: string;
     amount_paid?: string | null;
-    balance_due?: string | null;
     assigned_techs?: Array<{ id: string; name: string }>;
     notes?: Array<{ text: string; created: string }>;
     tags?: JobTag[];
@@ -124,98 +122,6 @@ export async function getJob(id: number): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}`);
 }
 
-// ─── RATE-ME-CRM-002: job attribution + dispatcher send ────────────────────
-
-export type RateLinkChannel = 'sms' | 'email' | 'copy';
-
-export interface JobRateStatus {
-    has_token: boolean;
-    sent_at: string | null;
-    sent_via: RateLinkChannel | null;
-    opened_at: string | null;
-    google_click_at: string | null;
-    rating: { stars: number; created_at: string } | null;
-}
-
-export interface SendRateLinkResult {
-    channel: RateLinkChannel;
-    url?: string;
-    sent_at: string;
-}
-
-/** Error carrying the jobs-envelope code for honest channel-specific feedback. */
-export class RateLinkError extends Error {
-    code: string | null;
-    constructor(message: string, code: string | null) {
-        super(message);
-        this.name = 'RateLinkError';
-        this.code = code;
-    }
-}
-
-export async function getRateStatus(jobId: number): Promise<JobRateStatus> {
-    return jobsRequest<JobRateStatus>(`${JOBS_BASE}/${jobId}/rate-status`);
-}
-
-export async function sendRateLink(jobId: number, channel: RateLinkChannel): Promise<SendRateLinkResult> {
-    const res = await authedFetch(`${JOBS_BASE}/${jobId}/rate-link`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel }),
-    });
-    let json: {
-        ok?: boolean;
-        data?: SendRateLinkResult;
-        code?: string;
-        message?: string;
-        error?: string;
-    } = {};
-    try { json = await res.json(); } catch { /* non-JSON body */ }
-    if (!res.ok || !json.ok || !json.data) {
-        throw new RateLinkError(
-            json.message || json.error || `Request failed (${res.status})`,
-            json.code || null,
-        );
-    }
-    return json.data;
-}
-
-// ─── Create Job (direct, no lead) ─────────────────────────────────────────────
-
-export interface CreateJobBody {
-    contact: { contact_id: number } | { name: string; phone: string; email?: string };
-    address: {
-        line1?: string;
-        line2?: string;
-        city?: string;
-        state?: string;
-        postal_code?: string;
-        lat?: number | null;
-        lng?: number | null;
-    };
-    slot: { start: string; end: string; tech_id?: string | null };
-    job_type: string;
-    description?: string;
-    /** Lead source — shared with the New Lead form; stored in job.metadata.lead_source. */
-    lead_source?: string;
-    /** Additional-info custom fields — shared with New Lead; merged into job.metadata. */
-    metadata?: Record<string, string>;
-}
-
-export interface CreateJobResult {
-    job_id: number;
-    zenbooker_job_id?: string;
-    zb_warning?: string;
-}
-
-/** Create a job directly (without a lead). POST /api/jobs. */
-export async function createJob(body: CreateJobBody): Promise<CreateJobResult> {
-    return jobsRequest<CreateJobResult>(JOBS_BASE, {
-        method: 'POST',
-        body: JSON.stringify(body),
-    });
-}
-
 export async function updateBlancStatus(id: number, blancStatus: string, options: { cancelReason?: string } = {}): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/status`, {
         method: 'PATCH',
@@ -228,64 +134,6 @@ export async function cancelJob(id: number, reason: string): Promise<void> {
         method: 'POST',
         body: JSON.stringify({ reason }),
     });
-}
-
-// ─── ONWAY-001: "On the way" ETA estimate + notify ─────────────────────────────
-
-/** Error carrying the backend `code` so the modal can map it to a friendly toast. */
-export class EtaNotifyError extends Error {
-    code: string | null;
-    constructor(message: string, code: string | null) {
-        super(message);
-        this.name = 'EtaNotifyError';
-        this.code = code;
-    }
-}
-
-export interface EtaEstimateResult {
-    eta_minutes: number | null;
-}
-
-export interface EtaNotifyResult {
-    sent?: boolean;
-    status?: string;
-    /** Present (= 'status_not_advanced') when the SMS sent but the status didn't update. */
-    warning?: string;
-}
-
-/**
- * Estimate the technician's travel-time ETA to the job address.
- * Posts device coords when available; with no fix the server still returns
- * `eta_minutes: null` (we send `{}`), so the modal can stay in state (c).
- */
-export async function estimateEta(id: number, origin: { lat: number; lng: number } | null): Promise<EtaEstimateResult> {
-    const data = await jobsRequest<{ eta_minutes: number | null }>(`${JOBS_BASE}/${id}/eta/estimate`, {
-        method: 'POST',
-        body: JSON.stringify(origin ? { origin } : {}),
-    });
-    return { eta_minutes: data?.eta_minutes ?? null };
-}
-
-/**
- * Notify the customer (outbound SMS) that the technician is on the way and
- * advance the job to "On the way". Returns `data` plus any non-blocking
- * `warning`. On failure throws an {@link EtaNotifyError} carrying the backend
- * `code` (NO_PHONE / NO_PROXY / WALLET_BLOCKED / SMS_FAILED / invalid_eta).
- */
-export async function notifyEta(id: number, etaMinutes: number): Promise<EtaNotifyResult> {
-    const res = await authedFetch(`${JOBS_BASE}/${id}/eta/notify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eta_minutes: etaMinutes }),
-    });
-    let json: any = {};
-    try { json = await res.json(); } catch { /* non-JSON body */ }
-    if (!res.ok || !json.ok) {
-        const code = (json.code as string) || (json.error as string) || null;
-        const message = (json.message as string) || (json.error as string) || `Request failed (${res.status})`;
-        throw new EtaNotifyError(message, code);
-    }
-    return { ...(json.data || {}), warning: json.warning };
 }
 
 export async function rescheduleJob(id: number, data: { start_date: string; arrival_window_minutes?: number; tech_id?: string }): Promise<LocalJob> {

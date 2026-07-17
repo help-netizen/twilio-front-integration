@@ -4,15 +4,13 @@
  */
 
 import React from 'react';
-import { Sparkles, Plus } from 'lucide-react';
-import { Button } from '../ui/button';
+import { Sparkles } from 'lucide-react';
 
 interface ScheduleToolbarProps {
     onToggleAIAssistant?: () => void;
-    onNewJob?: () => void;
 }
 
-export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ onToggleAIAssistant, onNewJob }) => {
+export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ onToggleAIAssistant }) => {
     return (
         <div className="flex items-center justify-between gap-4 px-1">
             <h1
@@ -28,27 +26,23 @@ export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ onToggleAIAssi
                 Schedule
             </h1>
 
-            <div className="flex items-center gap-3">
-            {/* PALETTE-V2: оба хедер-действия = канонный pill одной высоты; New job —
-                solid primary (ui/button default = --blanc-accent), AI Assistant остаётся
-                фиолетовым, но без кастомного градиента/теней. */}
-            {onNewJob && (
-                <Button type="button" onClick={onNewJob} className="h-[48px] gap-2 px-6 text-[15px]">
-                    <Plus className="size-5" /> New job
-                </Button>
-            )}
             {onToggleAIAssistant && (
-                <Button
+                <button
                     type="button"
-                    variant="secondary"
                     onClick={onToggleAIAssistant}
-                    className="h-[48px] gap-2.5 px-6 text-[15px] font-semibold"
+                    className="flex items-center gap-2.5 min-h-[48px] px-5 text-[15px] font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    style={{
+                        background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.95), rgba(99, 102, 241, 0.95))',
+                        border: '1px solid rgba(255, 255, 255, 0.25)',
+                        borderRadius: 'var(--sched-radius-md)',
+                        color: '#ffffff',
+                        boxShadow: '0 8px 24px rgba(99, 102, 241, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                    }}
                 >
                     <Sparkles className="size-5" />
                     <span>AI Assistant</span>
-                </Button>
+                </button>
             )}
-            </div>
         </div>
     );
 };

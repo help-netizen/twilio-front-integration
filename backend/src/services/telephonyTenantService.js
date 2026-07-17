@@ -13,8 +13,6 @@ const crypto = require('crypto');
 const twilio = require('twilio');
 const db = require('../db/connection');
 const auditService = require('./auditService');
-const billingService = require('./billingService');
-const walletService = require('./walletService');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -47,27 +45,6 @@ function masterClient() {
     return getTwilioClient();
 }
 
-async function grantWelcomeCredit(companyId) {
-    try {
-        await walletService.credit(companyId, 5, {
-            type: 'adjustment',
-            description: 'Welcome credit',
-            ref: 'welcome_credit:v1',
-        });
-    } catch (err) {
-        console.error(`[TelephonyTenant] welcome credit failed (${companyId}):`, err.message);
-    }
-
-    try {
-        const subscription = await billingService.getSubscription(companyId);
-        if (!subscription || subscription.plan_id === 'trial') {
-            await billingService.subscribe(companyId, 'payg');
-        }
-    } catch (err) {
-        console.error(`[TelephonyTenant] payg activation failed (${companyId}):`, err.message);
-    }
-}
-
 // ── Tenant connection state ──────────────────────────────────────────────────
 
 async function getTelephonyState(companyId) {
@@ -92,48 +69,6 @@ async function getTelephonyState(companyId) {
     };
 }
 
-// ── Autonomous mode (force every inbound call down the After-Hours branch) ───
-
-/**
- * Whether company-wide Autonomous mode is ON. A missing company_telephony row
- * (company never connected a subaccount) reads as OFF. Single indexed PK lookup.
- */
-async function getAutonomousMode(companyId) {
-    if (!companyId) return false;
-    const { rows } = await db.query(
-        `SELECT autonomous_mode FROM company_telephony WHERE company_id = $1`,
-        [companyId]
-    );
-    return rows[0]?.autonomous_mode === true;
-}
-
-/**
- * Set company-wide Autonomous mode. Upserts so it works even when the company
- * has no company_telephony row yet (e.g. the master/default company that never
- * created a subaccount). Returns the persisted boolean.
- */
-async function setAutonomousMode(companyId, on, actorId) {
-    const value = on === true;
-    const { rows } = await db.query(
-        `INSERT INTO company_telephony (company_id, autonomous_mode)
-         VALUES ($1, $2)
-         ON CONFLICT (company_id) DO UPDATE SET
-            autonomous_mode = EXCLUDED.autonomous_mode,
-            updated_at = now()
-         RETURNING autonomous_mode`,
-        [companyId, value]
-    );
-
-    auditService.log({
-        actor_id: actorId || null,
-        action: 'telephony.autonomous_mode_changed',
-        target_type: 'company', target_id: companyId, company_id: companyId,
-        details: { autonomous_mode: value },
-    }).catch(() => {});
-
-    return rows[0].autonomous_mode === true;
-}
-
 /**
  * Connect telephony for a tenant: create a Twilio subaccount and store its
  * credentials (token encrypted). Idempotent — an existing connection is
@@ -155,14 +90,6 @@ async function connectTelephony(companyId, { actorId, companyName } = {}) {
             status = 'connected', suspended_at = NULL, updated_at = now()`,
         [companyId, sub.sid, encryptToken(sub.authToken), actorId || null]
     );
-
-    await grantWelcomeCredit(companyId);
-
-    setImmediate(() => {
-        ensureSoftphoneSetup(companyId).catch(err => {
-            console.error(`[TelephonyTenant] softphone setup failed (${companyId}):`, err.message);
-        });
-    });
 
     auditService.log({
         actor_id: actorId, action: 'telephony.connected',
@@ -489,8 +416,6 @@ async function getUsageSummary(companyId) {
 
 module.exports = {
     getTelephonyState,
-    getAutonomousMode,
-    setAutonomousMode,
     connectTelephony,
     getClientForCompany,
     resolveCompanyByAccountSid,

@@ -131,11 +131,6 @@ tokenRouter.get('/token', async (req, res) => {
         res.json({ ...result, allowed: true });
     } catch (err) {
         console.error('[Voice] Token generation error:', err.message);
-        // ONBTEL-001 C5: service throws { httpStatus, code } for mapped errors
-        // (e.g. 409 SOFTPHONE_NOT_PROVISIONED). No auto-provision here.
-        if (err && err.httpStatus) {
-            return res.status(err.httpStatus).json({ error: err.message, code: err.code });
-        }
         res.status(500).json({ error: 'Failed to generate voice token' });
     }
 });

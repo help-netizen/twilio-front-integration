@@ -13,14 +13,12 @@ import { useAuthz } from './useAuthz';
 import { useIsMobile } from './useIsMobile';
 import {
     fetchScheduleItems, fetchDispatchSettings, updateDispatchSettings,
-    rescheduleItem, reassignItem, createFromSlot, fetchRouteSegments, fetchTimeOff,
+    rescheduleItem, reassignItem, createFromSlot, fetchRouteSegments,
     loadPersistedFilters, persistFilters,
     type ScheduleItem, type DispatchSettings, type ScheduleFilters,
-    type CreateFromSlotPayload, type RouteSegment, type TimeOffBlock,
+    type CreateFromSlotPayload, type RouteSegment,
 } from '../services/scheduleApi';
 import { authedFetch } from '../services/apiClient';
-import { dateInTZ } from '../utils/companyTime';
-import { filterItemsByProviderTags } from '../services/scheduleFilters';
 import { useRealtimeEvents } from './useRealtimeEvents';
 import { toast } from 'sonner';
 
@@ -159,32 +157,6 @@ export function useScheduleData() {
         return map;
     }, [routeSegments]);
 
-    // ── Fetch time-off blocks (TECH-DAYOFF-001) ──────────────────────────────
-    // Separate, parallel, best-effort fetch on the same visible dateRange
-    // (route-segments pattern): a failed fetch never blocks or fails the
-    // schedule — the grey blocks simply don't render. Company-local calendar
-    // days are widened to UTC instants via dateInTZ (half-open [from, to)).
-    const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
-    const timezone = (settings ?? DEFAULT_SETTINGS).timezone;
-
-    const loadTimeOff = useCallback(async () => {
-        try {
-            const [sy, sm, sd] = dateRange.startDate.split('-').map(Number);
-            const [ey, em, ed] = dateRange.endDate.split('-').map(Number);
-            const from = dateInTZ(sy, sm, sd, 0, 0, timezone).toISOString();
-            // End of range = midnight AFTER endDate (UTC-day overflow is fine).
-            const next = new Date(Date.UTC(ey, em - 1, ed + 1));
-            const to = dateInTZ(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, timezone).toISOString();
-            const blocks = await fetchTimeOff({ from, to });
-            setTimeOff(blocks);
-        } catch (err) {
-            console.warn('[Schedule] time-off fetch failed (best-effort)', err);
-            setTimeOff([]);
-        }
-    }, [dateRange, timezone]);
-
-    useEffect(() => { loadTimeOff(); }, [loadTimeOff]);
-
     // ── Fetch settings (once) ────────────────────────────────────────────────
     // Dispatch settings and the full provider roster are dispatch-only data:
     // providers without schedule.dispatch never request them (PF007).
@@ -303,10 +275,23 @@ export function useScheduleData() {
 
     // ── Computed ─────────────────────────────────────────────────────────────
 
-    const providerFilteredItems = useMemo(
-        () => filterItemsByProviderTags(items, filters),
-        [items, filters.providerIds, filters.tags],
-    );
+    const providerFilteredItems = useMemo(() => {
+        let result = items;
+        if (filters.providerIds?.length) {
+            const wantUnassigned = filters.providerIds.includes('__unassigned__');
+            result = result.filter(item => {
+                const techs = item.assigned_techs;
+                if (!techs?.length) return wantUnassigned;
+                return techs.some(t => filters.providerIds!.includes(t.id || t.name));
+            });
+        }
+        if (filters.tags?.length) {
+            result = result.filter(item =>
+                item.tags?.some(t => filters.tags!.includes(t)),
+            );
+        }
+        return result;
+    }, [items, filters.providerIds, filters.tags]);
 
     const scheduledItems = useMemo(() => providerFilteredItems.filter(i => i.start_at != null), [providerFilteredItems]);
     const unscheduledItems = useMemo(() => providerFilteredItems.filter(i => i.start_at == null), [providerFilteredItems]);
@@ -362,7 +347,7 @@ export function useScheduleData() {
             return { ...i, assigned_techs: newTechs };
         }));
         try {
-            await reassignItem(entityType, entityId, assigneeId, assigneeName);
+            await reassignItem(entityType, entityId, assigneeId);
             const target = assigneeName || 'Unassigned';
             toast.success(`${title || 'Item'} reassigned to ${target}`);
         } catch (err: any) {
@@ -400,8 +385,6 @@ export function useScheduleData() {
         scheduledItems,
         unscheduledItems,
         routeByPair,
-        timeOff,
-        reloadTimeOff: loadTimeOff,
         itemCounts,
         allTags,
         settings: effectiveSettings,

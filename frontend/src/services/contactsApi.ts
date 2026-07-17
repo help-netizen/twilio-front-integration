@@ -4,23 +4,9 @@ import type {
     ContactDetailResponse,
     SearchCandidatesResponse,
     Contact,
-    ContactConflictPayload,
-    ContactConflictResolution,
 } from '../types/contact';
 
 import { authedFetch } from './apiClient';
-
-// CONTACT-MERGE-001 — conflict contract types, re-exported so surfaces can import
-// everything API-shaped from one module.
-export type {
-    ContactConflict,
-    ContactConflictAttribute,
-    ContactConflictParty,
-    ContactConflictPartyPhone,
-    ContactConflictPartyEmail,
-    ContactConflictPayload,
-    ContactConflictResolution,
-} from '../types/contact';
 
 const API_BASE = '/api/contacts';
 
@@ -37,26 +23,13 @@ export class ContactsApiError extends Error {
     code: string;
     httpStatus: number;
     correlationId: string;
-    /**
-     * CONTACT-MERGE-001: for 409 `CONTACT_ATTRIBUTE_CONFLICT` this carries the
-     * `conflict` sibling of the error envelope ({ conflicts: [...] }) so the
-     * conflict flow can open the merge dialog. Undefined for every other error.
-     */
-    details?: ContactConflictPayload;
 
-    constructor(
-        code: string,
-        message: string,
-        httpStatus: number,
-        correlationId: string,
-        details?: ContactConflictPayload
-    ) {
+    constructor(code: string, message: string, httpStatus: number, correlationId: string) {
         super(message);
         this.name = 'ContactsApiError';
         this.code = code;
         this.httpStatus = httpStatus;
         this.correlationId = correlationId;
-        this.details = details;
     }
 }
 
@@ -101,14 +74,12 @@ export async function getContact(id: number): Promise<ContactDetailResponse> {
  * Search for candidate contacts for deduplication (used by create lead form)
  */
 export async function searchCandidates(params: {
-    q?: string;
     first_name?: string;
     last_name?: string;
     phone?: string;
     email?: string;
 }): Promise<SearchCandidatesResponse> {
     const sp = new URLSearchParams();
-    if (params.q) sp.set('q', params.q);
     if (params.first_name) sp.set('first_name', params.first_name);
     if (params.last_name) sp.set('last_name', params.last_name);
     if (params.phone) sp.set('phone', params.phone);
@@ -116,43 +87,22 @@ export async function searchCandidates(params: {
     return request<SearchCandidatesResponse>(`${API_BASE}/search-candidates?${sp.toString()}`);
 }
 
-/** Editable contact fields accepted by `PATCH /api/contacts/:id`. */
-export type UpdateContactFields = {
+/**
+ * Update a contact's fields
+ */
+export async function updateContact(contactId: number, fields: {
     first_name?: string; last_name?: string; company_name?: string;
     phone_e164?: string; secondary_phone?: string; secondary_phone_name?: string;
     email?: string; notes?: string;
-    /** Multi-email list (CONTACT-EMAIL-MERGE-001). Exactly one is_primary is enforced server-side. */
-    emails?: { email: string; is_primary?: boolean }[];
-};
-
-/**
- * Update a contact's fields.
- *
- * CONTACT-MERGE-001: when the save previously 409'd with
- * `CONTACT_ATTRIBUTE_CONFLICT`, the retry re-sends the SAME `fields` plus the
- * user's `resolutions` (strict echo of the detected conflicts). A 409 throws a
- * `ContactsApiError` whose `details` carries the dialog payload.
- */
-export async function updateContact(
-    contactId: number,
-    fields: UpdateContactFields,
-    resolutions?: ContactConflictResolution[]
-): Promise<{ ok: true; data: { contact: Contact } }> {
-    const body = resolutions && resolutions.length > 0 ? { ...fields, resolutions } : fields;
+}): Promise<{ ok: true; data: { contact: Contact } }> {
     const res = await authedFetch(`${API_BASE}/${contactId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(fields),
     });
     const data = await res.json();
     if (!data.ok) {
-        throw new ContactsApiError(
-            data.error.code,
-            data.error.message,
-            res.status,
-            data.error.correlation_id,
-            data.conflict ?? undefined
-        );
+        throw new ContactsApiError(data.error.code, data.error.message, res.status, data.error.correlation_id);
     }
     return data;
 }
@@ -211,7 +161,7 @@ export type SavedAddress = {
 const ZB_INTEGRATION_BASE = '/api/integrations/zenbooker';
 
 /**
- * Create a Zenbooker customer from an existing Albusto contact
+ * Create a Zenbooker customer from an existing Blanc contact
  */
 export async function createZenbookerCustomer(contactId: number): Promise<{
     ok: true;
@@ -234,7 +184,7 @@ export async function createZenbookerCustomer(contactId: number): Promise<{
 }
 
 /**
- * Sync a Albusto contact's data to Zenbooker
+ * Sync a Blanc contact's data to Zenbooker
  */
 export async function syncToZenbooker(contactId: number): Promise<{
     ok: true;

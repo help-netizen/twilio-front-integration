@@ -20,7 +20,6 @@ import {
 } from '../components/payments/paymentTypes';
 import './PaymentsPage.css';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
-import { BottomSheet } from '../components/ui/BottomSheet';
 import { isMobileViewport } from '../hooks/useViewportSafePosition';
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -97,12 +96,18 @@ export default function PaymentsPage() {
                             </>
                         );
 
-                        // mobile only — desktop popover unchanged
                         if (isMobileViewport()) {
                             return (
-                                <BottomSheet open={pm.filtersOpen} onClose={() => pm.setFiltersOpen(false)} title="Filters" size="standard">
-                                    {filterContent}
-                                </BottomSheet>
+                                <>
+                                    <div className="blanc-mobile-sheet-backdrop" onClick={() => pm.setFiltersOpen(false)} />
+                                    <div className="blanc-mobile-sheet" style={{ maxHeight: '70vh' }}>
+                                        <div className="blanc-mobile-sheet-header">
+                                            <span style={{ fontWeight: 600 }}>Filters</span>
+                                            <button onClick={() => pm.setFiltersOpen(false)}><X className="size-5" /></button>
+                                        </div>
+                                        <div style={{ overflowY: 'auto', flex: 1 }}>{filterContent}</div>
+                                    </div>
+                                </>
                             );
                         }
 
@@ -154,17 +159,27 @@ export default function PaymentsPage() {
                             </>
                         );
 
-                        // mobile only — desktop popover unchanged
                         if (isMobileViewport()) {
                             return (
                                 <>
                                     <button className="blanc-control-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => pm.setDatePickerOpen(true)}>
                                         <CalendarIcon className="size-3.5" />{dateLabel}
                                     </button>
-                                    <BottomSheet open={pm.datePickerOpen} onClose={() => pm.setDatePickerOpen(false)} title="Date Range" size="full">
-                                        <div className="flex flex-wrap gap-1.5 mb-4">{presets}</div>
-                                        <div className="flex flex-col items-center">{calendars}</div>
-                                    </BottomSheet>
+                                    {pm.datePickerOpen && (
+                                        <>
+                                            <div className="blanc-mobile-sheet-backdrop" onClick={() => pm.setDatePickerOpen(false)} />
+                                            <div className="blanc-mobile-sheet" style={{ maxHeight: '85vh' }}>
+                                                <div className="blanc-mobile-sheet-header">
+                                                    <span style={{ fontWeight: 600 }}>Date Range</span>
+                                                    <button onClick={() => pm.setDatePickerOpen(false)}><X className="size-5" /></button>
+                                                </div>
+                                                <div style={{ overflowY: 'auto', flex: 1, padding: '0 16px 16px' }}>
+                                                    <div className="flex flex-wrap gap-1.5 mb-4">{presets}</div>
+                                                    <div className="flex flex-col items-center">{calendars}</div>
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
                                 </>
                             );
                         }
@@ -204,8 +219,8 @@ export default function PaymentsPage() {
                 </div>
             )}
 
-            {/* Аквариум снесён (правило 7): невидимый layout-контейнер */}
-            <div className="flex flex-1 flex-col min-h-0">
+            {/* ── Content Card ───────────────────────────────────────── */}
+            <div className="blanc-page-card">
                 <div className="payments-list-panel">
                 {/* Error */}
                 {pm.error && <div className="payments-error">⚠️ {pm.error}</div>}

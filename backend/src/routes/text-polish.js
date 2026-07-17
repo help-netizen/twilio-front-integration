@@ -6,10 +6,9 @@
 const express = require('express');
 const router = express.Router();
 const { polishText } = require('../services/textPolishService');
-const { requirePermission } = require('../middleware/authorization');
 
 // POST / — Polish text
-router.post('/', requirePermission('messages.send'), async (req, res) => {
+router.post('/', async (req, res) => {
     try {
         const { text, language, tone, channel } = req.body;
 

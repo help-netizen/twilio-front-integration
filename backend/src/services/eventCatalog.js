@@ -23,9 +23,6 @@ const EVENT_TYPES = [
     { key: 'subscription.past_due', label: 'Subscription past due', sample_fields: ['subscription_id', 'status'] },
     { key: 'agent_task.succeeded', label: 'Agent task succeeded', sample_fields: ['task_id', 'agent_type'] },
     { key: 'agent_task.failed', label: 'Agent task failed', sample_fields: ['task_id', 'agent_type', 'error'] },
-    // TASKS-COUNT-BADGE-001: coarse, PII-free open-task-count ping. Carries ONLY
-    // company_id — clients refetch their own scoped /api/tasks/count on it.
-    { key: 'task.changed', label: 'Open-task count changed', sample_fields: ['company_id'] },
 ];
 
 // Param hints per action type for the editor (label + which params it expects)

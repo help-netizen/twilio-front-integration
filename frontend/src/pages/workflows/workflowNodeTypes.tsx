@@ -13,19 +13,19 @@ export const WorkflowStateNode = memo(function WorkflowStateNode({
     data,
     selected,
 }: NodeProps & { data: WorkflowNodeData }) {
-    const borderColor = data.isInitial ? 'var(--blanc-accent)' : '#3b82f6';
+    const borderColor = data.isInitial ? '#6366f1' : '#3b82f6';
     return (
         <div
             style={{
                 minWidth: 200,
                 padding: '10px 14px',
                 borderRadius: 10,
-                background: 'var(--blanc-panel-surface)',
+                background: '#fff',
                 borderWidth: '2px 2px 2px 4px',
                 borderStyle: 'solid',
-                borderColor: `${selected ? 'var(--blanc-accent)' : 'var(--blanc-line)'} ${selected ? 'var(--blanc-accent)' : 'var(--blanc-line)'} ${selected ? 'var(--blanc-accent)' : 'var(--blanc-line)'} ${borderColor}`,
+                borderColor: `${selected ? '#6366f1' : 'rgba(117,106,89,0.18)'} ${selected ? '#6366f1' : 'rgba(117,106,89,0.18)'} ${selected ? '#6366f1' : 'rgba(117,106,89,0.18)'} ${borderColor}`,
                 boxShadow: selected
-                    ? '0 0 0 3px color-mix(in srgb, var(--blanc-accent) 20%, transparent)'
+                    ? '0 0 0 3px rgba(99,102,241,0.2)'
                     : '0 1px 4px rgba(0,0,0,0.06)',
                 cursor: 'grab',
                 transition: 'box-shadow 0.15s, border-color 0.15s',
@@ -42,7 +42,7 @@ export const WorkflowStateNode = memo(function WorkflowStateNode({
                         style={{
                             fontSize: 13,
                             fontWeight: 600,
-                            color: 'var(--blanc-ink-1)',
+                            color: '#374151',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
@@ -53,7 +53,7 @@ export const WorkflowStateNode = memo(function WorkflowStateNode({
                     <div
                         style={{
                             fontSize: 10,
-                            color: 'var(--blanc-ink-3)',
+                            color: '#9ca3af',
                             fontFamily: 'monospace',
                             marginTop: 2,
                         }}
@@ -99,12 +99,12 @@ export const WorkflowFinalNode = memo(function WorkflowFinalNode({
                 minWidth: 200,
                 padding: '10px 14px',
                 borderRadius: 10,
-                background: 'var(--blanc-field)',
+                background: '#fafafa',
                 borderWidth: '2px 2px 2px 4px',
                 borderStyle: 'solid',
-                borderColor: `${selected ? 'var(--blanc-accent)' : 'var(--blanc-line)'} ${selected ? 'var(--blanc-accent)' : 'var(--blanc-line)'} ${selected ? 'var(--blanc-accent)' : 'var(--blanc-line)'} var(--blanc-ink-3)`,
+                borderColor: `${selected ? '#6366f1' : 'rgba(117,106,89,0.18)'} ${selected ? '#6366f1' : 'rgba(117,106,89,0.18)'} ${selected ? '#6366f1' : 'rgba(117,106,89,0.18)'} #9ca3af`,
                 boxShadow: selected
-                    ? '0 0 0 3px color-mix(in srgb, var(--blanc-accent) 20%, transparent)'
+                    ? '0 0 0 3px rgba(99,102,241,0.2)'
                     : '0 1px 4px rgba(0,0,0,0.06)',
                 cursor: 'grab',
                 transition: 'box-shadow 0.15s, border-color 0.15s',
@@ -113,7 +113,7 @@ export const WorkflowFinalNode = memo(function WorkflowFinalNode({
             <Handle
                 type="target"
                 position={Position.Top}
-                style={{ background: 'var(--blanc-ink-3)', width: 8, height: 8 }}
+                style={{ background: '#9ca3af', width: 8, height: 8 }}
             />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -121,7 +121,7 @@ export const WorkflowFinalNode = memo(function WorkflowFinalNode({
                         style={{
                             fontSize: 13,
                             fontWeight: 600,
-                            color: 'var(--blanc-ink-2)',
+                            color: '#6b7280',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
@@ -132,7 +132,7 @@ export const WorkflowFinalNode = memo(function WorkflowFinalNode({
                     <div
                         style={{
                             fontSize: 10,
-                            color: 'var(--blanc-ink-3)',
+                            color: '#9ca3af',
                             fontFamily: 'monospace',
                             marginTop: 2,
                         }}
@@ -144,8 +144,8 @@ export const WorkflowFinalNode = memo(function WorkflowFinalNode({
                     style={{
                         fontSize: 9,
                         fontWeight: 700,
-                        color: 'var(--blanc-ink-2)',
-                        background: 'rgba(25,25,25,0.06)',
+                        color: '#6b7280',
+                        background: '#f3f4f6',
                         padding: '1px 6px',
                         borderRadius: 4,
                         letterSpacing: '0.05em',
@@ -168,8 +168,8 @@ export const BipartiteSourceNode = memo(function BipartiteSourceNode({
     const highlighted = (data as any).highlighted;
     const dimmed = (data as any).dimmed;
     const neutral = (data as any).neutral;
-    const accentColor = selected ? 'var(--blanc-accent)' : highlighted ? 'color-mix(in srgb, var(--blanc-accent) 60%, white)' : data.isInitial ? 'var(--blanc-accent)' : data.isFinal ? 'var(--blanc-ink-3)' : '#3b82f6';
-    const borderCol = neutral ? 'transparent' : selected || highlighted ? accentColor : 'var(--blanc-line)';
+    const accentColor = selected ? '#6366f1' : highlighted ? '#818cf8' : data.isInitial ? '#6366f1' : data.isFinal ? '#9ca3af' : '#3b82f6';
+    const borderCol = neutral ? 'transparent' : selected || highlighted ? accentColor : 'rgba(117,106,89,0.14)';
     const leftBorder = neutral ? 'transparent' : accentColor;
     return (
         <div
@@ -177,11 +177,11 @@ export const BipartiteSourceNode = memo(function BipartiteSourceNode({
                 width: 200,
                 padding: '8px 12px',
                 borderRadius: 8,
-                background: neutral ? 'transparent' : data.isFinal ? 'var(--blanc-field)' : 'var(--blanc-panel-surface)',
+                background: neutral ? 'transparent' : data.isFinal ? '#fafafa' : '#fff',
                 borderWidth: '1.5px 1.5px 1.5px 3px',
                 borderStyle: 'solid',
                 borderColor: `${borderCol} ${borderCol} ${borderCol} ${leftBorder}`,
-                boxShadow: selected ? '0 0 0 3px color-mix(in srgb, var(--blanc-accent) 25%, transparent)' : highlighted ? '0 0 0 2px color-mix(in srgb, var(--blanc-accent) 12%, transparent)' : 'none',
+                boxShadow: selected ? '0 0 0 3px rgba(99,102,241,0.25)' : highlighted ? '0 0 0 2px rgba(99,102,241,0.12)' : 'none',
                 opacity: dimmed ? 0.15 : neutral ? 0.55 : 1,
                 transition: 'box-shadow 0.15s, border-color 0.15s, opacity 0.15s',
                 cursor: 'pointer',
@@ -189,7 +189,7 @@ export const BipartiteSourceNode = memo(function BipartiteSourceNode({
         >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: data.isFinal ? 'var(--blanc-ink-3)' : 'var(--blanc-ink-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: data.isFinal ? '#9ca3af' : '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {data.label}
                     </div>
                 </div>
@@ -197,7 +197,7 @@ export const BipartiteSourceNode = memo(function BipartiteSourceNode({
                     <span style={{ fontSize: 8, fontWeight: 700, color: '#059669', background: '#ecfdf5', padding: '0px 4px', borderRadius: 3, letterSpacing: '0.05em', flexShrink: 0 }}>START</span>
                 )}
                 {data.isFinal && (
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--blanc-ink-2)', background: 'rgba(25,25,25,0.06)', padding: '0px 4px', borderRadius: 3, letterSpacing: '0.05em', flexShrink: 0 }}>FINAL</span>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '0px 4px', borderRadius: 3, letterSpacing: '0.05em', flexShrink: 0 }}>FINAL</span>
                 )}
             </div>
             <Handle
@@ -218,8 +218,8 @@ export const BipartiteTargetNode = memo(function BipartiteTargetNode({
     const highlighted = (data as any).highlighted;
     const dimmed = (data as any).dimmed;
     const neutral = (data as any).neutral;
-    const accentColor = selected ? 'var(--blanc-accent)' : highlighted ? 'color-mix(in srgb, var(--blanc-accent) 60%, white)' : data.isFinal ? 'var(--blanc-ink-3)' : '#3b82f6';
-    const borderCol = neutral ? 'transparent' : selected || highlighted ? accentColor : 'var(--blanc-line)';
+    const accentColor = selected ? '#6366f1' : highlighted ? '#818cf8' : data.isFinal ? '#9ca3af' : '#3b82f6';
+    const borderCol = neutral ? 'transparent' : selected || highlighted ? accentColor : 'rgba(117,106,89,0.14)';
     const rightBorder = neutral ? 'transparent' : accentColor;
     return (
         <div
@@ -227,11 +227,11 @@ export const BipartiteTargetNode = memo(function BipartiteTargetNode({
                 width: 200,
                 padding: '8px 12px',
                 borderRadius: 8,
-                background: neutral ? 'transparent' : data.isFinal ? 'var(--blanc-field)' : 'var(--blanc-panel-surface)',
+                background: neutral ? 'transparent' : data.isFinal ? '#fafafa' : '#fff',
                 borderWidth: '1.5px 3px 1.5px 1.5px',
                 borderStyle: 'solid',
                 borderColor: `${borderCol} ${rightBorder} ${borderCol} ${borderCol}`,
-                boxShadow: selected ? '0 0 0 3px color-mix(in srgb, var(--blanc-accent) 25%, transparent)' : highlighted ? '0 0 0 2px color-mix(in srgb, var(--blanc-accent) 12%, transparent)' : 'none',
+                boxShadow: selected ? '0 0 0 3px rgba(99,102,241,0.25)' : highlighted ? '0 0 0 2px rgba(99,102,241,0.12)' : 'none',
                 opacity: dimmed ? 0.15 : neutral ? 0.55 : 1,
                 transition: 'box-shadow 0.15s, border-color 0.15s, opacity 0.15s',
                 cursor: 'pointer',
@@ -244,12 +244,12 @@ export const BipartiteTargetNode = memo(function BipartiteTargetNode({
             />
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: data.isFinal ? 'var(--blanc-ink-3)' : 'var(--blanc-ink-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: data.isFinal ? '#9ca3af' : '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {data.label}
                     </div>
                 </div>
                 {data.isFinal && (
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--blanc-ink-2)', background: 'rgba(25,25,25,0.06)', padding: '0px 4px', borderRadius: 3, letterSpacing: '0.05em', flexShrink: 0 }}>FINAL</span>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '0px 4px', borderRadius: 3, letterSpacing: '0.05em', flexShrink: 0 }}>FINAL</span>
                 )}
             </div>
         </div>
@@ -300,8 +300,8 @@ export function BipartiteEdge({
                             pointerEvents: 'none',
                             fontSize: (labelStyle as any)?.fontSize || 10,
                             fontWeight: (labelStyle as any)?.fontWeight || 500,
-                            color: (labelStyle as any)?.fill || 'var(--blanc-ink-2)',
-                            background: 'rgba(255,255,255,0.95)',
+                            color: (labelStyle as any)?.fill || '#6b7280',
+                            background: 'rgba(255,253,249,0.95)',
                             padding: '1px 6px',
                             borderRadius: 3,
                             whiteSpace: 'nowrap',
@@ -390,9 +390,9 @@ export function WorkflowInsertableEdge({
                                 width: 28,
                                 height: 28,
                                 borderRadius: '50%',
-                                border: '2px solid var(--blanc-accent)',
-                                background: 'var(--blanc-panel-surface)',
-                                color: 'var(--blanc-accent)',
+                                border: '2px solid #6366f1',
+                                background: '#fff',
+                                color: '#6366f1',
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',

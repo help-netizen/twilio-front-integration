@@ -306,7 +306,7 @@ export default function WorkflowBuilderPage() {
                 type: 'workflowInsertable',
                 markerEnd: { type: MarkerType.ArrowClosed },
                 style: { strokeWidth: 2 },
-                labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' },
+                labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
                 data: {
                     event: `TO_${tgtOriginal.toUpperCase()}`,
                     isAction: true,
@@ -370,8 +370,8 @@ export default function WorkflowBuilderPage() {
         }
 
         // Visual states:
-        // - selected: accent glow (the clicked node)
-        // - highlighted: accent border (connected nodes)
+        // - selected: indigo glow (the clicked node)
+        // - highlighted: indigo border (connected nodes)
         // - neutral: no border, full opacity (opposite column, not connected — available for new edges)
         // - dimmed: opacity 0.15 (same column, not connected)
         const sameColumn = isSource ? '__src' : '__tgt';
@@ -406,8 +406,8 @@ export default function WorkflowBuilderPage() {
             const isConnected = connectedEdgeBipIds.has(e.id);
             const isActive = e.id === activeEdgeBipId;
             const origLabel = originalLabels.get(e.id) || e.label || '';
-            // Active edge (clicked) = green, connected = accent, dimmed = gray
-            const edgeColor = isActive ? '#059669' : isConnected ? 'var(--blanc-accent)' : 'rgba(25,25,25,0.12)';
+            // Active edge (clicked) = green, connected = indigo, dimmed = gray
+            const edgeColor = isActive ? '#059669' : isConnected ? '#6366f1' : 'rgba(117,106,89,0.12)';
             return {
                 ...e,
                 // zIndex: active edge highest, connected above dimmed
@@ -596,7 +596,7 @@ export default function WorkflowBuilderPage() {
                     type: 'workflowInsertable',
                     markerEnd: { type: MarkerType.ArrowClosed },
                     style: { strokeWidth: 2 },
-                    labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' },
+                    labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
                     data: { ...((edge.data || {}) as WorkflowEdgeData) },
                     label: (edge.data as any)?.label || edge.label,
                 };
@@ -609,7 +609,7 @@ export default function WorkflowBuilderPage() {
                         type: 'workflowInsertable',
                         markerEnd: { type: MarkerType.ArrowClosed },
                         style: { strokeWidth: 2 },
-                        labelStyle: { fontSize: 10, fontWeight: 500, fill: 'var(--blanc-ink-2)' },
+                        labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
                         data: {
                             event: `TO_${edge.target.toUpperCase()}`,
                             isAction: true,
@@ -736,7 +736,7 @@ export default function WorkflowBuilderPage() {
     return (
         <div className="flex flex-col h-screen bg-[var(--blanc-bg)]">
             {/* ── Toolbar ──────────────────────────────────────────────── */}
-            <div className="h-14 border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface)] flex items-center px-4 gap-3 shrink-0">
+            <div className="h-14 border-b border-[var(--blanc-line)] flex items-center px-4 gap-3 shrink-0">
                 {/* Left: back + title */}
                 <button
                     onClick={handleBack}
@@ -758,7 +758,7 @@ export default function WorkflowBuilderPage() {
                 <button
                     onClick={undo}
                     disabled={!canUndo}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors disabled:opacity-30"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors disabled:opacity-30"
                     title="Undo (Ctrl+Z)"
                 >
                     <Undo2 className="w-3.5 h-3.5" />
@@ -766,7 +766,7 @@ export default function WorkflowBuilderPage() {
                 <button
                     onClick={redo}
                     disabled={!canRedo}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors disabled:opacity-30"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors disabled:opacity-30"
                     title="Redo (Ctrl+Y)"
                 >
                     <Redo2 className="w-3.5 h-3.5" />
@@ -776,7 +776,7 @@ export default function WorkflowBuilderPage() {
 
                 <button
                     onClick={handleAutoLayout}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors"
                 >
                     <LayoutGrid className="w-3.5 h-3.5" /> Layout
                 </button>
@@ -788,7 +788,7 @@ export default function WorkflowBuilderPage() {
                         setNewStateName('');
                         setNewStateIsFinal(false);
                     }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors"
                 >
                     <Plus className="w-3.5 h-3.5" /> Add State
                 </button>
@@ -799,7 +799,7 @@ export default function WorkflowBuilderPage() {
                 <button
                     onClick={handleValidate}
                     disabled={validateScxml.isPending}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors disabled:opacity-50"
                 >
                     <ShieldCheck className="w-3.5 h-3.5" /> Validate
                 </button>
@@ -807,7 +807,7 @@ export default function WorkflowBuilderPage() {
                 <button
                     onClick={handleSave}
                     disabled={!dirty || saveDraft.isPending}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors disabled:opacity-50"
                 >
                     <Save className="w-3.5 h-3.5" /> {saveDraft.isPending ? 'Saving…' : 'Save draft'}
                 </button>
@@ -816,14 +816,14 @@ export default function WorkflowBuilderPage() {
                     onClick={() => setPublishOpen(true)}
                     disabled={dirty || saveDraft.isPending || !machineKey}
                     title={dirty ? 'Save your changes first' : 'Publish this draft to production'}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--blanc-accent)] text-white hover:opacity-90 transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--blanc-job,#2f63d8)] text-white hover:bg-[#234d9e] transition-colors disabled:opacity-50"
                 >
                     <UploadCloud className="w-3.5 h-3.5" /> Publish
                 </button>
 
                 <button
                     onClick={handleExport}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors"
                 >
                     <Download className="w-3.5 h-3.5" /> Export
                 </button>
@@ -853,21 +853,21 @@ export default function WorkflowBuilderPage() {
                         defaultEdgeOptions={{
                             type: 'bipartiteEdge',
                             markerEnd: { type: MarkerType.ArrowClosed },
-                            style: { strokeWidth: 1.5, stroke: 'rgba(25,25,25,0.35)' },
+                            style: { strokeWidth: 1.5, stroke: 'rgba(117,106,89,0.35)' },
                         }}
                     >
-                        <Background gap={20} size={1} color="rgba(25,25,25,0.08)" />
+                        <Background gap={20} size={1} color="rgba(117,106,89,0.08)" />
                         <Controls />
                         <MiniMap
                             nodeStrokeWidth={3}
-                            style={{ background: 'rgba(25,25,25,0.04)' }}
+                            style={{ background: 'rgba(117,106,89,0.04)' }}
                         />
                     </ReactFlow>
                 </div>
 
                 {/* Inspector Sidebar */}
                 <div
-                    className="w-[300px] border-l border-[var(--blanc-line)] bg-[var(--blanc-panel-surface)] overflow-y-auto shrink-0"
+                    className="w-[300px] border-l border-[var(--blanc-line)] overflow-y-auto shrink-0"
                     style={{ padding: 16 }}
                 >
                     {currentSelectedNode ? (
@@ -908,7 +908,7 @@ export default function WorkflowBuilderPage() {
                     onClick={() => setShowAddState(false)}
                 >
                     <div
-                        className="bg-[var(--blanc-panel-surface)] rounded-2xl shadow-xl w-[360px]"
+                        className="bg-white rounded-2xl shadow-xl w-[360px]"
                         style={{ padding: 24 }}
                         onClick={(e) => e.stopPropagation()}
                     >
@@ -941,7 +941,7 @@ export default function WorkflowBuilderPage() {
                                     onKeyDown={(e) => e.key === 'Enter' && handleAddState()}
                                     placeholder="e.g. Waiting for Parts"
                                     autoFocus
-                                    className="w-full text-sm px-3 py-2 rounded-lg border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
+                                    className="w-full text-sm px-3 py-2 rounded-lg border border-[var(--blanc-line)] outline-none focus:border-[rgba(117,106,89,0.4)]"
                                 />
                                 <div className="text-xs text-[var(--blanc-ink-3)] mt-1">
                                     ID: {newStateName.trim().replace(/\s+/g, '_') || '...'}
@@ -953,7 +953,7 @@ export default function WorkflowBuilderPage() {
                                     type="checkbox"
                                     checked={newStateIsFinal}
                                     onChange={(e) => setNewStateIsFinal(e.target.checked)}
-                                    style={{ accentColor: 'var(--blanc-accent)' }}
+                                    style={{ accentColor: 'var(--blanc-job, #2f63d8)' }}
                                 />
                                 Final status (end of the workflow — no further actions)
                             </label>
@@ -964,7 +964,7 @@ export default function WorkflowBuilderPage() {
                                         setShowAddState(false);
                                         setInsertEdgeId(null);
                                     }}
-                                    className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.06)]"
+                                    className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.06)]"
                                 >
                                     Cancel
                                 </button>

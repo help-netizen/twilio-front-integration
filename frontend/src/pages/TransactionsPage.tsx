@@ -8,7 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, DollarSign, TrendingDown, Clock, Minus } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
-import { useAuthz } from '../hooks/useAuthz';
 
 // -- Constants ----------------------------------------------------------------
 
@@ -87,8 +86,6 @@ function SummaryCard({ label, value, icon: Icon, className }: { label: string; v
 
 export function TransactionsPage() {
     const page = useTransactions();
-    const { hasAnyPermission } = useAuthz();
-    const canRecordPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
     const [recordOpen, setRecordOpen] = useState(false);
 
     return (
@@ -147,11 +144,9 @@ export function TransactionsPage() {
                             ))}
                         </SelectContent>
                     </Select>
-                    {canRecordPayment && (
-                        <button onClick={() => setRecordOpen(true)} className="blanc-control-chip-primary">
-                            <Plus className="size-4" />Record Payment
-                        </button>
-                    )}
+                    <button onClick={() => setRecordOpen(true)} className="blanc-control-chip-primary">
+                        <Plus className="size-4" />Record Payment
+                    </button>
                 </div>
             </div>
 
@@ -165,8 +160,8 @@ export function TransactionsPage() {
                 </div>
             )}
 
-            {/* Аквариум снесён (правило 7): невидимый layout-контейнер */}
-            <div className="flex flex-1 flex-col min-h-0">
+            {/* ── Content Card ─────────────────────────────────────────── */}
+            <div className="blanc-page-card">
             {/* -- Left: Transactions List ---------------------------------------- */}
             <div className="flex flex-1 flex-col overflow-hidden">
 
@@ -181,24 +176,24 @@ export function TransactionsPage() {
                             No transactions found
                         </div>
                     ) : (
-                        <table className="w-full text-sm blanc-table-tiles">
-                            <thead>
+                        <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-background border-b">
                                 <tr>
-                                    <th className="text-left px-4 py-1">ID</th>
-                                    <th className="text-left px-4 py-1">Type</th>
-                                    <th className="text-left px-4 py-1">Method</th>
-                                    <th className="text-right px-4 py-1">Amount</th>
-                                    <th className="text-left px-4 py-1">Status</th>
-                                    <th className="text-left px-4 py-1">Invoice</th>
-                                    <th className="text-left px-4 py-1">Date</th>
-                                    <th className="text-right px-4 py-1 w-10"></th>
+                                    <th className="text-left px-4 py-2 font-medium">ID</th>
+                                    <th className="text-left px-4 py-2 font-medium">Type</th>
+                                    <th className="text-left px-4 py-2 font-medium">Method</th>
+                                    <th className="text-right px-4 py-2 font-medium">Amount</th>
+                                    <th className="text-left px-4 py-2 font-medium">Status</th>
+                                    <th className="text-left px-4 py-2 font-medium">Invoice</th>
+                                    <th className="text-left px-4 py-2 font-medium">Date</th>
+                                    <th className="text-right px-4 py-2 font-medium w-10"></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {page.transactions.map(txn => (
                                     <tr
                                         key={txn.id}
-                                        className={`cursor-pointer ${page.selectedTransaction?.id === txn.id ? 'blanc-tile-row-selected' : ''}`}
+                                        className={`border-b cursor-pointer hover:bg-muted/50 transition-colors ${page.selectedTransaction?.id === txn.id ? 'bg-muted' : ''}`}
                                         onClick={() => page.selectTransaction(txn.id)}
                                     >
                                         <td className="px-4 py-2 font-mono text-xs">#{txn.id}</td>
@@ -245,7 +240,7 @@ export function TransactionsPage() {
 
                 {/* Pagination */}
                 {page.totalPages > 1 && (
-                    <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
+                    <div className="border-t px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
                         <span>{page.total} transaction{page.total !== 1 ? 's' : ''}</span>
                         <div className="flex items-center gap-1">
                             <Button

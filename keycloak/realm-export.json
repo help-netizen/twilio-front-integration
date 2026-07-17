@@ -1,18 +1,14 @@
 {
   "realm": "crm-prod",
   "enabled": true,
-  "loginTheme": "albusto",
   "registrationAllowed": false,
-  "registrationEmailAsUsername": true,
   "resetPasswordAllowed": true,
   "verifyEmail": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
-  "rememberMe": true,
+  "rememberMe": false,
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
-  "ssoSessionIdleTimeoutRememberMe": 2592000,
-  "ssoSessionMaxLifespanRememberMe": 2592000,
   "offlineSessionIdleTimeout": 2592000,
   "offlineSessionMaxLifespan": 5184000,
   "accessTokenLifespan": 300,
@@ -112,64 +108,6 @@
           }
         }
       ]
-    },
-    {
-      "clientId": "crm-mobile",
-      "name": "CRM Mobile App (native iOS)",
-      "description": "MOBILE-TECH-APP-001 / MTECH-T3: public PKCE OIDC client for the native provider app (albusto-mobile). Custom-scheme redirect albusto://auth. Mirrors crm-web claim/scope config so the mobile token resolves /api/auth/me identically. Do not add a client secret — this is a public client.",
-      "enabled": true,
-      "publicClient": true,
-      "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "implicitFlowEnabled": false,
-      "serviceAccountsEnabled": false,
-      "protocol": "openid-connect",
-      "rootUrl": "",
-      "baseUrl": "",
-      "attributes": {
-        "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "albusto://auth/*"
-      },
-      "redirectUris": [
-        "albusto://auth",
-        "albusto://auth/*"
-      ],
-      "webOrigins": [],
-      "fullScopeAllowed": true,
-      "defaultClientScopes": [
-        "web-origins",
-        "acr",
-        "profile",
-        "roles",
-        "email"
-      ],
-      "protocolMappers": [
-        {
-          "name": "realm-roles",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-usermodel-realm-role-mapper",
-          "consentRequired": false,
-          "config": {
-            "multivalued": "true",
-            "userinfo.token.claim": "true",
-            "id.token.claim": "true",
-            "access.token.claim": "true",
-            "claim.name": "realm_roles",
-            "jsonType.label": "String"
-          }
-        },
-        {
-          "name": "audience-crm",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "consentRequired": false,
-          "config": {
-            "included.client.audience": "crm-mobile",
-            "id.token.claim": "false",
-            "access.token.claim": "true"
-          }
-        }
-      ]
     }
   ],
   "users": [
@@ -228,61 +166,6 @@
       "realmRoles": [
         "viewer",
         "default-roles-crm-prod"
-      ]
-    }
-  ],
-  "identityProviders": [
-    {
-      "alias": "google",
-      "providerId": "google",
-      "enabled": true,
-      "trustEmail": true,
-      "storeToken": false,
-      "addReadTokenRoleOnCreate": false,
-      "authenticateByDefault": false,
-      "linkOnly": false,
-      "hideOnLoginPage": false,
-      "firstBrokerLoginFlowAlias": "first broker login",
-      "config": {
-        "clientId": "${GOOGLE_IDP_CLIENT_ID:}",
-        "clientSecret": "${GOOGLE_IDP_CLIENT_SECRET:}",
-        "useJwksUrl": "true",
-        "syncMode": "IMPORT",
-        "defaultScope": "openid profile email"
-      }
-    }
-  ],
-  "identityProviderMappers": [
-    {
-      "name": "email",
-      "identityProviderAlias": "google",
-      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-      "config": { "syncMode": "INHERIT", "claim": "email", "user.attribute": "email" }
-    },
-    {
-      "name": "given name",
-      "identityProviderAlias": "google",
-      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-      "config": { "syncMode": "INHERIT", "claim": "given_name", "user.attribute": "firstName" }
-    },
-    {
-      "name": "family name",
-      "identityProviderAlias": "google",
-      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-      "config": { "syncMode": "INHERIT", "claim": "family_name", "user.attribute": "lastName" }
-    }
-  ],
-  "authenticationFlows": [
-    {
-      "alias": "first broker login auto link",
-      "description": "DEPRECATED by AUTH-IDP-LINK-001. Silent auto-link (no password) is NO LONGER used — the google IdP now binds the built-in 'first broker login' flow so an email match routes to Confirm-link + password. Kept only for reference; do not re-bind.",
-      "providerId": "basic-flow",
-      "topLevel": true,
-      "builtIn": false,
-      "authenticationExecutions": [
-        { "authenticator": "idp-review-profile", "requirement": "DISABLED", "priority": 10, "authenticatorFlow": false, "userSetupAllowed": false },
-        { "authenticator": "idp-create-user-if-unique", "requirement": "ALTERNATIVE", "priority": 20, "authenticatorFlow": false, "userSetupAllowed": false },
-        { "authenticator": "idp-auto-link", "requirement": "ALTERNATIVE", "priority": 30, "authenticatorFlow": false, "userSetupAllowed": false }
       ]
     }
   ]

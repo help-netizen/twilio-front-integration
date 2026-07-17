@@ -8,27 +8,6 @@ export const US_STATES = [
     "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
 ] as const;
 
-/**
- * Derive a US state abbreviation from a ZIP code by its 3-digit prefix, for the
- * New England service area (MA/RI/NH/ME/VT/CT). Used to fill the State field when
- * an address arrives with a ZIP but no state — e.g. a contact-record autofill, a
- * place pick whose description omitted the state, or Safari autofilling the text
- * inputs but not the State <Select>. Returns '' for any prefix we are NOT certain
- * of — it never guesses wrong; out-of-region ZIPs are picked manually.
- */
-export function stateFromZip(zip: string | null | undefined): string {
-    const m = String(zip ?? "").match(/^\s*(\d{3})/);
-    if (!m) return "";
-    const p = Number(m[1]);
-    if (p >= 10 && p <= 27) return "MA";
-    if (p === 28 || p === 29) return "RI";
-    if (p >= 30 && p <= 38) return "NH";
-    if (p >= 39 && p <= 49) return "ME";
-    if (p >= 50 && p <= 59) return "VT";
-    if (p >= 60 && p <= 69) return "CT";
-    return "";
-}
-
 export interface AddressFields {
     street: string;
     apt: string;
@@ -76,41 +55,6 @@ export function parseAddressComponents(
     const lng = geometry?.location?.lng() ?? null;
 
     return { street: [streetNumber, route].filter(Boolean).join(" "), apt: "", city, state, zip, lat, lng };
-}
-
-/**
- * Build editable AddressFields from a stored base-location row. Prefers the structured
- * columns (street/apt/city/state/zip) when present; falls back to parsing the composed
- * `address` string for pre-migration rows that only kept a string + lat/lng — so the
- * edit form is pre-filled instead of empty.
- */
-export function fieldsFromStored(row: {
-    street?: string | null;
-    apt?: string | null;
-    city?: string | null;
-    state?: string | null;
-    zip?: string | null;
-    address?: string | null;
-    label?: string | null;
-    lat?: number | null;
-    lng?: number | null;
-}): AddressFields {
-    const hasStructured = !!(row.street || row.city || row.state || row.zip || row.apt);
-    if (hasStructured) {
-        return {
-            street: row.street || "",
-            apt: row.apt || "",
-            city: row.city || "",
-            state: row.state || "",
-            zip: row.zip || "",
-            lat: row.lat ?? null,
-            lng: row.lng ?? null,
-        };
-    }
-    const composed = row.address || row.label || "";
-    if (!composed) return { ...EMPTY_ADDRESS, lat: row.lat ?? null, lng: row.lng ?? null };
-    const parsed = parseDescription(composed);
-    return { ...parsed, lat: row.lat ?? null, lng: row.lng ?? null };
 }
 
 /** Parse address from Autocomplete description text */

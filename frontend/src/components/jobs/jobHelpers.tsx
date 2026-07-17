@@ -10,21 +10,16 @@ export const BLANC_STATUSES = [
     'Job is Done',
     'Rescheduled',
     'Canceled',
-    'On the way',
 ];
 
-// UI-QA-001: pill text = full color on a 10% tint — 500-tier hues sat below AA
-// (amber 2.2, sky 2.8, blue 3.7). Same hues one step deeper; Submitted = system
-// job-blue (--blanc-info). Keep in sync with jobsFilterHelpers.BLANC_STATUS_COLORS.
 export const BLANC_STATUS_COLORS: Record<string, string> = {
-    'Submitted': '#2F63D8',
-    'Waiting for parts': '#B45309',
-    'Follow Up with Client': '#7C3AED',
-    'Visit completed': '#15803D',
+    'Submitted': '#3B82F6',
+    'Waiting for parts': '#F59E0B',
+    'Follow Up with Client': '#8B5CF6',
+    'Visit completed': '#22C55E',
     'Job is Done': '#6B7280',
-    'Rescheduled': '#C2410C',
-    'Canceled': '#DC2626',
-    'On the way': '#0369A1',
+    'Rescheduled': '#F97316',
+    'Canceled': '#EF4444',
 };
 
 export const ZB_STATUS_COLORS: Record<string, string> = {
@@ -141,7 +136,7 @@ export const STATIC_COLUMNS: Record<string, ColumnDef> = {
         key: 'customer_name', label: 'Customer', sortKey: 'customer_name', width: 'w-48 max-w-[12rem]',
         render: (j) => (
             <div className="max-w-[12rem]">
-                <div className="font-medium truncate">{[j.customer_name, j.city].filter(Boolean).join(', ') || '—'}</div>
+                <div className="font-medium truncate">{j.customer_name || '—'}</div>
                 {j.customer_phone && <div className="text-xs text-muted-foreground">{j.customer_phone}</div>}
             </div>
         ),
@@ -175,7 +170,7 @@ export const STATIC_COLUMNS: Record<string, ColumnDef> = {
         ),
     },
     assigned_techs: {
-        key: 'assigned_techs', label: 'Providers',
+        key: 'assigned_techs', label: 'Techs',
         render: (j) => <span>{j.assigned_techs?.map((p: any) => p.name).join(', ') || '—'}</span>,
     },
     start_date: {

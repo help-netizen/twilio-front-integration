@@ -34,7 +34,6 @@ INSERT INTO marketplace_apps (
     '{
         "access_summary": ["Read connected Gmail mailbox metadata and message content for triage"],
         "requires_connected_gmail": true,
-        "setup_path": "/settings/integrations/mail-secretary",
         "dependency_cta": {
             "label": "Connect Gmail",
             "path": "/settings/email"

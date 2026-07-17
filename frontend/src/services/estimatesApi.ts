@@ -138,9 +138,9 @@ export interface EstimateCreateData {
 }
 
 export interface EstimateSendData {
-    channel: 'email' | 'sms';
-    recipient: string;
-    message: string;
+    channel: 'email' | 'text' | 'sms';
+    recipient?: string;
+    message?: string;
 }
 
 export interface EstimateItemCreateData {
@@ -169,41 +169,6 @@ async function estimatesRequest<T>(url: string, options?: RequestInit): Promise<
     const json: ApiResponse<T> = await res.json();
     if (!res.ok || !json.ok) throw new Error(json.error?.message || `Estimates API error ${res.status}`);
     return json.data;
-}
-
-/**
- * Error carrying the server-supplied `code`/`status` so the send dialog can branch
- * (409 MAILBOX_NOT_CONNECTED, 402 WALLET_BLOCKED, 422 NO_PROXY|NO_PHONE, 400 VALIDATION).
- */
-export class EstimateApiError extends Error {
-    code: string;
-    status: number;
-    constructor(message: string, code: string, status: number) {
-        super(message);
-        this.name = 'EstimateApiError';
-        this.code = code;
-        this.status = status;
-    }
-}
-
-/**
- * Like `estimatesRequest`, but throws an `EstimateApiError` that preserves the
- * server `error.code` (the plain helper collapses everything to a generic Error,
- * losing the code the send dialog needs to map 409/402/422 → the right toast).
- */
-async function estimatesRequestTyped<T>(url: string, options?: RequestInit): Promise<T> {
-    const res = await authedFetch(url, {
-        headers: { 'Content-Type': 'application/json' },
-        ...options,
-    });
-    let json: any = null;
-    try { json = await res.json(); } catch { /* non-JSON error body */ }
-    if (!res.ok || !json?.ok) {
-        const code = json?.error?.code ?? 'INTERNAL';
-        const message = json?.error?.message ?? `Estimates API error ${res.status}`;
-        throw new EstimateApiError(message, code, res.status);
-    }
-    return json.data as T;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -261,20 +226,9 @@ export async function restoreEstimate(id: number): Promise<Estimate> {
 }
 
 export async function sendEstimate(id: number, data: EstimateSendData): Promise<Estimate> {
-    // Typed request so the dialog can surface 409/402/422 via EstimateApiError.code.
-    return estimatesRequestTyped<Estimate>(`${ESTIMATES_BASE}/${id}/send`, {
+    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/send`, {
         method: 'POST',
         body: JSON.stringify(data),
-    });
-}
-
-/**
- * Mint (or fetch) the tokenized public link for an estimate — `POST /api/estimates/:id/public-link`
- * → `{ url }`. Idempotent on the backend (re-send reuses the same token). Mirrors `ensureInvoicePublicLink`.
- */
-export async function ensureEstimatePublicLink(id: number): Promise<{ token: string; url: string }> {
-    return estimatesRequestTyped<{ token: string; url: string }>(`${ESTIMATES_BASE}/${id}/public-link`, {
-        method: 'POST',
     });
 }
 
@@ -303,14 +257,6 @@ export async function addEstimateItem(estimateId: number, item: EstimateItemCrea
     return estimatesRequest<EstimateItem>(`${ESTIMATES_BASE}/${estimateId}/items`, {
         method: 'POST',
         body: JSON.stringify(item),
-    });
-}
-
-// PRICEBOOK-001: bulk add (a Price Book group expanded into its items) — one call.
-export async function addEstimateItemsBulk(estimateId: number, items: EstimateItemCreateData[]): Promise<{ added: number }> {
-    return estimatesRequest<{ added: number }>(`${ESTIMATES_BASE}/${estimateId}/items/bulk`, {
-        method: 'POST',
-        body: JSON.stringify({ items }),
     });
 }
 

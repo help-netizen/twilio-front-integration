@@ -3,59 +3,37 @@
  *
  * POST /api/vapi-tools
  *
- * THIN ADAPTER (AGENT-SKILLS-001 T4). This file is transport-only: it validates
- * the VAPI secret, unwraps the VAPI tool-calls envelope, and dispatches each tool
- * call GENERICALLY into the provider-neutral skill layer via `agentSkills.runSkill`.
- * It contains ZERO business logic — no CRM queries, no verification decisions, no
- * Google Geocoding, no slot-engine composition (all of that now lives in
- * `backend/src/services/agentSkills/skills/*`, behind the single choke-point).
- *
- * Because dispatch is generic, EVERY registered skill is exposed here — the 5
- * legacy tools (checkServiceArea / validateAddress / checkAvailability /
- * recommendSlots / createLead) AND the new existing-customer skills — with the
- * skill name mapping 1:1 to `toolCall.function.name`.
- *
  * VAPI sends:
- *   { message: { type: "tool-calls",
- *       toolCallList: [{ id, function: { name, arguments } }],
- *       call: { customer: { number }, ... } } }
+ *   { message: { type: "tool-calls", toolCallList: [{ id, function: { name, arguments } }], call: { ... } } }
+ *
+ * Tools handled:
+ *   - checkServiceArea({ zip })              — check zip against service_territories DB
+ *   - validateAddress({ street, apt, ... })  — Google Maps Geocoding (uses GOOGLE_GEOCODING_KEY)
+ *   - checkAvailability({ zip, unitType })   — Blanc scheduleService.getAvailableSlots (dispatch_settings + booked items)
+ *   - createLead({ ... })                    — create qualified lead in CRM
  *
  * Response format (VAPI expects):
- *   { results: [{ toolCallId, result }] }   // result = JSON.stringify(skillOutput)
- *
- * Verification, graceful degradation, and unknown-tool handling all live in the
- * skill layer: `runSkill` NEVER throws and NEVER leaks internals — an unknown or
- * errored tool returns a speech-safe SAFE_FALLBACK. So this adapter never surfaces
- * `err.message` / stacks / SQL / PII to the caller (gate G6).
+ *   { results: [{ toolCallId, result }] }
  */
 const express = require('express');
 const router = express.Router();
-const agentSkills = require('../services/agentSkills');
+const https = require('https');
+const stQueries = require('../db/serviceTerritoryQueries');
+const leadsService = require('../services/leadsService');
+const scheduleService = require('../services/scheduleService');
 
-// Company is hardwired for the VAPI (voice) transport — never taken from the
-// client payload. The authed MCP transport (contract B) supplies its own scope.
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-
-// The 5 relocated legacy L0 tools keep byte-identical behavior (AC-11): they read
-// their OWN `phone` from `args` and must NOT be perturbed by the silent caller-ID
-// fallback below. The new identity/verification skills DO get the silent phone so
-// an existing customer on a masked line can still be resolved.
-const LEGACY_TOOLS = new Set([
-    'checkServiceArea',
-    'validateAddress',
-    'checkAvailability',
-    'recommendSlots',
-    'createLead',
-]);
+const AVAILABILITY_DAYS = 5;
+const APPOINTMENT_DURATION_MIN = 120;
+const MAX_SLOTS = 3;
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
 function vapiSecretAuth(req, res, next) {
     const secret = process.env.VAPI_TOOLS_SECRET;
     if (!secret) {
-        // Fail closed: a public endpoint must never run unauthenticated.
-        console.error('[vapi-tools] VAPI_TOOLS_SECRET not set — refusing requests (fail-closed)');
-        return res.status(503).json({ error: 'vapi tools not configured' });
+        console.warn('[vapi-tools] VAPI_TOOLS_SECRET not set — skipping auth (dev mode)');
+        return next();
     }
     const header = req.headers['x-vapi-secret'];
     if (header !== secret) {
@@ -64,46 +42,154 @@ function vapiSecretAuth(req, res, next) {
     next();
 }
 
-/**
- * Build the per-call skill input from the tool arguments, threading the VAPI
- * caller-ID (`message.call.customer.number`) in as the SILENT phone — a FALLBACK
- * only: anything the assistant re-sent in `args` wins (`{ phone: callerId, ...args }`).
- *
- * The silent phone is threaded ONLY for the new identity/verification skills. The
- * 5 legacy L0 tools are excluded so their observable output stays byte-identical
- * to the pre-refactor handlers (they never saw the raw caller-ID before).
- *
- * OUTBOUND-PARTS-CALL-001: for the server-initiated outbound call, the call's
- * pre-bound identity (`jobId`, `contactId`, `taskId`, `companyId`, slot fields) is
- * injected at call-open into `call.assistantOverrides.variableValues` — NOT a
- * caller/model claim. Those variableValues are threaded into the skill input and
- * OVERRIDE any same-named model `args`, so an outbound skill's ownership pre-check
- * (e.g. `confirmPartsVisit`) keys on server-injected identity the model cannot
- * spoof. Inbound Sara calls carry NO `assistantOverrides.variableValues`, so this
- * is a pure no-op for the inbound path (Sara/legacy tools untouched).
- *
- * @param {string} name The tool/skill name.
- * @param {object} args Parsed tool arguments.
- * @param {object} [call] The VAPI call metadata (message.call).
- * @returns {object} The skill input (identity block + skill-specific fields).
- */
-function buildSkillInput(name, args, call) {
-    // Server-injected, model-untrusted identity for outbound calls (empty for
-    // inbound Sara). Overrides same-named model args → identity can't be spoofed.
-    const variableValues =
-        (call && call.assistantOverrides && call.assistantOverrides.variableValues) || null;
+// ─── Tool: checkServiceArea ───────────────────────────────────────────────────
 
-    const callerNumber = call && call.customer && call.customer.number;
-    if (LEGACY_TOOLS.has(name) || !callerNumber) {
-        // Legacy L0 tools stay byte-identical (no silent phone); but outbound
-        // variableValues (absent for inbound) still take precedence when present.
-        return variableValues ? { ...args, ...variableValues } : args;
+async function handleCheckServiceArea({ zip }) {
+    if (!zip) return { inServiceArea: false, error: 'zip is required' };
+
+    const row = await stQueries.search(DEFAULT_COMPANY_ID, String(zip).trim());
+    if (!row) return { inServiceArea: false };
+
+    return {
+        inServiceArea: true,
+        area: row.area || '',
+        city: row.city || '',
+        state: row.state || '',
+        zip: row.zip || zip,
+    };
+}
+
+// ─── Tool: validateAddress ────────────────────────────────────────────────────
+
+async function handleValidateAddress({ street, apt, city, state, zip }) {
+    // Dedicated server-side Geocoding key (IP-restricted). Falls back to the
+    // frontend Maps key for back-compat if the dedicated one isn't set.
+    const apiKey = process.env.GOOGLE_GEOCODING_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+        console.warn('[vapi-tools] GOOGLE_GEOCODING_KEY not set — address validation skipped');
+        return { valid: false, error: 'GOOGLE_GEOCODING_KEY not configured' };
     }
-    // Silent caller-ID is a FALLBACK (args win); variableValues are AUTHORITATIVE
-    // (server-injected) so they are spread LAST to override any model-sent field.
-    return variableValues
-        ? { phone: callerNumber, ...args, ...variableValues }
-        : { phone: callerNumber, ...args };
+
+    try {
+        const parts = [street, apt, city, state, zip].filter(Boolean);
+        const addressQuery = parts.join(', ');
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addressQuery)}&key=${apiKey}`;
+
+        const data = await new Promise((resolve, reject) => {
+            https.get(url, (res) => {
+                let body = '';
+                res.on('data', chunk => { body += chunk; });
+                res.on('end', () => {
+                    try { resolve(JSON.parse(body)); }
+                    catch (e) { reject(new Error('Invalid JSON from Geocoding API')); }
+                });
+            }).on('error', reject);
+        });
+
+        if (!data.results || data.results.length === 0 || data.status === 'ZERO_RESULTS') {
+            return { valid: false };
+        }
+
+        const result = data.results[0];
+        const components = result.address_components || [];
+
+        const postalComponent = components.find(c => c.types.includes('postal_code'));
+        const correctedZip = postalComponent?.short_name || zip || '';
+
+        // Strip ", USA" from formatted address for cleaner speech output
+        const standardized = (result.formatted_address || '').replace(/, USA$/, '').trim();
+
+        return {
+            valid: true,
+            standardized,
+            correctedZip,
+            lat: result.geometry?.location?.lat ?? null,
+            lng: result.geometry?.location?.lng ?? null,
+        };
+    } catch (err) {
+        console.error('[vapi-tools] validateAddress error:', err.message);
+        return { valid: false };
+    }
+}
+
+// ─── Tool: checkAvailability ──────────────────────────────────────────────────
+
+async function handleCheckAvailability({ zip, unitType, days }) {
+    try {
+        return await scheduleService.getAvailableSlots(DEFAULT_COMPANY_ID, {
+            days: days || AVAILABILITY_DAYS,
+            slotDurationMin: APPOINTMENT_DURATION_MIN,
+            maxSlots: MAX_SLOTS,
+        });
+    } catch (err) {
+        console.error('[vapi-tools] checkAvailability error:', err.message);
+        return { slots: [], error: err.message };
+    }
+}
+
+// ─── Tool: createLead ─────────────────────────────────────────────────────────
+
+function buildCallSummary({ unitType, brand, unitAge, problemDescription, preferredSlot, addressValidated, escalationRequested }) {
+    const parts = [
+        unitType          && `Unit: ${unitType}`,
+        brand             && `Brand: ${brand}`,
+        `Age: ${unitAge || 'unknown'}`,
+        problemDescription && `Problem: ${problemDescription}`,
+        'Fee agreed: Yes',
+        `Slot: ${preferredSlot || 'pending callback'}`,
+        `Address validated: ${addressValidated ? 'yes' : 'no'}`,
+        escalationRequested && 'escalation_requested: true',
+    ].filter(Boolean);
+    return parts.join(' | ');
+}
+
+async function handleCreateLead(args) {
+    const {
+        firstName, lastName, phone, email,
+        street, apt, zip, city, state,
+        unitType, brand, unitAge, problemDescription,
+        preferredSlot, addressValidated, escalationRequested,
+        disqualified, disqualReason,
+        callerName,
+    } = args;
+
+    // Disqualified leads (out-of-area / unsupported appliance) are logged for
+    // lead-gen refund tracking even without full contact details — the call
+    // transcript is the evidence. Valid leads still require a phone number.
+    if (!disqualified && (!phone || phone.length < 5)) {
+        return { success: false, error: 'Phone number is required to create lead' };
+    }
+
+    const summary = buildCallSummary({ unitType, brand, unitAge, problemDescription, preferredSlot, addressValidated, escalationRequested });
+    const body = {
+        FirstName: firstName || callerName?.split(' ')[0] || 'Unknown',
+        LastName:  lastName  || callerName?.split(' ').slice(1).join(' ') || 'Caller',
+        Phone:     phone || '',
+        ...(email && { Email: email }),
+        Status:    'Review',
+        JobType:   unitType ? `${unitType} Repair` : 'Appliance Repair',
+        JobSource: disqualified ? 'AI Phone (Invalid)' : 'AI Phone',
+        Comments:  disqualified
+            ? `INVALID LEAD — ${disqualReason || 'disqualified'}. ${summary}`.trim()
+            : summary,
+        ...(street && { Address: street }),
+        ...(apt && { Unit: apt }),
+        City:      city || '',
+        State:     state || '',
+        PostalCode: zip || '',
+    };
+
+    // Attempt with 1 retry on failure
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            const lead = await leadsService.createLead(body, DEFAULT_COMPANY_ID);
+            return { success: true, leadId: lead?.UUID || lead?.uuid || lead?.id || null };
+        } catch (err) {
+            console.error(`[vapi-tools] createLead attempt ${attempt} failed:`, err.message);
+            if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+    return { success: false, error: 'Lead creation failed after retry' };
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -130,17 +216,23 @@ router.post('/', vapiSecretAuth, async (req, res) => {
                 }
             })();
 
-            // Generic dispatch — the SINGLE choke-point. No if/else per tool, no
-            // business logic here. `runSkill` gates + runs the skill and degrades
-            // gracefully (unknown tool / any throw → SAFE_FALLBACK); it never
-            // throws and never leaks internals, so no per-tool catch is needed.
-            const input = buildSkillInput(name, args, message.call);
-            const result = await agentSkills.runSkill(
-                name,
-                DEFAULT_COMPANY_ID,
-                { source: 'vapi', call: message.call },
-                input,
-            );
+            let result;
+            try {
+                if (name === 'checkServiceArea') {
+                    result = await handleCheckServiceArea(args);
+                } else if (name === 'validateAddress') {
+                    result = await handleValidateAddress(args);
+                } else if (name === 'checkAvailability') {
+                    result = await handleCheckAvailability(args);
+                } else if (name === 'createLead') {
+                    result = await handleCreateLead(args);
+                } else {
+                    result = { error: `Unknown tool: ${name}` };
+                }
+            } catch (err) {
+                console.error(`[vapi-tools] Tool "${name}" unhandled error:`, err.message);
+                result = { error: err.message };
+            }
 
             results.push({
                 toolCallId: toolCall.id,
@@ -150,15 +242,9 @@ router.post('/', vapiSecretAuth, async (req, res) => {
 
         res.json({ results });
     } catch (err) {
-        // Thin backstop: the skill layer already degrades gracefully per tool, so
-        // this only fires on a malformed-envelope / framework fault. Stay
-        // well-formed and NEVER surface err.message / internals to the caller.
-        console.error('[vapi-tools] Handler error:', err && err.message ? err.message : 'unknown error');
-        res.status(500).json({ error: 'vapi tools handler error' });
+        console.error('[vapi-tools] Handler error:', err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
 module.exports = router;
-// Exported additively for unit tests (variableValues anti-spoof precedence). The
-// router remains the default export; this does not alter the mount behavior.
-module.exports.buildSkillInput = buildSkillInput;

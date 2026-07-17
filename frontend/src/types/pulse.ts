@@ -1,7 +1,6 @@
 // Pulse timeline types
 
 import type { CallData } from '../components/call-list-item';
-import type { TaskAction } from '../components/tasks/tasksApi';
 
 export interface SmsMediaItem {
     id: string;
@@ -33,25 +32,7 @@ export interface SmsConversation {
     state: string;
 }
 
-export type TimelineItemType = 'call' | 'sms' | 'financial' | 'email';
-
-// EMAIL-TIMELINE-001 §6 — an email projected onto a contact's timeline.
-// Backend (buildTimeline) already quote-strips body_text for display.
-export interface EmailTimelineItem {
-    id: string;
-    type: 'email';
-    direction: 'inbound' | 'outbound';
-    is_outbound: boolean;
-    from_email: string | null;
-    from_name: string | null;
-    to_email: string | string[] | null; // raw to_recipients_json
-    subject: string | null;
-    body_text: string | null; // plain text, already quote-stripped server-side
-    body_html: string | null; // raw HTML body — sanitized client-side (SafeEmailHtml)
-    sent_at: string; // gmail_internal_at (ISO8601) — timeline sort timestamp
-    thread_id: string | null;
-    sent_by_user_email: string | null; // outbound attribution (nullable)
-}
+export type TimelineItemType = 'call' | 'sms' | 'financial';
 
 export interface FinancialEvent {
     id: string;
@@ -67,7 +48,7 @@ export interface FinancialEvent {
 export interface TimelineItem {
     type: TimelineItemType;
     timestamp: Date;
-    data: CallData | SmsMessage | FinancialEvent | EmailTimelineItem;
+    data: CallData | SmsMessage | FinancialEvent;
 }
 
 export interface PulseTimelineResponse {
@@ -75,53 +56,14 @@ export interface PulseTimelineResponse {
     messages: SmsMessage[];
     conversations: SmsConversation[];
     financial_events?: FinancialEvent[];
-    email_messages?: EmailTimelineItem[];
-}
-
-export type TimelinePageSrc = 'call' | 'sms' | 'email' | 'financial';
-
-export interface TimelinePageItem {
-    ts: string;
-    src: TimelinePageSrc;
-    id: string;
-    data: any;
-}
-
-export interface TimelinePage {
-    items: TimelinePageItem[];
-    next_cursor: string | null;
-    has_more: boolean;
-}
-
-export interface PulseTimelineMeta {
-    timeline_id: number | null;
-    display_name: string | null;
-    external_source: string | null;
-    contact: any | null;
-    conversations: SmsConversation[];
-}
-
-export interface PulseTimelinePageResponse {
-    page: TimelinePage;
-    meta?: PulseTimelineMeta;
 }
 
 // Action Required types
 export interface PulseTask {
     id: number;
     title: string;
-    description?: string | null;
     due_at: string | null;
     priority: 'p1' | 'p2' | 'p3';
-    kind?: string;
-    agent_output?: { reason?: string } | null;
-    /** OUTBOUND-PARTS-CALL-BTN-001: typed action buttons (robot_call / manual_call)
-     *  hydrated onto the by-contact open_task; feeds <TaskActionButtons> in the AR banner. */
-    actions?: TaskAction[];
-    /** OUTBOUND-PARTS-CALL-SLOTPICK-001 (SP-03): the open_task's parent — lets the AR
-     *  banner resolve the jobId for the robot_call slot-picker. */
-    parent_id?: number;
-    parent_type?: string;
 }
 
 export interface ActionRequiredState {

@@ -6,7 +6,6 @@
 const express = require('express');
 const router = express.Router();
 const qmQueries = require('../db/quickMessagesQueries');
-const { requirePermission } = require('../middleware/authorization');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -17,7 +16,7 @@ function getCompanyId(req) {
 }
 
 // GET /api/quick-messages — list all quick messages (ordered)
-router.get('/', requirePermission('messages.send'), async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         const messages = await qmQueries.getQuickMessages(getCompanyId(req));
         res.json({ messages });
@@ -28,7 +27,7 @@ router.get('/', requirePermission('messages.send'), async (req, res) => {
 });
 
 // POST /api/quick-messages — create a new quick message
-router.post('/', requirePermission('messages.send'), async (req, res) => {
+router.post('/', async (req, res) => {
     try {
         const { title, content } = req.body;
         if (!title || !content) {
@@ -44,7 +43,7 @@ router.post('/', requirePermission('messages.send'), async (req, res) => {
 
 // PUT /api/quick-messages/reorder — update sort order
 // Must be before /:id to avoid matching "reorder" as an id
-router.put('/reorder', requirePermission('messages.send'), async (req, res) => {
+router.put('/reorder', async (req, res) => {
     try {
         const { orderedIds } = req.body;
         if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
@@ -59,7 +58,7 @@ router.put('/reorder', requirePermission('messages.send'), async (req, res) => {
 });
 
 // PUT /api/quick-messages/:id — update a quick message
-router.put('/:id', requirePermission('messages.send'), async (req, res) => {
+router.put('/:id', async (req, res) => {
     try {
         const { title, content } = req.body;
         const message = await qmQueries.updateQuickMessage(req.params.id, getCompanyId(req), { title, content });
@@ -72,7 +71,7 @@ router.put('/:id', requirePermission('messages.send'), async (req, res) => {
 });
 
 // DELETE /api/quick-messages/:id — delete a quick message
-router.delete('/:id', requirePermission('messages.send'), async (req, res) => {
+router.delete('/:id', async (req, res) => {
     try {
         const deleted = await qmQueries.deleteQuickMessage(req.params.id, getCompanyId(req));
         if (!deleted) return res.status(404).json({ error: 'Quick message not found' });

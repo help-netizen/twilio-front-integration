@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Button } from '../ui/button';
-import { FloatingField } from '../ui/floating-field';
-import { Dialog, DialogContent, DialogDescription, DialogPanelFooter, DialogPanelHeader, DialogBody, DialogTitle } from '../ui/dialog';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { toast } from 'sonner';
 import { authedFetch } from '../../services/apiClient';
 
@@ -39,7 +40,7 @@ export function BootstrapAdminDialog({ companyId, companyName, open, onOpenChang
             });
 
             if (res.ok) {
-                toast.success('Admin added');
+                toast.success('Admin bootstrapped successfully');
                 setFormData({ email: '', first_name: '', last_name: '' });
                 onSuccess();
                 onOpenChange(false);
@@ -56,43 +57,38 @@ export function BootstrapAdminDialog({ companyId, companyName, open, onOpenChang
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent variant="panel">
-                <form onSubmit={handleSubmit} className="contents">
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            Add first admin
-                        </DialogTitle>
-                        <DialogDescription className="sr-only">
-                            Invite the first user for {companyName}. They will receive an email to set their password and will be made an administrator.
+            <DialogContent className="sm:max-w-[425px]">
+                <form onSubmit={handleSubmit}>
+                    <DialogHeader>
+                        <DialogTitle>Bootstrap First Admin</DialogTitle>
+                        <DialogDescription>
+                            Invite the first user for <strong>{companyName}</strong>. They will receive an email to set their password and will be assigned the <code>tenant_admin</code> role.
                         </DialogDescription>
-                    </DialogPanelHeader>
-
-                    <DialogBody className="md:px-8 md:py-7">
-                      <div className="mx-auto w-full max-w-[740px] space-y-6">
-                        <p className="text-[15px]" style={{ color: 'var(--blanc-ink-2)' }}>
-                            Invite the first user for <strong>{companyName}</strong>. They will receive an email to set their password and will be made an administrator.
-                        </p>
-                        <div className="space-y-3.5">
-                            <FloatingField id="email" name="email" label="Email Address" type="email" value={formData.email} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <FloatingField id="first_name" name="first_name" label="First Name" value={formData.first_name} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
-                                <FloatingField id="last_name" name="last_name" label="Last Name" value={formData.last_name} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid gap-2">
+                            <Label htmlFor="email">Email Address</Label>
+                            <Input id="email" name="email" type="email" value={formData.email} onChange={handleChange} required placeholder="admin@acme.com" />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="grid gap-2">
+                                <Label htmlFor="first_name">First Name</Label>
+                                <Input id="first_name" name="first_name" value={formData.first_name} onChange={handleChange} required />
+                            </div>
+                            <div className="grid gap-2">
+                                <Label htmlFor="last_name">Last Name</Label>
+                                <Input id="last_name" name="last_name" value={formData.last_name} onChange={handleChange} required />
                             </div>
                         </div>
-                      </div>
-                    </DialogBody>
-
-                    <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>
+                    </div>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
                             Cancel
                         </Button>
                         <Button type="submit" disabled={loading}>
-                            {loading ? 'Adding…' : 'Add admin'}
+                            {loading ? 'Bootstrapping...' : 'Send Invite'}
                         </Button>
-                    </DialogPanelFooter>
+                    </DialogFooter>
                 </form>
             </DialogContent>
         </Dialog>

@@ -4,7 +4,7 @@ import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import {
     Loader2, ArrowUp, ArrowDown,
-    Settings, Download,
+    Settings, Download, X,
 } from 'lucide-react';
 import {
     Popover, PopoverContent, PopoverTrigger,
@@ -12,7 +12,6 @@ import {
 import { Checkbox } from '../ui/checkbox';
 import type { ColumnDef } from './jobHelpers';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
-import { BottomSheet } from '../ui/BottomSheet';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,8 +54,9 @@ export function JobsFieldsButton({
         }
     };
 
-    const fieldsList = (
-        <div className="max-h-80 overflow-auto p-1">
+    const fieldsContent = (
+        <>
+            <div className="max-h-80 overflow-auto p-1">
                 {pendingFields.map((fk, idx) => {
                     const col = allColumns[fk];
                     if (!col) return null;
@@ -123,24 +123,6 @@ export function JobsFieldsButton({
                     );
                 })}
             </div>
-    );
-
-    // Save/Cancel action row — used as the BottomSheet `footer` on mobile (the
-    // sheet footer owns the safe-area inset, so no inline padding here).
-    const fieldsFooter = (
-        <div className="flex gap-2 justify-end">
-            <Button variant="ghost" size="sm" onClick={() => setFieldsOpen(false)}>Cancel</Button>
-            <Button size="sm" disabled={savingFields || pendingFields.length === 0} onClick={handleSave}>
-                {savingFields ? <Loader2 className="size-4 animate-spin mr-1" /> : null}
-                Save
-            </Button>
-        </div>
-    );
-
-    // Desktop popover content — list + the original bordered footer (unchanged).
-    const fieldsContent = (
-        <>
-            {fieldsList}
             <div className="px-3 py-2 border-t flex gap-2 justify-end" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}>
                 <Button variant="ghost" size="sm" onClick={() => setFieldsOpen(false)}>Cancel</Button>
                 <Button size="sm" disabled={savingFields || pendingFields.length === 0} onClick={handleSave}>
@@ -154,16 +136,23 @@ export function JobsFieldsButton({
     const isMobile = isMobileViewport();
 
     if (isMobile) {
-        // mobile only — desktop popover unchanged
         return (
             <>
                 <button className="blanc-control-chip-icon" title="Column settings" onClick={handleOpen}>
                     <Settings className="size-4" />
                 </button>
-                <BottomSheet open={fieldsOpen} onClose={() => setFieldsOpen(false)} title="Visible Fields" size="standard"
-                    footer={fieldsFooter}>
-                    {fieldsList}
-                </BottomSheet>
+                {fieldsOpen && (
+                    <>
+                        <div className="blanc-mobile-sheet-backdrop" onClick={() => setFieldsOpen(false)} />
+                        <div className="blanc-mobile-sheet">
+                            <div className="blanc-mobile-sheet-header">
+                                <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Visible Fields</span>
+                                <button onClick={() => setFieldsOpen(false)} className="p-1.5 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-4" /></button>
+                            </div>
+                            {fieldsContent}
+                        </div>
+                    </>
+                )}
             </>
         );
     }

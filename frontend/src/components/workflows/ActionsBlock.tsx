@@ -4,12 +4,11 @@ import { toast } from 'sonner';
 import { useFsmActions, useApplyTransition, useOverrideStatus, useFsmStates, type FsmAction } from '../../hooks/useFsmActions';
 import { useAuthz } from '../../hooks/useAuthz';
 import {
-    Dialog, DialogContent, DialogPanelHeader, DialogTitle, DialogDescription, DialogBody, DialogPanelFooter,
+    Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose,
 } from '../ui/dialog';
-import { SelectItem } from '../ui/select';
-import { Button } from '../ui/button';
-import { FloatingField } from '../ui/floating-field';
-import { FloatingSelect } from '../ui/floating-select';
+import {
+    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '../ui/select';
 
 // ─── Icon map ────────────────────────────────────────────────────────────────
 
@@ -78,7 +77,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                     onTransitionComplete?.();
                 },
                 onError: (err) => {
-                    toast.error(err.message || 'Couldn\'t change status');
+                    toast.error(err.message || 'Transition failed');
                 },
             },
         );
@@ -120,7 +119,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                                 type="button"
                                 disabled={applyMutation.isPending}
                                 onClick={() => handleActionClick(action)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(25,25,25,0.03)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(117,106,89,0.04)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 style={{ color: 'var(--blanc-ink-1)', background: 'transparent' }}
                             >
                                 {applyMutation.isPending ? (
@@ -159,109 +158,114 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                     }
                 }}
             >
-                <DialogContent variant="panel">
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            {confirmAction?.target === 'Canceled' ? 'Cancel Job' : 'Confirm action'}
-                        </DialogTitle>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>{confirmAction?.target === 'Canceled' ? 'Cancel Job' : 'Confirm Action'}</DialogTitle>
                         <DialogDescription>
                             {confirmAction?.confirmText || 'Are you sure you want to perform this action?'}
                         </DialogDescription>
-                    </DialogPanelHeader>
-
-                    <DialogBody className="md:px-8 md:py-7">
-                      <div className="mx-auto w-full max-w-[740px] space-y-6">
-                        {confirmAction?.target === 'Canceled' && (
-                            <FloatingField
+                    </DialogHeader>
+                    {confirmAction?.target === 'Canceled' && (
+                        <div className="space-y-1.5 py-2">
+                            <label className="blanc-eyebrow" htmlFor="fsm-cancel-reason">Cancel reason</label>
+                            <textarea
                                 id="fsm-cancel-reason"
-                                label="Cancel reason"
-                                textarea
-                                rows={4}
                                 value={confirmReason}
                                 onChange={(e) => setConfirmReason(e.target.value)}
+                                placeholder="Enter the reason this job is being canceled..."
+                                rows={4}
                                 disabled={applyMutation.isPending}
+                                className="w-full rounded-lg border border-[var(--blanc-line)] bg-transparent px-3 py-2 text-sm placeholder:text-[var(--blanc-ink-3)] focus:outline-none focus:ring-1 focus:ring-[var(--blanc-line)] resize-none disabled:opacity-60"
                             />
-                        )}
-                      </div>
-                    </DialogBody>
-
-                    <DialogPanelFooter>
-                        <Button
-                            variant="ghost"
-                            onClick={() => { setConfirmAction(null); setConfirmReason(''); }}
-                        >
-                            {confirmAction?.target === 'Canceled' ? 'Keep Job' : 'Cancel'}
-                        </Button>
-                        <Button
-                            variant={confirmAction?.target === 'Canceled' ? 'destructive' : 'default'}
+                        </div>
+                    )}
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <DialogClose asChild>
+                            <button
+                                type="button"
+                                className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(117,106,89,0.04)] transition-colors"
+                                style={{ color: 'var(--blanc-ink-2)' }}
+                            >
+                                {confirmAction?.target === 'Canceled' ? 'Keep Job' : 'Cancel'}
+                            </button>
+                        </DialogClose>
+                        <button
+                            type="button"
                             disabled={applyMutation.isPending || (confirmAction?.target === 'Canceled' && !confirmReason.trim())}
                             onClick={() => confirmAction && executeTransition(confirmAction, confirmReason.trim() || undefined)}
+                            className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] font-medium hover:bg-[rgba(117,106,89,0.08)] transition-colors disabled:opacity-50"
+                            style={{ color: confirmAction?.target === 'Canceled' ? '#dc2626' : 'var(--blanc-ink-1)' }}
                         >
                             {applyMutation.isPending
                                 ? 'Applying...'
                                 : confirmAction?.target === 'Canceled'
                                     ? 'Cancel Job'
                                     : 'Confirm'}
-                        </Button>
-                    </DialogPanelFooter>
+                        </button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 
             {/* Override dialog */}
             <Dialog open={overrideOpen} onOpenChange={(open) => { if (!open) { setOverrideOpen(false); setOverrideTarget(''); setOverrideReason(''); } }}>
-                <DialogContent variant="panel">
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            Change status manually
-                        </DialogTitle>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Override Status</DialogTitle>
                         <DialogDescription className="flex items-start gap-2 pt-1">
                             <AlertTriangle className="size-4 shrink-0 text-amber-500 mt-0.5" />
-                            <span>This skips the normal status flow — use with care.</span>
+                            <span>This is an override. It bypasses allowed transitions.</span>
                         </DialogDescription>
-                    </DialogPanelHeader>
+                    </DialogHeader>
 
-                    <DialogBody className="md:px-8 md:py-7">
-                      <div className="mx-auto w-full max-w-[740px] space-y-6">
-                        <div className="space-y-3.5">
-                            <FloatingSelect label="Target status" value={overrideTarget} onValueChange={setOverrideTarget}>
-                                {(allStates ?? []).map((state) => (
-                                    <SelectItem key={state} value={state}>
-                                        {state}
-                                    </SelectItem>
-                                ))}
-                            </FloatingSelect>
+                    <div className="space-y-3 py-2">
+                        <div className="space-y-1.5">
+                            <label className="blanc-eyebrow">Target status</label>
+                            <Select value={overrideTarget} onValueChange={setOverrideTarget}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select a status..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {(allStates ?? []).map((state) => (
+                                        <SelectItem key={state} value={state}>
+                                            {state}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
 
-                            <FloatingField
-                                label="Reason for override"
-                                textarea
-                                rows={3}
+                        <div className="space-y-1.5">
+                            <label className="blanc-eyebrow">Reason for override</label>
+                            <textarea
                                 value={overrideReason}
                                 onChange={(e) => setOverrideReason(e.target.value)}
+                                placeholder="Explain why this override is needed..."
+                                rows={3}
+                                className="w-full rounded-lg border border-[var(--blanc-line)] bg-transparent px-3 py-2 text-sm placeholder:text-[var(--blanc-ink-3)] focus:outline-none focus:ring-1 focus:ring-[var(--blanc-line)] resize-none"
                             />
                         </div>
-                      </div>
-                    </DialogBody>
+                    </div>
 
-                    <DialogPanelFooter>
-                        <Button
-                            variant="ghost"
-                            onClick={() => { setOverrideOpen(false); setOverrideTarget(''); setOverrideReason(''); }}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <DialogClose asChild>
+                            <button
+                                type="button"
+                                className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(117,106,89,0.04)] transition-colors"
+                                style={{ color: 'var(--blanc-ink-2)' }}
+                            >
+                                Cancel
+                            </button>
+                        </DialogClose>
+                        <button
+                            type="button"
                             disabled={!overrideTarget || !overrideReason.trim() || overrideMutation.isPending}
                             onClick={handleOverrideSubmit}
+                            className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] font-medium hover:bg-[rgba(117,106,89,0.08)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{ color: 'var(--blanc-ink-1)' }}
                         >
-                            {overrideMutation.isPending ? 'Applying...' : 'Change status'}
-                        </Button>
-                    </DialogPanelFooter>
+                            {overrideMutation.isPending ? 'Applying...' : 'Override'}
+                        </button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>

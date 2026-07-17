@@ -67,7 +67,7 @@ function VersionRow({
     const canRestore = version.status !== 'draft';
 
     return (
-        <div className="rounded-xl border border-[var(--blanc-line)] px-4 py-3 transition-colors hover:border-[rgba(25,25,25,0.26)]">
+        <div className="rounded-xl border border-[var(--blanc-line)] px-4 py-3 transition-colors hover:border-[rgba(117,106,89,0.32)]">
             <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                     <span className="font-medium text-[var(--blanc-ink-1)] whitespace-nowrap">

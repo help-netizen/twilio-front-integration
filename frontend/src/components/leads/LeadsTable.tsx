@@ -3,8 +3,7 @@ import { Skeleton } from '../ui/skeleton';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { Phone, MoreVertical, PhoneOff, CheckCircle2, Briefcase, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import type { Lead, TableColumn } from '../../types/lead';
-import { renderCell } from './leadsTableHelpers';
-import { useAuthz } from '../../hooks/useAuthz';
+import { renderCell, handleCall } from './leadsTableHelpers';
 
 interface LeadsTableProps {
     leads: Lead[]; loading: boolean; selectedLeadId?: string; columns: TableColumn[];
@@ -16,11 +15,7 @@ interface LeadsTableProps {
 }
 
 export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLead, onMarkLost, onActivate, onConvert, offset, hasMore, onNextPage, onPrevPage, sortBy, sortOrder, onSortChange }: LeadsTableProps) {
-    const { hasPermission } = useAuthz();
-    const canViewSource = hasPermission('lead_source.view');
-    const visibleColumns = columns
-        .filter(col => col.visible && (canViewSource || col.id !== 'jobSource'))
-        .sort((a, b) => a.order - b.order);
+    const visibleColumns = columns.filter(col => col.visible).sort((a, b) => a.order - b.order);
 
     const handleHeaderClick = (col: TableColumn) => {
         if (!col.sortKey || !onSortChange) return;
@@ -37,10 +32,9 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
     return (
         <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-1 overflow-auto">
-                {/* Ряды-тайлы на канвасе (LAYOUT-CANON правило 7, .blanc-table-tiles) */}
-                <Table className="blanc-table-tiles">
-                    <TableHeader>
-                        <TableRow>
+                <Table>
+                    <TableHeader className="sticky top-0 z-10" style={{ background: 'var(--blanc-surface-strong)' }}>
+                        <TableRow style={{ borderColor: 'var(--blanc-line)' }}>
                             {visibleColumns.map(c => (
                                 <TableHead
                                     key={c.id}
@@ -66,7 +60,13 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                     <TableBody>{leads.map(lead => (
                         <TableRow
                             key={lead.UUID}
-                            className={`cursor-pointer ${selectedLeadId === lead.UUID ? 'blanc-tile-row-selected' : ''}`}
+                            className="cursor-pointer transition-colors"
+                            style={{
+                                borderColor: 'var(--blanc-line)',
+                                background: selectedLeadId === lead.UUID ? 'rgba(117, 106, 89, 0.06)' : undefined,
+                            }}
+                            onMouseEnter={e => { if (selectedLeadId !== lead.UUID) e.currentTarget.style.background = 'rgba(117, 106, 89, 0.03)'; }}
+                            onMouseLeave={e => { if (selectedLeadId !== lead.UUID) e.currentTarget.style.background = ''; }}
                             onClick={() => onSelectLead(lead)}
                         >
                             {visibleColumns.map(c => renderCell(c.id, lead, c.id))}
@@ -75,13 +75,13 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                                     <DropdownMenuTrigger asChild>
                                         <button
                                             className="inline-flex items-center justify-center transition-opacity hover:opacity-70 max-md:min-w-[44px] max-md:min-h-[44px]"
-                                            style={{ width: 32, height: 32, borderRadius: 10, color: 'var(--blanc-ink-3)', background: 'transparent' }}
+                                            style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid rgba(104, 95, 80, 0.1)', color: 'var(--blanc-ink-3)', background: 'transparent' }}
                                         >
                                             <MoreVertical className="size-3.5" />
                                         </button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
-                                        {lead.Phone && <DropdownMenuItem asChild><a href={`tel:${lead.Phone.replace(/[^\d+]/g, '')}`} onClick={e => e.stopPropagation()} className="flex items-center cursor-pointer"><Phone className="size-4 mr-2" />Call</a></DropdownMenuItem>}
+                                        {lead.Phone && <DropdownMenuItem onClick={e => handleCall(lead.Phone!, e)}><Phone className="size-4 mr-2" />Call</DropdownMenuItem>}
                                         <DropdownMenuSeparator />
                                         {!lead.LeadLost ? <DropdownMenuItem onClick={e => { e.stopPropagation(); onMarkLost(lead.UUID); }}><PhoneOff className="size-4 mr-2" />Mark Lost</DropdownMenuItem> : <DropdownMenuItem onClick={e => { e.stopPropagation(); onActivate(lead.UUID); }}><CheckCircle2 className="size-4 mr-2" />Activate</DropdownMenuItem>}
                                         {lead.Status !== 'Converted' && !lead.LeadLost && <><DropdownMenuSeparator /><DropdownMenuItem onClick={e => { e.stopPropagation(); onConvert(lead.UUID); }}><Briefcase className="size-4 mr-2" />Convert to Job</DropdownMenuItem></>}
@@ -92,8 +92,8 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                     ))}</TableBody>
                 </Table>
             </div>
-            {/* Pagination — плоско на канвасе */}
-            <div className="px-5 py-3.5 flex items-center justify-between">
+            {/* Pagination */}
+            <div className="px-5 py-3.5 flex items-center justify-between" style={{ borderTop: '1px solid var(--blanc-line)' }}>
                 <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
                     Showing {offset + 1} - {offset + leads.length} leads
                 </span>
@@ -102,7 +102,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                         onClick={onPrevPage}
                         disabled={offset === 0}
                         className="inline-flex items-center px-4 text-sm font-medium transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{ minHeight: 38, borderRadius: 999, border: '1px solid var(--blanc-line)', background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-2)' }}
+                        style={{ minHeight: 38, borderRadius: 12, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.04) 0px 4px 12px' }}
                     >
                         Previous
                     </button>
@@ -110,7 +110,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                         onClick={onNextPage}
                         disabled={!hasMore}
                         className="inline-flex items-center px-4 text-sm font-medium transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{ minHeight: 38, borderRadius: 999, border: '1px solid var(--blanc-line)', background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-2)' }}
+                        style={{ minHeight: 38, borderRadius: 12, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.04) 0px 4px 12px' }}
                     >
                         Next
                     </button>

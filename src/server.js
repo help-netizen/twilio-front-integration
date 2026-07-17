@@ -5,7 +5,6 @@ const webhooksRouter = require('../backend/src/routes/webhooks'); // Updated to 
 const healthRouter = require('./routes/health');
 const callsRouter = require('../backend/src/routes/calls');
 const syncRouter = require('../backend/src/routes/sync');
-const devicesRouter = require('../backend/src/routes/devices');
 const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
 const { tokenRouter: voiceTokenRouter, twimlRouter: voiceTwimlRouter } = require('../backend/src/routes/voice');
@@ -31,10 +30,6 @@ const noteAttachmentsRouter = require('../backend/src/routes/noteAttachments');
 const crmRouter = require('../backend/src/routes/crm');
 const crmMcpRouter = require('../backend/src/routes/crmMcp');
 const crmMcpPublicRouter = require('../backend/src/routes/crmMcpPublic');
-// AGENT-SKILLS-001 (T8): parallel service-CRM `svc.*` MCP triplet — reuses the
-// generic crmMcp validator/response, points at the provider-neutral skill layer.
-const agentSkillsMcpRouter = require('../backend/src/routes/agentSkillsMcp');
-const agentSkillsMcpPublicRouter = require('../backend/src/routes/agentSkillsMcpPublic');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -69,10 +64,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// RATE-ME-CRM-001: host gate — rating hosts (rate.albusto.com + verified customer
-// domains) expose ONLY the public rating surface; all Albusto hosts pass through untouched.
-app.use(require('../backend/src/middleware/rateHostGate'));
-
 // Billing webhook (Stripe) MUST receive the raw, unparsed body for HMAC
 // signature verification, so it is mounted before express.json. Path-scoped:
 // every other route is unaffected and still gets parsed JSON below.
@@ -83,13 +74,6 @@ app.use('/api/billing/webhook', express.raw({ type: '*/*', limit: '1mb' }),
 // body, mounted before express.json and SEPARATE from the platform billing webhook.
 app.use('/api/stripe-payments/webhook', express.raw({ type: '*/*', limit: '1mb' }),
     require('../backend/src/routes/stripePaymentsWebhook'));
-
-// EMAIL-TIMELINE-001 (TASK-ET-5): Gmail Pub/Sub inbound push. UNAUTHENTICATED by
-// user (Pub/Sub can't carry our JWT) — token/OIDC verification happens inside the
-// route. Mounted with the RAW body BEFORE express.json (mirrors the Stripe webhooks
-// above) so verification + JSON parse run on the unmodified payload.
-app.use('/api/email/push', express.raw({ type: '*/*', limit: '1mb' }),
-    require('../backend/src/routes/emailPush'));
 
 // Middleware
 // 2mb limit covers document-template descriptors that may embed a base64 logo
@@ -161,7 +145,6 @@ app.use('/api/pulse', authenticate, requireCompanyAccess, pulseRouter);
 app.use('/api/quick-messages', authenticate, requireCompanyAccess, quickMessagesRouter);
 app.use('/api/text/polish', authenticate, requireCompanyAccess, textPolishRouter);
 app.use('/api/sync', authenticate, requireCompanyAccess, syncRouter);
-app.use('/api/devices', authenticate, requireCompanyAccess, devicesRouter);
 
 // Leads API (behind feature flag)
 if (process.env.FEATURE_LEADS_TAB !== 'false') {
@@ -171,12 +154,6 @@ if (process.env.FEATURE_LEADS_TAB !== 'false') {
 // Contacts API
 app.use('/api/contacts', authenticate, requireCompanyAccess, contactsRouter);
 app.use('/api/phone-settings', authenticate, requireCompanyAccess, phoneSettingsRouter);
-// OUTBOUND-PARTS-CALL-001: VAPI end-of-call webhook — SECRET-auth (x-vapi-secret),
-// NOT a user session. Mounted BEFORE the session-authed /api/vapi router below so
-// the machine caller (VAPI) is never blocked by authenticate/requireCompanyAccess/
-// tenant.integrations.manage. Company is derived from the correlated attempt row.
-const vapiCallStatusRouter = require('../backend/src/routes/vapiCallStatus');
-app.use('/api/vapi/call-status', vapiCallStatusRouter);
 app.use('/api/vapi', authenticate, requireCompanyAccess, vapiRouter);
 
 // Telephony Admin routes
@@ -193,7 +170,6 @@ app.use('/api/telephony/provider', authenticate, requireCompanyAccess, telephony
 // ALB-107: tenant phone-number management (Twilio subaccount per company)
 const telephonyNumbersRouter = require('../backend/src/routes/telephonyNumbers');
 app.use('/api/telephony/numbers', authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess, telephonyNumbersRouter);
-app.use('/api/telephony/port-in', authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess, require('../backend/src/routes/telephonyPortIn'));
 // ADR-001: automation rules (rules-engine editor) + platform billing
 const automationRulesRouter = require('../backend/src/routes/automationRules');
 app.use('/api/automation', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, automationRulesRouter);
@@ -213,11 +189,6 @@ app.use('/api/zenbooker/jobs', authenticate, requireCompanyAccess, zenbookerJobs
 app.use('/api/jobs', authenticate, requireCompanyAccess, localJobsRouter);
 app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
-// TASKS-001 — cross-entity tasks (per-route requirePermission inside the router).
-app.use('/api/tasks', authenticate, requireCompanyAccess, require('../backend/src/routes/tasks'));
-app.use('/api/feedback', authenticate, requireCompanyAccess, require('../backend/src/routes/feedback'));
-app.use('/api/assistant', authenticate, requireCompanyAccess, require('../backend/src/routes/assistant'));
-
 // ─── PF100 Foundation Contract routes (Sprint 1 — skeleton 501 stubs) ─────
 const scheduleRouter = require('../backend/src/routes/schedule');
 const estimatesRouter = require('../backend/src/routes/estimates');
@@ -229,9 +200,6 @@ app.use('/api/schedule', authenticate, requireCompanyAccess, scheduleRouter);
 app.use('/api/estimates', authenticate, requireCompanyAccess, estimatesRouter);
 const estimateItemPresetsRouter = require('../backend/src/routes/estimate-item-presets');
 app.use('/api/estimate-item-presets', authenticate, requireCompanyAccess, estimateItemPresetsRouter);
-// PRICEBOOK-001: Price Book management API (categories/groups/items).
-const priceBookRouter = require('../backend/src/routes/price-book');
-app.use('/api/price-book', authenticate, requireCompanyAccess, priceBookRouter);
 // VAPI Tool Call Handler — public endpoint, secured by x-vapi-secret header
 const vapiToolsRouter = require('../backend/src/routes/vapi-tools');
 app.use('/api/vapi-tools', vapiToolsRouter);
@@ -241,18 +209,11 @@ app.use('/api/vapi-tools', vapiToolsRouter);
 // middleware doesn't intercept /api/public/* requests.
 const publicInvoicesRouter = require('../backend/src/routes/public-invoices');
 app.use('/api/public', publicInvoicesRouter);
-// Public, un-authenticated estimate routes (tokenized view JSON + PDF for "send" links).
-const publicEstimatesRouter = require('../backend/src/routes/public-estimates');
-app.use('/api/public', publicEstimatesRouter);
-// RATE-ME-CRM-001: public tokenized rating surface + Caddy on-demand-TLS ask endpoint.
-const publicRateRouter = require('../backend/src/routes/public-rate');
-app.use('/api/public', publicRateRouter);
 // ALB-101: self-registration surface (rate-limited, no auth, no tenant data)
 const publicAuthRouter = require('../backend/src/routes/publicAuth');
 app.use('/api/public', publicAuthRouter);
 // Top-level short-link redirect (e.g. /i/abc123 → /api/public/invoices/abc123/pdf).
 app.use('/', publicInvoicesRouter.shortRouter);
-app.use('/', publicEstimatesRouter.shortRouter);
 app.use('/api/invoices', authenticate, requireCompanyAccess, invoicesRouter);
 app.use('/api/payments', authenticate, requireCompanyAccess, paymentsCanonicalRouter);
 app.use('/api/portal', portalRouter); // public auth + portal-session auth inside router
@@ -261,10 +222,6 @@ app.use('/api/note-attachments', authenticate, requireCompanyAccess, noteAttachm
 app.use('/api/crm', authenticate, requireCompanyAccess, crmRouter);
 app.use('/api/crm/mcp', authenticate, requireCompanyAccess, crmMcpRouter);
 app.use('/mcp/crm', crmMcpPublicRouter);
-// AGENT-SKILLS-001 (T8): service-CRM `svc.*` MCP surface — authed (same chain as
-// /api/crm/mcp) + token-gated public (own env-bound gate, writes off by default).
-app.use('/api/agent-skills/mcp', authenticate, requireCompanyAccess, agentSkillsMcpRouter);
-app.use('/mcp/agent-skills', agentSkillsMcpPublicRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
@@ -275,12 +232,6 @@ app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
 // Integration settings API (§15)
 app.use('/api/admin/integrations', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, integrationsAdminRouter);
 app.use('/api/marketplace', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, marketplaceRouter);
-// MAIL-AGENT-001: Mail Secretary settings + activity (same gate as marketplace).
-app.use('/api/mail-agent', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,
-    require('../backend/src/routes/mailAgent'));
-// OUTBOUND-LEAD-CALL-001: Outbound Lead Caller settings (same gate as marketplace).
-app.use('/api/outbound-lead-caller', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,
-    require('../backend/src/routes/outboundLeadCall'));
 // F018 Stripe Payments settings/onboarding (the /webhook subpath is mounted earlier,
 // before express.json, so it is unaffected by this authed mount).
 app.use('/api/stripe-payments', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,
@@ -291,18 +242,6 @@ app.use('/api/stripe-terminal', authenticate, requireCompanyAccess,
 // Technician display profiles (photo/name) for the public payment page.
 app.use('/api/settings/technicians', authenticate, requireCompanyAccess,
     require('../backend/src/routes/technicians'));
-// COMPANY-PROFILE-001: tenant-facing company identity + branding (brand source for invoice/estimate PDFs).
-app.use('/api/settings/company-profile', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess,
-    require('../backend/src/routes/companyProfile'));
-// RBAC-ROLES-EDITOR-001: in-app Roles & Access editor (role matrix + per-member overrides).
-app.use('/api/settings/roles', authenticate, requireCompanyAccess, requirePermission('tenant.roles.manage'),
-    require('../backend/src/routes/rolesPermissions'));
-// Technician base (home) locations for the slot engine (SLOT-ENGINE-001 Phase 2).
-app.use('/api/settings/technician-base-locations', authenticate, requireCompanyAccess,
-    require('../backend/src/routes/technicianBaseLocations'));
-// Per-company recommendation settings for the slot engine (REC-SETTINGS-001).
-app.use('/api/settings/slot-engine-settings', authenticate, requireCompanyAccess,
-    require('../backend/src/routes/slotEngineSettings'));
 // F015: Document templates customization (estimates first; designed to extend to invoice/work_order)
 require('../backend/src/services/documentTemplates'); // bootstrap renderer registry
 const documentTemplatesRouter = require('../backend/src/routes/document-templates');
@@ -320,10 +259,6 @@ const emailRouter = require('../backend/src/routes/email');
 const emailOAuthRouter = require('../backend/src/routes/email-oauth');
 app.use('/api/email/oauth', emailOAuthRouter); // public — Google redirects here
 app.use('/api/settings/email', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, emailSettingsRouter);
-// Outbound email from the contact timeline (EMAIL-TIMELINE-001, TASK-ET-8) — mounted
-// before the broader /api/email so the more-specific prefix matches first.
-const emailTimelineRouter = require('../backend/src/routes/emailTimeline');
-app.use('/api/email/timeline', authenticate, requireCompanyAccess, emailTimelineRouter);
 app.use('/api/email', authenticate, requireCompanyAccess, emailRouter);
 const serviceTerritoryRouter = require('../backend/src/routes/service-territories');
 app.use('/api/settings/service-territories', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, serviceTerritoryRouter);
@@ -463,14 +398,6 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     // SCHED-ROUTE-001 (C-13): daily retention — purge stale segments + prune route cache
     require('../backend/src/services/routeRetentionScheduler').start();
 
-    // NOTE-ATTACH-UPLOAD-001: sweep abandoned staged note attachments (6h tick)
-    require('../backend/src/services/stagedAttachmentCleanupScheduler').start();
-
-    // OUTBOUND-PARTS-CALL-001 (OPC1-T12): outbound parts-visit retry loop (env-gated, default OFF)
-    if (process.env.FEATURE_OUTBOUND_CALL_WORKER === 'true') {
-      require('../backend/src/services/outboundCallWorker').start();
-    }
-
     // Start daily Zenbooker jobs sync cron
     const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');
     zbSyncCron.start();
@@ -479,66 +406,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     const emailSyncService = require('../backend/src/services/emailSyncService');
     emailSyncService.startScheduler();
 
-    // ── EMAIL-TIMELINE-001 (TASK-ET-6): Gmail watch-renewal scheduler ──────────
-    // Sibling of the EMAIL-001 poll scheduler above. Every ~12h, re-arm Gmail
-    // `users.watch` for connected mailboxes whose watch is null or expiring within
-    // 48h (Gmail watches expire ≤7 days). Entirely guarded: if GMAIL_PUBSUB_TOPIC
-    // is unset (Pub/Sub not provisioned) we skip — the 5-min poll covers inbound.
-    // renewWatch is itself safe-fail; per-mailbox + overall try/catch keep one bad
-    // mailbox (or a missing topic) from ever crashing the tick or boot.
-    if (process.env.GMAIL_PUBSUB_TOPIC) {
-        const emailQueries = require('../backend/src/db/emailQueries');
-        const providerRegistry = require('../backend/src/services/mail/providerRegistry');
-        const WATCH_RENEW_INTERVAL_MS = parseInt(process.env.GMAIL_WATCH_RENEW_INTERVAL_MS, 10) || 43200000; // 12h
-        const renewWatches = async () => {
-            try {
-                const mailboxes = await emailQueries.listMailboxesForWatchRenewal();
-                for (const mb of mailboxes) {
-                    try {
-                        await providerRegistry.get(mb.company_id).renewWatch(mb.company_id);
-                    } catch (mbErr) {
-                        console.error(`[emailWatchScheduler] renewWatch failed for company ${mb.company_id}:`, mbErr.message);
-                    }
-                }
-            } catch (err) {
-                console.error('[emailWatchScheduler] tick error:', err.message);
-            }
-        };
-        setInterval(renewWatches, WATCH_RENEW_INTERVAL_MS);
-        console.log(`📧 Gmail watch-renewal scheduler started (${Math.round(WATCH_RENEW_INTERVAL_MS / 3600000)}h tick)`);
-    } else {
-        console.log('📧 Gmail watch-renewal scheduler skipped (GMAIL_PUBSUB_TOPIC unset)');
-    }
 
-    // ── EMAIL-TIMELINE-001 (TASK-ET-4): inbound-link reconciliation poll ───────
-    // Sibling of the EMAIL-001 sync scheduler above (additive — does NOT touch
-    // emailSyncService). Same cadence (EMAIL_SYNC_INTERVAL_MS, default 5 min): the
-    // EMAIL-001 sync imports INBOX rows; this tick scans each connected company's
-    // recently-imported, not-yet-linked INBOUND rows and links them onto the
-    // contact timeline (recovers any dropped/failed push, idempotently). NOT gated
-    // on Pub/Sub — this is the reconciliation path that works without push.
-    // Wholly guarded so a bad mailbox or DB error never crashes the tick or boot.
-    // Reuse the EMAIL-001 cadence constant (emailSyncService.SYNC_INTERVAL_MS) so the
-    // two schedulers stay in lockstep instead of duplicating the 5-min default here.
-    const EMAIL_TIMELINE_POLL_MS = emailSyncService.SYNC_INTERVAL_MS;
-    const emailTimelineService = require('../backend/src/services/email/emailTimelineService');
-    const emailTimelineQueries = require('../backend/src/db/emailQueries');
-    const runTimelineLinkPoll = async () => {
-        try {
-            const mailboxes = await emailTimelineQueries.listConnectedMailboxes();
-            for (const mb of mailboxes) {
-                try {
-                    await emailTimelineService.ingestPolledForCompany(mb.company_id);
-                } catch (mbErr) {
-                    console.error(`[EmailTimeline] poll failed for company ${mb.company_id}:`, mbErr.message);
-                }
-            }
-        } catch (err) {
-            console.error('[EmailTimeline] poll tick error:', err.message);
-        }
-    };
-    setInterval(runTimelineLinkPoll, EMAIL_TIMELINE_POLL_MS);
-    console.log(`📨 Email-timeline link poll started, interval: ${EMAIL_TIMELINE_POLL_MS}ms`);
 
     // Realtime transcription (Twilio Media Streams → AssemblyAI)
     if (process.env.FEATURE_REALTIME_TRANSCRIPTION === 'true') {

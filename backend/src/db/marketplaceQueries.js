@@ -32,34 +32,7 @@ async function ensureMarketplaceSchema(client = null) {
         await query(readMigration('114_create_stripe_payment_sessions.sql'));
         await query(readMigration('115_create_stripe_webhook_events.sql'));
         await query(readMigration('116_seed_stripe_payments_marketplace_app.sql'));
-        // SLOT-ENGINE-001 Phase 2: Smart Slot Engine app (gate-only, no credential).
-        await query(readMigration('126_seed_smart_slot_engine_marketplace_app.sql'));
         await query(readMigration('117_create_stripe_terminal_locations.sql'));
-        // SEND-DOC-001: Google Email app + repoint mail-secretary's dependency_cta.
-        // MUST run AFTER 087 (which re-seeds mail-secretary's old /settings/email path)
-        // so this update wins on every schema-ensure, and so google-email self-heals.
-        await query(readMigration('132_seed_google_email_marketplace_app.sql'));
-        // ONBTEL-001: Telephony — Twilio tile. Derived connection (company_telephony
-        // is the source of truth) — no marketplace_installations rows are ever created.
-        await query(readMigration('145_seed_telephony_twilio_marketplace_app.sql'));
-        // REPAIR-ADVISOR-001: AI Repair Advisor tile (gate-only, no credential) —
-        // resolves through the generic install path, like the smart-slot-engine seed.
-        await query(readMigration('161_seed_ai_repair_advisor_marketplace_app.sql'));
-        // MARKETPLACE-LEADGEN-SPLIT-001: rename lead-generator → "Website Leads"
-        // + four per-source lead apps + default-company auto-connect on the
-        // SHARED live credential. MUST run AFTER 083 (whose ON CONFLICT DO UPDATE
-        // re-asserts the old "Lead Generator" name on every boot — the
-        // 132-after-087 precedent). Installation seed = all-statuses NOT EXISTS:
-        // boot replays never duplicate rows nor resurrect a disconnected one.
-        await query(readMigration('170_split_lead_generator_marketplace_apps.sql'));
-        // OUTBOUND-LEAD-CALL-001: Outbound Lead Caller tile (gate-only, no
-        // credential; setup page via metadata.setup_path). Boot-replayed AFTER
-        // 083 per the ordering rule. The DDL migration is deliberately NOT in
-        // this list (schema migration, not a seed).
-        await query(readMigration('176_seed_outbound_lead_caller_marketplace_app.sql'));
-        // ASSISTANT-BOT-001: restore bot-facing descriptions after app seeds overwrite metadata.
-        // MUST run AFTER every app seed above (it patches their metadata).
-        await query(readMigration('173_seed_assistant_app_descriptions.sql'));
         return;
     }
 
@@ -150,33 +123,6 @@ async function listPublishedAppsWithInstallation(companyId, client = null) {
     return rows;
 }
 
-// ASSISTANT-BOT-001 A2: deliberately skips schema setup and revoked-installation
-// reconciliation so this company-scoped assistant snapshot is a pure read.
-async function getAppConnectionSnapshot(companyId, client = null) {
-    const query = queryFor(client);
-    const { rows } = await query(
-        `SELECT
-            a.app_key,
-            a.name,
-            a.category,
-            i.status AS installation_status,
-            i.metadata->'settings' AS installation_settings
-         FROM marketplace_apps a
-         LEFT JOIN LATERAL (
-             SELECT mi.status, mi.metadata
-             FROM marketplace_installations mi
-             WHERE mi.app_id = a.id
-               AND mi.company_id = $1
-             ORDER BY mi.created_at DESC
-             LIMIT 1
-         ) i ON true
-         WHERE a.status = 'published'
-         ORDER BY a.category ASC, a.name ASC`,
-        [companyId]
-    );
-    return rows;
-}
-
 async function getPublishedAppByKey(appKey, client = null) {
     await ensureMarketplaceSchema(client);
     const query = queryFor(client);
@@ -205,24 +151,6 @@ async function findActiveInstallation(companyId, appId, client = null) {
          ORDER BY i.created_at DESC
          LIMIT 1`,
         [companyId, appId]
-    );
-    return rows[0] || null;
-}
-
-// RELY-LEADS-SETTINGS-001 P-14: this ingest hot-path read deliberately skips
-// ensureMarketplaceSchema/reconcileRevokedInstallations. A missing table throws
-// to the filter's fail-open boundary instead of adding schema work per lead.
-async function getConnectedRelySettings(companyId) {
-    const { rows } = await db.query(
-        `SELECT mi.metadata
-         FROM marketplace_installations mi
-         JOIN marketplace_apps ma ON ma.id = mi.app_id
-         WHERE mi.company_id = $1
-           AND ma.app_key = 'rely-leads'
-           AND mi.status = 'connected'
-         ORDER BY mi.created_at DESC
-         LIMIT 1`,
-        [companyId]
     );
     return rows[0] || null;
 }
@@ -316,21 +244,6 @@ async function updateInstallationCredential(companyId, installationId, apiIntegr
     return rows[0] || null;
 }
 
-async function setInstallationSettings(companyId, installationId, settingsObject, client = null) {
-    await ensureMarketplaceSchema(client);
-    const query = queryFor(client);
-    const { rows } = await query(
-        `UPDATE marketplace_installations
-         SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('settings', $3::jsonb),
-             updated_at = NOW()
-         WHERE company_id = $1
-           AND id = $2
-         RETURNING *`,
-        [companyId, installationId, JSON.stringify(settingsObject)]
-    );
-    return rows[0] || null;
-}
-
 async function revokeCredentialById(apiIntegrationId, companyId, client = null) {
     if (!apiIntegrationId) return null;
     await ensureMarketplaceSchema(client);
@@ -345,27 +258,6 @@ async function revokeCredentialById(apiIntegrationId, companyId, client = null) 
         [apiIntegrationId, companyId]
     );
     return rows[0] || null;
-}
-
-async function countOtherActiveInstallationsOnCredential(
-    companyId,
-    apiIntegrationId,
-    excludeInstallationId,
-    client = null
-) {
-    if (!apiIntegrationId) return 0;
-    await ensureMarketplaceSchema(client);
-    const query = queryFor(client);
-    const { rows } = await query(
-        `SELECT COUNT(*)::int AS count
-         FROM marketplace_installations
-         WHERE company_id = $1
-           AND api_integration_id = $2
-           AND id <> $3
-           AND status IN ('connected', 'provisioning_failed')`,
-        [companyId, apiIntegrationId, excludeInstallationId]
-    );
-    return rows[0].count;
 }
 
 async function markInstallationConnected({ companyId, installationId, externalInstallationId = null }, client = null) {
@@ -456,17 +348,13 @@ module.exports = {
     ensureMarketplaceSchema,
     reconcileRevokedInstallations,
     listPublishedAppsWithInstallation,
-    getAppConnectionSnapshot,
     getPublishedAppByKey,
     findActiveInstallation,
-    getConnectedRelySettings,
     listInstallations,
     getInstallationById,
     createInstallation,
     updateInstallationCredential,
-    setInstallationSettings,
     revokeCredentialById,
-    countOtherActiveInstallationsOnCredential,
     markInstallationConnected,
     markProvisioningFailed,
     markDisconnected,

@@ -64,14 +64,6 @@ function authenticate(req, res, next) {
     req.traceId = crypto.randomUUID().split('-')[0];
 
     if (!FEATURE_AUTH) {
-        // ONBOARD-FIX-001 (SEC): the dev bypass hands every request the seed
-        // company (…0001) as company_admin. That is a total cross-tenant leak if
-        // it ever runs in production, so fail CLOSED there — never serve tenant
-        // data without real auth. Dev bypass stays available only outside prod.
-        if (process.env.NODE_ENV === 'production') {
-            console.error('[Auth] FATAL: FEATURE_AUTH_ENABLED is not "true" in production — refusing the dev auth bypass');
-            return res.status(500).json({ code: 'AUTH_MISCONFIGURED', message: 'Authentication is misconfigured', trace_id: req.traceId });
-        }
         req.user = {
             sub: 'dev-user',
             email: 'dev@localhost',
@@ -193,12 +185,9 @@ function requireCompanyAccess(req, res, next) {
         return res.status(403).json({ code: 'PLATFORM_SCOPE_ONLY', message: 'Platform admins cannot access tenant resources.', trace_id: req.traceId });
     }
 
-    // ONBOARD-FIX-001 (SEC): tenant scope comes ONLY from an active membership
-    // (req.authz.company, resolved from company_memberships). The old fallback to
-    // req.user.company_id (crm_users.company_id) leaked cross-tenant data: migration
-    // 012 backfilled that shadow column to the seed company (…0001), so any user
-    // with no active membership resolved to Boston Masters. No membership → 403.
-    const companyId = req.authz?.company?.id || null;
+    // Membership is the authoritative tenant source; crm_users.company_id is
+    // only a compatibility shadow for requests where authz resolution failed.
+    const companyId = req.authz?.company?.id || req.user?.company_id || null;
     if (!companyId) {
         auditService.log({
             actor_id: req.user?.crmUser?.id,

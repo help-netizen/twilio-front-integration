@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
     ArrowRightLeft, Plus, XCircle, ArrowUpRight, Ban,
     RotateCcw, UserPlus, UserMinus, Tag, RefreshCw,
-    Pencil, Clock, Trash2,
+    Pencil, Clock,
 } from 'lucide-react';
 import { NoteAttachmentDisplay } from './NoteAttachmentDisplay';
 import { authedFetch } from '../../services/apiClient';
@@ -78,8 +78,6 @@ const EVENT_ICONS: Record<string, React.ComponentType<{ className?: string }>> =
     tags_changed: Tag,
     synced: RefreshCw,
     updated: Pencil,
-    note_edited: Pencil,
-    note_deleted: Trash2,
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────

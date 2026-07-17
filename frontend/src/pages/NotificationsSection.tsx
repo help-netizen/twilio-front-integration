@@ -10,8 +10,7 @@ import {
     sendTestNotification,
     type PermissionState,
 } from '../services/pushNotificationService';
-import { BellOff, CheckCircle, AlertCircle, XCircle, Send, RefreshCw } from 'lucide-react';
-import { SettingsSection } from '../components/settings/SettingsSection';
+import { Bell, BellOff, CheckCircle, AlertCircle, XCircle, Send, RefreshCw, Shield } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -158,95 +157,106 @@ export default function NotificationsSection() {
     }
 
     return (
-        <>
-            {/* ── Browser push status ─────────────────────────────────────── */}
-            <SettingsSection
-                title="Browser push notifications"
-                description="Allow this browser to show real-time alerts."
-            >
-                <div className="space-y-3">
+        <div className="space-y-5">
+            {/* ── Card 1: Browser Push Status ─────────────────────────────── */}
+            <div className="rounded-xl p-4 bg-white border border-[rgba(117,106,89,0.18)]">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                        <Bell className="size-5 text-[#2f63d8]" />
+                        <h3 className="font-medium text-sm">Browser Push Notifications</h3>
+                    </div>
                     <StatusBadge state={permState} hasSub={hasSub} />
+                </div>
 
-                    {/* Unsupported */}
-                    {permState === 'unsupported' && (
-                        <p className="text-xs text-gray-500">
-                            Your browser does not support push notifications. Try using Chrome, Edge, or Firefox.
-                        </p>
-                    )}
+                {/* Unsupported */}
+                {permState === 'unsupported' && (
+                    <p className="text-xs text-gray-500">
+                        Your browser does not support push notifications. Try using Chrome, Edge, or Firefox.
+                    </p>
+                )}
 
-                    {/* Default — can enable */}
-                    {permState === 'default' && (
-                        <div className="flex items-center gap-3">
+                {/* Default — can enable */}
+                {permState === 'default' && (
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={handleEnable}
+                            className="px-3 py-1.5 bg-[#2f63d8] text-white text-sm rounded-md hover:bg-[#234d9e] transition-colors"
+                        >
+                            Enable notifications
+                        </button>
+                        <span className="text-xs text-gray-500">Click to allow browser notifications</span>
+                    </div>
+                )}
+
+                {/* Granted */}
+                {permState === 'granted' && (
+                    <div className="flex items-center gap-3 flex-wrap">
+                        {!hasSub && (
                             <button
                                 onClick={handleEnable}
                                 className="px-3 py-1.5 bg-[#2f63d8] text-white text-sm rounded-md hover:bg-[#234d9e] transition-colors"
                             >
-                                Enable notifications
+                                Activate subscription
                             </button>
-                            <span className="text-xs text-gray-500">Click to allow browser notifications</span>
-                        </div>
-                    )}
-
-                    {/* Granted */}
-                    {permState === 'granted' && (
-                        <div className="flex items-center gap-3 flex-wrap">
-                            {!hasSub && (
-                                <button
-                                    onClick={handleEnable}
-                                    className="px-3 py-1.5 bg-[#2f63d8] text-white text-sm rounded-md hover:bg-[#234d9e] transition-colors"
-                                >
-                                    Activate subscription
-                                </button>
-                            )}
-                            {hasSub && (
-                                <button
-                                    onClick={handleTest}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors"
-                                >
-                                    <Send className="size-3.5" /> Send test notification
-                                </button>
-                            )}
+                        )}
+                        {hasSub && (
                             <button
-                                onClick={refreshBrowserState}
-                                disabled={refreshing}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                onClick={handleTest}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors"
                             >
-                                <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh status
+                                <Send className="size-3.5" /> Send test notification
                             </button>
-                        </div>
-                    )}
+                        )}
+                        <button
+                            onClick={refreshBrowserState}
+                            disabled={refreshing}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors disabled:opacity-50"
+                        >
+                            <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh status
+                        </button>
+                    </div>
+                )}
 
-                    {/* Denied / Blocked */}
-                    {permState === 'denied' && (
-                        <div className="space-y-2">
-                            <p className="text-xs text-gray-600">
-                                Notifications are blocked in your browser settings. To re-enable:
-                            </p>
-                            <ol className="text-xs text-gray-500 list-decimal list-inside space-y-1">
-                                <li>Click the lock/info icon in the address bar</li>
-                                <li>Find "Notifications" and change to "Allow"</li>
-                                <li>Refresh this page</li>
-                            </ol>
-                            <button
-                                onClick={refreshBrowserState}
-                                disabled={refreshing}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors mt-1 disabled:opacity-50"
-                            >
-                                <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh status
-                            </button>
-                        </div>
-                    )}
-                </div>
-            </SettingsSection>
+                {/* Denied / Blocked */}
+                {permState === 'denied' && (
+                    <div className="space-y-2">
+                        <p className="text-xs text-gray-600">
+                            Notifications are blocked in your browser settings. To re-enable:
+                        </p>
+                        <ol className="text-xs text-gray-500 list-decimal list-inside space-y-1">
+                            <li>Click the lock/info icon in the address bar</li>
+                            <li>Find "Notifications" and change to "Allow"</li>
+                            <li>Refresh this page</li>
+                        </ol>
+                        <button
+                            onClick={refreshBrowserState}
+                            disabled={refreshing}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors mt-1 disabled:opacity-50"
+                        >
+                            <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh status
+                        </button>
+                    </div>
+                )}
+            </div>
 
-            {/* ── Company notification types ──────────────────────────────── */}
+            {/* ── Card 2: Company Notification Types ──────────────────────── */}
             {config && (
-                <SettingsSection
-                    title="Company notification types"
-                    description={isAdmin
-                        ? 'These settings apply to all users in this company.'
-                        : 'Notification types are managed by your company admin.'}
-                >
+                <div className="rounded-xl p-4 bg-white border border-[rgba(117,106,89,0.18)]">
+                    <div className="flex items-center gap-2 mb-1">
+                        <Shield className="size-5 text-gray-500" />
+                        <h3 className="font-medium text-sm">Company Notification Types</h3>
+                    </div>
+                    {!isAdmin && (
+                        <p className="text-xs text-gray-500 mb-3">
+                            Notification types are managed by your company admin.
+                        </p>
+                    )}
+                    {isAdmin && (
+                        <p className="text-xs text-gray-500 mb-3">
+                            These settings apply to all users in this company.
+                        </p>
+                    )}
+
                     {/* Toggle: New text message */}
                     <div className="flex items-center justify-between py-2.5">
                         <div>
@@ -287,8 +297,8 @@ export default function NotificationsSection() {
                     {saveMutation.isPending && (
                         <p className="text-xs text-gray-400 mt-2">Saving…</p>
                     )}
-                </SettingsSection>
+                </div>
             )}
-        </>
+        </div>
     );
 }
