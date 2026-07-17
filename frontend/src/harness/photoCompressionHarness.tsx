@@ -1,6 +1,6 @@
 /**
  * NOTE-PHOTO-COMPRESS-001 harness — exercises the production compression module
- * against the owner's three acceptance fixtures. It does not call the backend.
+ * against the owner's acceptance fixtures. It does not call the backend.
  *
  * Run: npx vite → /photo-compress-harness.html
  */
@@ -16,6 +16,7 @@ import {
     type ImageCompressionResult,
 } from '../lib/imageCompression';
 import labelFixtureUrl from './fixtures-compress/label.jpeg?url';
+import labelHeicFixtureUrl from './fixtures-compress/label.heic?url';
 import rotatedKitchenFixtureUrl from './fixtures-compress/rotated-kitchen.jpeg?url';
 import burntFixtureUrl from './fixtures-compress/burnt-24mp.jpeg?url';
 
@@ -39,6 +40,11 @@ const FIXTURES: FixtureSpec[] = [
         name: 'label.jpeg',
         url: labelFixtureUrl,
         purpose: 'Acceptance: MODEL JB850S T1SS and SERIAL ZV2 21708Q remain readable.',
+    },
+    {
+        name: 'label.heic',
+        url: labelHeicFixtureUrl,
+        purpose: 'HEIC acceptance: lazy decoder fallback must produce a viewable JPEG in Chrome.',
     },
     {
         name: 'rotated-kitchen.jpeg',
@@ -213,7 +219,7 @@ function Harness() {
             <header>
                 <p className="blanc-eyebrow">NOTE-PHOTO-COMPRESS-001 · harness only</p>
                 <h1>Note photo compression</h1>
-                <p>Native browser canvas, production module, no backend and no third-party image dependency.</p>
+                <p>Native browser canvas with a lazy HEIC decoder fallback; production module, no backend.</p>
             </header>
 
             <section className="controls" aria-label="Compression parameters">

@@ -54,8 +54,13 @@ function unchanged(file: File, reason: Exclude<ImageCompressionReason, 'compress
     return { file, compressed: false, reason, original: metrics, output: metrics };
 }
 
+export function isHeicOrHeif(file: File): boolean {
+    const mime = file.type.toLowerCase();
+    return mime.includes('heic') || mime.includes('heif') || /\.hei[cf]$/i.test(file.name);
+}
+
 function isImage(file: File): boolean {
-    return file.type.toLowerCase().startsWith('image/');
+    return file.type.toLowerCase().startsWith('image/') || isHeicOrHeif(file);
 }
 
 function shouldPreserveAnimation(file: File): boolean {
@@ -127,6 +132,20 @@ async function decodeImage(file: File): Promise<DecodedImage> {
     return decodeWithImageElement(file);
 }
 
+async function decodeHeicWithWasm(file: File): Promise<DecodedImage> {
+    // Keep the decoder and its worker payload out of the initial application bundle.
+    const { heicTo, isHeic } = await import('heic-to');
+    if (!await isHeic(file)) throw new Error('Invalid HEIC/HEIF file');
+
+    const bitmap = await heicTo({ blob: file, type: 'bitmap' });
+    return {
+        source: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        release: () => bitmap.close(),
+    };
+}
+
 function canvasToJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
     return new Promise((resolve, reject) => {
         canvas.toBlob(blob => {
@@ -156,17 +175,21 @@ export async function compressImageForUpload(file: File, overrides: ImageCompres
     };
     validateOptions(options);
 
+    const heic = isHeicOrHeif(file);
     if (!isImage(file)) return unchanged(file, 'not-image');
-    if (shouldPreserveAnimation(file)) return unchanged(file, 'animation-preserved');
-    if (file.size <= options.skipBelowBytes) return unchanged(file, 'already-small');
+    if (!heic && shouldPreserveAnimation(file)) return unchanged(file, 'animation-preserved');
+    if (!heic && file.size <= options.skipBelowBytes) return unchanged(file, 'already-small');
 
     let decoded: DecodedImage;
     try {
         decoded = await decodeImage(file);
     } catch {
-        // Keep the existing upload path for browser-unsupported formats (notably
-        // HEIC). The server already accepts them; compression is best-effort.
-        return unchanged(file, 'decode-unsupported');
+        if (!heic) return unchanged(file, 'decode-unsupported');
+        try {
+            decoded = await decodeHeicWithWasm(file);
+        } catch {
+            throw new Error(`"${file.name}" could not be decoded as HEIC/HEIF. The file may be corrupt.`);
+        }
     }
 
     const canvas = document.createElement('canvas');
@@ -188,7 +211,7 @@ export async function compressImageForUpload(file: File, overrides: ImageCompres
 
         const blob = await canvasToJpeg(canvas, options.quality);
         const originalMetrics = { width: decoded.width, height: decoded.height, bytes: file.size };
-        if (blob.size >= file.size) {
+        if (!heic && blob.size >= file.size) {
             return {
                 ...unchanged(file, 'not-smaller', decoded.width, decoded.height),
                 original: originalMetrics,

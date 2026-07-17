@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback, type ChangeEvent } from 'react';
 import { Paperclip, X, FileText, Image as ImageIcon, Loader2, AlertCircle, RotateCcw } from 'lucide-react';
 import { uploadStagedAttachment, deleteStagedAttachment, type NoteEntityType } from '../../services/noteAttachmentsApi';
-import { yieldToMainThread } from '../../lib/imageCompression';
+import { isHeicOrHeif, yieldToMainThread } from '../../lib/imageCompression';
 import { NOTE_ATTACHMENT_MAX_FILE_SIZE, prepareImageAttachmentForUpload } from './noteAttachmentPreparation';
 
 const MAX_FILES = 5;
@@ -101,19 +101,23 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
         if (inputRef.current) inputRef.current.value = '';
         const room = Math.max(0, MAX_FILES - items.length);
         const toAdd = selected.slice(0, room).filter(f => {
-            if (!f.type.startsWith('image/') && f.size > NOTE_ATTACHMENT_MAX_FILE_SIZE) {
+            const isImage = f.type.startsWith('image/') || isHeicOrHeif(f);
+            if (!isImage && f.size > NOTE_ATTACHMENT_MAX_FILE_SIZE) {
                 console.warn(`[Attachments] "${f.name}" too large`);
                 return false;
             }
             return true;
         });
         if (toAdd.length === 0) return;
-        const newItems: Item[] = toAdd.map(f => ({
-            key: `${Date.now()}-${keySeq.current++}`,
-            file: f, name: f.name, size: f.size,
-            isImage: f.type.startsWith('image/'), prepared: false,
-            status: f.type.startsWith('image/') ? 'compressing' as const : 'uploading' as const,
-        }));
+        const newItems: Item[] = toAdd.map(f => {
+            const isImage = f.type.startsWith('image/') || isHeicOrHeif(f);
+            return {
+                key: `${Date.now()}-${keySeq.current++}`,
+                file: f, name: f.name, size: f.size,
+                isImage, prepared: false,
+                status: isImage ? 'compressing' as const : 'uploading' as const,
+            };
+        });
         setItems(prev => [...prev, ...newItems]);
         enqueueItems(newItems);
     };
