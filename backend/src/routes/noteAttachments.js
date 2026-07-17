@@ -25,24 +25,27 @@ router.post('/upload', upload.array('attachments', noteAttachmentsService.MAX_FI
     try {
         const companyId = req.companyFilter?.company_id;
         const entityType = req.body.entity_type;
-        const entityId = parseInt(req.body.entity_id, 10);
+        const requestedEntityId = req.body.entity_id;
         const files = req.files || [];
 
         if (!VALID_ENTITY_TYPES.has(entityType)) {
             return res.status(400).json({ ok: false, error: 'Invalid entity_type' });
         }
-        if (!Number.isInteger(entityId)) {
+        if (typeof requestedEntityId !== 'string' || requestedEntityId.trim() === '') {
+            return res.status(400).json({ ok: false, error: 'Invalid entity_id' });
+        }
+        if (entityType !== 'lead' && !/^\d+$/.test(requestedEntityId.trim())) {
             return res.status(400).json({ ok: false, error: 'Invalid entity_id' });
         }
         if (files.length === 0) {
             return res.status(400).json({ ok: false, error: 'No files provided' });
         }
-        const exists = await noteAttachmentsService.entityExistsInCompany(companyId, entityType, entityId);
-        if (!exists) {
+        const entityId = await noteAttachmentsService.resolveEntityIdInCompany(companyId, entityType, requestedEntityId);
+        if (entityId == null) {
             return res.status(404).json({ ok: false, error: 'Entity not found' });
         }
 
-        const userId = req.user?.crmUser?.id || req.user?.sub || null;
+        const userId = req.user?.crmUser?.id || null;
         const attachments = await noteAttachmentsService.stageAttachments(companyId, entityType, entityId, files, userId);
         res.json({ ok: true, data: { attachments } });
     } catch (err) {

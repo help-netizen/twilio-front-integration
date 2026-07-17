@@ -66,6 +66,45 @@ describe('POST /upload (stage)', () => {
         expect(insert).toMatch(/NULL, NULL/);   // note_index, note_id staged
     });
 
+    test('own lead UUID → 200 and stages against the lead serial_id', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 42, serial_id: 700 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 43, file_name: 'a.png', content_type: 'image/png', file_size: 3 }] });
+        const res = await request(makeApp()).post('/api/note-attachments/upload')
+            .field('entity_type', 'lead').field('entity_id', '0NMHI5')
+            .attach('attachments', Buffer.from('img'), 'a.png');
+
+        expect(res.status).toBe(200);
+        expect(mockQuery.mock.calls[0][0]).toMatch(/FROM leads WHERE uuid = \$1 AND company_id = \$2/i);
+        expect(mockQuery.mock.calls[0][1]).toEqual(['0NMHI5', COMPANY]);
+        expect(mockQuery.mock.calls[1][1][2]).toBe(700);
+    });
+
+    test('foreign lead UUID → 404 without staging or upload', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        const res = await request(makeApp()).post('/api/note-attachments/upload')
+            .field('entity_type', 'lead').field('entity_id', 'FOREIGN-UUID')
+            .attach('attachments', Buffer.from('img'), 'a.png');
+
+        expect(res.status).toBe(404);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(mockQuery.mock.calls[0][1]).toEqual(['FOREIGN-UUID', COMPANY]);
+        expect(storageService.uploadFile).not.toHaveBeenCalled();
+    });
+
+    test('numeric lead id fallback → 200 and stages against the lead serial_id', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 42, serial_id: 700 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 44, file_name: 'a.png', content_type: 'image/png', file_size: 3 }] });
+        const res = await request(makeApp()).post('/api/note-attachments/upload')
+            .field('entity_type', 'lead').field('entity_id', '42')
+            .attach('attachments', Buffer.from('img'), 'a.png');
+
+        expect(res.status).toBe(200);
+        expect(mockQuery.mock.calls[1][0]).toMatch(/FROM leads WHERE id = \$1 AND company_id = \$2/i);
+        expect(mockQuery.mock.calls[1][1]).toEqual([42, COMPANY]);
+        expect(mockQuery.mock.calls[2][1][2]).toBe(700);
+    });
+
     test('no files → 400', async () => {
         const res = await request(makeApp()).post('/api/note-attachments/upload')
             .field('entity_type', 'job').field('entity_id', '5');

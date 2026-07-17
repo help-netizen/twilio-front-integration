@@ -1,0 +1,5 @@
+# Owner-supplied test photos — local only (11MB, customer premises). Drop your own here per README.
+*.jpeg
+*.jpg
+*.heic
+*.png

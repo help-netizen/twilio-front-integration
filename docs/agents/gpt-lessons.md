@@ -8,6 +8,13 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-017 (2026-07-16)** — NEVER put `&` inside a harness run_in_background Bash command that
+  launches codex: the wrapper shell exits instantly (fires a FALSE "completed" notification) while
+  codex keeps running detached (PPID 1) — you then misread half-written logs as L-016 and pile a
+  resume onto a still-running session (two writers, one session file). Launch codex as the DIRECT
+  background command (no `&`, no trailing echo); before diagnosing any "premature exit", check
+  `ps -axo pid,ppid,etime,args | grep "Resources/codex"` for a live process and whether the log still grows.
+
 - **L-016 (2026-07-15)** — `codex exec` (gpt-5.6-sol, ultra reasoning) sometimes DRAFTS the full
   solution in its response but exits WITHOUT calling apply_patch — git shows zero changes even though
   the log "contains" the code. Don't trust the log/exit-0; verify with `git status`. Fix: `codex exec

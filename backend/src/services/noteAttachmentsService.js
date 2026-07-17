@@ -161,6 +161,35 @@ async function entityExistsInCompany(companyId, entityType, entityId) {
 }
 
 /**
+ * Resolve the public lead UUID used by lead notes to the legacy serial_id used
+ * by note_attachments. Numeric ids remain supported for older callers.
+ */
+async function resolveEntityIdInCompany(companyId, entityType, entityId) {
+    const rawEntityId = String(entityId ?? '').trim();
+    if (!rawEntityId) return null;
+
+    if (entityType === 'lead') {
+        let { rows } = await db.query(
+            `SELECT id, serial_id FROM leads WHERE uuid = $1 AND company_id = $2 LIMIT 1`,
+            [rawEntityId, companyId]
+        );
+        if (rows.length === 0 && /^\d+$/.test(rawEntityId)) {
+            ({ rows } = await db.query(
+                `SELECT id, serial_id FROM leads WHERE id = $1 AND company_id = $2 LIMIT 1`,
+                [Number(rawEntityId), companyId]
+            ));
+        }
+        if (rows.length === 0) return null;
+        return rows[0].serial_id ?? rows[0].id;
+    }
+
+    if (!/^\d+$/.test(rawEntityId)) return null;
+    const numericId = Number(rawEntityId);
+    if (!Number.isSafeInteger(numericId)) return null;
+    return await entityExistsInCompany(companyId, entityType, numericId) ? numericId : null;
+}
+
+/**
  * Stage attachments BEFORE a note exists: upload to S3 + insert rows with
  * note_index = NULL (the "staged" marker — excluded from display, cleaned by cron
  * if abandoned). Returned ids are later passed to associateStagedAttachments.
@@ -234,6 +263,7 @@ module.exports = {
     getPresignedUrlForAttachment,
     deleteAttachment,
     entityExistsInCompany,
+    resolveEntityIdInCompany,
     stageAttachments,
     associateStagedAttachments,
     deleteStaleStagedAttachments,

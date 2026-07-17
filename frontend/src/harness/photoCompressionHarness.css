@@ -1,0 +1,253 @@
+body {
+    margin: 0;
+    min-width: 320px;
+    background: var(--blanc-surface-muted);
+    color: var(--blanc-ink-1);
+}
+
+button,
+fieldset {
+    font: inherit;
+}
+
+.harness-shell {
+    width: min(1440px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 32px 0 64px;
+}
+
+.harness-shell > header h1 {
+    margin: 6px 0 4px;
+    font-size: clamp(28px, 4vw, 44px);
+    line-height: 1.05;
+}
+
+.harness-shell > header p:last-child,
+.fixture-heading p,
+.crop-card > div:first-child > p:last-child {
+    margin: 0;
+    color: var(--blanc-ink-2);
+}
+
+.controls {
+    display: flex;
+    align-items: end;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 28px;
+    padding: 18px;
+    border: 1px solid var(--blanc-line);
+    border-radius: 16px;
+    background: var(--blanc-panel-surface);
+}
+
+.controls fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.controls legend {
+    margin-bottom: 8px;
+    color: var(--blanc-ink-2);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.control-options {
+    display: flex;
+    gap: 6px;
+}
+
+.control-options button {
+    padding: 8px 12px;
+    border: 1px solid var(--blanc-line-strong);
+    border-radius: 9px;
+    background: var(--blanc-surface-strong);
+    color: var(--blanc-ink-1);
+    cursor: pointer;
+}
+
+.control-options button.active {
+    border-color: var(--blanc-info);
+    background: var(--blanc-info);
+    color: var(--blanc-surface-strong);
+}
+
+.status {
+    margin-left: auto;
+    color: var(--blanc-ink-2);
+    font-size: 13px;
+}
+
+.error {
+    margin-top: 20px;
+    padding: 14px 16px;
+    border: 1px solid var(--blanc-danger);
+    border-radius: 12px;
+    color: var(--blanc-danger);
+    background: var(--blanc-panel-surface);
+}
+
+.fixture-list {
+    display: grid;
+    gap: 24px;
+    margin-top: 24px;
+}
+
+.fixture-card,
+.crop-card {
+    padding: 22px;
+    border: 1px solid var(--blanc-line);
+    border-radius: 16px;
+    background: var(--blanc-panel-surface);
+}
+
+.fixture-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.fixture-heading h2,
+.crop-card h2 {
+    margin: 0 0 4px;
+    font-size: 21px;
+}
+
+.reduction-badge {
+    flex: none;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: var(--blanc-surface-muted);
+    color: var(--blanc-success);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.metric {
+    min-width: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--blanc-surface-muted);
+}
+
+.metric span,
+.metric strong {
+    display: block;
+}
+
+.metric span {
+    color: var(--blanc-ink-3);
+    font-size: 11px;
+}
+
+.metric strong {
+    margin-top: 3px;
+    overflow: hidden;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.image-pair,
+.crop-pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 18px;
+}
+
+figure {
+    min-width: 0;
+    margin: 0;
+}
+
+figcaption {
+    margin-bottom: 7px;
+    color: var(--blanc-ink-2);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.full-image-frame {
+    display: flex;
+    height: 390px;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 12px;
+    background: var(--blanc-surface-muted);
+}
+
+.full-image-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.crop-card {
+    margin-top: 24px;
+}
+
+.crop-pair {
+    align-items: start;
+}
+
+.native-crop {
+    position: relative;
+    height: 680px;
+    overflow: hidden;
+    border: 1px solid var(--blanc-line);
+    border-radius: 12px;
+    background: var(--blanc-surface-muted);
+}
+
+.native-crop img {
+    position: absolute;
+    max-width: none;
+    object-fit: none;
+}
+
+@media (max-width: 760px) {
+    .harness-shell {
+        width: min(100% - 20px, 1440px);
+        padding-top: 20px;
+    }
+
+    .controls {
+        gap: 16px;
+    }
+
+    .status {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .metrics-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .image-pair,
+    .crop-pair {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .full-image-frame {
+        height: 300px;
+    }
+
+    .native-crop {
+        height: 520px;
+    }
+}

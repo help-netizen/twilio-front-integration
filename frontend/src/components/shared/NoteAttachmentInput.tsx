@@ -1,18 +1,20 @@
 import { useRef, useState, useEffect, useCallback, type ChangeEvent } from 'react';
 import { Paperclip, X, FileText, Image as ImageIcon, Loader2, AlertCircle, RotateCcw } from 'lucide-react';
 import { uploadStagedAttachment, deleteStagedAttachment, type NoteEntityType } from '../../services/noteAttachmentsApi';
+import { yieldToMainThread } from '../../lib/imageCompression';
+import { NOTE_ATTACHMENT_MAX_FILE_SIZE, prepareImageAttachmentForUpload } from './noteAttachmentPreparation';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_FILES = 5;
 const ACCEPT = 'image/*,application/pdf,.doc,.docx,.xls,.xlsx';
 
-type ItemStatus = 'uploading' | 'done' | 'error';
+type ItemStatus = 'compressing' | 'uploading' | 'done' | 'error';
 interface Item {
     key: string;
     file: File;
     name: string;
     size: number;
     isImage: boolean;
+    prepared: boolean;
     status: ItemStatus;
     id?: number;
     error?: string;
@@ -43,6 +45,7 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
     const inputRef = useRef<HTMLInputElement>(null);
     const [items, setItems] = useState<Item[]>([]);
     const removedKeys = useRef<Set<string>>(new Set());
+    const uploadQueue = useRef<Promise<void>>(Promise.resolve());
     const keySeq = useRef(0);
     const cb = useRef(onStateChange);
     cb.current = onStateChange;
@@ -50,37 +53,69 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
     // Report state up AFTER render (never during a setState updater).
     useEffect(() => {
         const ids = items.filter(i => i.status === 'done' && i.id != null).map(i => i.id!);
-        const blocked = items.some(i => i.status === 'uploading' || i.status === 'error');
+        const blocked = items.some(i => i.status === 'compressing' || i.status === 'uploading' || i.status === 'error');
         cb.current({ ids, blocked });
     }, [items]);
 
-    const startUpload = useCallback(async (file: File, key: string) => {
+    const processItem = useCallback(async (item: Item) => {
         try {
-            const att = await uploadStagedAttachment(entityType, entityId, file);
-            if (removedKeys.current.has(key)) { deleteStagedAttachment(att.id).catch(() => {}); return; }
-            setItems(prev => prev.map(i => (i.key === key ? { ...i, status: 'done', id: att.id } : i)));
+            let uploadFile = item.file;
+            if (item.isImage && !item.prepared) {
+                const result = await prepareImageAttachmentForUpload(item.file);
+                if (removedKeys.current.has(item.key)) return;
+                uploadFile = result.file;
+                setItems(prev => prev.map(i => (i.key === item.key ? {
+                    ...i,
+                    file: uploadFile,
+                    name: uploadFile.name,
+                    size: uploadFile.size,
+                    prepared: true,
+                    status: 'uploading',
+                } : i)));
+            }
+
+            if (removedKeys.current.has(item.key)) return;
+            const att = await uploadStagedAttachment(entityType, entityId, uploadFile);
+            if (removedKeys.current.has(item.key)) { deleteStagedAttachment(att.id).catch(() => {}); return; }
+            setItems(prev => prev.map(i => (i.key === item.key ? { ...i, status: 'done', id: att.id } : i)));
         } catch (err) {
-            if (removedKeys.current.has(key)) return;
-            setItems(prev => prev.map(i => (i.key === key ? { ...i, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' } : i)));
+            if (removedKeys.current.has(item.key)) return;
+            setItems(prev => prev.map(i => (i.key === item.key ? { ...i, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' } : i)));
         }
     }, [entityType, entityId]);
+
+    const enqueueItems = useCallback((queuedItems: Item[]) => {
+        uploadQueue.current = uploadQueue.current.then(async () => {
+            // Let the Compressing… chip render before the first full-size decode.
+            await yieldToMainThread();
+            for (let index = 0; index < queuedItems.length; index += 1) {
+                const item = queuedItems[index];
+                if (item && !removedKeys.current.has(item.key)) await processItem(item);
+                if (index < queuedItems.length - 1) await yieldToMainThread();
+            }
+        });
+    }, [processItem]);
 
     const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
         const selected = Array.from(e.target.files || []);
         if (inputRef.current) inputRef.current.value = '';
         const room = Math.max(0, MAX_FILES - items.length);
         const toAdd = selected.slice(0, room).filter(f => {
-            if (f.size > MAX_FILE_SIZE) { console.warn(`[Attachments] "${f.name}" too large`); return false; }
+            if (!f.type.startsWith('image/') && f.size > NOTE_ATTACHMENT_MAX_FILE_SIZE) {
+                console.warn(`[Attachments] "${f.name}" too large`);
+                return false;
+            }
             return true;
         });
         if (toAdd.length === 0) return;
         const newItems: Item[] = toAdd.map(f => ({
             key: `${Date.now()}-${keySeq.current++}`,
             file: f, name: f.name, size: f.size,
-            isImage: f.type.startsWith('image/'), status: 'uploading' as const,
+            isImage: f.type.startsWith('image/'), prepared: false,
+            status: f.type.startsWith('image/') ? 'compressing' as const : 'uploading' as const,
         }));
         setItems(prev => [...prev, ...newItems]);
-        newItems.forEach(it => startUpload(it.file, it.key));
+        enqueueItems(newItems);
     };
 
     const removeItem = (key: string) => {
@@ -93,9 +128,11 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
     };
 
     const retry = (key: string) => {
-        setItems(prev => prev.map(i => (i.key === key ? { ...i, status: 'uploading', error: undefined } : i)));
         const it = items.find(i => i.key === key);
-        if (it) startUpload(it.file, key);
+        if (!it) return;
+        const status: ItemStatus = it.isImage && !it.prepared ? 'compressing' : 'uploading';
+        setItems(prev => prev.map(i => (i.key === key ? { ...i, status, error: undefined } : i)));
+        enqueueItems([{ ...it, status, error: undefined }]);
     };
 
     return (
@@ -127,11 +164,11 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                                     background: isErr ? 'rgba(180,35,24,0.06)' : 'rgba(25,25,25,0.06)',
                                     border: `1px solid ${isErr ? 'rgba(180,35,24,0.4)' : 'var(--blanc-line)'}`,
                                     color: 'var(--blanc-ink-2)',
-                                    opacity: item.status === 'uploading' ? 0.75 : 1,
+                                    opacity: item.status === 'compressing' || item.status === 'uploading' ? 0.75 : 1,
                                 }}
                                 title={isErr ? (item.error || 'Upload failed') : undefined}
                             >
-                                {item.status === 'uploading'
+                                {item.status === 'compressing' || item.status === 'uploading'
                                     ? <Loader2 className="size-3 shrink-0 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
                                     : isErr
                                         ? <AlertCircle className="size-3 shrink-0" style={{ color: '#b42318' }} />
@@ -140,7 +177,7 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                                             : <FileText className="size-3 shrink-0" />}
                                 <span className="max-w-[120px] truncate">{item.name}</span>
                                 <span className="text-[10px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    {item.status === 'uploading' ? 'Uploading…' : isErr ? 'Failed' : formatSize(item.size)}
+                                    {item.status === 'compressing' ? 'Compressing…' : item.status === 'uploading' ? 'Uploading…' : isErr ? 'Failed' : formatSize(item.size)}
                                 </span>
                                 {isErr && (
                                     <button
