@@ -19,7 +19,16 @@ const routeLines = APP.split('\n').filter(l => /<Route\s/.test(l));
 // Routes that intentionally render without a ProtectedRoute permission gate:
 //  - public (no auth at all): /signup, /pay/:token  (in AuthProvider PUBLIC_AUTH_PATHS)
 //  - auth-only (login required via kc.init, but no specific permission): /onboarding
-const ALLOWED_UNGUARDED = new Set(['/signup', '/pay/:token', '/onboarding']);
+//  - customer-facing, unguessable-token surfaces (backend enforces the real gate:
+//    token+host resolution, rate limit, uniform 404 — never a permission check, since
+//    the visitor is the CUSTOMER, not a CRM user):
+//      /e/:token   public estimate view (SEND-ESTIMATE-001)
+//      /r/:token   Rate Me review page  (RATE-ME-CRM-001, host-gated)
+//      /pay/thanks Stripe success/cancel landing — renders no tenant data at all
+const ALLOWED_UNGUARDED = new Set([
+    '/signup', '/pay/:token', '/onboarding',
+    '/e/:token', '/r/:token', '/pay/thanks',
+]);
 
 function pathOf(line) {
     const m = line.match(/path="([^"]+)"/);
