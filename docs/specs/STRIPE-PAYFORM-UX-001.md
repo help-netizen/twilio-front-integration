@@ -159,7 +159,7 @@ standalone means:
 | `backend/src/routes/payments.js:76-123` | Add literal result GET before `/:id`, with `payments.collect_keyed` and `req.companyFilter?.company_id`. |
 | `backend/src/services/jobsService.js:863-890` | Add completed standalone ledger payments to list rollup and return signed balance. |
 
-No migration or new dependency is required.
+No new dependency is required. Follow-up migration `181_payment_tx_job_standalone_index.sql` adds a partial index on `payment_transactions(job_id)` matching the standalone-rollup predicate (`invoice_id IS NULL AND transaction_type='payment' AND status='completed'`) so the jobs-list rollup stays index-driven as the ledger grows.
 
 ### Explicit no-touch boundary
 
