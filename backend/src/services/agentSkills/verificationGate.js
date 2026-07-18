@@ -60,7 +60,7 @@ function rankOf(level) {
  * The L0 verified-context shape (no confident single match). Reused for `new`,
  * `ambiguous`, and every fail-closed path.
  * @param {{ matchedPhone?: string|null, ambiguous?: boolean, ambiguousCount?: number }} [extra]
- * @returns {{ level: 'L0', contactId: null, customerName: null, matchedPhone: string|null, ambiguous: boolean, ambiguousCount: number }}
+ * @returns {{ level: 'L0', contactId: null, customerName: null, matchedPhone: string|null, ambiguous: boolean, ambiguousCount: number, phoneCandidateCount: number }}
  */
 function l0Context(extra = {}) {
     return {
@@ -70,6 +70,7 @@ function l0Context(extra = {}) {
         matchedPhone: extra.matchedPhone != null ? extra.matchedPhone : null,
         ambiguous: Boolean(extra.ambiguous),
         ambiguousCount: extra.ambiguousCount || 0,
+        phoneCandidateCount: extra.phoneCandidateCount || 0,
     };
 }
 
@@ -132,7 +133,7 @@ function addressFactorMatches(claims, record) {
  * @param {{ phone?: string, name?: string, zip?: string, street?: string, contactId?: string|number }} identityBlock
  *   The identity block (claims). Self-asserted verification fields (verified/
  *   level/isVerified) are IGNORED — see the destructure below.
- * @returns {Promise<{ level: 'L0'|'L1'|'L2', contactId: number|null, customerName: string|null, matchedPhone: string|null, ambiguous: boolean, ambiguousCount: number }>}
+ * @returns {Promise<{ level: 'L0'|'L1'|'L2', contactId: number|null, customerName: string|null, matchedPhone: string|null, ambiguous: boolean, ambiguousCount: number, phoneCandidateCount: number }>}
  */
 async function deriveLevel(companyId, identityBlock) {
     // --- AC-8 (THE load-bearing security invariant): read ONLY the claim fields.
@@ -142,12 +143,18 @@ async function deriveLevel(companyId, identityBlock) {
     // re-confirmation below. A client/LLM claim of verification CANNOT raise it.
     const src = identityBlock && typeof identityBlock === 'object' ? identityBlock : {};
     const { phone, name, zip, street, contactId } = src;
+    const resolverClaims = { phone, name, zip, street };
+    // Preserve an intentionally omitted contactId. createLead uses this boundary
+    // to ensure a model/client id never reaches the server-side resolver.
+    if (Object.prototype.hasOwnProperty.call(src, 'contactId')) {
+        resolverClaims.contactId = contactId;
+    }
 
     if (!companyId) return l0Context();
 
     let resolution;
     try {
-        resolution = await identityResolver.resolve(companyId, { phone, name, zip, street, contactId });
+        resolution = await identityResolver.resolve(companyId, resolverClaims);
     } catch (err) {
         // Fail-closed: resolver blew up → least privilege.
         // eslint-disable-next-line no-console
@@ -162,6 +169,7 @@ async function deriveLevel(companyId, identityBlock) {
             matchedPhone: resolution ? resolution.matchedPhone : null,
             ambiguous: Boolean(resolution && resolution.matchType === 'ambiguous'),
             ambiguousCount: resolution ? resolution.ambiguousCount || 0 : 0,
+            phoneCandidateCount: resolution ? resolution.phoneCandidateCount || 0 : 0,
         });
     }
 
@@ -172,6 +180,7 @@ async function deriveLevel(companyId, identityBlock) {
         matchedPhone: resolution.matchedPhone || null,
         ambiguous: false,
         ambiguousCount: 0,
+        phoneCandidateCount: resolution.phoneCandidateCount || 0,
     };
 
     // --- L2 test: server-confirmed name AND (zip OR street) against the stored

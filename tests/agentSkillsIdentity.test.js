@@ -134,6 +134,9 @@ describe('identityResolver.resolve — leads+contacts+jobs (Group D)', () => {
         expect(r.matchType).toBe('existing'); // take-latest, never ambiguous on the phone path
         expect(r.contactId).toBe(777); // the NEWEST contact, not the oldest
         expect(r.ambiguousCount).toBe(0);
+        // UNKNOWN-CALLER-LEAD-001: retain the pre-ranking count so createLead can
+        // refuse to attach the selected contact without changing voice-gate behavior.
+        expect(r.phoneCandidateCount).toBe(2);
     });
 
     test('ASK-SKILL-ID-04-latest2: created_at ordering is what decides — flip which row is newest and the pick flips', async () => {

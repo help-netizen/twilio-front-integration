@@ -22,7 +22,10 @@
  * FROZEN shape (no ok/speak). This skill is a WRITE but stays requiredLevel:'L0'
  * (it IS the new-lead flow — the gate must never block it). Only change vs. the
  * old handler: `companyId` arrives as the arg (adapter passes DEFAULT_COMPANY_ID)
- * instead of the module constant. `verifiedContext` unused (L0).
+ * instead of the module constant. UNKNOWN-CALLER-LEAD-001 additionally consumes
+ * the server-derived `verifiedContext`: a unique resolved contact supplies both
+ * `contact_id` and the stored real name; absent/shared identity keeps the legacy
+ * Unknown Caller fallback.
  */
 
 'use strict';
@@ -47,12 +50,37 @@ function buildCallSummary({ unitType, brand, unitAge, problemDescription, prefer
 }
 
 /**
+ * Project the server-derived identity into lead fields. The model input is never
+ * consulted for contact ownership. Shared-phone and otherwise ambiguous contexts
+ * fail closed so createLead cannot attach a guessed contact.
+ * @param {object} verifiedContext Context produced by verificationGate.
+ * @returns {{ contactId: number|string, firstName: string, lastName: string }|null}
+ */
+function resolvedLeadIdentity(verifiedContext) {
+    const ctx = verifiedContext && typeof verifiedContext === 'object' ? verifiedContext : {};
+    const isVerified = ctx.level === 'L1' || ctx.level === 'L2';
+    const candidateCount = Number(ctx.phoneCandidateCount || 0);
+    const customerName = String(ctx.customerName || '').trim().replace(/\s+/g, ' ');
+
+    if (!isVerified || ctx.contactId == null || ctx.ambiguous || candidateCount > 1 || !customerName) {
+        return null;
+    }
+
+    const [firstName, ...lastNameParts] = customerName.split(' ');
+    return {
+        contactId: ctx.contactId,
+        firstName,
+        lastName: lastNameParts.join(' '),
+    };
+}
+
+/**
  * @param {string} companyId Tenant scope (DEFAULT_COMPANY_ID on the voice surface).
- * @param {object} _verifiedContext Unused for this L0 tool.
+ * @param {object} verifiedContext Server-derived caller identity.
  * @param {object} input The tool arguments (see field destructuring below).
  * @returns {Promise<object>} Frozen legacy shape { success, leadId? | error }.
  */
-async function run(companyId, _verifiedContext, input = {}) {
+async function run(companyId, verifiedContext, input = {}) {
     const {
         firstName, lastName, phone, email,
         street, apt, zip, city, state,
@@ -70,11 +98,13 @@ async function run(companyId, _verifiedContext, input = {}) {
         return { success: false, error: 'Phone number is required to create lead' };
     }
 
+    const resolvedIdentity = resolvedLeadIdentity(verifiedContext);
     const summary = buildCallSummary({ unitType, brand, unitAge, problemDescription, preferredSlot, addressValidated, escalationRequested });
     const body = {
-        FirstName: firstName || callerName?.split(' ')[0] || 'Unknown',
-        LastName:  lastName  || callerName?.split(' ').slice(1).join(' ') || 'Caller',
+        FirstName: resolvedIdentity?.firstName || firstName || callerName?.split(' ')[0] || 'Unknown',
+        LastName:  resolvedIdentity ? resolvedIdentity.lastName : (lastName || callerName?.split(' ').slice(1).join(' ') || 'Caller'),
         Phone:     phone || '',
+        ...(resolvedIdentity && { contact_id: resolvedIdentity.contactId }),
         ...(email && { Email: email }),
         Status:    'Review',
         JobType:   unitType ? `${unitType} Repair` : 'Appliance Repair',

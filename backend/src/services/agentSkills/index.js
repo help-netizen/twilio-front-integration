@@ -56,12 +56,15 @@ function getVerificationGate() {
  * the client/LLM may have set (verified/level) are intentionally NOT read — the
  * gate re-derives the level from the DB (spec §2.3, AC-8).
  * @param {object} input The adapter's per-call payload.
+ * @param {{ includeContactId?: boolean }} [options]
  * @returns {{ phone?: string, name?: string, zip?: string, street?: string, contactId?: string }}
  */
-function identityBlockFrom(input) {
+function identityBlockFrom(input, options = {}) {
     const src = input && typeof input === 'object' ? input : {};
     const { phone, name, zip, street, contactId } = src;
-    return { phone, name, zip, street, contactId };
+    const identityBlock = { phone, name, zip, street };
+    if (options.includeContactId !== false) identityBlock.contactId = contactId;
+    return identityBlock;
 }
 
 /**
@@ -110,7 +113,11 @@ async function runSkill(name, companyId, rawContext, input) {
 
     try {
         const gate = getVerificationGate();
-        const identityBlock = identityBlockFrom(input);
+        // UNKNOWN-CALLER-LEAD-001: createLead may use only server-resolved phone
+        // identity. A model/client contactId must never pin the resolver result.
+        const identityBlock = identityBlockFrom(input, {
+            includeContactId: name !== 'createLead',
+        });
 
         // (2) Re-derive the verification level from the DB every call.
         const verifiedContext = await gate.deriveLevel(companyId, identityBlock);

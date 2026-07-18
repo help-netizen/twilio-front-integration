@@ -24,7 +24,7 @@
  *
  * OUTPUT (provider-neutral, speech-safe — no raw PII dump):
  *   { matchType:'new'|'existing'|'ambiguous', contactId|null, customerName|null,
- *     matchedPhone|null, ambiguousCount:int, contact|null }
+ *     matchedPhone|null, ambiguousCount:int, phoneCandidateCount:int, contact|null }
  *   `contact` is a small server-side record ({ id, name, zips[], streets[] }) the
  *   gate uses to confirm the L2 second factor; it is NEVER returned to a caller.
  */
@@ -429,11 +429,20 @@ async function takeLatestOnPhonePath(companyId, candidates, { name, zip, street 
  *   customerName: string|null,
  *   matchedPhone: string|null,
  *   ambiguousCount: number,
+ *   phoneCandidateCount: number,
  *   contact: { id: number, name: string|null, zips: string[], streets: string[] } | null
  * }>}
  */
 async function resolve(companyId, claims = {}) {
-    const NEW = { matchType: 'new', contactId: null, customerName: null, matchedPhone: null, ambiguousCount: 0, contact: null };
+    const NEW = {
+        matchType: 'new',
+        contactId: null,
+        customerName: null,
+        matchedPhone: null,
+        ambiguousCount: 0,
+        phoneCandidateCount: 0,
+        contact: null,
+    };
 
     // No tenant scope → resolve to nothing (fail-closed; never a cross-company match).
     if (!companyId) return NEW;
@@ -445,8 +454,13 @@ async function resolve(companyId, claims = {}) {
         // ---- Path A: a usable phone was supplied → phone resolution (§3.1–3.2).
         let candidates = [];
         let fromPhonePath = false;
+        let phoneCandidateCount = 0;
         if (last10) {
             candidates = await resolveByPhone(companyId, last10);
+            // Preserve the pre-ranking candidate count for consumers that must
+            // fail closed on shared phones (createLead), while the existing voice
+            // gate keeps its AGENT-SKILLS-002 take-latest behavior.
+            phoneCandidateCount = candidates.length;
             // The phone path OWNS its candidate set even if it found nothing — a
             // usable phone that matched >1 must take-latest, never fall to Path B.
             fromPhonePath = candidates.length > 0;
@@ -495,6 +509,7 @@ async function resolve(companyId, claims = {}) {
                     customerName: null,
                     matchedPhone: last10 || null,
                     ambiguousCount: candidates.length,
+                    phoneCandidateCount,
                     contact: null,
                 };
             }
@@ -510,6 +525,7 @@ async function resolve(companyId, claims = {}) {
             customerName: only.name,
             matchedPhone: last10 || null,
             ambiguousCount: 0,
+            phoneCandidateCount,
             contact: contactRecord,
         };
     } catch (err) {
