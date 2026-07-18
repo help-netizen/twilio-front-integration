@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard, Phone, PhoneIncoming, Users, Music,
-    Shield, FileText,
+    Shield, ShieldBan, FileText,
 } from 'lucide-react';
 import { useIsMobile } from '../../hooks/useIsMobile';
 
@@ -20,6 +20,7 @@ const sections = [
             { label: 'Phone Numbers', path: '/settings/telephony/phone-numbers', icon: <Phone size={15} /> },
             { label: 'User Groups', path: '/settings/telephony/user-groups', icon: <Users size={15} /> },
             { label: 'Audio Library', path: '/settings/telephony/audio-library', icon: <Music size={15} /> },
+            { label: 'Blacklist', path: '/settings/telephony/blacklist', icon: <ShieldBan size={15} /> },
         ],
     },
     {

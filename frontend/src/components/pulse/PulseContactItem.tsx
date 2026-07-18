@@ -13,11 +13,11 @@ import type { Lead } from '../../types/lead';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
     MessageSquare, MessageSquareReply, Mail, MailCheck, MoreVertical,
-    EyeOff, Clock, CheckCircle2, AlertTriangle, Bot,
+    EyeOff, Clock, CheckCircle2, AlertTriangle, Bot, ShieldBan,
 } from 'lucide-react';
 import type { Call } from '../../types/models';
 import { tomorrowAtInTZ } from '../../utils/companyTime';
-import { getPulseCallIconKind } from './pulseHelpers';
+import { getPulseCallIconKind, getPulsePrimaryText, isMissedInboundStatus } from './pulseHelpers';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -26,6 +26,7 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'failed': '#dc2626', 'canceled': '#6b7280', 'ringing': '#2563eb',
     'in-progress': '#7c3aed', 'queued': '#2563eb', 'initiated': '#2563eb',
     'voicemail_recording': '#ea580c', 'voicemail_left': '#dc2626',
+    'blocked': 'var(--blanc-danger)',
 };
 
 export const SNOOZE_OPTIONS = [
@@ -110,11 +111,16 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const company = lead?.Company || null;
     const contactName = !isAnon && call.contact?.full_name && call.contact.full_name !== call.contact.phone_e164
         ? call.contact.full_name : null;
-    const primaryText = isAnon
-        ? 'Anonymous'
-        // YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline has no company/
-        // lead/contact — fall back to its denormalized display_name before the phone.
-        : (company || leadName || contactName || (call as any).display_name || formatPhoneNumber(displayPhone));
+    // YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline has no company/
+    // lead/contact — fall back to its denormalized display_name before the phone.
+    const primaryText = getPulsePrimaryText({
+        isAnonymous: isAnon,
+        company,
+        leadName,
+        contactName,
+        displayName: (call as any).display_name,
+        formattedPhone: formatPhoneNumber(displayPhone),
+    });
     const showSecondaryPhone = !isAnon && !!(company || leadName || contactName);
 
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
@@ -133,9 +139,11 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const callDirection = call.direction === 'inbound' ? 'inbound'
         : call.direction?.startsWith('outbound') ? 'outbound'
             : call.direction === 'internal' ? 'internal' : 'outbound';
-    const callColor = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
-    const callIconKind = getPulseCallIconKind(callDirection, call.answered_by);
+    const callStatus = (call.status || '').toLowerCase();
+    const callColor = STATUS_ICON_COLORS[callStatus] || '#16a34a';
+    const callIconKind = getPulseCallIconKind(callDirection, call.answered_by, callStatus);
     const isAiAnsweredLatestCall = interactionType === 'call' && callIconKind === 'bot';
+    const isBlockedLatestCall = interactionType === 'call' && callIconKind === 'blocked';
     const directionLabel = callDirection === 'inbound'
         ? 'Incoming'
         : callDirection === 'internal' ? 'Internal' : 'Outgoing';
@@ -144,7 +152,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     // Missed incoming call — last interaction is a call, direction is inbound, status is not answered
     const isMissedIncoming = interactionType === 'call'
         && callDirection === 'inbound'
-        && ['no-answer', 'busy', 'failed', 'canceled', 'voicemail_left', 'voicemail_recording'].includes((call.status || '').toLowerCase());
+        && isMissedInboundStatus(callStatus);
 
     // Neutral icon container — same for all contacts, no visual noise
 
@@ -181,6 +189,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                         // but the list fell through to call icons for them.
                         if (interactionType === 'email_inbound') return <Mail className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
                         if (interactionType === 'email_outbound') return <MailCheck className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
+                        if (isBlockedLatestCall) return <ShieldBan className="size-[18px]" style={{ color: 'var(--blanc-danger)' }} aria-label="Blocked inbound call" />;
                         if (isAiAnsweredLatestCall) return <Bot className="size-[18px]" style={{ color: callColor }} aria-label={aiIconLabel} />;
                         if (callIconKind === 'internal') return <ArrowLeftRight className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
                         if (callIconKind === 'incoming') return <PhoneIncoming className="size-[18px]" style={{ color: callColor }} />;
@@ -212,6 +221,20 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                     {showSecondaryPhone && (
                         <div className="text-xs font-mono truncate" style={{ color: 'var(--blanc-ink-3)' }}>
                             {formatPhoneNumber(displayPhone)}
+                        </div>
+                    )}
+
+                    {isBlockedLatestCall && (
+                        <div className="mt-1.5 flex items-center">
+                            <span
+                                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold"
+                                style={{
+                                    background: 'color-mix(in srgb, var(--blanc-danger) 11%, transparent)',
+                                    color: 'var(--blanc-danger)',
+                                }}
+                            >
+                                <ShieldBan className="size-2.5" /> Blocked
+                            </span>
                         </div>
                     )}
 

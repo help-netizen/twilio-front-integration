@@ -168,6 +168,20 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     // default tenant instead of falling through to unscoped worker SQL.
     const eventCompanyId = await resolveEventCompanyId(payload.AccountSid);
 
+    // CALL-BLACKLIST-001: the initial TwiML webhook persists blocked calls
+    // directly so it can bypass this worker's unread/AR/task behavior. Ignore
+    // any later Twilio status callback for that terminal snapshot as well;
+    // otherwise a trailing completed/ringing event could create work or
+    // overwrite the distinct blocked state.
+    let existingCall = null;
+    try {
+        existingCall = await queries.getCallByCallSid(normalized.callSid, eventCompanyId);
+    } catch (e) { /* preserve the existing fail-open worker behavior */ }
+    if (existingCall?.status === 'blocked') {
+        console.log(`[${traceId}] Ignoring status event for blocked call ${normalized.callSid}`);
+        return existingCall;
+    }
+
     // Resolve external party via CallProcessor
     const callData = {
         from: normalized.fromNumber,
@@ -296,30 +310,29 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     let skipUpsert = false;
     {
         try {
-            const existing = await queries.getCallByCallSid(normalized.callSid, eventCompanyId);
-            if (existing) {
-                const existingIsFinal = isFinalStatus(existing.status);
+            if (existingCall) {
+                const existingIsFinal = isFinalStatus(existingCall.status);
                 const isInVoicemailFlow =
-                    ['voicemail_recording', 'voicemail_left'].includes(existing.status);
+                    ['voicemail_recording', 'voicemail_left'].includes(existingCall.status);
 
                 // Don't let non-final events overwrite a final status
                 // (e.g. dial.action sends "in-progress" after call is already "completed")
                 if (existingIsFinal && !isFinal) {
-                    console.log(`[${traceId}] Skipping upsert — call is final (${existing.status}), ignoring non-final ${normalized.eventStatus}`);
+                    console.log(`[${traceId}] Skipping upsert — call is final (${existingCall.status}), ignoring non-final ${normalized.eventStatus}`);
                     skipUpsert = true;
                 }
                 // Don't let voicemail/missed states be overwritten by non-final events
                 if (isInVoicemailFlow && !isFinal) {
-                    console.log(`[${traceId}] Skipping upsert — call is in ${existing.status} status, ignoring non-final ${normalized.eventStatus}`);
+                    console.log(`[${traceId}] Skipping upsert — call is in ${existingCall.status} status, ignoring non-final ${normalized.eventStatus}`);
                     skipUpsert = true;
                 }
                 // Don't let Twilio's "completed" overwrite missed/voicemail statuses.
                 // Twilio sends "completed" when TwiML execution finishes, even for
                 // unanswered calls — this would erase the meaningful no-answer/voicemail status.
                 // This applies to BOTH parent AND child legs.
-                const isMissedOrVoicemail = ['no-answer', 'voicemail_recording', 'voicemail_left'].includes(existing.status);
+                const isMissedOrVoicemail = ['no-answer', 'voicemail_recording', 'voicemail_left'].includes(existingCall.status);
                 if (isMissedOrVoicemail && normalized.eventStatus === 'completed') {
-                    console.log(`[${traceId}] Skipping upsert — preserving ${existing.status}, ignoring Twilio completed`);
+                    console.log(`[${traceId}] Skipping upsert — preserving ${existingCall.status}, ignoring Twilio completed`);
                     skipUpsert = true;
                 }
             }
@@ -619,7 +632,7 @@ async function reconcileParentCall(parentCallSid, traceId, companyId = DEFAULT_C
         );
         if (parentCheck.rows.length === 0) return;
         const parentCurrentStatus = parentCheck.rows[0]?.status;
-        if (['no-answer', 'voicemail_recording', 'voicemail_left'].includes(parentCurrentStatus)) {
+        if (['no-answer', 'voicemail_recording', 'voicemail_left', 'blocked'].includes(parentCurrentStatus)) {
             // Check if any child was genuinely answered (completed with real duration).
             // If so, allow reconciliation — the parent status was likely set prematurely
             // by partial reconciliation or should be corrected to completed.
@@ -873,7 +886,7 @@ async function enrichFromTwilioApi(callSid, existingCall, traceId, companyId = D
         // Preserve missed/voicemail statuses — Twilio always reports "completed"
         // for parent calls when TwiML finishes, even if the call was unanswered.
         const currentStatus = existingCall?.status;
-        const preserveStatus = ['no-answer', 'voicemail_recording', 'voicemail_left'].includes(currentStatus)
+        const preserveStatus = ['no-answer', 'voicemail_recording', 'voicemail_left', 'blocked'].includes(currentStatus)
             && details.status === 'completed';
         const effectiveStatus = preserveStatus ? currentStatus : (details.status || null);
         const effectiveIsFinal = preserveStatus ? existingCall.is_final : (isFinalStatus(details.status) || false);

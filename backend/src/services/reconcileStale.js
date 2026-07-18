@@ -188,7 +188,7 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
         // Twilio reports "completed" for parent calls when TwiML finishes,
         // even if no agent answered — preserve no-answer/voicemail statuses.
         const existing = await queries.getCallByCallSid(callSid);
-        const preserveStatuses = ['no-answer', 'voicemail_recording', 'voicemail_left'];
+        const preserveStatuses = ['no-answer', 'voicemail_recording', 'voicemail_left', 'blocked'];
         if (existing && preserveStatuses.includes(existing.status) && apiStatus === 'completed') {
             await db.query(
                 `UPDATE calls SET is_final = true,

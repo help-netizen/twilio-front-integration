@@ -162,6 +162,26 @@ describe('TC-CC-10: processVoiceEvent human-contact hook — fires on a real com
 });
 
 describe('TC-CC-10: guard variants — the hook must NOT fire', () => {
+    test('blocked snapshot ignores later Twilio status without unread, AR, task, or status overwrite', async () => {
+        mockQueries.getCallByCallSid.mockResolvedValue(
+            upsertedRow({ status: 'blocked', answered_at: null, duration_sec: 0 }),
+        );
+
+        const out = await drive({ CallStatus: 'completed' });
+
+        expect(out).toEqual({ success: true });
+        expect(mockQueries.findOrCreateTimeline).not.toHaveBeenCalled();
+        expect(mockQueries.markTimelineRead).not.toHaveBeenCalled();
+        expect(mockQueries.markTimelineUnread).not.toHaveBeenCalled();
+        expect(mockQueries.markContactRead).not.toHaveBeenCalled();
+        expect(mockQueries.markContactUnread).not.toHaveBeenCalled();
+        expect(mockQueries.setActionRequired).not.toHaveBeenCalled();
+        expect(mockQueries.createTask).not.toHaveBeenCalled();
+        expect(mockQueries.upsertCall).not.toHaveBeenCalled();
+        expect(mockQueries.appendCallEvent).not.toHaveBeenCalled();
+        expect(cancellationService.cancelForCompletedCustomerCall).not.toHaveBeenCalled();
+    });
+
     test('skipUpsert: voicemail_left preserved against Twilio\'s trailing completed → no upsert, no hook', async () => {
         // Existing row is voicemail_left (final) and the event is completed →
         // the preserve guard sets skipUpsert; the hook never sees the row.

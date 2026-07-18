@@ -2,6 +2,7 @@ import type {
     CallFlow, PhoneNumber, AudioAsset, RoutingLogEntry, AgentStatus,
     QueuedCall, DashboardKPI, ProviderInfo, UserGroup,
     OperationsDashboardData, TelephonyTargetGroupOption, TelephonyTargetUserOption,
+    BlacklistNumber,
 } from '../types/telephony';
 
 import { authedFetch } from './apiClient';
@@ -21,6 +22,37 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
     const json = await res.json();
     return json.data !== undefined ? json.data : json;
+}
+
+export class TelephonyBlacklistError extends Error {
+    code?: string;
+    status: number;
+
+    constructor(message: string, status: number, code?: string) {
+        super(message);
+        this.name = 'TelephonyBlacklistError';
+        this.status = status;
+        this.code = code;
+    }
+}
+
+async function blacklistFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+    const res = await authedFetch(`${API_BASE}${path}`, {
+        ...opts,
+        headers: {
+            'Content-Type': 'application/json',
+            ...(opts?.headers || {}),
+        },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new TelephonyBlacklistError(
+            body.error || 'The blacklist request failed.',
+            res.status,
+            body.code
+        );
+    }
+    return body as T;
 }
 
 // ─── Fallback mocks (used when API unavailable during dev) ────────────────────
@@ -81,6 +113,23 @@ export const telephonyApi = {
     listNumbers: async (): Promise<PhoneNumber[]> => {
         try { return await apiFetch<PhoneNumber[]>('/phone-numbers'); }
         catch { await delay(); return []; }
+    },
+
+    listBlacklistNumbers: async (): Promise<BlacklistNumber[]> => {
+        const data = await blacklistFetch<{ numbers: BlacklistNumber[] }>('/telephony/numbers/blacklist');
+        return data.numbers;
+    },
+    addBlacklistNumber: async (phoneNumber: string): Promise<BlacklistNumber> => {
+        const data = await blacklistFetch<{ number: BlacklistNumber }>('/telephony/numbers/blacklist', {
+            method: 'POST',
+            body: JSON.stringify({ phone_number: phoneNumber }),
+        });
+        return data.number;
+    },
+    removeBlacklistNumber: async (id: string): Promise<void> => {
+        await blacklistFetch('/telephony/numbers/blacklist/' + encodeURIComponent(id), {
+            method: 'DELETE',
+        });
     },
 
     // Audio — still mock (no backend yet)

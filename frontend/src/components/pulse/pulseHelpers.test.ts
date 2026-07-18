@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { getPulseCallIconKind, isAiAnsweredBy } from './pulseHelpers';
+import {
+    callToCallData,
+    getPulseCallIconKind,
+    getPulseCallStatusLabel,
+    getPulsePrimaryText,
+    isAiAnsweredBy,
+    isMissedInboundStatus,
+} from './pulseHelpers';
 
 describe('Pulse AI call icon selection', () => {
     it('matches only the canonical answered_by value', () => {
@@ -24,5 +31,37 @@ describe('Pulse AI call icon selection', () => {
         expect(getPulseCallIconKind('inbound', null)).toBe('incoming');
         expect(getPulseCallIconKind('internal', undefined)).toBe('internal');
         expect(getPulseCallIconKind('outbound-dial', 'vapi')).toBe('outgoing');
+    });
+});
+
+describe('Pulse blocked call presentation', () => {
+    it('maps persisted blocked status without degrading it to completed or missed', () => {
+        const call = callToCallData({
+            id: 9,
+            call_sid: 'CA_blocked',
+            direction: 'inbound',
+            from_number: '+16175550119',
+            to_number: '+15085550001',
+            status: 'blocked',
+            started_at: '2026-07-18T14:42:00.000Z',
+            ended_at: '2026-07-18T14:42:00.000Z',
+            duration_sec: 0,
+        });
+
+        expect(call.status).toBe('blocked');
+        expect(getPulseCallStatusLabel(call.status)).toBe('Blocked');
+        expect(getPulseCallIconKind(call.direction, 'ai', call.status)).toBe('blocked');
+        expect(isMissedInboundStatus(call.status)).toBe(false);
+    });
+
+    it('keeps a resolved contact name as the primary label', () => {
+        expect(getPulsePrimaryText({
+            isAnonymous: false,
+            company: null,
+            leadName: null,
+            contactName: 'Maya Chen',
+            displayName: null,
+            formattedPhone: '(617) 555-0119',
+        })).toBe('Maya Chen');
     });
 });

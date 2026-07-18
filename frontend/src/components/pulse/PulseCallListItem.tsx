@@ -6,12 +6,12 @@
 import { useState } from 'react';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
-    Settings2, Clock, DollarSign, Hash, Navigation, Timer, Bot,
+    Settings2, Clock, DollarSign, Hash, Navigation, Timer, Bot, ShieldBan,
 } from 'lucide-react';
 import { formatPhoneDisplay as formatPhoneNumber } from '@/utils/phoneUtils';
 import type { CallData } from '../call-list-item';
 import { PulseCallAudioPlayer } from './PulseCallAudioPlayer';
-import { getPulseCallIconKind } from './pulseHelpers';
+import { getPulseCallIconKind, getPulseCallStatusLabel } from './pulseHelpers';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -25,18 +25,12 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
     'in-progress':       { bg: 'rgba(124,58,237,0.1)', color: '#7c3aed' },
     voicemail_recording: { bg: 'rgba(234,88,12,0.1)',  color: '#ea580c' },
     voicemail_left:      { bg: 'rgba(220,38,38,0.1)',  color: '#dc2626' },
+    blocked:             { bg: 'color-mix(in srgb, var(--blanc-danger) 11%, transparent)', color: 'var(--blanc-danger)' },
 };
 
 function getStatusStyle(status: string) {
     return STATUS_COLORS[status] || { bg: 'rgba(107,114,128,0.1)', color: '#6b7280' };
 }
-
-const STATUS_LABELS: Record<string, string> = {
-    completed: 'Completed', 'no-answer': 'No Answer', busy: 'Busy',
-    failed: 'Failed', canceled: 'Canceled', ringing: 'Ringing',
-    'in-progress': 'In Progress', voicemail_recording: 'Voicemail',
-    voicemail_left: 'Voicemail Left',
-};
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -55,11 +49,13 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const [showSystemInfo, setShowSystemInfo] = useState(false);
     const status = (call.status || '').toLowerCase();
     const st = getStatusStyle(status);
-    const statusLabel = STATUS_LABELS[status] || status;
+    const statusLabel = getPulseCallStatusLabel(status);
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
 
-    const callIconKind = getPulseCallIconKind(call.direction, call.answeredBy);
-    const CallIcon = callIconKind === 'bot'
+    const callIconKind = getPulseCallIconKind(call.direction, call.answeredBy, status);
+    const CallIcon = callIconKind === 'blocked'
+        ? ShieldBan
+        : callIconKind === 'bot'
         ? Bot
         : callIconKind === 'incoming'
             ? PhoneIncoming
@@ -69,7 +65,9 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const directionLabel = callIconKind === 'internal'
         ? 'Internal'
         : call.direction === 'incoming' ? 'Incoming' : 'Outgoing';
-    const iconLabel = callIconKind === 'bot'
+    const iconLabel = callIconKind === 'blocked'
+        ? 'Blocked inbound call'
+        : callIconKind === 'bot'
         ? `AI answered · ${directionLabel} call`
         : `${directionLabel} call`;
 

@@ -27,6 +27,7 @@ function callToCallData(call: Call): CallData {
         'initiated': 'ringing',
         'voicemail_recording': 'voicemail_recording',
         'voicemail_left': 'voicemail_left',
+        'blocked': 'blocked',
     };
     const status = statusMap[rawStatus] || 'completed';
 

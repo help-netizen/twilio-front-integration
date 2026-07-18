@@ -129,6 +129,12 @@ export interface PhoneNumber {
     last_call_at?: string;
 }
 
+export interface BlacklistNumber {
+    id: string;
+    phone_e164: string;
+    created_at: string;
+}
+
 export interface AudioAsset {
     id: string;
     name: string;

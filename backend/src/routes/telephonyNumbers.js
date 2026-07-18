@@ -8,6 +8,7 @@ const router = express.Router();
 const db = require('../db/connection');
 const svc = require('../services/telephonyTenantService');
 const territoryGeoService = require('../services/territoryGeoService');
+const callBlacklistService = require('../services/callBlacklistService');
 
 function companyId(req) {
     return req.companyFilter?.company_id;
@@ -172,6 +173,40 @@ router.post('/buy', async (req, res) => {
         if (err.code === 21422) return res.status(409).json({ ok: false, code: 'NUMBER_UNAVAILABLE', error: 'This number was just taken — pick another one' });
         fail(res, err, 'Failed to buy the number');
     }
+});
+
+// GET /api/telephony/numbers/blacklist — list blocked inbound callers
+router.get('/blacklist', async (req, res) => {
+    try {
+        const numbers = await callBlacklistService.listNumbers(companyId(req));
+        res.json({ ok: true, numbers });
+    } catch (err) { fail(res, err, 'Failed to load the blacklist'); }
+});
+
+// POST /api/telephony/numbers/blacklist — add a blocked inbound caller
+router.post('/blacklist', async (req, res) => {
+    try {
+        const number = await callBlacklistService.addNumber(
+            companyId(req),
+            req.body?.phone_number,
+            req.user?.crmUser?.id || null
+        );
+        res.status(201).json({ ok: true, number });
+    } catch (err) { fail(res, err, 'Failed to add the number'); }
+});
+
+// DELETE /api/telephony/numbers/blacklist/:id — remove one company-owned row
+router.delete('/blacklist/:id', async (req, res) => {
+    try {
+        if (!/^\d+$/.test(req.params.id)) {
+            return res.status(404).json({ ok: false, code: 'NOT_FOUND', error: 'Blacklist entry not found' });
+        }
+        const removed = await callBlacklistService.removeNumber(companyId(req), req.params.id);
+        if (!removed) {
+            return res.status(404).json({ ok: false, code: 'NOT_FOUND', error: 'Blacklist entry not found' });
+        }
+        res.json({ ok: true });
+    } catch (err) { fail(res, err, 'Failed to remove the number'); }
 });
 
 // DELETE /api/telephony/numbers/:sid — release a number

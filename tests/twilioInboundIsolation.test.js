@@ -59,6 +59,11 @@ jest.mock('../backend/src/services/walletService', () => ({
     isServiceBlocked: (...args) => mockIsServiceBlocked(...args),
 }));
 
+const mockIsCallerBlocked = jest.fn();
+jest.mock('../backend/src/services/callBlacklistService', () => ({
+    isBlocked: (...args) => mockIsCallerBlocked(...args),
+}));
+
 const mockResolveGroupForNumber = jest.fn();
 jest.mock('../backend/src/services/groupRouting', () => ({
     resolveGroupForNumber: (...args) => mockResolveGroupForNumber(...args),
@@ -175,12 +180,17 @@ beforeEach(() => {
     mockDbQuery.mockResolvedValue({ rows: [] });
     mockInsertInboxEvent.mockResolvedValue({ id: 1 });
     mockResolveCompanyByAccountSid.mockResolvedValue(null);
+    mockIsCallerBlocked.mockResolvedValue(false);
     mockIsServiceBlocked.mockResolvedValue(false);
     mockResolveGroupForNumber.mockResolvedValue(null);
     mockBuildVoicemailTwiml.mockReturnValue(VOICEMAIL_TWIML);
     mockStartExecution.mockResolvedValue(GROUP_TWIML);
     mockFindOrCreateTimeline.mockResolvedValue({ id: 42, contact_id: 7 });
-    mockUpsertCall.mockResolvedValue({ call_sid: 'CA_inbound_001', status: 'no-answer' });
+    mockUpsertCall.mockImplementation(async data => ({
+        call_sid: data.callSid,
+        status: data.status,
+        contact_id: data.contactId,
+    }));
     mockValidateRequest.mockReturnValue(true);
     mockTwilioNumbersList.mockResolvedValue([]);
 });
@@ -212,7 +222,7 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(rejectionWarns()).toHaveLength(0);
     });
 
-    test('TC-C-02: unknown AccountSid + unknown To → bare <Reject/> (no reason), 6-field warn log, no missed-call record, ingest BEFORE resolve', async () => {
+    test('TC-C-02: unknown AccountSid + unknown To → bare <Reject/> (no reason), 6-field warn log, no missed-call record, audit ingest', async () => {
         mockResolveCompanyByAccountSid.mockResolvedValue(null);
         mockDbQuery.mockResolvedValue({ rows: [] }); // no pns row either
 
@@ -245,10 +255,10 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(mockFindOrCreateTimeline).not.toHaveBeenCalled();
         expect(mockUpsertCall).not.toHaveBeenCalled();
 
-        // Audit trail preserved: webhook_inbox ingest ran, and BEFORE resolution
+        // Audit trail preserved after both ownership lookups fail.
         expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1);
         expect(mockInsertInboxEvent.mock.invocationCallOrder[0])
-            .toBeLessThan(mockResolveCompanyByAccountSid.mock.invocationCallOrder[0]);
+            .toBeGreaterThan(mockResolveCompanyByAccountSid.mock.invocationCallOrder[0]);
 
         // Routing never reached
         expect(mockResolveGroupForNumber).not.toHaveBeenCalled();
@@ -376,6 +386,76 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(res.send).toHaveBeenCalledWith(VOICEMAIL_TWIML);
         expect(String(res.send.mock.calls[0][0])).not.toContain('<Reject');
         expect(mockFindOrCreateTimeline).not.toHaveBeenCalled();
+    });
+
+    test('TC-C-BL-01: blacklisted caller is persisted as blocked and hard-rejected before wallet or group routing', async () => {
+        mockResolveCompanyByAccountSid.mockResolvedValue(COMPANY_A);
+        mockIsCallerBlocked.mockResolvedValue(true);
+
+        const res = makeRes();
+        await handleVoiceInbound(makeReq(inboundBody({ AccountSid: SUB_SID })), res);
+
+        expect(mockIsCallerBlocked).toHaveBeenCalledWith(COMPANY_A, '+16175551000');
+        expect(mockFindOrCreateTimeline).toHaveBeenCalledWith('+16175551000', COMPANY_A);
+        expect(mockUpsertCall).toHaveBeenCalledWith(expect.objectContaining({
+            callSid: 'CA_inbound_001',
+            contactId: 7,
+            timelineId: 42,
+            direction: 'inbound',
+            status: 'blocked',
+            isFinal: true,
+            answeredAt: null,
+            durationSec: 0,
+            companyId: COMPANY_A,
+        }));
+        expect(mockPublishCallUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            eventType: 'call.updated',
+            status: 'blocked',
+            contact_id: 7,
+        }));
+        expect(res.send).toHaveBeenCalledWith('<Response><Reject reason="busy"/></Response>');
+
+        // No normal inbox event means no inbound worker, unread, AR, or task.
+        expect(mockInsertInboxEvent).not.toHaveBeenCalled();
+        expect(mockIsServiceBlocked).not.toHaveBeenCalled();
+        expect(mockResolveGroupForNumber).not.toHaveBeenCalled();
+        expect(mockStartExecution).not.toHaveBeenCalled();
+    });
+
+    test('TC-C-BL-02: FORCED blacklist lookup failure is fail-open and the call still starts group routing', async () => {
+        mockResolveCompanyByAccountSid.mockResolvedValue(COMPANY_A);
+        mockIsCallerBlocked.mockRejectedValue(new Error('blacklist unavailable'));
+        mockResolveGroupForNumber.mockResolvedValue({ group: { id: 'g1', name: 'Sales' }, flow: { id: 'f1' } });
+
+        const res = makeRes();
+        await handleVoiceInbound(makeReq(inboundBody({ AccountSid: SUB_SID })), res);
+
+        expect(mockIsCallerBlocked).toHaveBeenCalledWith(COMPANY_A, '+16175551000');
+        expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1);
+        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085550001');
+        expect(mockStartExecution).toHaveBeenCalledWith(expect.objectContaining({
+            callSid: 'CA_inbound_001',
+            group: { id: 'g1', name: 'Sales' },
+            flow: { id: 'f1' },
+        }));
+        expect(mockIsCallerBlocked.mock.invocationCallOrder[0])
+            .toBeLessThan(mockResolveGroupForNumber.mock.invocationCallOrder[0]);
+        expect(res.send).toHaveBeenCalledWith(GROUP_TWIML);
+        expect(String(res.send.mock.calls[0][0])).not.toContain('<Reject');
+    });
+
+    test('TC-C-BL-03: blocked-call persistence failure is fail-open and the call still routes', async () => {
+        mockResolveCompanyByAccountSid.mockResolvedValue(COMPANY_A);
+        mockIsCallerBlocked.mockResolvedValue(true);
+        mockUpsertCall.mockRejectedValue(new Error('calls write unavailable'));
+
+        const res = makeRes();
+        await handleVoiceInbound(makeReq(inboundBody({ AccountSid: SUB_SID })), res);
+
+        expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1);
+        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085550001');
+        expect(res.send).toHaveBeenCalledWith(VOICEMAIL_TWIML);
+        expect(String(res.send.mock.calls[0][0])).not.toContain('<Reject');
     });
 
     test('TC-C-09: DEFAULT company wallet-blocked (hypothetical) → busy-Reject — the null-company bypass is gone', async () => {

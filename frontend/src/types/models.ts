@@ -1,6 +1,6 @@
 // V3 data models — calls-first architecture
 
-export type CallStatus = 'completed' | 'busy' | 'no-answer' | 'canceled' | 'failed' | 'in-progress' | 'ringing' | 'initiated' | 'queued' | 'voicemail_recording' | 'voicemail_left';
+export type CallStatus = 'completed' | 'busy' | 'no-answer' | 'canceled' | 'failed' | 'in-progress' | 'ringing' | 'initiated' | 'queued' | 'voicemail_recording' | 'voicemail_left' | 'blocked';
 export type CallDirection = 'inbound' | 'outbound' | 'outbound-dial' | 'outbound-api' | 'internal';
 
 export interface Contact {

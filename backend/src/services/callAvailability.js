@@ -13,7 +13,7 @@
 const db = require('../db/connection');
 const { getTwilioClient } = require('./twilioClient');
 
-const FINAL_STATUSES = ['completed', 'busy', 'no-answer', 'canceled', 'failed'];
+const FINAL_STATUSES = ['completed', 'busy', 'no-answer', 'canceled', 'failed', 'blocked'];
 
 // Age thresholds: calls older than these are considered stale
 const RINGING_MAX_AGE_SECONDS = 90;

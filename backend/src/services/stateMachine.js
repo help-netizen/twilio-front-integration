@@ -22,7 +22,8 @@ const CallStatus = {
     NO_ANSWER: 'no-answer',
     CANCELED: 'canceled',
     FAILED: 'failed',
-    VOICEMAIL_LEFT: 'voicemail_left'
+    VOICEMAIL_LEFT: 'voicemail_left',
+    BLOCKED: 'blocked'
 };
 
 /**
@@ -42,7 +43,8 @@ const FINAL_STATUSES = [
     CallStatus.NO_ANSWER,
     CallStatus.CANCELED,
     CallStatus.FAILED,
-    CallStatus.VOICEMAIL_LEFT
+    CallStatus.VOICEMAIL_LEFT,
+    CallStatus.BLOCKED
 ];
 
 /**
@@ -56,7 +58,8 @@ const VALID_TRANSITIONS = {
         CallStatus.IN_PROGRESS,
         CallStatus.COMPLETED,
         CallStatus.CANCELED,
-        CallStatus.FAILED
+        CallStatus.FAILED,
+        CallStatus.BLOCKED
     ],
     [CallStatus.INITIATED]: [
         CallStatus.RINGING,
@@ -65,7 +68,8 @@ const VALID_TRANSITIONS = {
         CallStatus.BUSY,
         CallStatus.NO_ANSWER,
         CallStatus.CANCELED,
-        CallStatus.FAILED
+        CallStatus.FAILED,
+        CallStatus.BLOCKED
     ],
     [CallStatus.RINGING]: [
         CallStatus.IN_PROGRESS,
@@ -73,7 +77,8 @@ const VALID_TRANSITIONS = {
         CallStatus.BUSY,
         CallStatus.NO_ANSWER,
         CallStatus.CANCELED,
-        CallStatus.FAILED
+        CallStatus.FAILED,
+        CallStatus.BLOCKED
     ],
     [CallStatus.IN_PROGRESS]: [
         CallStatus.COMPLETED,
@@ -91,7 +96,8 @@ const VALID_TRANSITIONS = {
     [CallStatus.NO_ANSWER]: [CallStatus.NO_ANSWER, CallStatus.VOICEMAIL_RECORDING],
     [CallStatus.CANCELED]: [CallStatus.CANCELED, CallStatus.VOICEMAIL_RECORDING],
     [CallStatus.FAILED]: [CallStatus.FAILED],
-    [CallStatus.VOICEMAIL_LEFT]: [CallStatus.VOICEMAIL_LEFT]
+    [CallStatus.VOICEMAIL_LEFT]: [CallStatus.VOICEMAIL_LEFT],
+    [CallStatus.BLOCKED]: [CallStatus.BLOCKED]
 };
 
 /**
@@ -209,6 +215,9 @@ function getStatusMetadata(status) {
             case CallStatus.VOICEMAIL_LEFT:
                 description = 'Voicemail was left';
                 break;
+            case CallStatus.BLOCKED:
+                description = 'Call was rejected by the blacklist';
+                break;
         }
     }
 
@@ -267,7 +276,7 @@ function applyTransition(currentState, newStatus, strict = false) {
     }
 
     // Check if should freeze
-    if (shouldFreeze({ ...currentState, ...newState })) {
+    if (module.exports.shouldFreeze({ ...currentState, ...newState })) {
         newState.sync_state = 'frozen';
     } else {
         newState.sync_state = currentState.sync_state || 'active';

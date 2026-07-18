@@ -79,6 +79,7 @@ import RoutingLogsPage from './pages/telephony/RoutingLogsPage';
 import OperationsDashboardPage from './pages/telephony/OperationsDashboardPage';
 import UserGroupsPage from './pages/telephony/UserGroupsPage';
 import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
+import BlacklistPage from './pages/telephony/BlacklistPage';
 
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import SettingsLayout from './components/settings/SettingsLayout';
@@ -184,6 +185,7 @@ function App() {
               <Route path="/settings/telephony/user-groups/:groupId" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupDetailPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/audio-library" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/blacklist" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><BlacklistPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />

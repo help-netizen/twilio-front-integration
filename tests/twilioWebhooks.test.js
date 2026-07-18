@@ -4,6 +4,7 @@ const mockBuildVoicemailTwiml = jest.fn(() => '<?xml version="1.0" encoding="UTF
 const mockAdvance = jest.fn();
 const mockDbQuery = jest.fn();
 const mockIsServiceBlocked = jest.fn();
+const mockIsCallerBlocked = jest.fn();
 const mockFindOrCreateTimeline = jest.fn();
 const mockUpsertCall = jest.fn();
 
@@ -19,6 +20,10 @@ jest.mock('../backend/src/db/connection', () => ({
 
 jest.mock('../backend/src/services/walletService', () => ({
     isServiceBlocked: (...args) => mockIsServiceBlocked(...args),
+}));
+
+jest.mock('../backend/src/services/callBlacklistService', () => ({
+    isBlocked: (...args) => mockIsCallerBlocked(...args),
 }));
 
 jest.mock('../backend/src/services/realtimeService', () => ({
@@ -72,6 +77,7 @@ describe('Twilio webhook handlers', () => {
         // C1): an inbound call whose company cannot be resolved is now
         // fail-closed REJECTED — inbound routing tests must resolve a company.
         mockDbQuery.mockResolvedValue({ rows: [] });
+        mockIsCallerBlocked.mockResolvedValue(false);
         mockIsServiceBlocked.mockResolvedValue(false);
         mockFindOrCreateTimeline.mockResolvedValue({ id: 'tl_1', contact_id: 'c_1' });
         mockUpsertCall.mockResolvedValue({ id: 'call_1', status: 'no-answer' });

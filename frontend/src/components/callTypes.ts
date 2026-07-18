@@ -20,7 +20,7 @@ export interface CallData {
     totalDuration?: number;
     talkTime?: number;
     waitTime?: number;
-    status: 'completed' | 'no-answer' | 'busy' | 'failed' | 'ringing' | 'in-progress' | 'voicemail_recording' | 'voicemail_left';
+    status: 'completed' | 'no-answer' | 'busy' | 'failed' | 'ringing' | 'in-progress' | 'voicemail_recording' | 'voicemail_left' | 'blocked';
     startTime: Date;
     endTime: Date;
     cost?: number;
@@ -45,6 +45,7 @@ export const STATUS_CONFIG: Record<string, { label: string; iconColor: string; i
     'in-progress': { label: 'in progress', iconColor: '#7c3aed', iconBg: '#ede9fe', badgeBg: '#ede9fe', badgeText: '#6d28d9' },
     'voicemail_recording': { label: 'leaving voicemail', iconColor: '#ea580c', iconBg: '#ffedd5', badgeBg: '#ffedd5', badgeText: '#c2410c' },
     'voicemail_left': { label: 'voicemail left', iconColor: '#dc2626', iconBg: '#fee2e2', badgeBg: '#fee2e2', badgeText: '#b91c1c' },
+    'blocked': { label: 'blocked', iconColor: 'var(--blanc-danger)', iconBg: 'color-mix(in srgb, var(--blanc-danger) 11%, transparent)', badgeBg: 'color-mix(in srgb, var(--blanc-danger) 11%, transparent)', badgeText: 'var(--blanc-danger)' },
 };
 
 export function formatDuration(seconds: number | null): string {

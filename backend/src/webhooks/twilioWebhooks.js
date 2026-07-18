@@ -4,6 +4,7 @@ const groupRouting = require('../services/groupRouting');
 const callFlowRuntime = require('../services/callFlowRuntime');
 const walletService = require('../services/walletService');
 const telephonyTenantService = require('../services/telephonyTenantService');
+const callBlacklistService = require('../services/callBlacklistService');
 const db = require('../db/connection');
 
 /** Resolve the owning company for one of our Twilio numbers (inbound `To`). */
@@ -45,6 +46,44 @@ async function recordMissedInbound({ callSid, from, to, companyId, payload }) {
         companyId,
     });
     if (call) realtimeService.publishCallUpdate({ eventType: 'call.updated', ...call });
+}
+
+/**
+ * Persist a blacklist rejection directly, bypassing the inbound inbox worker.
+ * That worker intentionally creates unread/Action Required/task work for normal
+ * inbound calls, none of which applies to a rejected caller.
+ */
+async function recordBlockedInbound({ callSid, from, to, companyId, payload }) {
+    const realtimeService = require('../services/realtimeService');
+    const now = new Date();
+    const timeline = await queries.findOrCreateTimeline(from, companyId);
+    const call = await queries.upsertCall({
+        callSid,
+        parentCallSid: null,
+        contactId: timeline.contact_id || null,
+        timelineId: timeline.id,
+        direction: 'inbound',
+        fromNumber: from,
+        toNumber: to,
+        status: 'blocked',
+        isFinal: true,
+        startedAt: now,
+        answeredAt: null,
+        endedAt: now,
+        durationSec: 0,
+        price: 0,
+        priceUnit: null,
+        lastEventTime: now,
+        rawLastPayload: payload,
+        companyId,
+    });
+    if (!call) throw new Error('Blocked call snapshot was not persisted');
+    try {
+        realtimeService.publishCallUpdate({ eventType: 'call.updated', ...call });
+    } catch (err) {
+        console.warn('[CallBlacklist] Realtime publish failed (non-blocking):', err.message);
+    }
+    return call;
 }
 
 /**
@@ -117,6 +156,10 @@ function buildHangupTwiml() {
 <Response>
     <Hangup />
 </Response>`;
+}
+
+function buildBlacklistRejectTwiml() {
+    return '<Response><Reject reason="busy"/></Response>';
 }
 
 /**
@@ -270,15 +313,6 @@ async function handleVoiceInbound(req, res) {
             return res.status(400).send('<Response><Reject/></Response>');
         }
 
-        // Store initial call in inbox
-        await ingestToInbox({
-            source: 'voice',
-            eventType: 'call.inbound',
-            payload: req.body,
-            req,
-            traceId
-        });
-
         // Determine direction and return TwiML
         const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
         const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
@@ -295,6 +329,14 @@ async function handleVoiceInbound(req, res) {
         let twiml;
 
         if (isOutbound) {
+            await ingestToInbox({
+                source: 'voice',
+                eventType: 'call.inbound',
+                payload: req.body,
+                req,
+                traceId
+            });
+
             let dialNumber = To;
             if (To && To.startsWith('sip:')) {
                 const match = To.match(/^sip:(\+?\d+)@/);
@@ -344,10 +386,55 @@ async function handleVoiceInbound(req, res) {
                 // Unknown account AND unknown number → fail-closed Reject: a
                 // company-less call must never reach the generic voicemail.
                 // No recordMissedInbound (no company → no orphan timeline).
+                await ingestToInbox({
+                    source: 'voice',
+                    eventType: 'call.inbound',
+                    payload: req.body,
+                    req,
+                    traceId
+                });
                 console.warn(`[${traceId}] inbound_call.rejected`, { event: 'inbound_call.rejected', reason: 'unknown_number', call_sid: CallSid, account_sid: req.body.AccountSid, to: To, from: From });
                 res.type('text/xml');
                 return res.send('<Response><Reject/></Response>');
             }
+
+            // CALL-BLACKLIST-001: this is the pre-routing hook. Both lookup and
+            // persistence are fail-open so blacklist availability can never be
+            // a dependency of the normal inbound route.
+            let isBlacklisted = false;
+            try {
+                isBlacklisted = await callBlacklistService.isBlocked(companyId, From);
+            } catch (err) {
+                console.warn(`[${traceId}] Blacklist lookup failed; continuing inbound route:`, err.message);
+            }
+
+            if (isBlacklisted) {
+                try {
+                    await recordBlockedInbound({
+                        callSid: CallSid,
+                        from: From,
+                        to: To,
+                        companyId,
+                        payload: req.body,
+                    });
+                    console.log(`[${traceId}] Inbound caller is blacklisted; rejecting ${From} → ${To}`);
+                    res.type('text/xml');
+                    return res.send(buildBlacklistRejectTwiml());
+                } catch (err) {
+                    console.warn(`[${traceId}] Blocked-call persistence failed; continuing inbound route:`, err.message);
+                }
+            }
+
+            // Normal inbound processing starts only after the blacklist hook.
+            // Successfully blocked calls bypass this event because its worker
+            // creates unread/Action Required/task work by design.
+            await ingestToInbox({
+                source: 'voice',
+                eventType: 'call.inbound',
+                payload: req.body,
+                req,
+                traceId
+            });
 
             // Wallet gate (−$5 grace floor): block inbound calls when the
             // company can't pay. Reject BEFORE answering so Twilio never starts
@@ -579,5 +666,6 @@ module.exports = {
     handleDialAction,
     handleVoicemailComplete,
     handleVoiceFallback,
-    validateTwilioSignature
+    validateTwilioSignature,
+    buildBlacklistRejectTwiml,
 };

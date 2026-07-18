@@ -16,6 +16,7 @@ describe('Call State Machine', () => {
             expect(isFinalStatus('no-answer')).toBe(true);
             expect(isFinalStatus('canceled')).toBe(true);
             expect(isFinalStatus('failed')).toBe(true);
+            expect(isFinalStatus('blocked')).toBe(true);
         });
 
         it('should return false for non-final statuses', () => {
@@ -47,6 +48,14 @@ describe('Call State Machine', () => {
         it('should allow final status to stay the same (idempotency)', () => {
             expect(validateTransition('completed', 'completed').valid).toBe(true);
             expect(validateTransition('failed', 'failed').valid).toBe(true);
+            expect(validateTransition('blocked', 'blocked').valid).toBe(true);
+        });
+
+        it('should allow pre-answer calls to enter the blocked terminal state', () => {
+            expect(validateTransition('queued', 'blocked').valid).toBe(true);
+            expect(validateTransition('initiated', 'blocked').valid).toBe(true);
+            expect(validateTransition('ringing', 'blocked').valid).toBe(true);
+            expect(validateTransition('blocked', 'completed').valid).toBe(false);
         });
 
         it('should reject backwards transitions', () => {
@@ -109,6 +118,16 @@ describe('Call State Machine', () => {
             expect(meta.isActive).toBe(false);
             expect(meta.category).toBe('final');
             expect(meta.description).toContain('completed successfully');
+        });
+
+        it('should describe blocked as its own terminal call state', () => {
+            const meta = getStatusMetadata(CallStatus.BLOCKED);
+            expect(meta).toMatchObject({
+                isFinal: true,
+                isActive: false,
+                category: 'final',
+                description: 'Call was rejected by the blacklist',
+            });
         });
 
         it('should include allowed transitions', () => {
