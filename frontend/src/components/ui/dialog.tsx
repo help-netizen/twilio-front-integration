@@ -5,6 +5,7 @@ import { OverlayClose } from "./OverlayClose"
 import { cardStackStyle, OVERLAY_Z, type DialogSize } from "./overlayLayout"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useOverlayDismiss } from "../../hooks/useOverlayDismiss"
+import { useSheetViewport } from "../../hooks/useSheetViewport"
 import { useOverlayStack } from "./OverlayStack"
 
 const Dialog = DialogPrimitive.Root
@@ -72,7 +73,7 @@ function DialogOpenProbe({ onOpenChange }: { onOpenChange: (open: boolean) => vo
 const DialogContent = React.forwardRef<
     React.ElementRef<typeof DialogPrimitive.Content>,
     React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize; variant?: "dialog" | "panel" }
->(({ className, children, size = "default", variant = "dialog", onInteractOutside, style, ...props }, ref) => {
+>(({ className, children, size = "default", variant = "dialog", onInteractOutside, onOpenAutoFocus, onFocusCapture, style, ...props }, ref) => {
     // TRUE while the portal'd content subtree is mounted = the dialog is really open.
     // LAYER-STACK-PHANTOM-001: this wrapper runs its hooks even for CLOSED dialogs
     // (only the Radix portal unmounts), so any stack registration keyed on "mounted"
@@ -85,6 +86,19 @@ const DialogContent = React.forwardRef<
     // DRAG-TO-DISMISS, so dialogs felt different from a real <BottomSheet>. We add both,
     // WITHOUT replacing Radix: it keeps ownership of state / Esc / focus / portal.
     const isMobile = useIsMobile()
+    const sheetViewport = useSheetViewport({ open: contentMounted, enabled: isMobile })
+    // SHEET-KEYBOARD-001 — mobile sheets must not programmatically focus the first
+    // field while the OS keyboard and VisualViewport are still transitioning. Keep
+    // focus inside Radix's modal scope by focusing the non-editable content itself;
+    // desktop falls through to Radix's byte-identical first-field autofocus.
+    const handleMobileSheetOpenAutoFocus = React.useCallback((event: Event) => {
+        onOpenAutoFocus?.(event)
+        if (!isMobile || event.defaultPrevented) return
+        event.preventDefault()
+        if (event.currentTarget instanceof HTMLElement) {
+            event.currentTarget.focus({ preventScroll: true })
+        }
+    }, [isMobile, onOpenAutoFocus])
     // A hidden Radix <Close> we click to dismiss on a completed drag — this routes the
     // close through Radix's own onOpenChange(false), exactly like the corner × does, so
     // no call site needs an extra prop.
@@ -156,6 +170,11 @@ const DialogContent = React.forwardRef<
         <DialogOverlay className={variant === "panel" ? "bg-transparent" : undefined} />
         <DialogPrimitive.Content
             ref={ref}
+            onOpenAutoFocus={handleMobileSheetOpenAutoFocus}
+            onFocusCapture={(event) => {
+                onFocusCapture?.(event)
+                sheetViewport.onFocusCapture(event)
+            }}
             onInteractOutside={(event) => {
                 // Keep this dialog open when the interaction comes from a STACKED
                 // dialog or a popover/select/dropdown layer rendered above it.
@@ -202,7 +221,17 @@ const DialogContent = React.forwardRef<
             // (cardStyle is {} on mobile, dragStyle is {} on desktop), so neither clobbers
             // the other's transform. Single desktop dialog with nothing above → both empty →
             // rendered style byte-identical to before Phase 3.
-            style={{ ...style, ...cardStyle, ...dragStyle }}
+            style={{
+                ...style,
+                ...cardStyle,
+                ...dragStyle,
+                ...(sheetViewport.geometry
+                    ? {
+                        bottom: sheetViewport.geometry.bottomInset,
+                        maxHeight: sheetViewport.geometry.usableHeight,
+                    }
+                    : {}),
+            }}
             {...props}
         >
             {/* Mobile-only grab handle (same markup / tokens as BottomSheet's). It is the
@@ -310,7 +339,7 @@ const DialogBody = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
         return (
             <div
                 ref={innerRef}
-                className={cn("flex-1 overflow-y-auto px-6 py-5", className)}
+                className={cn("min-h-0 flex-1 overflow-y-auto px-6 py-5", className)}
                 style={boxShadow ? { boxShadow } : undefined}
                 {...props}
             >

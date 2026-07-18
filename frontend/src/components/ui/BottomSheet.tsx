@@ -28,6 +28,8 @@
 import { useEffect, useRef } from 'react';
 import { Overlay } from './Overlay';
 import { OverlayClose } from './OverlayClose';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { useSheetViewport } from '../../hooks/useSheetViewport';
 
 export type BottomSheetSize = 'standard' | 'full' | 'auto';
 
@@ -74,6 +76,8 @@ export function BottomSheet({
 }: BottomSheetProps) {
     const headerVisible = showHeader ?? !!title;
     const label = title ?? ariaLabel;
+    const isMobile = useIsMobile();
+    const sheetViewport = useSheetViewport({ open, enabled: isMobile });
 
     // SELECT-IN-DIALOG-SCROLL-FIX-002 — when this sheet is opened from inside a Radix
     // MODAL Dialog (e.g. the State <Select> in the New Job form), Radix wraps the dialog
@@ -106,10 +110,16 @@ export function BottomSheet({
     // Height policy — one knob (tokens) drives standard/full; auto is content-sized.
     const heightStyle: React.CSSProperties =
         size === 'standard'
-            ? { height: 'var(--blanc-sheet-h)' }
+            ? { height: sheetViewport.geometry
+                ? `min(var(--blanc-sheet-h), ${sheetViewport.geometry.usableHeight}px)`
+                : 'var(--blanc-sheet-h)' }
             : size === 'full'
-                ? { height: 'var(--blanc-sheet-h-full)' }
-                : { maxHeight };
+                ? { height: sheetViewport.geometry
+                    ? `min(var(--blanc-sheet-h-full), ${sheetViewport.geometry.usableHeight}px)`
+                    : 'var(--blanc-sheet-h-full)' }
+                : { maxHeight: sheetViewport.geometry
+                    ? `min(${maxHeight}, ${sheetViewport.geometry.usableHeight}px)`
+                    : maxHeight };
 
     // No footer → the body owns the safe-area bottom padding; with a footer the footer does.
     const bodyPaddingBottom = footer ? undefined : 'max(env(safe-area-inset-bottom), 12px)';
@@ -136,11 +146,12 @@ export function BottomSheet({
             <div
                 {...panelProps}
                 aria-label={label}
+                onFocusCapture={sheetViewport.onFocusCapture}
                 style={{
                     position: 'fixed',
                     left: 0,
                     right: 0,
-                    bottom: 0,
+                    bottom: sheetViewport.geometry?.bottomInset ?? 0,
                     zIndex: z,
                     display: 'flex',
                     flexDirection: 'column',
