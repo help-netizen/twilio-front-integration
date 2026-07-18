@@ -45,12 +45,13 @@ function normalizeEmail(value) {
  * @param {string} companyId  Tenant scope (required — contact is read company-scoped).
  * @param {number|string} contactId  The contact linked to the job/lead.
  * @param {{ phone?: string|null, email?: string|null }} details  Values from the job/lead.
- * @param {{ source?: string, logPrefix?: string }} [opts]  source = audit tag (e.g. 'job_create').
+ * @param {{ source?: string, logPrefix?: string, redactEmail?: boolean }} [opts]
+ *   source = audit tag (e.g. 'job_create'); redactEmail keeps receipt PII out of logs.
  * @returns {Promise<{ phone: string, email: string }>} outcome per field:
  *   'added_primary' | 'added_secondary' | 'added' | 'already' | 'conflict' | 'no_slot' | 'skipped'
  */
 async function propagateContactDetails(companyId, contactId, details = {}, opts = {}) {
-    const { source = 'unknown', logPrefix = '[ContactPropagation]' } = opts;
+    const { source = 'unknown', logPrefix = '[ContactPropagation]', redactEmail = false } = opts;
     const result = { phone: 'skipped', email: 'skipped' };
 
     if (!companyId || contactId == null) return result;
@@ -73,7 +74,7 @@ async function propagateContactDetails(companyId, contactId, details = {}, opts 
 
     // ── Email ────────────────────────────────────────────────────────────────
     if (email) {
-        result.email = await propagateEmail(companyId, contact, email, { source, logPrefix });
+        result.email = await propagateEmail(companyId, contact, email, { source, logPrefix, redactEmail });
     }
 
     return result;
@@ -121,7 +122,7 @@ async function propagatePhone(companyId, contact, digits, rawPhone, { source, lo
     return slot === 'phone_e164' ? 'added_primary' : 'added_secondary';
 }
 
-async function propagateEmail(companyId, contact, email, { source, logPrefix }) {
+async function propagateEmail(companyId, contact, email, { source, logPrefix, redactEmail }) {
     if (String(contact.email || '').trim().toLowerCase() === email) return 'already';
     if (String(contact.email || '').trim()) return 'no_slot'; // holds a DIFFERENT email — human decision
 
@@ -137,15 +138,21 @@ async function propagateEmail(companyId, contact, email, { source, logPrefix }) 
         [companyId, contact.id, email]
     );
     if (owners.length > 0) {
-        console.log(`${logPrefix} email ${email} already belongs to contact ${owners[0].id} — not touching contact ${contact.id} (source=${source})`);
+        const emailLabel = redactEmail ? '[redacted]' : email;
+        console.log(`${logPrefix} email ${emailLabel} already belongs to contact ${owners[0].id} — not touching contact ${contact.id} (source=${source})`);
         return 'conflict';
     }
 
-    await db.query(
-        'UPDATE contacts SET email = $1, updated_at = NOW() WHERE id = $2 AND company_id = $3',
+    const updated = await db.query(
+        `UPDATE contacts SET email = $1, updated_at = NOW()
+          WHERE id = $2 AND company_id = $3
+            AND NULLIF(BTRIM(email), '') IS NULL`,
         [email, contact.id, companyId]
     );
-    console.log(`${logPrefix} contact ${contact.id}: email ← ${email} (source=${source})`);
+    if (updated.rowCount === 0) return 'no_slot';
+
+    const emailLabel = redactEmail ? '[redacted]' : email;
+    console.log(`${logPrefix} contact ${contact.id}: email ← ${emailLabel} (source=${source})`);
 
     // Attach the email history for this address (same seam CONTACT-EMAIL-MERGE-001 uses).
     try {
@@ -155,7 +162,7 @@ async function propagateEmail(companyId, contact, email, { source, logPrefix }) 
         console.error(`${logPrefix} inbox re-link failed (non-fatal): ${e.message}`);
     }
 
-    logEnrichmentEvent(companyId, contact.id, { email_added: email, source });
+    logEnrichmentEvent(companyId, contact.id, { email_added: redactEmail ? true : email, source });
     return 'added';
 }
 

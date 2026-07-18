@@ -122,6 +122,24 @@ router.get('/manual-card-sessions/:sessionId/result', requirePermission('payment
     }
 });
 
+// POST /api/payments/manual-card-sessions/:sessionId/receipt — ask Stripe to
+// send its native connected-account receipt; never write the email to logs.
+router.post('/manual-card-sessions/:sessionId/receipt', requirePermission('payments.collect_keyed'), async (req, res) => {
+    try {
+        const stripePaymentsService = require('../services/stripePaymentsService');
+        const companyId = req.companyFilter?.company_id;
+        const result = await stripePaymentsService.sendManualCardReceipt(
+            companyId,
+            req.params.sessionId,
+            req.body?.email
+        );
+        res.json(result);
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
 // GET /api/payments/:id — Get payment transaction by ID
 router.get('/:id', requirePermission('payments.view'), async (req, res) => {
     try {

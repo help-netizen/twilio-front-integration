@@ -17,6 +17,8 @@ interface Props {
     /** Job outstanding balance (dollars). Prefilled iff > 0, else the field starts blank. */
     outstanding: number;
     hasInvoices?: boolean;
+    contactEmail?: string | null;
+    hasContact?: boolean;
     onSuccess?: () => void;
     onPaymentConfirmed?: (payment: ManualCardSessionResult) => boolean | void | Promise<boolean | void>;
     onDone?: () => void;
@@ -70,6 +72,8 @@ export function CollectPaymentDialog({
     jobId,
     outstanding,
     hasInvoices,
+    contactEmail,
+    hasContact,
     onSuccess,
     onPaymentConfirmed,
     onDone,
@@ -245,6 +249,8 @@ export function CollectPaymentDialog({
                 amount={amountNum}
                 balanceBefore={outstanding}
                 jobHasInvoices={hasInvoices}
+                contactEmail={contactEmail}
+                hasContact={hasContact}
                 onPaymentConfirmed={manualCardCallbacks.onPaymentConfirmed}
                 onDone={manualCardCallbacks.onDone}
             />

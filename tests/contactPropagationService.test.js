@@ -140,7 +140,51 @@ describe('propagateContactDetails — email', () => {
         expect(res.email).toBe('added');
         const emailUpdate = updateCalls().find(([sql]) => sql.includes('email'));
         expect(emailUpdate[1][0]).toBe('leslie@example.com'); // normalized
+        expect(emailUpdate[0]).toContain("NULLIF(BTRIM(email), '') IS NULL");
+        expect(emailUpdate[1]).toEqual(['leslie@example.com', 7, COMPANY]);
         expect(mockLinkInboxMessages).toHaveBeenCalledWith(7, 'leslie@example.com', COMPANY);
+    });
+
+    test('the final SQL guard preserves a concurrent email write', async () => {
+        primeDb({ contact: { id: 7, phone_e164: '', secondary_phone: '', email: '' } });
+        const baseImplementation = mockQuery.getMockImplementation();
+        mockQuery.mockImplementation(async (sql, params) => {
+            if (/^UPDATE contacts SET/m.test(sql.trim())) return { rowCount: 0, rows: [] };
+            return baseImplementation(sql, params);
+        });
+
+        const res = await propagateContactDetails(COMPANY, 7, { email: 'new@example.com' }, {});
+
+        expect(res.email).toBe('no_slot');
+        expect(mockLinkInboxMessages).not.toHaveBeenCalled();
+        expect(mockLogEvent).not.toHaveBeenCalled();
+    });
+
+    test('receipt mode redacts the email from console and event logs', async () => {
+        primeDb({ contact: { id: 7, phone_e164: '', secondary_phone: '', email: '' } });
+        const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+        try {
+            await propagateContactDetails(
+                COMPANY,
+                7,
+                { email: 'private@example.com' },
+                { source: 'stripe_receipt', logPrefix: '[StripeReceipt]', redactEmail: true }
+            );
+
+            expect(log).toHaveBeenCalledWith(expect.stringContaining('email ← [redacted]'));
+            expect(log.mock.calls.flat().join(' ')).not.toContain('private@example.com');
+            expect(mockLogEvent).toHaveBeenCalledWith(
+                COMPANY,
+                'contact',
+                7,
+                'contact_enriched',
+                { email_added: true, source: 'stripe_receipt' },
+                'system'
+            );
+        } finally {
+            log.mockRestore();
+        }
     });
 
     test('never steals an email owned by another contact', async () => {

@@ -525,11 +525,7 @@ function parseSessionMetadata(value) {
     try { return JSON.parse(value); } catch { return {}; }
 }
 
-/**
- * Reconcile one merchant manual-card session without exposing Stripe/session ids.
- * Ownership and merchant/public classification are resolved before any Stripe call.
- */
-async function getManualCardSessionResult(companyId, sessionId) {
+async function getMerchantManualCardSession(companyId, sessionId) {
     if (!/^\d+$/.test(String(sessionId || ''))) {
         throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
     }
@@ -542,6 +538,15 @@ async function getManualCardSessionResult(companyId, sessionId) {
     if (!isMerchantManual || !session.stripe_payment_intent_id || !session.stripe_account_id) {
         throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
     }
+    return session;
+}
+
+/**
+ * Reconcile one merchant manual-card session without exposing Stripe/session ids.
+ * Ownership and merchant/public classification are resolved before any Stripe call.
+ */
+async function getManualCardSessionResult(companyId, sessionId) {
+    const session = await getMerchantManualCardSession(companyId, sessionId);
 
     const pi = await provider.retrievePaymentIntent(
         session.stripe_account_id,
@@ -564,6 +569,69 @@ async function getManualCardSessionResult(companyId, sessionId) {
         amount: Number(pi.amount || 0) / 100,
         brand: card?.brand || null,
         last4: card?.last4 || null,
+    };
+}
+
+const RECEIPT_EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeReceiptEmail(value) {
+    const email = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (!email || email.length > 254 || !RECEIPT_EMAIL_SHAPE.test(email)) {
+        throw new StripePaymentsError('INVALID_EMAIL', 'Enter a valid customer email', 400);
+    }
+    return email;
+}
+
+/**
+ * Send Stripe's native receipt for a successful merchant keyed-card charge.
+ * The contact lookup and optional fill-empty write are both resolved server-side.
+ */
+async function sendManualCardReceipt(companyId, sessionId, rawEmail) {
+    // Resolve tenant ownership + merchant/public classification before validation
+    // or any Stripe request so foreign/public session ids retain a uniform 404.
+    const session = await getMerchantManualCardSession(companyId, sessionId);
+    const email = normalizeReceiptEmail(rawEmail);
+
+    const pi = await provider.retrievePaymentIntent(
+        session.stripe_account_id,
+        session.stripe_payment_intent_id
+    );
+    if (pi.status !== 'succeeded') {
+        throw new StripePaymentsError('PAYMENT_NOT_SUCCEEDED', 'Payment has not succeeded', 409);
+    }
+    const chargeId = typeof pi.latest_charge === 'string'
+        ? pi.latest_charge
+        : pi.latest_charge?.id;
+    if (!chargeId) {
+        throw new StripePaymentsError('CHARGE_NOT_FOUND', 'Successful charge is unavailable', 409);
+    }
+
+    let contactEmailSaved = false;
+    const contact = await q.getSessionReceiptContact(companyId, session.id);
+    if (contact && !String(contact.email || '').trim()) {
+        const { propagateContactDetails } = require('./contactPropagationService');
+        const outcome = await propagateContactDetails(
+            companyId,
+            contact.id,
+            { email },
+            { source: 'stripe_receipt', logPrefix: '[StripeReceipt]', redactEmail: true }
+        );
+        contactEmailSaved = outcome.email === 'added';
+    }
+
+    // Complete the local fill-empty write before the external send. If the local
+    // write fails, Stripe has not emailed yet; if Stripe then fails, retrying is
+    // safe for the contact because the same fill-empty guard becomes a no-op.
+    const charge = await provider.updateChargeReceiptEmail(
+        session.stripe_account_id,
+        chargeId,
+        email
+    );
+
+    return {
+        sent: true,
+        receipt_url: charge.receipt_url || null,
+        contact_email_saved: contactEmailSaved,
     };
 }
 
@@ -940,6 +1008,7 @@ module.exports = {
     applyStripePayment,
     createManualCardSession,
     getManualCardSessionResult,
+    sendManualCardReceipt,
     getConnectionToken,
     createTapToPayIntent,
     cancelTerminalIntent,

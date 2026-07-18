@@ -119,7 +119,12 @@ export function JobDetailPanel({
                             {canViewFinancials && (
                                 <>
                                     <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
-                                    <JobFinancialsTab jobId={job.id} leadSerialId={job.lead_serial_id} />
+                                    <JobFinancialsTab
+                                        jobId={job.id}
+                                        leadSerialId={job.lead_serial_id}
+                                        contactEmail={contactInfo?.email}
+                                        hasContact={Boolean(contactInfo?.id || job.contact_id)}
+                                    />
                                 </>
                             )}
                         </div>
@@ -150,7 +155,12 @@ export function JobDetailPanel({
 
                     {canViewFinancials && (
                         <TabsContent value="financials" className="flex-1 flex flex-col mt-0 data-[state=inactive]:hidden">
-                            <JobFinancialsTab jobId={job.id} leadSerialId={job.lead_serial_id} />
+                            <JobFinancialsTab
+                                jobId={job.id}
+                                leadSerialId={job.lead_serial_id}
+                                contactEmail={contactInfo?.email}
+                                hasContact={Boolean(contactInfo?.id || job.contact_id)}
+                            />
                         </TabsContent>
                     )}
                 </Tabs>

@@ -179,6 +179,17 @@ async function retrievePaymentMethod(accountId, paymentMethodId) {
     return call('GET', `/payment_methods/${encodeURIComponent(paymentMethodId)}`, undefined, { stripeAccount: accountId });
 }
 
+/**
+ * Ask Stripe to email its native receipt for an existing direct charge.
+ * Stripe sends the receipt when receipt_email is updated in live mode; test mode
+ * exposes receipt_email / receipt_url on the returned Charge without delivery.
+ */
+async function updateChargeReceiptEmail(accountId, chargeId, receiptEmail) {
+    return call('POST', `/charges/${encodeURIComponent(chargeId)}`, {
+        receipt_email: receiptEmail,
+    }, { stripeAccount: accountId });
+}
+
 /** Terminal connection token (scoped to the connected account). */
 async function createConnectionToken(accountId, { locationId } = {}) {
     return call('POST', '/terminal/connection_tokens', locationId ? { location: locationId } : {}, { stripeAccount: accountId });
@@ -259,6 +270,7 @@ module.exports = {
     createCardPaymentIntent,
     retrievePaymentIntent,
     retrievePaymentMethod,
+    updateChargeReceiptEmail,
     createConnectionToken,
     createTerminalLocation,
     createTerminalPaymentIntent,

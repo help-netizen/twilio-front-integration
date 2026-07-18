@@ -35,3 +35,25 @@ describe('stripePaymentsQueries.getSessionById', () => {
         await expect(queries.getSessionById(COMPANY, 99)).resolves.toBeNull();
     });
 });
+
+describe('stripePaymentsQueries.getSessionReceiptContact', () => {
+    it('resolves session/invoice/job contact linkage with every table tenant-scoped', async () => {
+        const contact = { id: 5, email: null };
+        db.query.mockResolvedValue({ rows: [contact] });
+
+        await expect(queries.getSessionReceiptContact(COMPANY, 11)).resolves.toEqual(contact);
+
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain('i.company_id = s.company_id');
+        expect(sql).toContain('j.company_id = s.company_id');
+        expect(sql).toContain('c.company_id = s.company_id');
+        expect(sql).toContain('WHERE s.company_id = $1 AND s.id = $2');
+        expect(sql).toContain('COALESCE(s.contact_id, i.contact_id, j.contact_id)');
+        expect(params).toEqual([COMPANY, 11]);
+    });
+
+    it('returns null when the session has no bound contact in the requested company', async () => {
+        db.query.mockResolvedValue({ rows: [] });
+        await expect(queries.getSessionReceiptContact(COMPANY, 11)).resolves.toBeNull();
+    });
+});

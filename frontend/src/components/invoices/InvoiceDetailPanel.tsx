@@ -871,6 +871,8 @@ export function InvoiceDetailPanel({
                 invoiceId={invoice.id}
                 amount={manualCardAmount}
                 balanceBefore={manualCardAmount || 0}
+                contactEmail={invoice.contact_email}
+                hasContact={invoice.contact_id != null}
                 onPaymentConfirmed={revalidateAfterCardPayment}
             />
         </div>

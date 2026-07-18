@@ -77,11 +77,13 @@ function MetricCell({ label, value, tone = 'default' }: { label: string; value: 
 interface Props {
     jobId: number;
     leadSerialId?: number | null;
+    contactEmail?: string | null;
+    hasContact?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
+export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact }: Props) {
     const {
         estimates, invoices, jobPayments, loading,
         selectedEstimate, selectedInvoice,
@@ -556,6 +558,8 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                 jobId={jobId}
                 outstanding={totalDue}
                 hasInvoices={invoices.length > 0}
+                contactEmail={contactEmail}
+                hasContact={hasContact}
                 onSuccess={() => refresh()}
                 onPaymentConfirmed={revalidateAfterPayment}
             />

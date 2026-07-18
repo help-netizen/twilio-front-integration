@@ -233,6 +233,29 @@ async function getSessionById(companyId, id) {
     return rows[0] || null;
 }
 
+/**
+ * Resolve the current contact bound to a payment session. The session snapshot
+ * wins; invoice/job linkage is a fallback for older or initially unbound rows.
+ * Every join is pinned to the session's tenant.
+ */
+async function getSessionReceiptContact(companyId, sessionId) {
+    await ensureMarketplaceSchema();
+    const { rows } = await db.query(
+        `SELECT c.id, c.email
+           FROM stripe_payment_sessions s
+           LEFT JOIN invoices i
+             ON i.id = s.invoice_id AND i.company_id = s.company_id
+           LEFT JOIN jobs j
+             ON j.id = s.job_id AND j.company_id = s.company_id
+           JOIN contacts c
+             ON c.id = COALESCE(s.contact_id, i.contact_id, j.contact_id)
+            AND c.company_id = s.company_id
+          WHERE s.company_id = $1 AND s.id = $2`,
+        [companyId, sessionId]
+    );
+    return rows[0] || null;
+}
+
 // ---- terminal locations -----------------------------------------------------
 
 async function listTerminalLocations(companyId) {
@@ -300,6 +323,7 @@ module.exports = {
     getSessionByCheckoutId,
     getSessionByPaymentIntent,
     getSessionById,
+    getSessionReceiptContact,
     updateSession,
     listSessionsForInvoice,
     listSessionsForJob,

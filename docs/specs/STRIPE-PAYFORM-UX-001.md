@@ -337,3 +337,78 @@ cd frontend && env -u NODE_USE_SYSTEM_CA npm test
 - **Webhook lag:** Stripe success can precede the canonical ledger. Keep success truthful, revalidate Finance in the parent, and never convert delayed ledger observation into payment failure.
 - **Ambiguous transport failure:** A second charge is the highest-risk outcome. Reconcile the existing session/PI and gate retry strictly on `requires_payment_method`.
 - **Credit semantics:** Negative Due here means overpayment/standalone job credit, not a refund or stored-wallet balance. Use clear “Credit” copy and keep refund accounting out of scope.
+
+---
+
+## Addendum — STRIPE-RECEIPT-001
+
+### Goal and settled decisions
+
+After an exact-`succeeded` merchant keyed-card charge, the persistent success panel optionally sends Stripe's native receipt from the connected account. The original receipt non-goal above is superseded only for this merchant success block.
+
+- Use Stripe's documented post-success path: update the successful Charge's `receipt_email` with the connected account in `Stripe-Account`. No Albusto template or mailer. ([Charge update](https://docs.stripe.com/api/charges/update?lang=node), [receipts](https://docs.stripe.com/receipts), [connected-account requests](https://docs.stripe.com/api/connected-accounts))
+- Live mode sends the native email. Test mode does not deliver it; QA asserts the updated Charge has the submitted `receipt_email` and a non-empty `receipt_url`.
+- Add `POST /api/payments/manual-card-sessions/:sessionId/receipt` with body `{ "email": string }`, real `payments.collect_keyed`, tenant from `req.companyFilter.company_id`, and the same merchant-session ownership/public exclusion as result reconciliation. Missing, foreign, public, and non-manual sessions 404 before Stripe.
+- Validate and normalize email server-side. Never echo an invalid address in an error or write a receipt address to application/event logs.
+- Resolve the current contact server-side from the company-scoped session, with current invoice/job contact linkage as fallback. If its scalar email is empty, reuse `JOB-CONTACT-SYNC-001` propagation in PII-redacted mode. The final SQL write includes an atomic empty predicate. An existing value is never overwritten; an unbound contact means send only.
+- Response is `{ sent, receipt_url, contact_email_saved }`. It contains no email, Stripe ids, client secret, metadata, or account id.
+- Job and invoice entry points pass their known contact email and contact-existence flag to the one shared `ManualCardDialog`; the backend never trusts these values for persistence.
+- Public invoice pay, its Payment Element, and its automatic-method PaymentIntent path remain untouched.
+
+### Success-panel contract
+
+The optional block sits below brand/last4 and above Done.
+
+| State | Field/button | Copy and behavior |
+|---|---|---|
+| Prefilled | Editable floating field `Customer email`; secondary violet `Send receipt` | Use the known contact email when present. |
+| Empty contact | Editable empty field | Show only when a contact is actually bound and its known email is empty: `This email will be saved to the customer's contact.` |
+| Sending | Field and button locked; spinner | `Sending receipt…`; Done remains enabled and closes immediately if chosen. |
+| Sent | Field/button locked; check state | `Receipt sent to <email>`; no second send in this panel instance. |
+| Failure | Field editable; retry enabled | Inline `We couldn’t send the receipt. Try again.` Done remains enabled. |
+
+Sending is optional. Payment success and Finance revalidation do not depend on receipt delivery or contact persistence.
+
+### Exact touch list
+
+| File:line | Change |
+|---|---|
+| `backend/src/services/stripeConnectProvider.js:187-191` | Connected-account Charge update with `receipt_email`. |
+| `backend/src/db/stripePaymentsQueries.js:241-260` | Company-scoped session/invoice/job contact resolution. |
+| `backend/src/services/stripePaymentsService.js:528-634` | Shared merchant guard reuse, email validation, exact-succeeded/Charge resolution, native receipt send, and fill-empty decision. |
+| `backend/src/routes/payments.js:125-143` | Literal receipt POST before `/:id`, keyed permission, and `req.companyFilter` tenant. |
+| `backend/src/services/contactPropagationService.js:52-164` | Opt-in PII redaction and atomic fill-empty email write in the existing propagation path. |
+| `frontend/src/services/stripePaymentsApi.ts:48-110` | Receipt result type and authenticated POST client. |
+| `frontend/src/components/invoices/ManualCardDialog.tsx:28-91,304-572,679-718` | Receipt state, prefill/edit/send/retry/sent behavior, caption predicate, and Done independence. |
+| `frontend/src/components/invoices/InvoiceDetailPanel.tsx:868-876` | Invoice contact prefill/context wiring. |
+| `frontend/src/components/jobs/CollectPaymentDialog.tsx:13-25,241-256` | Shared job receipt context passthrough. |
+| `frontend/src/components/jobs/JobFinancialsTab.tsx:77-84,553-565` | Job Finance contact context passthrough. |
+| `frontend/src/components/jobs/JobDetailPanel.tsx:120-127,156-163` | Known contact email/existence supplied from hydrated job detail. |
+| `tests/stripeManualCardReceipt.routes.test.js:new` | 401/403, real permission, company source, foreign 404, validation mapping, route ordering. |
+| `tests/stripeConnectProvider.test.js:80-106` | Charge body, `Stripe-Account`, returned `receipt_email` and `receipt_url`. |
+| `tests/stripePayments.test.js:384-493` | Succeeded-only send, merchant/public exclusion before Stripe, validation, fill-empty, never-overwrite, and no-contact semantics. |
+| `tests/stripePaymentsQueries.test.js:39-59` | Tenant predicates on every receipt-contact join. |
+| `tests/contactPropagationService.test.js:135-193` | Atomic race guard and receipt-mode PII redaction. |
+| `frontend/src/components/invoices/ManualCardDialog.test.tsx:183-294` | Prefill/edit, caption-only-when-empty, sending/sent lock, API projection, and Done independence. |
+
+### Test and QA plan
+
+```bash
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/stripeConnectProvider.test.js tests/stripeManualCardResult.routes.test.js tests/stripeManualCardReceipt.routes.test.js tests/stripePaymentsQueries.test.js tests/stripePayments.test.js tests/stripeAdhocPay.test.js tests/contactPropagationService.test.js --testPathIgnorePatterns /node_modules/ --runInBand --forceExit
+cd frontend && env -u NODE_USE_SYSTEM_CA npm run build
+cd frontend && env -u NODE_USE_SYSTEM_CA npm test
+```
+
+Manual connected-account QA:
+
+1. In test mode, complete a merchant keyed-card payment, send a receipt, and verify the connected-account Charge now has the submitted `receipt_email` and a `receipt_url`; no inbox delivery is expected.
+2. In live mode, send to an owned address and verify Stripe's branded native receipt arrives.
+3. Repeat with contact email present, contact email empty, and no contact; verify respectively no contact write, one fill-empty write, and send-only.
+4. Edit a prefilled address and verify Stripe receives the edit while the existing contact remains unchanged.
+5. Verify Done works before sending, during sending, after failure, and after sent.
+
+### Addendum non-goals and risks
+
+- No public-pay receipt UI/API behavior, custom email, receipt template, receipt PDF generation, print/download action, automatic send, or delivery-status webhook.
+- No overwrite/merge resolution for an existing contact email, refunds, resend history, or receipt settings UI.
+- A transport failure after Stripe accepts the Charge update can make a retry send another native receipt; this endpoint never risks a second charge, but Stripe provides no local atomic transaction spanning email delivery and contact persistence.

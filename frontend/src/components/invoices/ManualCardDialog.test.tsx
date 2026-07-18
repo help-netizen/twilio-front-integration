@@ -20,12 +20,16 @@ import {
     canDismissManualCard,
     completeManualCardDialog,
     createCardElementOptions,
+    createManualCardReceiptState,
     decideConfirmation,
     manualCardReducer,
+    manualCardReceiptReducer,
     mountStripeCard,
     reconcileManualCardSession,
     requestManualCardDismiss,
     settleFinanceSync,
+    shouldShowReceiptContactSaveCaption,
+    validateReceiptEmail,
 } from './ManualCardDialog';
 
 const SUCCEEDED: ManualCardSessionResult = {
@@ -198,6 +202,61 @@ describe('confirmed and Done callback split', () => {
         expect(onOpenChange).toHaveBeenCalledWith(false);
         expect(onDone).toHaveBeenCalledOnce();
     });
+
+    it('keeps Done independent while an optional receipt request is sending', () => {
+        const onOpenChange = vi.fn();
+        const onDone = vi.fn();
+        const sending = manualCardReceiptReducer(
+            createManualCardReceiptState('customer@example.com'),
+            { type: 'SEND' },
+        );
+
+        expect(sending.phase).toBe('sending');
+        completeManualCardDialog(onOpenChange, onDone);
+        expect(onOpenChange).toHaveBeenCalledWith(false);
+        expect(onDone).toHaveBeenCalledOnce();
+    });
+});
+
+describe('optional Stripe-native receipt state', () => {
+    it('prefills from contact, stays editable, and does not replace a technician edit', () => {
+        let receipt = createManualCardReceiptState(' contact@example.com ');
+        expect(receipt.email).toBe('contact@example.com');
+
+        receipt = manualCardReceiptReducer(receipt, { type: 'EDIT', email: 'edited@example.com' });
+        receipt = manualCardReceiptReducer(receipt, { type: 'PREFILL', email: 'late@example.com' });
+        expect(receipt).toMatchObject({ phase: 'idle', email: 'edited@example.com', dirty: true });
+    });
+
+    it('shows the save caption only for a bound contact whose known email is empty', () => {
+        expect(shouldShowReceiptContactSaveCaption(true, '', 'idle')).toBe(true);
+        expect(shouldShowReceiptContactSaveCaption(true, null, 'sending')).toBe(true);
+        expect(shouldShowReceiptContactSaveCaption(true, 'known@example.com', 'idle')).toBe(false);
+        expect(shouldShowReceiptContactSaveCaption(true, undefined, 'idle')).toBe(false);
+        expect(shouldShowReceiptContactSaveCaption(false, '', 'idle')).toBe(false);
+        expect(shouldShowReceiptContactSaveCaption(true, '', 'sent')).toBe(false);
+    });
+
+    it('locks the sent field/button state and records the exact recipient', () => {
+        let receipt = createManualCardReceiptState('customer@example.com');
+        receipt = manualCardReceiptReducer(receipt, { type: 'SEND' });
+        expect(receipt.phase).toBe('sending');
+        receipt = manualCardReceiptReducer(receipt, { type: 'SENT', email: 'customer@example.com' });
+        const sent = receipt;
+        expect(sent).toMatchObject({
+            phase: 'sent',
+            email: 'customer@example.com',
+            sentEmail: 'customer@example.com',
+            error: null,
+        });
+        expect(manualCardReceiptReducer(sent, { type: 'EDIT', email: 'other@example.com' })).toBe(sent);
+    });
+
+    it('validates email locally while leaving the server authoritative', () => {
+        expect(validateReceiptEmail('customer@example.com')).toBeNull();
+        expect(validateReceiptEmail('not-an-email')).toBe('Enter a valid customer email.');
+        expect(validateReceiptEmail('two words@example.com')).toBe('Enter a valid customer email.');
+    });
 });
 
 describe('manual card result API', () => {
@@ -208,5 +267,30 @@ describe('manual card result API', () => {
         expect(result).toEqual(SUCCEEDED);
         expect(authedFetch).toHaveBeenCalledWith('/api/payments/manual-card-sessions/11/result');
         expect(Object.keys(result).sort()).toEqual(['amount', 'brand', 'last4', 'status']);
+    });
+
+    it('posts the receipt email and projects the native receipt result', async () => {
+        authedFetch.mockResolvedValueOnce(jsonResponse({
+            sent: true,
+            receipt_url: 'https://pay.stripe.com/receipts/test',
+            contact_email_saved: true,
+            email: 'must-not-project@example.com',
+        }));
+
+        const result = await stripePaymentsApi.sendManualCardReceipt(11, 'customer@example.com');
+
+        expect(result).toEqual({
+            sent: true,
+            receipt_url: 'https://pay.stripe.com/receipts/test',
+            contact_email_saved: true,
+        });
+        expect(authedFetch).toHaveBeenCalledWith(
+            '/api/payments/manual-card-sessions/11/receipt',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: 'customer@example.com' }),
+            },
+        );
     });
 });

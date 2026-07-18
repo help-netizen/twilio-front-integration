@@ -2450,3 +2450,9 @@ GPT-implementer: 2 волны ACCEPT (backend+frontend), 0 fix-раундов. T
 
 ---
 
+## 2026-07-18 — STRIPE-RECEIPT-001: чек Stripe с success-экрана + email в контакт (fill-empty)
+
+Продолжение STRIPE-PAYFORM-UX-001: на экране «Payment successful» появился опциональный блок отправки родного Stripe-чека клиенту. Поле «Customer email» подставляется из контакта (редактируемое); отправка = `POST /api/payments/manual-card-sessions/:id/receipt` (те же гарды, что у result-endpoint: `payments.collect_keyed`, company-scope, merchant-only, 404-до-Stripe, server-side валидация email) → backend ставит `receipt_email` на успешный Charge connected-аккаунта (`Stripe-Account`) — чек шлёт сам Stripe, своего мейлера нет. Если у привязанного контакта email ПУСТ — введённый адрес сохраняется в карточку через канонический `contactPropagationService` (fill-empty/never-steal; сервер перерезолвивает контакт сам, клиенту не верит), с подписью на форме «This email will be saved to the customer's contact» — подпись видна ТОЛЬКО когда сохранение реально произойдёт. Существующий email никогда не перезаписывается. PII: email редактируется из логов (`redactEmail:true`), ответ `{sent, receipt_url, contact_email_saved}` без email/Stripe-id. Done работает без отправки; ошибка отправки не блокирует закрытие. Тандем (та же сессия Codex): backend jest 135/135, FE build 0 + vitest 85/85, саботаж never-overwrite red→green. ⚠️ test-mode Stripe письма не шлёт — реальную доставку проверять на live после деплоя.
+
+---
+

@@ -45,6 +45,12 @@ export interface ManualCardSessionResult {
     last4: string | null;
 }
 
+export interface ManualCardReceiptResult {
+    sent: boolean;
+    receipt_url: string | null;
+    contact_email_saved: boolean;
+}
+
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     const res = await authedFetch(`${API_BASE}${path}`, {
         ...opts,
@@ -72,6 +78,24 @@ async function getManualCardSessionResult(sessionId: number): Promise<ManualCard
     };
 }
 
+async function sendManualCardReceipt(sessionId: number, email: string): Promise<ManualCardReceiptResult> {
+    const res = await authedFetch(`/api/payments/manual-card-sessions/${sessionId}/receipt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+        const message = typeof json?.error === 'string' ? json.error : json?.error?.message;
+        throw new Error(message || `Request failed: ${res.status}`);
+    }
+    return {
+        sent: json.sent === true,
+        receipt_url: json.receipt_url ?? null,
+        contact_email_saved: json.contact_email_saved === true,
+    };
+}
+
 export const stripePaymentsApi = {
     getStatus: (): Promise<{ status: StripePaymentsStatus }> => apiFetch('/status'),
     connect: (): Promise<{ account_id: string; onboarding_url: string }> =>
@@ -83,6 +107,7 @@ export const stripePaymentsApi = {
     disconnect: (): Promise<{ disconnected: boolean }> =>
         apiFetch('/disconnect', { method: 'POST' }),
     getManualCardSessionResult,
+    sendManualCardReceipt,
 };
 
 // Invoice payment links (mounted under /api/invoices/:id/...)
