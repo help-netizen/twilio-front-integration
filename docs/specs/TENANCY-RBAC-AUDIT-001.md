@@ -131,10 +131,11 @@ CRM read key, so the closest existing key is identified where needed.
 ## Additional tenancy findings exposed by the USE checks
 
 The lint deliberately baselines existing occurrences instead of changing product code in
-this audit step. Highest-risk baselines are:
+this audit step. Step 2 rechecked the historical outbound phone-cancel incident: it is no
+longer live; `outboundCallCancellationService.cancel` scopes its lookup and all mutations by
+`company_id`, with `outboundCancelTenantIsolation.test.js` as the passing `T-blast` guard.
+Highest-risk baselines still open are:
 
-- `outboundLeadCallService.js:815`: phone-keyed update across active outbound attempts has
-  no `company_id` predicate—the exact natural-key action-leak class from the frame.
 - `calls.js:337`: SMS conversation read-state update uses customer digits without company scope.
 - `inboxWorker.js:459,474,540,556,564,680,752,847` and
   `reconcileStale.js:129,194,213,250`: background writes use Twilio SIDs without an explicit

@@ -8,6 +8,8 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-020 (2026-07-18)** — Natural-key actions (phone/email/SID/external id) MUST also scope by `company_id`; seed two tenants with the same key and use `T-blast` to prove the other row is byte-unchanged.
+- **L-019 (2026-07-18)** — RBAC must be designed, not inferred: every new route declares one catalog permission and adds a deny test for every `R-matrix` cell.
 - **L-018 (2026-07-18)** — Worktree `frontend/node_modules` goes STALE after pulling master: new deps
   (e.g. `heic-to`, `vitest`) are declared in package.json but not installed, so `npm run build` fails on
   missing packages that have nothing to do with your diff. Codex's sandbox has NO network — do not treat

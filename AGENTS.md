@@ -33,6 +33,9 @@ Layout: `backend/src/` (routes/services/db), `frontend/src/` (pages/components/h
 4. Entity access by id: `AND company_id = $N`; foreign rows → 404.
 5. SQL always parameterized. Never interpolate user input.
 6. `created_by` / audit FK columns = `req.user.crmUser.id`, NEVER `req.user.sub` (sub ≠ crm_users.id → FK 500).
+7. Every company-scoped surface MUST test `T-own`, `T-foreign` (404 + unchanged), `T-blast`, and every `R-matrix` deny cell; see `docs/specs/TENANCY-RBAC-CANON.md`.
+8. Natural keys (phone/email/SID/external id) are NOT tenant-unique; pair them with `company_id`.
+9. No `req` means no `companyFilter`: workers/cron must take `companyId` explicitly.
 
 ## Design canon (frontend)
 

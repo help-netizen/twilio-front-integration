@@ -95,12 +95,25 @@ the screens BEFORE building — UX-first means the screen is the spec.
 task list T1..Tn with per-task acceptance criteria, verify commands, test plan, and
 a named sabotage-minimum (each control = invariant → how to break → which test goes
 red). Codex writes the spec file to `docs/specs/<FEATURE-ID>.md` (lowercase docs/ —
-case-collision gotcha). You red-pen the spec diff, fix only what's wrong, approve.
+case-collision gotcha), including a filled `Tenancy & Roles` table from
+`docs/specs/TENANCY-RBAC-CANON.md`. An empty/missing table rejects the spec before
+code. You red-pen the spec diff, fix only what's wrong, approve.
 Skip Turn 2 for S-size tasks — fold the plan into Turn 1.
 
 ### Phase 2 — Implement (Codex, full authority; you gate per task)
 Same session implements task-by-task (or one pass for S/M). Codex applies patches,
 writes tests, runs its own verify (build + jest), reports per the contract.
+
+**Mandatory tenancy/RBAC red-team turn:** after implementation, send a separate
+adversarial turn whose only job is to break tenant and role boundaries. The
+implementer cannot audit its own blind spot; keep this turn attack-only.
+
+```text
+You are the attacker. Your ONLY job is to find where this diff leaks between
+companies or to a role that should not have access. Trace routes, workers,
+webhooks, SSE, aggregates, natural keys, and side effects. List concrete attack
+paths with file:line and the missing/ineffective test. Do not implement fixes.
+```
 
 Your per-task gate (cheap):
 1. `git status --short` (L-016) + `git diff --stat` (scope sanity — files match the plan).
@@ -109,8 +122,9 @@ Your per-task gate (cheap):
    actor/created_by = `crmUser.id` never `sub`, no protected files
    (src/server.js, authedFetch.ts, useRealtimeEvents.ts, backend/db/ without a plan),
    public routes rate-limited/host-gated, no secrets in code or logs.
-4. ONE sabotage control on the task's riskiest invariant: `cp <file> /tmp/bak` →
-   break → expect RED → restore from the backup (NEVER `git checkout` — L-015).
+4. Company-scoped surface touched → REQUIRED tenant-guard sabotage: remove its
+   tenant guard → expect the tenancy suite RED → restore from `cp` backup (NEVER
+   `git checkout` — L-015). Otherwise sabotage the task's riskiest invariant.
 5. Verdict ACCEPT (commit) or FIX (resume with a numbered list; max 3 rounds, then
    finish the remainder yourself and note why).
 
