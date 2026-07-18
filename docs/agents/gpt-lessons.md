@@ -8,6 +8,12 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-018 (2026-07-18)** — Worktree `frontend/node_modules` goes STALE after pulling master: new deps
+  (e.g. `heic-to`, `vitest`) are declared in package.json but not installed, so `npm run build` fails on
+  missing packages that have nothing to do with your diff. Codex's sandbox has NO network — do not treat
+  this as your bug and do not try to install. Report it as an environment gap; the architect runs
+  `npm install` and owns the build gate.
+
 - **L-017 (2026-07-16)** — NEVER put `&` inside a harness run_in_background Bash command that
   launches codex: the wrapper shell exits instantly (fires a FALSE "completed" notification) while
   codex keeps running detached (PPID 1) — you then misread half-written logs as L-016 and pile a
