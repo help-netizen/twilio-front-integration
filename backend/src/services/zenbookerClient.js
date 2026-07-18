@@ -35,6 +35,10 @@ const ZENBOOKER_TIMEOUT_MS = Number(process.env.ZENBOOKER_TIMEOUT_MS) || 30000;
 // — a cross-tenant data leak. Configurable via env; defaults to the seed company.
 const ZENBOOKER_DEFAULT_COMPANY_ID = process.env.ZENBOOKER_DEFAULT_COMPANY_ID || '00000000-0000-0000-0000-000000000001';
 
+function isDefaultZenbookerCompany(companyId) {
+    return !!companyId && companyId === ZENBOOKER_DEFAULT_COMPANY_ID;
+}
+
 let client = null;
 
 /**
@@ -280,38 +284,77 @@ async function createJob(payload) {
 
 // ─── Transactions / Invoices / Jobs ───────────────────────────────────────────
 
+function transactionQueryParams(params = {}) {
+    const queryParams = {
+        limit: params.limit || 100,
+        cursor: params.cursor ?? 0,
+    };
+    if (params.date_from) queryParams.transaction_date_after = params.date_from;
+    if (params.date_to) queryParams.transaction_date_before = params.date_to;
+    if (params.status) queryParams.status = params.status;
+    if (params.payment_method) queryParams.payment_method = params.payment_method;
+    if (params.sort_by) queryParams.sort_by = params.sort_by;
+    if (params.sort_order) queryParams.sort_order = params.sort_order;
+    return queryParams;
+}
+
+async function getTransactionsPageWithClient(apiClient, params = {}) {
+    const res = await retryRequest(() =>
+        apiClient.get('/transactions', { params: transactionQueryParams(params) })
+    );
+    const data = res.data || {};
+    return {
+        results: data.results || [],
+        has_more: !!data.has_more,
+        next_cursor: data.next_cursor ?? null,
+    };
+}
+
+async function getTransactionsWithClient(apiClient, params = {}) {
+    const allResults = [];
+    let cursor = params.cursor ?? 0;
+
+    while (true) {
+        const page = await getTransactionsPageWithClient(apiClient, { ...params, cursor });
+        allResults.push(...page.results);
+        if (!page.has_more) break;
+        if (page.next_cursor == null || page.next_cursor === cursor) {
+            throw new Error('Zenbooker returned has_more without a usable next_cursor');
+        }
+        cursor = page.next_cursor;
+    }
+
+    return allResults;
+}
+
+/**
+ * Resolve the Zenbooker client once and return payment-read helpers bound to
+ * that company. Payment sync must use this instead of the unscoped globals.
+ */
+async function getPaymentReaderForCompany(companyId) {
+    const apiClient = await getClientForCompany(companyId);
+    if (!apiClient) return null;
+    return {
+        getTransactions: params => getTransactionsWithClient(apiClient, params),
+        getTransactionsPage: params => getTransactionsPageWithClient(apiClient, params),
+        getInvoice: async id => {
+            const res = await retryRequest(() => apiClient.get(`/invoices/${id}`));
+            return res.data;
+        },
+        getJob: async id => {
+            const res = await retryRequest(() => apiClient.get(`/jobs/${id}`));
+            return res.data;
+        },
+    };
+}
+
 /**
  * Fetch all transactions for a date range, auto-paginating.
  * @param {Object} params - { date_from, date_to, status?, payment_method?, sort_by?, sort_order? }
  * @returns {Array} All transaction objects
  */
 async function getTransactions(params = {}) {
-    const allResults = [];
-    let cursor = 0;
-    const limit = 100; // max allowed by API
-
-    while (true) {
-        const queryParams = { limit, cursor };
-        if (params.date_from) queryParams.transaction_date_after = params.date_from;
-        if (params.date_to) queryParams.transaction_date_before = params.date_to;
-        if (params.status) queryParams.status = params.status;
-        if (params.payment_method) queryParams.payment_method = params.payment_method;
-        if (params.sort_by) queryParams.sort_by = params.sort_by;
-        if (params.sort_order) queryParams.sort_order = params.sort_order;
-
-        const res = await retryRequest(() =>
-            getClient().get('/transactions', { params: queryParams })
-        );
-
-        const data = res.data;
-        const results = data.results || [];
-        allResults.push(...results);
-
-        if (!data.has_more || !data.next_cursor) break;
-        cursor = data.next_cursor;
-    }
-
-    return allResults;
+    return getTransactionsWithClient(getClient(), params);
 }
 
 /**
@@ -593,8 +636,11 @@ async function getTeamMembers(params = {}, companyId = null) {
 }
 
 module.exports = {
+    ZENBOOKER_DEFAULT_COMPANY_ID,
+    isDefaultZenbookerCompany,
     getClient,
     getClientForCompany,
+    getPaymentReaderForCompany,
     createJobFromLead,
     createJob,
     ensureAddressState,

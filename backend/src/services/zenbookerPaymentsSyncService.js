@@ -14,6 +14,35 @@
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 
+const FULL_HISTORY_TIME_BUDGET_MS = Number(process.env.ZENBOOKER_PAYMENTS_FULL_HISTORY_BUDGET_MS) || 210000;
+const FULL_HISTORY_PAGE_SIZE = Number(process.env.ZENBOOKER_PAYMENTS_FULL_HISTORY_PAGE_SIZE) || 25;
+
+class ZenbookerPaymentsSyncError extends Error {
+    constructor(code, message, httpStatus) {
+        super(message);
+        this.name = 'ZenbookerPaymentsSyncError';
+        this.code = code;
+        this.httpStatus = httpStatus;
+    }
+}
+
+function isDefaultSyncCompany(companyId) {
+    const defaultCompanyId = zenbookerClient.ZENBOOKER_DEFAULT_COMPANY_ID
+        || process.env.ZENBOOKER_DEFAULT_COMPANY_ID
+        || '00000000-0000-0000-0000-000000000001';
+    return !!companyId && companyId === defaultCompanyId;
+}
+
+function assertDefaultSyncCompany(companyId) {
+    if (!isDefaultSyncCompany(companyId)) {
+        throw new ZenbookerPaymentsSyncError(
+            'ZENBOOKER_SYNC_FORBIDDEN',
+            'Zenbooker payment sync is available only for the default company',
+            403,
+        );
+    }
+}
+
 // ─── Source / Tag / Method helpers (moved from route) ────────────────────────
 
 const SOURCE_MATCH_KEYS = [
@@ -86,6 +115,37 @@ function formatPaymentMethod(txn) {
 function displayPaymentMethod(txn) {
     if (txn.custom_payment_method_name) return txn.custom_payment_method_name;
     return txn.payment_method || '';
+}
+
+function normalizeZenbookerPaymentMethod(value) {
+    const method = String(value || '').trim().toLowerCase();
+    if (['stripe', 'card', 'credit_card'].includes(method) || method.startsWith('stripe (')) return 'zb_card';
+    if (method === 'check' || method === 'cheque') return 'zb_check';
+    if (method === 'cash') return 'zb_cash';
+    if (method === 'ach') return 'zb_ach';
+    if (method === 'venmo') return 'zb_venmo';
+    if (method === 'zelle') return 'zb_zelle';
+    return 'zb_other';
+}
+
+function classifyZenbookerTransaction(txn = {}) {
+    const rawKind = String(
+        txn.transaction_type || txn.type || txn.kind || txn.action || ''
+    ).trim().toLowerCase();
+    const rawStatus = String(txn.status || '').trim().toLowerCase();
+    const amount = Number(txn.amount_collected ?? txn.amount ?? 0);
+    const refundLike = /refund|reversal|reversed/.test(rawKind)
+        || ['refund', 'refunded', 'reversal', 'reversed'].includes(rawStatus)
+        || (Number.isFinite(amount) && amount < 0);
+
+    // The retained fixtures and published list endpoint do not establish a
+    // reliable refund amount/sign contract. Keep anything refund-like in the
+    // ledger for audit/display, but non-financial until that contract is proven.
+    if (refundLike) return { transaction_type: 'adjustment', status: 'pending' };
+    if (rawStatus === 'succeeded') return { transaction_type: 'payment', status: 'completed' };
+    if (rawStatus === 'failed') return { transaction_type: 'payment', status: 'failed' };
+    if (rawStatus === 'voided') return { transaction_type: 'payment', status: 'voided' };
+    return { transaction_type: 'payment', status: 'pending' };
 }
 
 function formatJobStatus(job) {
@@ -256,6 +316,7 @@ function resolveZbJobId(txn, invoice) {
 
 function assembleRow(txn, invoice, job) {
     const resolvedJobId = resolveZbJobId(txn, invoice);
+    const canonicalTransaction = classifyZenbookerTransaction(txn);
     // missing_job_link drives the "details unavailable" warning + hides the job
     // tile. It means the full job BODY wasn't attached at sync time. Even when
     // it's true we now persist resolvedJobId below, so the row can still be
@@ -333,6 +394,14 @@ function assembleRow(txn, invoice, job) {
             initiated_by: txn.initiated_by || null,
             team_member_id: txn.team_member_id || null,
             memo: txn.memo || null,
+            canonical_payment_method: normalizeZenbookerPaymentMethod(txn.payment_method),
+            canonical_transaction_type: canonicalTransaction.transaction_type,
+            canonical_transaction_status: canonicalTransaction.status,
+            zb_payment_method: txn.payment_method || null,
+            zb_custom_payment_method_name: txn.custom_payment_method_name || null,
+            zb_card_brand: txn.stripe_card_brand || null,
+            zb_transaction_kind: txn.transaction_type || txn.type || txn.kind || txn.action || null,
+            zb_transaction_status: txn.status || null,
         },
     };
 }
@@ -341,37 +410,68 @@ function assembleRow(txn, invoice, job) {
 // syncPayments — Fetch from Zenbooker API and upsert into local DB
 // =============================================================================
 
-async function syncPayments(companyId, dateFrom, dateTo) {
-    console.log(`[PaymentsService] Syncing ${dateFrom} → ${dateTo} for company ${companyId}`);
+function continuationCursor(value) {
+    if (value == null || value === '') return null;
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+    if (typeof value === 'string' && value.length <= 255) return value;
+    throw new ZenbookerPaymentsSyncError('VALIDATION', 'cursor must be a non-negative number or short string', 400);
+}
 
-    // 1. Fetch all transactions
-    const transactions = await zenbookerClient.getTransactions({
-        date_from: dateFrom,
-        date_to: dateTo,
-    });
-    console.log(`[PaymentsService] Got ${transactions.length} transactions`);
+function transactionRange(transactions) {
+    const timestamps = transactions
+        .map(txn => txn.payment_date || txn.created || null)
+        .filter(Boolean)
+        .map(value => new Date(value))
+        .filter(value => !Number.isNaN(value.getTime()))
+        .sort((a, b) => a.getTime() - b.getTime());
+    if (timestamps.length === 0) return null;
+    return {
+        from: timestamps[0].toISOString(),
+        to: timestamps[timestamps.length - 1].toISOString(),
+    };
+}
 
-    // 2. Batch-fetch invoices
+function mergeRange(current, next) {
+    if (!next) return current;
+    if (!current) return next;
+    return {
+        from: new Date(current.from) < new Date(next.from) ? current.from : next.from,
+        to: new Date(current.to) > new Date(next.to) ? current.to : next.to,
+    };
+}
+
+async function existingTransactionIds(companyId, transactions) {
+    const ids = [...new Set(transactions.map(txn => String(txn.id || '')).filter(Boolean))];
+    if (ids.length === 0) return new Set();
+    const { rows } = await db.query(
+        `SELECT transaction_id
+         FROM zb_payments
+         WHERE company_id = $1
+           AND transaction_id = ANY($2::text[])`,
+        [companyId, ids],
+    );
+    return new Set(rows.map(row => String(row.transaction_id)));
+}
+
+async function ingestTransactionChunk(companyId, transactions, reader) {
+    const existingIds = await existingTransactionIds(companyId, transactions);
+    const uniqueIds = new Set(transactions.map(txn => String(txn.id || '')).filter(Boolean));
+
     const invoiceIds = transactions.map(t => resolveZbInvoiceId(t)).filter(Boolean);
-    const invoiceCache = await batchFetch(invoiceIds, id => zenbookerClient.getInvoice(id));
+    const invoiceCache = await batchFetch(invoiceIds, id => reader.getInvoice(id));
     console.log(`[PaymentsService] Fetched ${invoiceCache.size}/${new Set(invoiceIds).size} invoices`);
 
-    // 3. Batch-fetch jobs. Resolve each job id from the invoice OR the
-    //    transaction (not invoice.job_id alone) so a payment still links when
-    //    the invoice hop is thin/absent. Fetching is keyed by the resolved id.
     const jobIds = [];
     for (const txn of transactions) {
         const invoice = invoiceCache.get(resolveZbInvoiceId(txn));
         const jobId = resolveZbJobId(txn, invoice);
         if (jobId) jobIds.push(jobId);
     }
-    const jobCache = await batchFetch(jobIds, id => zenbookerClient.getJob(id));
+    const jobCache = await batchFetch(jobIds, id => reader.getJob(id));
     console.log(`[PaymentsService] Fetched ${jobCache.size}/${new Set(jobIds).size} jobs`);
 
-    // 4. Assemble and upsert rows
-    let upsertedCount = 0;
-    let unresolvedJobIdCount = 0;   // couldn't even determine which ZB job
-    let unfetchedJobCount = 0;      // knew the job id but the fetch failed
+    let unresolvedJobIdCount = 0;
+    let unfetchedJobCount = 0;
     const unlinkedTxnSamples = [];
 
     for (const txn of transactions) {
@@ -379,9 +479,6 @@ async function syncPayments(companyId, dateFrom, dateTo) {
         const jobId = resolveZbJobId(txn, invoice);
         const job = jobId ? jobCache.get(jobId) || null : null;
 
-        // Observability: a once-silent job-fetch miss is the reason payments
-        // landed with no provider/no linked job. Count + sample them so a bad
-        // sync is visible in the result and logs instead of failing quietly.
         if (!jobId) {
             unresolvedJobIdCount++;
             if (unlinkedTxnSamples.length < 10) unlinkedTxnSamples.push({ txn: txn.id, reason: 'no_job_id' });
@@ -416,16 +513,8 @@ async function syncPayments(companyId, dateFrom, dateTo) {
                 $27, $28, $29,
                 $30
             )
-            -- Job-BODY-derived columns (job_number, job_type, status, tags,
-            -- source, tech, custom_fields, job_detail, attachments, zb_raw_job,
-            -- client) are guarded: when THIS sync didn't fetch the job body
-            -- (EXCLUDED.missing_job_link = true, i.e. getJob failed/was skipped),
-            -- a plain "= EXCLUDED.x" would WIPE good data with empties — that's
-            -- how work-note images vanished from already-synced payments after a
-            -- re-sync where the job fetch timed out (reconcileJobLinks heals the
-            -- link but never repopulates attachments). So keep the existing value
-            -- on a body-less run; take the fresh value only when we actually have
-            -- the job (legit note/image removals in ZB still propagate then).
+            -- Job-BODY-derived columns are guarded: if this chunk could not
+            -- fetch the job body, keep previously complete display/detail data.
             ON CONFLICT (company_id, transaction_id) DO UPDATE SET
                 invoice_id = EXCLUDED.invoice_id,
                 job_id = COALESCE(NULLIF(EXCLUDED.job_id, ''), zb_payments.job_id),
@@ -441,7 +530,7 @@ async function syncPayments(companyId, dateFrom, dateTo) {
                 source = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.source ELSE EXCLUDED.source END,
                 tech = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.tech ELSE EXCLUDED.tech END,
                 transaction_status = EXCLUDED.transaction_status,
-                -- never regress a previously-linked row to "missing" on a body-less run
+                -- Never regress a previously linked row on a transient fetch miss.
                 missing_job_link = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.missing_job_link ELSE false END,
                 invoice_status = EXCLUDED.invoice_status,
                 invoice_total = EXCLUDED.invoice_total,
@@ -471,27 +560,113 @@ async function syncPayments(companyId, dateFrom, dateTo) {
             job ? JSON.stringify(job) : null,
             row.custom_fields || '',
         ]);
-
-        upsertedCount++;
     }
 
-    console.log(`[PaymentsService] Upserted ${upsertedCount} payments`);
-
-    const unlinkedCount = unresolvedJobIdCount + unfetchedJobCount;
-    if (unlinkedCount > 0) {
+    const unlinked = unresolvedJobIdCount + unfetchedJobCount;
+    if (unlinked > 0) {
         console.warn(
-            `[PaymentsService] ${unlinkedCount}/${transactions.length} payments synced WITHOUT a linked job ` +
+            `[PaymentsService] ${unlinked}/${transactions.length} payments synced WITHOUT a linked job ` +
             `(${unresolvedJobIdCount} had no resolvable job id, ${unfetchedJobCount} had a job id but the fetch failed). ` +
             `Run reconcilePaymentJobLinks to heal these. Samples: ${JSON.stringify(unlinkedTxnSamples)}`
         );
     }
 
-    // Re-link any still-broken payments to their jobs (heals rows synced before
-    // the resolver fix, and any job-fetch miss from THIS run, from already-synced
-    // local jobs) and project into the canonical payment_transactions ledger
-    // (Zenbooker = master, so its rows win on conflict). Idempotent and SQL-only;
-    // only touches rows still missing a link, so it never regresses fresh data.
-    // Best-effort — a reconcile/projection hiccup must not fail the sync itself.
+    return {
+        synced: transactions.length,
+        imported: Math.max(0, uniqueIds.size - existingIds.size),
+        skipped_existing: existingIds.size,
+        unlinked,
+        unresolved_job_id: unresolvedJobIdCount,
+        job_fetch_failed: unfetchedJobCount,
+        last_range: transactionRange(transactions),
+    };
+}
+
+function addChunkTotals(totals, chunk) {
+    totals.synced += chunk.synced;
+    totals.imported += chunk.imported;
+    totals.skipped_existing += chunk.skipped_existing;
+    totals.unlinked += chunk.unlinked;
+    totals.unresolved_job_id += chunk.unresolved_job_id;
+    totals.job_fetch_failed += chunk.job_fetch_failed;
+    totals.last_range = mergeRange(totals.last_range, chunk.last_range);
+}
+
+async function syncPayments(companyId, dateFrom, dateTo, options = {}) {
+    // Defense in depth: reject before client resolution, network, or SQL.
+    assertDefaultSyncCompany(companyId);
+
+    const fullHistory = options.fullHistory === true || (!dateFrom && !dateTo);
+    if ((fullHistory && (dateFrom || dateTo)) || (!fullHistory && (!dateFrom || !dateTo))) {
+        throw new ZenbookerPaymentsSyncError(
+            'VALIDATION',
+            fullHistory
+                ? 'full_history cannot be combined with date_from/date_to'
+                : 'date_from and date_to are both required for range sync',
+            400,
+        );
+    }
+    const requestedCursor = fullHistory ? continuationCursor(options.cursor) : null;
+
+    const reader = await zenbookerClient.getPaymentReaderForCompany(companyId);
+    if (!reader) {
+        throw new ZenbookerPaymentsSyncError('ZENBOOKER_NOT_CONFIGURED', 'Zenbooker is not configured', 403);
+    }
+
+    const totals = {
+        synced: 0,
+        imported: 0,
+        skipped_existing: 0,
+        unlinked: 0,
+        unresolved_job_id: 0,
+        job_fetch_failed: 0,
+        last_range: null,
+    };
+    let remaining = false;
+    let nextCursor = null;
+
+    if (fullHistory) {
+        const now = typeof options.now === 'function' ? options.now : Date.now;
+        const budgetMs = Number.isFinite(options.timeBudgetMs)
+            ? Math.max(0, options.timeBudgetMs)
+            : FULL_HISTORY_TIME_BUDGET_MS;
+        const startedAt = now();
+        let cursor = requestedCursor ?? 0;
+
+        console.log(`[PaymentsService] Full-history sync for company ${companyId}, cursor=${cursor}`);
+        while (true) {
+            const page = await reader.getTransactionsPage({
+                cursor,
+                limit: FULL_HISTORY_PAGE_SIZE,
+            });
+            const transactions = page.results || [];
+            console.log(`[PaymentsService] Got full-history chunk of ${transactions.length} transactions`);
+            addChunkTotals(totals, await ingestTransactionChunk(companyId, transactions, reader));
+
+            if (!page.has_more) break;
+            if (page.next_cursor == null || page.next_cursor === cursor) {
+                throw new Error('Zenbooker returned has_more without a usable next_cursor');
+            }
+
+            cursor = page.next_cursor;
+            if (now() - startedAt >= budgetMs) {
+                remaining = true;
+                nextCursor = cursor;
+                break;
+            }
+        }
+    } else {
+        console.log(`[PaymentsService] Syncing ${dateFrom} → ${dateTo} for company ${companyId}`);
+        const transactions = await reader.getTransactions({
+            date_from: dateFrom,
+            date_to: dateTo,
+        });
+        console.log(`[PaymentsService] Got ${transactions.length} transactions`);
+        addChunkTotals(totals, await ingestTransactionChunk(companyId, transactions, reader));
+    }
+
+    // Re-link historical rows and reproject the whole company after every bounded
+    // request. This retypes legacy zenbooker_sync rows without duplicating them.
     try {
         const recon = await reconcileJobLinks(companyId, { dryRun: false });
         console.log('[PaymentsService] Post-sync reconcile + ledger projection:', recon);
@@ -500,11 +675,17 @@ async function syncPayments(companyId, dateFrom, dateTo) {
     }
 
     return {
-        synced: upsertedCount,
-        total_transactions: transactions.length,
-        unlinked: unlinkedCount,
-        unresolved_job_id: unresolvedJobIdCount,
-        job_fetch_failed: unfetchedJobCount,
+        mode: fullHistory ? 'full_history' : 'range',
+        synced: totals.synced,
+        total_transactions: totals.synced,
+        imported: totals.imported,
+        skipped_existing: totals.skipped_existing,
+        remaining,
+        cursor: remaining ? nextCursor : null,
+        last_range: totals.last_range,
+        unlinked: totals.unlinked,
+        unresolved_job_id: totals.unresolved_job_id,
+        job_fetch_failed: totals.job_fetch_failed,
     };
 }
 
@@ -522,26 +703,86 @@ async function projectCompanyLedger(companyId, exec = db) {
         )
         SELECT zp.company_id,
                j.id,
-               'payment', 'zenbooker_sync',
-               CASE zp.transaction_status
-                   WHEN 'succeeded' THEN 'completed'
-                   WHEN 'failed'    THEN 'failed'
-                   WHEN 'voided'    THEN 'voided'
-                   ELSE 'pending' END,
+               CASE
+                   WHEN lower(trim(COALESCE(
+                       NULLIF(zp.zb_raw_transaction->>'transaction_type', ''),
+                       NULLIF(zp.zb_raw_transaction->>'type', ''),
+                       NULLIF(zp.zb_raw_transaction->>'kind', ''),
+                       NULLIF(zp.zb_raw_transaction->>'action', ''),
+                       ''
+                   ))) ~ '(refund|reversal|reversed)'
+                     OR lower(trim(COALESCE(zp.transaction_status, ''))) IN ('refund', 'refunded', 'reversal', 'reversed')
+                     OR COALESCE(zp.amount_paid, 0) < 0
+                   THEN 'adjustment'
+                   ELSE 'payment'
+               END,
+               CASE
+                   WHEN lower(trim(COALESCE(
+                       NULLIF(zp.zb_raw_transaction->>'payment_method', ''),
+                       NULLIF(split_part(zp.payment_methods, ' ', 1), ''),
+                       NULLIF(zp.display_payment_method, ''),
+                       ''
+                   ))) IN ('stripe', 'card', 'credit_card')
+                     OR lower(trim(COALESCE(
+                       NULLIF(zp.zb_raw_transaction->>'payment_method', ''),
+                       NULLIF(zp.payment_methods, ''),
+                       NULLIF(zp.display_payment_method, ''),
+                       ''
+                     ))) LIKE 'stripe (%'
+                   THEN 'zb_card'
+                   WHEN lower(trim(COALESCE(
+                       NULLIF(zp.zb_raw_transaction->>'payment_method', ''),
+                       NULLIF(zp.payment_methods, ''), NULLIF(zp.display_payment_method, ''), ''
+                   ))) IN ('check', 'cheque') THEN 'zb_check'
+                   WHEN lower(trim(COALESCE(NULLIF(zp.zb_raw_transaction->>'payment_method', ''), NULLIF(zp.payment_methods, ''), NULLIF(zp.display_payment_method, ''), ''))) = 'cash' THEN 'zb_cash'
+                   WHEN lower(trim(COALESCE(NULLIF(zp.zb_raw_transaction->>'payment_method', ''), NULLIF(zp.payment_methods, ''), NULLIF(zp.display_payment_method, ''), ''))) = 'ach' THEN 'zb_ach'
+                   WHEN lower(trim(COALESCE(NULLIF(zp.zb_raw_transaction->>'payment_method', ''), NULLIF(zp.payment_methods, ''), NULLIF(zp.display_payment_method, ''), ''))) = 'venmo' THEN 'zb_venmo'
+                   WHEN lower(trim(COALESCE(NULLIF(zp.zb_raw_transaction->>'payment_method', ''), NULLIF(zp.payment_methods, ''), NULLIF(zp.display_payment_method, ''), ''))) = 'zelle' THEN 'zb_zelle'
+                   ELSE 'zb_other'
+               END,
+               CASE
+                   WHEN lower(trim(COALESCE(
+                       NULLIF(zp.zb_raw_transaction->>'transaction_type', ''),
+                       NULLIF(zp.zb_raw_transaction->>'type', ''),
+                       NULLIF(zp.zb_raw_transaction->>'kind', ''),
+                       NULLIF(zp.zb_raw_transaction->>'action', ''),
+                       ''
+                   ))) ~ '(refund|reversal|reversed)'
+                     OR lower(trim(COALESCE(zp.transaction_status, ''))) IN ('refund', 'refunded', 'reversal', 'reversed')
+                     OR COALESCE(zp.amount_paid, 0) < 0
+                   THEN 'pending'
+                   WHEN lower(trim(COALESCE(zp.transaction_status, ''))) = 'succeeded' THEN 'completed'
+                   WHEN lower(trim(COALESCE(zp.transaction_status, ''))) = 'failed'    THEN 'failed'
+                   WHEN lower(trim(COALESCE(zp.transaction_status, ''))) = 'voided'    THEN 'voided'
+                   ELSE 'pending'
+               END,
                COALESCE(zp.amount_paid, 0), 'USD',
                NULLIF(zp.invoice_id, ''), zp.transaction_id, 'zenbooker',
                NULLIF(zp.client, '—'),
                jsonb_build_object('zb_job_id', zp.job_id, 'job_number', zp.job_number,
                    'job_type', zp.job_type, 'display_payment_method', zp.display_payment_method,
-                   'invoice_status', zp.invoice_status, 'source', 'zb_sync_writethrough'),
+                   'invoice_status', zp.invoice_status, 'source', 'zb_sync_writethrough',
+                   'zb_payment_method', NULLIF(zp.zb_raw_transaction->>'payment_method', ''),
+                   'zb_custom_payment_method_name', NULLIF(zp.zb_raw_transaction->>'custom_payment_method_name', ''),
+                   'zb_card_brand', NULLIF(zp.zb_raw_transaction->>'stripe_card_brand', ''),
+                   'zb_transaction_kind', COALESCE(
+                       NULLIF(zp.zb_raw_transaction->>'transaction_type', ''),
+                       NULLIF(zp.zb_raw_transaction->>'type', ''),
+                       NULLIF(zp.zb_raw_transaction->>'kind', ''),
+                       NULLIF(zp.zb_raw_transaction->>'action', '')
+                   ),
+                   'zb_transaction_status', NULLIF(zp.transaction_status, '')),
                zp.payment_date, zp.created_at, now()
         FROM zb_payments zp
         LEFT JOIN jobs j ON j.zenbooker_job_id = zp.job_id AND j.company_id = zp.company_id
         WHERE zp.company_id = $1
         ON CONFLICT (company_id, external_id) WHERE external_source = 'zenbooker'
-        DO UPDATE SET job_id = EXCLUDED.job_id, status = EXCLUDED.status,
+        DO UPDATE SET job_id = EXCLUDED.job_id,
+            transaction_type = EXCLUDED.transaction_type,
+            status = EXCLUDED.status,
             amount = EXCLUDED.amount, payment_method = EXCLUDED.payment_method,
-            memo = EXCLUDED.memo, metadata = EXCLUDED.metadata,
+            memo = EXCLUDED.memo,
+            metadata = COALESCE(payment_transactions.metadata, '{}'::jsonb) || EXCLUDED.metadata,
             processed_at = EXCLUDED.processed_at, updated_at = now()
     `, [companyId]);
 }
@@ -960,6 +1201,7 @@ async function updateCheckDeposited(companyId, paymentId, deposited) {
 
 module.exports = {
     syncPayments,
+    isDefaultSyncCompany,
     projectCompanyLedger,
     reconcileJobLinks,
     listPayments,
@@ -974,6 +1216,8 @@ module.exports = {
     extractTags,
     formatPaymentMethod,
     displayPaymentMethod,
+    normalizeZenbookerPaymentMethod,
+    classifyZenbookerTransaction,
     buildInvoiceSummary,
     extractAttachments,
     extractCustomFields,

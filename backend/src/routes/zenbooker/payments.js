@@ -26,19 +26,40 @@ router.post('/sync', async (req, res) => {
             return res.status(403).json({ ok: false, error: 'No company context' });
         }
 
-        const { date_from, date_to } = req.body;
-        if (!date_from || !date_to) {
-            return res.status(400).json({ ok: false, error: 'date_from and date_to are required' });
+        // ZBPAY-MIGRATE-001: the shared Zenbooker payment account belongs to
+        // exactly one company. Reject before validation, client resolution,
+        // network fetches, or writes so a foreign tenant cannot stamp its id on
+        // the default company's transactions.
+        if (!paymentsService.isDefaultSyncCompany(companyId)) {
+            return res.status(403).json({ ok: false, error: 'Zenbooker payment sync is not available for this company' });
         }
 
-        console.log(`[Payments] Sync requested: ${date_from} → ${date_to}, company=${companyId}`);
+        const { date_from, date_to, full_history, cursor } = req.body || {};
+        const hasFrom = !!date_from;
+        const hasTo = !!date_to;
+        const noRange = !hasFrom && !hasTo;
+        const wantsFullHistory = full_history === true || noRange;
+        const invalidFullFlag = full_history != null && typeof full_history !== 'boolean';
+        const invalidRange = hasFrom !== hasTo;
+        const mixedModes = full_history === true && (hasFrom || hasTo);
+        const cursorWithRange = cursor != null && !wantsFullHistory;
+        if (invalidFullFlag || invalidRange || mixedModes || cursorWithRange) {
+            return res.status(400).json({ ok: false, error: 'Choose either date_from/date_to or full_history, not both' });
+        }
 
-        const result = await paymentsService.syncPayments(companyId, date_from, date_to);
+        console.log(`[Payments] ${wantsFullHistory ? 'Full-history' : 'Range'} sync requested, company=${companyId}`);
+
+        const result = await paymentsService.syncPayments(
+            companyId,
+            wantsFullHistory ? null : date_from,
+            wantsFullHistory ? null : date_to,
+            { fullHistory: wantsFullHistory, cursor: cursor ?? null },
+        );
 
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] Sync error:', err.response?.data || err.message);
-        const status = err.response?.status || 500;
+        const status = err.httpStatus || err.response?.status || 500;
         res.status(status).json({
             ok: false,
             error: err.response?.data?.error?.message || err.message,

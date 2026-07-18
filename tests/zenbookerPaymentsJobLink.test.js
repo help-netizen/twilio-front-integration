@@ -13,7 +13,10 @@
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), getClient: jest.fn() }));
 jest.mock('../backend/src/services/zenbookerClient', () => ({
+    ZENBOOKER_DEFAULT_COMPANY_ID: '00000000-0000-0000-0000-000000000001',
+    getPaymentReaderForCompany: jest.fn(),
     getTransactions: jest.fn(),
+    getTransactionsPage: jest.fn(),
     getInvoice: jest.fn(),
     getJob: jest.fn(),
 }));
@@ -22,15 +25,25 @@ const db = require('../backend/src/db/connection');
 const zb = require('../backend/src/services/zenbookerClient');
 const sync = require('../backend/src/services/zenbookerPaymentsSyncService');
 
-const COMPANY = '11111111-1111-1111-1111-111111111111';
+const COMPANY = '00000000-0000-0000-0000-000000000001';
 const ZB_JOB_ID = '1781974323252x656275605619673900'; // shape from the real ZB API
+
+const reader = {
+    getTransactions: (...args) => zb.getTransactions(...args),
+    getTransactionsPage: (...args) => zb.getTransactionsPage(...args),
+    getInvoice: (...args) => zb.getInvoice(...args),
+    getJob: (...args) => zb.getJob(...args),
+};
 
 beforeEach(() => {
     db.query.mockReset();
     db.getClient.mockReset();
     zb.getTransactions.mockReset();
+    zb.getTransactionsPage.mockReset();
     zb.getInvoice.mockReset();
     zb.getJob.mockReset();
+    zb.getPaymentReaderForCompany.mockReset();
+    zb.getPaymentReaderForCompany.mockResolvedValue(reader);
 });
 
 // ── job/invoice id resolution ────────────────────────────────────────────────

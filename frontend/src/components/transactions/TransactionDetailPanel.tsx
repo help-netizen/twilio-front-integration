@@ -5,6 +5,7 @@ import { Separator } from '../ui/separator';
 import { Undo2, Ban, Send, Receipt } from 'lucide-react';
 import type { PaymentTransaction, PaymentReceipt, SendReceiptData, RefundData } from '../../services/paymentsCanonicalApi';
 import { RefundDialog } from './RefundDialog';
+import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -21,15 +22,6 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
     failed: 'destructive',
     refunded: 'secondary',
     voided: 'secondary',
-};
-
-const METHOD_LABELS: Record<string, string> = {
-    credit_card: 'Credit Card',
-    ach: 'ACH',
-    check: 'Check',
-    cash: 'Cash',
-    other: 'Other',
-    zenbooker_sync: 'Zenbooker',
 };
 
 function money(value: string | number | null | undefined): string {
@@ -113,7 +105,7 @@ export function TransactionDetailPanel({ transaction, receipt, onClose: _onClose
                     <div>
                         <p className="text-3xl font-bold">{money(transaction.amount)}</p>
                         <p className="text-xs text-muted-foreground mt-1">
-                            {transaction.currency.toUpperCase()} via {METHOD_LABELS[transaction.payment_method] || transaction.payment_method}
+                            {transaction.currency.toUpperCase()} via {paymentMethodLabel(transaction.payment_method)}
                         </p>
                     </div>
 

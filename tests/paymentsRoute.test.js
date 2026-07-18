@@ -8,6 +8,7 @@
 const mockListPayments = jest.fn();
 const mockGetPaymentDetail = jest.fn();
 const mockSyncPayments = jest.fn();
+const mockIsDefaultSyncCompany = jest.fn(() => true);
 
 // The route imports services/zenbookerPaymentsSyncService (the Zenbooker sync
 // layer was relocated out of paymentsService). Mock the module the route
@@ -16,6 +17,7 @@ jest.mock('../backend/src/services/zenbookerPaymentsSyncService', () => ({
     listPayments: mockListPayments,
     getPaymentDetail: mockGetPaymentDetail,
     syncPayments: mockSyncPayments,
+    isDefaultSyncCompany: mockIsDefaultSyncCompany,
     listPaymentsForExport: jest.fn(),
     updateCheckDeposited: jest.fn(),
 }));
@@ -267,7 +269,8 @@ describe('Payments Route (DB-backed)', () => {
             expect(mockSyncPayments).toHaveBeenCalledWith(
                 TEST_COMPANY_ID,
                 '2026-02-01',
-                '2026-02-28'
+                '2026-02-28',
+                { fullHistory: false, cursor: null },
             );
         });
 

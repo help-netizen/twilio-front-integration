@@ -359,7 +359,7 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
 
     // Net "Paid" per job — supports partial payments. Single canonical source:
     // the payment_transactions ledger (debt #6). Zenbooker is the master payment
-    // system, so when a job carries zenbooker_sync rows those are authoritative
+    // system, so when a job carries Zenbooker-source rows those are authoritative
     // and native rows are ignored to avoid double counting; otherwise native
     // rows are summed. Refunds/voids/failures excluded. Numbers verified
     // identical to the legacy zb_payments path on a prod-data copy (migration 104).
@@ -373,13 +373,16 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
           END
         )
         FROM payment_transactions pt
-        WHERE pt.job_id = j.id ${scope}
+        WHERE pt.job_id = j.id
+          AND pt.company_id = j.company_id ${scope}
       ), 0)`;
     const paidExpr = `
       CASE
         WHEN EXISTS (SELECT 1 FROM payment_transactions pt
-                     WHERE pt.job_id = j.id AND pt.payment_method = 'zenbooker_sync')
-          THEN ${ledgerSum("AND pt.payment_method = 'zenbooker_sync'")}
+                     WHERE pt.job_id = j.id
+                       AND pt.company_id = j.company_id
+                       AND pt.external_source = 'zenbooker')
+          THEN ${ledgerSum("AND pt.external_source = 'zenbooker'")}
         ELSE ${ledgerSum('')}
       END
     `;

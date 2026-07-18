@@ -18,7 +18,20 @@ export interface PaymentTransaction {
     invoice_id: number | null;
     job_id: number | null;
     transaction_type: 'payment' | 'refund' | 'adjustment';
-    payment_method: 'credit_card' | 'ach' | 'check' | 'cash' | 'other' | 'zenbooker_sync';
+    payment_method:
+        | 'credit_card'
+        | 'ach'
+        | 'check'
+        | 'cash'
+        | 'other'
+        | 'zenbooker_sync'
+        | 'zb_card'
+        | 'zb_check'
+        | 'zb_cash'
+        | 'zb_ach'
+        | 'zb_venmo'
+        | 'zb_zelle'
+        | 'zb_other';
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'refunded' | 'voided';
     amount: string;
     currency: string;

@@ -25,6 +25,7 @@ import { approveEstimate, archiveEstimate, declineEstimate, restoreEstimate, sen
 import { deleteInvoice } from '../../services/invoicesApi';
 import { toast } from 'sonner';
 import { calculateJobFinanceSummary, formatSignedCurrency } from './jobFinanceMath';
+import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,14 +40,6 @@ const INVOICE_STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destruct
 
 function money(v: string | number | null | undefined): string {
     return formatSignedCurrency(v);
-}
-
-function paymentMethodLabel(method: string): string {
-    if (method === 'cash') return 'Cash';
-    if (method === 'check') return 'Check';
-    if (method === 'credit_card') return 'Card';
-    if (method === 'ach') return 'ACH';
-    return method.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function paymentDate(value: string | null): string {

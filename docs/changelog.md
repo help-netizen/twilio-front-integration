@@ -2471,3 +2471,9 @@ GPT-implementer: 2 волны ACCEPT (backend+frontend), 0 fix-раундов. T
 
 ---
 
+## 2026-07-18 — ZBPAY-MIGRATE-001 P1: миграция ZB-платежей + Due-гард + харднинг синка
+
+Подготовка к отключению Zenbooker. (1) **Due-гард (деплой-блокер снят):** ZB-платежи учитываются в Paid, но НЕ создают standalone-кредит в Due (`FILTER (WHERE external_source IS DISTINCT FROM 'zenbooker')` в jobs-роллапе + зеркальная логика jobFinanceMath) — иначе новый знаковый Due окрасил бы ~1027 исторических ZB-строк (~$197K) кредитами. (2) **Mig 182:** зеркальные методы `zb_card/zb_check/zb_cash/zb_ach/zb_venmo/zb_zelle/zb_other` в CHECK; проектор перетипизирует легаси `zenbooker_sync` на месте (metadata сохраняется), идемпотентно; лейблы «Zenbooker · X» на всех канонических поверхностях (общий `paymentMethodLabels`). Нативные пути создания платежей `zb_*` не принимают. (3) **Sync-харднинг:** 403 для не-дефолтного тенанта ДО сетевого вызова (закрыта cross-tenant дыра класса старой ZB-утечки); режим **Sync full history** — чанки под бюджетом 210с, честный partial-результат с курсором и «Progress saved — run again to continue» (реран идемпотентен по `(company_id, external_id)` — дублей не бывает, гарантия владельца). Рефанды/сторно ZB — non-financial pending (надёжной схемы в данных нет; документировано). Тандем: backend jest 72/72 (вкл. реальный PG-тест миграции), FE build 0 + vitest 98/98; 2 саботажа (Due-гард, tenant-гейт) red→green. P2 (синтез инвойсов из ZB) — отдельным этапом.
+
+---
+

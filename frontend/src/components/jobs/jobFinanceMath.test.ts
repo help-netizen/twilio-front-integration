@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { calculateJobFinanceSummary, completedStandalonePaid, formatSignedCurrency } from './jobFinanceMath';
+import {
+    calculateJobFinanceSummary,
+    completedStandaloneDueOffset,
+    completedStandalonePaid,
+    formatSignedCurrency,
+} from './jobFinanceMath';
 
 describe('calculateJobFinanceSummary', () => {
-    it('turns a no-invoice $95 standalone payment into Paid $95 and signed Due -$95', () => {
+    it('keeps a native no-invoice $95 payment as Paid $95 and signed Due -$95', () => {
         const summary = calculateJobFinanceSummary([], [], [{
             amount: '95.00',
             invoice_id: null,
             transaction_type: 'payment',
             status: 'completed',
+            external_source: 'stripe',
         }]);
 
         expect(summary).toEqual({ estimated: 0, invoiced: 0, paid: 95, due: -95 });
@@ -16,15 +22,31 @@ describe('calculateJobFinanceSummary', () => {
         expect(formatSignedCurrency(summary.due).codePointAt(0)).toBe(0x2212);
     });
 
+    it('CTRL-ZBPAY-DUE-GUARD: counts a standalone ZB payment in Paid but not Due credit', () => {
+        const payment = {
+            amount: '95.00',
+            invoice_id: null,
+            transaction_type: 'payment',
+            status: 'completed',
+            external_source: 'zenbooker',
+        };
+
+        expect(completedStandalonePaid([payment])).toBe(95);
+        expect(completedStandaloneDueOffset([payment])).toBe(0);
+        expect(calculateJobFinanceSummary([], [], [payment]))
+            .toEqual({ estimated: 0, invoiced: 0, paid: 95, due: 0 });
+    });
+
     it('combines invoice paid with only completed standalone payment rows', () => {
         const payments = [
-            { amount: '25', invoice_id: null, transaction_type: 'payment', status: 'completed' },
+            { amount: '25', invoice_id: null, transaction_type: 'payment', status: 'completed', external_source: 'manual' },
             { amount: '100', invoice_id: 8, transaction_type: 'payment', status: 'completed' },
             { amount: '50', invoice_id: null, transaction_type: 'payment', status: 'pending' },
             { amount: '10', invoice_id: null, transaction_type: 'refund', status: 'completed' },
         ];
 
         expect(completedStandalonePaid(payments)).toBe(25);
+        expect(completedStandaloneDueOffset(payments)).toBe(25);
         expect(calculateJobFinanceSummary(
             [{ total: '150' }],
             [{ total: '100', amount_paid: '40' }],

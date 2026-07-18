@@ -14,6 +14,7 @@ interface JobPaymentMoney {
     invoice_id?: number | null;
     transaction_type?: string;
     status?: string;
+    external_source?: string | null;
 }
 
 export interface JobFinanceSummary {
@@ -38,6 +39,17 @@ export function completedStandalonePaid(payments: JobPaymentMoney[]): number {
         .reduce((sum, payment) => sum + moneyNumber(payment.amount), 0);
 }
 
+export function completedStandaloneDueOffset(payments: JobPaymentMoney[]): number {
+    return payments
+        .filter(payment => (
+            payment.invoice_id == null
+            && payment.transaction_type === 'payment'
+            && payment.status === 'completed'
+            && payment.external_source !== 'zenbooker'
+        ))
+        .reduce((sum, payment) => sum + moneyNumber(payment.amount), 0);
+}
+
 export function calculateJobFinanceSummary(
     estimates: EstimateMoney[],
     invoices: InvoiceMoney[],
@@ -47,12 +59,13 @@ export function calculateJobFinanceSummary(
     const invoiced = invoices.reduce((sum, invoice) => sum + moneyNumber(invoice.total), 0);
     const invoicePaid = invoices.reduce((sum, invoice) => sum + moneyNumber(invoice.amount_paid), 0);
     const paid = invoicePaid + completedStandalonePaid(jobPayments);
+    const standaloneDueOffset = completedStandaloneDueOffset(jobPayments);
 
     return {
         estimated,
         invoiced,
         paid,
-        due: invoiced - paid,
+        due: invoiced - invoicePaid - standaloneDueOffset,
     };
 }
 

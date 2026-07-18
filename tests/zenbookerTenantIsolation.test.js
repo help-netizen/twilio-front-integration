@@ -42,4 +42,37 @@ describe('Zenbooker tenant isolation (ZB-ISO-001)', () => {
         // The DB was consulted; the Zenbooker API was never called for this tenant.
         expect(db.query).toHaveBeenCalledTimes(1);
     });
+
+    it('binds all payment reads to the resolved default-company client', async () => {
+        db.query.mockResolvedValueOnce({ rows: [{ zenbooker_api_key: null }] });
+        const reader = await zb.getPaymentReaderForCompany(DEFAULT_CO);
+        const client = zb.getClient();
+        const originalGet = client.get;
+        client.get = jest.fn()
+            .mockResolvedValueOnce({ data: { results: [{ id: 'tx-1' }], has_more: true, next_cursor: 25 } })
+            .mockResolvedValueOnce({ data: { id: 'inv-1' } })
+            .mockResolvedValueOnce({ data: { id: 'job-1' } });
+
+        try {
+            await expect(reader.getTransactionsPage({ cursor: 0, limit: 25, sort_order: 'ascending' }))
+                .resolves.toEqual({ results: [{ id: 'tx-1' }], has_more: true, next_cursor: 25 });
+            await expect(reader.getInvoice('inv-1')).resolves.toEqual({ id: 'inv-1' });
+            await expect(reader.getJob('job-1')).resolves.toEqual({ id: 'job-1' });
+
+            expect(client.get).toHaveBeenNthCalledWith(1, '/transactions', {
+                params: { limit: 25, cursor: 0, sort_order: 'ascending' },
+            });
+            expect(client.get).toHaveBeenNthCalledWith(2, '/invoices/inv-1');
+            expect(client.get).toHaveBeenNthCalledWith(3, '/jobs/job-1');
+        } finally {
+            client.get = originalGet;
+        }
+    });
+
+    it('returns no payment reader for an unconnected foreign tenant', async () => {
+        db.query.mockResolvedValueOnce({ rows: [{ zenbooker_api_key: null }] });
+        await expect(zb.getPaymentReaderForCompany(OTHER_CO)).resolves.toBeNull();
+        expect(zb.isDefaultZenbookerCompany(DEFAULT_CO)).toBe(true);
+        expect(zb.isDefaultZenbookerCompany(OTHER_CO)).toBe(false);
+    });
 });

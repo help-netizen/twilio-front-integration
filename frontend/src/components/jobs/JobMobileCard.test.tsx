@@ -39,4 +39,19 @@ describe('jobPaymentDisplay signed credit', () => {
             invoice_total: '70.50',
         }))).toEqual({ text: 'Partial · $70.50', tone: 'partial' });
     });
+
+    it('renders a backend ZB paid-only rollup as Paid, never Credit', () => {
+        const zbPaidJob = job({ amount_paid: '95.00', balance_due: '0.00' });
+
+        expect(jobPaymentDisplay(zbPaidJob)).toEqual({
+            text: 'Paid · $95',
+            tone: 'paid',
+        });
+
+        const markup = renderToStaticMarkup(
+            <JobMobileCard job={zbPaidJob} canViewFinance onClick={vi.fn()} />,
+        );
+        expect(markup).toContain('Paid · $95');
+        expect(markup).not.toContain('Credit');
+    });
 });

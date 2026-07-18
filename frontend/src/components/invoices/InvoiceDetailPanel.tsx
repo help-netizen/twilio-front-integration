@@ -55,6 +55,7 @@ import { TaskStack } from '../tasks/TaskStack';
 import { openAuthedPdf } from '../../lib/openAuthedPdf';
 import { toast } from 'sonner';
 import type { ManualCardSessionResult } from '../../services/stripePaymentsApi';
+import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -741,9 +742,9 @@ export function InvoiceDetailPanel({
                             <div className="space-y-1">
                                 {payments.map((tx: any) => (
                                     <div key={tx.id} className="flex justify-between text-xs">
-                                        <span className="text-[var(--blanc-ink-2)] capitalize">
+                                        <span className="text-[var(--blanc-ink-2)]">
                                             {fmtDate(tx.transaction_date || tx.created_at)}
-                                            {(tx.payment_method || tx.metadata?.payment_method) && ` · ${tx.payment_method || tx.metadata?.payment_method}`}
+                                            {(tx.payment_method || tx.metadata?.payment_method) && ` · ${paymentMethodLabel(tx.payment_method || tx.metadata?.payment_method)}`}
                                         </span>
                                         <span className="font-mono text-emerald-700">{money(tx.amount ?? tx.metadata?.amount)}</span>
                                     </div>

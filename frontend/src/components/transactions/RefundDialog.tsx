@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter
 import { Button } from '../ui/button';
 import { FloatingField } from '../ui/floating-field';
 import type { PaymentTransaction, RefundData } from '../../services/paymentsCanonicalApi';
+import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -78,7 +79,7 @@ export function RefundDialog({ open, onOpenChange, transaction, onRefund }: Prop
                         </div>
                         <div className="flex justify-between text-sm">
                             <span style={{ color: 'var(--blanc-ink-3)' }}>Method</span>
-                            <span className="capitalize">{transaction.payment_method.replace('_', ' ')}</span>
+                            <span>{paymentMethodLabel(transaction.payment_method)}</span>
                         </div>
                     </div>
 

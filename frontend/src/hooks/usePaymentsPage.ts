@@ -4,6 +4,11 @@ import { authedFetch } from '../services/apiClient';
 import type { PaymentRow, PaymentDetail, SortField, SortDir } from '../components/payments/paymentTypes';
 import { defaultDateFrom, defaultDateTo } from '../components/payments/paymentTypes';
 import { exportPaymentsCSV } from './paymentExport';
+import {
+    zenbookerPaymentsApi,
+    zenbookerSyncResultMessage,
+    type ZenbookerSyncCursor,
+} from '../services/zenbookerPaymentsApi';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -25,8 +30,9 @@ export function usePaymentsPage() {
     const [selectedId, setSelectedId] = useState<number | null>(urlPaymentId ? parseInt(urlPaymentId, 10) || null : null);
     const [detail, setDetail] = useState<PaymentDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
-    const [syncing, setSyncing] = useState(false);
+    const [syncingMode, setSyncingMode] = useState<'range' | 'full_history' | null>(null);
     const [syncResult, setSyncResult] = useState<string | null>(null);
+    const [fullHistoryCursor, setFullHistoryCursor] = useState<ZenbookerSyncCursor | null>(null);
     const [providerFilter, setProviderFilter] = useState('');
     const [paidFilter, setPaidFilter] = useState<'' | 'paid' | 'due'>('');
     const [filtersOpen, setFiltersOpen] = useState(false);
@@ -49,10 +55,39 @@ export function usePaymentsPage() {
     useEffect(() => { fetchPayments(); }, [fetchPayments]);
 
     const handleSync = useCallback(async () => {
-        setSyncing(true); setSyncResult(null);
-        try { const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }) }); let json; try { json = await res.json(); } catch { throw new Error(res.status === 502 ? 'Sync timed out — try a shorter date range' : `Server error (${res.status})`); } if (!res.ok || !json.ok) throw new Error(json.error || 'Sync failed'); setSyncResult(`Synced ${json.data.synced} payments`); fetchPayments(); }
-        catch (err: any) { setSyncResult(`Sync error: ${err.message}`); } finally { setSyncing(false); setTimeout(() => setSyncResult(null), 5000); }
+        setSyncingMode('range');
+        setSyncResult(null);
+        try {
+            const result = await zenbookerPaymentsApi.syncRange(dateFrom, dateTo);
+            setSyncResult(zenbookerSyncResultMessage(result));
+            await fetchPayments();
+        } catch (err: any) {
+            setSyncResult(`Sync error: ${err.message}`);
+        } finally {
+            setSyncingMode(null);
+        }
     }, [dateFrom, dateTo, fetchPayments]);
+
+    const handleFullHistorySync = useCallback(async () => {
+        setSyncingMode('full_history');
+        setSyncResult(null);
+        try {
+            const result = await zenbookerPaymentsApi.syncFullHistory(fullHistoryCursor);
+            if (result.remaining) {
+                if (result.cursor == null) throw new Error('Progress was saved without a continuation cursor');
+                setFullHistoryCursor(result.cursor);
+                setSyncResult(zenbookerSyncResultMessage(result));
+            } else {
+                setFullHistoryCursor(null);
+                setSyncResult(zenbookerSyncResultMessage(result));
+            }
+            await fetchPayments();
+        } catch (err: any) {
+            setSyncResult(`Sync error: ${err.message}`);
+        } finally {
+            setSyncingMode(null);
+        }
+    }, [fetchPayments, fullHistoryCursor]);
 
     const fetchDetail = useCallback(async (paymentId: number) => {
         setDetailLoading(true);
@@ -104,7 +139,9 @@ export function usePaymentsPage() {
         datePickerOpen, setDatePickerOpen, quickFilter, setQuickFilter, filterRef,
         uniqueMethods, uniqueProviders, activeFilterCount, clearAllFilters, undepositedCheckCount,
         sortField, sortDir, handleSort, selectedId, detail, detailLoading,
-        handleSelectRow, handleCloseDetail, handleToggleDeposited, syncing, syncResult, handleSync,
+        handleSelectRow, handleCloseDetail, handleToggleDeposited,
+        syncing: syncingMode !== null, syncingMode, syncResult, handleSync,
+        handleFullHistorySync, fullHistoryRemaining: fullHistoryCursor != null,
         exporting, handleExportCSV,
     };
 }

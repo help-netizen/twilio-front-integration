@@ -170,7 +170,7 @@ describe('jobsService.listJobs signed payment rollup', () => {
         db.query.mockReset();
     });
 
-    it('CTRL-DUE-SIGNED: no invoice + completed standalone $95 returns paid 95 and due -95', async () => {
+    it('CTRL-DUE-SIGNED: native completed standalone $95 returns paid 95 and due -95', async () => {
         primeList([{ job_id: 7, total_paid: '95.00', total_due: '-95.00' }]);
 
         const result = await jobsService.listJobs({ companyId: CO });
@@ -190,7 +190,24 @@ describe('jobsService.listJobs signed payment rollup', () => {
         expect(sql).toContain("pt.transaction_type = 'payment'");
         expect(sql).toContain("pt.status = 'completed'");
         expect(sql).toContain('COALESCE(ir.invoice_paid, 0) + COALESCE(sr.standalone_paid, 0)');
-        expect(sql).toContain('COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_paid, 0)');
+        expect(sql).toContain("pt.external_source IS DISTINCT FROM 'zenbooker'");
+        expect(sql).toContain('COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_due_offset, 0)');
+    });
+
+    it('CTRL-ZBPAY-DUE-GUARD: completed standalone ZB $95 is Paid but cannot create Due credit', async () => {
+        primeList([{ job_id: 7, total_paid: '95.00', total_due: '0.00' }]);
+
+        const result = await jobsService.listJobs({ companyId: CO });
+
+        expect(result.results[0]).toMatchObject({
+            id: 7,
+            amount_paid: '95.00',
+            balance_due: '0.00',
+        });
+
+        const sql = db.query.mock.calls[3][0];
+        expect(sql).toContain('SUM(pt.amount) AS standalone_paid');
+        expect(sql).toMatch(/SUM\(pt\.amount\) FILTER \(\s*WHERE pt\.external_source IS DISTINCT FROM 'zenbooker'\s*\) AS standalone_due_offset/);
     });
 
     it('keeps amount_paid and balance_due null when no local invoice or standalone payment exists', async () => {

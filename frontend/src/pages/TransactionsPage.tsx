@@ -9,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, DollarSign, TrendingDown, Clock, Minus } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { useAuthz } from '../hooks/useAuthz';
+import { paymentMethodLabel } from '../lib/paymentMethodLabels';
 
 // -- Constants ----------------------------------------------------------------
 
@@ -49,15 +50,6 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
     failed: 'destructive',
     refunded: 'secondary',
     voided: 'secondary',
-};
-
-const METHOD_LABELS: Record<string, string> = {
-    credit_card: 'Credit Card',
-    ach: 'ACH',
-    check: 'Check',
-    cash: 'Cash',
-    other: 'Other',
-    zenbooker_sync: 'Zenbooker',
 };
 
 function formatMoney(value: string | number): string {
@@ -207,7 +199,7 @@ export function TransactionsPage() {
                                                 {txn.transaction_type}
                                             </Badge>
                                         </td>
-                                        <td className="px-4 py-2 text-muted-foreground">{METHOD_LABELS[txn.payment_method] || txn.payment_method}</td>
+                                        <td className="px-4 py-2 text-muted-foreground">{paymentMethodLabel(txn.payment_method)}</td>
                                         <td className="px-4 py-2 text-right font-mono">${formatMoney(txn.amount)}</td>
                                         <td className="px-4 py-2">
                                             <Badge variant={STATUS_VARIANT[txn.status] || 'secondary'} className="capitalize">

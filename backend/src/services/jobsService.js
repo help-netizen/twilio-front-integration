@@ -875,7 +875,11 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
                 GROUP BY i.job_id
             ),
             standalone_rollup AS (
-                SELECT pt.job_id, SUM(pt.amount) AS standalone_paid
+                SELECT pt.job_id,
+                       SUM(pt.amount) AS standalone_paid,
+                       SUM(pt.amount) FILTER (
+                           WHERE pt.external_source IS DISTINCT FROM 'zenbooker'
+                       ) AS standalone_due_offset
                 FROM payment_transactions pt
                 WHERE pt.job_id = ANY($1)
                   AND pt.company_id = $2
@@ -891,7 +895,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
             )
             SELECT jwm.job_id,
                    COALESCE(ir.invoice_paid, 0) + COALESCE(sr.standalone_paid, 0) AS total_paid,
-                   COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_paid, 0) AS total_due
+                   COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_due_offset, 0) AS total_due
             FROM jobs_with_money jwm
             LEFT JOIN invoice_rollup ir ON ir.job_id = jwm.job_id
             LEFT JOIN standalone_rollup sr ON sr.job_id = jwm.job_id
