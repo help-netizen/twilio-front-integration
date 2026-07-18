@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Ban,
     Check,
@@ -54,6 +54,7 @@ import { useAuthz } from '../../hooks/useAuthz';
 import { TaskStack } from '../tasks/TaskStack';
 import { openAuthedPdf } from '../../lib/openAuthedPdf';
 import { toast } from 'sonner';
+import type { ManualCardSessionResult } from '../../services/stripePaymentsApi';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +94,8 @@ function toDateInput(value: string | null | undefined): string {
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+
+const INVOICE_REVALIDATION_DELAYS_MS = [0, 1000, 2000, 4000, 8000] as const;
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -186,6 +189,54 @@ export function InvoiceDetailPanel({
     const [recording, setRecording] = useState(false);
     const [collecting, setCollecting] = useState(false);
     const [manualCardOpen, setManualCardOpen] = useState(false);
+    const [manualCardAmount, setManualCardAmount] = useState<number | undefined>();
+    const cardPollGenerationRef = useRef(0);
+    const cardPollWaitersRef = useRef(new Map<number, () => void>());
+
+    const cancelCardRevalidation = useCallback(() => {
+        cardPollGenerationRef.current += 1;
+        for (const cancel of cardPollWaitersRef.current.values()) cancel();
+        cardPollWaitersRef.current.clear();
+    }, []);
+
+    const waitForCardPoll = useCallback((milliseconds: number) => new Promise<void>(resolve => {
+        const id = window.setTimeout(() => {
+            cardPollWaitersRef.current.delete(id);
+            resolve();
+        }, milliseconds);
+        cardPollWaitersRef.current.set(id, () => {
+            window.clearTimeout(id);
+            resolve();
+        });
+    }), []);
+
+    useEffect(() => () => cancelCardRevalidation(), [invoice.id, cancelCardRevalidation]);
+
+    const revalidateAfterCardPayment = useCallback(async (payment: ManualCardSessionResult): Promise<boolean> => {
+        if (payment.status !== 'succeeded') return false;
+        cancelCardRevalidation();
+        const generation = cardPollGenerationRef.current;
+        const expectedPaidCents = Math.round((Number(invoice.amount_paid || 0) + payment.amount) * 100);
+
+        for (const delay of INVOICE_REVALIDATION_DELAYS_MS) {
+            if (delay > 0) await waitForCardPoll(delay);
+            if (generation !== cardPollGenerationRef.current) return false;
+            try {
+                const [fresh, freshPayments] = await Promise.all([
+                    fetchInvoice(invoice.id),
+                    fetchInvoicePayments(invoice.id),
+                ]);
+                if (generation !== cardPollGenerationRef.current) return false;
+                setInvoice(fresh);
+                setPayments(freshPayments);
+                onChanged?.(fresh);
+                if (Math.round(Number(fresh.amount_paid || 0) * 100) >= expectedPaidCents) return true;
+            } catch {
+                // The webhook-backed ledger may lag or one poll may fail; continue within the bound.
+            }
+        }
+        return false;
+    }, [invoice.id, invoice.amount_paid, onChanged, cancelCardRevalidation, waitForCardPoll]);
 
     // Pre-fill the amount with the remaining balance whenever the popover opens
     // (or when the underlying balance changes while it's open).
@@ -752,7 +803,10 @@ export function InvoiceDetailPanel({
                                             <DropdownMenuItem onSelect={() => collectPayment('copy')}>
                                                 <CreditCard className="size-4" />Copy payment link
                                             </DropdownMenuItem>
-                                            <DropdownMenuItem onSelect={() => setManualCardOpen(true)}>
+                                            <DropdownMenuItem onSelect={() => {
+                                                setManualCardAmount(Number(invoice.balance_due) || undefined);
+                                                setManualCardOpen(true);
+                                            }}>
                                                 <CreditCard className="size-4" />Enter card manually
                                             </DropdownMenuItem>
                                             <DropdownMenuItem disabled>Tap to Pay · mobile app</DropdownMenuItem>
@@ -815,7 +869,9 @@ export function InvoiceDetailPanel({
                 open={manualCardOpen}
                 onOpenChange={setManualCardOpen}
                 invoiceId={invoice.id}
-                onSuccess={() => { onChanged?.(invoice); }}
+                amount={manualCardAmount}
+                balanceBefore={manualCardAmount || 0}
+                onPaymentConfirmed={revalidateAfterCardPayment}
             />
         </div>
     );

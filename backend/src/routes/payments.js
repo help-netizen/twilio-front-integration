@@ -108,6 +108,20 @@ router.post('/manual', requirePermission('payments.collect_offline'), async (req
     }
 });
 
+// GET /api/payments/manual-card-sessions/:sessionId/result — reconcile keyed card.
+// Literal route stays before /:id; success intentionally has exactly four keys.
+router.get('/manual-card-sessions/:sessionId/result', requirePermission('payments.collect_keyed'), async (req, res) => {
+    try {
+        const stripePaymentsService = require('../services/stripePaymentsService');
+        const companyId = req.companyFilter?.company_id;
+        const result = await stripePaymentsService.getManualCardSessionResult(companyId, req.params.sessionId);
+        res.json(result);
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
 // GET /api/payments/:id — Get payment transaction by ID
 router.get('/:id', requirePermission('payments.view'), async (req, res) => {
     try {

@@ -24,6 +24,7 @@ import { recordPayment, voidInvoice, sendInvoice } from '../../services/invoices
 import { approveEstimate, archiveEstimate, declineEstimate, restoreEstimate, sendEstimate, linkJobToEstimate, updateEstimate } from '../../services/estimatesApi';
 import { deleteInvoice } from '../../services/invoicesApi';
 import { toast } from 'sonner';
+import { calculateJobFinanceSummary, formatSignedCurrency } from './jobFinanceMath';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,8 +38,7 @@ const INVOICE_STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destruct
 };
 
 function money(v: string | number | null | undefined): string {
-    if (v == null) return '$0.00';
-    return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return formatSignedCurrency(v);
 }
 
 function paymentMethodLabel(method: string): string {
@@ -58,8 +58,12 @@ function paymentDate(value: string | null): string {
     });
 }
 
-function MetricCell({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'warning' }) {
-    const valueClass = tone === 'warning' ? 'text-[var(--blanc-warning)]' : 'text-[var(--blanc-ink-1)]';
+function MetricCell({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'warning' | 'credit' }) {
+    const valueClass = tone === 'warning'
+        ? 'text-[var(--blanc-warning)]'
+        : tone === 'credit'
+            ? 'text-[var(--blanc-success)]'
+            : 'text-[var(--blanc-ink-1)]';
     return (
         <div className="min-w-0 bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--blanc-ink-3)]">{label}</p>
@@ -82,7 +86,7 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
         estimates, invoices, jobPayments, loading,
         selectedEstimate, selectedInvoice,
         setSelectedEstimate, setSelectedInvoice,
-        refresh, handleCreateEstimate, handleCreateInvoice,
+        refresh, revalidateAfterPayment, handleCreateEstimate, handleCreateInvoice,
     } = useJobFinancials(jobId);
 
     const [showEstimateEditor, setShowEstimateEditor] = useState(false);
@@ -135,12 +139,17 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
         }
     };
 
-    const totalEstimated = estimates.reduce((s, e) => s + Number(e.total || 0), 0);
-    const totalInvoiced = invoices.reduce((s, i) => s + Number(i.total || 0), 0);
-    const jobLedgerPayments = (jobPayments || []).filter(payment => payment.invoice_id == null);
-    const jobLedgerPaid = jobLedgerPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-    const totalPaid = invoices.reduce((s, i) => s + Number(i.amount_paid || 0), 0) + jobLedgerPaid;
-    const totalDue = Math.max(totalInvoiced - totalPaid, 0);
+    const jobLedgerPayments = (jobPayments || []).filter(payment => (
+        payment.invoice_id == null
+        && payment.transaction_type === 'payment'
+        && payment.status === 'completed'
+    ));
+    const {
+        estimated: totalEstimated,
+        invoiced: totalInvoiced,
+        paid: totalPaid,
+        due: totalDue,
+    } = calculateJobFinanceSummary(estimates, invoices, jobPayments || []);
 
     // Collect-payment surface (STRIPE-ADHOC-PAY-001 §1). Perm-gate FIRST: no collect
     // perm → render nothing at all (no button, no CTA). Then split on Stripe readiness.
@@ -159,10 +168,15 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
         <div className="flex-1 overflow-y-auto bg-[var(--blanc-panel-surface,#fffdf9)] p-5 text-[var(--blanc-ink-1)]">
             <div className="mx-auto max-w-5xl space-y-5">
                 <div className="overflow-hidden rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-line)]">
-                    <div className="grid grid-cols-3 gap-px">
+                    <div className="grid grid-cols-2 gap-px sm:grid-cols-4">
                         <MetricCell label="Estimated" value={money(totalEstimated)} />
                         <MetricCell label="Invoiced" value={money(totalInvoiced)} />
-                        <MetricCell label="Due" value={money(totalDue)} tone={totalDue > 0 ? 'warning' : 'default'} />
+                        <MetricCell label="Paid" value={money(totalPaid)} />
+                        <MetricCell
+                            label="Due"
+                            value={money(totalDue)}
+                            tone={totalDue < 0 ? 'credit' : totalDue > 0 ? 'warning' : 'default'}
+                        />
                     </div>
                     {(showPayCard || showRecordButton) && (
                         <div className={`mt-px bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-3 ${showPayCard && showRecordButton ? 'grid grid-cols-2 gap-2' : 'flex'}`}>
@@ -541,7 +555,9 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                 onOpenChange={setShowCollect}
                 jobId={jobId}
                 outstanding={totalDue}
+                hasInvoices={invoices.length > 0}
                 onSuccess={() => refresh()}
+                onPaymentConfirmed={revalidateAfterPayment}
             />
 
             <JobRecordPaymentDialog

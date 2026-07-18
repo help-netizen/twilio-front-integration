@@ -447,7 +447,7 @@ async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, me
     return { sent: true, url: link.url, channel: chosen };
 }
 
-// ---- manual card entry (Payment Element) — Phase 3 --------------------------
+// ---- manual card entry (Card Element) — Phase 3 -----------------------------
 
 /**
  * Resolve amount + linkage from invoice or job context for a card-present / keyed
@@ -501,7 +501,7 @@ async function createCardSession(companyId, actor, surface, params) {
     const idempotencyKey = `${surface}-${companyId}-${ctx.invoiceId || ctx.jobId || 'adhoc'}-${ctx.amount}-${Date.now()}`;
     const pi = surface === 'tap_to_pay'
         ? await provider.createTerminalPaymentIntent(account.stripe_account_id, { amount: ctx.amount, metadata }, { idempotencyKey })
-        : await provider.createPaymentIntent(account.stripe_account_id, { amount: ctx.amount, metadata }, { idempotencyKey });
+        : await provider.createCardPaymentIntent(account.stripe_account_id, { amount: ctx.amount, metadata }, { idempotencyKey });
 
     const row = await q.insertSession(companyId, {
         invoice_id: ctx.invoiceId, job_id: ctx.jobId, contact_id: ctx.contactId,
@@ -519,6 +519,53 @@ async function createCardSession(companyId, actor, surface, params) {
 }
 
 const createManualCardSession = (companyId, actor, params) => createCardSession(companyId, actor, 'manual_card', params);
+
+function parseSessionMetadata(value) {
+    if (!value || typeof value === 'object') return value || {};
+    try { return JSON.parse(value); } catch { return {}; }
+}
+
+/**
+ * Reconcile one merchant manual-card session without exposing Stripe/session ids.
+ * Ownership and merchant/public classification are resolved before any Stripe call.
+ */
+async function getManualCardSessionResult(companyId, sessionId) {
+    if (!/^\d+$/.test(String(sessionId || ''))) {
+        throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
+    }
+
+    const session = await q.getSessionById(companyId, sessionId);
+    const metadata = parseSessionMetadata(session?.metadata);
+    const isMerchantManual = session?.surface === 'manual_card'
+        && metadata.public !== true
+        && metadata.public !== 'true';
+    if (!isMerchantManual || !session.stripe_payment_intent_id || !session.stripe_account_id) {
+        throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
+    }
+
+    const pi = await provider.retrievePaymentIntent(
+        session.stripe_account_id,
+        session.stripe_payment_intent_id
+    );
+    let paymentMethod = pi.payment_method && typeof pi.payment_method === 'object'
+        ? pi.payment_method
+        : null;
+    if (!paymentMethod && typeof pi.payment_method === 'string') {
+        try {
+            paymentMethod = await provider.retrievePaymentMethod(session.stripe_account_id, pi.payment_method);
+        } catch {
+            // Brand/last4 are enrichment; a retrieved PI status remains authoritative.
+        }
+    }
+    const card = paymentMethod?.card || null;
+
+    return {
+        status: pi.status,
+        amount: Number(pi.amount || 0) / 100,
+        brand: card?.brand || null,
+        last4: card?.last4 || null,
+    };
+}
 
 // ---- Terminal / Tap to Pay (backend) — Phase 4 -----------------------------
 
@@ -892,6 +939,7 @@ module.exports = {
     createPublicPayIntent,
     applyStripePayment,
     createManualCardSession,
+    getManualCardSessionResult,
     getConnectionToken,
     createTapToPayIntent,
     cancelTerminalIntent,

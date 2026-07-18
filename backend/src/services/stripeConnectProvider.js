@@ -146,7 +146,7 @@ async function retrieveCheckoutSession(accountId, sessionId) {
 
 /**
  * Create a PaymentIntent as a DIRECT charge on the connected account.
- * Used for manual/keyed card entry (Payment Element) — automatic payment methods.
+ * Used by the public Payment Element — automatic payment methods.
  * The client confirms with the platform publishable key + { stripeAccount } option.
  */
 async function createPaymentIntent(accountId, { amount, currency = 'usd', metadata = {} }, { idempotencyKey } = {}) {
@@ -156,6 +156,27 @@ async function createPaymentIntent(accountId, { amount, currency = 'usd', metada
         automatic_payment_methods: { enabled: true },
         metadata,
     }, { stripeAccount: accountId, idempotencyKey });
+}
+
+/** Create a card-only PaymentIntent for the merchant keyed-card Card Element. */
+async function createCardPaymentIntent(accountId, { amount, currency = 'usd', metadata = {} }, { idempotencyKey } = {}) {
+    return call('POST', '/payment_intents', {
+        amount: Math.round(Number(amount) * 100),
+        currency: String(currency).toLowerCase(),
+        // The local form encoder handles nested objects; an indexed object emits
+        // Stripe's required payment_method_types[0]=card without touching the
+        // existing public or Terminal request serialization.
+        payment_method_types: { 0: 'card' },
+        metadata,
+    }, { stripeAccount: accountId, idempotencyKey });
+}
+
+async function retrievePaymentIntent(accountId, paymentIntentId) {
+    return call('GET', `/payment_intents/${encodeURIComponent(paymentIntentId)}`, undefined, { stripeAccount: accountId });
+}
+
+async function retrievePaymentMethod(accountId, paymentMethodId) {
+    return call('GET', `/payment_methods/${encodeURIComponent(paymentMethodId)}`, undefined, { stripeAccount: accountId });
 }
 
 /** Terminal connection token (scoped to the connected account). */
@@ -235,6 +256,9 @@ module.exports = {
     createCheckoutSession,
     retrieveCheckoutSession,
     createPaymentIntent,
+    createCardPaymentIntent,
+    retrievePaymentIntent,
+    retrievePaymentMethod,
     createConnectionToken,
     createTerminalLocation,
     createTerminalPaymentIntent,

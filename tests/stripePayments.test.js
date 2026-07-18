@@ -235,21 +235,145 @@ describe('ensurePaymentLink', () => {
 // ── Phase 3: manual card session ────────────────────────────────────────────
 describe('createManualCardSession (Phase 3)', () => {
     const readyAccount = { company_id: COMPANY, stripe_account_id: ACCT, details_submitted: true, charges_enabled: true, payouts_enabled: true, capabilities: { card_payments: 'active' }, status: 'connected_ready' };
-    beforeEach(() => { provider.createPaymentIntent = jest.fn(); });
+    beforeEach(() => {
+        provider.createPaymentIntent = jest.fn();
+        provider.createCardPaymentIntent = jest.fn();
+    });
 
-    it('creates a PaymentIntent + session and returns client_secret', async () => {
+    it('creates a card-only PaymentIntent + session and returns client_secret', async () => {
         q.getAccountByCompany.mockResolvedValue(readyAccount);
         invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 80, total: 80, currency: 'USD', contact_id: 5 });
-        provider.createPaymentIntent.mockResolvedValue({ id: 'pi_m', client_secret: 'pi_m_secret' });
+        provider.createCardPaymentIntent.mockResolvedValue({ id: 'pi_m', client_secret: 'pi_m_secret' });
         q.insertSession.mockResolvedValue({ id: 11 });
         const res = await svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 });
         expect(res).toMatchObject({ client_secret: 'pi_m_secret', payment_intent_id: 'pi_m', account_id: ACCT, amount: 80 });
         expect(q.insertSession.mock.calls[0][1]).toMatchObject({ surface: 'manual_card' });
+        expect(provider.createCardPaymentIntent).toHaveBeenCalledWith(
+            ACCT,
+            expect.objectContaining({ amount: 80, metadata: expect.objectContaining({ surface: 'manual_card' }) }),
+            expect.objectContaining({ idempotencyKey: expect.any(String) })
+        );
+        expect(provider.createPaymentIntent).not.toHaveBeenCalled();
     });
 
     it('blocks when Stripe not ready', async () => {
         q.getAccountByCompany.mockResolvedValue(null);
         await expect(svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 })).rejects.toMatchObject({ code: 'NOT_READY' });
+    });
+});
+
+describe('createPublicPayIntent provider invariant', () => {
+    const readyAccount = { company_id: COMPANY, stripe_account_id: ACCT, details_submitted: true, charges_enabled: true, payouts_enabled: true, capabilities: { card_payments: 'active' }, status: 'connected_ready' };
+
+    beforeEach(() => {
+        provider.createPaymentIntent = jest.fn();
+        provider.createCardPaymentIntent = jest.fn();
+    });
+
+    it('CTRL-PUBLIC-AUTOMATIC: public pay uses the automatic provider and stamps public session metadata', async () => {
+        invoicesQueries.getInvoiceByPublicToken.mockResolvedValue({
+            id: 42,
+            company_id: COMPANY,
+            status: 'sent',
+            balance_due: 80,
+            currency: 'USD',
+            job_id: 7,
+            contact_id: 5,
+        });
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        provider.createPaymentIntent.mockResolvedValue({ id: 'pi_public', client_secret: 'pi_public_secret' });
+        q.insertSession.mockResolvedValue({ id: 12 });
+
+        const result = await svc.createPublicPayIntent('public-token', { tip: 15 });
+
+        expect(result).toMatchObject({ amount: 95, tip: 15, balance_due: 80 });
+        expect(provider.createPaymentIntent).toHaveBeenCalledWith(
+            ACCT,
+            expect.objectContaining({ amount: 95, metadata: expect.objectContaining({ surface: 'public_pay' }) }),
+            expect.objectContaining({ idempotencyKey: expect.any(String) })
+        );
+        expect(provider.createCardPaymentIntent).not.toHaveBeenCalled();
+        expect(q.insertSession).toHaveBeenCalledWith(COMPANY, expect.objectContaining({
+            surface: 'manual_card',
+            metadata: { tip: 15, public: true },
+        }));
+    });
+});
+
+describe('getManualCardSessionResult', () => {
+    const merchantSession = {
+        id: 11,
+        company_id: COMPANY,
+        surface: 'manual_card',
+        stripe_payment_intent_id: 'pi_merchant',
+        stripe_account_id: ACCT,
+        metadata: {},
+    };
+
+    beforeEach(() => {
+        provider.retrievePaymentIntent = jest.fn();
+        provider.retrievePaymentMethod = jest.fn();
+    });
+
+    it('projects exactly status, dollar amount, brand, and last4', async () => {
+        q.getSessionById.mockResolvedValue(merchantSession);
+        provider.retrievePaymentIntent.mockResolvedValue({
+            id: 'pi_merchant', status: 'succeeded', amount: 9500, payment_method: 'pm_1',
+        });
+        provider.retrievePaymentMethod.mockResolvedValue({ card: { brand: 'visa', last4: '4242' } });
+
+        const result = await svc.getManualCardSessionResult(COMPANY, 11);
+
+        expect(result).toEqual({ status: 'succeeded', amount: 95, brand: 'visa', last4: '4242' });
+        expect(Object.keys(result)).toEqual(['status', 'amount', 'brand', 'last4']);
+        expect(q.getSessionById).toHaveBeenCalledWith(COMPANY, 11);
+        expect(provider.retrievePaymentIntent).toHaveBeenCalledWith(ACCT, 'pi_merchant');
+        expect(provider.retrievePaymentMethod).toHaveBeenCalledWith(ACCT, 'pm_1');
+    });
+
+    it('uses an expanded PaymentMethod without another Stripe request', async () => {
+        q.getSessionById.mockResolvedValue(merchantSession);
+        provider.retrievePaymentIntent.mockResolvedValue({
+            status: 'requires_payment_method',
+            amount: 1234,
+            payment_method: { card: { brand: 'mastercard', last4: '4444' } },
+        });
+
+        await expect(svc.getManualCardSessionResult(COMPANY, 11)).resolves.toEqual({
+            status: 'requires_payment_method', amount: 12.34, brand: 'mastercard', last4: '4444',
+        });
+        expect(provider.retrievePaymentMethod).not.toHaveBeenCalled();
+    });
+
+    it('keeps authoritative PI status when card enrichment fails', async () => {
+        q.getSessionById.mockResolvedValue(merchantSession);
+        provider.retrievePaymentIntent.mockResolvedValue({ status: 'succeeded', amount: 9500, payment_method: 'pm_missing' });
+        provider.retrievePaymentMethod.mockRejectedValue(new Error('Stripe unavailable'));
+
+        await expect(svc.getManualCardSessionResult(COMPANY, 11)).resolves.toEqual({
+            status: 'succeeded', amount: 95, brand: null, last4: null,
+        });
+    });
+
+    it.each([
+        ['foreign/missing session', null],
+        ['public session', { ...merchantSession, metadata: { public: true } }],
+        ['string-encoded public metadata', { ...merchantSession, metadata: '{"public":true}' }],
+        ['non-manual session', { ...merchantSession, surface: 'tap_to_pay' }],
+    ])('404s before Stripe for %s', async (_label, session) => {
+        q.getSessionById.mockResolvedValue(session);
+
+        await expect(svc.getManualCardSessionResult(COMPANY, 11))
+            .rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(provider.retrievePaymentIntent).not.toHaveBeenCalled();
+        expect(provider.retrievePaymentMethod).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid session id before DB or Stripe', async () => {
+        await expect(svc.getManualCardSessionResult(COMPANY, 'not-an-id'))
+            .rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(q.getSessionById).not.toHaveBeenCalled();
+        expect(provider.retrievePaymentIntent).not.toHaveBeenCalled();
     });
 });
 

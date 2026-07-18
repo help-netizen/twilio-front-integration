@@ -7,7 +7,7 @@
  *     → service_name (title) → "customer_name, city" (plain text, one line)
  *   top-right cluster = technician (assigned_techs[0].name +N / "Unassigned") + status dot
  *   left 4px border = provider color · canceled → opacity .6
- *   payment pill (bottom) only when finance-permitted AND invoice_status is present.
+ *   payment pill (bottom) only when finance-permitted and local/fallback finance is present.
  *
  * No job number is shown (per the tile design). Desktop is unaffected — this is
  * rendered only inside JobsMobileList, which JobsPage mounts behind useIsMobile.
@@ -18,14 +18,15 @@ import type { LocalJob } from '../../services/jobsApi';
 import { formatTimeInTZ } from '../../utils/companyTime';
 import { getProviderColor } from '../../utils/providerColors';
 import { BLANC_STATUS_COLORS } from './jobsFilterHelpers';
+import { formatSignedCurrency } from './jobFinanceMath';
 
 const UNASSIGNED_ACCENT = 'var(--blanc-ink-3, rgba(117, 106, 89, 0.6))';
 const UNASSIGNED_BG = 'linear-gradient(180deg, rgba(248, 246, 242, 0.98), rgba(240, 237, 232, 0.94))';
 const UNASSIGNED_BORDER = 'var(--blanc-line)';
 
 // ── Payment pill ────────────────────────────────────────────────────────────
-// Prefer the LOCAL invoice math (amount_paid + balance_due, summed across this
-// job's non-void/refunded invoices) so the tile shows real paid-vs-due money.
+// Prefer the LOCAL finance rollup (non-void invoice money plus completed standalone
+// job payments) so the tile shows real paid-vs-due money, including signed credit.
 // When there is NO local invoice (balance_due == null) we fall back to the coarse
 // Zenbooker `invoice_status` + `invoice_total`, collapsing to 3 buckets:
 // Paid (green) / Partial (amber) / Unpaid (red).
@@ -46,16 +47,21 @@ export function money(v?: string | number | null): string {
 
 /**
  * Pure, unit-testable mapping of a job's payment state to a pill.
- * Local invoices (balance_due != null) drive paid/due amounts; otherwise the
+ * Local finance (balance_due != null) drives paid/due/credit amounts; otherwise the
  * coarse Zenbooker status is used. Returns null when there's nothing to show.
  */
 export function jobPaymentDisplay(
     job: Pick<LocalJob, 'amount_paid' | 'balance_due' | 'invoice_status' | 'invoice_total'>,
 ): PayDisplay {
-    // Local invoices present → real paid/due breakdown.
+    // Local finance present → real paid/due/credit breakdown.
     if (job.balance_due != null) {
-        const paid = Math.max(0, Number(job.amount_paid) || 0);
-        const due = Math.max(0, Number(job.balance_due) || 0);
+        const rawPaid = Number(job.amount_paid) || 0;
+        const rawDue = Number(job.balance_due) || 0;
+        if (rawDue < 0) {
+            return { text: 'Credit · ' + formatSignedCurrency(rawDue), tone: 'paid' };
+        }
+        const paid = Math.max(0, rawPaid);
+        const due = rawDue;
         const total = paid + due;
         if (total <= 0) return null; // nothing billed
         if (due <= 0) return { text: 'Paid · ' + money(total), tone: 'paid' };

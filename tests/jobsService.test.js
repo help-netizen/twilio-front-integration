@@ -105,3 +105,74 @@ describe('jobsService.getJobBalanceDue', () => {
         expect(db.query).not.toHaveBeenCalled();
     });
 });
+
+// ---------------------------------------------------------------------------
+// listJobs — signed local-finance rollup for the Jobs mobile tile/list.
+// ---------------------------------------------------------------------------
+describe('jobsService.listJobs signed payment rollup', () => {
+    const CO = 'company-uuid-001';
+    const jobRow = {
+        id: 7,
+        company_id: CO,
+        assigned_techs: [],
+        assigned_provider_user_ids: [],
+        notes: [],
+        metadata: {},
+        start_date: null,
+        end_date: null,
+        created_at: null,
+        updated_at: null,
+    };
+
+    function primeList(paymentRows) {
+        db.query
+            .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+            .mockResolvedValueOnce({ rows: [jobRow] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: paymentRows });
+    }
+
+    beforeEach(() => {
+        db.query.mockReset();
+    });
+
+    it('CTRL-DUE-SIGNED: no invoice + completed standalone $95 returns paid 95 and due -95', async () => {
+        primeList([{ job_id: 7, total_paid: '95.00', total_due: '-95.00' }]);
+
+        const result = await jobsService.listJobs({ companyId: CO });
+
+        expect(result.results).toHaveLength(1);
+        expect(result.results[0]).toMatchObject({
+            id: 7,
+            amount_paid: '95.00',
+            balance_due: '-95.00',
+        });
+
+        const [sql, params] = db.query.mock.calls[3];
+        expect(params).toEqual([[7], CO]);
+        expect(sql).toContain('i.company_id = $2');
+        expect(sql).toContain('pt.company_id = $2');
+        expect(sql).toContain('pt.invoice_id IS NULL');
+        expect(sql).toContain("pt.transaction_type = 'payment'");
+        expect(sql).toContain("pt.status = 'completed'");
+        expect(sql).toContain('COALESCE(ir.invoice_paid, 0) + COALESCE(sr.standalone_paid, 0)');
+        expect(sql).toContain('COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_paid, 0)');
+    });
+
+    it('keeps amount_paid and balance_due null when no local invoice or standalone payment exists', async () => {
+        primeList([]);
+
+        const result = await jobsService.listJobs({ companyId: CO });
+
+        expect(result.results[0]).toMatchObject({ amount_paid: null, balance_due: null });
+    });
+
+    it('maps the combined invoice + standalone rollup without a second calculation', async () => {
+        primeList([{ job_id: 7, total_paid: '70.00', total_due: '30.00' }]);
+
+        const result = await jobsService.listJobs({ companyId: CO });
+
+        expect(result.results[0]).toMatchObject({ amount_paid: '70.00', balance_due: '30.00' });
+        expect(db.query).toHaveBeenCalledTimes(4);
+    });
+});

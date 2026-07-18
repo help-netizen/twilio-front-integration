@@ -860,20 +860,41 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         }
     }
 
-    // Fetch actual paid + outstanding amounts from invoices for all jobs in batch.
-    // Exclude void/refunded invoices (not real money owed) so they can't skew the
-    // totals. A job present in this map has local invoices → both amounts are
-    // strings; a job absent from it has no local invoice → amount_paid/balance_due
-    // stay null, which is the signal the tile uses to fall back to Zenbooker.
-    let paymentsMap = {};
+    // Fetch actual paid + signed outstanding amounts from invoices and completed
+    // standalone job payments. Invoice-linked ledger rows are excluded because
+    // their money is already reflected in invoices.amount_paid/balance_due.
+    const paymentsMap = {};
     if (jobIds.length > 0 && companyId) {
         const { rows: paidRows } = await db.query(`
-            SELECT i.job_id,
-                   SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS total_paid,
-                   SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS total_due
-            FROM invoices i
-            WHERE i.job_id = ANY($1) AND i.company_id = $2
-            GROUP BY i.job_id
+            WITH invoice_rollup AS (
+                SELECT i.job_id,
+                       SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS invoice_paid,
+                       SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS invoice_due
+                FROM invoices i
+                WHERE i.job_id = ANY($1) AND i.company_id = $2
+                GROUP BY i.job_id
+            ),
+            standalone_rollup AS (
+                SELECT pt.job_id, SUM(pt.amount) AS standalone_paid
+                FROM payment_transactions pt
+                WHERE pt.job_id = ANY($1)
+                  AND pt.company_id = $2
+                  AND pt.invoice_id IS NULL
+                  AND pt.transaction_type = 'payment'
+                  AND pt.status = 'completed'
+                GROUP BY pt.job_id
+            ),
+            jobs_with_money AS (
+                SELECT job_id FROM invoice_rollup
+                UNION
+                SELECT job_id FROM standalone_rollup
+            )
+            SELECT jwm.job_id,
+                   COALESCE(ir.invoice_paid, 0) + COALESCE(sr.standalone_paid, 0) AS total_paid,
+                   COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_paid, 0) AS total_due
+            FROM jobs_with_money jwm
+            LEFT JOIN invoice_rollup ir ON ir.job_id = jwm.job_id
+            LEFT JOIN standalone_rollup sr ON sr.job_id = jwm.job_id
         `, [jobIds, companyId]);
         for (const pr of paidRows) {
             paymentsMap[pr.job_id] = { total_paid: pr.total_paid, total_due: pr.total_due };
@@ -884,7 +905,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         const job = rowToJob(r);
         job.tags = tagsMap[r.id] || [];
         const pay = paymentsMap[r.id];
-        // No local invoice → leave both null so the tile uses the Zenbooker fallback.
+        // No local invoice or standalone payment → retain the Zenbooker fallback.
         job.amount_paid = pay ? pay.total_paid : null;
         job.balance_due = pay ? pay.total_due : null;
         return job;

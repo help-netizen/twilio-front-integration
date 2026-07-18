@@ -38,6 +38,13 @@ export interface StripePaymentsStatus {
     checklist: StripeChecklistItem[];
 }
 
+export interface ManualCardSessionResult {
+    status: string;
+    amount: number;
+    brand: string | null;
+    last4: string | null;
+}
+
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     const res = await authedFetch(`${API_BASE}${path}`, {
         ...opts,
@@ -50,6 +57,21 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     return json;
 }
 
+async function getManualCardSessionResult(sessionId: number): Promise<ManualCardSessionResult> {
+    const res = await authedFetch(`/api/payments/manual-card-sessions/${sessionId}/result`);
+    const json = await res.json();
+    if (!res.ok) {
+        const message = typeof json?.error === 'string' ? json.error : json?.error?.message;
+        throw new Error(message || `Request failed: ${res.status}`);
+    }
+    return {
+        status: json.status,
+        amount: json.amount,
+        brand: json.brand ?? null,
+        last4: json.last4 ?? null,
+    };
+}
+
 export const stripePaymentsApi = {
     getStatus: (): Promise<{ status: StripePaymentsStatus }> => apiFetch('/status'),
     connect: (): Promise<{ account_id: string; onboarding_url: string }> =>
@@ -60,6 +82,7 @@ export const stripePaymentsApi = {
         apiFetch('/refresh-status', { method: 'POST' }),
     disconnect: (): Promise<{ disconnected: boolean }> =>
         apiFetch('/disconnect', { method: 'POST' }),
+    getManualCardSessionResult,
 };
 
 // Invoice payment links (mounted under /api/invoices/:id/...)

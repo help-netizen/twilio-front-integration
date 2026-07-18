@@ -55,6 +55,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     provider.createCheckoutSession = jest.fn();
     provider.createPaymentIntent = jest.fn();
+    provider.createCardPaymentIntent = jest.fn();
 });
 
 // ── A. assertAdhocAmount (§4.4) ─────────────────────────────────────────────
@@ -135,6 +136,33 @@ describe('resolveSurfaceContext (job branch)', () => {
         q.findOpenSession.mockResolvedValue({ id: 9, url: 'https://pay/x', expires_at: null });
         await svc.ensurePaymentLink(COMPANY, { id: 'u1' }, 42);
         expect(jobsService.getJobById).not.toHaveBeenCalled();
+    });
+});
+
+describe('createManualCardSession (job branch)', () => {
+    it('uses the merchant card-only provider for an invoice-independent job charge', async () => {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        jobsService.getJobById.mockResolvedValue({ id: 'job-1', contact_id: 5 });
+        provider.createCardPaymentIntent.mockResolvedValue({ id: 'pi_job', client_secret: 'pi_job_secret' });
+        q.insertSession.mockResolvedValue({ id: 21 });
+
+        const result = await svc.createManualCardSession(
+            COMPANY,
+            { id: 'u1' },
+            { jobId: 'job-1', amount: 95 }
+        );
+
+        expect(result).toMatchObject({ session_id: 21, payment_intent_id: 'pi_job', amount: 95 });
+        expect(jobsService.getJobById).toHaveBeenCalledWith('job-1', COMPANY);
+        expect(provider.createCardPaymentIntent).toHaveBeenCalledWith(
+            ACCT,
+            expect.objectContaining({ amount: 95, metadata: expect.objectContaining({ job_id: 'job-1', surface: 'manual_card' }) }),
+            expect.objectContaining({ idempotencyKey: expect.any(String) })
+        );
+        expect(provider.createPaymentIntent).not.toHaveBeenCalled();
+        expect(q.insertSession).toHaveBeenCalledWith(COMPANY, expect.objectContaining({
+            job_id: 'job-1', invoice_id: null, surface: 'manual_card', metadata: {},
+        }));
     });
 });
 

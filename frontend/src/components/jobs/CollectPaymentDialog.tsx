@@ -7,7 +7,7 @@ import {
     DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle,
 } from '../ui/dialog';
 import { FloatingField } from '../ui/floating-field';
-import { jobStripeApi } from '../../services/stripePaymentsApi';
+import { jobStripeApi, type ManualCardSessionResult } from '../../services/stripePaymentsApi';
 import ManualCardDialog from '../invoices/ManualCardDialog';
 
 interface Props {
@@ -16,7 +16,33 @@ interface Props {
     jobId: number | string;
     /** Job outstanding balance (dollars). Prefilled iff > 0, else the field starts blank. */
     outstanding: number;
+    hasInvoices?: boolean;
     onSuccess?: () => void;
+    onPaymentConfirmed?: (payment: ManualCardSessionResult) => boolean | void | Promise<boolean | void>;
+    onDone?: () => void;
+}
+
+interface ManualCardCollectionCallbacksArgs {
+    setManualCardOpen: (open: boolean) => void;
+    setCollectionOpen: (open: boolean) => void;
+    onPaymentConfirmed?: (payment: ManualCardSessionResult) => boolean | void | Promise<boolean | void>;
+    onDone?: () => void;
+}
+
+export function createManualCardCollectionCallbacks({
+    setManualCardOpen,
+    setCollectionOpen,
+    onPaymentConfirmed,
+    onDone,
+}: ManualCardCollectionCallbacksArgs) {
+    return {
+        onPaymentConfirmed: (payment: ManualCardSessionResult) => onPaymentConfirmed?.(payment),
+        onDone: () => {
+            setManualCardOpen(false);
+            setCollectionOpen(false);
+            onDone?.();
+        },
+    };
 }
 
 // Client mirror of the server-side `assertAdhocAmount` (STRIPE-ADHOC-PAY-001 §4.4).
@@ -38,7 +64,16 @@ function validateAmount(raw: string): string | null {
  *   • Send payment link   → jobStripeApi.sendLink (real dispatch; honest toast)
  *   • Copy payment link   → jobStripeApi.createLink → clipboard
  */
-export function CollectPaymentDialog({ open, onOpenChange, jobId, outstanding, onSuccess }: Props) {
+export function CollectPaymentDialog({
+    open,
+    onOpenChange,
+    jobId,
+    outstanding,
+    hasInvoices,
+    onSuccess,
+    onPaymentConfirmed,
+    onDone,
+}: Props) {
     const [amount, setAmount] = useState('');
     const [busy, setBusy] = useState<null | 'send' | 'copy'>(null);
     const [manualCardOpen, setManualCardOpen] = useState(false);
@@ -50,6 +85,12 @@ export function CollectPaymentDialog({ open, onOpenChange, jobId, outstanding, o
 
     const error = validateAmount(amount);
     const amountNum = error ? undefined : Number(amount);
+    const manualCardCallbacks = createManualCardCollectionCallbacks({
+        setManualCardOpen,
+        setCollectionOpen: onOpenChange,
+        onPaymentConfirmed,
+        onDone,
+    });
 
     // Round to 2dp on blur so the value submitted matches server expectations.
     const roundOnBlur = () => {
@@ -202,7 +243,10 @@ export function CollectPaymentDialog({ open, onOpenChange, jobId, outstanding, o
                 onOpenChange={setManualCardOpen}
                 jobId={jobId}
                 amount={amountNum}
-                onSuccess={() => { setManualCardOpen(false); onOpenChange(false); onSuccess?.(); }}
+                balanceBefore={outstanding}
+                jobHasInvoices={hasInvoices}
+                onPaymentConfirmed={manualCardCallbacks.onPaymentConfirmed}
+                onDone={manualCardCallbacks.onDone}
             />
         </>
     );
