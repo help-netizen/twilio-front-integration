@@ -20,7 +20,7 @@ import '../styles/schedule-redesign.css';
 import { DayView } from '../components/schedule/DayView';
 import { TimelineView } from '../components/schedule/TimelineView';
 import { TimelineWeekView } from '../components/schedule/TimelineWeekView';
-import type { ScheduleItem, DispatchSettings, TimeOffBlock } from '../services/scheduleApi';
+import type { ScheduleItem, DispatchSettings, UnavailabilityBlock } from '../services/scheduleApi';
 
 /* ── Fixtures ── */
 const settings: DispatchSettings = {
@@ -56,9 +56,9 @@ const items: ScheduleItem[] = [
 
 const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
 const dayEnd = new Date(dayStart.getTime() + 86400000);
-const timeOff: TimeOffBlock[] = [
-    { id: 'off-1', technician_id: 't2', technician_name: 'Maria Lopez', starts_at: dayStart.toISOString(), ends_at: dayEnd.toISOString(), note: 'Vacation — Cancun', source: 'individual' },
-    { id: 'off-2', technician_id: 't1', technician_name: 'Alex Johnson', starts_at: atToday(14), ends_at: atToday(16), note: 'Dentist', source: 'individual' },
+const unavailability: UnavailabilityBlock[] = [
+    { id: 'off-1', kind: 'time_off', technician_id: 't2', technician_name: 'Maria Lopez', starts_at: dayStart.toISOString(), ends_at: dayEnd.toISOString(), note: 'Vacation — Cancun', source: 'individual', mutable: true },
+    { id: 'off-2', kind: 'time_off', technician_id: 't1', technician_name: 'Alex Johnson', starts_at: atToday(14), ends_at: atToday(16), note: 'Dentist', source: 'individual', mutable: true },
 ];
 
 /* ── Harness shell ── */
@@ -87,15 +87,15 @@ function Harness() {
             </div>
             {view === 'day' && (
                 <DayView currentDate={new Date()} items={shownItems} settings={settings}
-                    onSelectItem={noop} timeOff={timeOff} providerFilterIds={providerFilterIds} />
+                    onSelectItem={noop} unavailability={unavailability} providerFilterIds={providerFilterIds} />
             )}
             {view === 'timeline' && (
                 <TimelineView currentDate={new Date()} items={shownItems} settings={settings}
-                    allProviders={providers} onSelectItem={noop} timeOff={timeOff} providerFilterIds={providerFilterIds} />
+                    allProviders={providers} onSelectItem={noop} unavailability={unavailability} providerFilterIds={providerFilterIds} />
             )}
             {view === 'week' && (
                 <TimelineWeekView currentDate={new Date()} items={shownItems} settings={settings}
-                    allProviders={providers} onSelectItem={noop} timeOff={timeOff} providerFilterIds={providerFilterIds} />
+                    allProviders={providers} onSelectItem={noop} unavailability={unavailability} providerFilterIds={providerFilterIds} />
             )}
         </div>
     );

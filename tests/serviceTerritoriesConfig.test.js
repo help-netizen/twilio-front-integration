@@ -249,6 +249,39 @@ describe('PUT /mode', () => {
         expect(db.query).toHaveBeenCalledTimes(callsAfterValid);
         expect(db.query.mock.calls.some(([sql]) => /\bDELETE\b/.test(String(sql)))).toBe(false);
     });
+
+    test('TC-SA-MODE-01 — list→radius→list preserves both assignment maps', async () => {
+        let activeMode = 'list';
+        const districtAssignments = [{ technician_id: 'tech-1', district_name: 'North' }];
+        const radiusAssignments = [{
+            technician_id: 'tech-1',
+            radius_id: '11111111-1111-4111-8111-111111111111',
+        }];
+        const before = JSON.stringify({ districtAssignments, radiusAssignments });
+        db.query.mockImplementation(async (sql, params) => {
+            if (isSql(sql, 'INSERT INTO company_territory_settings')) {
+                activeMode = params[1];
+                return { rows: [{ active_mode: activeMode }] };
+            }
+            if (/DELETE FROM technician_district_assignments/.test(String(sql))) {
+                districtAssignments.length = 0;
+                return { rows: [] };
+            }
+            if (/DELETE FROM technician_radius_assignments/.test(String(sql))) {
+                radiusAssignments.length = 0;
+                return { rows: [] };
+            }
+            throw new Error(`Unexpected SQL: ${sql}`);
+        });
+        const app = appWith();
+
+        expect((await request(app).put(`${BASE_PATH}/mode`).send({ active_mode: 'radius' })).status).toBe(200);
+        expect((await request(app).put(`${BASE_PATH}/mode`).send({ active_mode: 'list' })).status).toBe(200);
+
+        expect(activeMode).toBe('list');
+        expect(JSON.stringify({ districtAssignments, radiusAssignments })).toBe(before);
+        expect(db.query).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe('POST /radii', () => {
@@ -465,4 +498,3 @@ describe('mount middleware and tenant isolation', () => {
         }
     });
 });
-

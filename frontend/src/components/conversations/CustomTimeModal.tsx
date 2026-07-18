@@ -16,8 +16,9 @@ import { dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ } from '../..
 import { serverDate, serverNow } from '../../utils/serverClock';
 import { makePinSvg } from '../../utils/mapPins';
 import { fetchSlotRecommendations, type SlotRecommendation } from '../../services/slotRecommendationsApi';
-import { fetchTimeOff, type TimeOffBlock } from '../../services/scheduleApi';
-import { formatTimeOffPeriod } from '../jobs/timeOffWarning';
+import { fetchTechnicianServiceAreaMatches, fetchUnavailability, unavailabilityLabel, type UnavailabilityBlock } from '../../services/scheduleApi';
+import { formatUnavailabilityPeriod } from '../jobs/timeOffWarning';
+import { serviceAreaSelectionWarning } from './serviceAreaWarning';
 import './CustomTimeModal.css';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -80,7 +81,7 @@ interface TechGroup {
     name: string;
     colorIndex: number;
     jobs: LocalJob[];
-    timeOff: TimeOffBlock[];
+    unavailability: UnavailabilityBlock[];
     matchesTerritory: boolean;
 }
 
@@ -159,9 +160,15 @@ function snapToGrid(y: number, containerTop: number): number {
 
 /**
  * Build tech groups from ALL providers, merging in jobs.
- * Priority: 1) Techs whose territories include territoryId  2) Least loaded first
+ * Priority: 1) Techs eligible through Albusto's active service-area mode
+ * 2) Least loaded first.
  */
-function buildTechGroups(providers: TeamMember[], jobs: LocalJob[], timeOff: TimeOffBlock[], territoryId?: string): TechGroup[] {
+function buildTechGroups(
+    providers: TeamMember[],
+    jobs: LocalJob[],
+    unavailability: UnavailabilityBlock[],
+    areaMatches: Map<string, boolean> | null,
+): TechGroup[] {
     const activeJobs = jobs.filter(j => !EXCLUDED_STATUSES.includes(j.blanc_status || ''));
 
     // Map jobs → tech id
@@ -176,10 +183,10 @@ function buildTechGroups(providers: TeamMember[], jobs: LocalJob[], timeOff: Tim
         }
     }
 
-    const timeOffByTech = new Map<string, TimeOffBlock[]>();
-    for (const block of timeOff) {
-        if (!timeOffByTech.has(block.technician_id)) timeOffByTech.set(block.technician_id, []);
-        timeOffByTech.get(block.technician_id)!.push(block);
+    const unavailabilityByTech = new Map<string, UnavailabilityBlock[]>();
+    for (const block of unavailability) {
+        if (!unavailabilityByTech.has(block.technician_id)) unavailabilityByTech.set(block.technician_id, []);
+        unavailabilityByTech.get(block.technician_id)!.push(block);
     }
 
     // Build groups for ALL providers
@@ -187,15 +194,13 @@ function buildTechGroups(providers: TeamMember[], jobs: LocalJob[], timeOff: Tim
         const techJobs = (jobsByTech.get(prov.id) || []).sort(
             (a, b) => new Date(a.start_date || 0).getTime() - new Date(b.start_date || 0).getTime()
         );
-        const matchesTerritory = territoryId
-            ? (prov.assigned_territories || []).some(t => t.id === territoryId)
-            : true;
+        const matchesTerritory = areaMatches?.get(String(prov.id)) ?? true;
         return {
             id: prov.id,
             name: prov.name,
             colorIndex: i % TECH_COLORS.length,
             jobs: techJobs,
-            timeOff: timeOffByTech.get(prov.id) || [],
+            unavailability: unavailabilityByTech.get(prov.id) || [],
             matchesTerritory,
         };
     });
@@ -225,13 +230,13 @@ interface TechTimelineProps {
     isSuggested?: boolean;
     /** Engine recommendations for THIS tech on the selected date (T13 overlay bands) */
     recsForTech?: SlotRecommendation[];
-    /** Time-off periods for THIS tech overlapping the selected date */
-    timeOff?: TimeOffBlock[];
+    /** Effective unavailable periods for THIS tech overlapping the selected date */
+    unavailability?: UnavailabilityBlock[];
     /** Apply a recommendation via the existing pick mechanism */
     onApplyRec?: (rec: SlotRecommendation) => void;
 }
 
-function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz, isSuggested, recsForTech, timeOff, onApplyRec }: TechTimelineProps) {
+function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz, isSuggested, recsForTech, unavailability, onApplyRec }: TechTimelineProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [hoverMinutes, setHoverMinutes] = useState<number | null>(null);
 
@@ -318,8 +323,8 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
                     );
                 })}
 
-                {/* Technician time off — clamped to this day's visible working window */}
-                {timeOff?.map((block) => {
+                {/* Same existing hatch for explicit time off and recurring gaps. */}
+                {unavailability?.map((block) => {
                     const blockStart = new Date(block.starts_at);
                     const blockEnd = new Date(block.ends_at);
                     const dayStart = dateInTZ(y, m, d, 0, 0, companyTz);
@@ -347,12 +352,12 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
 
                     return (
                         <div
-                            key={`timeoff-${block.id}`}
+                            key={`unavailability-${block.id}`}
                             className="tech-timeline__timeoff"
                             style={{ top, height }}
-                            title={formatTimeOffPeriod(block, companyTz)}
+                            title={formatUnavailabilityPeriod(block, companyTz)}
                         >
-                            <span className="tech-timeline__timeoff-label">Time off · {compactPeriod}</span>
+                            <span className="tech-timeline__timeoff-label">{unavailabilityLabel(block)} · {compactPeriod}</span>
                         </div>
                     );
                 })}
@@ -638,9 +643,12 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     }, [open]);
     const [techPage, setTechPage] = useState(0);
     const [jobs, setJobs] = useState<LocalJob[]>([]);
-    const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
+    const [unavailability, setUnavailability] = useState<UnavailabilityBlock[]>([]);
+    const [availabilityError, setAvailabilityError] = useState('');
     const [providers, setProviders] = useState<TeamMember[]>([]);
     const [providerError, setProviderError] = useState('');
+    const [areaMatches, setAreaMatches] = useState<Map<string, boolean> | null>(null);
+    const [areaMatchError, setAreaMatchError] = useState('');
     const [loading, setLoading] = useState(false);
     const durationMin = newJobDuration || DEFAULT_DURATION_MIN;
 
@@ -704,6 +712,39 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         return () => { cancelled = true; };
     }, []);
 
+    // Albusto-only area matching. Zenbooker remains the roster source; its
+    // provider-side territory metadata is not part of eligibility.
+    useEffect(() => {
+        if (!open || (!newJobCoords && !newJobAddress)) {
+            setAreaMatches(null);
+            setAreaMatchError('');
+            return;
+        }
+        let cancelled = false;
+        fetchTechnicianServiceAreaMatches({
+            address: newJobAddress,
+            lat: newJobCoords?.lat,
+            lng: newJobCoords?.lng,
+        }).then(result => {
+            if (cancelled) return;
+            if (!result.target_resolved) {
+                setAreaMatches(null);
+                setAreaMatchError('Technician service areas could not be verified. You can still book manually.');
+                return;
+            }
+            setAreaMatches(new Map(
+                result.matches.map(match => [match.technician_id, match.eligible])
+            ));
+            setAreaMatchError('');
+        }).catch(error => {
+            if (cancelled) return;
+            console.warn('[CustomTimeModal] Albusto service-area match failed', error);
+            setAreaMatches(null);
+            setAreaMatchError('Technician service areas could not be verified. You can still book manually.');
+        });
+        return () => { cancelled = true; };
+    }, [open, newJobAddress, newJobCoords?.lat, newJobCoords?.lng]);
+
     // dateObj for Calendar UI — browser-local Date so Calendar component highlights correct day
     const dateObj = useMemo(() => {
         const [y, m, d] = selectedDate.split('-').map(Number);
@@ -722,25 +763,30 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             } catch { if (!cancelled) setJobs([]); }
             finally { if (!cancelled) setLoading(false); }
         }
-        async function fetchDayTimeOff() {
+        async function fetchDayUnavailability() {
             const [y, m, d] = selectedDate.split('-').map(Number);
             const from = dateInTZ(y, m, d, 0, 0, companyTz);
             const nextDay = new Date(Date.UTC(y, m - 1, d + 1));
             const to = dateInTZ(nextDay.getUTCFullYear(), nextDay.getUTCMonth() + 1, nextDay.getUTCDate(), 0, 0, companyTz);
             try {
-                const blocks = await fetchTimeOff({ from: from.toISOString(), to: to.toISOString() });
-                if (!cancelled) setTimeOff(blocks);
-            } catch { if (!cancelled) setTimeOff([]); }
+                const blocks = await fetchUnavailability({ from: from.toISOString(), to: to.toISOString() });
+                if (!cancelled) {
+                    setUnavailability(blocks);
+                    setAvailabilityError('');
+                }
+            } catch {
+                if (!cancelled) setAvailabilityError('Technician availability could not be loaded. You can still book manually; confirm availability first.');
+            }
         }
         fetchJobs();
-        fetchDayTimeOff();
+        fetchDayUnavailability();
         return () => { cancelled = true; };
     }, [selectedDate, companyTz]);
 
-    // Group jobs and time off by tech — all providers, priority sorted
+    // Group jobs and effective unavailability by tech — all providers, priority sorted
     const techGroups = useMemo(
-        () => buildTechGroups(providers, jobs, timeOff, territoryId),
-        [providers, jobs, timeOff, territoryId],
+        () => buildTechGroups(providers, jobs, unavailability, areaMatches),
+        [providers, jobs, unavailability, areaMatches],
     );
     const totalPages = Math.max(1, Math.ceil(techGroups.length / 2));
     const visibleTechs = techGroups.slice(techPage * 2, techPage * 2 + 2);
@@ -950,6 +996,22 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     /* ── Technician timelines (the hour grid) ── */
     const timelinesPanel = (
         <div className="ctm-timelines">
+                        {availabilityError && (
+                            <div
+                                className="mx-3 mb-3 rounded-xl px-3.5 py-3 text-xs"
+                                style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-ink-1)' }}
+                            >
+                                {availabilityError}
+                            </div>
+                        )}
+                        {areaMatchError && (
+                            <div
+                                className="mx-3 mb-3 rounded-xl px-3.5 py-3 text-xs"
+                                style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-ink-1)' }}
+                            >
+                                {areaMatchError}
+                            </div>
+                        )}
                         {/* Tech name bar */}
                         {visibleTechs.length > 0 && (
                             <div className="ctm-tech-bar-container">
@@ -1032,7 +1094,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                     companyTz={companyTz}
                                                     isSuggested={tech.id === suggestedTechId}
                                                     recsForTech={recsByTech.get(tech.id)}
-                                                    timeOff={tech.timeOff}
+                                                    unavailability={tech.unavailability}
                                                     onApplyRec={applyRecommendation}
                                                 />
                                             ))}
@@ -1057,8 +1119,15 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         />
     );
 
-    const territoryWarn = selectedSlot && !techGroups.find(g => g.id === selectedSlot.techId)?.matchesTerritory
-        ? <span className="ctm-footer__territory-warn">⚠ This technician doesn&apos;t serve this area</span>
+    const territoryWarningText = serviceAreaSelectionWarning({
+        hasSelection: Boolean(selectedSlot),
+        lookupFailed: Boolean(areaMatchError),
+        eligible: selectedSlot
+            ? techGroups.find(group => group.id === selectedSlot.techId)?.matchesTerritory
+            : undefined,
+    });
+    const territoryWarn = territoryWarningText
+        ? <span className="ctm-footer__territory-warn">⚠ {territoryWarningText}</span>
         : null;
     const confirmButton = (
         <Button onClick={handleConfirm} disabled={!selectedSlot} className={isMobile ? 'flex-1' : undefined}>

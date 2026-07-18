@@ -9,9 +9,9 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import { overlapsTimeOff } from '../../services/scheduleApi';
-import { filterTimeOffByProviders } from '../../services/scheduleFilters';
-import type { ScheduleItem, DispatchSettings, RouteSegment, TimeOffBlock } from '../../services/scheduleApi';
+import { overlapsUnavailability, unavailabilityLabel, unavailabilityWarningPhrase } from '../../services/scheduleApi';
+import { filterUnavailabilityByProviders } from '../../services/scheduleFilters';
+import type { ScheduleItem, DispatchSettings, RouteSegment, UnavailabilityBlock } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { routeSegmentLabel, routeSegmentTone } from '../../utils/routeFormat';
 import {
@@ -38,15 +38,15 @@ interface TimelineViewProps {
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => void;
     routeByPair?: Map<string, RouteSegment>;
-    /** TECH-DAYOFF-001: day-off blocks for the visible range (grey lane overlay + DnD warning). */
-    timeOff?: TimeOffBlock[];
+    /** Combined time-off and recurring schedule gaps for lane overlays/warnings. */
+    unavailability?: UnavailabilityBlock[];
     /** TECH-DAYOFF-002: active provider filter — rendered time-off lanes honor it (DnD warnings don't). */
     providerFilterIds?: string[];
 }
 
 // TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
 // separate non-interactive layer under the job cards.
-const TIME_OFF_BG = 'repeating-linear-gradient(135deg, rgba(25, 25, 25, 0.04) 0 10px, rgba(25, 25, 25, 0.08) 10px 20px)';
+const UNAVAILABILITY_BG = 'repeating-linear-gradient(135deg, rgba(25, 25, 25, 0.04) 0 10px, rgba(25, 25, 25, 0.08) 10px 20px)';
 
 const LEG_TONE_COLOR: Record<string, string> = {
     ok: 'var(--sched-ink-2)', pending: 'var(--sched-ink-3)', warn: '#a65312', none: 'var(--sched-ink-3)',
@@ -126,7 +126,7 @@ function layoutItems(items: ScheduleItem[], tz: string, startHour: number): Posi
 }
 
 export const TimelineView: React.FC<TimelineViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReschedule, onReassign, onCreateFromSlot, routeByPair, timeOff, providerFilterIds,
+    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReschedule, onReassign, onCreateFromSlot, routeByPair, unavailability, providerFilterIds,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -150,7 +150,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
     // TECH-DAYOFF-001 S-11: a drop that lands on the target technician's time
     // off is parked here until the dispatcher confirms (warning-only, never a block).
-    const [pendingDrop, setPendingDrop] = useState<{ techName: string; period: string; proceed: () => void } | null>(null);
+    const [pendingDrop, setPendingDrop] = useState<{ techName: string; phrase: string; period: string; proceed: () => void } | null>(null);
 
     // Close inline placeholder on outside click / Esc
     useEffect(() => {
@@ -275,18 +275,19 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         // target lane technician's time off (blocks already in memory, 0 requests).
         const conflicts = group.id === '__unassigned'
             ? []
-            : overlapsTimeOff(timeOff ?? [], [group.id], startAt, endAt);
+            : overlapsUnavailability(unavailability ?? [], [group.id], startAt, endAt);
         if (conflicts.length > 0) {
             const c = conflicts[0];
             setPendingDrop({
                 techName: c.technician_name,
+                phrase: unavailabilityWarningPhrase(c),
                 period: `${formatDateTimeInTZ(new Date(c.starts_at), tz)} – ${formatDateTimeInTZ(new Date(c.ends_at), tz)}`,
                 proceed,
             });
             return;
         }
         proceed();
-    }, [onReschedule, onReassign, pctToMinutes, refY, refM, refD, tz, timeOff]);
+    }, [onReschedule, onReassign, pctToMinutes, refY, refM, refD, tz, unavailability]);
 
     // ── Slot click for create-from-slot ────────────────────────────────────
 
@@ -435,7 +436,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                             {/* Time-off blocks (TECH-DAYOFF-001 S-9, INV-10) — a grey layer
                                 UNDER the job cards; pointer-events:none so click/DnD pass
                                 straight through to the grid (the protected DnD chain). */}
-                            {group.id !== '__unassigned' && filterTimeOffByProviders(timeOff ?? [], providerFilterIds)
+                            {group.id !== '__unassigned' && filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds)
                                 .filter(b => b.technician_id === group.id
                                     && new Date(b.starts_at) < gridEndUtc
                                     && gridStartUtc < new Date(b.ends_at))
@@ -452,12 +453,12 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     const heightPx = Math.max(botMin / 60 * HOUR_HEIGHT - topPx, 18);
                                     return (
                                         <div
-                                            key={`timeoff-${b.id}`}
+                                            key={`unavailability-${b.id}`}
                                             className="absolute left-0 right-0 z-[2] pointer-events-none select-none overflow-hidden"
-                                            style={{ top: topPx, height: heightPx, background: TIME_OFF_BG }}
+                                            style={{ top: topPx, height: heightPx, background: UNAVAILABILITY_BG }}
                                         >
                                             <div className="px-2 pt-1 text-[11px] font-medium truncate" style={{ color: 'var(--sched-ink-3)' }}>
-                                                Time off
+                                                {unavailabilityLabel(b)}
                                             </div>
                                             {b.note && heightPx >= 48 && (
                                                 <div className="px-2 text-[11px] truncate" style={{ color: 'var(--sched-ink-3)' }}>
@@ -607,9 +608,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         <Dialog open={!!pendingDrop} onOpenChange={v => { if (!v) setPendingDrop(null); }}>
             <DialogContent variant="dialog" size="sm">
                 <DialogHeader>
-                    <DialogTitle>Blocked by time off</DialogTitle>
+                    <DialogTitle>Availability warning</DialogTitle>
                     <DialogDescription>
-                        {pendingDrop && `${pendingDrop.techName} has time off ${pendingDrop.period}. Move anyway?`}
+                        {pendingDrop && `${pendingDrop.techName} ${pendingDrop.phrase} ${pendingDrop.period}. Move anyway?`}
                     </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>
@@ -621,4 +622,3 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         </>
     );
 };
-

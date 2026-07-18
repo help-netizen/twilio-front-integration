@@ -11,8 +11,8 @@ import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { fetchTimeOff, overlapsTimeOff } from '../../services/scheduleApi';
-import { getCompanyTimezone, formatTimeOffPeriod } from './timeOffWarning';
+import { fetchUnavailability, overlapsUnavailability, unavailabilityWarningPhrase } from '../../services/scheduleApi';
+import { getCompanyTimezone, formatUnavailabilityPeriod } from './timeOffWarning';
 import { JobTechnicianControl } from './JobTechnicianControl';
 import { useNavigate } from 'react-router-dom';
 import { googleMapsUrl } from '../../utils/routeFormat';
@@ -101,13 +101,12 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
 
     const territoryId = job.zb_raw?.territory?.id || job.zb_raw?.service_territory?.id || undefined;
 
-    // TECH-DAYOFF-001 S-13 (warning-only): after the time is picked and BEFORE
-    // the existing reschedule call, run a targeted time-off check for each of
+    // Warning-only: after the time is picked and BEFORE the existing reschedule
+    // call, run a targeted effective-unavailability check for each of
     // the job's CURRENT assigned techs on the chosen interval. A conflict opens
     // a confirm modal (center dialog canon); confirming runs the untouched
-    // reschedule path. A failed fetch skips the warning (best-effort) and
-    // reschedules as before — never blocks.
-    const [pendingReschedule, setPendingReschedule] = useState<{ techName: string; period: string; slot: RescheduleSlot } | null>(null);
+    // reschedule path. A failed verification asks for confirmation too.
+    const [pendingReschedule, setPendingReschedule] = useState<{ message: string; slot: RescheduleSlot } | null>(null);
 
     const handleRescheduleConfirm = async (slot: RescheduleSlot) => {
         setShowReschedule(false);
@@ -115,17 +114,22 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
         if (techs.length > 0) {
             try {
                 const [perTech, tz] = await Promise.all([
-                    Promise.all(techs.map(t => fetchTimeOff({ from: slot.start, to: slot.end, technician_id: t.id }))),
+                    Promise.all(techs.map(t => fetchUnavailability({ from: slot.start, to: slot.end, technician_id: t.id }))),
                     getCompanyTimezone(),
                 ]);
-                const conflicts = overlapsTimeOff(perTech.flat(), techs.map(t => t.id), slot.start, slot.end);
+                const conflicts = overlapsUnavailability(perTech.flat(), techs.map(t => t.id), slot.start, slot.end);
                 if (conflicts.length > 0) {
                     const c = conflicts[0];
-                    setPendingReschedule({ techName: c.technician_name, period: formatTimeOffPeriod(c, tz), slot });
+                    setPendingReschedule({
+                        message: `${c.technician_name} ${unavailabilityWarningPhrase(c)} ${formatUnavailabilityPeriod(c, tz)}.`,
+                        slot,
+                    });
                     return;
                 }
             } catch (err) {
-                console.warn('[JobInfoSections] time-off warning check failed (skipped)', err);
+                console.warn('[JobInfoSections] availability warning check failed', err);
+                setPendingReschedule({ message: 'Technician availability could not be verified.', slot });
+                return;
             }
         }
         await performReschedule(slot);
@@ -357,7 +361,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                     <DialogHeader>
                         <DialogTitle>Blocked by time off</DialogTitle>
                         <DialogDescription>
-                            {pendingReschedule && `${pendingReschedule.techName} has time off ${pendingReschedule.period}. Reschedule anyway?`}
+                            {pendingReschedule && `${pendingReschedule.message} Reschedule anyway?`}
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>

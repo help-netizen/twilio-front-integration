@@ -13,10 +13,10 @@ import { useAuthz } from './useAuthz';
 import { useIsMobile } from './useIsMobile';
 import {
     fetchScheduleItems, fetchDispatchSettings, updateDispatchSettings,
-    rescheduleItem, reassignItem, createFromSlot, fetchRouteSegments, fetchTimeOff,
+    rescheduleItem, reassignItem, createFromSlot, fetchRouteSegments, fetchUnavailability,
     loadPersistedFilters, persistFilters,
     type ScheduleItem, type DispatchSettings, type ScheduleFilters,
-    type CreateFromSlotPayload, type RouteSegment, type TimeOffBlock,
+    type CreateFromSlotPayload, type RouteSegment, type UnavailabilityBlock,
 } from '../services/scheduleApi';
 import { authedFetch } from '../services/apiClient';
 import { dateInTZ } from '../utils/companyTime';
@@ -159,15 +159,16 @@ export function useScheduleData() {
         return map;
     }, [routeSegments]);
 
-    // ── Fetch time-off blocks (TECH-DAYOFF-001) ──────────────────────────────
+    // ── Fetch combined technician unavailability ─────────────────────────────
     // Separate, parallel, best-effort fetch on the same visible dateRange
     // (route-segments pattern): a failed fetch never blocks or fails the
     // schedule — the grey blocks simply don't render. Company-local calendar
     // days are widened to UTC instants via dateInTZ (half-open [from, to)).
-    const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
+    const [unavailability, setUnavailability] = useState<UnavailabilityBlock[]>([]);
+    const [unavailabilityError, setUnavailabilityError] = useState<string | null>(null);
     const timezone = (settings ?? DEFAULT_SETTINGS).timezone;
 
-    const loadTimeOff = useCallback(async () => {
+    const loadUnavailability = useCallback(async () => {
         try {
             const [sy, sm, sd] = dateRange.startDate.split('-').map(Number);
             const [ey, em, ed] = dateRange.endDate.split('-').map(Number);
@@ -175,15 +176,16 @@ export function useScheduleData() {
             // End of range = midnight AFTER endDate (UTC-day overflow is fine).
             const next = new Date(Date.UTC(ey, em - 1, ed + 1));
             const to = dateInTZ(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, timezone).toISOString();
-            const blocks = await fetchTimeOff({ from, to });
-            setTimeOff(blocks);
+            const blocks = await fetchUnavailability({ from, to });
+            setUnavailability(blocks);
+            setUnavailabilityError(null);
         } catch (err) {
-            console.warn('[Schedule] time-off fetch failed (best-effort)', err);
-            setTimeOff([]);
+            console.warn('[Schedule] availability fetch failed', err);
+            setUnavailabilityError(err instanceof Error ? err.message : 'Technician availability is unavailable');
         }
     }, [dateRange, timezone]);
 
-    useEffect(() => { loadTimeOff(); }, [loadTimeOff]);
+    useEffect(() => { loadUnavailability(); }, [loadUnavailability]);
 
     // ── Fetch settings (once) ────────────────────────────────────────────────
     // Dispatch settings and the full provider roster are dispatch-only data:
@@ -400,8 +402,9 @@ export function useScheduleData() {
         scheduledItems,
         unscheduledItems,
         routeByPair,
-        timeOff,
-        reloadTimeOff: loadTimeOff,
+        unavailability,
+        unavailabilityError,
+        reloadUnavailability: loadUnavailability,
         itemCounts,
         allTags,
         settings: effectiveSettings,

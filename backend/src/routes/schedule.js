@@ -8,6 +8,8 @@ const scheduleService = require('../services/scheduleService');
 const slotEngineService = require('../services/slotEngineService');
 const marketplaceService = require('../services/marketplaceService');
 const timeOffService = require('../services/timeOffService');
+const technicianAvailabilityService = require('../services/technicianAvailabilityService');
+const technicianServiceAreaService = require('../services/technicianServiceAreaService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -221,6 +223,47 @@ router.post('/slot-recommendations', requirePermission('schedule.dispatch'), asy
 // =============================================================================
 // Technician time off — TECH-DAYOFF-001
 // =============================================================================
+
+// POST /api/schedule/technician-service-area-matches — Albusto active-mode
+// eligibility for the manual picker. It never uses Zenbooker territories and
+// never blocks manual selection.
+router.post('/technician-service-area-matches', requirePermission('schedule.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const data = await technicianServiceAreaService.getTechnicianMatches(companyId, {
+            query: req.body?.address || req.body?.query || '',
+            lat: req.body?.lat,
+            lng: req.body?.lng,
+        });
+        res.json({ ok: true, data });
+    } catch (err) {
+        console.error('[Schedule] POST /technician-service-area-matches error:', err.message);
+        res.status(err.httpStatus || 500).json({
+            ok: false,
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
+    }
+});
+
+// GET /api/schedule/unavailability?from&to[&technician_id] — the one read seam
+// combining explicit time off with derived recurring-schedule gaps. Synthetic
+// blocks are read-only and never enter technician_time_off.
+router.get('/unavailability', requirePermission('schedule.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const { from, to, technician_id } = req.query;
+        const items = await technicianAvailabilityService.listUnavailability(
+            companyId,
+            { from, to, technicianId: technician_id },
+            getProviderScope(req)
+        );
+        res.json({ ok: true, data: { unavailability: items } });
+    } catch (err) {
+        console.error('[Schedule] GET /unavailability error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
 
 // GET /api/schedule/time-off?from&to[&technician_id] — records overlapping
 // [from, to). Provider (assigned_only) scope: forced onto the caller's own

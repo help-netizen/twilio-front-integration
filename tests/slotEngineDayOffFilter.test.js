@@ -2,8 +2,8 @@
  * TECH-DAYOFF-001 (DO-06, section B) — A′ day-off filter inside the single seam
  * slotEngineService.getRecommendations. TC-DO-17…28.
  *
- * Mock scaffold = tests/slotEngineProxy.test.js; the new timeOffQueries module
- * is mocked directly (listOverlappingRange), the engine is global.fetch.
+ * Mock scaffold = tests/slotEngineProxy.test.js; the composite availability
+ * seam is mocked directly, and the engine is global.fetch.
  * Time expectations are built with the REAL exported tzCombine (E-8 canon) so
  * the test derives instants with the same function as production.
  */
@@ -27,14 +27,20 @@ jest.mock('../backend/src/services/slotEngineSettingsService', () => {
         resolve: jest.fn(),
     };
 });
-jest.mock('../backend/src/db/timeOffQueries', () => ({ listOverlappingRange: jest.fn() }));
+jest.mock('../backend/src/services/technicianAvailabilityService', () => ({ buildUnavailability: jest.fn() }));
+jest.mock('../backend/src/services/technicianServiceAreaService', () => ({
+    filterEligibleTechnicians: jest.fn(),
+}));
 
 const db = require('../backend/src/db/connection');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const jobsService = require('../backend/src/services/jobsService');
+const scheduleService = require('../backend/src/services/scheduleService');
 const settingsService = require('../backend/src/services/slotEngineSettingsService');
-const timeOffQueries = require('../backend/src/db/timeOffQueries');
+const availabilityService = require('../backend/src/services/technicianAvailabilityService');
+const serviceAreaService = require('../backend/src/services/technicianServiceAreaService');
 const slotEngineService = require('../backend/src/services/slotEngineService');
+const realAvailabilityService = jest.requireActual('../backend/src/services/technicianAvailabilityService');
 
 const { DEFAULTS } = jest.requireActual('../backend/src/services/slotEngineSettingsService');
 const { tzCombine } = slotEngineService;
@@ -119,8 +125,12 @@ beforeEach(() => {
         { id: '7654321', first_name: 'Jane', last_name: 'Doe', deactivated: false },
     ]);
     jobsService.listJobs.mockReset().mockResolvedValue([]);
+    scheduleService.getDispatchSettings.mockReset().mockResolvedValue({ timezone: TZ });
     settingsService.resolve.mockReset().mockResolvedValue({ ...DEFAULTS });
-    timeOffQueries.listOverlappingRange.mockReset().mockResolvedValue([]);
+    availabilityService.buildUnavailability.mockReset().mockResolvedValue([]);
+    serviceAreaService.filterEligibleTechnicians.mockReset().mockImplementation(
+        async (_companyId, technicians) => ({ target_resolved: true, technicians })
+    );
     process.env.SLOT_ENGINE_URL = 'http://engine.test';
     global.fetch = jest.fn();
 });
@@ -170,11 +180,14 @@ describe('zero day-off path (TC-DO-17, protected pin)', () => {
         });
 
         // 3. The single SELECT, horizon bounds derived by the real helpers.
-        expect(timeOffQueries.listOverlappingRange).toHaveBeenCalledTimes(1);
-        expect(timeOffQueries.listOverlappingRange).toHaveBeenCalledWith(
+        expect(availabilityService.buildUnavailability).toHaveBeenCalledTimes(1);
+        expect(availabilityService.buildUnavailability).toHaveBeenCalledWith(
             COMPANY,
-            tzCombine(SAT, '00:00', TZ),
-            tzCombine(addDaysLocal(SUN, 1), '00:00', TZ),
+            {
+                from: tzCombine(SAT, '00:00', TZ),
+                to: tzCombine(addDaysLocal(SUN, 1), '00:00', TZ),
+                technicians: TECHS_PIN,
+            },
         );
     });
 });
@@ -182,8 +195,66 @@ describe('zero day-off path (TC-DO-17, protected pin)', () => {
 // ─── Post-filter geometry ────────────────────────────────────────────────────
 
 describe('post-filter overlap semantics', () => {
+    it('TECH-SCHEDULE-001: a derived schedule gap suppresses an overlapping suggestion through the same seam', async () => {
+        availabilityService.buildUnavailability.mockResolvedValue([{
+            ...off(T1.id, SAT, '00:00', SAT, '10:00'),
+            kind: 'schedule_gap',
+            source: 'work_schedule',
+            mutable: false,
+        }]);
+        const [outside, inside] = recs(
+            [SAT, '08:00', '10:00', [T1]],
+            [SAT, '10:00', '12:00', [T1]],
+        );
+        engineReturns([outside, inside]);
+
+        const out = await callSeam();
+        expect(out.recommendations).toEqual(rerank([inside]));
+    });
+
+    it('TC-WS-CLOSED-ENGINE-01 — company-closed custom working interval yields no suggestion', async () => {
+        scheduleService.getDispatchSettings.mockResolvedValue({
+            timezone: TZ,
+            work_start_time: '08:00:00',
+            work_end_time: '18:00:00',
+            work_days: [1, 2, 3, 4, 5],
+        });
+        db.query.mockImplementation(async sql => {
+            const text = String(sql);
+            if (/SELECT tech_id, lat, lng/.test(text)) {
+                return {
+                    rows: [
+                        { tech_id: '1234567', lat: 42.36, lng: -71.06, label: null, address: null },
+                        { tech_id: '7654321', lat: 42.3, lng: -71.2, label: null, address: null },
+                    ],
+                };
+            }
+            if (/FROM technician_work_schedules s/.test(text)) {
+                return {
+                    rows: Array.from({ length: 7 }, (_, day) => ({
+                        technician_id: T1.id,
+                        inherits_company_schedule: false,
+                        day_of_week: day,
+                        is_working: day >= 1 && day <= 5 || day === 0,
+                        work_start_time: day >= 1 && day <= 5 || day === 0 ? '10:00:00' : null,
+                        work_end_time: day >= 1 && day <= 5 || day === 0 ? '14:00:00' : null,
+                    })),
+                };
+            }
+            return { rows: [] };
+        });
+        availabilityService.buildUnavailability.mockImplementation(
+            (...args) => realAvailabilityService.buildUnavailability(...args)
+        );
+        const engineRec = rec(1, SUN, '10:00', '12:00', [T1]);
+        engineReturns([engineRec]);
+
+        const out = await callSeam({ earliest_allowed_date: SUN, latest_allowed_date: SUN });
+        expect(out.recommendations).toEqual([]);
+    });
+
     it('TC-DO-18: partial overlap kills the window; half-open boundary touch does NOT; other techs live; rank 1..n', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([off(T1.id, SAT, '09:00', SAT, '13:00')]);
+        availabilityService.buildUnavailability.mockResolvedValue([off(T1.id, SAT, '09:00', SAT, '13:00')]);
         const [r1, r2, r3, r4, r5] = recs(
             [SAT, '08:00', '10:00', [T1]], // partial overlap → dropped
             [SAT, '12:00', '14:00', [T1]], // partial overlap → dropped
@@ -202,7 +273,7 @@ describe('post-filter overlap semantics', () => {
 
     it('TC-DO-19: company-wide all-day day-off empties that day for everyone; other days live from 00:00', async () => {
         // Materialized batch = one row per tech, Saturday 00:00 → Sunday 00:00 NY.
-        timeOffQueries.listOverlappingRange.mockResolvedValue([
+        availabilityService.buildUnavailability.mockResolvedValue([
             off(T1.id, SAT, '00:00', SUN, '00:00'),
             off(T2.id, SAT, '00:00', SUN, '00:00'),
         ]);
@@ -219,7 +290,7 @@ describe('post-filter overlap semantics', () => {
     });
 
     it('TC-DO-20: cross-midnight multi-day day-off is ONE interval — no per-date slicing', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([off(T1.id, SAT, '09:00', SUN, '21:00')]);
+        availabilityService.buildUnavailability.mockResolvedValue([off(T1.id, SAT, '09:00', SUN, '21:00')]);
         const [r1, r2, r3, r4, r5, r6] = recs(
             [SAT, '08:00', '10:00', [T1]], // partial (tail into 09:00) → dropped
             [SAT, '10:00', '12:00', [T1]], // inside → dropped
@@ -235,7 +306,7 @@ describe('post-filter overlap semantics', () => {
     });
 
     it('TC-DO-24: two OVERLAPPING day-offs of one tech → union semantics, window dropped exactly once, no dupes', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([
+        availabilityService.buildUnavailability.mockResolvedValue([
             off(T1.id, SAT, '09:00', SAT, '13:00'),
             off(T1.id, SAT, '11:00', SAT, '15:00'),
         ]);
@@ -256,7 +327,7 @@ describe('post-filter overlap semantics', () => {
 
 describe('pre-shaping and top_n headroom', () => {
     it('TC-DO-21: a single record covering the whole horizon drops the tech from technicians[]; coverage over the pre-shaped roster', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([
+        availabilityService.buildUnavailability.mockResolvedValue([
             off(T1.id, SAT, '00:00', HORIZON_END_DATE, '00:00'), // covers [horizonStart, horizonEnd)
             off(T2.id, SAT, '09:00', SAT, '11:00'),              // partial → stays
         ]);
@@ -271,7 +342,7 @@ describe('pre-shaping and top_n headroom', () => {
     });
 
     it('TC-DO-22: ranking.top_n = original + 5 in the request; result sliced to the original top_n, rank 1..n; per-tech caps untouched', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([off(T1.id, SAT, '09:00', SAT, '13:00')]);
+        availabilityService.buildUnavailability.mockResolvedValue([off(T1.id, SAT, '09:00', SAT, '13:00')]);
         const N = DEFAULTS.recommendations_shown; // 3
         // Engine returns N+5 recs; 2 of them overlap T1's day-off.
         const engineRecs = recs(
@@ -303,7 +374,7 @@ describe('pre-shaping and top_n headroom', () => {
     });
 
     it('TC-DO-23: two ABUTTING records jointly covering the horizon → tech NOT pre-shaped (v1, no merging), but killed by the post-filter', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([
+        availabilityService.buildUnavailability.mockResolvedValue([
             off(T1.id, SAT, '00:00', SUN, '00:00'),               // [horizonStart, mid)
             off(T1.id, SUN, '00:00', HORIZON_END_DATE, '00:00'),  // [mid, horizonEnd)
         ]);
@@ -327,7 +398,7 @@ describe('pre-shaping and top_n headroom', () => {
 
 describe('TECHSLOT one-tech + day-off (TC-DO-25)', () => {
     it('(a) day-off covers the whole horizon → pre-shaping yields technicians=[], safe-fail 0 recs, no throw', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([
+        availabilityService.buildUnavailability.mockResolvedValue([
             off(T1.id, SAT, '00:00', HORIZON_END_DATE, '00:00'),
         ]);
         engineReturns([]);
@@ -345,7 +416,7 @@ describe('TECHSLOT one-tech + day-off (TC-DO-25)', () => {
     });
 
     it('(b) day-off only on the targetDay → post-filter drops every rec, same safe-fail shape', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([off(T1.id, SAT, '00:00', SUN, '00:00')]);
+        availabilityService.buildUnavailability.mockResolvedValue([off(T1.id, SAT, '00:00', SUN, '00:00')]);
         engineReturns(recs(
             [SAT, '08:00', '10:00', [T1]],
             [SAT, '10:00', '12:00', [T1]],
@@ -370,7 +441,7 @@ describe('DST fall-back day, America/New_York (TC-DO-26)', () => {
         expect(tzCombine(DST_DAY, '08:00', TZ)).toBe('2026-11-01T13:00:00.000Z');
 
         // Day-off entered company-local 08:00→12:00 of the switch day, converted by the SAME tzCombine.
-        timeOffQueries.listOverlappingRange.mockResolvedValue([off(T1.id, DST_DAY, '08:00', DST_DAY, '12:00')]);
+        availabilityService.buildUnavailability.mockResolvedValue([off(T1.id, DST_DAY, '08:00', DST_DAY, '12:00')]);
         const [r1, r2] = recs(
             [DST_DAY, '07:00', '09:00', [T1]], // instant-overlap → dropped
             [DST_DAY, '12:00', '14:00', [T1]], // boundary touch → kept
@@ -382,16 +453,34 @@ describe('DST fall-back day, America/New_York (TC-DO-26)', () => {
         });
         expect(out.recommendations).toEqual(rerank([r2]));
         // Horizon end built through the same DST-aware combine (next local midnight).
-        expect(timeOffQueries.listOverlappingRange).toHaveBeenCalledWith(
-            COMPANY, tzCombine(DST_DAY, '00:00', TZ), tzCombine(DST_NEXT, '00:00', TZ));
+        expect(availabilityService.buildUnavailability).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                from: tzCombine(DST_DAY, '00:00', TZ),
+                to: tzCombine(DST_NEXT, '00:00', TZ),
+            }));
     });
 });
 
 // ─── Failure semantics ───────────────────────────────────────────────────────
 
 describe('failure paths', () => {
+    it('company schedule failure fails smart recommendations closed before engine dispatch', async () => {
+        scheduleService.getDispatchSettings.mockRejectedValue(new Error('settings down'));
+        engineReturns(recs([SAT, '08:00', '10:00', [T1]]));
+
+        await expect(callSeam()).resolves.toEqual({
+            recommendations: [],
+            summary: null,
+            engine_status: 'unavailable',
+            coverage: { technicians_total: 0, technicians_with_base: 0 },
+        });
+        expect(availabilityService.buildUnavailability).not.toHaveBeenCalled();
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('TC-DO-27: day-off SELECT error PROPAGATES (reject) — never swallowed into "0 rows"', async () => {
-        timeOffQueries.listOverlappingRange.mockRejectedValue(new Error('db down'));
+        availabilityService.buildUnavailability.mockRejectedValue(new Error('db down'));
         engineReturns(recs([SAT, '08:00', '10:00', [T1]])); // must not turn into a success
 
         await expect(callSeam()).rejects.toThrow('db down');
@@ -399,7 +488,7 @@ describe('failure paths', () => {
 
     it('TC-DO-28a: SLOT_ENGINE_URL missing + non-empty day-off → existing unavailable shape, fetch not called', async () => {
         delete process.env.SLOT_ENGINE_URL;
-        timeOffQueries.listOverlappingRange.mockResolvedValue([off(T1.id, SAT, '09:00', SAT, '13:00')]);
+        availabilityService.buildUnavailability.mockResolvedValue([off(T1.id, SAT, '09:00', SAT, '13:00')]);
 
         const out = await callSeam();
         expect(out).toEqual({
@@ -412,7 +501,7 @@ describe('failure paths', () => {
     });
 
     it('TC-DO-28b: engine down (fetch rejects) + non-empty day-off → same byte-exact unavailable shape', async () => {
-        timeOffQueries.listOverlappingRange.mockResolvedValue([off(T1.id, SAT, '09:00', SAT, '13:00')]);
+        availabilityService.buildUnavailability.mockResolvedValue([off(T1.id, SAT, '09:00', SAT, '13:00')]);
         global.fetch.mockRejectedValue(new Error('aborted'));
 
         const out = await callSeam();

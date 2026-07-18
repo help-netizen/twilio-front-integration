@@ -1,7 +1,8 @@
 /**
  * technicianProfilesService.js — technician display info (photo + name) for the
- * public payment page. Technicians come from jobs.assigned_techs (JSONB); this adds
- * an uploadable photo + optional display-name override, keyed by (company_id, tech_id).
+ * public payment page. Settings supplies the active Zenbooker roster and this
+ * service merges stored photo/name overrides keyed by (company_id, tech_id).
+ * Invoice display still resolves the assigned technician from the invoice job.
  */
 const fs = require('fs');
 const path = require('path');
@@ -16,22 +17,18 @@ async function ensureSchema() {
     schemaReady = true;
 }
 
-/** Distinct technicians seen across this company's jobs, with photo/name status. */
-async function listTechnicians(companyId) {
+/** Stored display profiles for a caller-supplied, already company-scoped roster. */
+async function listProfiles(companyId, technicianIds) {
     await ensureSchema();
+    const ids = Array.from(new Set((technicianIds || []).map(String).filter(Boolean)));
+    if (ids.length === 0) return [];
     const { rows } = await db.query(
-        `SELECT techs.tech_id,
-                COALESCE(p.name, techs.name) AS name,
-                (p.photo_storage_key IS NOT NULL) AS has_photo
-         FROM (
-            SELECT DISTINCT t->>'id' AS tech_id, (array_agg(t->>'name'))[1] AS name
-            FROM jobs j, jsonb_array_elements(j.assigned_techs) t
-            WHERE j.company_id = $1 AND jsonb_typeof(j.assigned_techs) = 'array' AND (t->>'id') IS NOT NULL
-            GROUP BY t->>'id'
-         ) techs
-         LEFT JOIN technician_profiles p ON p.company_id = $1 AND p.tech_id = techs.tech_id
-         ORDER BY name NULLS LAST`,
-        [companyId]
+        `SELECT tech_id, name, (photo_storage_key IS NOT NULL) AS has_photo
+         FROM technician_profiles
+         WHERE company_id = $1
+           AND tech_id = ANY($2::text[])
+         ORDER BY tech_id`,
+        [companyId, ids]
     );
     return rows;
 }
@@ -88,4 +85,4 @@ async function getTechnicianForInvoice(companyId, invoice) {
     return { name: profile?.name || tech.name || null, photo_url };
 }
 
-module.exports = { listTechnicians, getProfile, uploadPhoto, getTechnicianForInvoice };
+module.exports = { listProfiles, getProfile, uploadPhoto, getTechnicianForInvoice };

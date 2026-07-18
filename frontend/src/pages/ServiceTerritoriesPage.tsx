@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../services/apiClient';
-import { Plus, Upload, Download, Trash2, Loader2, Search, ChevronUp, ChevronDown, MapPin, ArrowLeft, LayoutGrid, List } from 'lucide-react';
+import { AlertTriangle, Plus, Upload, Download, Trash2, Loader2, Search, ChevronUp, ChevronDown, MapPin, ArrowLeft, LayoutGrid, List, Users } from 'lucide-react';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -10,6 +10,12 @@ import { FloatingSelect } from '../components/ui/floating-select';
 import { SelectItem } from '../components/ui/select';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { TerritoryCoverageMap } from '../components/settings/TerritoryCoverageMap';
+import { TerritoryTechnicianPanel, type TerritoryAssignmentTarget } from '../components/settings/TerritoryTechnicianPanel';
+import {
+    serviceTerritoryAssignmentsApi,
+    wildcardTechniciansForMode,
+    type ServiceTerritoryAssignmentState,
+} from '../services/serviceTerritoryAssignmentsApi';
 import { toast } from 'sonner';
 
 // ---------------------------------------------------------------------------
@@ -45,6 +51,15 @@ interface TerritoryConfig {
     counts: { list_zips: number; radii: number };
     company_zip: string | null;
     list_centroids: { zip: string; lat: number; lon: number }[];
+}
+
+function technicianNames(
+    state: ServiceTerritoryAssignmentState | undefined,
+    technicianIds: string[],
+): string[] {
+    if (!state) return [];
+    const names = new Map(state.technicians.map(technician => [technician.id, technician.name]));
+    return technicianIds.map(id => names.get(id) || id);
 }
 
 class ApiRequestError extends Error {
@@ -255,7 +270,7 @@ function ModeToggle({ mode, onChange, disabled }: {
 }) {
     return (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Service territory mode">
-            {([['list', 'Zip list'], ['radius', 'Radius']] as const).map(([value, label]) => (
+            {([['list', 'Districts'], ['radius', 'Radii']] as const).map(([value, label]) => (
                 <button
                     key={value}
                     type="button"
@@ -275,9 +290,12 @@ function ModeToggle({ mode, onChange, disabled }: {
 // ---------------------------------------------------------------------------
 // Area cards grid
 // ---------------------------------------------------------------------------
-function AreaCardsGrid({ territories, onSelectArea }: {
+function AreaCardsGrid({ territories, assignments, assignmentDisabled, onSelectArea, onManage }: {
     territories: Territory[];
+    assignments?: ServiceTerritoryAssignmentState;
+    assignmentDisabled: boolean;
     onSelectArea: (area: string) => void;
+    onManage: (target: TerritoryAssignmentTarget) => void;
 }) {
     const areaStats = useMemo(() => {
         const map = new Map<string, { count: number; states: Set<string> }>();
@@ -297,26 +315,47 @@ function AreaCardsGrid({ territories, onSelectArea }: {
 
     return (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
-            {areaStats.map(({ area, count, states }) => (
-                <button
+            {areaStats.map(({ area, count, states }) => {
+                const districtId = area === '(No area)' ? '' : area;
+                const district = assignments?.districts.find(item => item.id === districtId);
+                const assignedNames = technicianNames(assignments, district?.technician_ids || []);
+                return (
+                <div
                     key={area}
-                    onClick={() => onSelectArea(area === '(No area)' ? '' : area)}
                     className="text-left"
                     style={{
                         padding: '16px 18px', borderRadius: 16, cursor: 'pointer',
                         background: 'rgba(25,25,25,0.03)', border: '1px solid var(--blanc-line)',
                         transition: 'border-color 0.15s',
                     }}
-                    onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(25,25,25,0.28)')}
-                    onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}
                 >
-                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>{area}</div>
+                    <button
+                        type="button"
+                        className="w-full text-left disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={assignmentDisabled}
+                        onClick={() => onManage({ mode: 'district', id: districtId, label: area })}
+                    >
+                        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>{area}</div>
+                        <div className="mt-2 flex items-start gap-1.5 text-xs" style={{ color: 'var(--blanc-ink-2)' }}>
+                            <Users className="mt-0.5 size-3.5 shrink-0" />
+                            <span>{assignedNames.length > 0 ? assignedNames.join(', ') : 'No direct technician assignments'}</span>
+                        </div>
+                    </button>
                     <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginTop: 4 }}>
                         {count} zip code{count !== 1 ? 's' : ''}
                         {states && <span style={{ marginLeft: 6 }}>{states}</span>}
                     </div>
-                </button>
-            ))}
+                    <button
+                        type="button"
+                        className="mt-3 text-xs font-medium"
+                        style={{ color: 'var(--blanc-accent)' }}
+                        onClick={() => onSelectArea(districtId)}
+                    >
+                        View ZIP codes
+                    </button>
+                </div>
+                );
+            })}
         </div>
     );
 }
@@ -412,7 +451,12 @@ function ZipTable({ rows, onRemove, removing }: {
     );
 }
 
-function RadiusPanel({ config }: { config: TerritoryConfig }) {
+function RadiusPanel({ config, assignments, assignmentDisabled, onManage }: {
+    config: TerritoryConfig;
+    assignments?: ServiceTerritoryAssignmentState;
+    assignmentDisabled: boolean;
+    onManage: (target: TerritoryAssignmentTarget) => void;
+}) {
     const qc = useQueryClient();
     const [zip, setZip] = useState('');
     const [radiusMiles, setRadiusMiles] = useState('');
@@ -486,6 +530,8 @@ function RadiusPanel({ config }: { config: TerritoryConfig }) {
                     {orderedRadii.map((radius, index) => {
                         const location = [radius.city, radius.state].filter(Boolean).join(', ');
                         const deleting = deleteRadiusMut.isPending && deleteRadiusMut.variables === radius.id;
+                        const assignment = assignments?.radii.find(item => item.id === radius.id);
+                        const assignedNames = technicianNames(assignments, assignment?.technician_ids || []);
                         return (
                             <div
                                 key={radius.id}
@@ -509,6 +555,20 @@ function RadiusPanel({ config }: { config: TerritoryConfig }) {
                                     {location && (
                                         <div className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>{location}</div>
                                     )}
+                                    <button
+                                        type="button"
+                                        className="mt-2 flex items-start gap-1.5 text-left text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                                        style={{ color: 'var(--blanc-ink-2)' }}
+                                        disabled={assignmentDisabled}
+                                        onClick={() => onManage({
+                                            mode: 'radius',
+                                            id: radius.id,
+                                            label: `${radius.zip} · ${radius.radius_miles} mi`,
+                                        })}
+                                    >
+                                        <Users className="mt-0.5 size-3.5 shrink-0" />
+                                        <span>{assignedNames.length > 0 ? assignedNames.join(', ') : 'No direct technician assignments'}</span>
+                                    </button>
                                 </div>
                                 <button
                                     type="button"
@@ -563,8 +623,19 @@ const ServiceTerritoriesPage: React.FC = () => {
     const { data: territories = [], isLoading } = useQuery({ queryKey: ['service-territories'], queryFn: fetchTerritories });
     const { data: areas = [] } = useQuery({ queryKey: ['service-territories-areas'], queryFn: fetchAreas });
     const configQuery = useQuery({ queryKey: ['service-territories-config'], queryFn: fetchTerritoryConfig });
+    const assignmentQuery = useQuery({
+        queryKey: ['service-territory-assignments'],
+        queryFn: serviceTerritoryAssignmentsApi.get,
+        retry: false,
+    });
     const config = configQuery.data;
     const activeMode = config?.active_mode ?? 'list';
+    const assignmentState = assignmentQuery.data;
+    const assignmentDisabled = assignmentQuery.isLoading || Boolean(assignmentQuery.error);
+    const wildcardTechnicians = useMemo(
+        () => assignmentState ? wildcardTechniciansForMode(assignmentState, activeMode) : [],
+        [assignmentState, activeMode],
+    );
     const configErrorToastRef = useRef(false);
 
     useEffect(() => {
@@ -592,11 +663,19 @@ const ServiceTerritoriesPage: React.FC = () => {
     // Modals
     const [addOpen, setAddOpen] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
+    const [assignmentTarget, setAssignmentTarget] = useState<TerritoryAssignmentTarget | null>(null);
+    const selectedTechnicianIds = useMemo(() => {
+        if (!assignmentTarget || !assignmentState) return [];
+        return assignmentTarget.mode === 'district'
+            ? assignmentState.districts.find(item => item.id === assignmentTarget.id)?.technician_ids || []
+            : assignmentState.radii.find(item => item.id === assignmentTarget.id)?.technician_ids || [];
+    }, [assignmentTarget, assignmentState]);
 
     const invalidate = () => {
         qc.invalidateQueries({ queryKey: ['service-territories'] });
         qc.invalidateQueries({ queryKey: ['service-territories-areas'] });
         qc.invalidateQueries({ queryKey: ['service-territories-config'] });
+        qc.invalidateQueries({ queryKey: ['service-territory-assignments'] });
     };
 
     // Mutations
@@ -633,6 +712,7 @@ const ServiceTerritoriesPage: React.FC = () => {
         },
         onSettled: () => {
             qc.invalidateQueries({ queryKey: ['service-territories-config'] });
+            qc.invalidateQueries({ queryKey: ['service-territory-assignments'] });
         },
     });
 
@@ -645,7 +725,7 @@ const ServiceTerritoriesPage: React.FC = () => {
     return (
         <SettingsPageShell
             title="Service Territories"
-            description="Tell Albusto where you work — as a zip list, or as a radius around your base."
+            description="Tell Albusto where you work — by ZIP-code districts or by radii around your bases."
         >
             <div className="min-w-0 space-y-6">
                 <div className="space-y-3.5">
@@ -658,6 +738,40 @@ const ServiceTerritoriesPage: React.FC = () => {
                         Both setups are saved — switching modes never erases anything.
                     </p>
                 </div>
+
+                {assignmentQuery.isLoading ? (
+                    <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
+                        <Loader2 className="size-4 animate-spin" /> Loading technician assignments…
+                    </div>
+                ) : assignmentQuery.error ? (
+                    <div
+                        role="alert"
+                        className="flex gap-2 rounded-xl px-3.5 py-3 text-sm"
+                        style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                        <span>
+                            The active technician roster could not be loaded. Assignment editing is disabled, and wildcard notices are not hidden as though everyone were assigned.
+                        </span>
+                    </div>
+                ) : (
+                    <div className="space-y-3" aria-label="Wildcard technician notices">
+                        {wildcardTechnicians.map(technician => (
+                            <div
+                                key={technician.id}
+                                role="status"
+                                data-wildcard-technician={technician.id}
+                                className="flex gap-2 rounded-xl px-3.5 py-3 text-sm"
+                                style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-ink-1)' }}
+                            >
+                                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                                <span>
+                                    <strong>{technician.name}</strong> has no {activeMode === 'radius' ? 'radius' : 'district'} assignments and will receive requests from all {activeMode === 'radius' ? 'radii' : 'districts'} by default.
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
 
                 {activeMode === 'list' ? (
                     <div className="min-w-0 space-y-4">
@@ -711,13 +825,24 @@ const ServiceTerritoriesPage: React.FC = () => {
                         ) : activeArea !== null ? (
                             <ZipTable rows={areaRows} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
                         ) : view === 'areas' ? (
-                            <AreaCardsGrid territories={territories} onSelectArea={handleSelectArea} />
+                            <AreaCardsGrid
+                                territories={territories}
+                                assignments={assignmentState}
+                                assignmentDisabled={assignmentDisabled}
+                                onSelectArea={handleSelectArea}
+                                onManage={setAssignmentTarget}
+                            />
                         ) : (
                             <ZipTable rows={territories} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
                         )}
                     </div>
                 ) : config ? (
-                    <RadiusPanel config={config} />
+                    <RadiusPanel
+                        config={config}
+                        assignments={assignmentState}
+                        assignmentDisabled={assignmentDisabled}
+                        onManage={setAssignmentTarget}
+                    />
                 ) : (
                     <div className="flex items-center justify-center py-16">
                         <Loader2 className="size-6 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
@@ -738,6 +863,15 @@ const ServiceTerritoriesPage: React.FC = () => {
 
             {/* Import dialog */}
             <ImportDialog open={importOpen} onOpenChange={setImportOpen} onImport={importMut.mutate} isPending={importMut.isPending} />
+
+            <TerritoryTechnicianPanel
+                open={assignmentTarget !== null}
+                target={assignmentTarget}
+                technicians={assignmentState?.technicians || []}
+                selectedIds={selectedTechnicianIds}
+                onClose={() => setAssignmentTarget(null)}
+                onSaved={state => qc.setQueryData(['service-territory-assignments'], state)}
+            />
         </SettingsPageShell>
     );
 };

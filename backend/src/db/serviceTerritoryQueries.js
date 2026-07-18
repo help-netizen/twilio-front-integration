@@ -27,6 +27,18 @@ async function getAreas(companyId) {
     return result.rows.map(r => r.area);
 }
 
+/** Assignment targets include the empty-string Uncategorized ZIP group. */
+async function getDistrictTargets(companyId) {
+    const result = await db.query(
+        `SELECT DISTINCT area
+         FROM service_territories
+         WHERE company_id = $1
+         ORDER BY area ASC`,
+        [companyId]
+    );
+    return result.rows.map(row => row.area);
+}
+
 async function create(companyId, { zip, area, city, state, county }) {
     const result = await db.query(
         `INSERT INTO service_territories (company_id, zip, area, city, state, county)
@@ -76,6 +88,19 @@ async function bulkReplace(companyId, rows) {
                 [companyId, zips, areas, cities, states, counties]
             );
         }
+        // District identity is the current Albusto ZIP-group name. Prune names
+        // removed by this replacement so stale rows cannot suppress wildcard.
+        await client.query(
+            `DELETE FROM technician_district_assignments a
+             WHERE a.company_id = $1
+               AND NOT EXISTS (
+                    SELECT 1
+                    FROM service_territories st
+                    WHERE st.company_id = a.company_id
+                      AND st.area = a.district_name
+               )`,
+            [companyId]
+        );
         await client.query('COMMIT');
     } catch (err) {
         await client.query('ROLLBACK');
@@ -150,6 +175,7 @@ async function search(companyId, query) {
 module.exports = {
     getAll,
     getAreas,
+    getDistrictTargets,
     create,
     remove,
     bulkReplace,

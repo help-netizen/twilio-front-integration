@@ -23,6 +23,14 @@ jest.mock('../backend/src/services/jobsService', () => ({ listJobs: jest.fn() })
 jest.mock('../backend/src/services/scheduleService', () => ({
     getDispatchSettings: jest.fn(async () => ({ timezone: 'America/New_York' })),
 }));
+jest.mock('../backend/src/services/technicianAvailabilityService', () => ({
+    buildUnavailability: jest.fn(),
+    listUnavailability: jest.fn(),
+}));
+jest.mock('../backend/src/services/technicianServiceAreaService', () => ({
+    filterEligibleTechnicians: jest.fn(),
+    getTechnicianMatches: jest.fn(),
+}));
 // RS-2: getRecommendations now builds config_override from resolve(companyId). Mock
 // resolve for determinism (no DB dependence) but keep the REAL buildConfigOverride so
 // the integration assertions equal production logic, not a copy (test-cases note §6).
@@ -44,6 +52,8 @@ const jobsService = require('../backend/src/services/jobsService');
 const marketplaceService = require('../backend/src/services/marketplaceService');
 const slotEngineService = require('../backend/src/services/slotEngineService');
 const settingsService = require('../backend/src/services/slotEngineSettingsService');
+const availabilityService = require('../backend/src/services/technicianAvailabilityService');
+const serviceAreaService = require('../backend/src/services/technicianServiceAreaService');
 const scheduleRouter = require('../backend/src/routes/schedule');
 
 const COMPANY = '00000000-0000-0000-0000-00000000000a';
@@ -66,6 +76,13 @@ beforeEach(() => {
     // RS-2: settings resolve defaults to DEFAULTS so the existing snapshot/proxy tests
     // stay deterministic; integration cases below override per-test.
     settingsService.resolve.mockReset().mockResolvedValue({ ...DEFAULTS });
+    availabilityService.buildUnavailability.mockReset().mockResolvedValue([]);
+    serviceAreaService.filterEligibleTechnicians.mockReset().mockImplementation(
+        async (_companyId, technicians) => ({ target_resolved: true, technicians })
+    );
+    serviceAreaService.getTechnicianMatches.mockReset().mockResolvedValue({
+        active_mode: 'list', target_resolved: true, no_targets: true, target_ids: [], matches: [],
+    });
     process.env.SLOT_ENGINE_URL = 'http://engine.test';
     global.fetch = jest.fn();
 });
@@ -292,6 +309,37 @@ describe('POST /api/schedule/slot-recommendations', () => {
             .post('/api/schedule/slot-recommendations').send({ new_job: {} });
         expect(res.status).toBe(422);
         expect(res.body.error.code).toBe('NEW_JOB_LOCATION_REQUIRED');
+    });
+});
+
+describe('POST /api/schedule/technician-service-area-matches', () => {
+    it('requires schedule.view and passes only the company-scoped location to the Albusto matcher', async () => {
+        const forbidden = await request(appWith({ permissions: [] }))
+            .post('/api/schedule/technician-service-area-matches')
+            .send({ address: '12 Main St', lat: 42.36, lng: -71.06 });
+        expect(forbidden.status).toBe(403);
+        expect(serviceAreaService.getTechnicianMatches).not.toHaveBeenCalled();
+
+        serviceAreaService.getTechnicianMatches.mockResolvedValue({
+            active_mode: 'list',
+            target_resolved: true,
+            no_targets: false,
+            target_ids: ['North'],
+            matches: [{ technician_id: 'tech-1', wildcard: false, eligible: true }],
+        });
+        const response = await request(appWith({ permissions: ['schedule.view'] }))
+            .post('/api/schedule/technician-service-area-matches')
+            .send({ address: '12 Main St', lat: 42.36, lng: -71.06 });
+
+        expect(response.status).toBe(200);
+        expect(serviceAreaService.getTechnicianMatches).toHaveBeenCalledWith(COMPANY, {
+            query: '12 Main St',
+            lat: 42.36,
+            lng: -71.06,
+        });
+        expect(response.body.data.matches[0]).toEqual({
+            technician_id: 'tech-1', wildcard: false, eligible: true,
+        });
     });
 });
 

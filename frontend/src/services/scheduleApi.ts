@@ -68,6 +68,37 @@ export interface TimeOffBlock {
     created_at?: string;
 }
 
+// TECH-SCHEDULE-001 — the read-only availability projection used by schedule
+// surfaces, manual warnings, and smart-slot suppression. Only `time_off` rows
+// are mutable; `schedule_gap` rows are derived server-side for the read range.
+export interface UnavailabilityBlock {
+    id: string;
+    kind: 'time_off' | 'schedule_gap';
+    technician_id: string;
+    technician_name: string;
+    starts_at: string;
+    ends_at: string;
+    note?: string | null;
+    source: 'individual' | 'company' | 'work_schedule';
+    mutable: boolean;
+    batch_id?: string | null;
+    created_at?: string;
+}
+
+export interface TechnicianServiceAreaMatch {
+    technician_id: string;
+    wildcard: boolean;
+    eligible: boolean;
+}
+
+export interface TechnicianServiceAreaMatches {
+    active_mode: 'list' | 'radius';
+    target_resolved: boolean;
+    no_targets: boolean;
+    target_ids: string[];
+    matches: TechnicianServiceAreaMatch[];
+}
+
 export type CreateTimeOffPayload =
     | { target: 'technician'; technician_id: string; technician_name: string; starts_at: string; ends_at: string; note?: string }
     | { target: 'company'; starts_at: string; ends_at: string; note?: string };
@@ -268,6 +299,39 @@ interface TimeOffListResponse {
     time_off: TimeOffBlock[];
 }
 
+interface UnavailabilityListResponse {
+    unavailability: UnavailabilityBlock[];
+}
+
+/** Combined explicit time off plus recurring schedule gaps over `[from, to)`. */
+export async function fetchUnavailability(
+    params: { from: string; to: string; technician_id?: string },
+): Promise<UnavailabilityBlock[]> {
+    const qs = new URLSearchParams();
+    qs.set('from', params.from);
+    qs.set('to', params.to);
+    if (params.technician_id) qs.set('technician_id', params.technician_id);
+    const result = await scheduleRequest<UnavailabilityListResponse>(
+        `${SCHEDULE_BASE}/unavailability?${qs.toString()}`,
+    );
+    return result.unavailability;
+}
+
+/** Albusto active-mode matches for warning-only manual technician selection. */
+export async function fetchTechnicianServiceAreaMatches(input: {
+    address?: string;
+    lat?: number | null;
+    lng?: number | null;
+}): Promise<TechnicianServiceAreaMatches> {
+    return scheduleRequest<TechnicianServiceAreaMatches>(
+        `${SCHEDULE_BASE}/technician-service-area-matches`,
+        {
+            method: 'POST',
+            body: JSON.stringify(input),
+        },
+    );
+}
+
 /**
  * Day-off blocks overlapping `[from, to)` (UTC ISO, both required). Optional
  * `technician_id` narrows to one technician (used by the targeted reschedule
@@ -325,4 +389,29 @@ export function overlapsTimeOff(
         Date.parse(b.starts_at) < end &&
         start < Date.parse(b.ends_at),
     );
+}
+
+/** Shared strict half-open overlap rule for the composite availability read. */
+export function overlapsUnavailability(
+    blocks: UnavailabilityBlock[],
+    techIds: string[],
+    startIso: string,
+    endIso: string,
+): UnavailabilityBlock[] {
+    const start = Date.parse(startIso);
+    const end = Date.parse(endIso);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+    return blocks.filter(block =>
+        techIds.includes(block.technician_id)
+        && Date.parse(block.starts_at) < end
+        && start < Date.parse(block.ends_at),
+    );
+}
+
+export function unavailabilityLabel(block: Pick<UnavailabilityBlock, 'kind'>): string {
+    return block.kind === 'schedule_gap' ? 'Outside work schedule' : 'Time off';
+}
+
+export function unavailabilityWarningPhrase(block: Pick<UnavailabilityBlock, 'kind'>): string {
+    return block.kind === 'schedule_gap' ? 'is outside their work schedule' : 'has time off';
 }

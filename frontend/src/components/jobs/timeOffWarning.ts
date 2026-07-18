@@ -1,12 +1,8 @@
 /**
- * TECH-DAYOFF-001 S-12/S-13 — tiny shared helpers for the warning-only
- * day-off conflict hints in NewJobDialog (create-from-slot / new job) and
- * JobInfoSections (reschedule from the Job card).
- *
- * Warnings are best-effort and NEVER block: callers catch fetch failures and
- * simply skip the hint (consistent with the useScheduleData best-effort canon).
+ * Shared company-time formatter for warning-only availability conflicts in
+ * NewJobDialog and JobInfoSections. Warnings never disable manual actions.
  */
-import { fetchDispatchSettings, type TimeOffBlock } from '../../services/scheduleApi';
+import { fetchDispatchSettings, type UnavailabilityBlock } from '../../services/scheduleApi';
 import { formatDateTimeInTZ } from '../../utils/companyTime';
 
 // Company timezone, fetched once per page load (dispatch settings rarely
@@ -24,6 +20,6 @@ export function getCompanyTimezone(): Promise<string | undefined> {
 }
 
 /** "Mar 30, 2026 1:00 PM – Mar 31, 2026 9:00 AM" in the company tz. */
-export function formatTimeOffPeriod(block: TimeOffBlock, tz?: string): string {
+export function formatUnavailabilityPeriod(block: UnavailabilityBlock, tz?: string): string {
     return `${formatDateTimeInTZ(new Date(block.starts_at), tz)} – ${formatDateTimeInTZ(new Date(block.ends_at), tz)}`;
 }

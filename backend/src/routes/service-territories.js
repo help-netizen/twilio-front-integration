@@ -9,13 +9,19 @@ const db = require('../db/connection');
 const stQueries = require('../db/serviceTerritoryQueries');
 const radiusQueries = require('../db/territoryRadiusQueries');
 const territoryGeoService = require('../services/territoryGeoService');
+const technicianServiceAreaService = require('../services/technicianServiceAreaService');
 const { normalizeZip } = require('../utils/zip');
 
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-
 function getCompanyId(req) {
-    return req.companyFilter?.company_id
-        || DEFAULT_COMPANY_ID;
+    return req.companyFilter?.company_id;
+}
+
+function sendServiceAreaError(res, error, context) {
+    console.error(`[ServiceTerritories] ${context} error:`, error.message);
+    res.status(error.httpStatus || 500).json({
+        ok: false,
+        error: { code: error.code || 'INTERNAL', message: error.message },
+    });
 }
 
 async function getCompanyZip(companyId) {
@@ -119,6 +125,46 @@ router.put('/mode', async (req, res) => {
     } catch (err) {
         console.error('[ServiceTerritories] PUT /mode error:', err);
         res.status(500).json({ error: 'Failed to update service territory mode' });
+    }
+});
+
+// GET /assignments — active roster plus both independent assignment maps.
+router.get('/assignments', async (req, res) => {
+    try {
+        const state = await technicianServiceAreaService.getAssignmentState(getCompanyId(req));
+        res.json({ ok: true, data: technicianServiceAreaService.publicState(state) });
+    } catch (error) {
+        sendServiceAreaError(res, error, 'GET /assignments');
+    }
+});
+
+// PUT /district-assignments — reverse edit for one Albusto district.
+router.put('/district-assignments', async (req, res) => {
+    try {
+        const data = await technicianServiceAreaService.replaceDistrictTechnicians(
+            getCompanyId(req),
+            req.body?.district_name,
+            req.body?.technician_ids,
+            req.user?.crmUser?.id || null
+        );
+        res.json({ ok: true, data });
+    } catch (error) {
+        sendServiceAreaError(res, error, 'PUT /district-assignments');
+    }
+});
+
+// PUT /radii/:radiusId/technicians — reverse edit for one Albusto radius.
+router.put('/radii/:radiusId/technicians', async (req, res) => {
+    try {
+        const data = await technicianServiceAreaService.replaceRadiusTechnicians(
+            getCompanyId(req),
+            req.params.radiusId,
+            req.body?.technician_ids,
+            req.user?.crmUser?.id || null
+        );
+        res.json({ ok: true, data });
+    } catch (error) {
+        sendServiceAreaError(res, error, 'PUT /radii/:radiusId/technicians');
     }
 });
 

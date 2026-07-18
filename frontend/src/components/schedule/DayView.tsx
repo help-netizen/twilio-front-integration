@@ -8,9 +8,9 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import { overlapsTimeOff } from '../../services/scheduleApi';
-import { filterTimeOffByProviders } from '../../services/scheduleFilters';
-import type { ScheduleItem, DispatchSettings, RouteSegment, TimeOffBlock } from '../../services/scheduleApi';
+import { overlapsUnavailability, unavailabilityLabel, unavailabilityWarningPhrase } from '../../services/scheduleApi';
+import { filterUnavailabilityByProviders } from '../../services/scheduleFilters';
+import type { ScheduleItem, DispatchSettings, RouteSegment, UnavailabilityBlock } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
     formatTimeInTZ, formatDateTimeInTZ, dateKeyInTZ,
@@ -34,15 +34,15 @@ interface DayViewProps {
     onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
     /** SCHED-ROUTE-001: drive-time between consecutive jobs (by `${fromId}->${toId}`). */
     routeByPair?: Map<string, RouteSegment>;
-    /** TECH-DAYOFF-001: day-off blocks for the visible range (mobile agenda cards + DnD warning). */
-    timeOff?: TimeOffBlock[];
+    /** Effective blocks for the visible range (mobile agenda cards + DnD warning). */
+    unavailability?: UnavailabilityBlock[];
     /** TECH-DAYOFF-002: active provider filter — rendered time-off cards honor it (DnD warnings don't). */
     providerFilterIds?: string[];
 }
 
 // TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
 // separate non-interactive layer alongside the job cards.
-const TIME_OFF_BG = 'repeating-linear-gradient(135deg, rgba(25, 25, 25, 0.04) 0 10px, rgba(25, 25, 25, 0.08) 10px 20px)';
+const UNAVAILABILITY_BG = 'repeating-linear-gradient(135deg, rgba(25, 25, 25, 0.04) 0 10px, rgba(25, 25, 25, 0.08) 10px 20px)';
 
 function parseTime(t: string): number {
     const [h, m] = t.split(':').map(Number);
@@ -59,7 +59,7 @@ function buildHourSlots(startTime: string, endTime: string): number[] {
 
 const HOUR_HEIGHT = 86; // px per hour — Sprint 7 design refresh
 
-export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot, routeByPair, timeOff, providerFilterIds }) => {
+export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot, routeByPair, unavailability, providerFilterIds }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
     const isMobile = useIsMobile();
@@ -72,7 +72,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
 
     // TECH-DAYOFF-001 S-11: a drop that lands on the item's technician time off
     // is parked here until the dispatcher confirms (warning-only, never a block).
-    const [pendingDrop, setPendingDrop] = useState<{ techName: string; period: string; proceed: () => void } | null>(null);
+    const [pendingDrop, setPendingDrop] = useState<{ techName: string; phrase: string; period: string; proceed: () => void } | null>(null);
 
     // Close placeholder on outside click / Esc
     useEffect(() => {
@@ -163,18 +163,19 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         // (blocks already in memory, 0 requests).
         const item = items.find(i => i.entity_type === data.entityType && i.entity_id === data.entityId);
         const techIds = (item?.assigned_techs ?? []).map(t => t.id).filter(Boolean);
-        const conflicts = techIds.length === 0 ? [] : overlapsTimeOff(timeOff ?? [], techIds, startAt, endAt);
+        const conflicts = techIds.length === 0 ? [] : overlapsUnavailability(unavailability ?? [], techIds, startAt, endAt);
         if (conflicts.length > 0) {
             const c = conflicts[0];
             setPendingDrop({
                 techName: c.technician_name,
+                phrase: unavailabilityWarningPhrase(c),
                 period: `${formatDateTimeInTZ(new Date(c.starts_at), tz)} – ${formatDateTimeInTZ(new Date(c.ends_at), tz)}`,
                 proceed,
             });
             return;
         }
         proceed();
-    }, [onReschedule, pxToMinutes, dy, dm, dd, tz, items, timeOff]);
+    }, [onReschedule, pxToMinutes, dy, dm, dd, tz, items, unavailability]);
 
     const handleDragLeave = useCallback(() => setDropHighlightMin(null), []);
 
@@ -211,32 +212,32 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         const dayStartUtc = dateInTZ(dy, dm, dd, 0, 0, tz);
         const nextUtcDay = new Date(Date.UTC(dy, dm - 1, dd + 1));
         const dayEndUtc = dateInTZ(nextUtcDay.getUTCFullYear(), nextUtcDay.getUTCMonth() + 1, nextUtcDay.getUTCDate(), 0, 0, tz);
-        const dayBlocks = filterTimeOffByProviders(timeOff ?? [], providerFilterIds)
+        const dayBlocks = filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds)
             .filter(b => new Date(b.starts_at) < dayEndUtc && dayStartUtc < new Date(b.ends_at))
             .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
         const allDayBlocks = dayBlocks.filter(b => new Date(b.starts_at) <= dayStartUtc && new Date(b.ends_at) >= dayEndUtc);
         const timedBlocks = dayBlocks.filter(b => !allDayBlocks.includes(b));
         // Chronological slot: timed off-cards render before the first item that
         // starts later than they do (items chain itself is untouched — INV-10).
-        const offBeforeIdx: TimeOffBlock[][] = Array.from({ length: sorted.length + 1 }, () => []);
+        const offBeforeIdx: UnavailabilityBlock[][] = Array.from({ length: sorted.length + 1 }, () => []);
         for (const b of timedBlocks) {
             const t = +new Date(b.starts_at);
             let idx = sorted.findIndex(i => i.start_at && +new Date(i.start_at) > t);
             if (idx === -1) idx = sorted.length;
             offBeforeIdx[idx].push(b);
         }
-        const renderOffCard = (b: TimeOffBlock, allDay: boolean) => {
+        const renderOffCard = (b: UnavailabilityBlock, allDay: boolean) => {
             const bs = new Date(b.starts_at);
             const be = new Date(b.ends_at);
             const from = bs <= dayStartUtc ? dayStartUtc : bs;
             const to = be >= dayEndUtc ? dayEndUtc : be;
             return (
                 <div
-                    key={`timeoff-${b.id}`}
+                    key={`unavailability-${b.id}`}
                     className="rounded-xl px-4 py-3 text-[13px] font-medium pointer-events-none select-none"
-                    style={{ background: TIME_OFF_BG, color: 'var(--sched-ink-3)' }}
+                    style={{ background: UNAVAILABILITY_BG, color: 'var(--sched-ink-3)' }}
                 >
-                    Time off · {b.technician_name} · {allDay ? 'All day' : `${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
+                    {unavailabilityLabel(b)} · {b.technician_name} · {allDay ? 'All day' : `${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
                 </div>
             );
         };
@@ -510,9 +511,9 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         <Dialog open={!!pendingDrop} onOpenChange={v => { if (!v) setPendingDrop(null); }}>
             <DialogContent variant="dialog" size="sm">
                 <DialogHeader>
-                    <DialogTitle>Blocked by time off</DialogTitle>
+                    <DialogTitle>Availability warning</DialogTitle>
                     <DialogDescription>
-                        {pendingDrop && `${pendingDrop.techName} has time off ${pendingDrop.period}. Move anyway?`}
+                        {pendingDrop && `${pendingDrop.techName} ${pendingDrop.phrase} ${pendingDrop.period}. Move anyway?`}
                     </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>

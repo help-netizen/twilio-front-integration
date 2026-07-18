@@ -10,9 +10,9 @@ import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { RouteConnector } from './RouteConnector';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import { overlapsTimeOff } from '../../services/scheduleApi';
-import { filterTimeOffByProviders } from '../../services/scheduleFilters';
-import type { ScheduleItem, DispatchSettings, RouteSegment, TimeOffBlock } from '../../services/scheduleApi';
+import { overlapsUnavailability, unavailabilityLabel, unavailabilityWarningPhrase } from '../../services/scheduleApi';
+import { filterUnavailabilityByProviders } from '../../services/scheduleFilters';
+import type { ScheduleItem, DispatchSettings, RouteSegment, UnavailabilityBlock } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../../utils/companyTime';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
@@ -22,7 +22,7 @@ import { Button } from '../ui/button';
 
 // TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
 // separate non-interactive layer alongside the job cards.
-const TIME_OFF_BG = 'repeating-linear-gradient(135deg, rgba(25, 25, 25, 0.04) 0 10px, rgba(25, 25, 25, 0.08) 10px 20px)';
+const UNAVAILABILITY_BG = 'repeating-linear-gradient(135deg, rgba(25, 25, 25, 0.04) 0 10px, rgba(25, 25, 25, 0.08) 10px 20px)';
 
 function parseTime(t: string): number {
     const [h, m] = t.split(':').map(Number);
@@ -39,8 +39,8 @@ interface TimelineWeekViewProps {
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => void;
     routeByPair?: Map<string, RouteSegment>;
-    /** TECH-DAYOFF-001: day-off blocks for the visible range (grey cell strips + DnD warning). */
-    timeOff?: TimeOffBlock[];
+    /** Combined time-off and recurring schedule gaps for cell strips/warnings. */
+    unavailability?: UnavailabilityBlock[];
     /** TECH-DAYOFF-002: active provider filter — rendered time-off strips honor it (DnD warnings don't). */
     providerFilterIds?: string[];
 }
@@ -52,7 +52,7 @@ interface ProviderGroup {
 }
 
 export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, onCreateFromSlot, routeByPair, timeOff, providerFilterIds,
+    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, onCreateFromSlot, routeByPair, unavailability, providerFilterIds,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -73,7 +73,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
 
     // TECH-DAYOFF-001 S-11: a drop that lands on the target technician's time
     // off is parked here until the dispatcher confirms (warning-only, never a block).
-    const [pendingDrop, setPendingDrop] = useState<{ techName: string; period: string; proceed: () => void } | null>(null);
+    const [pendingDrop, setPendingDrop] = useState<{ techName: string; phrase: string; period: string; proceed: () => void } | null>(null);
 
     // Close placeholder on outside click / Esc
     useEffect(() => {
@@ -156,18 +156,19 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
             ?? (startIso ? new Date(new Date(startIso).getTime() + data.durationMin * 60000).toISOString() : null);
         const conflicts = (group.id === '__unassigned' || !startIso || !endIso)
             ? []
-            : overlapsTimeOff(timeOff ?? [], [group.id], startIso, endIso);
+            : overlapsUnavailability(unavailability ?? [], [group.id], startIso, endIso);
         if (conflicts.length > 0) {
             const c = conflicts[0];
             setPendingDrop({
                 techName: c.technician_name,
+                phrase: unavailabilityWarningPhrase(c),
                 period: `${formatDateTimeInTZ(new Date(c.starts_at), tz)} – ${formatDateTimeInTZ(new Date(c.ends_at), tz)}`,
                 proceed,
             });
             return;
         }
         proceed();
-    }, [onReassign, items, timeOff, tz]);
+    }, [onReassign, items, unavailability, tz]);
 
     // ── Slot click for create-from-slot ────────────────────────────────────
 
@@ -320,7 +321,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                 >
                                     {/* Time-off strips (TECH-DAYOFF-001 S-9, INV-10) — grey,
                                         non-interactive; a multi-day period shows this day's slice. */}
-                                    {group.id !== '__unassigned' && filterTimeOffByProviders(timeOff ?? [], providerFilterIds)
+                                    {group.id !== '__unassigned' && filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds)
                                         .filter(b => b.technician_id === group.id
                                             && new Date(b.starts_at) < dayEndUtc
                                             && dayStartUtc < new Date(b.ends_at))
@@ -332,11 +333,11 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                             const to = be >= dayEndUtc ? dayEndUtc : be;
                                             return (
                                                 <div
-                                                    key={`timeoff-${b.id}`}
+                                                    key={`unavailability-${b.id}`}
                                                     className="rounded-md px-2 py-1 text-[11px] font-medium truncate pointer-events-none select-none"
-                                                    style={{ background: TIME_OFF_BG, color: 'var(--sched-ink-3)' }}
+                                                    style={{ background: UNAVAILABILITY_BG, color: 'var(--sched-ink-3)' }}
                                                 >
-                                                    Time off{allDay ? '' : ` · ${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
+                                                    {unavailabilityLabel(b)}{allDay ? '' : ` · ${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
                                                 </div>
                                             );
                                         })}
@@ -416,9 +417,9 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
         <Dialog open={!!pendingDrop} onOpenChange={v => { if (!v) setPendingDrop(null); }}>
             <DialogContent variant="dialog" size="sm">
                 <DialogHeader>
-                    <DialogTitle>Blocked by time off</DialogTitle>
+                    <DialogTitle>Availability warning</DialogTitle>
                     <DialogDescription>
-                        {pendingDrop && `${pendingDrop.techName} has time off ${pendingDrop.period}. Move anyway?`}
+                        {pendingDrop && `${pendingDrop.techName} ${pendingDrop.phrase} ${pendingDrop.period}. Move anyway?`}
                     </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>

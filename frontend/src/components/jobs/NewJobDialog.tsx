@@ -25,8 +25,8 @@ import { CustomTimeModal } from '../conversations/CustomTimeModal';
 import { useZipCheck } from '../../hooks/useZipCheck';
 import * as contactsApi from '../../services/contactsApi';
 import { createJob, type CreateJobBody } from '../../services/jobsApi';
-import { fetchTimeOff, overlapsTimeOff } from '../../services/scheduleApi';
-import { getCompanyTimezone, formatTimeOffPeriod } from './timeOffWarning';
+import { fetchUnavailability, overlapsUnavailability, unavailabilityWarningPhrase } from '../../services/scheduleApi';
+import { getCompanyTimezone, formatUnavailabilityPeriod } from './timeOffWarning';
 import type { CopyJobData } from './copyJobData';
 import type { DedupeCandidate } from '../../types/contact';
 import '../leads/CreateLeadDialog.css';
@@ -129,31 +129,31 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
         }
     }, [open, presetSlot]);
 
-    // TECH-DAYOFF-001 S-12 (warning-only): when the chosen slot carries a
-    // technician, lazily run ONE targeted time-off check for that tech on the
+    // Warning-only: when the chosen slot carries a technician, lazily run ONE
+    // targeted effective-unavailability check for that tech on the
     // slot interval (covers every mount point — SchedulePage from-slot AND the
     // plain JobsPage "New job"; the picked slot may also land outside the
     // schedule's loaded range, so a targeted fetch beats a threaded prop).
-    // Best-effort: a failed fetch just means no hint. Save is NEVER disabled.
-    const [timeOffWarning, setTimeOffWarning] = useState<{ techName: string; period: string } | null>(null);
+    // A failed verification gets its own warning. Save is NEVER disabled.
+    const [availabilityWarning, setAvailabilityWarning] = useState<{ message: string } | null>(null);
     const slotStart = slot?.start, slotEnd = slot?.end, slotTechId = slot?.techId;
     useEffect(() => {
-        if (!open || !slotStart || !slotEnd || !slotTechId) { setTimeOffWarning(null); return; }
+        if (!open || !slotStart || !slotEnd || !slotTechId) { setAvailabilityWarning(null); return; }
         let cancelled = false;
         (async () => {
             try {
                 const [blocks, tz] = await Promise.all([
-                    fetchTimeOff({ from: slotStart, to: slotEnd, technician_id: slotTechId }),
+                    fetchUnavailability({ from: slotStart, to: slotEnd, technician_id: slotTechId }),
                     getCompanyTimezone(),
                 ]);
                 if (cancelled) return;
-                const conflicts = overlapsTimeOff(blocks, [slotTechId], slotStart, slotEnd);
-                setTimeOffWarning(conflicts.length > 0
-                    ? { techName: conflicts[0].technician_name, period: formatTimeOffPeriod(conflicts[0], tz) }
+                const conflicts = overlapsUnavailability(blocks, [slotTechId], slotStart, slotEnd);
+                setAvailabilityWarning(conflicts.length > 0
+                    ? { message: `${conflicts[0].technician_name} ${unavailabilityWarningPhrase(conflicts[0])} ${formatUnavailabilityPeriod(conflicts[0], tz)}.` }
                     : null);
             } catch (err) {
-                if (!cancelled) setTimeOffWarning(null);
-                console.warn('[NewJobDialog] time-off warning check failed (skipped)', err);
+                if (!cancelled) setAvailabilityWarning({ message: 'Technician availability could not be verified.' });
+                console.warn('[NewJobDialog] availability warning check failed', err);
             }
         })();
         return () => { cancelled = true; };
@@ -374,10 +374,10 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                             )}
                             {/* TECH-DAYOFF-001 S-12: warning-only conflict hint — the
                                 job can still be booked, Save stays enabled. */}
-                            {slot && timeOffWarning && (
+                            {slot && availabilityWarning && (
                                 <div className="flex items-start gap-2 px-1 text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-2)' }}>
                                     <TriangleAlert className="size-3.5 flex-shrink-0" style={{ color: 'var(--blanc-warning)', marginTop: 2 }} />
-                                    <span>{timeOffWarning.techName} has time off {timeOffWarning.period}. You can still book it.</span>
+                                    <span>{availabilityWarning.message} You can still book it.</span>
                                 </div>
                             )}
                         </div>

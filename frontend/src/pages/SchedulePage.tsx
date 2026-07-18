@@ -144,13 +144,13 @@ export function SchedulePage() {
                 if (isMobile && mobileMapOpen) {
                     return <ScheduleJobsMap jobs={schedule.scheduledItems} companyTz={schedule.settings.timezone} selectedProviderIds={schedule.filters.providerIds} />;
                 }
-                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} timeOff={schedule.timeOff} providerFilterIds={schedule.filters.providerIds} />;
+                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} />;
             case 'month':
                 return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
             case 'timeline':
-                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} timeOff={schedule.timeOff} providerFilterIds={schedule.filters.providerIds} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'timeline-week':
-                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} timeOff={schedule.timeOff} providerFilterIds={schedule.filters.providerIds} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'list':
                 return <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             default:
@@ -242,6 +242,17 @@ export function SchedulePage() {
                     )}
 
                     {/* Calendar view */}
+                    {schedule.unavailabilityError
+                        && (schedule.viewMode === 'timeline'
+                            || schedule.viewMode === 'timeline-week'
+                            || (schedule.viewMode === 'day' && isMobile)) && (
+                        <div
+                            className="rounded-xl px-3.5 py-3 text-sm"
+                            style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            Technician availability could not be loaded. Existing blocks remain visible; retry before assuming a technician is available.
+                        </div>
+                    )}
                     {renderCalendarView()}
                 </div>
 
@@ -305,7 +316,7 @@ export function SchedulePage() {
                 onOpenChange={setTimeOffOpen}
                 providers={schedule.providers}
                 timezone={schedule.settings.timezone}
-                onChanged={schedule.reloadTimeOff}
+                onChanged={schedule.reloadUnavailability}
             />
 
             {/* Calendar slot → the full New Job form with the slot + technician pre-set */}

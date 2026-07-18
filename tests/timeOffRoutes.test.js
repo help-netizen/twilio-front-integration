@@ -17,7 +17,12 @@ jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: je
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/services/jobsService', () => ({ listJobs: jest.fn() }));
 jest.mock('../backend/src/services/scheduleService', () => ({
-    getDispatchSettings: jest.fn(async () => ({ timezone: 'America/New_York' })),
+    getDispatchSettings: jest.fn(async () => ({
+        timezone: 'America/New_York',
+        work_start_time: '08:00:00',
+        work_end_time: '18:00:00',
+        work_days: [1, 2, 3, 4, 5],
+    })),
 }));
 jest.mock('../backend/src/db/membershipQueries', () => ({
     getZenbookerTeamMemberIdForUser: jest.fn(),
@@ -383,6 +388,72 @@ describe('GET /api/schedule/time-off', () => {
         const res = await request(viewer()).get(`/api/schedule/time-off?from=${FROM}&to=${TO}`);
         expect(res.status).toBe(200);
         expect(res.body.data.time_off[0].technician_name).toBe('Old Name Snapshot');
+        expect(zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
+    });
+});
+
+// ─── GET /unavailability — composite read, explicit CRUD remains separate ───
+
+describe('GET /api/schedule/unavailability (TECH-SCHEDULE-001)', () => {
+    const FROM = '2026-07-20T04:00:00.000Z';
+    const TO = '2026-07-21T04:00:00.000Z';
+
+    it('returns explicit time off and derived schedule gaps with distinct kinds', async () => {
+        zenbookerClient.getTeamMembers.mockResolvedValue([
+            { id: '1234567', first_name: 'John', last_name: 'Smith', service_provider: true },
+        ]);
+        selectRows = [{
+            id: ROW_ID,
+            company_id: COMPANY,
+            technician_id: '1234567',
+            technician_name: 'John Smith',
+            starts_at: '2026-07-20T15:00:00.000Z',
+            ends_at: '2026-07-20T16:00:00.000Z',
+            note: 'Appointment',
+            source: 'individual',
+            batch_id: null,
+        }];
+
+        const res = await request(viewer()).get(
+            `/api/schedule/unavailability?from=${FROM}&to=${TO}`
+        );
+        expect(res.status).toBe(200);
+        expect(res.body.data.unavailability.map(item => item.kind)).toEqual([
+            'schedule_gap', 'time_off', 'schedule_gap',
+        ]);
+        expect(res.body.data.unavailability.find(item => item.kind === 'schedule_gap')).toMatchObject({
+            mutable: false,
+            source: 'company',
+        });
+        expect(res.body.data.unavailability.find(item => item.kind === 'time_off')).toMatchObject({
+            mutable: true,
+            note: 'Appointment',
+        });
+    });
+
+    it('retains schedule.view RBAC and provider-own scoping', async () => {
+        zenbookerClient.getTeamMembers.mockResolvedValue([
+            { id: '1234567', name: 'John Smith', service_provider: true },
+            { id: '7654321', name: 'Jane Doe', service_provider: true },
+        ]);
+        membershipQueries.getZenbookerTeamMemberIdForUser.mockResolvedValue('1234567');
+        const provider = appWith({
+            permissions: ['schedule.view'],
+            scopes: { job_visibility: 'assigned_only' },
+            crmUser: { id: PROVIDER_USER },
+        });
+        const res = await request(provider).get(
+            `/api/schedule/unavailability?from=${FROM}&to=${TO}&technician_id=7654321`
+        );
+        expect(res.status).toBe(200);
+        expect(new Set(res.body.data.unavailability.map(item => item.technician_id))).toEqual(new Set(['1234567']));
+    });
+
+    it('rejects callers without schedule.view before reading availability', async () => {
+        const res = await request(appWith({ permissions: [] })).get(
+            `/api/schedule/unavailability?from=${FROM}&to=${TO}`
+        );
+        expect(res.status).toBe(403);
         expect(zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
     });
 });

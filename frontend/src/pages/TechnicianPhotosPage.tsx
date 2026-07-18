@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { toast } from 'sonner';
-import { Loader2, CheckCircle2, MapPin, X } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Loader2, MapPin, MapPinned, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
-import { techniciansApi, type Technician } from '../services/techniciansApi';
+import { technicianScheduleDisplay, techniciansApi, type Technician } from '../services/techniciansApi';
 import {
     technicianBaseLocationsApi,
     type TechnicianBaseLocation,
@@ -12,6 +12,9 @@ import { CompanyBaseAddress, type CompanyBase } from '../components/settings/Com
 import { BaseAddressForm } from '../components/settings/BaseAddressForm';
 import { RecommendationSettings } from '../components/settings/RecommendationSettings';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { TechnicianSettingsPanel } from '../components/settings/TechnicianSettingsPanel';
+import { technicianServiceAreaSummary } from '../components/settings/TechnicianServiceAreas';
+import type { TechnicianSettings } from '../services/techniciansApi';
 
 function initials(name?: string | null) {
     if (!name) return '—';
@@ -41,6 +44,7 @@ export default function TechnicianPhotosPage() {
     const [savingBase, setSavingBase] = useState<string | null>(null);
     const [baseMode, setBaseMode] = useState<'company' | 'own'>('own');
     const [companyBase, setCompanyBase] = useState<CompanyBase | null>(null);
+    const [selectedTech, setSelectedTech] = useState<TechRow | null>(null);
     const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
     const load = () => {
@@ -138,12 +142,28 @@ export default function TechnicianPhotosPage() {
         ? { background: 'var(--blanc-panel-surface, #fffdf9)', color: 'var(--blanc-ink-1)' }
         : { color: 'var(--blanc-ink-3)', opacity: disabled ? 0.5 : 1 };
 
+    const onScheduleSaved = (settings: TechnicianSettings) => {
+        setTechs(current => current.map(technician => technician.tech_id === settings.technician_id
+            ? {
+                ...technician,
+                inherits_company_schedule: settings.inherits_company_schedule,
+                effective_schedule: settings.effective_week,
+                schedule_summary: settings.schedule_summary,
+                exceeds_company_hours: settings.exceeds_company_hours,
+                degraded_to_company_schedule: settings.degraded_to_company_schedule,
+                service_area_mode: settings.service_areas.active_mode,
+                service_area_summary: technicianServiceAreaSummary(settings.service_areas),
+                service_area_wildcard: settings.service_areas.wildcard_in_active_mode,
+            }
+            : technician));
+    };
+
     return (
         <SettingsPageShell
             backTo="/settings/integrations"
             backLabel="Settings"
-            title="Providers"
-            description="A photo builds trust on the payment page and lifts tips. A base location lets the scheduler suggest the best arrival times."
+            title="Technicians"
+            description="Active Zenbooker technicians, their recurring work schedules, payment-page photos, and scheduling bases."
         >
             <CompanyBaseAddress
                 title="Company base address"
@@ -156,16 +176,27 @@ export default function TechnicianPhotosPage() {
             {loading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
             ) : techs.length === 0 ? (
-                <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No providers found yet — they appear here once assigned to jobs.</p>
+                <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No active service-provider technicians were found in Zenbooker.</p>
             ) : (
                 <div className="space-y-3">
                     {techs.map(t => {
+                        const scheduleDisplay = technicianScheduleDisplay(t);
                         const hasBase = !!t.base?.has_base;
                         const isEditing = editingBase === t.tech_id;
                         const busy = savingBase === t.tech_id;
                         const matchesCompany = hasBase && sameCoords(companyBase, t.base);
                         return (
-                            <div key={t.tech_id} className="rounded-xl border px-4 py-4" style={{ borderColor: 'var(--blanc-line)' }}>
+                            <div
+                                key={t.tech_id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => setSelectedTech(t)}
+                                onKeyDown={event => {
+                                    if (event.key === 'Enter' || event.key === ' ') setSelectedTech(t);
+                                }}
+                                className="rounded-xl border px-4 py-4 text-left transition-colors hover:bg-[var(--blanc-surface-muted)]"
+                                style={{ borderColor: 'var(--blanc-line)' }}
+                            >
                                 <div className="flex gap-4">
                                     {/* Left: avatar + upload directly beneath it */}
                                     <div className="flex flex-col items-center gap-2 shrink-0" style={{ width: 92 }}>
@@ -176,7 +207,10 @@ export default function TechnicianPhotosPage() {
                                             onChange={e => onPick(t.tech_id, e.target.files?.[0])} />
                                         <button
                                             type="button"
-                                            onClick={() => fileInputs.current[t.tech_id]?.click()}
+                                            onClick={event => {
+                                                event.stopPropagation();
+                                                fileInputs.current[t.tech_id]?.click();
+                                            }}
                                             disabled={uploading === t.tech_id}
                                             className="text-[12px] font-medium text-center leading-tight"
                                             style={{ color: 'var(--blanc-job)' }}
@@ -189,8 +223,56 @@ export default function TechnicianPhotosPage() {
 
                                     {/* Right: name + base */}
                                     <div className="flex-1 min-w-0">
-                                        <div className="font-medium truncate">{t.name || 'Unnamed provider'}</div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <div className="font-medium truncate">{t.name || 'Unnamed technician'}</div>
+                                            <span
+                                                className="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                style={{
+                                                    background: t.inherits_company_schedule ? 'var(--blanc-surface-muted)' : 'var(--blanc-accent-soft)',
+                                                    color: t.inherits_company_schedule ? 'var(--blanc-ink-2)' : 'var(--blanc-accent)',
+                                                }}
+                                            >
+                                                {scheduleDisplay.state}
+                                            </span>
+                                            {scheduleDisplay.wider && (
+                                                <span className="text-[11px] font-medium" style={{ color: 'var(--blanc-warning)' }}>
+                                                    Wider hours
+                                                </span>
+                                            )}
+                                            {scheduleDisplay.degraded && (
+                                                <span className="text-[11px] font-medium" style={{ color: 'var(--blanc-danger)' }}>
+                                                    Company fallback
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="text-xs mt-0.5" style={{ color: 'var(--blanc-ink-3)' }}>{t.has_photo ? 'Photo set' : 'No photo'}</div>
+                                        <button
+                                            type="button"
+                                            className="mt-3 flex w-full items-start gap-2 text-left"
+                                            onClick={event => {
+                                                event.stopPropagation();
+                                                setSelectedTech(t);
+                                            }}
+                                        >
+                                            <CalendarClock className="mt-0.5 h-4 w-4 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                                            <span>
+                                                <span className="block text-xs font-medium" style={{ color: 'var(--blanc-ink-2)' }}>Weekly schedule</span>
+                                                <span className="mt-0.5 block text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
+                                                    {scheduleDisplay.summary}
+                                                </span>
+                                            </span>
+                                        </button>
+                                        <div className="mt-3 flex items-start gap-2">
+                                            <MapPinned className="mt-0.5 h-4 w-4 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                                            <span>
+                                                <span className="block text-xs font-medium" style={{ color: 'var(--blanc-ink-2)' }}>
+                                                    {t.service_area_mode === 'radius' ? 'Radii served' : 'Districts served'}
+                                                </span>
+                                                <span className="mt-0.5 block text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
+                                                    {t.service_area_summary || 'Service areas unavailable'}
+                                                </span>
+                                            </span>
+                                        </div>
                                         <div className="mt-3 flex items-start justify-between gap-2">
                                             <div className="min-w-0">
                                                 {hasBase ? (
@@ -205,7 +287,7 @@ export default function TechnicianPhotosPage() {
                                                     <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No base location</span>
                                                 )}
                                             </div>
-                                            <Button variant="ghost" size="sm" disabled={busy} onClick={() => openEdit(t)} className="shrink-0" style={{ color: 'var(--blanc-ink-2)' }}>
+                                            <Button variant="ghost" size="sm" disabled={busy} onClick={event => { event.stopPropagation(); openEdit(t); }} className="shrink-0" style={{ color: 'var(--blanc-ink-2)' }}>
                                                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : hasBase ? 'Edit' : 'Set base'}
                                             </Button>
                                         </div>
@@ -213,7 +295,7 @@ export default function TechnicianPhotosPage() {
                                 </div>
 
                                 {isEditing && (
-                                    <div className="mt-3 rounded-2xl p-3.5" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
+                                    <div className="mt-3 rounded-2xl p-3.5" style={{ background: 'rgba(25, 25, 25, 0.03)' }} onClick={event => event.stopPropagation()}>
                                         <div className="flex items-center justify-between mb-3">
                                             <div className="inline-flex rounded-lg p-0.5" style={{ background: 'rgba(25, 25, 25, 0.06)' }}>
                                                 <button type="button" onClick={() => companyBase && setBaseMode('company')} disabled={!companyBase}
@@ -264,6 +346,13 @@ export default function TechnicianPhotosPage() {
                     })}
                 </div>
             )}
+
+            <TechnicianSettingsPanel
+                open={selectedTech !== null}
+                technician={selectedTech}
+                onClose={() => setSelectedTech(null)}
+                onSaved={onScheduleSaved}
+            />
         </SettingsPageShell>
     );
 }
