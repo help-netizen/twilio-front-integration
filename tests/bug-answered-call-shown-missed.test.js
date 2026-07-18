@@ -63,6 +63,8 @@ const { processEvent, processDialEvent, reconcileParentCall } = require('../back
 const PARENT_SID = 'CA_parent_race_001';
 const CHILD_A_SID = 'CA_child_unanswered_001';
 const CHILD_B_SID = 'CA_child_answered_001';
+const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+const VAPI_SIP = 'sip:blanc-ai-dev@sip.vapi.ai';
 
 function makeDialEvent(overrides = {}) {
     return {
@@ -265,6 +267,150 @@ describe('Answered call shown as missed — single-writer fix', () => {
 
             // Should have returned early — no child query, no parent update
             expect(mockQuery).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // AGENT-CALL-BADGE-001 marker repair
+    // -----------------------------------------------------------------------
+
+    describe('AGENT-CALL-BADGE-001 — AI answered marker', () => {
+        it('canonicalizes an in-progress VAPI child answer on the parent', async () => {
+            mockGetCallByCallSid
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({
+                    call_sid: PARENT_SID, status: 'ringing', answered_by: null,
+                })
+                .mockResolvedValueOnce({
+                    call_sid: PARENT_SID, status: 'in-progress', answered_by: 'ai',
+                });
+            mockUpsertCall.mockResolvedValue({
+                call_sid: CHILD_B_SID,
+                parent_call_sid: PARENT_SID,
+                status: 'in-progress',
+                is_final: false,
+            });
+
+            await processEvent({
+                id: 200,
+                source: 'voice',
+                event_type: 'call.status_changed',
+                call_sid: CHILD_B_SID,
+                payload: {
+                    CallSid: CHILD_B_SID,
+                    ParentCallSid: PARENT_SID,
+                    CallStatus: 'in-progress',
+                    From: '+15551112222',
+                    To: VAPI_SIP,
+                    Direction: 'outbound-dial',
+                    Timestamp: '1760000000',
+                },
+            });
+
+            const parentMarkerUpdate = mockQuery.mock.calls.find(([sql]) =>
+                sql.includes('answered_by = $3')
+            );
+            expect(parentMarkerUpdate).toBeTruthy();
+            expect(parentMarkerUpdate[1]).toEqual([
+                PARENT_SID,
+                new Date(1760000000 * 1000),
+                'ai',
+                DEFAULT_COMPANY_ID,
+            ]);
+            expect(mockAppendCallEvent).toHaveBeenCalledWith(
+                CHILD_B_SID,
+                'call.status_changed',
+                expect.any(Date),
+                expect.any(Object),
+                'voice',
+                DEFAULT_COMPANY_ID,
+            );
+        });
+
+        it('completed VAPI child repairs an empty parent marker', async () => {
+            mockQuery
+                .mockResolvedValueOnce({ rows: [{ status: 'completed' }] })
+                .mockResolvedValueOnce({
+                    rows: [{
+                        call_sid: CHILD_B_SID,
+                        status: 'completed',
+                        duration_sec: 45,
+                        started_at: new Date('2026-07-18T10:00:00Z'),
+                        ended_at: new Date('2026-07-18T10:00:45Z'),
+                        is_final: true,
+                        contact_id: null,
+                        to_number: VAPI_SIP,
+                    }],
+                })
+                .mockResolvedValueOnce({ rows: [{ from_number: '+15551112222' }] })
+                .mockResolvedValueOnce({ rowCount: 1 });
+            mockGetCallByCallSid.mockResolvedValue({
+                call_sid: PARENT_SID,
+                status: 'completed',
+                answered_by: 'ai',
+            });
+
+            await reconcileParentCall(PARENT_SID, 'test_trace', DEFAULT_COMPANY_ID);
+
+            const parentUpdate = mockQuery.mock.calls.find(([sql]) =>
+                sql.includes("answered_by = CASE WHEN $9 THEN 'ai'")
+            );
+            expect(parentUpdate).toBeTruthy();
+            expect(parentUpdate[1][8]).toBe(true);
+            expect(parentUpdate[1][9]).toBe(DEFAULT_COMPANY_ID);
+            expect(parentUpdate[0]).toContain('WHERE call_sid = $1 AND company_id = $10');
+        });
+
+        it('does not mark a completed human SIP child as AI', async () => {
+            mockQuery
+                .mockResolvedValueOnce({ rows: [{ status: 'completed' }] })
+                .mockResolvedValueOnce({
+                    rows: [{
+                        call_sid: CHILD_B_SID,
+                        status: 'completed',
+                        duration_sec: 45,
+                        started_at: new Date('2026-07-18T10:00:00Z'),
+                        ended_at: new Date('2026-07-18T10:00:45Z'),
+                        is_final: true,
+                        contact_id: null,
+                        to_number: 'sip:chairman@sip.example.com',
+                    }],
+                })
+                .mockResolvedValueOnce({ rows: [{ from_number: '+15551112222' }] })
+                .mockResolvedValueOnce({ rowCount: 1 });
+
+            await reconcileParentCall(PARENT_SID, 'test_trace', DEFAULT_COMPANY_ID);
+
+            const parentUpdate = mockQuery.mock.calls.find(([sql]) =>
+                sql.includes("answered_by = CASE WHEN $9 THEN 'ai'")
+            );
+            expect(parentUpdate[1][8]).toBe(false);
+        });
+
+        it('does not mark a failed VAPI child as AI', async () => {
+            mockQuery
+                .mockResolvedValueOnce({ rows: [{ status: 'ringing' }] })
+                .mockResolvedValueOnce({
+                    rows: [{
+                        call_sid: CHILD_B_SID,
+                        status: 'failed',
+                        duration_sec: null,
+                        started_at: new Date('2026-07-18T10:00:00Z'),
+                        ended_at: new Date('2026-07-18T10:00:05Z'),
+                        is_final: true,
+                        contact_id: null,
+                        to_number: VAPI_SIP,
+                    }],
+                })
+                .mockResolvedValueOnce({ rows: [{ from_number: '+15551112222' }] })
+                .mockResolvedValueOnce({ rowCount: 1 });
+
+            await reconcileParentCall(PARENT_SID, 'test_trace', DEFAULT_COMPANY_ID);
+
+            const parentUpdate = mockQuery.mock.calls.find(([sql]) =>
+                sql.includes("answered_by = CASE WHEN $9 THEN 'ai'")
+            );
+            expect(parentUpdate[1][8]).toBe(false);
         });
     });
 

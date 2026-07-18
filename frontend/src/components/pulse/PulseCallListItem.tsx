@@ -11,7 +11,7 @@ import {
 import { formatPhoneDisplay as formatPhoneNumber } from '@/utils/phoneUtils';
 import type { CallData } from '../call-list-item';
 import { PulseCallAudioPlayer } from './PulseCallAudioPlayer';
-import { isAiAnsweredBy } from './pulseHelpers';
+import { getPulseCallIconKind } from './pulseHelpers';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -58,12 +58,20 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const statusLabel = STATUS_LABELS[status] || status;
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
 
-    const dir = call.direction as string;
-    const DirectionIcon = dir === 'incoming'
-        ? PhoneIncoming
-        : dir === 'internal'
-            ? ArrowLeftRight
-            : PhoneOutgoing;
+    const callIconKind = getPulseCallIconKind(call.direction, call.answeredBy);
+    const CallIcon = callIconKind === 'bot'
+        ? Bot
+        : callIconKind === 'incoming'
+            ? PhoneIncoming
+            : callIconKind === 'internal'
+                ? ArrowLeftRight
+                : PhoneOutgoing;
+    const directionLabel = callIconKind === 'internal'
+        ? 'Internal'
+        : call.direction === 'incoming' ? 'Incoming' : 'Outgoing';
+    const iconLabel = callIconKind === 'bot'
+        ? `AI answered · ${directionLabel} call`
+        : `${directionLabel} call`;
 
     return (
         <div
@@ -75,7 +83,13 @@ export function PulseCallListItem({ call }: { call: CallData }) {
             {/* Header row */}
             <div className="px-4 py-3.5">
                 <div className="flex items-center gap-2.5">
-                    <DirectionIcon className="size-4 shrink-0" style={{ color: st.color }} />
+                    <CallIcon
+                        className="size-4 shrink-0"
+                        style={{ color: st.color }}
+                        aria-label={iconLabel}
+                    >
+                        <title>{iconLabel}</title>
+                    </CallIcon>
                     <span className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
                         {formatPhoneNumber(otherPartyNumber)}
                     </span>
@@ -85,11 +99,6 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                     >
                         {statusLabel}
                     </span>
-                    {isAiAnsweredBy(call.answeredBy) && (
-                        <Bot className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} aria-label="AI call">
-                            <title>AI call</title>
-                        </Bot>
-                    )}
                     <div className="flex-1" />
                     <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
                         {formatTime(call.startTime)}

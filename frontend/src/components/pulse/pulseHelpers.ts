@@ -36,12 +36,21 @@ export function callToCallData(call: any): CallData {
 }
 
 // =============================================================================
-// AI-answered detection — single source of truth for the sidebar marker
-// (PulseContactItem) and the thread-feed tile marker (PulseCallListItem).
+// Call icon selection — single source of truth for the sidebar
+// (PulseContactItem) and the thread-feed tile (PulseCallListItem).
 // =============================================================================
-const AI_ANSWERED_BY_MARKERS = ['ai', 'vapi', 'bot', 'assistant'];
+export type PulseCallIconKind = 'bot' | 'incoming' | 'outgoing' | 'internal';
 
 export function isAiAnsweredBy(answeredBy: string | null | undefined): boolean {
-    const normalized = (answeredBy || '').toLowerCase();
-    return AI_ANSWERED_BY_MARKERS.some(marker => normalized.includes(marker));
+    return answeredBy === 'ai';
+}
+
+export function getPulseCallIconKind(
+    direction: string | null | undefined,
+    answeredBy: string | null | undefined,
+): PulseCallIconKind {
+    if (isAiAnsweredBy(answeredBy)) return 'bot';
+    if (direction === 'internal') return 'internal';
+    if (direction === 'incoming' || direction === 'inbound') return 'incoming';
+    return 'outgoing';
 }

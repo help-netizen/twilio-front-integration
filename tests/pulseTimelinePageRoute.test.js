@@ -858,3 +858,21 @@ test('TC-TRP-035: company call legs cannot leak proxy-keyed SMS into legacy or p
         expect(event.params).toEqual([COMPANY_A]);
     }
 });
+
+test('TC-TRP-036: answered_by=ai reaches both legacy and paged Pulse timeline calls', async () => {
+    state.data = {
+        ...GOLDEN_DATA,
+        calls: GOLDEN_DATA.calls.map((call, index) => index === 0
+            ? { ...call, answered_by: 'ai' }
+            : { ...call }),
+    };
+
+    const legacy = await request(stubApp()).get(`/api/pulse/timeline-by-id/${TIMELINE.id}`);
+    expect(legacy.status).toBe(200);
+    expect(legacy.body.calls.find(call => call.call_sid === 'CA-golden-new').answered_by).toBe('ai');
+
+    const paged = await request(stubApp()).get(`/api/pulse/timeline-by-id/${TIMELINE.id}?limit=20`);
+    expect(paged.status).toBe(200);
+    const callItem = paged.body.page.items.find(item => item.src === 'call' && item.data.call_sid === 'CA-golden-new');
+    expect(callItem.data.answered_by).toBe('ai');
+});

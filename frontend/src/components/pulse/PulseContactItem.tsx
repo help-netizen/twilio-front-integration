@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import type { Call } from '../../types/models';
 import { tomorrowAtInTZ } from '../../utils/companyTime';
-import { isAiAnsweredBy } from './pulseHelpers';
+import { getPulseCallIconKind } from './pulseHelpers';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -134,7 +134,12 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
         : call.direction?.startsWith('outbound') ? 'outbound'
             : call.direction === 'internal' ? 'internal' : 'outbound';
     const callColor = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
-    const isAiAnsweredLatestCall = interactionType === 'call' && isAiAnsweredBy(call.answered_by);
+    const callIconKind = getPulseCallIconKind(callDirection, call.answered_by);
+    const isAiAnsweredLatestCall = interactionType === 'call' && callIconKind === 'bot';
+    const directionLabel = callDirection === 'inbound'
+        ? 'Incoming'
+        : callDirection === 'internal' ? 'Internal' : 'Outgoing';
+    const aiIconLabel = `AI answered · ${directionLabel} call`;
 
     // Missed incoming call — last interaction is a call, direction is inbound, status is not answered
     const isMissedIncoming = interactionType === 'call'
@@ -167,7 +172,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
 
             <div className="flex items-start gap-2.5">
                 {/* Event type icon */}
-                <div className="relative shrink-0 mt-1" title={isAiAnsweredLatestCall ? 'AI bot answered this call' : undefined}>
+                <div className="relative shrink-0 mt-1" title={isAiAnsweredLatestCall ? aiIconLabel : undefined}>
                     {(() => {
                         if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
                         if (interactionType === 'sms_outbound') return <MessageSquare className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
@@ -176,9 +181,9 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                         // but the list fell through to call icons for them.
                         if (interactionType === 'email_inbound') return <Mail className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
                         if (interactionType === 'email_outbound') return <MailCheck className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
-                        if (isAiAnsweredLatestCall) return <Bot className="size-[18px]" style={{ color: '#dc2626' }} aria-label="AI bot answered this call" />;
-                        if (callDirection === 'internal') return <ArrowLeftRight className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
-                        if (callDirection === 'inbound') return <PhoneIncoming className="size-[18px]" style={{ color: callColor }} />;
+                        if (isAiAnsweredLatestCall) return <Bot className="size-[18px]" style={{ color: callColor }} aria-label={aiIconLabel} />;
+                        if (callIconKind === 'internal') return <ArrowLeftRight className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
+                        if (callIconKind === 'incoming') return <PhoneIncoming className="size-[18px]" style={{ color: callColor }} />;
                         return <PhoneOutgoing className="size-[18px]" style={{ color: callColor }} />;
                     })()}
                 </div>

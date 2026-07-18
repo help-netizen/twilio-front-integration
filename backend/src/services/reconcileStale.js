@@ -37,7 +37,7 @@ async function reconcileStaleCalls() {
         // REST API. Synthetic `vapi:%` rows would 404 → be wrongly marked failed
         // mid-call, so they are excluded here and handled by the synthetic sweeper above.
         const result = await db.query(
-            `SELECT call_sid, parent_call_sid, status, direction, started_at
+            `SELECT call_sid, parent_call_sid, status, direction, started_at, company_id
              FROM calls
              WHERE is_final = false
                AND call_sid LIKE 'CA%'
@@ -116,7 +116,7 @@ async function sweepStaleSyntheticCalls(traceId) {
 }
 
 async function reconcileOneCall(call, traceId) {
-    const { call_sid, parent_call_sid } = call;
+    const { call_sid, parent_call_sid, company_id } = call;
 
     // Stuck voicemail_recording: caller hung up before recording started,
     // so the recording callback never arrives. Transition to no-answer (final).
@@ -157,7 +157,7 @@ async function reconcileOneCall(call, traceId) {
 
             // Now reconcile the parent based on updated children
             const { reconcileParentCall } = require('./inboxWorker');
-            await reconcileParentCall(call_sid, traceId);
+            await reconcileParentCall(call_sid, traceId, company_id);
 
             const updated = await queries.getCallByCallSid(call_sid);
             if (updated && updated.is_final) {

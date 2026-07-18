@@ -6,6 +6,23 @@ const { extractPhoneFromSIP } = require('./callProcessor');
 const { reconcileStaleCalls } = require('./reconcileStale');
 const { getTwilioClient } = require('./twilioClient');
 
+const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+const AI_ANSWERED_BY = 'ai';
+
+function isVapiSipTarget(value) {
+    return /^sip:[^@]+@(?:[^@]+\.)*vapi\.ai(?:[?;].*)?$/i.test(String(value || '').trim());
+}
+
+async function resolveEventCompanyId(accountSid) {
+    try {
+        const telephonyTenantService = require('./telephonyTenantService');
+        return await telephonyTenantService.resolveCompanyByAccountSid(accountSid)
+            || DEFAULT_COMPANY_ID;
+    } catch (_) {
+        return DEFAULT_COMPANY_ID;
+    }
+}
+
 /**
  * Configuration
  */
@@ -147,13 +164,9 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     const normalized = normalizeVoiceEvent(payload);
 
     // ALB-107: attribute the event to a tenant by the Twilio AccountSid
-    // (subaccount per company). Falls back to the legacy default inside
-    // findOrCreateTimeline when resolution fails.
-    let eventCompanyId = null;
-    try {
-        const telephonyTenantService = require('./telephonyTenantService');
-        eventCompanyId = await telephonyTenantService.resolveCompanyByAccountSid(payload.AccountSid);
-    } catch (e) { /* legacy fallback */ }
+    // (subaccount per company). Unknown/legacy accounts stay inside the legacy
+    // default tenant instead of falling through to unscoped worker SQL.
+    const eventCompanyId = await resolveEventCompanyId(payload.AccountSid);
 
     // Resolve external party via CallProcessor
     const callData = {
@@ -283,7 +296,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     let skipUpsert = false;
     {
         try {
-            const existing = await queries.getCallByCallSid(normalized.callSid);
+            const existing = await queries.getCallByCallSid(normalized.callSid, eventCompanyId);
             if (existing) {
                 const existingIsFinal = isFinalStatus(existing.status);
                 const isInVoicemailFlow =
@@ -330,8 +343,11 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
         && processed.direction === 'inbound') {
         try {
             const childCheck = await db.query(
-                `SELECT 1 FROM calls WHERE parent_call_sid = $1 AND status = 'in-progress' LIMIT 1`,
-                [normalized.callSid]
+                `SELECT 1 FROM calls
+                  WHERE parent_call_sid = $1 AND company_id = $2
+                    AND status = 'in-progress'
+                  LIMIT 1`,
+                [normalized.callSid, eventCompanyId]
             );
             if (childCheck.rows.length === 0) {
                 effectiveStatus = 'ringing';
@@ -350,7 +366,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
             parentCallSid: normalized.parentCallSid,
             contactId,
             timelineId,
-            companyId: eventCompanyId || undefined,
+            companyId: eventCompanyId,
             direction: processed.direction,   // Use CallProcessor's direction
             fromNumber: (() => {
                 const extracted = extractPhoneFromSIP(normalized.fromNumber);
@@ -424,16 +440,17 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
         eventType || 'call.status_changed',
         normalized.eventTime,
         { ...normalized, raw: payload },
-        source
+        source,
+        eventCompanyId
     );
 
     // Enrich from Twilio API on final status (skip if voicemail — we manage those statuses ourselves)
     let enrichedCall = call;
     if (isFinal && !skipUpsert) {
-        await enrichFromTwilioApi(normalized.callSid, call, traceId);
+        await enrichFromTwilioApi(normalized.callSid, call, traceId, eventCompanyId);
         // Re-read from DB to get enriched data for SSE broadcast
         try {
-            const freshCall = await queries.getCallByCallSid(normalized.callSid);
+            const freshCall = await queries.getCallByCallSid(normalized.callSid, eventCompanyId);
             if (freshCall) enrichedCall = freshCall;
         } catch (e) { /* use original call if re-read fails */ }
     }
@@ -449,17 +466,18 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     // Propagate child leg status changes to parent call
     if (normalized.parentCallSid && ['ringing', 'in-progress'].includes(normalized.eventStatus)) {
         try {
-            const parentCall = await queries.getCallByCallSid(normalized.parentCallSid);
+            const parentCall = await queries.getCallByCallSid(normalized.parentCallSid, eventCompanyId);
             if (parentCall) {
                 const parentStatus = parentCall.status;
 
                 // Child ringing → parent ringing (if parent is still initiated)
                 if (normalized.eventStatus === 'ringing' && ['initiated', 'queued'].includes(parentStatus)) {
                     await db.query(
-                        `UPDATE calls SET status = 'ringing' WHERE call_sid = $1`,
-                        [normalized.parentCallSid]
+                        `UPDATE calls SET status = 'ringing'
+                          WHERE call_sid = $1 AND company_id = $2`,
+                        [normalized.parentCallSid, eventCompanyId]
                     );
-                    const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
+                    const freshParent = await queries.getCallByCallSid(normalized.parentCallSid, eventCompanyId);
                     if (freshParent) publishRealtimeEvent('call.updated', freshParent, traceId);
                     console.log(`[${traceId}] Child ringing → parent ${normalized.parentCallSid} → ringing`);
                 }
@@ -468,13 +486,17 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
                 if (normalized.eventStatus === 'in-progress' && ['initiated', 'queued', 'ringing'].includes(parentStatus)) {
                     const toNum = normalized.toNumber || '';
                     const sipMatch = toNum.match(/^sip:([^@]+)@/i);
-                    const answeredBy = sipMatch ? sipMatch[1] : null;
+                    const answeredBy = isVapiSipTarget(toNum)
+                        ? AI_ANSWERED_BY
+                        : (sipMatch ? sipMatch[1] : null);
 
                     await db.query(
-                        `UPDATE calls SET status = 'in-progress', answered_at = $2, answered_by = $3 WHERE call_sid = $1`,
-                        [normalized.parentCallSid, normalized.eventTime, answeredBy]
+                        `UPDATE calls
+                            SET status = 'in-progress', answered_at = $2, answered_by = $3
+                          WHERE call_sid = $1 AND company_id = $4`,
+                        [normalized.parentCallSid, normalized.eventTime, answeredBy, eventCompanyId]
                     );
-                    const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
+                    const freshParent = await queries.getCallByCallSid(normalized.parentCallSid, eventCompanyId);
                     if (freshParent) publishRealtimeEvent('call.updated', freshParent, traceId);
                     console.log(`[${traceId}] Child answered → parent ${normalized.parentCallSid} → in-progress (by ${answeredBy})`);
                 }
@@ -486,7 +508,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
 
     // Reconcile parent call if this is a child leg that reached final status
     if (normalized.parentCallSid && isFinal) {
-        await reconcileParentCall(normalized.parentCallSid, traceId);
+        await reconcileParentCall(normalized.parentCallSid, traceId, eventCompanyId);
     }
 
     // Also reconcile if THIS is the parent call reaching final status
@@ -494,7 +516,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     // For outbound: parent call needs child leg data for accurate status/duration
     // Skip if upsert was skipped (status already preserved as no-answer/voicemail)
     if (!normalized.parentCallSid && isFinal && !skipUpsert) {
-        await reconcileParentCall(normalized.callSid, traceId);
+        await reconcileParentCall(normalized.callSid, traceId, eventCompanyId);
     }
 }
 
@@ -510,6 +532,7 @@ async function processDialEvent(payload, traceId) {
     const dialStatus = (payload.DialCallStatus || '').toLowerCase();
     const dialDuration = parseInt(payload.DialCallDuration || 0) || null;
     const isAnswered = dialStatus === 'completed' || dialStatus === 'answered';
+    const companyId = await resolveEventCompanyId(payload.AccountSid);
 
     console.log(`[${traceId}] processDialEvent`, { CallSid, dialStatus, dialDuration });
 
@@ -517,9 +540,9 @@ async function processDialEvent(payload, traceId) {
     //    Defense against edge cases where DialCallStatus doesn't match reality
     const childResult = await db.query(
         `SELECT call_sid, status, duration_sec FROM calls
-         WHERE parent_call_sid = $1
+         WHERE parent_call_sid = $1 AND company_id = $2
          ORDER BY duration_sec DESC NULLS LAST`,
-        [CallSid]
+        [CallSid, companyId]
     );
     const children = childResult.rows;
     const answeredChild = children.find(c =>
@@ -543,8 +566,8 @@ async function processDialEvent(payload, traceId) {
             duration_sec = CASE WHEN status = 'in-progress'
                 THEN COALESCE($3, duration_sec) ELSE duration_sec END,
             ended_at = COALESCE(ended_at, NOW())
-         WHERE parent_call_sid = $1 AND is_final = false`,
-        [CallSid, finalizeStatus, dialDuration]
+         WHERE parent_call_sid = $1 AND company_id = $4 AND is_final = false`,
+        [CallSid, finalizeStatus, dialDuration, companyId]
     );
     if (finResult.rowCount > 0) {
         console.log(`[${traceId}] dial.action: finalized ${finResult.rowCount} child leg(s) as ${finalizeStatus}`);
@@ -555,28 +578,28 @@ async function processDialEvent(payload, traceId) {
         await db.query(
             `UPDATE calls SET status = 'completed', is_final = true,
              ended_at = COALESCE(ended_at, NOW())
-             WHERE call_sid = $1`,
-            [CallSid]
+             WHERE call_sid = $1 AND company_id = $2`,
+            [CallSid, companyId]
         );
         console.log(`[${traceId}] dial.action: parent ${CallSid} → completed`);
     } else {
         await db.query(
             `UPDATE calls SET status = 'voicemail_recording', is_final = false
-             WHERE call_sid = $1`,
-            [CallSid]
+             WHERE call_sid = $1 AND company_id = $2`,
+            [CallSid, companyId]
         );
         console.log(`[${traceId}] dial.action: parent ${CallSid} → voicemail_recording`);
     }
 
     // 4. SSE broadcast so frontend updates
-    const freshCall = await queries.getCallByCallSid(CallSid);
+    const freshCall = await queries.getCallByCallSid(CallSid, companyId);
     if (freshCall) {
         publishRealtimeEvent('call.updated', freshCall, traceId);
     }
 
     // 5. Final reconciliation to enrich parent with winner metadata (duration, answered_at, etc.)
     if (effectivelyAnswered) {
-        await reconcileParentCall(CallSid, traceId);
+        await reconcileParentCall(CallSid, traceId, companyId);
     }
 }
 
@@ -585,14 +608,16 @@ async function processDialEvent(payload, traceId) {
 // When child legs complete, update the parent with the winner's metadata
 // =============================================================================
 
-async function reconcileParentCall(parentCallSid, traceId) {
+async function reconcileParentCall(parentCallSid, traceId, companyId = DEFAULT_COMPANY_ID) {
     try {
         // Guard: don't overwrite voicemail / missed-call statuses
         // These are set by handleDialAction and must be preserved — Twilio child legs
         // may report "completed" which would create a false "winner" in reconciliation.
         const parentCheck = await db.query(
-            `SELECT status FROM calls WHERE call_sid = $1`, [parentCallSid]
+            `SELECT status FROM calls WHERE call_sid = $1 AND company_id = $2`,
+            [parentCallSid, companyId]
         );
+        if (parentCheck.rows.length === 0) return;
         const parentCurrentStatus = parentCheck.rows[0]?.status;
         if (['no-answer', 'voicemail_recording', 'voicemail_left'].includes(parentCurrentStatus)) {
             // Check if any child was genuinely answered (completed with real duration).
@@ -600,9 +625,10 @@ async function reconcileParentCall(parentCallSid, traceId) {
             // by partial reconciliation or should be corrected to completed.
             const answeredCheck = await db.query(
                 `SELECT 1 FROM calls
-                 WHERE parent_call_sid = $1 AND status = 'completed' AND duration_sec > 0
+                 WHERE parent_call_sid = $1 AND company_id = $2
+                   AND status = 'completed' AND duration_sec > 0
                  LIMIT 1`,
-                [parentCallSid]
+                [parentCallSid, companyId]
             );
             if (answeredCheck.rows.length === 0) {
                 console.log(`[${traceId}] Skipping reconciliation — parent is ${parentCurrentStatus}, no answered children`);
@@ -613,10 +639,11 @@ async function reconcileParentCall(parentCallSid, traceId) {
 
         // Get all child legs for this parent
         const childResult = await db.query(
-            `SELECT call_sid, status, duration_sec, started_at, ended_at, is_final, contact_id
-             FROM calls WHERE parent_call_sid = $1
+            `SELECT call_sid, status, duration_sec, started_at, ended_at, is_final,
+                    contact_id, to_number
+             FROM calls WHERE parent_call_sid = $1 AND company_id = $2
              ORDER BY duration_sec DESC NULLS LAST`,
-            [parentCallSid]
+            [parentCallSid, companyId]
         );
         const children = childResult.rows;
 
@@ -631,6 +658,9 @@ async function reconcileParentCall(parentCallSid, traceId) {
         const winner = children.find(c =>
             c.status === 'completed' && c.duration_sec && c.duration_sec > 0
         ) || children.find(c => c.status === 'completed');
+        const aiAnswered = children.some(c =>
+            c.status === 'completed' && isVapiSipTarget(c.to_number)
+        );
 
         // Get contact_id from winner or first child that has one
         // (for outbound SIP calls where parent may not have contact_id)
@@ -673,8 +703,17 @@ async function reconcileParentCall(parentCallSid, traceId) {
         // Update parent call with reconciled data + propagate contact_id and from_number from child
         // (for SoftPhone outbound, parent has from_number=null or client:xxx, child has the actual caller ID)
         const childFromNumber = winner
-            ? (await db.query(`SELECT from_number FROM calls WHERE call_sid = $1`, [winner.call_sid])).rows[0]?.from_number
-            : (await db.query(`SELECT from_number FROM calls WHERE parent_call_sid = $1 AND from_number NOT LIKE 'client:%' LIMIT 1`, [parentCallSid])).rows[0]?.from_number;
+            ? (await db.query(
+                `SELECT from_number FROM calls WHERE call_sid = $1 AND company_id = $2`,
+                [winner.call_sid, companyId]
+            )).rows[0]?.from_number
+            : (await db.query(
+                `SELECT from_number FROM calls
+                  WHERE parent_call_sid = $1 AND company_id = $2
+                    AND from_number NOT LIKE 'client:%'
+                  LIMIT 1`,
+                [parentCallSid, companyId]
+            )).rows[0]?.from_number;
 
         await db.query(
             `UPDATE calls SET
@@ -688,15 +727,17 @@ async function reconcileParentCall(parentCallSid, traceId) {
                     WHEN calls.from_number IS NULL OR calls.from_number LIKE 'client:%'
                     THEN COALESCE($8, calls.from_number)
                     ELSE calls.from_number
-                END
-             WHERE call_sid = $1`,
-            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt, parentEndedAt, childContactId, childFromNumber]
+                END,
+                answered_by = CASE WHEN $9 THEN 'ai' ELSE answered_by END
+             WHERE call_sid = $1 AND company_id = $10`,
+            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt,
+                parentEndedAt, childContactId, childFromNumber, aiAnswered, companyId]
         );
 
         console.log(`[${traceId}] Reconciled parent ${parentCallSid}: status=${parentStatus}, winner=${winner?.call_sid || 'none'}`);
 
         // Publish update for parent so frontend refreshes
-        const parentCall = await queries.getCallByCallSid(parentCallSid);
+        const parentCall = await queries.getCallByCallSid(parentCallSid, companyId);
         if (parentCall) {
             publishRealtimeEvent('call.updated', parentCall, traceId);
         }
@@ -823,7 +864,7 @@ async function processTranscriptionEvent(payload, traceId, source = 'webhook') {
 // Twilio API enrichment on final call status
 // =============================================================================
 
-async function enrichFromTwilioApi(callSid, existingCall, traceId) {
+async function enrichFromTwilioApi(callSid, existingCall, traceId, companyId = DEFAULT_COMPANY_ID) {
     try {
         const client = getTwilioClient();
         const details = await client.calls(callSid).fetch();
@@ -855,7 +896,7 @@ async function enrichFromTwilioApi(callSid, existingCall, traceId) {
                 duration_sec    = COALESCE($9, duration_sec),
                 price           = COALESCE($10, price),
                 price_unit      = COALESCE($11, price_unit)
-             WHERE call_sid = $1`,
+             WHERE call_sid = $1 AND company_id = $12`,
             [
                 callSid,
                 details.parentCallSid || null,
@@ -868,6 +909,7 @@ async function enrichFromTwilioApi(callSid, existingCall, traceId) {
                 parseInt(details.duration) || null,
                 details.price ? parseFloat(details.price) : null,
                 details.priceUnit || 'USD',
+                companyId,
             ]
         );
 

@@ -524,6 +524,15 @@ describe('GET /api/calls/by-contact — route', () => {
         expect(res.body.total).toBe(120);
     });
 
+    it('preserves answered_by=ai for the Pulse sidebar icon selector', async () => {
+        mockGetUnifiedTimelinePage.mockResolvedValue([row(1, { answered_by: 'ai' })]);
+
+        const res = await request(callsApp(), 'GET', '/api/calls/by-contact');
+
+        expect(res.status).toBe(200);
+        expect(res.body.conversations[0].answered_by).toBe('ai');
+    });
+
     it('page-2 (offset 50) shares NO timeline_id with page-1 over a 120-row fixture', async () => {
         const all = Array.from({ length: 120 }, (_, i) => row(i + 1));
         mockGetUnifiedTimelinePage.mockImplementation(async ({ limit, offset }) =>
