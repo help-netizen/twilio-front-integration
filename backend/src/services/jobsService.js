@@ -1379,8 +1379,8 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 // Notes
 // =============================================================================
 
-async function addNote(jobId, text, attachments = [], author = null, createdBy = null, noteId = null) {
-    const job = await getJobById(jobId);
+async function addNote(jobId, text, attachments = [], author = null, createdBy = null, noteId = null, companyId = null) {
+    const job = await getJobById(jobId, companyId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
     const note = { id: noteId || randomUUID(), text, created: new Date().toISOString(), created_by: createdBy || null };
@@ -1395,8 +1395,13 @@ async function addNote(jobId, text, attachments = [], author = null, createdBy =
     }
 
     let notes = [...(job.notes || []), note];
-    await db.query('UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2',
-        [JSON.stringify(notes), jobId]);
+    const updateSql = companyId
+        ? 'UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND company_id = $3'
+        : 'UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2';
+    const updateParams = companyId
+        ? [JSON.stringify(notes), jobId, companyId]
+        : [JSON.stringify(notes), jobId];
+    await db.query(updateSql, updateParams);
 
     // Also push text to Zenbooker if linked (attachments are local-only).
     // Capture the resulting ZB note id so that when Zenbooker echoes this note back
@@ -1411,8 +1416,9 @@ async function addNote(jobId, text, attachments = [], author = null, createdBy =
             if (zbId) {
                 note.zb_note_id = String(zbId);
                 notes = [...(job.notes || []), note];
-                await db.query('UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2',
-                    [JSON.stringify(notes), jobId]);
+                await db.query(updateSql, companyId
+                    ? [JSON.stringify(notes), jobId, companyId]
+                    : [JSON.stringify(notes), jobId]);
             }
         } catch (err) {
             console.error(`[JobsService] Note sync error:`, err.response?.data || err.message);

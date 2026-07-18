@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const invoicesService = require('../services/invoicesService');
+const { actorFromRequest } = require('../services/documentSendNoteService');
 
 // Resolve the active company scope from any of the supported middleware shapes.
 function getCompanyId(req) {
@@ -145,7 +146,14 @@ router.post('/:id/send', requirePermission('invoices.send'), async (req, res) =>
         const { channel, recipient, message, includePaymentLink } = req.body || {};
         const userEmail = getUserEmail(req);
 
-        const result = await invoicesService.sendInvoice(companyId, userId, id, { channel, recipient, message, includePaymentLink, userEmail });
+        const result = await invoicesService.sendInvoice(companyId, userId, id, {
+            channel,
+            recipient,
+            message,
+            includePaymentLink,
+            userEmail,
+            noteActor: actorFromRequest(req),
+        });
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/send error:', err.message);

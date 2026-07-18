@@ -28,8 +28,10 @@ const request = require('supertest');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const USER_SUB = '11111111-1111-4111-8111-111111111111';
+const CRM_USER_ID = '22222222-2222-4222-8222-222222222222';
 const INV_ID = 77;
 const INV_ID_S = String(INV_ID);
+const JOB_ID = 519;
 
 // ─── DB query layer ──────────────────────────────────────────────────────────
 const mockGetInvoiceById = jest.fn();
@@ -87,13 +89,23 @@ jest.mock('../backend/src/services/documentTemplates', () => ({
 
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
 
+const mockAddNote = jest.fn();
+jest.mock('../backend/src/services/jobsService', () => ({
+    addNote: (...a) => mockAddNote(...a),
+}));
+
 const invoicesRouter = require('../backend/src/routes/invoices');
 
 function appWith({ permissions = ['invoices.send'], companyId = COMPANY_A } = {}) {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
-        req.user = { sub: USER_SUB, email: 'agent@x.com' };
+        req.user = {
+            sub: USER_SUB,
+            email: 'agent@x.com',
+            name: 'Agent Smith',
+            crmUser: { id: CRM_USER_ID },
+        };
         req.authz = { permissions };
         req.companyFilter = { company_id: companyId };
         next();
@@ -109,6 +121,7 @@ function invoiceRow(overrides = {}) {
         invoice_number: 'INVOICE L-519-1',
         status: 'draft',
         contact_id: 7,
+        job_id: JOB_ID,
         public_token: 'tok_invABCDE', // pre-seeded → ensurePublicLink never re-mints
         ...overrides,
     };
@@ -130,6 +143,7 @@ beforeEach(() => {
     mockSendMessage.mockResolvedValue(undefined);
     mockGetCompanyById.mockResolvedValue({ name: 'Boston Masters' });
     mockRender.mockResolvedValue(Buffer.from('%PDF-1.4 invoice'));
+    mockAddNote.mockResolvedValue({ notes: [] });
 });
 
 // ─── A. Email happy path — pay-page link + PDF + AFTER-success order (TC-SD-014) ─
@@ -152,12 +166,23 @@ describe('sendInvoice — email happy path', () => {
         // status + event written
         expect(mockUpdateInvoiceStatus).toHaveBeenCalledWith(INV_ID_S, COMPANY_A, 'sent', 'sent_at');
         expect(mockCreateEvent).toHaveBeenCalledWith(
-            INV_ID_S, 'sent', 'user', USER_SUB, expect.objectContaining({ channel: 'email', recipient: 'c@x.com' }),
+            INV_ID_S, 'sent', 'user', CRM_USER_ID, expect.objectContaining({ channel: 'email', recipient: 'c@x.com' }),
+        );
+        expect(mockAddNote).toHaveBeenCalledWith(
+            JOB_ID,
+            'Invoice #INVOICE L-519-1 sent to c@x.com',
+            [],
+            'Agent',
+            CRM_USER_ID,
+            null,
+            COMPANY_A,
         );
 
         // ORDER: the §2.7 / flip-first-bug guarantee — dispatch BEFORE the status flip.
         expect(mockSendEmail.mock.invocationCallOrder[0])
             .toBeLessThan(mockUpdateInvoiceStatus.mock.invocationCallOrder[0]);
+        expect(mockSendEmail.mock.invocationCallOrder[0])
+            .toBeLessThan(mockAddNote.mock.invocationCallOrder[0]);
     });
 
     it('TC-SD-015: includePaymentLink:false → no pay-link anchor in the body, still flips', async () => {
@@ -185,6 +210,47 @@ describe('sendInvoice — sms happy path', () => {
         expect(mockSendEmail).not.toHaveBeenCalled();
         expect(mockSendMessage.mock.invocationCallOrder[0])
             .toBeLessThan(mockUpdateInvoiceStatus.mock.invocationCallOrder[0]);
+        expect(mockAddNote).toHaveBeenCalledWith(
+            JOB_ID,
+            'Invoice #INVOICE L-519-1 sent by SMS to +15551234567',
+            [],
+            'Agent',
+            CRM_USER_ID,
+            null,
+            COMPANY_A,
+        );
+    });
+});
+
+describe('sendInvoice — document send note is best-effort', () => {
+    it('keeps a successful send successful when the job note write fails', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        mockAddNote.mockRejectedValueOnce(new Error('notes unavailable'));
+
+        const res = await request(appWith())
+            .post(`/${INV_ID}/send`)
+            .send({ channel: 'email', recipient: 'one-off@example.com', message: 'Hi' });
+
+        expect(res.status).toBe(200);
+        expect(mockUpdateInvoiceStatus).toHaveBeenCalledWith(INV_ID_S, COMPANY_A, 'sent', 'sent_at');
+        expect(warn).toHaveBeenCalledWith('[DocumentSendNote] Job note failed after successful send (non-fatal)');
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('one-off@example.com');
+        warn.mockRestore();
+    });
+
+    it('skips an unbound invoice without writing the address to logs', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        mockGetInvoiceById.mockResolvedValue(invoiceRow({ job_id: null }));
+
+        const res = await request(appWith())
+            .post(`/${INV_ID}/send`)
+            .send({ channel: 'email', recipient: 'one-off@example.com', message: 'Hi' });
+
+        expect(res.status).toBe(200);
+        expect(mockAddNote).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith('[DocumentSendNote] Document has no job binding; note skipped');
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('one-off@example.com');
+        warn.mockRestore();
     });
 });
 

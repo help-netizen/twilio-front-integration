@@ -23,6 +23,7 @@ const { ALL_PERMISSION_KEYS } = require('../backend/src/services/permissionCatal
 
 const COMPANY_A = '00000000-0000-0000-0000-0000000000aa';
 const COMPANY_B = '00000000-0000-0000-0000-0000000000bb';
+const CRM_USER_ID = '22222222-2222-4222-8222-222222222222';
 
 const receiptRouteIndex = paymentsRouter.stack.findIndex(
     layer => layer.route?.path === '/manual-card-sessions/:sessionId/receipt'
@@ -35,6 +36,7 @@ async function dispatch({
     company = COMPANY_A,
     authed = true,
     email = 'customer@example.com',
+    crmUserId = CRM_USER_ID,
 } = {}) {
     const req = {
         method: 'POST',
@@ -42,7 +44,12 @@ async function dispatch({
         params: { sessionId: '11' },
         body: { email },
         ip: '127.0.0.1',
-        user: authed ? { sub: 'kc-sub', crmUser: { id: 'crm-user-1' } } : undefined,
+        user: authed ? {
+            sub: 'kc-sub',
+            name: 'Agent Smith',
+            email: 'agent@x.com',
+            crmUser: crmUserId ? { id: crmUserId } : undefined,
+        } : undefined,
         authz: authed ? { scope: 'tenant', company: { id: company }, permissions } : undefined,
         companyFilter: authed ? { company_id: company } : undefined,
         companyId: 'LEGACY-DO-NOT-USE',
@@ -82,7 +89,7 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
         expect(receiptRouteIndex).toBeLessThan(transactionRouteIndex);
     });
 
-    it('uses req.companyFilter and passes only the session id and submitted email', async () => {
+    it('uses req.companyFilter and forwards the strict acting CRM user', async () => {
         const result = {
             sent: true,
             receipt_url: 'https://pay.stripe.com/receipts/test',
@@ -96,7 +103,21 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
         expect(mockStripeService.sendManualCardReceipt).toHaveBeenCalledWith(
             COMPANY_A,
             '11',
-            'customer@example.com'
+            'customer@example.com',
+            { id: CRM_USER_ID, name: 'Agent' }
+        );
+    });
+
+    it('never substitutes the Keycloak sub when the CRM user is unavailable', async () => {
+        mockStripeService.sendManualCardReceipt.mockResolvedValue({ sent: true });
+
+        await dispatch({ crmUserId: null });
+
+        expect(mockStripeService.sendManualCardReceipt).toHaveBeenCalledWith(
+            COMPANY_A,
+            '11',
+            'customer@example.com',
+            { id: null, name: 'Agent' }
         );
     });
 
@@ -127,7 +148,8 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
         expect(mockStripeService.sendManualCardReceipt).toHaveBeenCalledWith(
             COMPANY_B,
             '11',
-            'customer@example.com'
+            'customer@example.com',
+            { id: CRM_USER_ID, name: 'Agent' }
         );
     });
 

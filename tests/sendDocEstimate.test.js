@@ -27,8 +27,10 @@ const request = require('supertest');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const USER_SUB = '11111111-1111-4111-8111-111111111111'; // valid v4-shaped UUID so getUserId() keeps it
+const CRM_USER_ID = '22222222-2222-4222-8222-222222222222';
 const EST_ID = 42;
 const EST_ID_S = String(EST_ID); // route passes req.params.id as a string
+const JOB_ID = 519;
 
 // ─── DB query layer ──────────────────────────────────────────────────────────
 const mockGetEstimateById = jest.fn();
@@ -85,6 +87,11 @@ jest.mock('../backend/src/services/estimatePdfService', () => ({
 // auditService.log fires on the 403 path; stub so no real DB write.
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
 
+const mockAddNote = jest.fn();
+jest.mock('../backend/src/services/jobsService', () => ({
+    addNote: (...a) => mockAddNote(...a),
+}));
+
 const estimatesService = require('../backend/src/services/estimatesService');
 const estimatesRouter = require('../backend/src/routes/estimates');
 
@@ -94,7 +101,12 @@ function appWith({ permissions = ['estimates.send'], companyId = COMPANY_A } = {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
-        req.user = { sub: USER_SUB, email: 'agent@x.com' };
+        req.user = {
+            sub: USER_SUB,
+            email: 'agent@x.com',
+            name: 'Agent Smith',
+            crmUser: { id: CRM_USER_ID },
+        };
         req.authz = { permissions };
         req.companyFilter = { company_id: companyId };
         next();
@@ -111,6 +123,7 @@ function estimateRow(overrides = {}) {
         status: 'draft',
         archived_at: null,
         contact_id: 7,
+        job_id: JOB_ID,
         public_token: 'tok_estABCDE', // pre-seeded → ensurePublicLink never re-mints
         ...overrides,
     };
@@ -132,6 +145,7 @@ beforeEach(() => {
     mockGetOrCreateConversation.mockResolvedValue({ id: 7 });
     mockSendMessage.mockResolvedValue(undefined);
     mockGetCompanyById.mockResolvedValue({ name: 'Boston Masters' });
+    mockAddNote.mockResolvedValue({ notes: [] });
 });
 
 // ─── A. EMAIL happy path + ordering (TC-SD-010/011/016) ──────────────────────
@@ -161,7 +175,16 @@ describe('sendEstimate — email happy path', () => {
             EST_ID_S, COMPANY_A, expect.objectContaining({ status: 'sent', sent_at: expect.any(String) }),
         );
         expect(mockCreateEvent).toHaveBeenCalledWith(
-            EST_ID_S, 'sent', 'user', USER_SUB, { channel: 'email', recipient: 'c@x.com' },
+            EST_ID_S, 'sent', 'user', CRM_USER_ID, { channel: 'email', recipient: 'c@x.com' },
+        );
+        expect(mockAddNote).toHaveBeenCalledWith(
+            JOB_ID,
+            'Estimate #ESTIMATE 519-1 sent to c@x.com',
+            [],
+            'Agent',
+            CRM_USER_ID,
+            null,
+            COMPANY_A,
         );
 
         // ORDER: dispatch resolved BEFORE the status flip (the §2.7 guarantee).
@@ -211,7 +234,16 @@ describe('sendEstimate — sms happy path', () => {
         expect(mockSendMessage.mock.invocationCallOrder[0])
             .toBeLessThan(mockUpdateEstimate.mock.invocationCallOrder[0]);
         expect(mockCreateEvent).toHaveBeenCalledWith(
-            EST_ID_S, 'sent', 'user', USER_SUB, { channel: 'sms', recipient: '+15551234567' },
+            EST_ID_S, 'sent', 'user', CRM_USER_ID, { channel: 'sms', recipient: '+15551234567' },
+        );
+        expect(mockAddNote).toHaveBeenCalledWith(
+            JOB_ID,
+            'Estimate #ESTIMATE 519-1 sent by SMS to +15551234567',
+            [],
+            'Agent',
+            CRM_USER_ID,
+            null,
+            COMPANY_A,
         );
     });
 
@@ -228,6 +260,27 @@ describe('sendEstimate — sms happy path', () => {
         await request(appWith()).post(`/${EST_ID}/send`).send({ channel: 'sms', recipient: '+15551234567', message: 'x' });
         // estimatesQueries has no linkMessageToContact; assert no stray email send either.
         expect(mockSendEmail).not.toHaveBeenCalled();
+    });
+});
+
+describe('sendEstimate — document send note is best-effort', () => {
+    it('keeps a successful send successful when the job note write fails', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        mockAddNote.mockRejectedValueOnce(new Error('notes unavailable'));
+
+        const res = await request(appWith())
+            .post(`/${EST_ID}/send`)
+            .send({ channel: 'email', recipient: 'one-off@example.com', message: 'Hi' });
+
+        expect(res.status).toBe(200);
+        expect(mockUpdateEstimate).toHaveBeenCalledWith(
+            EST_ID_S,
+            COMPANY_A,
+            expect.objectContaining({ status: 'sent' }),
+        );
+        expect(warn).toHaveBeenCalledWith('[DocumentSendNote] Job note failed after successful send (non-fatal)');
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('one-off@example.com');
+        warn.mockRestore();
     });
 });
 

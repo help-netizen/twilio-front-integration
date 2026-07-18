@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const estimatesService = require('../services/estimatesService');
 const { requirePermission } = require('../middleware/authorization');
+const { actorFromRequest } = require('../services/documentSendNoteService');
 
 // Tenant context comes ONLY from requireCompanyAccess (PF007-HARDENING-001)
 function getCompanyId(req) {
@@ -177,7 +178,13 @@ router.post('/:id/send', requirePermission('estimates.send'), async (req, res) =
         const { channel, recipient, message } = req.body || {};
         const userEmail = getUserEmail(req);
 
-        const result = await estimatesService.sendEstimate(companyId, userId, id, { channel, recipient, message, userEmail });
+        const result = await estimatesService.sendEstimate(companyId, userId, id, {
+            channel,
+            recipient,
+            message,
+            userEmail,
+            noteActor: actorFromRequest(req),
+        });
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/send error:', err.message);

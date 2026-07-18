@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const estimatesQueries = require('../db/estimatesQueries');
 const { renderEstimatePdf } = require('./estimatePdfService');
 const { toE164 } = require('../utils/phoneUtils');
+const { recordDocumentSendNote } = require('./documentSendNoteService');
 
 class EstimatesServiceError extends Error {
     constructor(code, message, httpStatus = 500) {
@@ -377,7 +378,7 @@ function buildSmsBody(message, link) {
  * Coded errors carry { code, httpStatus } so routes/estimates.js maps them to
  * the SEND-DOC-001 §2.5 matrix; anything unexpected surfaces as 500.
  */
-async function sendEstimate(companyId, userId, id, { channel, recipient, message, userEmail } = {}) {
+async function sendEstimate(companyId, userId, id, { channel, recipient, message, userEmail, noteActor } = {}) {
     const estimate = await estimatesQueries.getEstimateById(companyId, id);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
@@ -391,6 +392,8 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
     if (!to) {
         throw new EstimatesServiceError('VALIDATION', 'Recipient is required.', 400);
     }
+    const number = estimate.estimate_number || `estimate-${id}`;
+    let noteRecipient = to;
 
     // Public page link is shared by both channels (idempotent — never re-mints).
     const { url: link } = await ensurePublicLink(companyId, id);
@@ -404,7 +407,6 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
             throw new EstimatesServiceError('MAILBOX_NOT_CONNECTED', 'Connect Google Email to send.', 409);
         }
 
-        const number = estimate.estimate_number || `estimate-${id}`;
         let companyName = '';
         try {
             const companyQueries = require('../db/companyQueries');
@@ -457,6 +459,7 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
         if (!customerE164) {
             throw new EstimatesServiceError('NO_PHONE', 'A valid phone number is required.', 422);
         }
+        noteRecipient = customerE164;
 
         const conversationsService = require('./conversationsService');
         const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
@@ -472,6 +475,16 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
     await estimatesQueries.createEvent(id, 'sent', 'user', userId, {
         channel: normalizedChannel,
         recipient: to,
+    });
+
+    await recordDocumentSendNote({
+        companyId,
+        jobId: estimate.job_id,
+        actor: noteActor,
+        documentType: 'estimate',
+        number,
+        channel: normalizedChannel,
+        recipient: noteRecipient,
     });
 
     return getEstimate(companyId, id);

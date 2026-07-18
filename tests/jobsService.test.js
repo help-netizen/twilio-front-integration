@@ -44,6 +44,40 @@ describe('jobsService.getJobById', () => {
     });
 });
 
+describe('jobsService.addNote company scope', () => {
+    beforeEach(() => {
+        db.query.mockReset();
+    });
+
+    it('qualifies both the job read and note update when companyId is supplied', async () => {
+        db.query
+            .mockResolvedValueOnce({ rows: [{ id: 705, notes: [], company_id: 'company-uuid-001' }] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [] });
+
+        const result = await jobsService.addNote(
+            705,
+            'Invoice #100 sent to customer@example.com',
+            [],
+            'Agent',
+            'crm-user-id',
+            null,
+            'company-uuid-001',
+        );
+
+        expect(db.query.mock.calls[0][0]).toContain('WHERE j.id = $1 AND j.company_id = $2');
+        expect(db.query.mock.calls[0][1]).toEqual([705, 'company-uuid-001']);
+        expect(db.query.mock.calls[2][0]).toContain('WHERE id = $2 AND company_id = $3');
+        expect(db.query.mock.calls[2][1][1]).toBe(705);
+        expect(db.query.mock.calls[2][1][2]).toBe('company-uuid-001');
+        expect(result.notes[0]).toMatchObject({
+            text: 'Invoice #100 sent to customer@example.com',
+            author: 'Agent',
+            created_by: 'crm-user-id',
+        });
+    });
+});
+
 // ---------------------------------------------------------------------------
 // getJobBalanceDue — company-scoped local-invoice rollup for the outbound
 // "part arrived" voice agent (OUTBOUND-PARTS-CALL balance injection). Mirrors

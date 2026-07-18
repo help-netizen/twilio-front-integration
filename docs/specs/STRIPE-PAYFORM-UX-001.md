@@ -412,3 +412,48 @@ Manual connected-account QA:
 - No public-pay receipt UI/API behavior, custom email, receipt template, receipt PDF generation, print/download action, automatic send, or delivery-status webhook.
 - No overwrite/merge resolution for an existing contact email, refunds, resend history, or receipt settings UI.
 - A transport failure after Stripe accepts the Charge update can make a retry send another native receipt; this endpoint never risks a second charge, but Stripe provides no local atomic transaction spanning email delivery and contact persistence.
+
+---
+
+## Addendum — DOC-SEND-NOTE-001
+
+### Goal and settled decisions
+
+Every successful receipt, invoice, or estimate delivery leaves a greppable note showing exactly what was sent and where, so one-off destinations remain discoverable on the owning job.
+
+- Covered server-side seams are Stripe receipt completion in `sendManualCardReceipt`, authenticated invoice `POST /api/invoices/:id/send`, and authenticated estimate `POST /api/estimates/:id/send`. The invoice and estimate seams support both email and SMS; `/e/:token` is view-only and needs no frontend workaround.
+- Target the owning job: use the receipt session's `job_id`, fall back through its company-scoped invoice when necessary, and use the invoice/estimate's `job_id` directly. Invoice/estimate `notes` are document copy and their event streams are lifecycle records, not canonical free-form notes; a document with no job therefore sends normally and emits a recipient-free warning.
+- Exact note copy is `Receipt for $95.00 sent to x@y.z`, `Invoice #<number> sent to x@y.z`, or `Estimate #<number> sent to x@y.z`. SMS uses `… sent by SMS to +1…` with the normalized E.164 destination.
+- Author is the acting `req.user.crmUser.id`, never the Keycloak `sub`; the visible author uses the same first-name/email fallback as normal job notes.
+- Reuse `jobsService.addNote`. New document-send calls provide `companyId`, making both the job lookup and note update tenant-scoped. Existing callers retain their current signature.
+- Note creation runs only after external delivery succeeds. Missing binding, actor, foreign job, or any note error is non-fatal and warns without including the recipient. No receipt/invoice/estimate response contract changes.
+- No new endpoint and no frontend change.
+
+### Exact touch list
+
+| File | Change |
+|---|---|
+| `backend/src/services/documentSendNoteService.js` | Shared exact-copy builder, strict request actor, and non-fatal normal-job-note writer. |
+| `backend/src/routes/payments.js` | Pass the strict acting CRM user into the existing receipt service call. |
+| `backend/src/routes/invoices.js` | Pass the strict acting CRM user into invoice delivery. |
+| `backend/src/routes/estimates.js` | Pass the strict acting CRM user into estimate delivery. |
+| `backend/src/services/stripePaymentsService.js` | Write the receipt note after Charge update; resolve session job then company-scoped invoice fallback. |
+| `backend/src/services/invoicesService.js` | Write exact email/SMS job note after successful dispatch. |
+| `backend/src/services/estimatesService.js` | Write exact email/SMS job note after successful dispatch. |
+| `backend/src/services/jobsService.js` | Optional company scope for the normal `addNote` read and writes. |
+| `tests/stripePayments.test.js` | Receipt copy, job fallback, author/company scope, unbound, and non-fatal behavior. |
+| `tests/stripeManualCardReceipt.routes.test.js` | Strict CRM actor forwarding through the existing guarded route. |
+| `tests/sendDocInvoice.test.js` | Exact email/SMS copy, acting author, company scope, unbound, and non-fatal behavior. |
+| `tests/sendDocEstimate.test.js` | Exact email/SMS copy, acting author, company scope, and non-fatal behavior. |
+| `tests/jobsService.test.js` | Company-qualified job read and note update. |
+
+### Verification
+
+```bash
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/stripeConnectProvider.test.js tests/stripeManualCardResult.routes.test.js tests/stripeManualCardReceipt.routes.test.js tests/stripePaymentsQueries.test.js tests/stripePayments.test.js tests/stripeAdhocPay.test.js tests/contactPropagationService.test.js tests/jobsService.test.js tests/sendDocInvoice.test.js tests/sendDocEstimate.test.js --testPathIgnorePatterns /node_modules/ --runInBand --forceExit
+```
+
+### Non-goals and risks
+
+- No client-side note, public estimate-page behavior, new note endpoint, document-content mutation, receipt template, or delivery-history model.
+- A successful external send followed by a failed note is intentionally reported as a successful send; the PII-free warning is the operational signal for best-effort note repair.

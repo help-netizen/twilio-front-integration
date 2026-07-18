@@ -586,7 +586,7 @@ function normalizeReceiptEmail(value) {
  * Send Stripe's native receipt for a successful merchant keyed-card charge.
  * The contact lookup and optional fill-empty write are both resolved server-side.
  */
-async function sendManualCardReceipt(companyId, sessionId, rawEmail) {
+async function sendManualCardReceipt(companyId, sessionId, rawEmail, noteActor = null) {
     // Resolve tenant ownership + merchant/public classification before validation
     // or any Stripe request so foreign/public session ids retain a uniform 404.
     const session = await getMerchantManualCardSession(companyId, sessionId);
@@ -627,6 +627,30 @@ async function sendManualCardReceipt(companyId, sessionId, rawEmail) {
         chargeId,
         email
     );
+
+    let receiptJobId = session.job_id || null;
+    if (!receiptJobId && session.invoice_id) {
+        try {
+            const invoice = await invoicesQueries.getInvoiceById(companyId, session.invoice_id);
+            receiptJobId = invoice?.job_id || null;
+        } catch {
+            console.warn('[DocumentSendNote] Receipt invoice lookup failed after successful send (non-fatal)');
+        }
+    }
+    const amountInCents = pi.amount_received ?? pi.amount;
+    const amount = amountInCents == null
+        ? Number(session.amount || 0)
+        : Number(amountInCents) / 100;
+    const { recordDocumentSendNote } = require('./documentSendNoteService');
+    await recordDocumentSendNote({
+        companyId,
+        jobId: receiptJobId,
+        actor: noteActor,
+        documentType: 'receipt',
+        amount,
+        channel: 'email',
+        recipient: email,
+    });
 
     return {
         sent: true,

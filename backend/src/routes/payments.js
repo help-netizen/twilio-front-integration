@@ -127,11 +127,13 @@ router.get('/manual-card-sessions/:sessionId/result', requirePermission('payment
 router.post('/manual-card-sessions/:sessionId/receipt', requirePermission('payments.collect_keyed'), async (req, res) => {
     try {
         const stripePaymentsService = require('../services/stripePaymentsService');
+        const { actorFromRequest } = require('../services/documentSendNoteService');
         const companyId = req.companyFilter?.company_id;
         const result = await stripePaymentsService.sendManualCardReceipt(
             companyId,
             req.params.sessionId,
-            req.body?.email
+            req.body?.email,
+            actorFromRequest(req)
         );
         res.json(result);
     } catch (err) {

@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const invoicesQueries = require('../db/invoicesQueries');
 const estimatesQueries = require('../db/estimatesQueries');
 const { toE164 } = require('../utils/phoneUtils');
+const { recordDocumentSendNote } = require('./documentSendNoteService');
 
 // =============================================================================
 // Error class
@@ -357,7 +358,7 @@ function buildSmsBody(message, link) {
  * Coded errors carry { code, httpStatus } so routes/invoices.js maps them to
  * the SEND-DOC-001 §2.5 matrix; anything unexpected surfaces as 500.
  */
-async function sendInvoice(companyId, userId, id, { channel, recipient, message, includePaymentLink, userEmail } = {}) {
+async function sendInvoice(companyId, userId, id, { channel, recipient, message, includePaymentLink, userEmail, noteActor } = {}) {
     const invoice = await invoicesQueries.getInvoiceById(companyId, id);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
@@ -371,6 +372,8 @@ async function sendInvoice(companyId, userId, id, { channel, recipient, message,
     if (!to) {
         throw new InvoicesServiceError('VALIDATION', 'Recipient is required.', 400);
     }
+    const number = invoice.invoice_number || `invoice-${id}`;
+    let noteRecipient = to;
 
     // Branded pay page link, derived from the token ensurePublicLink mints
     // (ensurePublicLink itself returns the /i/<token> PDF redirect — we want /pay).
@@ -389,7 +392,6 @@ async function sendInvoice(companyId, userId, id, { channel, recipient, message,
             throw new InvoicesServiceError('MAILBOX_NOT_CONNECTED', 'Connect Google Email to send.', 409);
         }
 
-        const number = invoice.invoice_number || `invoice-${id}`;
         let companyName = '';
         try {
             const companyQueries = require('../db/companyQueries');
@@ -441,6 +443,7 @@ async function sendInvoice(companyId, userId, id, { channel, recipient, message,
         if (!customerE164) {
             throw new InvoicesServiceError('NO_PHONE', 'A valid phone number is required.', 422);
         }
+        noteRecipient = customerE164;
 
         const conversationsService = require('./conversationsService');
         const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
@@ -454,6 +457,16 @@ async function sendInvoice(companyId, userId, id, { channel, recipient, message,
         channel: normalizedChannel,
         recipient: to,
         message: message || null,
+    });
+
+    await recordDocumentSendNote({
+        companyId,
+        jobId: invoice.job_id,
+        actor: noteActor,
+        documentType: 'invoice',
+        number,
+        channel: normalizedChannel,
+        recipient: noteRecipient,
     });
 
     return updated;
