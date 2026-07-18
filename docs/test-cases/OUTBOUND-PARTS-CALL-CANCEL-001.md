@@ -1,18 +1,19 @@
 # OUTBOUND-PARTS-CALL-CANCEL-001 — Test cases
 
 ## Coverage
-- Backend (jest): 16 | Frontend (build + logic-review, no FE runner): 2 | Build: 1
+- Backend (jest): 17 | Frontend (logic-review): 1 | Build: 1
 - P0: 12 | P1: 5 | P2: 2
-- Test files (extend existing, in-repo mock idioms): `tests/partsCallService.test.js`
+- Test files (extend existing, in-repo mock idioms): `tests/partsCallService.test.js`,
+  `tests/outboundLeadCallCallback.test.js`, `tests/outboundLeadCallSmsCancel.test.js`,
+  `tests/inboxWorkerHumanContact.test.js`
   (`jest.mock('../backend/src/db/connection')`, `db/tasksQueries`, `jobsService`),
   `tests/vapiCallStatusWebhook.test.js` (supertest + `x-vapi-secret`),
-  `tests/outboundCallWorker.test.js`, `tests/inboxWorker.test.js`,
-  plus a jobsService-hook block (new `tests/jobsServiceLeaveHook.test.js` or extend an existing
-  jobsService suite). FE: `npm run build` (tsc -b; prod Docker stricter — noUnusedLocals).
+  `tests/outboundCallWorker.test.js`, `tests/jobsPartArrived.test.js`.
+  FE: `npm run build` (tsc -b; prod Docker stricter — noUnusedLocals).
 
 ---
 
-## A. `cancelScheduledRobotCalls` — core (unit, tests/partsCallService.test.js)
+## A. `cancelScheduledRobotCalls` — parts-only status-leave core (unit, tests/partsCallService.test.js)
 
 ### TC-CC-01 (P0) — pending flip + note + stamp (status_change)
 - **Setup:** mock db: active SELECT → one `pending` row `{id:10, job_id:5, task_id:7, status:'pending', attempt_no:1}`; mock `jobsService.addNote`; tasks SELECT/UPDATE for the stamp.
@@ -25,29 +26,29 @@
 
 ### TC-CC-03 (P0) — dialing-only → marker row + suffix note, dialing row untouched
 - **Setup:** active SELECT → one `dialing` row `{id:11, job_id:5, task_id:7, attempt_no:2, phone:'+16175550100'}`.
-- **Input:** cause `{kind:'human_contact', direction:'inbound', at:'2026-07-10T15:42:00.000Z'}`.
-- **Expected:** NO UPDATE of row 11; ONE INSERT `status='canceled'` marker copying company/job/task/contact/phone/attempt_no=2; note text ends with `(inbound call completed at 2026-07-10T15:42:00.000Z). A call already in progress will not be retried.`; task stamped canceled.
+- **Input:** status-leave cause `{kind:'status_change', newStatus:'Rescheduled'}`.
+- **Expected:** NO UPDATE of row 11; ONE INSERT `status='canceled'` marker copying company/job/task/contact/phone/attempt_no=2; status-leave note ends with `A call already in progress will not be retried.`; task stamped canceled.
 
-### TC-CC-04 (P1) — phone-digit scope match (no contact_id)
-- **Setup:** scope `{contactId:null, phone:'(617) 555-0100'}`; assert the active SELECT receives digit-normalized `$3='6175550100'` and the `RIGHT(regexp_replace(phone,'\D','','g'),10) = RIGHT($3,10)` predicate; digits <7 (`phone:'911'`) → function returns `{canceled:0}` WITHOUT querying.
-- **Expected:** as stated; company param always `$1=COMPANY_A`.
+### TC-CC-04 (P1) — cross-scenario phone cancellation belongs to the shared core
+- **Setup:** `backend/src/services/outboundCallCancellationService.js` → `cancel({companyId, rawPhone, cause})` with active `lead_call` and/or `parts_visit` rows.
+- **Expected:** the active lookup is company + canonical phone digits (exact international; 10/11-digit NANP equivalent) + active statuses with NO scenario predicate; the frozen `SCENARIO_HANDLERS` map exposes `lead_call → leads.structured_notes` and `parts_visit → jobs.notes + marker/task-stamp`; scenario × cause matrix covers `lead_call|parts_visit × customer_answered_dispatcher_call|customer_called_in|customer_replied_by_sms`. `tests/outboundLeadCallSmsCancel.test.js` additionally pins that only persisted inbound SMS emits `sms.inbound`; its named `SABOTAGE CONTROL` proves outbound SMS never reaches the shared core.
 
 ### TC-CC-05 (P0) — never throws (safe-fail)
 - **Setup:** db.query rejects on the first call.
 - **Expected:** resolves `{canceled:0}` (or error-shaped `{canceled:0, error}`) — NO throw; console.warn'ed.
 
-## B. `onHumanContact` — trigger-2 exclusions (unit, tests/partsCallService.test.js)
+## B. Shared completed-human-call detector — trigger exclusions (unit, `tests/outboundLeadCallCallback.test.js`)
 
 ### TC-CC-06 (P0) — completed human inbound cancels; robot/Sara/AI excluded
 - **Matrix (each call row → expect cancel invoked / NOT invoked):**
-  1. `{status:'completed', is_final:true, parent_call_sid:null, duration_sec:90, answered_at:set, direction:'inbound', answered_by:'dana', call_sid:'CA1', company_id:A}` + no vapi flow-execution → CANCEL (scope `{contactId, phone:from_number}`).
+  1. `{status:'completed', is_final:true, parent_call_sid:null, duration_sec:90, answered_at:set, direction:'inbound', answered_by:'dana', call_sid:'CA1', company_id:A}` + no vapi flow-execution → `cancel({companyId:A, rawPhone:from_number, cause:'customer_called_in'})`.
   2. same but `answered_by:'ai'` → NO.
   3. same but `call_sid:'vapi:abc'` → NO.
   4. same but `call_flow_executions` row: `current_node_id:'n2'`, `context_json:'{"graph":{"states":[{"id":"n2","kind":"vapi_agent"}]}}'` → NO (Sara).
   5. same as 4 but execution node kind `'queue'` (Sara forwarded → human answered) → CANCEL.
-- **Expected:** exactly per matrix; external number = `from_number` (inbound) / `to_number` (outbound leg case asserted once with `direction:'outbound'`).
+- **Expected:** exactly per matrix; external number = `from_number` (inbound) / `to_number` (outbound), then the one cross-scenario `cancel` core runs with the unified `customer_*` reason.
 
-## C. jobsService leave-hooks (unit, jobsServiceLeaveHook block)
+## C. jobsService leave-hooks (unit, `tests/jobsPartArrived.test.js`)
 
 ### TC-CC-07 (P0) — updateBlancStatus leave-hook fires exactly on Part arrived → other
 - **Setup:** mock getJobById → `{blanc_status:'Part arrived', company_id:A}`; spy lazy-required `partsCallService.cancelScheduledRobotCalls`.
@@ -62,12 +63,12 @@
 - **Setup:** existing `{blanc_status:'Part arrived', zb_canceled:false, company_id:A}`; incoming cols `zb_canceled:true`.
 - **Expected:** cancel with `'Canceled (Zenbooker)'`; ALSO assert `blanc_status` stays `'Part arrived'` in the UPDATE (preserve path :1105-1120 regression pin); incoming `zb_canceled:false` or existing already true → not called.
 
-## D. inboxWorker hook predicate (tests/inboxWorker.test.js)
+## D. inboxWorker hook predicate (`tests/inboxWorkerHumanContact.test.js`)
 
 ### TC-CC-10 (P0) — final completed parent with answered_at → hook; guard variants → no hook
-- **Setup:** drive `processVoiceEvent` with mocked `queries.upsertCall` returning the row under test; spy `partsCallService.onHumanContact`.
+- **Setup:** drive `processVoiceEvent` with mocked `queries.upsertCall` returning the row under test; spy `outboundCallCancellationService.cancelForCompletedCustomerCall`.
 - **Matrix:** upsert returns `{is_final:true, status:'completed', parent_call_sid:null, duration_sec:45, answered_at:set, direction:'inbound'}` → hook ONCE; variants each → NO hook: `skipUpsert` path (existing `voicemail_left` + event completed), `duration_sec:0`, `answered_at:null`, `parent_call_sid:'CA0'`, `direction:'internal'`, upsert returns undefined (out-of-order).
-- **Expected:** per matrix; a throwing `onHumanContact` never rejects `processVoiceEvent`.
+- **Expected:** per matrix; a throwing shared hook never rejects `processVoiceEvent`.
 
 ## E. Retry-resurrection guard (tests/vapiCallStatusWebhook.test.js + outboundCallWorker.test.js)
 

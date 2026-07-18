@@ -402,9 +402,9 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
         console.log(`[${traceId}] Call not updated (out-of-order event)`, { callSid: normalized.callSid });
     }
 
-    // OUTBOUND-PARTS-CALL-CANCEL-001 (CC-03) — trigger-2 human-contact hook.
+    // OUTBOUND-CALL-CANCEL-001 — shared human-contact trigger.
     // A real completed conversation with the customer (either direction,
-    // human-answered) cancels any scheduled part-arrived robot call. The
+    // human-answered) cancels every outbound agent's work for that customer. The
     // predicate runs on the upsertCall RESULT row — the monotonic and
     // voicemail-preserve guards above already filtered stale events, so:
     //   • upsert actually applied (!skipUpsert && call — out-of-order rows out),
@@ -414,7 +414,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     //   • somebody actually picked up (answered_at set),
     //   • direction inbound|outbound (internal out).
     // Robot/Sara exclusions (vapi:% sid, answered_by='ai', call_flow_executions
-    // vapi_agent discriminator) live inside partsCallService.onHumanContact.
+    // vapi_agent discriminator) live inside the shared cancellation service.
     // Fire-and-forget + double-guarded: NEVER blocks or fails the voice-event
     // pipeline (spec: Failure semantics).
     if (!skipUpsert && call
@@ -425,8 +425,8 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
         && call.answered_at != null
         && (call.direction === 'inbound' || call.direction === 'outbound')) {
         try {
-            const partsCallService = require('./partsCallService');
-            Promise.resolve(partsCallService.onHumanContact(call)).catch((err) => {
+            const cancellationService = require('./outboundCallCancellationService');
+            Promise.resolve(cancellationService.cancelForCompletedCustomerCall(call)).catch((err) => {
                 console.warn(`[${traceId}] human-contact cancel hook failed (non-fatal):`, err.message);
             });
         } catch (err) {

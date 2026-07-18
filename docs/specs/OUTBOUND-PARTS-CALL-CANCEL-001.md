@@ -1,4 +1,4 @@
-# OUTBOUND-PARTS-CALL-CANCEL-001 — Spec: cancel the queued robot call on status-leave or real human contact
+# OUTBOUND-PARTS-CALL-CANCEL-001 — Spec: cancel the queued robot call on status-leave or shared customer contact
 
 ## Overview
 Extends OUTBOUND-PARTS-CALL-001/-BTN/-SLOTPICK/-TECHSLOT and OUTBOUND-CALL-TIMELINE-001. The
@@ -9,8 +9,9 @@ and the webhook retry path (`vapiCallStatus.js:296-305`) re-inserts retries with
 check at all (resurrection). This spec adds:
 
 1. **Status-change cancel** — leave-hooks on every `blanc_status` writer that can exit `Part arrived`.
-2. **Human-contact cancel** — a post-final-upsert hook in `inboxWorker.processVoiceEvent`: a real
-   completed conversation with the customer (either direction, human-answered) cancels the plan.
+2. **Customer-contact cancel** — the shared `outboundCallCancellationService`: a real completed
+   conversation with the customer (either direction, human-answered) or an inbound customer SMS
+   cancels every outbound-agent plan for that company/phone, including this parts plan.
 3. **Job note + task stamp** — every cancellation writes one English job note (why) and stamps the
    task's `robot_call` action `state:'canceled'` + reason; re-queue resets the stamp to `'queued'`.
 4. **No-resurrection guard** — the retry INSERT (webhook + worker) is skipped when the job left
@@ -28,14 +29,23 @@ the partial unique index only covers `pending|dialing`). Migration 161 is NOT ne
 most ONE active row per job — so a cancel event sees either one `pending` row (flip it) or one
 `dialing` row (leave it, insert a `canceled` marker row for the guard) or nothing (no-op).
 
+**Shared customer-contact seam:** `backend/src/services/outboundCallCancellationService.js` owns
+the scenario-agnostic `cancel({companyId, rawPhone, cause, contactAt})` lookup. Its frozen
+`SCENARIO_HANDLERS` map (`Object.freeze`) declares `lead_call → leads.structured_notes` and
+`parts_visit → jobs.notes + canceled-marker/task-stamp side effects`; scenario does not participate
+in the active-attempt lookup. A future outbound agent joins the same rules by adding one registry
+entry with its note target and side-effect hook, not by adding another trigger path.
+
 ## Exact copy (FR-3)
 - Status change: `AI: robot call canceled — job left 'Part arrived' (status changed to '<newStatus>').`
 - Human contact: `AI: robot call canceled — customer was already reached by phone (<inbound|outbound> call completed at <ISO-8601 time>).`
+- Inbound SMS: `AI: robot call canceled — customer replied by SMS.`
 - Suffix when a `dialing` row existed at cancel time: ` A call already in progress will not be retried.`
 - Task-action stamp reasons (short): `Canceled — job status changed to '<newStatus>'.` /
-  `Canceled — customer was already reached by phone.`
-- Note author/createdBy: `'AI Phone'` via `jobsService.addNote(jobId, text, [], 'AI Phone', 'AI Phone')`
-  (signature verified `jobsService.js:1217`).
+  `Canceled — customer was already reached by phone.` / `Canceled — customer replied by SMS.`
+- Status-leave notes retain the existing `'AI Phone'` author path. Shared customer-contact notes are
+  appended transactionally to `jobs.notes` with JSON metadata `author:'AI Phone'`,
+  `created_by:'system'` (no fake `crm_users` FK actor).
 
 ## Trigger-2 predicate (canonical)
 Hook condition on the `upsertCall` RESULT row in `processVoiceEvent` (after `inboxWorker.js:383`):
@@ -50,7 +60,8 @@ AND call.answered_at IS NOT NULL            -- somebody actually picked up (kill
 AND call.direction IN ('inbound','outbound')
 ```
 
-then inside `partsCallService.onHumanContact(call)` — AI exclusions:
+then inside `backend/src/services/outboundCallCancellationService.js` →
+`cancelForCompletedCustomerCall(call)` — AI exclusions:
 
 ```
 call.call_sid NOT LIKE 'vapi:%'             -- synthetic robot row (pre-re-key)
@@ -64,16 +75,17 @@ AND NOT saraHandled(call)                   -- call_flow_executions row for call
 attempt match (company-scoped, external number = `from_number` for inbound / `to_number` for outbound):
 
 ```sql
-SELECT id, job_id, task_id, status, attempt_no
+SELECT id, scenario, job_id, lead_uuid, task_id, status, attempt_no
 FROM outbound_call_attempts
 WHERE company_id = $1                       -- = call.company_id (from the row, never the payload)
   AND status IN ('pending','dialing')
   AND (
-        ($2::bigint IS NOT NULL AND contact_id = $2)
-     OR ($3 <> '' AND phone IS NOT NULL
-         AND RIGHT(regexp_replace(phone, '\D', '', 'g'), 10) = RIGHT($3, 10))
+        regexp_replace(COALESCE(phone,''), '\D', '', 'g') = $2
+     OR (length($2) = 11 AND left($2,1) = '1'
+         AND regexp_replace(COALESCE(phone,''), '\D', '', 'g') ~ '^(1)?[0-9]{10}$'
+         AND RIGHT(regexp_replace(COALESCE(phone,''), '\D', '', 'g'),10) = RIGHT($2,10))
       )
--- $2 = call.contact_id, $3 = digits(external number), applied only when length(digits) >= 7
+-- $2 = canonical digits(external number); NO scenario predicate
 ```
 
 Voicemail vocabulary (verified `stateMachine.js:31-46` + `inboxWorker.js`): voicemail is
@@ -119,8 +131,15 @@ overwriting them, so voicemail can never satisfy the predicate.
 ### S5 — Outbound dispatcher call completed → cancel + note
 - Dispatcher dials the customer from the softphone (or via the task's 📞 `manual_call`); customer
   answers; parent outbound row finalizes `completed` with `duration_sec>0` and `answered_at`.
-- **Result:** same as S4 with `(outbound call completed at …)`. Match works by `contact_id` OR by
-  last-10 phone digits of `to_number` (jobs whose attempt carries only a phone still match).
+- **Result:** same as S4 with `(outbound call completed at …)`. Match uses canonical phone digits:
+  exact for international numbers and equivalent 10/11-digit NANP forms for formatted parts phones.
+
+### S5b — Inbound SMS → the same cross-scenario cancellation
+- `conversationsService` persists an inbound customer-authored message, then emits `sms.inbound`
+  with authoritative `company_id` and `customer_e164`. The shared subscriber calls the same
+  `cancel({companyId, rawPhone, cause:'customer_replied_by_sms'})` core.
+- **Result:** the parts retry plan is canceled with the SMS job note/task-stamp copy. Outbound SMS
+  never emits `sms.inbound`, so it can never invoke cancellation.
 
 ### S6 — Voicemail / no-answer / busy / IVR-hangup → NO cancel
 - Missed inbound → `no-answer` or `voicemail_recording→voicemail_left` (status ≠ completed → skip).
@@ -178,7 +197,7 @@ overwriting them, so voicemail can never satisfy the predicate.
   so `isChainCanceled(…, newAttempt.id)` is false — the guard never blocks the new chain.
 
 ### S13 — Idempotency
-- Second final webhook of the same call / repeated status change: the active-rows SELECT finds
+- Second final webhook, repeated inbound SMS, or repeated status change: the active-rows SELECT finds
   nothing (already canceled/terminal) → `{canceled:0}` → NO second note, NO second stamp, no marker.
 - Cancel racing the claim-loop: the flip UPDATE re-checks `status='pending'`; if the worker claimed
   first, the row is treated as `dialing` (marker path). Rows never end half-canceled.
@@ -213,13 +232,14 @@ overwriting them, so voicemail can never satisfy the predicate.
 ## Failure semantics
 - Every hook is fire-and-forget + internally try/caught (pattern: `jobsService.js:976-984`): a
   cancel failure NEVER fails a status change, the inbox worker loop, or the webhook's 200.
-- `cancelScheduledRobotCalls` never throws; partial progress is acceptable (note/stamp best-effort
-  after the row flip; the flip itself is the source of truth for the guard).
+- Shared customer-contact cancellation never throws into ingestion, but its attempt mutation,
+  local lead/job note, and transactional scenario side effects commit or roll back together.
+  The parts-only status-leave hook retains its existing safe-fail behavior.
 - No new tables, no new endpoints, no `src/server.js` changes.
 
 ## Out of scope
 - Killing a `dialing` VAPI call mid-flight (explicit owner default).
-- SMS/email contact as a cancel trigger (calls only).
+- Email contact as a cancel trigger.
 - AMD machine-detection for outbound dispatcher calls (Twilio classifies machine-answered dials as
   `completed` without AMD; owner accepts Twilio's classification).
 - Backfill/cleanup of historical `failed` Guard-1 rows.

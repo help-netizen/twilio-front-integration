@@ -55,6 +55,22 @@ function registerSubscribers() {
         });
     });
 
+    // OUTBOUND-CALL-CANCEL-001: conversationsService emits this ONLY for an
+    // inbound customer-authored message, after sms_messages persistence. The
+    // event company is authoritative; payload.from is the customer phone because
+    // sms_conversations has no lead/timeline FK.
+    eventBus.subscribe('outbound-call-cancel-on-sms', 'sms.inbound', async (event) => {
+        const companyId = event.company_id;
+        const rawPhone = event.payload && event.payload.from;
+        if (!companyId || !rawPhone) return;
+        const cancellationService = require('./outboundCallCancellationService');
+        await cancellationService.cancel({
+            companyId,
+            rawPhone,
+            cause: cancellationService.CAUSES.INBOUND_SMS,
+        });
+    });
+
     console.log(`[eventBus] ${eventBus._subscribers.length} subscriber(s) registered`);
 }
 

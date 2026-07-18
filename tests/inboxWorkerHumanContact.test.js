@@ -4,10 +4,10 @@
  * `inboxWorker.processVoiceEvent`.
  *
  * Focused suite (the legacy tests/inboxWorker.test.js predates the current
- * worker API and is red on its own — this file pins ONLY the new hook with the
+ * worker API and is red on its own — this file pins ONLY the shared hook with the
  * worker's seams mocked). Drives the REAL processVoiceEvent through the
  * exported `processEvent` router with `queries.upsertCall` returning the row
- * under test, and asserts when `partsCallService.onHumanContact` fires:
+ * under test, and asserts when `cancelForCompletedCustomerCall` fires:
  *
  *   • final completed PARENT with duration>0 + answered_at + direction
  *     inbound|outbound  → hook fires ONCE with the upserted row;
@@ -15,7 +15,7 @@
  *     zero/absent duration, answered_at NULL, child leg, internal direction,
  *     busy / no-answer / voicemail_left / non-final rows, out-of-order upsert
  *     (undefined)  → hook does NOT fire;
- *   • onHumanContact rejecting or throwing synchronously → the voice-event
+ *   • the shared hook rejecting or throwing synchronously → the voice-event
  *     pipeline is UNAFFECTED (processEvent resolves, appendCallEvent still ran).
  *
  * A mocked jest here proves only the DISPATCH (whether the hook was invoked and
@@ -65,11 +65,11 @@ jest.mock('../backend/src/services/reconcileStale', () => ({
     reconcileStaleCalls: jest.fn(async () => {}),
 }));
 // The seam under test: the hook must lazy-require this and fire-and-forget it.
-jest.mock('../backend/src/services/partsCallService', () => ({
-    onHumanContact: jest.fn(async () => ({ canceled: 1, marker: false })),
+jest.mock('../backend/src/services/outboundCallCancellationService', () => ({
+    cancelForCompletedCustomerCall: jest.fn(async () => ({ canceled: 1, marker: false })),
 }));
 
-const partsCallService = require('../backend/src/services/partsCallService');
+const cancellationService = require('../backend/src/services/outboundCallCancellationService');
 const { processEvent } = require('../backend/src/services/inboxWorker');
 
 const CO = '00000000-0000-0000-0000-000000000001';
@@ -119,7 +119,7 @@ beforeEach(() => {
     mockQueries.appendCallEvent.mockResolvedValue({});
     mockQueries.findOrCreateTimeline.mockResolvedValue({ id: 1, contact_id: 501 });
     mockDbQuery.mockResolvedValue({ rows: [] });
-    partsCallService.onHumanContact.mockResolvedValue({ canceled: 1, marker: false });
+    cancellationService.cancelForCompletedCustomerCall.mockResolvedValue({ canceled: 1, marker: false });
     // The worker narrates every step via console.log/warn (incl. the throwing
     // Twilio-client mock inside enrichFromTwilioApi) — keep the run readable.
     logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -138,10 +138,10 @@ describe('TC-CC-10: processVoiceEvent human-contact hook — fires on a real com
         const out = await drive();
 
         expect(out).toEqual({ success: true });
-        expect(partsCallService.onHumanContact).toHaveBeenCalledTimes(1);
+        expect(cancellationService.cancelForCompletedCustomerCall).toHaveBeenCalledTimes(1);
         // The hook hands over the STORED row (company/tenant from the row — S14),
         // not the raw payload.
-        expect(partsCallService.onHumanContact).toHaveBeenCalledWith(row);
+        expect(cancellationService.cancelForCompletedCustomerCall).toHaveBeenCalledWith(row);
     });
 
     test('successful outbound (dispatcher) call → fired with the outbound row (external = to_number downstream)', async () => {
@@ -154,8 +154,8 @@ describe('TC-CC-10: processVoiceEvent human-contact hook — fires on a real com
 
         await drive({ Direction: 'outbound-api' });
 
-        expect(partsCallService.onHumanContact).toHaveBeenCalledTimes(1);
-        expect(partsCallService.onHumanContact).toHaveBeenCalledWith(
+        expect(cancellationService.cancelForCompletedCustomerCall).toHaveBeenCalledTimes(1);
+        expect(cancellationService.cancelForCompletedCustomerCall).toHaveBeenCalledWith(
             expect.objectContaining({ direction: 'outbound', to_number: '+16175550100' }),
         );
     });
@@ -173,7 +173,7 @@ describe('TC-CC-10: guard variants — the hook must NOT fire', () => {
 
         expect(out).toEqual({ success: true });
         expect(mockQueries.upsertCall).not.toHaveBeenCalled();
-        expect(partsCallService.onHumanContact).not.toHaveBeenCalled();
+        expect(cancellationService.cancelForCompletedCustomerCall).not.toHaveBeenCalled();
     });
 
     test.each([
@@ -192,7 +192,7 @@ describe('TC-CC-10: guard variants — the hook must NOT fire', () => {
         const out = await drive(payloadOver);
 
         expect(out).toEqual({ success: true });
-        expect(partsCallService.onHumanContact).not.toHaveBeenCalled();
+        expect(cancellationService.cancelForCompletedCustomerCall).not.toHaveBeenCalled();
     });
 
     test('out-of-order event: upsertCall returns undefined → NOT fired', async () => {
@@ -201,19 +201,19 @@ describe('TC-CC-10: guard variants — the hook must NOT fire', () => {
         const out = await drive();
 
         expect(out).toEqual({ success: true });
-        expect(partsCallService.onHumanContact).not.toHaveBeenCalled();
+        expect(cancellationService.cancelForCompletedCustomerCall).not.toHaveBeenCalled();
     });
 });
 
 describe('TC-CC-10: non-fatality — the voice-event pipeline never depends on the hook', () => {
-    test('onHumanContact REJECTS → processEvent resolves and the pipeline continued (appendCallEvent ran)', async () => {
+    test('shared hook REJECTS → processEvent resolves and the pipeline continued (appendCallEvent ran)', async () => {
         mockQueries.upsertCall.mockResolvedValue(upsertedRow());
-        partsCallService.onHumanContact.mockRejectedValueOnce(new Error('cancel boom'));
+        cancellationService.cancelForCompletedCustomerCall.mockRejectedValueOnce(new Error('cancel boom'));
 
         const out = await drive();
 
         expect(out).toEqual({ success: true });
-        expect(partsCallService.onHumanContact).toHaveBeenCalledTimes(1);
+        expect(cancellationService.cancelForCompletedCustomerCall).toHaveBeenCalledTimes(1);
         // The pipeline steps AFTER the hook still ran.
         expect(mockQueries.appendCallEvent).toHaveBeenCalled();
         // Let the swallowed rejection settle so no unhandled-rejection escapes.
@@ -222,9 +222,9 @@ describe('TC-CC-10: non-fatality — the voice-event pipeline never depends on t
             .toBe(true);
     });
 
-    test('onHumanContact THROWS synchronously → still non-fatal (double guard)', async () => {
+    test('shared hook THROWS synchronously → still non-fatal (double guard)', async () => {
         mockQueries.upsertCall.mockResolvedValue(upsertedRow());
-        partsCallService.onHumanContact.mockImplementationOnce(() => {
+        cancellationService.cancelForCompletedCustomerCall.mockImplementationOnce(() => {
             throw new Error('sync boom');
         });
 

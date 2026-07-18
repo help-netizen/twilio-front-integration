@@ -26,6 +26,7 @@ const eventService = require('./eventService');
 const recommendSlots = require('./agentSkills/skills/recommendSlots');
 const slotEngineService = require('./slotEngineService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
+const outboundCallCancellationService = require('./outboundCallCancellationService');
 
 // v1 dial seam is gated to Boston Masters (spec §Scope / C.1). All code stays
 // parameterized on job.company_id; this constant only guards the dial seam.
@@ -43,11 +44,8 @@ const ENGINE_ERROR_DISPATCHER_REASON =
 // The closed action set stamped onto the auto-task (rendered as typed buttons by
 // TaskCard; executed by the closed backend action registry — T14). Labels are the
 // dispatcher-facing copy from the spec (§B.3 / S1).
-const PART_ARRIVED_CALL_KIND = 'part_arrived_call';
-const PART_ARRIVED_ACTIONS = [
-    { type: 'robot_call', label: '🤖 Let the robot call' },
-    { type: 'manual_call', label: "📞 I'll call myself" },
-];
+const PART_ARRIVED_CALL_KIND = outboundCallCancellationService.PARTS_VISIT_TASK_KIND;
+const PART_ARRIVED_ACTIONS = outboundCallCancellationService.PARTS_VISIT_DEFAULT_ACTIONS;
 
 /**
  * onPartArrived(jobId, companyId, client?) — idempotent auto-task creation.
@@ -201,16 +199,6 @@ async function markRobotCallCanceled(companyId, taskId, reason, client) {
 const MIDFLIGHT_NOTE_SUFFIX = ' A call already in progress will not be retried.';
 
 function buildCancelCopy(cause = {}) {
-    if (cause && cause.kind === 'human_contact') {
-        const direction = cause.direction === 'outbound' ? 'outbound' : 'inbound';
-        const at = cause.at || new Date().toISOString();
-        return {
-            dbReason: `human_contact:${direction}`.slice(0, 120),
-            noteText: `AI: robot call canceled — customer was already reached by phone (${direction} call completed at ${at}).`,
-            stampReason: 'Canceled — customer was already reached by phone.',
-        };
-    }
-    // Default: status_change.
     const newStatus = String((cause && cause.newStatus) || 'unknown');
     return {
         dbReason: `status_change:${newStatus}`.slice(0, 120),
@@ -220,18 +208,11 @@ function buildCancelCopy(cause = {}) {
 }
 
 /**
- * cancelScheduledRobotCalls(scope, companyId, cause, client?) — the SINGLE cancel
- * core every CANCEL-001 hook calls (status-leave hooks CC-02, human-contact hook
- * CC-03). Idempotent, company-scoped, and it NEVER throws (fire-and-forget safe).
+ * cancelScheduledRobotCalls(scope, companyId, cause, client?) — the parts-only
+ * JOB-STATUS leave hook. Customer-contact cancellation lives exclusively in
+ * outboundCallCancellationService and spans every scenario.
  *
- * scope — which attempts to cancel:
- *   • `{ jobId }`             — status-leave hooks (S1-S3).
- *   • `{ contactId, phone }`  — human-contact hook (S4/S5): matched by contact_id
- *     OR by last-10 phone digits INSIDE the company-scoped active subset; a phone
- *     under 7 digits is ignored, and no usable key → `{canceled:0}` w/o querying.
- * cause — `{ kind:'status_change', newStatus }` or
- *         `{ kind:'human_contact', direction:'inbound'|'outbound', at:ISO }` —
- *         drives the FR-3 note/stamp/reason copy (buildCancelCopy).
+ * scope — `{ jobId }`; cause — `{ kind:'status_change', newStatus }`.
  *
  * Per the partial-unique invariant (mig 158) each job has at most ONE active row:
  *   • `pending` → flip to `canceled` (+reason). The UPDATE re-checks
@@ -259,38 +240,15 @@ async function cancelScheduledRobotCalls(scope = {}, companyId, cause = {}, clie
         requireCompanyId(companyId);
         const copy = buildCancelCopy(cause);
 
-        // 1) Find the active rows in scope (company-scoped; ≤1 per job by the
-        //    partial-unique invariant, but contact/phone scope may span jobs).
-        let active;
-        if (scope && scope.jobId != null) {
-            active = await query(
-                `SELECT id, job_id, task_id, contact_id, phone, attempt_no, status, slot_json
-                 FROM outbound_call_attempts
-                 WHERE company_id = $1 AND job_id = $2 AND status IN ('pending','dialing')
-                 ORDER BY id`,
-                [companyId, scope.jobId]
-            );
-        } else {
-            const contactId = (scope && scope.contactId) ?? null;
-            const digits = String((scope && scope.phone) || '').replace(/\D/g, '');
-            const phoneDigits = digits.length >= 7 ? digits : '';
-            if (contactId == null && phoneDigits === '') {
-                // No usable match key (spec: digits applied only when >= 7) → no-op.
-                return { canceled: 0, marker: false };
-            }
-            active = await query(
-                `SELECT id, job_id, task_id, contact_id, phone, attempt_no, status, slot_json
-                 FROM outbound_call_attempts
-                 WHERE company_id = $1 AND status IN ('pending','dialing')
-                   AND (
-                         ($2::bigint IS NOT NULL AND contact_id = $2)
-                      OR ($3 <> '' AND phone IS NOT NULL
-                          AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), 10) = RIGHT($3, 10))
-                       )
-                 ORDER BY id`,
-                [companyId, contactId, phoneDigits]
-            );
-        }
+        if (!scope || scope.jobId == null) return { canceled: 0, marker: false };
+        const active = await query(
+            `SELECT id, job_id, task_id, contact_id, phone, attempt_no, status, slot_json
+             FROM outbound_call_attempts
+             WHERE company_id = $1 AND job_id = $2 AND scenario = 'parts_visit'
+               AND status IN ('pending','dialing')
+             ORDER BY id`,
+            [companyId, scope.jobId]
+        );
         const rows = (active && active.rows) || [];
         if (rows.length === 0) {
             // Idempotent no-op (S13): nothing canceled → NO note, NO stamp, NO event.
@@ -387,7 +345,7 @@ async function cancelScheduledRobotCalls(scope = {}, companyId, cause = {}, clie
                 eventService.logEvent(companyId, 'job', jobId, 'outbound_call_canceled', {
                     canceled: flipped,
                     marker,
-                    kind: cause && cause.kind === 'human_contact' ? 'human_contact' : 'status_change',
+                    kind: 'status_change',
                     ...(cause && cause.newStatus ? { newStatus: cause.newStatus } : {}),
                 }, 'system');
             } catch (err) {
@@ -432,109 +390,10 @@ async function isChainCanceled(companyId, jobId, sinceAttemptId, client = null) 
     }
 }
 
-/**
- * saraHandledCall(callSid, query) — the Sara discriminator (S8). Sara's leg is a
- * `<Sip>` dial (callFlowRuntime.js:467-479), so the PARENT call row carries
- * `answered_by=<sip-username>` — NOT `'ai'` — and the answered_by exclusion
- * can't see her. The tell is the call-flow execution: on `vapi.completed` the
- * execution is completed while `current_node_id` STAYS on the vapi node
- * (callFlowRuntime.js:610-613). So: load `call_flow_executions` by call_sid
- * (unique index, mig 091), JSON.parse the TEXT `context_json`, and check whether
- * the node the execution rests on is `kind === 'vapi_agent'`. If Sara FORWARDED
- * to a human queue (vapi.failed/timeout edges) the execution advanced to a
- * queue/transfer node → NOT Sara-handled → a completed human conversation
- * cancels (correct). Any parse fault → false (treated as human-handled only by
- * the caller's remaining predicate).
- */
-async function saraHandledCall(callSid, query) {
-    const res = await query(
-        `SELECT current_node_id, context_json
-           FROM call_flow_executions
-          WHERE call_sid = $1
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [callSid]
-    );
-    const row = res && res.rows && res.rows[0];
-    if (!row || !row.current_node_id) return false;
-    let context = {};
-    try { context = JSON.parse(row.context_json || '{}'); } catch { context = {}; }
-    const states = context && context.graph && Array.isArray(context.graph.states)
-        ? context.graph.states
-        : [];
-    const node = states.find((s) => s && s.id === row.current_node_id) || null;
-    return !!(node && node.kind === 'vapi_agent');
-}
-
-/**
- * onHumanContact(call, client?) — trigger-2 of OUTBOUND-PARTS-CALL-CANCEL-001
- * (CC-03, S4/S5): a REAL completed conversation with the customer (either
- * direction, human-answered) cancels the scheduled robot-call plan for that
- * contact/number. Fired fire-and-forget by the inboxWorker post-final-upsert
- * hook with the upsertCall RESULT row (the hook already enforced the base
- * predicate: !skipUpsert, is_final, status='completed', parent row only,
- * duration_sec>0, answered_at set, direction ∈ {inbound,outbound}).
- *
- * This side owns the AI exclusions (S7/S8) — belt-and-braces even for rows
- * that should never reach the hook:
- *   1. `call_sid LIKE 'vapi:%'`   — synthetic robot row (pre-re-key).
- *   2. `answered_by = 'ai'`       — robot row post-re-key (vapiCallTimelineService).
- *   3. `saraHandledCall(...)`     — Sara-attended inbound (see helper above).
- *
- * Then the external party's number — `from_number` for inbound / `to_number`
- * for outbound — plus the row's `contact_id` become the cancel scope; the
- * <7-digit phone guard and the company-scoped contact-OR-digits match live in
- * `cancelScheduledRobotCalls` (scope `{contactId, phone}`). `company_id` comes
- * from the STORED row (tenant resolved by AccountSid at ingest — S14), never a
- * payload. Idempotent (no active rows → `{canceled:0}`, no note/stamp) and it
- * NEVER throws.
- *
- * @param {object} call the upserted `calls` row
- * @param {object} [client] optional pg client for tx-aware execution
- * @returns {Promise<{canceled:number, marker:boolean, error?:string}>}
- */
+// Compatibility export for older internal callers. Voice ingestion now invokes
+// the neutral service directly; this wrapper preserves one implementation.
 async function onHumanContact(call, client = null) {
-    const query = queryFor(client, db);
-    try {
-        if (!call || !call.company_id) return { canceled: 0, marker: false };
-        const direction = call.direction;
-        if (direction !== 'inbound' && direction !== 'outbound') {
-            return { canceled: 0, marker: false };
-        }
-
-        // AI exclusions (S7): the robot's own call never cancels its own plan.
-        if (String(call.call_sid || '').startsWith('vapi:')) {
-            return { canceled: 0, marker: false };
-        }
-        if (String(call.answered_by || '') === 'ai') {
-            return { canceled: 0, marker: false };
-        }
-        // S8: Sara (AI-answered inbound) is not a human contact — plan survives.
-        if (await saraHandledCall(call.call_sid, query)) {
-            return { canceled: 0, marker: false };
-        }
-
-        // External party's number: inbound → from, outbound → to (spec trigger-2).
-        const externalNumber = direction === 'inbound' ? call.from_number : call.to_number;
-
-        // FR-3 note timestamp: the call's end instant (ISO-8601), else "now".
-        let at = new Date().toISOString();
-        if (call.ended_at) {
-            const ended = new Date(call.ended_at);
-            if (!Number.isNaN(ended.getTime())) at = ended.toISOString();
-        }
-
-        return await cancelScheduledRobotCalls(
-            { contactId: call.contact_id ?? null, phone: externalNumber },
-            call.company_id,
-            { kind: 'human_contact', direction, at },
-            client
-        );
-    } catch (err) {
-        // NEVER throws — a cancel fault can never fail the inbox-worker pipeline.
-        console.warn('[partsCallService] onHumanContact failed (non-fatal):', err.message);
-        return { canceled: 0, marker: false, error: err.message };
-    }
+    return outboundCallCancellationService.cancelForCompletedCustomerCall(call, client);
 }
 
 /**

@@ -246,6 +246,20 @@ describe('classification (REAL handleLeadEndOfCall)', () => {
         expect(ladderInserts()).toHaveLength(1); // next rung
     });
 
+    it('LEADCALL-SMS-CANCEL-001: late webhook for a customer-contact-canceled attempt cannot schedule a retry', async () => {
+        await svc.handleLeadEndOfCall(
+            leadRow({ status: 'canceled', reason: 'customer_replied_by_sms' }),
+            'no_answer',
+            'customer-did-not-answer',
+            {},
+        );
+
+        expect(terminalMark()).toHaveLength(0);
+        expect(ladderInserts()).toHaveLength(0);
+        expect(timelinesQueries.createTask).not.toHaveBeenCalled();
+        expect(eventService.logEvent).not.toHaveBeenCalled();
+    });
+
     it('TC-034(6): transient at attempt_no=3 → exhausted marker + exactly one task', async () => {
         await svc.handleLeadEndOfCall(leadRow({ attempt_no: 3 }), 'no_answer', 'customer-did-not-answer', {});
         const marker = ladderInserts().find(([sql]) => /'exhausted'/.test(sql));

@@ -139,15 +139,13 @@ async function reconcileCall(twilioPayload, source) {
         }
     }
 
-    // OLC-CALLBACK-001: a lead Sara is robo-calling just called US back → cancel
-    // its outbound lead_call queue (so Sara doesn't also dial) and note the lead.
-    // Keyed on the caller's number + active lead_call status, so it needs no
-    // company context here; idempotent + safe-fail (never disturbs call ingest).
-    // Lazy require avoids any cycle (outboundLeadCallService never requires this).
-    if (processed.direction === 'inbound' && externalParty?.formatted) {
+    // OUTBOUND-CALL-CANCEL-001: reconciliation uses the SAME completed-human-call
+    // detector as webhook ingestion. That keeps the VAPI/Sara exclusions intact
+    // while applying one company/phone cancellation core to every scenario.
+    if (call?.company_id) {
         try {
-            await require('./outboundLeadCallService')
-                .cancelLeadChainsForInboundCallback(externalParty.formatted);
+            await require('./outboundCallCancellationService')
+                .cancelForCompletedCustomerCall(call);
         } catch (e) { /* non-fatal */ }
     }
 

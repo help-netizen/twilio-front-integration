@@ -36,6 +36,16 @@ jest.mock('../backend/src/services/jobsService', () => ({
 jest.mock('../backend/src/services/eventService', () => ({
     logEvent: jest.fn(),
 }));
+// OUTBOUND-CALL-CANCEL-001: customer-contact behavior moved to the neutral core.
+// This suite retains the parts status-leave core and compatibility wrapper only.
+jest.mock('../backend/src/services/outboundCallCancellationService', () => ({
+    PARTS_VISIT_TASK_KIND: 'part_arrived_call',
+    PARTS_VISIT_DEFAULT_ACTIONS: [
+        { type: 'robot_call', label: '🤖 Let the robot call' },
+        { type: 'manual_call', label: "📞 I'll call myself" },
+    ],
+    cancelForCompletedCustomerCall: jest.fn(async () => ({ canceled: 0, marker: false })),
+}));
 // recommendSlots.run is mocked (no engine); formatSlotLabel is the REAL pure helper
 // so buildRobotCallSlot builds the same label the voice surface offers (SLOTPICK-001).
 jest.mock('../backend/src/services/agentSkills/skills/recommendSlots', () => {
@@ -55,6 +65,7 @@ const timelinesQueries = require('../backend/src/db/timelinesQueries');
 const dbConn = require('../backend/src/db/connection');
 const jobsService = require('../backend/src/services/jobsService');
 const eventService = require('../backend/src/services/eventService');
+const outboundCallCancellationService = require('../backend/src/services/outboundCallCancellationService');
 const recommendSlots = require('../backend/src/services/agentSkills/skills/recommendSlots');
 const settings = require('../backend/src/services/outboundCallSettingsService');
 const slotEngineService = require('../backend/src/services/slotEngineService');
@@ -729,6 +740,7 @@ describe('CANCEL-001: cancelScheduledRobotCalls — cancel core (TC-CC-01…05)'
         // Active SELECT is company+job scoped to the ACTIVE statuses only.
         const [selSql, selParams] = mockQuery.mock.calls[0];
         expect(selSql).toMatch(/company_id = \$1 AND job_id = \$2/);
+        expect(selSql).toMatch(/scenario = 'parts_visit'/);
         expect(selSql).toMatch(/status IN \('pending','dialing'\)/);
         expect(selParams).toEqual([CO, 5]);
 
@@ -804,7 +816,7 @@ describe('CANCEL-001: cancelScheduledRobotCalls — cancel core (TC-CC-01…05)'
 
         const out = await partsCallService.cancelScheduledRobotCalls(
             { jobId: 5 }, CO,
-            { kind: 'human_contact', direction: 'inbound', at: '2026-07-10T15:42:00.000Z' },
+            { kind: 'status_change', newStatus: 'Rescheduled' },
         );
 
         expect(out).toEqual({ canceled: 0, marker: true });
@@ -819,42 +831,26 @@ describe('CANCEL-001: cancelScheduledRobotCalls — cancel core (TC-CC-01…05)'
         expect(marker).toBeTruthy();
         expect(marker[0]).toMatch(/'canceled'/);
         expect(marker[0]).toMatch(/company_id, job_id, task_id, contact_id, phone, attempt_no, status, scheduled_at, slot_json, reason/);
-        expect(marker[1]).toEqual([CO, 5, 7, 501, '+16175550100', 2, null, 'human_contact:inbound']);
+        expect(marker[1]).toEqual([CO, 5, 7, 501, '+16175550100', 2, null, 'status_change:Rescheduled']);
 
-        // The FR-3 human-contact note carries the mid-flight suffix.
+        // The FR-3 status-leave note carries the mid-flight suffix.
         expect(jobsService.addNote).toHaveBeenCalledTimes(1);
         expect(jobsService.addNote.mock.calls[0][1]).toBe(
-            'AI: robot call canceled — customer was already reached by phone (inbound call completed at 2026-07-10T15:42:00.000Z).'
+            "AI: robot call canceled — job left 'Part arrived' (status changed to 'Rescheduled')."
             + ' A call already in progress will not be retried.',
         );
 
-        // Task stamped canceled with the short human-contact reason.
+        // Task stamped canceled with the short status-leave reason.
         const stampUpd = mockQuery.mock.calls.find((c) => /UPDATE tasks SET actions/i.test(c[0]));
         const robot = JSON.parse(stampUpd[1][2]).find((a) => a.type === 'robot_call');
         expect(robot.state).toBe('canceled');
-        expect(robot.reason).toBe('Canceled — customer was already reached by phone.');
+        expect(robot.reason).toBe("Canceled — job status changed to 'Rescheduled'.");
     });
 
-    test('TC-CC-04: phone-digit scope — normalized $3 + RIGHT(…,10) predicate inside the company-scoped active subset', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [] }); // active SELECT (match none)
-
+    test('TC-CC-04: non-job scope is owned by the shared customer-contact core → no query here', async () => {
         const out = await partsCallService.cancelScheduledRobotCalls(
-            { contactId: null, phone: '(617) 555-0100' }, CO,
-            { kind: 'human_contact', direction: 'outbound', at: '2026-07-10T15:42:00.000Z' },
-        );
-
-        expect(out).toEqual({ canceled: 0, marker: false });
-        const [sql, params] = mockQuery.mock.calls[0];
-        expect(sql).toContain("RIGHT(regexp_replace(phone, '\\D', '', 'g'), 10) = RIGHT($3, 10)");
-        expect(sql).toMatch(/company_id = \$1 AND status IN \('pending','dialing'\)/);
-        expect(sql).toMatch(/\$2::bigint IS NOT NULL AND contact_id = \$2/);
-        expect(params).toEqual([CO, null, '6175550100']); // digit-normalized, company first
-    });
-
-    test('TC-CC-04b: under 7 digits and no contactId → {canceled:0} WITHOUT querying', async () => {
-        const out = await partsCallService.cancelScheduledRobotCalls(
-            { contactId: null, phone: '911' }, CO,
-            { kind: 'human_contact', direction: 'inbound', at: '2026-07-10T15:42:00.000Z' },
+            { phone: '+16175550100' }, CO,
+            { kind: 'status_change', newStatus: 'Rescheduled' },
         );
         expect(out).toEqual({ canceled: 0, marker: false });
         expect(mockQuery).not.toHaveBeenCalled();
@@ -1015,200 +1011,18 @@ describe('CANCEL-001 (TC-CC-17): startRobotCall re-queue resets the stamp to que
     });
 });
 
-// ---------------------------------------------------------------------------
-// OUTBOUND-PARTS-CALL-CANCEL-001 (CC-03, TC-CC-06) — onHumanContact: the
-// trigger-2 entry with the AI exclusions. The inboxWorker hook enforces the
-// base predicate (final completed parent, duration>0, answered_at, direction);
-// THIS side drops the robot's own rows (vapi:% sid / answered_by='ai'), the
-// Sara-attended calls (call_flow_executions resting on a vapi_agent node), and
-// scopes the cancel to {contactId, phone:external number} with company_id from
-// the STORED row. "Cancel invoked" is asserted at the db level — the active
-// SELECT on outbound_call_attempts (the internal call is module-local, so a
-// spy on module.exports would never see it).
-// ---------------------------------------------------------------------------
+// The AI/Sara detector and cross-scenario matrix now live with the neutral core.
+// Keep this compatibility export pinned so older callers cannot fork behavior.
+describe('OUTBOUND-CALL-CANCEL-001: onHumanContact compatibility wrapper', () => {
+    test('delegates the stored call row and optional client to the shared detector', async () => {
+        const call = { call_sid: 'CA1', company_id: CO };
+        const client = { query: jest.fn() };
+        outboundCallCancellationService.cancelForCompletedCustomerCall
+            .mockResolvedValueOnce({ canceled: 2, marker: true });
 
-describe('CANCEL-001 (TC-CC-06): onHumanContact — human cancels; robot/Sara/AI excluded', () => {
-    const PENDING_ROW = {
-        id: 10, job_id: 5, task_id: 7, contact_id: 501,
-        phone: '+16175550100', attempt_no: 1, status: 'pending', slot_json: null,
-    };
-    const ACTIONS_ROW = {
-        rows: [{
-            actions: [
-                { type: 'robot_call', label: '🤖 Let the robot call' },
-                { type: 'manual_call', label: "📞 I'll call myself" },
-            ],
-        }],
-    };
-    // The upsertCall RESULT row the inboxWorker hook hands over (S4 shape).
-    const HUMAN_CALL = {
-        call_sid: 'CA1',
-        company_id: CO,
-        contact_id: 501,
-        direction: 'inbound',
-        status: 'completed',
-        is_final: true,
-        parent_call_sid: null,
-        duration_sec: 90,
-        answered_at: '2026-07-10T15:40:30.000Z',
-        ended_at: '2026-07-10T15:42:00.000Z',
-        answered_by: 'dana',
-        from_number: '+16175550100',
-        to_number: '+16175006181',
-    };
-    const SARA_EXECUTION = {
-        rows: [{
-            current_node_id: 'n2',
-            context_json: '{"graph":{"states":[{"id":"n2","kind":"vapi_agent"}]}}',
-        }],
-    };
-
-    const findAttemptsSelect = () => mockQuery.mock.calls.find(
-        (c) => /FROM outbound_call_attempts/i.test(c[0]) && /SELECT/i.test(c[0])
-    );
-    const findCfeSelect = () => mockQuery.mock.calls.find(
-        (c) => /FROM call_flow_executions/i.test(c[0])
-    );
-
-    test('matrix 1: completed human inbound (answered_by dispatcher, no flow execution) → CANCEL with {contactId, phone:from_number} + FR-3 note at ended_at', async () => {
-        mockQuery
-            .mockResolvedValueOnce({ rows: [] })                        // call_flow_executions read → none
-            .mockResolvedValueOnce({ rows: [PENDING_ROW] })             // active SELECT
-            .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 10 }] }) // flip UPDATE
-            .mockResolvedValueOnce(ACTIONS_ROW)                         // stamp SELECT actions
-            .mockResolvedValueOnce({ rows: [] });                       // stamp UPDATE
-
-        const out = await partsCallService.onHumanContact(HUMAN_CALL);
-
-        expect(out).toEqual({ canceled: 1, marker: false });
-
-        // Sara discriminator read: by call_sid on the unique index.
-        const cfe = findCfeSelect();
-        expect(cfe).toBeTruthy();
-        expect(cfe[1]).toEqual(['CA1']);
-
-        // Cancel scope: company FROM THE ROW, contact_id OR last-10 digits of
-        // the EXTERNAL number — from_number for an inbound call.
-        const sel = findAttemptsSelect();
-        expect(sel).toBeTruthy();
-        expect(sel[0]).toMatch(/company_id = \$1 AND status IN \('pending','dialing'\)/);
-        expect(sel[1]).toEqual([CO, 501, '16175550100']);
-
-        // ONE FR-3 human-contact note stamped with the call's END instant.
-        expect(jobsService.addNote).toHaveBeenCalledTimes(1);
-        expect(jobsService.addNote).toHaveBeenCalledWith(
-            5,
-            'AI: robot call canceled — customer was already reached by phone (inbound call completed at 2026-07-10T15:42:00.000Z).',
-            [], 'AI Phone', 'AI Phone',
-        );
-
-        // db reason vocabulary: human_contact:<direction>.
-        const flip = mockQuery.mock.calls.find((c) => /UPDATE outbound_call_attempts/i.test(c[0]));
-        expect(flip[1]).toEqual([CO, 10, 'human_contact:inbound']);
-    });
-
-    test('matrix 2: answered_by=\'ai\' (robot post-re-key) → NO cancel, not even a db read', async () => {
-        const out = await partsCallService.onHumanContact({ ...HUMAN_CALL, answered_by: 'ai' });
-        expect(out).toEqual({ canceled: 0, marker: false });
-        expect(mockQuery).not.toHaveBeenCalled();
-        expect(jobsService.addNote).not.toHaveBeenCalled();
-    });
-
-    test('matrix 3: call_sid vapi:% (robot pre-re-key) → NO cancel, not even a db read', async () => {
-        const out = await partsCallService.onHumanContact({ ...HUMAN_CALL, call_sid: 'vapi:abc' });
-        expect(out).toEqual({ canceled: 0, marker: false });
-        expect(mockQuery).not.toHaveBeenCalled();
-        expect(jobsService.addNote).not.toHaveBeenCalled();
-    });
-
-    test('matrix 4: Sara-attended — execution resting on a vapi_agent node → NO cancel (plan survives)', async () => {
-        mockQuery.mockResolvedValueOnce(SARA_EXECUTION); // call_flow_executions read
-
-        const out = await partsCallService.onHumanContact(HUMAN_CALL);
-
-        expect(out).toEqual({ canceled: 0, marker: false });
-        // Only the discriminator read ran — no attempts SELECT, no writes, no note.
-        expect(mockQuery).toHaveBeenCalledTimes(1);
-        expect(findAttemptsSelect()).toBeFalsy();
-        expect(jobsService.addNote).not.toHaveBeenCalled();
-    });
-
-    test('matrix 5: Sara FORWARDED to a human queue (execution advanced to kind=queue) → CANCEL proceeds', async () => {
-        mockQuery
-            .mockResolvedValueOnce({
-                rows: [{
-                    current_node_id: 'n3',
-                    context_json: '{"graph":{"states":[{"id":"n2","kind":"vapi_agent"},{"id":"n3","kind":"queue"}]}}',
-                }],
-            })
-            .mockResolvedValueOnce({ rows: [] }); // active SELECT (none active — still "invoked")
-
-        const out = await partsCallService.onHumanContact(HUMAN_CALL);
-
-        expect(out).toEqual({ canceled: 0, marker: false });
-        const sel = findAttemptsSelect();
-        expect(sel).toBeTruthy(); // the cancel core WAS invoked
-        expect(sel[1]).toEqual([CO, 501, '16175550100']);
-    });
-
-    test('outbound leg: external number = to_number; note says "(outbound call completed at …)"', async () => {
-        mockQuery
-            .mockResolvedValueOnce({ rows: [] })                        // cfe read
-            .mockResolvedValueOnce({ rows: [PENDING_ROW] })             // active SELECT
-            .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 10 }] }) // flip UPDATE
-            .mockResolvedValueOnce(ACTIONS_ROW)                         // stamp SELECT
-            .mockResolvedValueOnce({ rows: [] });                       // stamp UPDATE
-
-        const out = await partsCallService.onHumanContact({
-            ...HUMAN_CALL,
-            direction: 'outbound',
-            from_number: '+16175006181',      // dispatcher's caller ID
-            to_number: '(617) 555-0199',      // the customer — external party
-        });
-
-        expect(out).toEqual({ canceled: 1, marker: false });
-        const sel = findAttemptsSelect();
-        expect(sel[1]).toEqual([CO, 501, '6175550199']); // digits of TO, not FROM
-        expect(jobsService.addNote.mock.calls[0][1]).toBe(
-            'AI: robot call canceled — customer was already reached by phone (outbound call completed at 2026-07-10T15:42:00.000Z).',
-        );
-        const flip = mockQuery.mock.calls.find((c) => /UPDATE outbound_call_attempts/i.test(c[0]));
-        expect(flip[1][2]).toBe('human_contact:outbound');
-    });
-
-    test('<7 digits AND no contact → no-op: exclusion read only, cancel core never queries attempts', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [] }); // cfe read
-
-        const out = await partsCallService.onHumanContact({
-            ...HUMAN_CALL, contact_id: null, from_number: '911',
-        });
-
-        expect(out).toEqual({ canceled: 0, marker: false });
-        expect(mockQuery).toHaveBeenCalledTimes(1); // ONLY the cfe read
-        expect(findAttemptsSelect()).toBeFalsy();
-        expect(jobsService.addNote).not.toHaveBeenCalled();
-    });
-
-    test('guards: direction internal / missing company_id → no-op without any query', async () => {
-        await expect(partsCallService.onHumanContact({ ...HUMAN_CALL, direction: 'internal' }))
-            .resolves.toEqual({ canceled: 0, marker: false });
-        await expect(partsCallService.onHumanContact({ ...HUMAN_CALL, company_id: null }))
-            .resolves.toEqual({ canceled: 0, marker: false });
-        await expect(partsCallService.onHumanContact(null))
-            .resolves.toEqual({ canceled: 0, marker: false });
-        expect(mockQuery).not.toHaveBeenCalled();
-    });
-
-    test('never throws: the discriminator read rejects → resolves {canceled:0} + warn, no cancel attempted', async () => {
-        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        mockQuery.mockRejectedValueOnce(new Error('cfe read boom'));
-
-        await expect(partsCallService.onHumanContact(HUMAN_CALL))
-            .resolves.toMatchObject({ canceled: 0 });
-
-        expect(warn).toHaveBeenCalled();
-        expect(findAttemptsSelect()).toBeFalsy();
-        expect(jobsService.addNote).not.toHaveBeenCalled();
-        warn.mockRestore();
+        await expect(partsCallService.onHumanContact(call, client))
+            .resolves.toEqual({ canceled: 2, marker: true });
+        expect(outboundCallCancellationService.cancelForCompletedCustomerCall)
+            .toHaveBeenCalledWith(call, client);
     });
 });

@@ -24,8 +24,10 @@ const leadsService = require('./leadsService');
 const marketplaceService = require('./marketplaceService');
 const outboundLeadCallSettingsService = require('./outboundLeadCallSettingsService');
 const scheduleService = require('./scheduleService');
+const outboundCallCancellationService = require('./outboundCallCancellationService');
 
 const APP_KEY = 'outbound-lead-caller';
+const CONTACT_CANCEL_CAUSES = outboundCallCancellationService.CAUSES;
 
 // scheduleService's DEFAULT_DISPATCH_SETTINGS is module-private — mirror the
 // window-relevant keys (sanitizeDispatchSettings would coerce to the same
@@ -791,68 +793,16 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
     }
 }
 
-// ── OLC-CALLBACK-001 — inbound callback cancels the outbound queue ────────────
+// Backward-compatible aliases. Trigger sites depend directly on the neutral
+// service; these exports keep older internal callers on that SAME mechanism.
+const cancelLeadChainsForCustomerContact = outboundCallCancellationService.cancel;
 
-/**
- * A lead Sara is robo-calling CALLED US BACK. Cancel that lead's pending/dialing
- * outbound lead_call attempts (so Sara doesn't also dial them) and leave a trace
- * on the lead. Keyed purely on the dialed phone + active lead_call status, so it
- * needs NO inbound-call company context — it cancels exactly the chains that were
- * dialing THIS number and derives the company from each matched row (a phone with
- * an active lead_call chain belongs to the company running that chain). Idempotent
- * (a repeat inbound event finds nothing active) and SAFE-FAIL by contract — it runs
- * inside the shared call-ingest path and must never disturb it.
- *
- * @param {string} rawPhone the inbound caller's number (E.164 or loose).
- * @returns {Promise<{canceled:number}>}
- */
-async function cancelLeadChainsForInboundCallback(rawPhone) {
-    try {
-        const phone = normalizeDialablePhone(rawPhone);
-        if (!phone) return { canceled: 0 };
-
-        const { rows } = await db.query(
-            `UPDATE outbound_call_attempts
-             SET status = 'canceled', reason = 'inbound_callback', updated_at = now()
-             WHERE scenario = 'lead_call' AND phone = $1 AND status IN ('pending', 'dialing')
-             RETURNING id, company_id, lead_uuid`,
-            [phone]
-        );
-        if (!rows.length) return { canceled: 0 };
-
-        // One trace per affected lead (company-scoped from the matched row). The
-        // trace + event ride the SAME UPDATE that cancels, so they are naturally
-        // exactly-once: a later inbound event for the same call finds nothing active.
-        const seen = new Set();
-        for (const r of rows) {
-            if (!r.lead_uuid) continue;
-            const key = `${r.company_id}:${r.lead_uuid}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            const trace = `[AI Phone] ${new Date().toISOString()} — Outbound calls canceled — the customer called us back.`;
-            try {
-                await db.query(
-                    `UPDATE leads
-                     SET comments = COALESCE(NULLIF(comments, '') || E'\\n\\n', '') || $2
-                     WHERE uuid = $1 AND company_id = $3`,
-                    [r.lead_uuid, trace, r.company_id]
-                );
-            } catch (e) {
-                console.warn('[outboundLeadCall] callback-cancel note failed (non-fatal):', e && e.message);
-            }
-            try {
-                const eventService = require('./eventService');
-                eventService.logEvent(r.company_id, 'lead', r.lead_uuid, 'outbound_lead_call_canceled_inbound',
-                    { reason: 'inbound_callback' }, 'system');
-            } catch { /* non-fatal */ }
-        }
-        console.log(`[outboundLeadCall] inbound callback ${phone} → canceled ${rows.length} lead attempt(s)`);
-        return { canceled: rows.length };
-    } catch (err) {
-        console.warn('[outboundLeadCall] cancelLeadChainsForInboundCallback failed (non-fatal):', err && err.message);
-        return { canceled: 0 };
-    }
+async function cancelLeadChainsForInboundCallback(rawPhone, companyId) {
+    return outboundCallCancellationService.cancel({
+        companyId,
+        rawPhone,
+        cause: CONTACT_CANCEL_CAUSES.INBOUND_CALL,
+    });
 }
 
 module.exports = {
@@ -873,6 +823,8 @@ module.exports = {
     scheduleLeadRetryOrExhaust,
     handleLeadEndOfCall,
     createLeadCallTask,
-    // OLC-CALLBACK-001
+    // LEADCALL-SMS-CANCEL-001
+    CONTACT_CANCEL_CAUSES,
+    cancelLeadChainsForCustomerContact,
     cancelLeadChainsForInboundCallback,
 };
