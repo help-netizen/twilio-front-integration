@@ -26,9 +26,11 @@ router.get('/calls', authenticate, requireCompanyAccess, requirePermission('puls
 
 /**
  * GET /events/stats
- * Monitoring endpoint for SSE service statistics
+ * Monitoring endpoint for SSE service statistics.
+ * Authenticated (role-neutral): operational counters are not tenant data, but
+ * they reveal live connection/subscriber counts, so they are not public.
  */
-router.get('/stats', (req, res) => {
+router.get('/stats', authenticate, (req, res) => {
     const stats = realtimeService.getStats();
     res.json(stats);
 });

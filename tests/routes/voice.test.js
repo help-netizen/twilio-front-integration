@@ -73,6 +73,16 @@ function makeTokenApp(permissions) {
     return app;
 }
 
+// The /twiml/* handlers now reject unsigned requests unless NODE_ENV is
+// 'development' (TWILIO-SIG-ENFORCE-001). These suites exercise caller-id /
+// tenant business logic, not the signature — run them in development so the
+// gate is bypassed, the same convention twilioWebhooks.test.js uses. The
+// dedicated enforcement suite (twilioSignatureEnforcement.test.js) covers the
+// production gate. Restored in afterAll so no other suite inherits it.
+const VOICE_TEST_PRIOR_ENV = process.env.NODE_ENV;
+beforeEach(() => { process.env.NODE_ENV = 'development'; });
+afterAll(() => { process.env.NODE_ENV = VOICE_TEST_PRIOR_ENV; });
+
 describe('F017 outbound Caller ID validation', () => {
     beforeEach(() => {
         jest.clearAllMocks();

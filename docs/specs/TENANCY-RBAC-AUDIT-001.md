@@ -81,18 +81,18 @@ Every handler is listed as `line METHOD path`; mount citations point to `src/ser
 | `vapi-tools.js` | 111 POST `/` | Fail-closed `x-vapi-secret` middleware |
 | `vapiCallStatus.js` | 165 POST `/` | Fail-closed `x-vapi-secret` middleware |
 | `zip-check.js` | 18 GET `/` | Authenticated role-neutral lookup scoped by selected company |
-| `events.js` | 30 GET `/stats` | **FLAG:** public operational counters have no auth, host gate, or local rate limit |
+| `events.js` | 30 GET `/stats` | ~~FLAG~~ **RESOLVED:** now `authenticate`-gated (role-neutral); no longer public |
 | `integrations-zenbooker.js` | 127 POST `/webhooks`; 148 POST `/wh/:key` | **FLAG:** legacy route accepts requests without a secret when the env var is unset; keyed route uses a 32+ character company key |
 | `notification-settings.js` | 35 GET `/` | Authenticated role-neutral read; PUT is separately admin-gated |
 | `onboarding.js` | 21 POST `/`; 94 GET `/status` | Authenticated pre-tenant flow; bootstrap requires no membership + verified OTP |
-| `portal.js` | 61 POST `/auth/request-access`; 91 POST `/auth/verify`; 158 GET `/session`; 181 GET `/documents`; 191 GET `/documents/:type/:id`; 202 POST `/documents/:type/:id/accept`; 213 POST `/documents/:type/:id/decline`; 224 POST `/payments`; 239 GET `/payments/history`; 249 GET `/bookings`; 259 GET `/profile`; 269 PATCH `/profile` | Portal-session bearer gate after token exchange. **FLAG:** `request-access` accepts company/contact ids and returns a raw token with no proof or route-local rate limit |
+| `portal.js` | 61 POST `/auth/request-access`; 91 POST `/auth/verify`; 158 GET `/session`; … | Portal-session bearer gate after token exchange. ~~FLAG~~ **RESOLVED:** public `request-access`/`verify` now fail closed behind `PORTAL_PUBLIC_ENABLED` (default off, returns 404) + a route-local rate limit; the safe mint path is the authenticated company-scoped `GET /links` (PORTAL-PUBLIC-GATE-001) |
 | `schedule.js` | 190 GET `/availability` | Authenticated placeholder; always 501, no data/action |
 | `text-polish.js` | 36 GET `/health` | Authenticated static health/version response |
-| `twiml.js` | 12 POST `/voice` | **FLAG:** Twilio-called endpoint has no Twilio signature validation |
+| `twiml.js` | 12 POST `/voice` | ~~FLAG~~ **RESOLVED:** validates the Twilio signature, failing closed (403) in production (TWILIO-SIG-ENFORCE-001) |
 | `userGroups.js` | 261 GET `/my` | Authenticated current-user group lookup |
-| `voice.js` | 271 POST `/twiml/outbound`; 398 POST `/twiml/inbound` | **FLAG:** Twilio-called TwiML handlers have no signature validation; outbound validates caller-id ownership only |
-| `webhooks.js` | 14/17/20/23/26/29/32/35 POST voice callbacks; 42/43 POST Conversations callbacks; 46 GET `/health` | Main voice callbacks validate Twilio signatures. **FLAG:** voice fallback and Conversations pre do not validate; Conversations post fails open when token/signature is absent |
-| `src/server.js` | 129 GET `/api/messaging/media/:mediaId/temporary-url` | **FLAG:** opaque UUID is the sole control; no auth or rate limit |
+| `voice.js` | 271 POST `/twiml/outbound`; 398 POST `/twiml/inbound` | ~~FLAG~~ **RESOLVED:** both validate the Twilio signature, failing closed (403) in production, on top of the outbound caller-id ownership check (TWILIO-SIG-ENFORCE-001) |
+| `webhooks.js` | voice callbacks; Conversations pre/post; `/health` | Main voice callbacks validate Twilio signatures. ~~FLAG~~ **RESOLVED:** voice-fallback now validates; Conversations post now fails **closed** when token/signature is absent. Conversations *pre* stays an unauthenticated no-op **by design** — it performs no work and touches no data, so a forged pre-event has no effect (TWILIO-SIG-ENFORCE-001) |
+| `src/server.js` | 129 GET `/api/messaging/media/:mediaId/temporary-url` | **BY DESIGN:** reached by `<img src>` (cannot carry a JWT). Sole control is a crypto-random `gen_random_uuid()` handed out only inside an already company-scoped message DTO — it never reaches anyone who cannot already see the message, so it is not a cross-tenant vector |
 
 ## (c) REAL GAP — 24
 
