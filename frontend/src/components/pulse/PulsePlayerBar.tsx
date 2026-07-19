@@ -1,42 +1,148 @@
 /**
- * PulsePlayerBar — floating recording player over the Pulse page (PULSE-PLAYER-001 / OB-13).
+ * PulsePlayerBar — the shared recording player UI (PULSE-PLAYER-001 / OB-13).
  *
- * Fixed bottom-center hover bar: play/pause · ±10s · label · seekable progress ·
- * time · speed · close. Renders nothing while no track is loaded. Sits at z-70 —
- * one notch BELOW OVERLAY_Z.panel (80), so every panel/dialog covers it.
+ * Desktop (≥768): floating bottom-center hover bar — play/pause · ±10s · label ·
+ * seekable progress · time · speed · close. Non-modal z-70 layer, one notch BELOW
+ * OVERLAY_Z.panel (80), so every panel/dialog covers it.
+ *
+ * Mobile (<768): the canonical BottomSheet (owner's call) with a roomy 3-row
+ * layout — label header · full-width seek + times · big centered transport.
+ * Dismissing the sheet (swipe / backdrop / ✕) stops playback, same as ✕ on
+ * desktop. The <audio> element lives in the PROVIDER, so switching between the
+ * two presentations (e.g. rotating a tablet) never interrupts the sound.
  */
 import { Play, Pause, RotateCcw, RotateCw, X } from 'lucide-react';
+import { BottomSheet } from '../ui/BottomSheet';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePulsePlayer, fmtPlayerTime, type PulsePlayerApi } from './pulsePlayer';
 
-/** Connected bar — reads the shared player context. */
+/**
+ * Connected player UI — bar on desktop, bottom sheet on mobile.
+ *
+ * The BottomSheet stays MOUNTED and only its `open` flag follows the viewport:
+ * yanking it out of the tree mid-open (rotate to landscape while playing) skips
+ * its close choreography and leaks the body scroll-lock — caught live in the
+ * harness. A viewport flip closes the sheet through the normal path WITHOUT
+ * touching playback; the audio element lives in the provider and keeps playing.
+ */
 export function PulsePlayerBar() {
     const p = usePulsePlayer();
-    return <PulsePlayerBarView p={p} />;
+    const isMobile = useIsMobile();
+    return (
+        <>
+            <BottomSheet
+                open={isMobile && !!p.track}
+                onClose={p.close}
+                size="auto"
+                title={p.track?.label}
+                ariaLabel="Recording player"
+            >
+                <PulsePlayerSheetControls p={p} />
+            </BottomSheet>
+            {!isMobile && <PulsePlayerBarView p={p} />}
+        </>
+    );
 }
 
-/** Presentational bar; exported for static-markup tests (vitest env=node). */
-export function PulsePlayerBarView({ p }: { p: PulsePlayerApi }) {
-    if (!p.track) return null;
-
-    const duration = p.duration > 0 ? p.duration : (p.track.durationHint || 0);
-    const IconBtn = ({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) => (
+/** ±10s button: icon sized close to the Play control so the "10" reads clearly. */
+function SkipBtn({ dir, onClick, size = 'md' }: { dir: -1 | 1; onClick: () => void; size?: 'md' | 'lg' }) {
+    const Icon = dir === -1 ? RotateCcw : RotateCw;
+    const title = dir === -1 ? 'Rewind 10 seconds' : 'Forward 10 seconds';
+    const btn = size === 'lg' ? 'h-14 w-14' : 'h-11 w-11';
+    const icon = size === 'lg' ? 'size-9' : 'size-7';
+    const num = size === 'lg' ? 'text-[11px]' : 'text-[10px]';
+    return (
         <button
             onClick={onClick}
             title={title}
             aria-label={title}
-            className="h-10 w-10 shrink-0 flex items-center justify-center rounded-full transition-colors hover:bg-[rgba(25,25,25,0.05)]"
+            className={`${btn} shrink-0 flex items-center justify-center rounded-full transition-colors hover:bg-[rgba(25,25,25,0.05)]`}
             style={{ color: 'var(--blanc-ink-2)' }}
         >
-            {children}
+            <span className="relative flex items-center justify-center">
+                <Icon className={icon} strokeWidth={1.75} />
+                <span className={`absolute ${num} font-semibold mt-[1px]`}>10</span>
+            </span>
         </button>
     );
+}
 
+function SeekRange({ p, tall = false }: { p: PulsePlayerApi; tall?: boolean }) {
+    const duration = p.duration > 0 ? p.duration : (p.track?.durationHint || 0);
+    return (
+        <input
+            type="range"
+            min={0}
+            max={Math.max(duration, 1)}
+            step={0.1}
+            value={Math.min(p.currentTime, duration || p.currentTime)}
+            onChange={e => p.seekTo(Number(e.target.value))}
+            aria-label="Seek"
+            className={`w-full min-w-0 cursor-pointer ${tall ? 'h-2' : 'h-1.5'}`}
+            style={{ accentColor: 'var(--blanc-accent)' }}
+        />
+    );
+}
+
+function RateChip({ p, size = 'md' }: { p: PulsePlayerApi; size?: 'md' | 'lg' }) {
+    return (
+        <button
+            onClick={p.cycleRate}
+            title="Playback speed"
+            aria-label="Playback speed"
+            className={`${size === 'lg' ? 'h-10 px-3 text-[13px]' : 'h-8 px-2 text-[11px]'} shrink-0 rounded-lg font-semibold tabular-nums transition-colors hover:bg-[rgba(25,25,25,0.05)]`}
+            style={{ color: p.rate !== 1 ? 'var(--blanc-accent)' : 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
+        >
+            {p.rate}×
+        </button>
+    );
+}
+
+/**
+ * Mobile sheet body — roomy 2-row transport (owner: "2-3 строки, пусть занимает
+ * хоть полэкрана, главное удобно"). Label lives in the sheet header; the sheet's
+ * own ✕ / swipe-down closes the player.
+ */
+export function PulsePlayerSheetControls({ p }: { p: PulsePlayerApi }) {
+    if (!p.track) return null;
+    const duration = p.duration > 0 ? p.duration : (p.track.durationHint || 0);
+    return (
+        <div className="px-5 pb-6 pt-1 space-y-5">
+            {/* Seek + times */}
+            <div className="space-y-1.5">
+                <SeekRange p={p} tall />
+                <div className="flex items-center justify-between text-[13px] font-mono tabular-nums" style={{ color: 'var(--blanc-ink-3)' }}>
+                    <span>{fmtPlayerTime(p.currentTime)}</span>
+                    <span>{fmtPlayerTime(duration)}</span>
+                </div>
+            </div>
+            {/* Transport row: −10 · play/pause · +10 · speed */}
+            <div className="flex items-center justify-center gap-5">
+                <SkipBtn dir={-1} size="lg" onClick={() => p.skip(-10)} />
+                <button
+                    onClick={p.toggle}
+                    title={p.isPlaying ? 'Pause' : 'Play'}
+                    aria-label={p.isPlaying ? 'Pause' : 'Play'}
+                    className="h-16 w-16 shrink-0 flex items-center justify-center rounded-full transition-opacity hover:opacity-90"
+                    style={{ background: 'var(--blanc-accent)', color: '#fff' }}
+                >
+                    {p.isPlaying ? <Pause className="size-7" /> : <Play className="size-7 ml-1" />}
+                </button>
+                <SkipBtn dir={1} size="lg" onClick={() => p.skip(10)} />
+                <RateChip p={p} size="lg" />
+            </div>
+        </div>
+    );
+}
+
+/** Presentational desktop bar; exported for static-markup tests (vitest env=node). */
+export function PulsePlayerBarView({ p }: { p: PulsePlayerApi }) {
+    if (!p.track) return null;
+    const duration = p.duration > 0 ? p.duration : (p.track.durationHint || 0);
     return (
         <div
             data-testid="pulse-player-bar"
-            // Mobile (<768px): clear the fixed .app-bottom-nav (60px + safe-area,
-            // AppLayout.css) with a 12px gap; desktop: 16px above the viewport edge.
-            className="fixed left-1/2 -translate-x-1/2 z-[70] w-[min(680px,calc(100vw-2rem))] bottom-[calc(72px+env(safe-area-inset-bottom,0px))] md:bottom-4"
+            className="fixed left-1/2 -translate-x-1/2 z-[70] w-[min(680px,calc(100vw-2rem))] bottom-4"
         >
             <div
                 className="flex items-center gap-2 rounded-2xl px-3 py-2.5 backdrop-blur-md"
@@ -51,16 +157,14 @@ export function PulsePlayerBarView({ p }: { p: PulsePlayerApi }) {
                     onClick={p.toggle}
                     title={p.isPlaying ? 'Pause' : 'Play'}
                     aria-label={p.isPlaying ? 'Pause' : 'Play'}
-                    className="h-10 w-10 shrink-0 flex items-center justify-center rounded-full transition-opacity hover:opacity-90"
+                    className="h-11 w-11 shrink-0 flex items-center justify-center rounded-full transition-opacity hover:opacity-90"
                     style={{ background: 'var(--blanc-accent)', color: '#fff' }}
                 >
                     {p.isPlaying ? <Pause className="size-5" /> : <Play className="size-5 ml-0.5" />}
                 </button>
 
-                <span className="hidden sm:flex items-center">
-                    <IconBtn onClick={() => p.skip(-10)} title="Rewind 10 seconds"><span className="relative flex items-center justify-center"><RotateCcw className="size-[19px]" /><span className="absolute text-[8px] font-semibold mt-[1px]">10</span></span></IconBtn>
-                    <IconBtn onClick={() => p.skip(10)} title="Forward 10 seconds"><span className="relative flex items-center justify-center"><RotateCw className="size-[19px]" /><span className="absolute text-[8px] font-semibold mt-[1px]">10</span></span></IconBtn>
-                </span>
+                <SkipBtn dir={-1} onClick={() => p.skip(-10)} />
+                <SkipBtn dir={1} onClick={() => p.skip(10)} />
 
                 {/* Label + progress */}
                 <div className="flex-1 min-w-0">
@@ -68,35 +172,24 @@ export function PulsePlayerBarView({ p }: { p: PulsePlayerApi }) {
                         {p.track.label}
                     </div>
                     <div className="flex items-center gap-2">
-                        <input
-                            type="range"
-                            min={0}
-                            max={Math.max(duration, 1)}
-                            step={0.1}
-                            value={Math.min(p.currentTime, duration || p.currentTime)}
-                            onChange={e => p.seekTo(Number(e.target.value))}
-                            aria-label="Seek"
-                            className="flex-1 min-w-0 h-1.5 cursor-pointer"
-                            style={{ accentColor: 'var(--blanc-accent)' }}
-                        />
+                        <SeekRange p={p} />
                         <span className="shrink-0 text-[11px] font-mono tabular-nums" style={{ color: 'var(--blanc-ink-3)' }}>
                             {fmtPlayerTime(p.currentTime)} / {fmtPlayerTime(duration)}
                         </span>
                     </div>
                 </div>
 
-                {/* Speed */}
-                <button
-                    onClick={p.cycleRate}
-                    title="Playback speed"
-                    aria-label="Playback speed"
-                    className="h-8 shrink-0 px-2 rounded-lg text-[11px] font-semibold tabular-nums transition-colors hover:bg-[rgba(25,25,25,0.05)]"
-                    style={{ color: p.rate !== 1 ? 'var(--blanc-accent)' : 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
-                >
-                    {p.rate}×
-                </button>
+                <RateChip p={p} />
 
-                <IconBtn onClick={p.close} title="Close player"><X className="size-[18px]" /></IconBtn>
+                <button
+                    onClick={p.close}
+                    title="Close player"
+                    aria-label="Close player"
+                    className="h-11 w-11 shrink-0 flex items-center justify-center rounded-full transition-colors hover:bg-[rgba(25,25,25,0.05)]"
+                    style={{ color: 'var(--blanc-ink-2)' }}
+                >
+                    <X className="size-5" />
+                </button>
             </div>
         </div>
     );
