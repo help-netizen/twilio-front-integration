@@ -18,6 +18,15 @@ const eventService = require('./eventService');
 const eventBus = require('./eventBus');
 const membershipQueries = require('../db/membershipQueries');
 const { isZenbookerSyncEnabled } = require('../config/featureFlags');
+const {
+    createCursorFingerprint,
+    encodeCursor,
+    decodeCursor,
+    assertCursorOffsetExclusive,
+    buildKeysetPredicate,
+    timestampCursorExpression,
+    bigintCursorExpression,
+} = require('../utils/listCursor');
 
 // =============================================================================
 // Constants
@@ -676,14 +685,134 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate, serviceName, provider, tagIds, tagMatch, providerScope } = {}) {
+const JOB_LIST_SORTS = Object.freeze({
+    job_number: { expression: `LOWER(COALESCE(j.job_number, '')) COLLATE "C"`, type: 'text' },
+    customer_name: { expression: `LOWER(COALESCE(j.customer_name, '')) COLLATE "C"`, type: 'text' },
+    customer_phone: { expression: `LOWER(COALESCE(j.customer_phone, '')) COLLATE "C"`, type: 'text' },
+    customer_email: { expression: `LOWER(COALESCE(j.customer_email, '')) COLLATE "C"`, type: 'text' },
+    service_name: { expression: `LOWER(COALESCE(j.service_name, '')) COLLATE "C"`, type: 'text' },
+    start_date: { expression: 'j.start_date', type: 'timestamp', nullable: true },
+    end_date: { expression: 'j.end_date', type: 'timestamp', nullable: true },
+    blanc_status: { expression: `LOWER(COALESCE(j.blanc_status, '')) COLLATE "C"`, type: 'text' },
+    zb_status: { expression: `LOWER(COALESCE(j.zb_status, '')) COLLATE "C"`, type: 'text' },
+    address: { expression: `LOWER(COALESCE(j.address, '')) COLLATE "C"`, type: 'text' },
+    territory: { expression: `LOWER(COALESCE(j.territory, '')) COLLATE "C"`, type: 'text' },
+    invoice_total: { expression: `NULLIF(j.invoice_total, '')::numeric`, type: 'numeric', nullable: true },
+    invoice_status: { expression: `LOWER(COALESCE(j.invoice_status, '')) COLLATE "C"`, type: 'text' },
+    job_type: { expression: `LOWER(COALESCE(j.job_type, '')) COLLATE "C"`, type: 'text' },
+    job_source: { expression: `LOWER(COALESCE(j.job_source, '')) COLLATE "C"`, type: 'text' },
+    description: { expression: `LOWER(COALESCE(j.description, '')) COLLATE "C"`, type: 'text' },
+    created_at: { expression: 'j.created_at', type: 'timestamp' },
+    updated_at: { expression: 'j.updated_at', type: 'timestamp' },
+});
+
+function jobsListError(code, message, statusCode) {
+    const error = new Error(message);
+    error.code = code;
+    error.statusCode = statusCode;
+    return error;
+}
+
+function splitList(value) {
+    if (value === undefined || value === null || value === '') return [];
+    const items = Array.isArray(value) ? value : String(value).split(',');
+    return [...new Set(items.map(item => String(item).trim()).filter(Boolean))].sort();
+}
+
+async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, cursor, companyId, contactId, sortBy = 'start_date', sortOrder = 'desc', onlyOpen, startDate, endDate, serviceName, jobSource, provider, tagIds, tagMatch, providerScope } = {}) {
+    if (!companyId) throw jobsListError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
+    if (!Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 500) {
+        throw jobsListError('INVALID_QUERY', 'limit must be an integer from 1 to 500', 400);
+    }
+    const pageLimit = Number(limit);
+    if (offset !== undefined && (!Number.isInteger(Number(offset)) || Number(offset) < 0)) {
+        throw jobsListError('INVALID_QUERY', 'offset must be a non-negative integer', 400);
+    }
+    assertCursorOffsetExclusive(cursor, offset);
+    if (sortOrder !== 'asc' && sortOrder !== 'desc') {
+        throw jobsListError('INVALID_QUERY', 'Invalid job sort direction', 400);
+    }
+
+    let sortTemplate = JOB_LIST_SORTS[sortBy];
+    let metaKey = null;
+    if (!sortTemplate && typeof sortBy === 'string' && sortBy.startsWith('meta:')) {
+        metaKey = sortBy.slice(5);
+        if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(metaKey)) {
+            throw jobsListError('INVALID_QUERY', 'Invalid metadata sort field', 400);
+        }
+        sortTemplate = { type: 'text', nullable: false };
+    }
+    if (!sortTemplate) throw jobsListError('INVALID_QUERY', 'Invalid job sort field', 400);
+
+    const statuses = splitList(blancStatus);
+    const serviceNames = splitList(serviceName);
+    const jobSources = splitList(jobSource);
+    const providers = splitList(provider);
+    const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+    const normalizedTagIds = splitList(tagIds)
+        .map(value => Number(value))
+        .filter(value => Number.isSafeInteger(value) && value > 0)
+        .sort((left, right) => left - right);
+    const normalizedCanceled = zbCanceled === undefined
+        ? null
+        : (zbCanceled === true || zbCanceled === 'true');
+    const mode = offset === undefined ? 'cursor' : 'offset';
+    const visibility = {
+        assignedOnly: providerScope?.assignedOnly === true,
+        userId: providerScope?.assignedOnly ? String(providerScope.userId || '') : null,
+    };
+    const fingerprint = createCursorFingerprint({
+        endpoint: 'jobs',
+        company: String(companyId),
+        visibility,
+        filters: {
+            blanc_status: statuses,
+            canceled: normalizedCanceled,
+            search: normalizedSearch.toLocaleLowerCase('en-US'),
+            contact_id: contactId == null ? null : String(contactId),
+            only_open: Boolean(onlyOpen),
+            start_date: startDate || null,
+            end_date: endDate || null,
+            service_name: serviceNames,
+            job_source: jobSources,
+            provider: providers,
+            tag_ids: normalizedTagIds,
+            tag_match: tagMatch === 'all' ? 'all' : 'any',
+        },
+        sort: sortBy,
+        direction: sortOrder,
+        limit: pageLimit,
+    });
+    const cursorValueTypes = sortTemplate.nullable
+        ? ['boolean', { type: sortTemplate.type, nullable: true }, 'bigint']
+        : [sortTemplate.type, 'bigint'];
+    const cursorExpectation = {
+        endpoint: 'jobs',
+        sort: sortBy,
+        direction: sortOrder,
+        fingerprint,
+        valueTypes: cursorValueTypes,
+    };
+    const decodedCursor = cursor ? decodeCursor(cursor, cursorExpectation) : null;
+
+    if (metaKey) {
+        const fieldResult = await db.query(
+            `SELECT 1
+             FROM lead_custom_fields
+             WHERE company_id = $1 AND api_name = $2 AND is_system = false
+             LIMIT 1`,
+            [companyId, metaKey],
+        );
+        if (fieldResult.rows.length === 0) {
+            throw jobsListError('INVALID_QUERY', 'Unknown metadata sort field', 400);
+        }
+    }
+
     const conditions = [];
     const params = [];
     let idx = 0;
 
-    if (companyId) {
-        idx++; conditions.push(`j.company_id = $${idx}`); params.push(companyId);
-    }
+    idx++; conditions.push(`j.company_id = $${idx}`); params.push(companyId);
     // assigned_only visibility (PF007): only jobs whose internal assignee
     // mirror contains the current crm_users.id. No user → empty result.
     if (providerScope?.assignedOnly) {
@@ -694,21 +823,13 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
             params.push(JSON.stringify([providerScope.userId]));
         }
     }
-    if (blancStatus) {
-        // Support comma-separated multi-value: "Submitted,Rescheduled"
-        const statuses = blancStatus.split(',').map(s => s.trim()).filter(Boolean);
-        if (statuses.length === 1) {
-            idx++; conditions.push(`j.blanc_status = $${idx}`); params.push(statuses[0]);
-        } else if (statuses.length > 1) {
-            const placeholders = statuses.map(() => { idx++; return `$${idx}`; });
-            conditions.push(`j.blanc_status IN (${placeholders.join(',')})`);
-            params.push(...statuses);
-        }
+    if (statuses.length > 0) {
+        idx++; conditions.push(`j.blanc_status = ANY($${idx}::text[])`); params.push(statuses);
     }
-    if (zbCanceled !== undefined) {
-        idx++; conditions.push(`j.zb_canceled = $${idx}`); params.push(zbCanceled === 'true' || zbCanceled === true);
+    if (normalizedCanceled !== null) {
+        idx++; conditions.push(`j.zb_canceled = $${idx}::boolean`); params.push(normalizedCanceled);
     }
-    if (search) {
+    if (normalizedSearch) {
         idx++;
         const searchClauses = [
             `j.job_number ILIKE $${idx}`,
@@ -721,25 +842,18 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
                 JOIN job_tags t2 ON t2.id = jta2.tag_id
                 WHERE jta2.job_id = j.id AND t2.name ILIKE $${idx}
             )`,
+            `EXISTS (
+                SELECT 1
+                FROM lead_custom_fields lcf
+                WHERE lcf.company_id = j.company_id
+                  AND lcf.is_searchable = true
+                  AND lcf.is_system = false
+                  AND COALESCE(j.metadata ->> lcf.api_name, '') ILIKE $${idx}
+            )`,
         ];
 
-        // Add searchable metadata fields
-        try {
-            const { rows: searchableFields } = await db.query(
-                `SELECT api_name FROM lead_custom_fields WHERE is_searchable = true AND is_system = false`
-            );
-            for (const f of searchableFields) {
-                const key = f.api_name.replace(/[^a-zA-Z0-9_]/g, ''); // sanitize
-                if (key) {
-                    searchClauses.push(`j.metadata->>'${key}' ILIKE $${idx}`);
-                }
-            }
-        } catch (err) {
-            console.warn('[JobsService] Could not load searchable fields:', err.message);
-        }
-
         conditions.push(`(${searchClauses.join(' OR\n            ')})`);
-        params.push(`%${search}%`);
+        params.push(`%${normalizedSearch}%`);
     }
     if (contactId) {
         idx++; conditions.push(`j.contact_id = $${idx}`); params.push(contactId);
@@ -748,100 +862,129 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         conditions.push(`j.blanc_status NOT IN ('Job is Done', 'Canceled')`);
     }
     if (startDate) {
-        idx++; conditions.push(`j.start_date >= $${idx}`); params.push(startDate);
+        idx++; conditions.push(`j.start_date >= $${idx}::timestamptz`); params.push(startDate);
     }
     if (endDate) {
-        idx++; conditions.push(`j.start_date <= $${idx}`); params.push(endDate + ' 23:59:59');
+        idx++; conditions.push(`j.start_date < ($${idx}::date + interval '1 day')`); params.push(endDate);
     }
-    if (serviceName) {
-        const names = serviceName.split(',').map(s => s.trim()).filter(Boolean);
-        if (names.length === 1) {
-            idx++; conditions.push(`j.service_name = $${idx}`); params.push(names[0]);
-        } else if (names.length > 1) {
-            const placeholders = names.map(() => { idx++; return `$${idx}`; });
-            conditions.push(`j.service_name IN (${placeholders.join(',')})`);
-            params.push(...names);
-        }
+    if (serviceNames.length > 0) {
+        idx++; conditions.push(`j.service_name = ANY($${idx}::text[])`); params.push(serviceNames);
     }
-    if (provider) {
-        const providers = provider.split(',').map(s => s.trim()).filter(Boolean);
-        // assigned_techs is JSONB array — search for matching provider name
-        const providerConditions = providers.map(() => {
-            idx++; return `j.assigned_techs::text ILIKE $${idx}`;
-        });
-        conditions.push(`(${providerConditions.join(' OR ')})`);
-        params.push(...providers.map(p => `%${p}%`));
+    if (jobSources.length > 0) {
+        idx++; conditions.push(`j.job_source = ANY($${idx}::text[])`); params.push(jobSources);
     }
-    if (tagIds) {
-        const ids = tagIds.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-        if (ids.length > 0) {
-            if (tagMatch === 'all' && ids.length > 1) {
-                // ALL mode: job must have ALL selected tags
-                const placeholders = ids.map(() => { idx++; return `$${idx}`; });
-                conditions.push(`(
-                    SELECT COUNT(DISTINCT jta3.tag_id) FROM job_tag_assignments jta3
-                    WHERE jta3.job_id = j.id AND jta3.tag_id IN (${placeholders.join(',')})
-                ) = ${ids.length}`);
-                params.push(...ids);
-            } else {
-                // ANY mode (default): job has at least one of selected tags
-                const placeholders = ids.map(() => { idx++; return `$${idx}`; });
-                conditions.push(`EXISTS (
-                    SELECT 1 FROM job_tag_assignments jta3
-                    WHERE jta3.job_id = j.id AND jta3.tag_id IN (${placeholders.join(',')})
-                )`);
-                params.push(...ids);
-            }
+    if (normalizedTagIds.length > 0) {
+        idx++; const tagsParam = `$${idx}::int[]`; params.push(normalizedTagIds);
+        if (tagMatch === 'all' && normalizedTagIds.length > 1) {
+            idx++; params.push(normalizedTagIds.length);
+            conditions.push(`(
+                SELECT COUNT(DISTINCT jta3.tag_id) FROM job_tag_assignments jta3
+                WHERE jta3.job_id = j.id AND jta3.tag_id = ANY(${tagsParam})
+            ) = $${idx}::int`);
+        } else {
+            conditions.push(`EXISTS (
+                SELECT 1 FROM job_tag_assignments jta3
+                WHERE jta3.job_id = j.id AND jta3.tag_id = ANY(${tagsParam})
+            )`);
         }
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    // Count
-    const { rows: countRows } = await db.query(
-        `SELECT COUNT(*) as total FROM jobs j ${whereClause}`, params
-    );
-    const total = parseInt(countRows[0].total, 10);
-
-    // Sort — whitelist columns to prevent SQL injection
-    const SORTABLE_COLUMNS = {
-        job_number: 'j.job_number',
-        customer_name: 'j.customer_name',
-        customer_phone: 'j.customer_phone',
-        customer_email: 'j.customer_email',
-        service_name: 'j.service_name',
-        start_date: 'j.start_date',
-        end_date: 'j.end_date',
-        blanc_status: 'j.blanc_status',
-        zb_status: 'j.zb_status',
-        address: 'j.address',
-        territory: 'j.territory',
-        invoice_total: 'j.invoice_total',
-        invoice_status: 'j.invoice_status',
-        job_type: 'j.job_type',
-        job_source: 'j.job_source',
-        description: 'j.description',
-        created_at: 'j.created_at',
-        updated_at: 'j.updated_at',
-    };
-    let sortCol = SORTABLE_COLUMNS[sortBy] || 'j.created_at';
-    // Support sorting by metadata fields: meta:field_name → j.metadata->>'field_name'
-    if (sortBy && sortBy.startsWith('meta:')) {
-        const metaKey = sortBy.slice(5).replace(/[^a-zA-Z0-9_]/g, ''); // sanitize
-        if (metaKey) sortCol = `j.metadata->>'${metaKey}'`;
+    const facetConditions = conditions.slice();
+    if (providers.length > 0) {
+        idx++; params.push(providers);
+        conditions.push(`EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(j.assigned_techs, '[]'::jsonb)) AS tech(value)
+            WHERE BTRIM(tech.value ->> 'name') = ANY($${idx}::text[])
+        )`);
     }
-    const sortDir = sortOrder === 'asc' ? 'ASC' : 'DESC';
-    const orderClause = `ORDER BY ${sortCol} ${sortDir} NULLS LAST`;
 
-    // Data
-    idx++; params.push(limit);
-    idx++; params.push(offset);
-    const { rows } = await db.query(`
-        SELECT j.* FROM jobs j
-        ${whereClause}
-        ${orderClause}
-        LIMIT $${idx - 1} OFFSET $${idx}
-    `, params);
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+    const facetWhereClause = `WHERE ${facetConditions.join(' AND ')}`;
+
+    let total = null;
+    let facets = null;
+    if (!decodedCursor) {
+        const includeProviderFacet = mode === 'cursor' || Number(offset) === 0;
+        const providersSql = includeProviderFacet
+            ? `(SELECT COALESCE(json_agg(provider_rows.provider ORDER BY provider_rows.provider), '[]'::json)
+                FROM (
+                    SELECT DISTINCT BTRIM(tech.value ->> 'name') AS provider
+                    FROM jobs j
+                    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(j.assigned_techs, '[]'::jsonb)) AS tech(value)
+                    ${facetWhereClause}
+                      AND BTRIM(COALESCE(tech.value ->> 'name', '')) <> ''
+                ) provider_rows)`
+            : 'NULL::json';
+        const metadataResult = await db.query(
+            `SELECT
+                (SELECT COUNT(*)::int FROM jobs j ${whereClause}) AS total,
+                ${providersSql} AS providers`,
+            params,
+        );
+        total = Number(metadataResult.rows[0]?.total || 0);
+        facets = includeProviderFacet
+            ? { providers: metadataResult.rows[0]?.providers || [] }
+            : null;
+    }
+
+    const dataParams = params.slice();
+    const sort = metaKey
+        ? {
+            expression: `LOWER(COALESCE(j.metadata ->> $${dataParams.push(metaKey)}, '')) COLLATE "C"`,
+            type: 'text',
+            nullable: false,
+        }
+        : sortTemplate;
+    const cursorKeys = [];
+    const cursorProjections = [];
+    const orderParts = [];
+    if (sort.nullable) {
+        cursorKeys.push({ expression: `(${sort.expression} IS NULL)`, direction: 'asc', type: 'boolean' });
+        cursorProjections.push(`(${sort.expression} IS NULL) AS __cursor_null`);
+        orderParts.push(`(${sort.expression} IS NULL) ASC`);
+    }
+    cursorKeys.push({
+        expression: sort.expression,
+        direction: sortOrder,
+        type: sort.type,
+        nullable: sort.nullable === true,
+    });
+    cursorKeys.push({ expression: 'j.id', direction: sortOrder, type: 'bigint' });
+    if (sort.type === 'timestamp') {
+        cursorProjections.push(`${timestampCursorExpression(sort.expression)} AS __cursor_value`);
+    } else if (sort.type === 'numeric') {
+        cursorProjections.push(`(${sort.expression})::text AS __cursor_value`);
+    } else {
+        cursorProjections.push(`${sort.expression} AS __cursor_value`);
+    }
+    cursorProjections.push(`${bigintCursorExpression('j.id')} AS __cursor_id`);
+    orderParts.push(`${sort.expression} ${sortOrder.toUpperCase()}`, `j.id ${sortOrder.toUpperCase()}`);
+
+    let cursorPredicate = '';
+    if (decodedCursor) {
+        const keyset = buildKeysetPredicate(cursorKeys, decodedCursor.values, dataParams.length + 1);
+        cursorPredicate = ` AND ${keyset.sql}`;
+        dataParams.push(...keyset.params);
+    }
+    const limitParam = dataParams.length + 1;
+    dataParams.push(pageLimit + 1);
+    let offsetSql = '';
+    if (mode === 'offset') {
+        const offsetParam = dataParams.length + 1;
+        dataParams.push(Number(offset));
+        offsetSql = ` OFFSET $${offsetParam}`;
+    }
+
+    const { rows: probedRows } = await db.query(`
+        SELECT j.*, ${cursorProjections.join(', ')}
+        FROM jobs j
+        ${whereClause}${cursorPredicate}
+        ORDER BY ${orderParts.join(', ')}
+        LIMIT $${limitParam}${offsetSql}
+    `, dataParams);
+    const rows = probedRows.slice(0, pageLimit);
+    const hasMore = probedRows.length > pageLimit;
 
     // Fetch tags for all jobs in batch
     const jobIds = rows.map(r => r.id);
@@ -851,9 +994,10 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
             SELECT jta.job_id, t.id, t.name, t.color, t.is_active
             FROM job_tag_assignments jta
             JOIN job_tags t ON t.id = jta.tag_id
+            JOIN jobs scoped_job ON scoped_job.id = jta.job_id AND scoped_job.company_id = $2
             WHERE jta.job_id = ANY($1)
             ORDER BY t.sort_order, t.id
-        `, [jobIds]);
+        `, [jobIds, companyId]);
         for (const tr of tagRows) {
             if (!tagsMap[tr.job_id]) tagsMap[tr.job_id] = [];
             tagsMap[tr.job_id].push({ id: tr.id, name: tr.name, color: tr.color, is_active: tr.is_active });
@@ -915,12 +1059,39 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         return job;
     });
 
+    const lastRow = rows.at(-1);
+    const cursorValues = lastRow
+        ? [
+            ...(sort.nullable ? [Boolean(lastRow.__cursor_null)] : []),
+            lastRow.__cursor_value == null ? null : String(lastRow.__cursor_value),
+            String(lastRow.__cursor_id),
+        ]
+        : [];
+    const nextCursor = mode === 'cursor' && hasMore && lastRow
+        ? encodeCursor({
+            endpoint: 'jobs',
+            sort: sortBy,
+            direction: sortOrder,
+            fingerprint,
+            values: cursorValues,
+        }, cursorExpectation)
+        : null;
+
     return {
         results,
         total,
-        offset,
-        limit,
-        has_more: offset + rows.length < total,
+        offset: mode === 'offset' ? Number(offset) : 0,
+        limit: pageLimit,
+        has_more: hasMore,
+        facets,
+        pagination: {
+            mode,
+            limit: pageLimit,
+            returned: results.length,
+            has_more: hasMore,
+            next_cursor: nextCursor,
+            total,
+        },
     };
 }
 

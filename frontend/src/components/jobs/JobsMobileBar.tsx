@@ -12,9 +12,9 @@
  * Rendered ONLY on mobile (JobsPage gates it behind useIsMobile).
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Settings2, Plus, X, RotateCcw, Download, Loader2, Search } from 'lucide-react';
-import type { JobTag, LocalJob } from '../../services/jobsApi';
+import type { JobTag } from '../../services/jobsApi';
 import { authedFetch } from '../../services/apiClient';
 import { BottomSheet } from '../ui/BottomSheet';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
@@ -65,8 +65,8 @@ interface JobsMobileBarProps {
     sortOrder: 'asc' | 'desc';
     onSortChange: (field: string, order: 'asc' | 'desc') => void;
 
-    /** Drives the PROVIDERS filter column (names derived from the loaded jobs). */
-    jobs: LocalJob[];
+    /** Complete provider facet from the first page metadata. */
+    providerNames: string[];
 
     onExportCSV: () => void;
     exporting: boolean;
@@ -85,7 +85,7 @@ export const JobsMobileBar: React.FC<JobsMobileBarProps> = ({
     tagFilter, onTagFilterChange, allTags,
     startDate, onStartDateChange, endDate, onEndDateChange,
     sortBy, sortOrder, onSortChange,
-    jobs, onExportCSV, exporting, canExport, onNewJob, canCreateJob,
+    providerNames, onExportCSV, exporting, canExport, onNewJob, canCreateJob,
 }) => {
     const [sheetOpen, setSheetOpen] = useState(false);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
@@ -94,12 +94,6 @@ export const JobsMobileBar: React.FC<JobsMobileBarProps> = ({
 
     // Same derivations JobsFilters performs, so JobsFilterBody behaves identically.
     useEffect(() => { authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => { if (data.success && data.jobTypes?.length > 0) setDynamicJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name)); }).catch(() => { }); }, []);
-
-    const providerNames = useMemo(() => {
-        const names = new Set<string>();
-        jobs.forEach(j => { if (j.assigned_techs) j.assigned_techs.forEach((t) => { if (t.name) names.add(t.name); }); });
-        return [...names].sort();
-    }, [jobs]);
 
     const activeFilterCount = statusFilter.length + providerFilter.length + sourceFilter.length + jobTypeFilter.length + tagFilter.length;
     const resetFilters = () => {

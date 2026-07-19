@@ -1,17 +1,14 @@
-import { ChevronLeft, ChevronRight, User } from 'lucide-react';
-import { Button } from '../ui/button';
+import { User } from 'lucide-react';
 import { Skeleton } from '../ui/skeleton';
 import type { Contact } from '../../types/contact';
+import { LoadMoreFooter, type LoadMoreFooterProps } from '../lists/LoadMoreFooter';
 
 interface ContactsListProps {
     contacts: Contact[];
     loading: boolean;
     selectedContactId?: number;
     onSelectContact: (contact: Contact) => void;
-    offset: number;
-    hasMore: boolean;
-    onNextPage: () => void;
-    onPrevPage: () => void;
+    footerProps: LoadMoreFooterProps;
 }
 
 function formatPhone(phone: string | null): string {
@@ -29,14 +26,11 @@ export function ContactsList({
     loading,
     selectedContactId,
     onSelectContact,
-    offset,
-    hasMore,
-    onNextPage,
-    onPrevPage,
+    footerProps,
 }: ContactsListProps) {
     return (
         /* Invisible layout container (LAYOUT-CANON rule 7): fills the page column,
-           no surface of its own. Rhythm to the pagination footer via gap. */
+           with the shared footer at the end of the existing scroll content. */
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '8px' }}>
             {/* List — the single scroll container; parent gap spaces the tiles (rule 2) */}
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -44,6 +38,8 @@ export function ContactsList({
                     Array.from({ length: 8 }).map((_, i) => (
                         <Skeleton key={i} className="h-14 w-full shrink-0 rounded-xl" />
                     ))
+                ) : contacts.length === 0 && footerProps.state === 'error+retry' ? (
+                    <LoadMoreFooter {...footerProps} />
                 ) : contacts.length === 0 ? (
                     <div style={{
                         padding: '48px 16px',
@@ -55,7 +51,8 @@ export function ContactsList({
                         <div>No contacts found</div>
                     </div>
                 ) : (
-                    contacts.map((contact) => (
+                    <>
+                    {contacts.map((contact) => (
                         /* Contact tile — the only surface above the canvas; the tile
                            itself is the flex row (no inner wrapper). Selected = warm
                            active bg (as Pulse) + line-strong inset ring. */
@@ -115,36 +112,11 @@ export function ContactsList({
                                 </div>
                             </div>
                         </div>
-                    ))
+                    ))}
+                    <LoadMoreFooter {...footerProps} />
+                    </>
                 )}
             </div>
-
-            {/* Pagination — sits directly on the canvas, no card/border chrome */}
-            {(offset > 0 || hasMore) && (
-                <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    flexShrink: 0,
-                }}>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={offset === 0}
-                        onClick={onPrevPage}
-                    >
-                        <ChevronLeft className="size-4 mr-1" /> Prev
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!hasMore}
-                        onClick={onNextPage}
-                    >
-                        Next <ChevronRight className="size-4 ml-1" />
-                    </Button>
-                </div>
-            )}
         </div>
     );
 }

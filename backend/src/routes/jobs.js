@@ -156,21 +156,51 @@ router.post('/', requirePermission('jobs.create'), async (req, res) => {
 
 router.get('/', requirePermission('jobs.view'), async (req, res) => {
     try {
-        const { blanc_status, canceled, search, offset, limit, contact_id, sort_by, sort_order, only_open, start_date, end_date, service_name, provider, tag_ids, tag_match } = req.query;
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) {
+            return res.status(403).json({
+                ok: false,
+                error: 'Company context is required',
+                code: 'TENANT_CONTEXT_REQUIRED',
+            });
+        }
+
+        const { blanc_status, canceled, search, offset, limit, cursor, contact_id, sort_by, sort_order, only_open, start_date, end_date, service_name, job_source, provider, tag_ids, tag_match } = req.query;
+        if (offset !== undefined && (!/^\d+$/.test(String(offset)) || !Number.isSafeInteger(Number(offset)))) {
+            return res.status(400).json({ ok: false, error: 'offset must be a non-negative integer', code: 'INVALID_QUERY' });
+        }
+        if (limit !== undefined && (!/^\d+$/.test(String(limit)) || Number(limit) < 1 || Number(limit) > 500)) {
+            return res.status(400).json({ ok: false, error: 'limit must be 1-500', code: 'INVALID_QUERY' });
+        }
+        if (cursor !== undefined && typeof cursor !== 'string') {
+            return res.status(400).json({ ok: false, error: 'Invalid cursor', code: 'INVALID_CURSOR' });
+        }
+        if (sort_order !== undefined && sort_order !== 'asc' && sort_order !== 'desc') {
+            return res.status(400).json({ ok: false, error: 'Invalid sort direction', code: 'INVALID_QUERY' });
+        }
+        if (canceled !== undefined && canceled !== 'true' && canceled !== 'false') {
+            return res.status(400).json({ ok: false, error: 'canceled must be true or false', code: 'INVALID_QUERY' });
+        }
+        if (tag_match !== undefined && tag_match !== 'any' && tag_match !== 'all') {
+            return res.status(400).json({ ok: false, error: 'tag_match must be any or all', code: 'INVALID_QUERY' });
+        }
+
         const result = await jobsService.listJobs({
             blancStatus: blanc_status || undefined,
             zbCanceled: canceled,
             search: search || undefined,
-            offset: parseInt(offset, 10) || 0,
-            limit: parseInt(limit, 10) || 50,
-            companyId: req.companyFilter?.company_id || undefined,
+            offset: offset === undefined ? undefined : Number(offset),
+            limit: limit === undefined ? 50 : Number(limit),
+            cursor,
+            companyId,
             contactId: contact_id || undefined,
-            sortBy: sort_by || undefined,
-            sortOrder: sort_order || undefined,
+            sortBy: sort_by || 'start_date',
+            sortOrder: sort_order || 'desc',
             onlyOpen: only_open === 'true' || undefined,
             startDate: start_date || undefined,
             endDate: end_date || undefined,
             serviceName: service_name || undefined,
+            jobSource: job_source || undefined,
             provider: provider || undefined,
             tagIds: tag_ids || undefined,
             tagMatch: tag_match || undefined,
@@ -178,8 +208,9 @@ router.get('/', requirePermission('jobs.view'), async (req, res) => {
         });
         res.json({ ok: true, data: result });
     } catch (err) {
-        console.error('[Jobs API] List error:', err.message);
-        res.status(500).json({ ok: false, error: err.message });
+        const status = err.statusCode || err.httpStatus || 500;
+        if (status >= 500) console.error('[Jobs API] List error:', err.message);
+        res.status(status).json({ ok: false, error: err.message, code: err.code || 'INTERNAL_ERROR' });
     }
 });
 

@@ -53,18 +53,26 @@ export class LeadsApiError extends Error {
 /**
  * List leads with filters and pagination
  */
-export async function listLeads(params: LeadsListParams): Promise<LeadsListResponse> {
+export async function listLeads(params: LeadsListParams, signal?: AbortSignal): Promise<LeadsListResponse> {
     const searchParams = new URLSearchParams();
     if (params.start_date) searchParams.set('start_date', params.start_date);
     if (params.end_date) searchParams.set('end_date', params.end_date);
     if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
     if (params.records !== undefined) searchParams.set('records', String(params.records));
+    if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params.cursor) searchParams.set('cursor', params.cursor);
     if (params.only_open !== undefined) searchParams.set('only_open', String(params.only_open));
     if (params.status) {
         params.status.forEach(s => searchParams.append('status', s));
     }
+    if (params.search) searchParams.set('search', params.search);
+    params.source?.forEach(source => searchParams.append('source', source));
+    params.job_type?.forEach(jobType => searchParams.append('job_type', jobType));
+    if (params.rejected_only !== undefined) searchParams.set('rejected_only', String(params.rejected_only));
+    if (params.sort_by) searchParams.set('sort_by', params.sort_by);
+    if (params.sort_order) searchParams.set('sort_order', params.sort_order);
 
-    return request<LeadsListResponse>(`${API_BASE}?${searchParams.toString()}`);
+    return request<LeadsListResponse>(`${API_BASE}?${searchParams.toString()}`, { signal });
 }
 
 /**

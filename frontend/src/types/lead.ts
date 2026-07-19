@@ -63,15 +63,27 @@ export type LeadsListParams = {
     end_date?: string;   // YYYY-MM-DD
     offset?: number;
     records?: number;
+    limit?: number;
+    cursor?: string;
     only_open?: boolean;
     status?: string[];
+    search?: string;
+    source?: string[];
+    job_type?: string[];
+    rejected_only?: boolean;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
 };
 
 export type LeadsPagination = {
-    offset: number;
-    records: number;
+    mode: 'cursor' | 'offset';
+    offset?: number;
+    records?: number;
+    limit: number;
     returned: number;
     has_more: boolean;
+    next_cursor: string | null;
+    total: number | null;
 };
 
 export type LeadsListResponse = {
@@ -83,6 +95,12 @@ export type LeadsListResponse = {
             start_date: string | null;
             only_open: boolean;
             status: string[];
+            search: string;
+            source: string[];
+            job_type: string[];
+            rejected_only: boolean;
+            sort_by: string;
+            sort_order: 'asc' | 'desc';
         };
     };
     meta: { request_id: string; timestamp: string };

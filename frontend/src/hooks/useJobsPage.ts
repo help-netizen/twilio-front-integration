@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { LocalJob } from '../services/jobsApi';
-import { useJobsData, LIMIT } from './useJobsData';
+import { useJobsData } from './useJobsData';
 import { useJobDetail } from './useJobDetail';
 import { useJobsExport } from './useJobsExport';
 import { useRealtimeEvents, type SSEJobUpdatedEvent } from './useRealtimeEvents';
@@ -22,7 +22,7 @@ export function useJobsPage() {
 
     const detail = useJobDetail({
         jobId: selectedJobId,
-        onJobMutated: useCallback(() => data.loadJobs(data.offset), [data.loadJobs, data.offset]),
+        onJobMutated: useCallback(() => { void data.resetJobs(); }, [data.resetJobs]),
     });
 
     // Export covers the entire selected date range, ignoring on-screen
@@ -49,11 +49,12 @@ export function useJobsPage() {
 
     const handleJobUpdated = useCallback((updatedJob: LocalJob) => {
         if (!updatedJob?.id) return;
-        // Update list
-        data.setJobs(prev => prev.map(j => j.id === updatedJob.id ? updatedJob : j));
+        data.updateJob(updatedJob.id, () => updatedJob);
         // Also update selected job via useJobDetail
         detail.handleJobUpdated(updatedJob);
-    }, [data.setJobs, detail.handleJobUpdated]);
+        // SSE fields can affect the active predicate or sort tuple.
+        void data.resetJobs();
+    }, [data.resetJobs, data.updateJob, detail.handleJobUpdated]);
 
     useRealtimeEvents({
         onJobUpdated: useCallback((event: SSEJobUpdatedEvent) => {
@@ -66,8 +67,6 @@ export function useJobsPage() {
     return {
         // Data (from useJobsData)
         ...data,
-        limit: LIMIT,
-
         // Selection — expose detail.job as selectedJob for backward compat
         selectedJob: detail.job,
         detailLoading: detail.detailLoading,

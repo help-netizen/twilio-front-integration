@@ -1,6 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { toast } from 'sonner';
 import { LeadsTable } from '../components/leads/LeadsTable';
 import { LeadsFilters } from '../components/leads/LeadsFilters';
 import { LeadsMobileBar } from '../components/leads/LeadsMobileBar';
@@ -12,7 +11,6 @@ import { ColumnSettingsDialog } from '../components/leads/ColumnSettingsDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Plus, Settings } from 'lucide-react';
 import * as leadsApi from '../services/leadsApi';
-import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
 import type { Lead, LeadsListParams, TableColumn } from '../types/lead';
 import { serverNow, serverDate } from '../utils/serverClock';
 import { DEFAULT_COLUMNS } from '../types/lead';
@@ -21,57 +19,82 @@ import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { MobileListPage } from '../components/layout/MobileListPage';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useAuthz } from '../hooks/useAuthz';
+import { useLoadMoreList } from '../hooks/useLoadMoreList';
+import { useDebouncedSearch } from '../hooks/useDebouncedSearch';
+import type { LoadMoreFooterProps } from '../components/lists/LoadMoreFooter';
 
 const STORAGE_KEY = 'leads-table-columns';
+const LEADS_PAGE_SIZE = 100;
+const leadKey = (lead: Lead) => lead.UUID;
 
 export function LeadsPage() {
     const navigate = useNavigate();
     const { leadId } = useParams<{ leadId?: string }>();
-    const [leads, setLeads] = useState<Lead[]>([]);
-    const [loading, setLoading] = useState(true);
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
     const [editingLead, setEditingLead] = useState<Lead | null>(null);
     const [createDialogOpen, setCreateDialogOpen] = useState(false);
     const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
     const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
     const [columns, setColumns] = useState<TableColumn[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved) : DEFAULT_COLUMNS; });
-    const [filters, setFilters] = useState<LeadsListParams>({ start_date: new Date(serverNow() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end_date: serverDate().toISOString().split('T')[0], offset: 0, records: 100, only_open: true, status: [] });
+    const [filters, setFilters] = useState<LeadsListParams>({ start_date: new Date(serverNow() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end_date: serverDate().toISOString().split('T')[0], only_open: true, status: [] });
     const [searchQuery, setSearchQuery] = useState('');
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
     const [rejectedOnly, setRejectedOnly] = useState(false);
-    const [hasMore, setHasMore] = useState(false);
     const [sortBy, setSortBy] = useState<string>('CreatedDate');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-    const { customFields: allSettingsFields } = useLeadFormSettings();
-    const searchableFields = useMemo(() => allSettingsFields.filter(f => f.is_searchable && !f.is_system).map(f => ({ api_name: f.api_name })), [allSettingsFields]);
     const isMobile = useIsMobile();
     const { company, hasPermission } = useAuthz();
     const canCreateLead = hasPermission('leads.create');
-
-    const loadLeads = async (newFilters?: LeadsListParams) => {
-        setLoading(true);
-        try { const params = newFilters || filters; const response = await leadsApi.listLeads(params); setLeads(response.data.results); setHasMore(response.data.pagination.has_more); }
-        catch (error) { toast.error('Failed to load leads', { description: error instanceof Error ? error.message : 'Unknown error' }); }
-        finally { setLoading(false); }
-    };
-
-    // Mobile "Load more" — append the next page (does NOT touch filters.offset, so
-    // the desktop replace-on-offset effect and prev/next pagination stay untouched).
-    const loadMoreLeads = async () => {
-        setLoading(true);
-        try {
-            const resp = await leadsApi.listLeads({ ...filters, offset: leads.length });
-            setLeads(prev => [...prev, ...resp.data.results]);
-            setHasMore(resp.data.pagination.has_more);
-        } catch (error) {
-            toast.error('Failed to load more leads', { description: error instanceof Error ? error.message : 'Unknown error' });
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    useEffect(() => { loadLeads(); }, [filters.start_date, filters.end_date, filters.only_open, filters.status, filters.offset]);
+    const debouncedSearch = useDebouncedSearch(searchQuery, 300);
+    const normalizedStatuses = [...(filters.status || [])].sort();
+    const normalizedSources = [...sourceFilter].sort();
+    const normalizedJobTypes = [...jobTypeFilter].sort();
+    const leadsList = useLoadMoreList<Lead>({
+        queryKey: [
+            'leads-list',
+            company?.id ?? null,
+            filters.start_date ?? null,
+            filters.end_date ?? null,
+            filters.only_open ?? true,
+            normalizedStatuses,
+            debouncedSearch,
+            normalizedSources,
+            normalizedJobTypes,
+            rejectedOnly,
+            sortBy,
+            sortOrder,
+        ],
+        pageSize: LEADS_PAGE_SIZE,
+        enabled: !!company?.id,
+        fetchPage: async ({ cursor, limit, signal }) => {
+            const response = await leadsApi.listLeads({
+                start_date: filters.start_date,
+                end_date: filters.end_date,
+                only_open: filters.only_open,
+                status: normalizedStatuses,
+                search: debouncedSearch || undefined,
+                source: normalizedSources,
+                job_type: normalizedJobTypes,
+                rejected_only: rejectedOnly,
+                sort_by: sortBy,
+                sort_order: sortOrder,
+                limit,
+                cursor: cursor ?? undefined,
+            }, signal);
+            return {
+                items: response.data.results,
+                pagination: {
+                    ...response.data.pagination,
+                    mode: 'cursor' as const,
+                },
+                meta: null,
+            };
+        },
+        getItemKey: leadKey,
+    });
+    const leads = leadsList.items;
+    const loading = leadsList.isLoadingFirst;
 
     useEffect(() => {
         if (!leadId) return; const numericId = Number(leadId); if (!numericId || isNaN(numericId)) return;
@@ -79,29 +102,21 @@ export function LeadsPage() {
         (async () => { try { const detail = await leadsApi.getLeadById(numericId); setSelectedLead(detail.data.lead); } catch (err) { console.warn('[LeadsPage] Failed to load lead from URL:', leadId, err); } })();
     }, [leadId]);
 
-    const filteredLeads = useMemo(() => {
-        let result = leads;
-        if (searchQuery.trim()) { const q = searchQuery.toLowerCase(); result = result.filter(lead => { const fn = `${lead.FirstName || ''} ${lead.LastName || ''}`.toLowerCase(); if (fn.includes(q) || lead.Company?.toLowerCase().includes(q) || lead.Phone?.includes(q) || lead.Email?.toLowerCase().includes(q) || String(lead.SerialId)?.includes(q)) return true; if (lead.Metadata && searchableFields.length > 0) { for (const f of searchableFields) { const v = (lead.Metadata as any)[f.api_name]; if (v && String(v).toLowerCase().includes(q)) return true; } } return false; }); }
-        if (sourceFilter.length > 0) result = result.filter(l => l.JobSource && sourceFilter.includes(l.JobSource));
-        if (jobTypeFilter.length > 0) result = result.filter(l => l.JobType && jobTypeFilter.includes(l.JobType));
-        if (rejectedOnly) result = result.filter(l => l.rely_filter?.rejected === true);
-        // Client-side sort
-        result = [...result].sort((a, b) => {
-            const av = (a as any)[sortBy] ?? '';
-            const bv = (b as any)[sortBy] ?? '';
-            const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
-            return sortOrder === 'asc' ? cmp : -cmp;
-        });
-        return result;
-    }, [leads, searchQuery, sourceFilter, jobTypeFilter, rejectedOnly, searchableFields, sortBy, sortOrder]);
-
-    const handleFiltersChange = (nf: Partial<LeadsListParams>) => setFilters(prev => ({ ...prev, ...nf, offset: 0 }));
-    const handleNextPage = () => { if (hasMore) setFilters(prev => ({ ...prev, offset: (prev.offset || 0) + (prev.records || 100) })); };
-    const handlePrevPage = () => { setFilters(prev => ({ ...prev, offset: Math.max(0, (prev.offset || 0) - (prev.records || 100)) })); };
+    const handleFiltersChange = (nextFilters: Partial<LeadsListParams>) => setFilters(previous => ({ ...previous, ...nextFilters }));
     const handleSelectLead = async (lead: Lead) => { const id = lead.SerialId || lead.ClientId; if (id) navigate(`/leads/${id}`, { replace: true }); try { const d = await leadsApi.getLeadByUUID(lead.UUID); setSelectedLead(d.data.lead); } catch { setSelectedLead(lead); } };
     const handleSaveColumns = (nc: TableColumn[]) => { setColumns(nc); localStorage.setItem(STORAGE_KEY, JSON.stringify(nc)); };
 
-    const actions = createLeadActions(leads, selectedLead, setLeads, setSelectedLead, setEditingLead, setConvertingLead, setCreateDialogOpen);
+    const actions = createLeadActions(leads, selectedLead, leadsList.reset, leadsList.updateItem, setSelectedLead, setEditingLead, setConvertingLead, setCreateDialogOpen);
+    const footerProps: LoadMoreFooterProps = {
+        state: leadsList.state,
+        loadedCount: leads.length,
+        totalCount: leadsList.total,
+        singularLabel: 'lead',
+        pluralLabel: 'leads',
+        errorPhase: leadsList.errorPhase,
+        onLoadMore: () => { void leadsList.loadMore(); },
+        onRetry: () => { void leadsList.retry(); },
+    };
 
     const detailAndDialogs = (
         <>
@@ -133,10 +148,9 @@ export function LeadsPage() {
                     }
                 >
                     <LeadsMobileList
-                        filteredLeads={filteredLeads}
+                        filteredLeads={leads}
                         loading={loading}
-                        hasMore={hasMore}
-                        onLoadMore={loadMoreLeads}
+                        footerProps={footerProps}
                         onSelectLead={handleSelectLead}
                         timezone={company?.timezone}
                     />
@@ -187,7 +201,7 @@ export function LeadsPage() {
                     {/* Аквариум .blanc-page-card снесён (правило 7): невидимый layout-контейнер */}
                     <div className="flex flex-1 flex-col min-h-0">
                         <div className="flex-1 flex flex-col overflow-x-auto">
-                            <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }} />
+                            <LeadsTable leads={leads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} footerProps={footerProps} sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }} />
                         </div>
                     </div>
                 </>

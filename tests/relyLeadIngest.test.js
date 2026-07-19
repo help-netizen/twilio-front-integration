@@ -443,7 +443,11 @@ describe('rejected lead read/count behavior', () => {
 
     test('TC-R6-01 · list and detail DTOs expose the marker through Metadata and top level', async () => {
         const row = markerRow();
-        mockQuery.mockResolvedValueOnce({ rows: [row] }).mockResolvedValueOnce({ rows: [row] });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 1 }] })
+            .mockResolvedValueOnce({ rows: [{ ...row, __cursor_value: '2026-07-18T12:00:00.000001Z', __cursor_id: '77' }] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [row] });
 
         const listed = await leadsService.listLeads({ companyId: COMPANY });
         const detail = await leadsService.getLeadByUUID('RL01', COMPANY);
@@ -452,7 +456,7 @@ describe('rejected lead read/count behavior', () => {
             expect(lead.Metadata.rely_filter).toEqual(row.metadata.rely_filter);
             expect(lead.rely_filter).toEqual(row.metadata.rely_filter);
         }
-        const [listSql] = mockQuery.mock.calls[0];
+        const [listSql] = mockQuery.mock.calls.find(([sql]) => /SELECT l\.\*, c\.full_name AS contact_name/i.test(sql));
         expect(listSql).toMatch(/l\.company_id\s*=\s*\$1/);
         expect(listSql).toContain("l.status NOT IN ('Lost', 'Converted')");
     });

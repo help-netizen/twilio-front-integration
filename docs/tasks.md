@@ -10749,3 +10749,311 @@ git diff --stat master -- tests/relyLead*   # ПУСТО
 - T3 — рефактор `PulseCallAudioPlayer.tsx`: минус локальный <audio>/стейт, чип Play/Pause, seek'и через контекст; live-режим не тронут. ✅
 - T4 — монтаж в `PulsePage.tsx` (провайдер + бар). ✅
 - T5 — vitest: TC-PP-01…09; прогон фронт-сьютов + `npm run build`. ✅
+## LIST-PAGINATION-UNIFY-001 — unified manual Load more pagination [IN PROGRESS]
+
+**Authoritative spec:** `docs/specs/LIST-PAGINATION-UNIFY-001.md`.
+
+**Execution:** strictly sequential on this machine: **T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8 → T9 → T10 → T11 → T12 → T13 → T14 → T15**. T1–T8 establish and prove every backend contract before any page integration begins. No parallel workers/watchers/dev servers.
+
+**Global constraints:** rows/tiles/filter controls unchanged; Lead/Job/Task `MobileListPage` unchanged; Contacts/Payments shell conversion is debt; no dependency; no `src/server.js`, `frontend/src/lib/authedFetch.ts`, or `frontend/src/hooks/useRealtimeEvents.ts` edit; no commit/push/deploy. Continuation is manual-only: no observer, sentinel, scroll listener, restored-tab/reconnect handler, or effect-driven next-page fetch.
+
+**Page constants:** Leads 100; Jobs/Tasks/Contacts/Payments 50; equal on mobile/desktop. Jobs default is `start_date DESC NULLS LAST, id DESC`. Lead default cursor is `(created_at,id)`, with dynamic cursor tuples for its retained alternate sort controls.
+
+### LPU-T1: shared cursor codec and comparator contract
+
+**Goal:** create `backend/src/utils/listCursor.js` with versioned base64url encode/decode, canonical SHA-256 query fingerprinting, endpoint/sort/direction/tuple validation, decimal-string BIGINT handling, microsecond timestamp text handling, nullable-sort tuple support, and typed `INVALID_CURSOR` failures. Add `tests/listCursor.test.js`; tests exercise actual codec/fingerprint/comparison helper logic rather than source text.
+
+**Files:** `backend/src/utils/listCursor.js` (NEW), `tests/listCursor.test.js` (NEW).
+
+**Acceptance:** malformed/oversized tokens, wrong version/endpoint/fingerprint/arity/type, unsafe sort text, cross-company/effective-scope reuse, and Number-unsafe IDs reject; identical normalized inputs fingerprint identically regardless of object insertion order; changing any filter, sort, direction, page size, company, provider scope, or task actor changes the fingerprint; UTC timestamp values retain six fractional digits; ASC/DESC/null-rank predicates and bind order have tests; all SQL values remain parameters.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listCursor.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+node -e "require('./backend/src/utils/listCursor')"
+```
+
+**Dependencies:** none. **Status:** planned.
+
+### LPU-T2: cursor indexes migration (187; 186 occupied, re-check immediately)
+
+**Goal:** only after resolving the live worktree and remote-head maxima, create the forward/rollback migration from spec §10 and `tests/listPaginationMigration.test.js`. Current names are `187_list_pagination_cursor_indexes.sql` and `rollback_187_list_pagination_cursor_indexes.sql` because 186 is occupied; if 187 is also occupied, use the next free number for both and update spec/task references in the same task.
+
+**Files:** `backend/db/migrations/NNN_list_pagination_cursor_indexes.sql` (NEW), `backend/db/migrations/rollback_NNN_list_pagination_cursor_indexes.sql` (NEW), `tests/listPaginationMigration.test.js` (NEW), spec/task number references only if renumbered.
+
+**Pre-create number gate (run immediately before `apply_patch` creates either migration):**
+
+```bash
+find backend/db/migrations -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' -exec basename {} \; | sort -n | tail -n 1
+git ls-remote origin refs/heads/master
+git rev-parse origin/master
+git ls-tree -r --name-only origin/master backend/db/migrations | sed -n 's#backend/db/migrations/\([0-9][0-9][0-9]\)_.*#\1#p' | sort -n | tail -n 1
+```
+
+The `git ls-remote` hash must equal the inspected `origin/master` object. If it does not, stop before creating files and obtain a read-only view of that exact remote tree; a stale tracking ref is not evidence.
+
+**Acceptance:** exactly the six approved indexes in spec §10; `IF NOT EXISTS`; rollback drops exactly those names with `IF EXISTS`; no table/data rewrite; apply twice is harmless; rollback and re-apply succeed on a disposable dev database; migration test pins forward/rollback parity and sort directions.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationMigration.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+test -n "$LIST_PAGINATION_DEV_DB_URL"
+psql "$LIST_PAGINATION_DEV_DB_URL" -v ON_ERROR_STOP=1 -f backend/db/migrations/NNN_list_pagination_cursor_indexes.sql
+psql "$LIST_PAGINATION_DEV_DB_URL" -v ON_ERROR_STOP=1 -f backend/db/migrations/NNN_list_pagination_cursor_indexes.sql
+psql "$LIST_PAGINATION_DEV_DB_URL" -v ON_ERROR_STOP=1 -f backend/db/migrations/rollback_NNN_list_pagination_cursor_indexes.sql
+psql "$LIST_PAGINATION_DEV_DB_URL" -v ON_ERROR_STOP=1 -f backend/db/migrations/NNN_list_pagination_cursor_indexes.sql
+```
+
+`NNN` is replaced by the verified number, never passed literally. **Dependencies:** T1. **Status:** planned.
+
+### LPU-T3: Leads cursor/filter/sort/total + fail-closed tenant
+
+**Goal:** implement spec §5.1 in the real Leads route/service. Add server search/source/job-type/rejected predicates, the complete sort map, dynamic keysets for alternate controls, `(created_at,id)` default, exact first-page total, and `limit+1`. Retain additive offset compatibility. Require tenant context in route and service before SQL. Add `tests/leadsListPagination.test.js`.
+
+**Files:** `backend/src/routes/leads.js`, `backend/src/services/leadsService.js`, `tests/leadsListPagination.test.js` (NEW).
+
+**Acceptance:** route/service missing-company tests return/throw 403 and observe zero DB calls; every existing Lead control has a server predicate/order test; custom searchable fields are company-scoped; default and alternate equal-value ties page by ID; invalid sort/cursor is 400; page-one total uses the row predicate; continuation has `total:null`; exactly 100 final matches produce `has_more:false,next_cursor:null`; 101 produce 100 + cursor then 1; Lead team/contact hydration remains unchanged and tenant-safe.
+
+**Sabotage:** execute **SAB-LEADS-EXACT-BOUNDARY** from spec §12.2; record RED then restored GREEN.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/leadsListPagination.test.js tests/relyLeadIngest.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+```
+
+**Dependencies:** T1–T2. **Status:** planned.
+
+### LPU-T4: Jobs cursor/source/facet + security correction
+
+**Goal:** implement spec §5.2 in the real Jobs route/service: one `start_date DESC NULLS LAST,id DESC` default, dynamic sort+ID keysets, server `job_source`, exact provider names, complete total, provider facet, limit+1, mandatory tenant in route/service, and the correlated company-scoped searchable-custom-field predicate. Keep existing provider visibility, tags, finance hydration, and offset callers compatible. Add `tests/jobsListPagination.test.js`.
+
+**Files:** `backend/src/routes/jobs.js`, `backend/src/services/jobsService.js`, `tests/jobsListPagination.test.js` (NEW).
+
+**Acceptance:** missing company is 403/zero SQL; no query reads `lead_custom_fields` without current-company correlation; source filtering applies before total/page; all static sorts are closed and every `meta:` key is validated against the current-company catalog then bound as `j.metadata ->> $N` (never interpolated); all sorts tie by ID; provider facet covers all matching visible rows excluding only selected-provider predicate and is first-page-only; assigned-only scope is identical for rows/total/facet; continuation performs no count/facet; existing tags and payment rollups run only for returned page IDs; current job service/provider tests remain green.
+
+**Sabotage:** execute **SAB-JOBS-CUSTOM-FIELD-TENANT**. The fixture must prove both custom-field-definition isolation and row isolation, not merely search for a SQL substring.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/jobsListPagination.test.js tests/jobsService.test.js tests/jobsProviderScope.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+```
+
+**Dependencies:** T1–T3. **Status:** planned.
+
+### LPU-T5: Tasks cursor page/query, global search/sort, total
+
+**Goal:** add the route-only cursor-page query from spec §5.3 while preserving array-returning `tasksQueries.listTasks`, `/api/tasks/count`, and entity lists. Move Tasks-page search and all five sorts to shared backend expressions; apply role scope to rows/count/cursor fingerprint; return pagination. Add `tests/tasksListPagination.test.js`.
+
+**Files:** `backend/src/routes/tasks.js`, `backend/src/db/tasksQueries.js`, `tests/tasksListPagination.test.js` (NEW).
+
+**Acceptance:** manager and non-manager predicates remain identical to today; non-manager totals cannot count another owner's tasks; search matches description, derived parent label, and assignee across the full set; default due/created/ID tuple and alternate sorts walk equal values without duplicates; due nulls stay last both directions; page two runs no count; legacy `listTasks` deep shape and `/count` behavior remain green; malformed cursor/sort is 400 rather than 500.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/tasksListPagination.test.js tests/routes/tasks.test.js tests/tasksCount.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+```
+
+**Dependencies:** T1–T4. **Status:** planned.
+
+### LPU-T6: Contacts ID cursor + total
+
+**Goal:** implement spec §5.4 in the existing Contacts route/service: fixed company/ID keyset, exact total, limit+1, invalid-input 400s, continuation metadata suppression, and additive offset compatibility. Add `tests/contactsListPagination.test.js`.
+
+**Files:** `backend/src/routes/contacts.js`, `backend/src/services/contactsService.js`, `tests/contactsListPagination.test.js` (NEW).
+
+**Acceptance:** company/provider scope is identical in rows and count; cursor IDs are decimal strings; exact 50-row final page has no false positive; page two has no count; search remains case-insensitive across the same four fields; softphone-style `limit=3,offset=0` remains compatible; existing missing-company and provider-isolation tests stay green.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/contactsListPagination.test.js tests/contactsPulseTenantIsolation.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+```
+
+**Dependencies:** T1–T5. **Status:** planned.
+
+### LPU-T7: Payments dynamic cursor + complete aggregate/facets
+
+**Goal:** implement spec §5.5 in `/api/zenbooker/payments`: provider/paid predicates, all seven server sorts, dynamic sort+ID cursor, limit+1, exact page-one count/sum and complete facets, continuation without metadata scans. Add `tests/zenbookerPaymentsListPagination.test.js`.
+
+**Files:** `backend/src/routes/zenbooker/payments.js`, `backend/src/services/zenbookerPaymentsSyncService.js`, `tests/zenbookerPaymentsListPagination.test.js` (NEW).
+
+**Acceptance:** rows and aggregate share the exact final predicate; `pagination.total === aggregates.transaction_count`; `total_amount` is exact decimal text from PostgreSQL and includes every matching row, negative values, and page-51 contributions; provider is exact trimmed-name matching and paid/due semantics match spec; invoice-due and tech sorts are accepted; every sort ties by ID and rejects unknown fields; facets cover the documented base predicate across all matches; continuation has `total/aggregates/facets:null` and no metadata SQL; export code/semantics unchanged.
+
+**Sabotage:** execute **SAB-PAYMENTS-PAGED-AGGREGATE** and record RED then restored GREEN.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/zenbookerPaymentsListPagination.test.js tests/paymentsRoute.test.js tests/zenbookerPaymentsNewChecks.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+```
+
+**Dependencies:** T1–T6. **Status:** planned.
+
+### LPU-T8: backend real-DB page-walk and concurrency gate
+
+**Goal:** create `tests/listPaginationUnify.db.test.js`, using a disposable PostgreSQL database/transaction and the real query/service logic. Seed more than two pages for all five endpoint shapes, including equal timestamp/text sort values. Prove first-page totals, full walks, tenant/visibility predicates, actual concurrent insert behavior, exact-limit boundaries, and Payments aggregate truth. No production file changes in this task.
+
+**Files:** `tests/listPaginationUnify.db.test.js` (NEW).
+
+**Acceptance:** each endpoint's baseline IDs appear exactly once after a page-one/concurrent-ahead-insert/full continuation walk; dynamic Jobs/Payments and fixed Leads/Contacts/Tasks paths are covered; inserted-ahead row does not shift the baseline walk; first page and last page cursor/has-more invariants hold; the real database also repeats the SAB-JOBS-CUSTOM-FIELD-TENANT A/B field-definition fixture and the Payments page-51 aggregate fixture; no fixture persists after the suite; test self-skips with an explicit reason only when `LIST_PAGINATION_TEST_DB_URL` is absent.
+
+**Sabotage:** execute **SAB-CURSOR-OFFSET-INSERT** against one fixed and one dynamic implementation. Replacing continuation with offset must make the real-DB suite red before restoration.
+
+**Verify:**
+
+```bash
+test -n "$LIST_PAGINATION_TEST_DB_URL"
+LIST_PAGINATION_TEST_DB_URL="$LIST_PAGINATION_TEST_DB_URL" node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationUnify.db.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand --detectOpenHandles
+```
+
+**Dependencies:** T1–T7. This is the backend-contract release gate; T9 cannot start until it is green. **Status:** planned.
+
+### LPU-T9: shared frontend hook/core/footer
+
+**Goal:** implement spec §6 once: a manual-only `useInfiniteQuery` adapter, AbortSignal threading, generation rejection, per-cursor one-flight gate, key merge/dedup, five-state derivation, and the always-visible primary **Load more** footer. The pure core is separately testable without adding a DOM-test dependency. Add structural pins for React wiring and the absence of automatic continuation paths.
+
+**Files:** `frontend/src/hooks/useLoadMoreList.ts` (NEW), `frontend/src/hooks/useDebouncedSearch.ts` (NEW), `frontend/src/hooks/loadMoreListCore.ts` (NEW), `frontend/src/hooks/loadMoreListCore.test.ts` (NEW), `frontend/src/components/lists/LoadMoreFooter.tsx` (NEW), `tests/listPaginationUi.structural.test.js` (NEW harness/shared pins).
+
+**Acceptance:** all five footer states derive correctly and first-load remains page-owned; initial vs continuation errors differ; first metadata is retained; duplicate item keys cannot duplicate rows; rapid/repeated button calls for the same cursor admit one fetch; key/reset aborts and late generation cannot commit; retry preserves rows; footer exact copy/grammar/Blanc-token rules pass; source gates prove no observer/sentinel/scroll/restored-tab/reconnect/effect-driven continuation; no protected-file change/new dependency.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationUi.structural.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+(cd frontend && npm test)
+(cd frontend && npm run build)
+```
+
+**Dependencies:** T1–T8. **Status:** planned.
+
+### LPU-T10: Leads page integration
+
+**Goal:** switch both Lead layouts to T9 with page size 100 and 300 ms server search; send every existing filter/sort; remove client filtering/sorting, offsets, Prev/Next, and local mobile append. Replace both footers with the shared footer. Refactor list-affecting Lead actions to reset the chain while retaining detail behavior. Do not change row/tile markup.
+
+**Files:** `frontend/src/types/lead.ts`, `frontend/src/services/leadsApi.ts`, `frontend/src/pages/LeadsPage.tsx`, `frontend/src/hooks/useLeadsActions.ts`, `frontend/src/components/leads/LeadsTable.tsx`, `frontend/src/components/leads/LeadsMobileList.tsx`, `tests/listPaginationUi.structural.test.js` (append Lead pins only).
+
+**Acceptance:** query key contains company and all controls; service consumes AbortSignal; default/alternate sort requests match T3; first load skeleton differs from continuation; `Showing …` and Prev/Next are absent; **Load more** remains visible while more; desktop/mobile flatten the same server order; exact copy is `N of M leads loaded` / `All M leads loaded`; `MobileListPage`, table rows, and mobile cards have no presentation diff.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationUi.structural.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+(cd frontend && npm test)
+(cd frontend && npm run build)
+```
+
+**Dependencies:** T9. **Status:** planned.
+
+### LPU-T11: Jobs page integration + one default
+
+**Goal:** replace `useJobsData`'s replace/append/offset paths with T9, page size 50, 300 ms search, server source filter, and server provider facet. Set `start_date desc` once for both viewports and delete the mobile-only effect. Replace Jobs table/mobile local footers; adapt list refresh/SSE/detail callbacks without modifying the protected realtime hook or row/tile content.
+
+**Files:** `frontend/src/services/jobsApi.ts`, `frontend/src/hooks/useJobsData.ts`, `frontend/src/hooks/useJobsPage.ts`, `frontend/src/pages/JobsPage.tsx`, `frontend/src/components/jobs/JobsTable.tsx`, `frontend/src/components/jobs/JobsMobileList.tsx`, `frontend/src/components/jobs/JobsFilters.tsx`, `frontend/src/components/jobs/JobsMobileBar.tsx`, `frontend/src/components/jobs/JobsFilterBody.tsx` comment, `tests/listPaginationUi.structural.test.js` (append Jobs pins).
+
+**Acceptance:** no `filteredJobs` source predicate remains; provider options come from first-page facet, not loaded rows; one default exists in hook/API requests and mobile grouping stays date-coherent; custom static/metadata sorts send the correct backend keys; both form factors use the same flattened pages/count/footer; detail/list membership or ordering mutations reset, display-only SSE updates cannot create duplicate keys; export semantics unchanged; rows/cards/group markup unchanged.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationUi.structural.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+(cd frontend && npm test)
+(cd frontend && npm run build)
+```
+
+**Dependencies:** T10. **Status:** planned.
+
+### LPU-T12: Tasks page integration
+
+**Goal:** switch Tasks to 50-row T9 pages; send status/parent/search/sort to T5; remove the 500-row snapshot and client `useMemo` search/sort; put the shared footer after desktop rows and mobile groups while retaining `MobileListPage`, grouping, actions, rows, and tiles.
+
+**Files:** `frontend/src/components/tasks/tasksApi.ts`, `frontend/src/pages/TasksPage.tsx`, `tests/listPaginationUi.structural.test.js` (append Tasks pins).
+
+**Acceptance:** 300 ms server search; complete total drives `N of M tasks loaded`; open/all, parent type, every sort, and role scope reset to a first page; loading-more retains groups/rows; complete/snooze refresh membership/order correctly; `/api/tasks/count` consumer is untouched; no `limit:500`, client search, client sort, or old count-only footer remains; mobile/desktop row/tile markup unchanged.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationUi.structural.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+(cd frontend && npm test)
+(cd frontend && npm run build)
+```
+
+**Dependencies:** T11. **Status:** planned.
+
+### LPU-T13: Contacts page integration + double-fire removal
+
+**Goal:** switch Contacts to the ID-cursor adapter, page size 50, and 300 ms trailing search. Delete offset/Prev/Next and the direct API call from `handleSearch`; place the shared footer inside the existing scroll content. Keep current desktop/mobile-responsive shell and contact tiles.
+
+**Files:** `frontend/src/types/contact.ts`, `frontend/src/services/contactsApi.ts`, `frontend/src/pages/ContactsPage.tsx`, `frontend/src/components/contacts/ContactsList.tsx`, `tests/listPaginationUi.structural.test.js` (append Contacts pins).
+
+**Acceptance:** one debounced query per settled search generation; obsolete search request receives abort and cannot commit; empty/first/more/error/all states match T9; no offset or Prev/Next control remains; footer reads `N of M contacts loaded`; softphone list API continues to compile/use offset independently; no `MobileListPage` conversion or tile redesign.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationUi.structural.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+(cd frontend && npm test)
+(cd frontend && npm run build)
+```
+
+**Dependencies:** T12. **Status:** planned.
+
+### LPU-T14: Payments page integration + authoritative money header
+
+**Goal:** switch `usePaymentsPage` to 50-row T9 pages; send provider/paid/sort to T7; consume server aggregates and facets; delete loaded-snapshot filtering/sorting/page slicing/sum and the 200/1000 fetch caps; replace Prev/Next with the shared footer. Keep the 400 ms search debounce, table rows, detail panel, sync, and export control design.
+
+**Files:** `frontend/src/components/payments/paymentTypes.ts`, `frontend/src/hooks/usePaymentsPage.ts`, `frontend/src/pages/PaymentsPage.tsx`, `frontend/src/pages/PaymentsPage.css`, `tests/listPaginationUi.structural.test.js` (append Payments pins).
+
+**Acceptance:** header displays server `transaction_count` and exact server `total_amount` for all active filters even when only 50 rows are loaded; method/provider lists and undeposited badge use server facets; all seven table sorts reset/refetch; no `sortedRows.slice`, client reduce money sum, `limit=1000`, default-200 snapshot, or Prev/Next remains; deposit toggle and sync reset first-page metadata; export retains its documented date-range-only scope; existing rows/detail markup unchanged and no `MobileListPage` redesign.
+
+**Verify:**
+
+```bash
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationUi.structural.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+(cd frontend && npm test)
+(cd frontend && npm run build)
+```
+
+**Dependencies:** T13. **Status:** planned.
+
+### LPU-T15: owner-run production-copy EXPLAIN gate + full release verification (no feature code)
+
+**Goal:** prepare the exact read-only spec §11 EXPLAIN harness for the owner, then run all locally available feature/stay-green/real-DB/frontend gates. The owner alone runs the harness against the production copy before ship. Any plan failure returns to its owning task; T15 restarts in full. No assertion weakening. No production deploy/commit.
+
+**Files:** `tests/listPaginationPlans.db.test.js` (NEW, verification-only; wraps the exact real service SQL for JSON EXPLAIN). No feature code. Record actual plan summaries, sabotage RED/GREEN evidence, migration number/hash evidence, and command results in the task handoff.
+
+**Perf acceptance:** all listed page-one/page-two/count/facet/aggregate/search/alternate-sort statements are run three times with actual page-one cursor tuples; approved default indexes appear; continuation has no metadata scans; no temp spill; warm row pages ≤100 ms; warm first-page metadata/search ≤250 ms. A failing scan/limit blocks release and returns with `actual rows`, removed rows, buffers, and timing; no speculative migration is added in T15.
+
+**Verify — feature + stay-green:**
+
+```bash
+test -n "$LIST_PAGINATION_PRODCOPY_URL"
+LIST_PAGINATION_PRODCOPY_URL="$LIST_PAGINATION_PRODCOPY_URL" PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=5000' node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationPlans.db.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand --detectOpenHandles
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listCursor.test.js tests/listPaginationMigration.test.js tests/leadsListPagination.test.js tests/jobsListPagination.test.js tests/tasksListPagination.test.js tests/contactsListPagination.test.js tests/zenbookerPaymentsListPagination.test.js tests/listPaginationUi.structural.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/relyLeadIngest.test.js tests/jobsService.test.js tests/jobsProviderScope.test.js tests/routes/tasks.test.js tests/tasksCount.test.js tests/contactsPulseTenantIsolation.test.js tests/paymentsRoute.test.js tests/zenbookerPaymentsNewChecks.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand
+test -n "$LIST_PAGINATION_TEST_DB_URL"
+LIST_PAGINATION_TEST_DB_URL="$LIST_PAGINATION_TEST_DB_URL" node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js tests/listPaginationUnify.db.test.js --rootDir . --runTestsByPath --testPathIgnorePatterns "/node_modules/" --runInBand --detectOpenHandles
+(cd frontend && npm test)
+(cd frontend && npm run build)
+git diff --check
+git diff -- src/server.js frontend/src/lib/authedFetch.ts frontend/src/hooks/useRealtimeEvents.ts frontend/src/components/layout/MobileListPage.tsx
+```
+
+The final `git diff` command must be empty. Also inspect row/tile render sections against the pre-task baseline; pagination-prop/footer-only edits are allowed, presentation edits are not.
+
+**Manual UX gate:** for each page at desktop and mobile width, confirm reaching the end sends no request; the visible **Load more** button sends exactly one request per click/cursor; double-click dedup; continuation error retains rows and retries only on click; empty; exact final page; header/filter/sort reset. Payments additionally checks a >50-row fixture's server count/sum against SQL.
+
+**Dependencies:** T1–T14 and all four sabotage controls restored GREEN. **Status:** planned.
+
+## LIST-PAGINATION-UNIFY-001 — task ownership and release order
+
+1. Backend contract owners are serial: cursor utility T1, migration T2, endpoint services T3–T7, real-DB gate T8.
+2. Frontend starts only after T8: shared primitive T9, then one page at a time T10–T14. `tests/listPaginationUi.structural.test.js` is created by T9 and append-only in page order.
+3. T15 is verification-only. Any defect is fixed in T1–T14's owning files and the complete T15 gate is rerun.
+4. Named sabotage ownership: Lead boundary=T3; Jobs tenant search=T4; Payments page aggregate=T7; concurrent insert/offset=T8; manual-only and cursor-click dedup=T9.
+5. Migration ownership is T2 only. No later task renumbers or edits it except a T15-discovered correctness fix returned to T2.

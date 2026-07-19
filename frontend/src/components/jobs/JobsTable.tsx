@@ -1,6 +1,5 @@
-import { Button } from '../ui/button';
 import {
-    ChevronLeft, ChevronRight, Loader2,
+    Loader2,
     ArrowUpDown, ArrowUp, ArrowDown,
     MoreVertical, Copy,
 } from 'lucide-react';
@@ -9,6 +8,7 @@ import type { ColumnDef } from './jobHelpers';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
+import { LoadMoreFooter, type LoadMoreFooterProps } from '../lists/LoadMoreFooter';
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
@@ -22,11 +22,7 @@ interface JobsTableProps {
     sortOrder: 'asc' | 'desc';
     onSortChange: (field: string, order: 'asc' | 'desc') => void;
     onSelectJob: (job: LocalJob) => void;
-    offset: number;
-    totalCount: number;
-    hasMore: boolean;
-    limit: number;
-    onLoadJobs: (offset: number) => void;
+    footerProps: LoadMoreFooterProps;
     onCopyJob?: (job: LocalJob) => void;
 }
 
@@ -42,11 +38,7 @@ export function JobsTable({
     sortOrder,
     onSortChange,
     onSelectJob,
-    offset,
-    totalCount,
-    hasMore,
-    limit,
-    onLoadJobs,
+    footerProps,
     onCopyJob,
 }: JobsTableProps) {
     const handleHeaderClick = (col: ColumnDef) => {
@@ -69,6 +61,13 @@ export function JobsTable({
 
     // Empty state
     if (jobs.length === 0) {
+        if (footerProps.state === 'error+retry') {
+            return (
+                <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
+                    <LoadMoreFooter {...footerProps} />
+                </div>
+            );
+        }
         return (
             <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
                 No jobs found
@@ -148,18 +147,7 @@ export function JobsTable({
                 </table>
             </div>
 
-            {/* Pagination — плоско на канвасе, без карты и границы */}
-            <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
-                <span>{totalCount > 0 ? `${offset + 1}–${offset + jobs.length} from ${totalCount} jobs` : '0 jobs'}</span>
-                <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" disabled={offset === 0} onClick={() => onLoadJobs(Math.max(0, offset - limit))}>
-                        <ChevronLeft className="size-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" disabled={!hasMore} onClick={() => onLoadJobs(offset + limit)}>
-                        <ChevronRight className="size-4" />
-                    </Button>
-                </div>
-            </div>
+            <LoadMoreFooter {...footerProps} />
         </>
     );
 }

@@ -75,6 +75,34 @@ export interface PaymentDetail extends Omit<PaymentRow, 'check_deposited'> {
 export type SortField = 'payment_date' | 'amount_paid' | 'invoice_amount_due' | 'job_number' | 'client' | 'payment_methods' | 'tech';
 export type SortDir = 'asc' | 'desc';
 
+export interface PaymentsListAggregates {
+    transaction_count: number;
+    total_amount: string;
+}
+
+export interface PaymentsListFacets {
+    payment_methods: string[];
+    providers: string[];
+    undeposited_check_count: number;
+}
+
+export interface PaymentsPagination {
+    mode: 'cursor' | 'offset';
+    limit: number;
+    returned: number;
+    has_more: boolean;
+    next_cursor: string | null;
+    total: number | null;
+}
+
+export interface PaymentsListResult {
+    rows: PaymentRow[];
+    total: number | null;
+    aggregates: PaymentsListAggregates | null;
+    facets: PaymentsListFacets | null;
+    pagination: PaymentsPagination;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function formatPaymentDate(iso: string, tz: string = 'America/New_York'): string {
