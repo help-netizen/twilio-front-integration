@@ -2486,3 +2486,9 @@ GPT-implementer: 2 волны ACCEPT (backend+frontend), 0 fix-раундов. T
 
 ---
 
+## 2026-07-18 — DISPATCH-SETTINGS-NULL-FIX: крах сохранения Dispatch Settings (⚙️ на /schedule)
+
+Первое сохранение панели Dispatch Settings падало с `null value in column "buffer_minutes" … violates not-null constraint`. Причина: у апсерта `upsertDispatchSettings` UPDATE-ветка COALESCE-ит каждое поле (частичный пейлоад легален by design), а INSERT-ветка передавала голые NULL-параметры — у компании БЕЗ строки настроек (до первого сохранения работают кодовые дефолты) частичный пейлоад вставлял явный NULL в NOT NULL-колонки (явный NULL обходит DEFAULT). Фикс: INSERT-ветка зеркалит дефолты схемы через COALESCE (`America/New_York`, 08:00–18:00, {1..5}, 60, 0, 'mi', '{}'). Регрессия: `tests/dispatchSettingsUpsert.db.test.js` — real-PG (первое сохранение «только часы» → строка с дефолтами; второе — merge частичного апдейта) + структурный контроль; саботаж (возврат старого INSERT) воспроизводит краш; schedule-свип 69/69.
+
+---
+

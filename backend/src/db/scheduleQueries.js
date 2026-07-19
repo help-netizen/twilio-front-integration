@@ -302,7 +302,15 @@ async function upsertDispatchSettings(companyId, settings) {
 
     const { rows } = await db.query(
         `INSERT INTO dispatch_settings (company_id, timezone, work_start_time, work_end_time, work_days, slot_duration, buffer_minutes, distance_unit, settings_json)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'mi'), $9)
+         VALUES ($1,
+                 COALESCE($2, 'America/New_York'),
+                 COALESCE($3, '08:00'::time),
+                 COALESCE($4, '18:00'::time),
+                 COALESCE($5, '{1,2,3,4,5}'::smallint[]),
+                 COALESCE($6, 60),
+                 COALESCE($7, 0),
+                 COALESCE($8, 'mi'),
+                 COALESCE($9, '{}'::jsonb))
          ON CONFLICT (company_id)
          DO UPDATE SET
             timezone        = COALESCE($2, dispatch_settings.timezone),
