@@ -81,7 +81,6 @@ import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 import BlacklistPage from './pages/telephony/BlacklistPage';
 import CompanySchedulePage from './pages/CompanySchedulePage';
 import BankTransferDetailsPage from './pages/BankTransferDetailsPage';
-import JobListColumnsPage from './pages/JobListColumnsPage';
 
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import SettingsLayout from './components/settings/SettingsLayout';
@@ -174,7 +173,6 @@ function App() {
                 <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
                 <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
                 <Route path="/settings/automation" element={<ProtectedRoute permissions={['tenant.company.manage']}><AutomationPage /></ProtectedRoute>} />
-                <Route path="/settings/jobs/list-columns" element={<ProtectedRoute permissions={['tenant.company.manage']}><JobListColumnsPage /></ProtectedRoute>} />
                 <Route path="/settings/providers" element={<Navigate to="/settings/technicians" replace />} />
                 <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
                 {/* Telephony pages share the Settings shell. TelephonyLayout now owns

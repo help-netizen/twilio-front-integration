@@ -346,14 +346,27 @@ function AreaCardsGrid({ territories, assignments, assignmentDisabled, onSelectA
                         {count} zip code{count !== 1 ? 's' : ''}
                         {states && <span style={{ marginLeft: 6 }}>{states}</span>}
                     </div>
-                    <button
-                        type="button"
-                        className="mt-3 text-xs font-medium"
-                        style={{ color: 'var(--blanc-accent)' }}
-                        onClick={() => onSelectArea(districtId)}
-                    >
-                        View ZIP codes
-                    </button>
+                    {/* The card body is clickable, but that was not discoverable —
+                        this spells the action out. */}
+                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                        <button
+                            type="button"
+                            className="text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                            style={{ color: 'var(--blanc-accent)' }}
+                            disabled={assignmentDisabled}
+                            onClick={() => onManage({ mode: 'district', id: districtId, label: area })}
+                        >
+                            {assignedNames.length > 0 ? 'Edit assigned providers' : 'Set assigned providers'}
+                        </button>
+                        <button
+                            type="button"
+                            className="text-xs font-medium"
+                            style={{ color: 'var(--blanc-ink-3)' }}
+                            onClick={() => onSelectArea(districtId)}
+                        >
+                            View ZIP codes
+                        </button>
+                    </div>
                 </div>
                 );
             })}

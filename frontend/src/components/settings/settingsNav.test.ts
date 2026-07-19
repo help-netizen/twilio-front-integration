@@ -24,8 +24,8 @@ describe('SETTINGS-IA-001 navigation model', () => {
         expect(SETTINGS_NAV.filter(group => group.kind === 'tenant').map(group => group.title)).toEqual([
             'Business',
             'Scheduling & service areas',
-            'Jobs',
-            'Phone & AI',
+            'Jobs and Leads',
+            'Communication and AI',
             'Billing & payments',
             'Apps & integrations',
             'Team & access',

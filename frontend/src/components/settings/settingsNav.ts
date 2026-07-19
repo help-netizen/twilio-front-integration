@@ -96,7 +96,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     },
     {
         id: 'jobs',
-        title: 'Jobs',
+        title: 'Jobs and Leads',
         landingPath: SETTINGS_GROUP_PATHS.jobs,
         kind: 'tenant',
         links: [
@@ -105,19 +105,20 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
                 matches: [{ pathname: '/settings/lead-form', exact: true, search: { tab: 'settings' }, allowMissingSearch: ['tab'] }],
             },
             {
-                id: 'job-workflows', label: 'Job workflows', to: '/settings/lead-form?tab=workflows', permissions: ['tenant.company.manage'],
+                id: 'job-workflows', label: 'Workflows', to: '/settings/lead-form?tab=workflows', permissions: ['tenant.company.manage'],
                 matches: [
                     { pathname: '/settings/lead-form', exact: true, search: { tab: 'workflows' } },
                     { pathname: '/settings/workflows' },
                 ],
             },
             { id: 'automations', label: 'Automations', to: '/settings/automation', permissions: ['tenant.company.manage'] },
-            { id: 'job-list-columns', label: 'Job list columns', to: '/settings/jobs/list-columns', permissions: ['tenant.company.manage'] },
+            // Job list columns intentionally NOT here: column choice is edited in
+            // context on the Jobs page (owner decision), not in Settings.
         ],
     },
     {
         id: 'phone-ai',
-        title: 'Phone & AI',
+        title: 'Communication and AI',
         landingPath: SETTINGS_GROUP_PATHS['phone-ai'],
         kind: 'tenant',
         links: [

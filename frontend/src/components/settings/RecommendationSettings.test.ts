@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import source from './RecommendationSettings.tsx?raw';
 
 /**
  * MinutePicker regression — the segmented 0/30/60/Custom control.
@@ -14,22 +13,17 @@ import { join } from 'path';
  * Fix: Custom is an explicit user choice only (`useState(false)`); a saved
  * non-preset value still opens the input through `!isPreset`.
  */
-const SOURCE = readFileSync(
-    join(__dirname, 'RecommendationSettings.tsx'),
-    'utf8',
-);
-
 describe('MinutePicker preset/custom latching', () => {
     it('does not seed the Custom toggle from the mount-time value', () => {
-        expect(SOURCE).toContain('const [custom, setCustom] = useState(false);');
-        expect(SOURCE).not.toContain('useState(!isPreset)');
+        expect(source).toContain('const [custom, setCustom] = useState(false);');
+        expect(source).not.toContain('useState(!isPreset)');
     });
 
     it('still derives the custom input from a non-preset value', () => {
-        expect(SOURCE).toContain('const showCustomInput = custom || !isPreset;');
+        expect(source).toContain('const showCustomInput = custom || !isPreset;');
     });
 
     it('selecting a preset clears the custom toggle', () => {
-        expect(SOURCE).toContain('onClick={() => { setCustom(false); onChange(String(p)); }}');
+        expect(source).toContain('onClick={() => { setCustom(false); onChange(String(p)); }}');
     });
 });
