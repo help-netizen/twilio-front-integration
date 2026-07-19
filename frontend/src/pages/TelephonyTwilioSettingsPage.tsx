@@ -312,8 +312,8 @@ export default function TelephonyTwilioSettingsPage() {
 
     return (
         <SettingsPageShell
-            backTo="/settings/integrations"
-            backLabel="Integrations"
+            backTo="/settings/phone-ai"
+            backLabel="Phone & AI"
             title="Telephony — Twilio"
             description="Choose a plan or start with a phone number."
         >
@@ -508,7 +508,7 @@ export default function TelephonyTwilioSettingsPage() {
                             </p>
                             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                                 <Button onClick={() => navigate('/settings/telephony')}>Manage telephony</Button>
-                                <Button variant="outline" onClick={() => navigate('/settings/integrations')}>Back to Integrations</Button>
+                                <Button variant="outline" onClick={() => navigate('/settings/phone-ai')}>Back to Phone &amp; AI</Button>
                             </div>
                         </div>
                     )}

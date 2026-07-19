@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { fetchIntegrations, createIntegration, revokeIntegration, fetchWebhookUrl, regenerateWebhookUrl, fetchZenbookerApiKey, saveZenbookerApiKey, type Integration } from '../services/integrationsApi';
 import { disconnectMarketplaceInstallation, fetchMarketplaceApps, installMarketplaceApp, retryMarketplaceProvisioning, type MarketplaceApp } from '../services/marketplaceApi';
@@ -16,6 +16,7 @@ import { CreateDialog, SecretDialog, RevokeDialog, RegenerateDialog } from './In
 import { RelyLeadsSettingsDialog } from './RelyLeadsSettingsDialog';
 import { RateMeSettingsDialog } from './RateMeSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { INTEGRATION_TAB_COPY, integrationTabFromSearchParams } from './integrationSettingsTabs';
 
 function formatDate(dateStr: string | null | undefined) {
     if (!dateStr) return '';
@@ -147,7 +148,10 @@ function MarketplaceDisconnectDialog({
 
 export function IntegrationsPage() {
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
     const queryClient = useQueryClient();
+    const activeTab = integrationTabFromSearchParams(searchParams);
+    const tabCopy = INTEGRATION_TAB_COPY[activeTab];
     const [createOpen, setCreateOpen] = useState(false);
     const [secretModalOpen, setSecretModalOpen] = useState(false);
     const [newIntegration, setNewIntegration] = useState<Integration | null>(null);
@@ -198,13 +202,21 @@ export function IntegrationsPage() {
 
     return (
         <SettingsPageShell
-            title="Integrations"
-            description="Connect apps, manage API credentials, and configure external services"
+            title={tabCopy.title}
+            description={tabCopy.description}
         >
-            <Tabs defaultValue="marketplace" className="space-y-6">
+            <Tabs
+                value={activeTab}
+                onValueChange={value => {
+                    const next = new URLSearchParams(searchParams);
+                    next.set('tab', value);
+                    setSearchParams(next, { replace: true });
+                }}
+                className="space-y-6"
+            >
                 <TabsList>
                     <TabsTrigger value="marketplace">Marketplace</TabsTrigger>
-                    <TabsTrigger value="api-keys">API Keys</TabsTrigger>
+                    <TabsTrigger value="api-keys">API access</TabsTrigger>
                     <TabsTrigger value="zenbooker">Zenbooker</TabsTrigger>
                 </TabsList>
 
@@ -337,12 +349,17 @@ export function IntegrationsPage() {
                 </TabsContent>
 
                 <TabsContent value="api-keys" className="mt-0">
-                    <div className="flex items-center justify-between mb-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
                             <h2 className="text-lg font-semibold text-[var(--blanc-ink-1)]">Manual API Keys</h2>
                             <p className="text-sm text-[var(--blanc-ink-2)] mt-1">Credentials for custom/private integrations. Marketplace apps use hidden credentials.</p>
                         </div>
-                        <Button onClick={() => setCreateOpen(true)} size="sm"><Plus className="h-4 w-4 mr-2" />Create Integration</Button>
+                        <div className="flex flex-wrap gap-2">
+                            <Button variant="outline" onClick={() => navigate('/settings/api-docs')} size="sm">
+                                <ExternalLink className="h-4 w-4 mr-2" />API reference
+                            </Button>
+                            <Button onClick={() => setCreateOpen(true)} size="sm"><Plus className="h-4 w-4 mr-2" />Create Integration</Button>
+                        </div>
                     </div>
                     {isLoading ? <div className="text-center text-[var(--blanc-ink-2)] py-12">Loading…</div> : integrations.length === 0 ? (
                         <div className="text-center py-12 border border-[var(--blanc-line)] rounded-xl"><Key className="h-12 w-12 text-[var(--blanc-ink-3)] mx-auto mb-4" /><p className="text-[var(--blanc-ink-2)]">No integrations yet</p><p className="text-sm text-[var(--blanc-ink-3)] mt-1">Create your first manual integration to start accepting leads via API.</p></div>

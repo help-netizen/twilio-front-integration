@@ -80,9 +80,13 @@ import OperationsDashboardPage from './pages/telephony/OperationsDashboardPage';
 import UserGroupsPage from './pages/telephony/UserGroupsPage';
 import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 import BlacklistPage from './pages/telephony/BlacklistPage';
+import CompanySchedulePage from './pages/CompanySchedulePage';
+import BankTransferDetailsPage from './pages/BankTransferDetailsPage';
+import JobListColumnsPage from './pages/JobListColumnsPage';
 
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import SettingsLayout from './components/settings/SettingsLayout';
+import { SettingsLandingRedirect } from './components/settings/SettingsLandingRedirect';
 import { EventNotification } from './components/EventNotification';
 import NotificationReminderBanner from './components/NotificationReminderBanner';
 import SSEPushBridge from './components/SSEPushBridge';
@@ -135,7 +139,7 @@ function App() {
               <Route path="/contacts" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               <Route path="/contacts/:contactId" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               
-              <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
+              <Route path="/settings" element={<SettingsLandingRedirect />} />
               <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
               <Route path="/settings/email" element={<Navigate to="/settings/integrations/google-email" replace />} />
 
@@ -149,10 +153,21 @@ function App() {
                   Pathless layout route: SettingsLayout renders the sidebar + <Outlet/>;
                   the per-route ProtectedRoute guards are unchanged. */}
               <Route element={<SettingsLayout />}>
+                <Route path="/settings/business" element={<SettingsLandingRedirect groupId="business" />} />
+                <Route path="/settings/scheduling" element={<SettingsLandingRedirect groupId="scheduling" />} />
+                <Route path="/settings/jobs" element={<SettingsLandingRedirect groupId="jobs" />} />
+                <Route path="/settings/phone-ai" element={<SettingsLandingRedirect groupId="phone-ai" />} />
+                <Route path="/settings/billing-payments" element={<SettingsLandingRedirect groupId="billing-payments" />} />
+                <Route path="/settings/apps-integrations" element={<SettingsLandingRedirect groupId="apps-integrations" />} />
+                <Route path="/settings/team-access" element={<SettingsLandingRedirect groupId="team-access" />} />
+                <Route path="/settings/alerts-notifications" element={<SettingsLandingRedirect groupId="alerts-notifications" />} />
+                <Route path="/settings/platform-administration" element={<SettingsLandingRedirect groupId="platform-administration" />} />
                 <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/scheduling/company-schedule" element={<ProtectedRoute permissions={['schedule.dispatch', 'tenant.company.manage']}><CompanySchedulePage /></ProtectedRoute>} />
                 <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
                 <Route path="/settings/roles" element={<ProtectedRoute permissions={['tenant.roles.manage']}><RolesAccessPage /></ProtectedRoute>} />
                 <Route path="/settings/billing" element={<ProtectedRoute permissions={['tenant.company.manage']}><BillingPage /></ProtectedRoute>} />
+                <Route path="/settings/billing/bank-transfer-details" element={<ProtectedRoute permissions={['tenant.company.manage']}><BankTransferDetailsPage /></ProtectedRoute>} />
                 <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/lead-form" element={<ProtectedRoute permissions={['tenant.company.manage']}><LeadFormSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/quick-messages" element={<ProtectedRoute permissions={['tenant.company.manage']}><QuickMessagesPage /></ProtectedRoute>} />
@@ -160,6 +175,7 @@ function App() {
                 <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
                 <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
                 <Route path="/settings/automation" element={<ProtectedRoute permissions={['tenant.company.manage']}><AutomationPage /></ProtectedRoute>} />
+                <Route path="/settings/jobs/list-columns" element={<ProtectedRoute permissions={['tenant.company.manage']}><JobListColumnsPage /></ProtectedRoute>} />
                 <Route path="/settings/providers" element={<ProtectedRoute permissions={['tenant.company.manage']}><ProvidersPage /></ProtectedRoute>} />
                 <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />

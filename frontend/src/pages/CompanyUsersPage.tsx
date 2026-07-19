@@ -20,7 +20,7 @@ export default function CompanyUsersPage() {
 
     return (
         <SettingsPageShell
-            title="Company users"
+            title="Users"
             description="Manage who can sign in, their role, and what they can do."
             actions={
                 <Button onClick={() => { h.setCreateForm(() => ({ full_name: '', email: '', role_key: 'dispatcher' })); h.setTempPassword(null); h.setCreateOpen(true); }}>

@@ -35,7 +35,7 @@ export default function DocumentTemplatesPage() {
 
     return (
         <SettingsPageShell
-            title="Document Templates"
+            title="Document templates"
             description="Customize estimates, invoices, and work orders"
         >
             {loading && <div className="text-sm text-[color:var(--blanc-ink-3)]">Loading…</div>}

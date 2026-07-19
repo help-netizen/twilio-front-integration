@@ -10,7 +10,6 @@ import {
 import { EMPTY_ADDRESS, fieldsFromStored, type AddressFields } from '../components/addressAutoHelpers';
 import { CompanyBaseAddress, type CompanyBase } from '../components/settings/CompanyBaseAddress';
 import { BaseAddressForm } from '../components/settings/BaseAddressForm';
-import { RecommendationSettings } from '../components/settings/RecommendationSettings';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { TechnicianSettingsPanel } from '../components/settings/TechnicianSettingsPanel';
 import { technicianServiceAreaSummary } from '../components/settings/TechnicianServiceAreas';
@@ -160,7 +159,7 @@ export default function TechnicianPhotosPage() {
 
     return (
         <SettingsPageShell
-            backTo="/settings/integrations"
+            backTo="/settings/scheduling"
             backLabel="Settings"
             title="Technicians"
             description="Active Zenbooker technicians, their recurring work schedules, payment-page photos, and scheduling bases."
@@ -170,8 +169,6 @@ export default function TechnicianPhotosPage() {
                 hint="The default base for providers who match it. Also editable in Settings → Company."
                 onChange={setCompanyBase}
             />
-
-            <RecommendationSettings />
 
             {loading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>

@@ -86,7 +86,7 @@ export default function AutomationPage() {
 
     return (
         <SettingsPageShell
-            title="Automation"
+            title="Automations"
             description="React to events and timers — send messages, create tasks, run agents."
             actions={
                 <>

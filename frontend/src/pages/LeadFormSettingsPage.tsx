@@ -19,10 +19,18 @@ import { Label } from '../components/ui/label';
 import MachineList from '../components/workflows/MachineList';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { SettingsSection } from '../components/settings/SettingsSection';
+import { useSearchParams } from 'react-router-dom';
 
 const FSM_EDITOR_ENABLED = import.meta.env.VITE_FSM_EDITOR_ENABLED !== 'false'; // default true
 
+export type JobSettingsTab = 'settings' | 'workflows';
+
+export function jobSettingsTabFromSearchParams(params: URLSearchParams): JobSettingsTab {
+    return params.get('tab') === 'workflows' && FSM_EDITOR_ENABLED ? 'workflows' : 'settings';
+}
+
 export default function LeadFormSettingsPage() {
+    const [searchParams, setSearchParams] = useSearchParams();
     const [jobTypes, setJobTypes] = useState<JobType[]>([]);
     const [fields, setFields] = useState<CustomField[]>([]);
     const [loading, setLoading] = useState(true);
@@ -36,7 +44,7 @@ export default function LeadFormSettingsPage() {
     const [newFieldName, setNewFieldName] = useState('');
     const [newFieldType, setNewFieldType] = useState('text');
     const [newFieldSearchable, setNewFieldSearchable] = useState(true);
-    const [activeTab, setActiveTab] = useState('settings');
+    const activeTab = jobSettingsTabFromSearchParams(searchParams);
     const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
 
     const load = useCallback(async () => { try { const res = await authedFetch('/api/settings/lead-form'); const data = await res.json(); if (data.success) { setJobTypes(data.jobTypes); setFields(data.customFields); } else toast.error('Failed to load settings'); } catch { toast.error('Network error loading settings'); } finally { setLoading(false); } }, []);
@@ -63,8 +71,10 @@ export default function LeadFormSettingsPage() {
 
     return (
         <SettingsPageShell
-            title="Lead & Job Settings"
-            description="Configure job types, form fields, and workflows."
+            title={activeTab === 'workflows' ? 'Job workflows' : 'Job setup'}
+            description={activeTab === 'workflows'
+                ? 'Configure the workflows that control each job lifecycle.'
+                : 'Configure job types, fields, and tags.'}
             actions={activeTab === 'settings'
                 ? <Button variant="default" onClick={handleSave} disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save'}</Button>
                 : undefined}
@@ -72,7 +82,15 @@ export default function LeadFormSettingsPage() {
             {loading ? (
                 <div className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Loading settings…</div>
             ) : (
-                <Tabs defaultValue="settings" value={activeTab} onValueChange={setActiveTab} className="w-full">
+                <Tabs
+                    value={activeTab}
+                    onValueChange={tab => {
+                        const next = new URLSearchParams(searchParams);
+                        next.set('tab', tab);
+                        setSearchParams(next, { replace: true });
+                    }}
+                    className="w-full"
+                >
                     <TabsList>
                         <TabsTrigger value="settings">Settings</TabsTrigger>
                         {FSM_EDITOR_ENABLED && <TabsTrigger value="workflows">Workflows</TabsTrigger>}

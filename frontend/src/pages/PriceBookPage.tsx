@@ -43,7 +43,7 @@ export default function PriceBookPage() {
 
     return (
         <SettingsPageShell
-            title="Price Book"
+            title="Price book"
             description="Manage items, groups & categories for estimates and invoices"
             actions={
                 <>

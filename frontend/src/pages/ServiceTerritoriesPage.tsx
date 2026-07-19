@@ -724,7 +724,7 @@ const ServiceTerritoriesPage: React.FC = () => {
 
     return (
         <SettingsPageShell
-            title="Service Territories"
+            title="Service areas"
             description="Tell Albusto where you work — by ZIP-code districts or by radii around your bases."
         >
             <div className="min-w-0 space-y-6">

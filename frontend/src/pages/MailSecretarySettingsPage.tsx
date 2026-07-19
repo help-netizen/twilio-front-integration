@@ -180,7 +180,7 @@ export default function MailSecretarySettingsPage() {
 
     if (loading) {
         return (
-            <SettingsPageShell backTo="/settings/integrations" backLabel="Integrations" title="Mail Secretary">
+            <SettingsPageShell backTo="/settings/phone-ai" backLabel="Phone & AI" title="Email assistant">
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
                     <Loader2 className="size-4 animate-spin" /> Loading…
                 </div>
@@ -194,9 +194,9 @@ export default function MailSecretarySettingsPage() {
 
     return (
         <SettingsPageShell
-            backTo="/settings/integrations"
-            backLabel="Integrations"
-            title="Mail Secretary"
+            backTo="/settings/phone-ai"
+            backLabel="Phone & AI"
+            title="Email assistant"
             description="Find the emails that need a person and turn them into clear dispatcher tasks."
             actions={installed ? (
                 <Button onClick={handleSave} disabled={saving}>

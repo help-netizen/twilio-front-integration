@@ -22,7 +22,7 @@ export default function QuickMessagesPage() {
 
     return (
         <SettingsPageShell
-            title="Quick Messages"
+            title="Message templates"
             description="Reusable message templates. Drag to reorder."
             actions={qm.saving
                 ? (

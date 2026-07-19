@@ -2492,3 +2492,9 @@ GPT-implementer: 2 волны ACCEPT (backend+frontend), 0 fix-раундов. T
 
 ---
 
+## 2026-07-18 — SETTINGS-IA-001 (батч 1): новая структура Settings — 8 групп вместо плоского списка
+
+Навигация настроек перестроена по согласованной с владельцем структуре: **Business · Scheduling & service areas · Jobs · Phone & AI · Billing & payments · Apps & integrations · Team & access · Alerts & notifications** (+ Platform administration под разделителем для super-admin). В списке видны только группы, подразделы раскрываются у активной; десктоп-сайдбар и мобильное/хедер-меню питаются ОДНОЙ permission-aware моделью (`settingsNav.ts`). **Company schedule**: настройки часов/дней компании переехали с шестерёнки /schedule в Settings→Scheduling (извлечённая форма + встроенные Recommendation settings; шестерёнка стала диплинком; права раздельные: неделя = schedule.dispatch, рекомендации = tenant.company.manage). Переезды по решению владельца: Price book + Document templates → Billing & payments; Message templates → Phone & AI; Alerts & notifications — отдельная группа; Bank transfer details → Billing (своя страница); Job list columns — своя страница в Jobs. Все старые URL живут (редиректы/алиасы), права не менялись. Попутно: «BLANC API» в ApiDocs → Albusto. Тандем: build 0 + vitest 158/158; саботаж permission-фильтрации (6 red)→green. Батч 2 (телефония в единый layout + слияние Providers→Technicians) — следом.
+
+---
+

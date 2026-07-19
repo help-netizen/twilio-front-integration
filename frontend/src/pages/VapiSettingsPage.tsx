@@ -292,12 +292,12 @@ export default function VapiSettingsPage() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['marketplace-apps'] });
             toast.success('VAPI AI connected');
-            navigate('/settings/integrations');
+            navigate('/settings/phone-ai');
         },
         onError: (err: Error) => {
             if (err.message?.includes('ALREADY_INSTALLED')) {
                 queryClient.invalidateQueries({ queryKey: ['marketplace-apps'] });
-                navigate('/settings/integrations');
+                navigate('/settings/phone-ai');
             } else {
                 toast.error(err.message || 'Failed to finish setup');
             }
@@ -309,16 +309,16 @@ export default function VapiSettingsPage() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['marketplace-apps'] });
             toast.success('VAPI AI disconnected');
-            navigate('/settings/integrations');
+            navigate('/settings/phone-ai');
         },
         onError: () => toast.error('Failed to disconnect VAPI AI'),
     });
 
     return (
         <SettingsPageShell
-            backTo="/settings/integrations"
-            backLabel="Back to Integrations"
-            title="VAPI AI"
+            backTo="/settings/phone-ai"
+            backLabel="Phone & AI"
+            title="AI phone agent"
             description="Let an AI voice agent answer calls and pass the right context to your team."
             actions={isFullyConnected ? (
                 <Badge className="bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)]" style={{ border: 'none', fontSize: 12 }}>

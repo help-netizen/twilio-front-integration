@@ -348,9 +348,9 @@ export default function RolesAccessPage() {
 
     if (isMobile) {
         return (
-            <SettingsPageShell title="Roles & Access">
+            <SettingsPageShell title="Roles & permissions">
                 <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                    The access grid is wide — please manage roles & access on a larger screen.
+                    The access grid is wide — please manage roles and permissions on a larger screen.
                 </p>
             </SettingsPageShell>
         );
@@ -358,7 +358,7 @@ export default function RolesAccessPage() {
 
     return (
         <SettingsPageShell
-            title="Roles & Access"
+            title="Roles & permissions"
             description="Control what each role can do, and fine-tune individual people with overrides."
         >
             {err && <p className="text-sm" style={{ color: 'var(--blanc-danger)' }}>{err}</p>}

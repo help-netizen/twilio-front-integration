@@ -144,94 +144,11 @@ function LogoSection({ logoUrl, onUploaded }: { logoUrl: string | null; onUpload
     );
 }
 
-// ── Payment / bank details ──────────────────────────────────────────────────
-
-type PaymentForm = {
-    bank_name: string; account_name: string; account_number: string;
-    routing_number: string; swift: string; instructions: string;
-};
-
-function paymentFrom(p: CompanyProfile): PaymentForm {
-    return {
-        bank_name: p.payment.bank_name ?? '',
-        account_name: p.payment.account_name ?? '',
-        account_number: p.payment.account_number ?? '',
-        routing_number: p.payment.routing_number ?? '',
-        swift: p.payment.swift ?? '',
-        instructions: p.payment.instructions ?? '',
-    };
-}
-
-// Map local form keys → PATCH body keys (payment_* prefix).
-const PAYMENT_FIELD: Record<keyof PaymentForm, keyof CompanyProfilePatch> = {
-    bank_name: 'payment_bank_name',
-    account_name: 'payment_account_name',
-    account_number: 'payment_account_number',
-    routing_number: 'payment_routing_number',
-    swift: 'payment_swift',
-    instructions: 'payment_instructions',
-};
-
-function PaymentSection({ profile, onSaved }: { profile: CompanyProfile; onSaved: (p: CompanyProfile) => void }) {
-    const [form, setForm] = useState<PaymentForm>(() => paymentFrom(profile));
-    const [saving, setSaving] = useState(false);
-    const initial = useRef<PaymentForm>(paymentFrom(profile));
-
-    useEffect(() => {
-        const next = paymentFrom(profile);
-        initial.current = next;
-        setForm(next);
-    }, [profile]);
-
-    const set = (k: keyof PaymentForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-        setForm(f => ({ ...f, [k]: e.target.value }));
-
-    const localDiff = diffPatch(form, initial.current);
-    const dirty = Object.keys(localDiff).length > 0;
-
-    const save = async () => {
-        if (!dirty) return;
-        const patch: CompanyProfilePatch = {};
-        for (const [localKey, value] of Object.entries(localDiff)) {
-            patch[PAYMENT_FIELD[localKey as keyof PaymentForm]] = value;
-        }
-        setSaving(true);
-        try {
-            const saved = await companyProfileApi.update(patch);
-            onSaved(saved);
-            toast.success('Payment details saved');
-        } catch (e: any) { toast.error(e.message || 'Failed to save payment details'); }
-        finally { setSaving(false); }
-    };
-
-    return (
-        <SettingsSection
-            title="Payment / bank details"
-            description="These appear on invoices and estimates so customers can pay by direct bank transfer."
-            footer={
-                <Button onClick={save} disabled={saving || !dirty}>
-                    {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
-                </Button>
-            }
-        >
-            <div className="grid gap-3 sm:grid-cols-2">
-                <FloatingField label="Bank name" value={form.bank_name} onChange={set('bank_name')} />
-                <FloatingField label="Account name" value={form.account_name} onChange={set('account_name')} />
-                <FloatingField label="Account number" value={form.account_number} onChange={set('account_number')} />
-                <FloatingField label="Routing number" value={form.routing_number} onChange={set('routing_number')} />
-                <FloatingField label="SWIFT / BIC (optional)" value={form.swift} onChange={set('swift')} containerClassName="sm:col-span-2" />
-                <FloatingField label="Payment instructions" textarea rows={3} value={form.instructions} onChange={set('instructions')} containerClassName="sm:col-span-2" />
-            </div>
-        </SettingsSection>
-    );
-}
-
 // ── Page ────────────────────────────────────────────────────────────────────
 
 /**
- * Settings → Company. Full company profile editor: identity (name/contact/billing),
- * logo, base address, and direct-transfer bank details. The name + bank details + logo
- * surface on the customer "on the way" SMS and on invoices/estimates.
+ * Settings → Business. Company identity, logo, and base address. Direct-transfer
+ * details moved to Billing & payments in SETTINGS-IA-001.
  */
 export default function CompanySettingsPage() {
     const qc = useQueryClient();
@@ -246,9 +163,9 @@ export default function CompanySettingsPage() {
 
     return (
         <SettingsPageShell
-            backTo="/settings/integrations"
+            backTo="/settings/business"
             backLabel="Settings"
-            title="Company profile"
+            title="Business profile"
             description="Your business identity — used on invoices, estimates, and customer messages."
         >
             {isLoading ? (
@@ -268,7 +185,6 @@ export default function CompanySettingsPage() {
                     <IdentitySection profile={profile} onSaved={applySaved} />
                     <LogoSection logoUrl={profile.logo_url} onUploaded={refetch} />
                     <CompanyBaseAddress title="Company address" />
-                    <PaymentSection profile={profile} onSaved={applySaved} />
                 </>
             )}
         </SettingsPageShell>

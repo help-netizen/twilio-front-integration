@@ -26,7 +26,6 @@ import { buildCopyJobData, type CopyJobData } from '../components/jobs/copyJobDa
 import { getJob } from '../services/jobsApi';
 import { SidebarStack } from '../components/schedule/SidebarStack';
 import { UnscheduledPanel } from '../components/schedule/UnscheduledPanel';
-import { DispatchSettingsDialog } from '../components/schedule/DispatchSettingsDialog';
 import { TimeOffDialog } from '../components/schedule/TimeOffDialog';
 import { CalendarOff } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
@@ -38,7 +37,6 @@ export function SchedulePage() {
     const schedule = useScheduleData();
     const navigate = useNavigate();
     const isMobile = useIsMobile();
-    const [settingsOpen, setSettingsOpen] = useState(false);
     // TECH-DAYOFF-001: day-off management panel (dispatch-only, like settings).
     const [timeOffOpen, setTimeOffOpen] = useState(false);
     // Dispatch-only controls hidden for providers without schedule.dispatch (PF007)
@@ -186,7 +184,7 @@ export function SchedulePage() {
                         onToggleMap={() => setMobileMapOpen(v => !v)}
                         onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
                         onToggleAIAssistant={() => setShowAIAssistant(true)}
-                        onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
+                        onOpenSettings={canDispatch ? () => navigate('/settings/scheduling/company-schedule') : undefined}
                         onTimeOff={canDispatch ? () => setTimeOffOpen(true) : undefined}
                     />
                 ) : (
@@ -225,7 +223,7 @@ export function SchedulePage() {
                                     onViewModeChange={schedule.setViewMode}
                                     onNavigateDate={schedule.navigateDate}
                                     onFiltersChange={schedule.setFilters}
-                                    onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
+                                    onOpenSettings={canDispatch ? () => navigate('/settings/scheduling/company-schedule') : undefined}
                                 />
                             </div>
                             {canDispatch && (
@@ -300,14 +298,6 @@ export function SchedulePage() {
                 onSubmit={(input) => {
                     console.log('[AI Schedule Assistant] Submitted:', input);
                 }}
-            />
-
-            {/* Settings dialog */}
-            <DispatchSettingsDialog
-                open={settingsOpen}
-                onClose={() => setSettingsOpen(false)}
-                settings={schedule.settings}
-                onSave={schedule.handleUpdateSettings}
             />
 
             {/* Time off management panel (TECH-DAYOFF-001) */}

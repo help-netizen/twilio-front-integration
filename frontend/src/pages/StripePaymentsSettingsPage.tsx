@@ -90,9 +90,9 @@ export default function StripePaymentsSettingsPage() {
 
     return (
         <SettingsPageShell
-            backTo="/settings/integrations"
-            backLabel="Integrations"
-            title="Stripe Payments"
+            backTo="/settings/billing-payments"
+            backLabel="Billing & payments"
+            title="Customer payments"
             description="Take card payments on the job, by link, or over the phone"
             actions={
                 <>

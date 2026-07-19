@@ -253,7 +253,7 @@ export default function BillingPage() {
 
     return (
         <SettingsPageShell
-            eyebrow="Billing"
+            eyebrow="Albusto plan & usage"
             title={`${currentPlan?.name || STATUS_LABEL[status]}${!isTrial && currentPlan ? ' plan' : ''}`}
             actions={
                 <span style={{ fontSize: 12, fontWeight: 600, padding: '4px 12px', borderRadius: 999, ...toneStyle(tone) }}>

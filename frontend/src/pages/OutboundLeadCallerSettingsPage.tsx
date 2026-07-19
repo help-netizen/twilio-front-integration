@@ -136,7 +136,7 @@ export default function OutboundLeadCallerSettingsPage() {
 
     if (loading) {
         return (
-            <SettingsPageShell backTo="/settings/integrations" backLabel="Integrations" title="Outbound Lead Caller">
+            <SettingsPageShell backTo="/settings/phone-ai" backLabel="Phone & AI" title="Outbound lead caller">
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
                     <Loader2 className="size-4 animate-spin" /> Loading…
                 </div>
@@ -149,9 +149,9 @@ export default function OutboundLeadCallerSettingsPage() {
 
     return (
         <SettingsPageShell
-            backTo="/settings/integrations"
-            backLabel="Integrations"
-            title="Outbound Lead Caller"
+            backTo="/settings/phone-ai"
+            backLabel="Phone & AI"
+            title="Outbound lead caller"
             description="Sara calls new leads from your chosen sources and books them into the schedule."
             actions={installed ? (
                 <Button onClick={handleSave} disabled={saving}>

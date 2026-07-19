@@ -1,11 +1,16 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, FileCog, Zap, CreditCard, Building2, ListChecks, Tags } from 'lucide-react';
+import { Users, Settings, LogOut, Activity, MessageSquareText, DollarSign, Contact2, Briefcase, CalendarDays, ListChecks, ChevronRight } from 'lucide-react';
 import { useAuthz } from '../../hooks/useAuthz';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { isFeedbackWidgetEnabled, openFeedbackWidget } from '../feedback/FeedbackWidget';
+import {
+    findActiveSettingsGroup,
+    getVisibleSettingsGroups,
+    isSettingsNavLinkActive,
+} from '../settings/settingsNav';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; leadsNewCount: number; openTasksCount: number; hasRole: (r: string) => boolean; logout: () => void; }
 
@@ -100,38 +105,19 @@ export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: numbe
     );
 };
 
-// Settings menu entries with their backing permissions (PF007)
-const SETTINGS_ITEMS = [
-    { label: 'Integrations', icon: Key, path: '/settings/integrations', permission: 'tenant.integrations.manage' },
-    { label: 'Company', icon: Building2, path: '/settings/company', permission: 'tenant.company.manage' },
-    { label: 'Lead & Job', icon: FileText, path: '/settings/lead-form', permission: 'tenant.company.manage' },
-    { label: 'Quick Messages', icon: MessageSquareText, path: '/settings/quick-messages', permission: 'tenant.company.manage' },
-    { label: 'API Docs', icon: BookOpen, path: '/settings/api-docs', permission: 'tenant.integrations.manage' },
-    { label: 'Users', icon: Users, path: '/settings/users', permission: 'tenant.users.manage' },
-    { label: 'Roles & Access', icon: Shield, path: '/settings/roles', permission: 'tenant.roles.manage' },
-    { label: 'Providers', icon: Wrench, path: '/settings/providers', permission: 'tenant.company.manage' },
-    { label: 'Telephony', icon: PhoneIncoming, path: '/settings/telephony', permission: 'tenant.telephony.manage' },
-    { label: 'Actions & Notifications', icon: Bell, path: '/settings/actions-notifications', permission: 'tenant.company.manage' },
-    { label: 'Automation', icon: Zap, path: '/settings/automation', permission: 'tenant.company.manage' },
-    { label: 'Billing', icon: CreditCard, path: '/settings/billing', permission: 'tenant.company.manage' },
-    { label: 'Service Territories', icon: MapPin, path: '/settings/service-territories', permission: 'tenant.company.manage' },
-    { label: 'Document Templates', icon: FileCog, path: '/settings/document-templates', permission: 'tenant.integrations.manage' },
-    { label: 'Price Book', icon: Tags, path: '/settings/price-book', permission: 'price_book.manage' },
-] as const;
-
 export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) => boolean; logout: () => void }> = ({ activeTab, logout }) => {
     const navigate = useNavigate();
-    const { hasPermission, hasPlatformRole } = useAuthz();
+    const location = useLocation();
+    const { permissions, platformRole } = useAuthz();
     const isMobile = useIsMobile();
     const isFeedbackEnabled = isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET);
-    const items = SETTINGS_ITEMS.filter(i => hasPermission(i.permission));
-    // Platform admin entry is platform-role based, never a tenant capability
-    const isPlatformAdmin = hasPlatformRole('super_admin');
+    const groups = getVisibleSettingsGroups({ permissions, platformRole });
+    const activeGroup = findActiveSettingsGroup(groups, location);
 
     // Low-permission users (provider/technician) get no settings entries — but on
     // mobile the feedback FAB is hidden, so keep a dropdown that still offers
     // "Send feedback" alongside Log Out. Otherwise fall back to the bare button.
-    if (items.length === 0 && !isPlatformAdmin) {
+    if (groups.length === 0) {
         if (isMobile && isFeedbackEnabled) {
             return (
                 <DropdownMenu>
@@ -155,14 +141,38 @@ export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) =>
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild><button className="user-menu" style={{ cursor: 'pointer', fontWeight: activeTab === 'settings' ? 600 : 400 }}><Settings className="size-4" style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} /><span className="hidden md:inline">Settings</span></button></DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-                {items.map(i => {
-                    const Icon = i.icon;
+            <DropdownMenuContent align="end" className="w-72">
+                {groups.map((group, index) => {
+                    const isActive = activeGroup?.id === group.id;
+                    const startsPlatformSection = group.kind === 'platform'
+                        && groups[index - 1]?.kind !== 'platform';
                     return (
-                        <DropdownMenuItem key={i.path} className="flex items-center gap-2 cursor-pointer" onClick={() => navigate(i.path)}><Icon className="size-4" />{i.label}</DropdownMenuItem>
+                        <React.Fragment key={group.id}>
+                            {startsPlatformSection && <DropdownMenuSeparator />}
+                            <DropdownMenuItem
+                                className={`flex cursor-pointer items-center justify-between gap-2 ${isActive ? 'font-semibold text-[var(--blanc-accent)]' : ''}`}
+                                onClick={() => navigate(group.links[0].to)}
+                            >
+                                {group.title}<ChevronRight className="size-3.5" />
+                            </DropdownMenuItem>
+                            {isActive && group.links.map(link => {
+                                const linkActive = isSettingsNavLinkActive(link, location);
+                                return (
+                                    <DropdownMenuItem
+                                        key={link.id}
+                                        className={`ml-3 cursor-pointer pl-4 text-[13px] ${linkActive
+                                            ? 'font-semibold text-[var(--blanc-accent)]'
+                                            : 'text-[var(--blanc-ink-2)]'
+                                        }`}
+                                        onClick={() => navigate(link.to)}
+                                    >
+                                        {link.label}
+                                    </DropdownMenuItem>
+                                );
+                            })}
+                        </React.Fragment>
                     );
                 })}
-                {isPlatformAdmin && <><DropdownMenuSeparator /><DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/admin')}><Shield className="size-4" />Super Admin</DropdownMenuItem></>}
                 {isMobile && isFeedbackEnabled && <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={openFeedbackWidget}><MessageSquareText className="size-4" />Send feedback</DropdownMenuItem>}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer text-red-600" onClick={logout}><LogOut className="size-4" />Log Out</DropdownMenuItem>

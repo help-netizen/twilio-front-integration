@@ -89,8 +89,8 @@ export default function GoogleEmailSettingsPage() {
 
     return (
         <SettingsPageShell
-            backTo="/settings/integrations"
-            backLabel="Integrations"
+            backTo="/settings/apps-integrations"
+            backLabel="Apps & integrations"
             title="Google Email"
             description="Connect one shared Gmail / Google Workspace mailbox per company to send estimates & invoices and sync mail."
         >

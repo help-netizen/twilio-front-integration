@@ -143,7 +143,7 @@ export default function ActionRequiredSettingsPage() {
 
     if (isLoading) {
         return (
-            <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
+            <SettingsPageShell title="Alerts & notifications" description="Flag threads that need attention, and manage browser push alerts.">
                 <div className="animate-pulse space-y-4">
                     <div className="h-8 rounded w-64" style={{ background: 'rgba(25,25,25,0.06)' }} />
                     <div className="h-40 rounded" style={{ background: 'rgba(25,25,25,0.03)' }} />
@@ -154,7 +154,7 @@ export default function ActionRequiredSettingsPage() {
 
     if (error || !config) {
         return (
-            <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
+            <SettingsPageShell title="Alerts & notifications" description="Flag threads that need attention, and manage browser push alerts.">
                 <p style={{ color: 'var(--blanc-danger)' }}>Failed to load settings</p>
             </SettingsPageShell>
         );
@@ -171,7 +171,7 @@ export default function ActionRequiredSettingsPage() {
     };
 
     return (
-        <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
+        <SettingsPageShell title="Alerts & notifications" description="Flag threads that need attention, and manage browser push alerts.">
             <SettingsSection
                 title="Action triggers"
                 description={'When enabled, matching events are flagged "Action Required" — optionally creating a task.'}
