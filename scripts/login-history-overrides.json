@@ -557,5 +557,25 @@
   },
   "8e87df5": {
     "hide": true
+  },
+  "bc0a5e2": {
+    "tag": "Polish",
+    "text": "Continued access-control hardening across the app"
+  },
+  "2ff0629": {
+    "tag": "Feature",
+    "text": "Billing now has its own Settings group, separate from customer payments"
+  },
+  "572890b": {
+    "tag": "Polish",
+    "text": "Clearer names across the Settings groups"
+  },
+  "8ac568f": {
+    "tag": "Fix",
+    "text": "Custom minute picker, and technician links on service-area cards"
+  },
+  "7bf6d49": {
+    "tag": "Polish",
+    "text": "Distances are always shown in miles"
   }
 }
