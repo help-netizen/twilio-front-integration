@@ -131,13 +131,26 @@ Your per-task gate (cheap):
 Frontend changed → `npm run build` must pass (tsc -b, noUnusedLocals); verify the
 UX on the harness/preview and screenshot it for the owner when the surface is new.
 
+**Session hygiene — close what you opened, IMMEDIATELY after the check (owner
+directive 2026-07-19; leaked sessions pile up and eat the Mac's RAM):**
+- Manual/visual verification done → in the SAME step: `preview_stop` every server
+  you started, close extra Browser-pane tabs, end computer-use / claude-in-chrome /
+  pdf-viewer sessions you opened. Not at end of feature — at end of THE CHECK.
+- Background shells/monitors you armed (`run_in_background`, Monitor) → TaskStop
+  them once their answer is in; never leave a poller running "just in case".
+- Before reporting a task done, sweep: `ps -axo pid,etime,rss,args | grep -E
+  "codex exec|vite|node src/server"` — anything you spawned must be gone. A leaked
+  session is a FIX-round defect, same severity as a failing test.
+
 ### Phase 3 — Acceptance, docs, report (you; small)
 - Full targeted regression sweep (one jest regex over the affected domains).
 - Codex drafts changelog/tasks entries (resume); you review, commit everything
   (feature + tests + docs), push to master per repo rules (fetch+rebase first;
   migration-number re-check vs origin/master when a migration exists).
 - Teaching: any generalizable Codex mistake → append to docs/agents/gpt-lessons.md.
-- Hygiene: kill codex orphans, stop preview servers, clean scratchpad.
+- Hygiene (final sweep — the per-check rule above should have left nothing): kill
+  codex orphans, stop preview servers, close browser/computer-use sessions, stop
+  background tasks/monitors, clean scratchpad. Verify with ps, don't assume.
 - **Deploy is NEVER part of this skill** — owner's explicit «да» per deploy.
 
 ### Final report — high-level only (owner's standing preference)
