@@ -123,6 +123,7 @@
     .identity { min-width: 0; }
     .identity-name { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 750 23px/1.15 var(--blanc-font-heading); letter-spacing: -0.035em; }
     .identity-company { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--blanc-ink-3); font-size: 12px; }
+    .identity-street::after { content: " · "; }
     .primary-actions { display: flex; align-items: center; gap: 7px; }
     .pin-action {
       min-height: 42px;
@@ -150,6 +151,11 @@
        Deliberately DESKTOP-only: the mobile bar is narrow by definition and keeps
        its labels (its buttons are a full-width 3-column grid, so they fit). */
     .device:not(.mobile) .pin-bar { container-type: inline-size; container-name: pinbar; }
+    /* Address degrades one step ahead of the buttons: the street goes first so the
+       city + ZIP — the part that actually orients a dispatcher — survives longest. */
+    @container pinbar (max-width: 720px) {
+      .identity-street { display: none; }
+    }
     @container pinbar (max-width: 620px) {
       .pin-action-label { display: none; }
       .pin-action { padding: 0; width: 42px; }
@@ -258,6 +264,8 @@
       padding: 12px;
       border-radius: 15px;
     }
+    /* Mobile has no container query (see above) and no room for a street line. */
+    .device.mobile .identity-street { display: none; }
     .device.mobile .identity { grid-area: identity; }
     .device.mobile .identity-name { font-size: 20px; }
     .device.mobile .primary-actions { grid-area: actions; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
@@ -377,7 +385,7 @@
               <div class="pin-bar" id="pinBar">
                 <div class="identity">
                   <h2 class="identity-name" id="pinName">Maria Rodriguez</h2>
-                  <p class="identity-company" id="pinCompany">Rodriguez Property Group</p>
+                  <p class="identity-company" id="pinCompany"><span class="identity-street">714 Westfield Avenue</span><span class="identity-cityzip">Brooklyn, NY 11215</span></p>
                 </div>
                 <div class="primary-actions" id="primaryActions"></div>
                 <div class="summary-actions" id="summaryActions"></div>
@@ -471,12 +479,12 @@
     };
 
     const scenarios = {
-      default: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', phone: true, email: true, connected: true, notes: true, leads: 2, jobs: 3 },
-      empty: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', phone: true, email: true, connected: true, notes: false, leads: 0, jobs: 0 },
-      'no-email': { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', phone: true, email: false, connected: true, notes: true, leads: 1, jobs: 1 },
-      'email-only': { name: 'Nora Bennett', company: 'Bennett Studio', phone: false, email: true, connected: true, notes: true, leads: 1, jobs: 0 },
-      'no-channels': { name: 'Ari Patel', company: 'Patel Holdings', phone: false, email: false, connected: true, notes: false, leads: 0, jobs: 0 },
-      disconnected: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', phone: true, email: true, connected: false, notes: true, leads: 2, jobs: 3 }
+      default: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: true, connected: true, notes: true, leads: 2, jobs: 3 },
+      empty: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '', cityZip: '', phone: true, email: true, connected: true, notes: false, leads: 0, jobs: 0 },
+      'no-email': { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: false, connected: true, notes: true, leads: 1, jobs: 1 },
+      'email-only': { name: 'Nora Bennett', company: 'Bennett Studio', street: '89 Harrison Street, Apt 4B', cityZip: 'Jersey City, NJ 07302', phone: false, email: true, connected: true, notes: true, leads: 1, jobs: 0 },
+      'no-channels': { name: 'Ari Patel', company: 'Patel Holdings', street: '', cityZip: '', phone: false, email: false, connected: true, notes: false, leads: 0, jobs: 0 },
+      disconnected: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: true, connected: false, notes: true, leads: 2, jobs: 3 }
     };
 
     const device = document.getElementById('device');
@@ -508,7 +516,18 @@
     function renderScenario(data) {
       activeScenario = data;
       document.getElementById('pinName').textContent = data.name;
-      document.getElementById('pinCompany').textContent = data.company;
+      // Secondary identity line: address beats company name — in field service
+      // "where" is the operative fact. Street drops before city/ZIP as the bar
+      // narrows, so the useful half survives instead of an ellipsised street.
+      // No address on file → fall back to the company so the line is never empty.
+      const secondary = [];
+      if (data.cityZip) {
+        if (data.street) secondary.push(`<span class="identity-street">${data.street}</span>`);
+        secondary.push(`<span class="identity-cityzip">${data.cityZip}</span>`);
+      } else if (data.company) {
+        secondary.push(`<span class="identity-cityzip">${data.company}</span>`);
+      }
+      document.getElementById('pinCompany').innerHTML = secondary.join('');
       document.getElementById('detailName').textContent = data.name;
 
       const actions = [];
