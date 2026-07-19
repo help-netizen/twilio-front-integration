@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../services/apiClient';
 import { AlertTriangle, Plus, Upload, Download, Trash2, Loader2, Search, ChevronUp, ChevronDown, MapPin, ArrowLeft, LayoutGrid, List, Users } from 'lucide-react';
@@ -766,7 +767,14 @@ const ServiceTerritoriesPage: React.FC = () => {
                             >
                                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                                 <span>
-                                    <strong>{technician.name}</strong> has no {activeMode === 'radius' ? 'radius' : 'district'} assignments and will receive requests from all {activeMode === 'radius' ? 'radii' : 'districts'} by default.
+                                    <strong>{technician.name}</strong> has no {activeMode === 'radius' ? 'radius' : 'district'} assignments and will receive requests from all {activeMode === 'radius' ? 'radii' : 'districts'} by default.{' '}
+                                    <Link
+                                        to={`/settings/technicians?tech=${encodeURIComponent(technician.id)}`}
+                                        className="font-medium underline underline-offset-2"
+                                        style={{ color: 'var(--blanc-accent)' }}
+                                    >
+                                        Set service areas
+                                    </Link>
                                 </span>
                             </div>
                         ))}

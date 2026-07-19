@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { CalendarClock, CheckCircle2, Loader2, Mail, MapPin, MapPinned, Phone, Wrench, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
@@ -63,6 +64,22 @@ export default function TechnicianPhotosPage() {
     const [selectedTech, setSelectedTech] = useState<TechnicianRosterRow | null>(null);
     const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
+    // Deep link: /settings/technicians?tech=<tech_id> opens that technician's
+    // panel once the roster arrives (Service areas links here to fix a
+    // technician with no assignments). Consumed once so closing the panel does
+    // not immediately reopen it.
+    const [searchParams, setSearchParams] = useSearchParams();
+    const deepLinkTech = searchParams.get('tech');
+    const consumedDeepLink = useRef<string | null>(null);
+
+    const clearDeepLink = useCallback(() => {
+        setSearchParams(current => {
+            const next = new URLSearchParams(current);
+            next.delete('tech');
+            return next;
+        }, { replace: true });
+    }, [setSearchParams]);
+
     const load = () => {
         setLoading(true);
         Promise.all([
@@ -74,6 +91,16 @@ export default function TechnicianPhotosPage() {
             .finally(() => setLoading(false));
     };
     useEffect(load, []);
+
+    useEffect(() => {
+        if (!deepLinkTech || techs.length === 0) return;
+        if (consumedDeepLink.current === deepLinkTech) return;
+        consumedDeepLink.current = deepLinkTech;
+        const match = techs.find(tech => String(tech.tech_id) === deepLinkTech);
+        if (match) setSelectedTech(match);
+        else toast.error('That technician is no longer on the active roster.');
+        clearDeepLink();
+    }, [deepLinkTech, techs, clearDeepLink]);
 
     const onPick = async (techId: string, file?: File) => {
         if (!file) return;

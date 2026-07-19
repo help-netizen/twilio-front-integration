@@ -228,8 +228,11 @@ function MinutePicker({ label, helper, value, error, disabled, onChange, range }
 }) {
     const numeric = parseInt10(value);
     const isPreset = numeric !== null && (MINUTE_PRESETS as readonly number[]).includes(numeric);
-    // A value not in {0,30,60} (or blank/invalid) sits in "Custom".
-    const [custom, setCustom] = useState(!isPreset);
+    // "Custom" is an explicit user choice only. It must NOT be seeded from the
+    // value at mount: settings load asynchronously, so the first render sees
+    // defaults and a saved preset (e.g. 30) would stay stuck on Custom forever.
+    // A saved non-preset value still opens Custom via `!isPreset` below.
+    const [custom, setCustom] = useState(false);
     const showCustomInput = custom || !isPreset;
 
     const seg = (active: boolean): CSSProperties => active
