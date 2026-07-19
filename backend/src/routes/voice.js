@@ -10,11 +10,13 @@
 const express = require('express');
 const { generateToken, generateTokenForCompany } = require('../services/voiceService');
 const { toE164 } = require('../utils/phoneUtils');
-const { isContactBusy } = require('../services/callAvailability');
+const { STALE_FILTER_SQL, FINAL_STATUSES } = require('../services/callAvailability');
+const { getTwilioClient } = require('../services/twilioClient');
 const { groupsForUser } = require('../services/groupRouting');
 const agentPresence = require('../services/agentPresence');
 const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
 const walletService = require('../services/walletService');
+const { requirePermission } = require('../middleware/authorization');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -90,6 +92,39 @@ async function getMyGroups(req) {
     return groupsForUser(userId, companyId, { includeAllForDev: req.user?._devMode && !req.user?.crmUser?.id });
 }
 
+async function isContactBusyForCompany(phoneE164, companyId, traceId) {
+    const db = require('../db/connection');
+    const result = await db.query(
+        `SELECT call_sid FROM calls
+         WHERE company_id = $2
+           AND parent_call_sid IS NULL
+           AND status IN ('initiated', 'ringing', 'in-progress', 'queued')
+           AND ${STALE_FILTER_SQL}
+           AND (from_number = $1 OR to_number = $1)
+         LIMIT 1`,
+        [phoneE164, companyId]
+    );
+    if (result.rows.length === 0) return false;
+
+    const sid = result.rows[0].call_sid;
+    try {
+        const details = await getTwilioClient().calls(sid).fetch();
+        const status = (details.status || '').toLowerCase();
+        if (FINAL_STATUSES.includes(status)) {
+            await db.query(
+                `UPDATE calls
+                 SET status = $2, is_final = true, ended_at = COALESCE($3, ended_at)
+                 WHERE call_sid = $1 AND company_id = $4 AND is_final = false`,
+                [sid, status, details.endTime ? new Date(details.endTime) : null, companyId]
+            );
+            return false;
+        }
+    } catch (err) {
+        console.warn(`[${traceId}] Twilio API busy-check fallback failed for ${sid}:`, err.message);
+    }
+    return true;
+}
+
 // ─── Authenticated router (token endpoint) ──────────────────────────────────
 const tokenRouter = express.Router();
 
@@ -98,7 +133,7 @@ const tokenRouter = express.Router();
  * Returns a short-lived Twilio Access Token for the authenticated user.
  * Only issues token if user has phone_calls_allowed = true.
  */
-tokenRouter.get('/token', async (req, res) => {
+tokenRouter.get('/token', requirePermission('phone_calls.use'), async (req, res) => {
     try {
         const userId = getCurrentUserId(req);
         const companyId = getCompanyId(req);
@@ -144,7 +179,7 @@ tokenRouter.get('/token', async (req, res) => {
  * GET /api/voice/phone-access
  * Lightweight check: is phone calling enabled for this user?
  */
-tokenRouter.get('/phone-access', async (req, res) => {
+tokenRouter.get('/phone-access', requirePermission('phone_calls.use'), async (req, res) => {
     try {
         const userId = getCurrentUserId(req);
         const companyId = getCompanyId(req);
@@ -174,7 +209,7 @@ tokenRouter.get('/phone-access', async (req, res) => {
  * POST /api/voice/presence
  * Softphone lifecycle heartbeat: available | on_call | offline.
  */
-tokenRouter.post('/presence', async (req, res) => {
+tokenRouter.post('/presence', requirePermission('phone_calls.use'), async (req, res) => {
     try {
         const userId = getCurrentUserId(req);
         const companyId = getCompanyId(req);
@@ -196,13 +231,13 @@ tokenRouter.post('/presence', async (req, res) => {
  * Returns whether a phone number currently has an active call.
  * Used to prevent two users from calling the same number simultaneously.
  */
-tokenRouter.get('/check-busy', async (req, res) => {
+tokenRouter.get('/check-busy', requirePermission('phone_calls.use'), async (req, res) => {
     try {
         const phone = req.query.phone;
         if (!phone) return res.json({ busy: false });
 
         const normalized = toE164(phone);
-        const busy = await isContactBusy(normalized, 'check-busy');
+        const busy = await isContactBusyForCompany(normalized, getCompanyId(req), 'check-busy');
 
         if (busy) {
             return res.json({
@@ -222,7 +257,7 @@ tokenRouter.get('/check-busy', async (req, res) => {
  * GET /api/voice/blanc-numbers
  * F017: caller ID picker only shows numbers assigned to the user's groups.
  */
-tokenRouter.get('/blanc-numbers', async (req, res) => {
+tokenRouter.get('/blanc-numbers', requirePermission('phone_calls.use'), async (req, res) => {
     try {
         const db = require('../db/connection');
         const companyId = getCompanyId(req);

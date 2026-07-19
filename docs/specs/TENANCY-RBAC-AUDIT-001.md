@@ -5,14 +5,14 @@ Date: 2026-07-18
 ## Scope and result
 
 The audit parsed 534 handlers in `backend/src/routes` plus the one direct `/api/*`
-handler in `src/server.js`. Of those, 211 contain literal inline
-`requirePermission(...)`; the remaining 324 are classified below.
+handler in `src/server.js`. Of those, 220 contain literal inline
+`requirePermission(...)`; the remaining 315 are classified below.
 
 | Category | Handlers | Result |
 |---|---:|---|
 | (a) effective RBAC outside the literal handler declaration | 176 | Fine: mount-level, router-level/alias, platform-role, or reviewed local role gate |
 | (b) public/machine/role-neutral by design | 84 | Compensating controls recorded; seven weak or missing-control cases are flagged |
-| (c) REAL GAP | 64 | Exact route and suggested catalog permission recorded |
+| (c) REAL GAP | 55 | Exact route and suggested catalog permission recorded |
 
 The scanner recognizes server mount guards by resolving route imports into the
 `app.use(... requirePermission/requirePlatformRole ..., router)` call. Existing real
@@ -92,7 +92,7 @@ Every handler is listed as `line METHOD path`; mount citations point to `src/ser
 | `webhooks.js` | 14/17/20/23/26/29/32/35 POST voice callbacks; 42/43 POST Conversations callbacks; 46 GET `/health` | Main voice callbacks validate Twilio signatures. **FLAG:** voice fallback and Conversations pre do not validate; Conversations post fails open when token/signature is absent |
 | `src/server.js` | 129 GET `/api/messaging/media/:mediaId/temporary-url` | **FLAG:** opaque UUID is the sole control; no auth or rate limit |
 
-## (c) REAL GAP — 64
+## (c) REAL GAP — 55
 
 All are authenticated/tenant-mounted unless noted, but lack role authorization.
 Suggested keys are from `permissionCatalog.js`; the catalog has no dedicated sales/service
@@ -113,12 +113,8 @@ CRM read key, so the closest existing key is identified where needed.
 | `integrations-zenbooker.js` | 185 GET `/webhook-url`; 219 POST `/webhook-url/regenerate`; 361 GET `/api-key`; 386 PUT `/api-key` | `tenant.integrations.manage` |
 |  | 244 POST `/contacts/:contactId/create-customer`; 272 POST `/contacts/:contactId/sync` | `contacts.edit` |
 |  | 300 GET `/jobs` | `jobs.view` |
-| `noteAttachments.js` | 24 POST `/upload`; 82 DELETE `/:id` | `jobs.edit`, `leads.edit`, or `contacts.edit` by entity type |
-|  | 62 GET `/:id/url` | `jobs.view`, `leads.view`, or `contacts.view` by entity type |
-| `portal.js` | 126 GET `/links` | `contacts.view` plus `estimates.send`/`invoices.send` by requested scope |
 | `sync.js` | 16 POST `/today`; 42 POST `/recent` | `tenant.integrations.manage` |
 | `telephonyProvider.js` | 65 GET `/autonomous-mode` | `tenant.telephony.manage` |
-| `voice.js` | 101 GET `/token`; 147 GET `/phone-access`; 177 POST `/presence`; 199 GET `/check-busy`; 225 GET `/blanc-numbers` | `phone_calls.use` |
 | `zenbooker/jobs.js` | 25 GET `/`; 41 GET `/:id` | `jobs.view` |
 |  | 57 POST `/:id/cancel`; 190 POST `/:id/complete` | `jobs.close` |
 |  | 73 POST `/:id/reschedule`; 126 POST `/:id/notes`; 151 POST `/:id/enroute`; 171 POST `/:id/start` | `jobs.edit` |
@@ -161,7 +157,7 @@ backend/src/routes/__tenantSafetyNegativeControl.js:1 [R-write-scope]
 ## Recommended triage order
 
 1. Fix the phone/digits/SID write baselines and public callbacks with missing/fail-open signatures.
-2. Gate voice token/TwiML operations and integration key/configuration routes.
-3. Gate CRM/MCP, Zenbooker job/payment, attachment, and portal-link surfaces.
+2. Gate TwiML operations and integration key/configuration routes.
+3. Gate CRM/MCP and Zenbooker job/payment surfaces.
 4. Add catalog keys for sales/service CRM read access instead of permanently overloading
    `contacts.view`/`leads.view`.

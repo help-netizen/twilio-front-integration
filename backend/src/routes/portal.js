@@ -10,7 +10,8 @@
 const express = require('express');
 const router = express.Router();
 const portalService = require('../services/portalService');
-const { authenticate } = require('../middleware/keycloakAuth');
+const { authenticate, requireCompanyAccess } = require('../middleware/keycloakAuth');
+const { requirePermission } = require('../middleware/authorization');
 
 // =============================================================================
 // Helpers
@@ -23,6 +24,27 @@ function handleError(res, err, label) {
         ok: false,
         error: { code: err.code || 'INTERNAL', message: err.message },
     });
+}
+
+function requirePortalSendPermission(req, res, next) {
+    const scope = req.query.scope || 'full';
+    const documentType = req.query.document_type;
+    let permissions;
+    if (scope === 'full') permissions = ['estimates.send', 'invoices.send'];
+    else if (documentType === 'estimate') permissions = ['estimates.send'];
+    else if (documentType === 'invoice') permissions = ['invoices.send'];
+    else {
+        return res.status(400).json({
+            ok: false,
+            error: { code: 'VALIDATION', message: 'document_type must be estimate or invoice for a document-scoped link' },
+        });
+    }
+
+    const check = (index) => {
+        if (index === permissions.length) return next();
+        return requirePermission(permissions[index])(req, res, () => check(index + 1));
+    };
+    return check(0);
 }
 
 /**
@@ -123,7 +145,8 @@ router.post('/auth/verify', async (req, res) => {
 // =============================================================================
 
 // GET /api/portal/links
-router.get('/links', authenticate, async (req, res) => {
+router.get('/links', authenticate, requireCompanyAccess,
+    requirePermission('estimates.send', 'invoices.send'), requirePortalSendPermission, async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const { contact_id, scope, document_type, document_id } = req.query;
@@ -135,7 +158,7 @@ router.get('/links', authenticate, async (req, res) => {
             });
         }
 
-        const userId = req.user?.sub || req.userId;
+        const userId = req.user?.crmUser?.id || null;
 
         const result = await portalService.generatePortalLink(companyId, contact_id, {
             scope,

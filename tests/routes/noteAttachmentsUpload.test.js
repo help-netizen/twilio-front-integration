@@ -13,17 +13,28 @@ jest.mock('../../backend/src/services/storageService', () => ({
     getPresignedUrl: jest.fn(async () => 'https://signed/url'),
     deleteFile: jest.fn(async () => {}),
 }));
+jest.mock('../../backend/src/services/auditService', () => ({
+    log: jest.fn(() => Promise.resolve()),
+}));
 
 const noteAttachmentsRouter = require('../../backend/src/routes/noteAttachments');
 const service = require('../../backend/src/services/noteAttachmentsService');
 const storageService = require('../../backend/src/services/storageService');
 
 const COMPANY = '00000000-0000-0000-0000-000000000001';
+const OFFICE_PERMISSIONS = [
+    'jobs.view', 'jobs.edit',
+    'leads.view', 'leads.edit',
+    'contacts.view', 'contacts.edit',
+];
+const PROVIDER_PERMISSIONS = ['jobs.view', 'jobs.done_pending_approval'];
+const PROVIDER_SCOPES = { job_visibility: 'assigned_only' };
 
-function makeApp() {
+function makeApp(permissions = OFFICE_PERMISSIONS, scopes = {}) {
     const app = express();
     app.use((req, _res, next) => {
         req.user = { sub: 'kc', email: 'u@x.com', crmUser: { id: 'crm-1' } };
+        req.authz = { permissions, scopes, company: { id: COMPANY } };
         req.companyFilter = { company_id: COMPANY };
         next();
     });
@@ -109,6 +120,165 @@ describe('POST /upload (stage)', () => {
         const res = await request(makeApp()).post('/api/note-attachments/upload')
             .field('entity_type', 'job').field('entity_id', '5');
         expect(res.status).toBe(400);
+    });
+});
+
+describe('Wave 1 attachment RBAC matrix', () => {
+    test('job upload allows a provider through jobs.done_pending_approval', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 42, file_name: 'a.png', content_type: 'image/png', file_size: 3 }] });
+
+        const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).post('/api/note-attachments/upload')
+            .field('entity_type', 'job').field('entity_id', '5')
+            .attach('attachments', Buffer.from('img'), 'a.png');
+
+        expect(res.status).toBe(200);
+        expect(mockQuery.mock.calls[1][0]).toMatch(/assigned_provider_user_ids @> \$3::jsonb/);
+        expect(mockQuery.mock.calls[1][1]).toEqual([5, COMPANY, JSON.stringify(['crm-1'])]);
+        expect(storageService.uploadFile).toHaveBeenCalledTimes(1);
+    });
+
+    test('provider gets 404 when uploading against an unassigned in-tenant job', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+
+        const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).post('/api/note-attachments/upload')
+            .field('entity_type', 'job').field('entity_id', '5')
+            .attach('attachments', Buffer.from('img'), 'a.png');
+
+        expect(res.status).toBe(404);
+        expect(storageService.uploadFile).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        ['lead', 'LEAD-1'],
+        ['contact', '5'],
+    ])('provider is denied %s upload', async (entityType, entityId) => {
+        const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).post('/api/note-attachments/upload')
+            .field('entity_type', entityType).field('entity_id', entityId)
+            .attach('attachments', Buffer.from('img'), 'a.png');
+
+        expect(res.status).toBe(403);
+        expect(mockQuery).not.toHaveBeenCalled();
+        expect(storageService.uploadFile).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        ['job', PROVIDER_PERMISSIONS, { entity_id: 5 }, PROVIDER_SCOPES],
+        ['lead', ['leads.view']],
+        ['contact', ['contacts.view']],
+    ])('%s attachment URL allows its entity-view permission', async (entityType, permissions, metadata = {}, scopes = {}) => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ entity_type: entityType, ...metadata }] });
+        if (scopes.job_visibility === 'assigned_only') {
+            mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+        }
+        mockQuery.mockResolvedValueOnce({ rows: [{ storage_key: 'own/key.png' }] });
+
+        const res = await request(makeApp(permissions, scopes)).get('/api/note-attachments/7/url');
+
+        expect(res.status).toBe(200);
+        expect(res.body.url).toBe('https://signed/url');
+        expect(mockQuery.mock.calls[0][0]).toMatch(/WHERE id = \$1 AND company_id = \$2/);
+        expect(mockQuery.mock.calls[0][1]).toEqual([7, COMPANY]);
+    });
+
+    test('provider gets 404 for an unassigned in-tenant job attachment URL', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ entity_type: 'job', entity_id: 5 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+
+        const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES))
+            .get('/api/note-attachments/7/url');
+
+        expect(res.status).toBe(404);
+        expect(storageService.getPresignedUrl).not.toHaveBeenCalled();
+    });
+
+    test.each(['lead', 'contact'])('provider is denied a %s attachment URL', async (entityType) => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ entity_type: entityType }] });
+
+        const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).get('/api/note-attachments/7/url');
+
+        expect(res.status).toBe(403);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(storageService.getPresignedUrl).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        ['job', PROVIDER_PERMISSIONS, { entity_id: 5, note_index: null, uploaded_by: 'crm-1' }, PROVIDER_SCOPES],
+        ['lead', ['leads.edit']],
+        ['contact', ['contacts.edit']],
+    ])('%s attachment delete allows its entity-edit permission', async (entityType, permissions, metadata = {}, scopes = {}) => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ entity_type: entityType, ...metadata }] });
+        if (scopes.job_visibility === 'assigned_only') {
+            mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+        }
+        mockQuery.mockResolvedValueOnce({ rows: [{ storage_key: 'own/key.png' }] });
+
+        const res = await request(makeApp(permissions, scopes)).delete('/api/note-attachments/7');
+
+        expect(res.status).toBe(200);
+        const deleteCall = mockQuery.mock.calls.find(([sql]) => /DELETE FROM note_attachments/.test(sql));
+        expect(deleteCall[0]).toMatch(/DELETE FROM note_attachments WHERE id = \$1 AND company_id = \$2/);
+        expect(deleteCall[1]).toEqual([7, COMPANY]);
+        expect(storageService.deleteFile).toHaveBeenCalledWith('own/key.png');
+    });
+
+    test('provider gets 404 deleting an unassigned in-tenant job attachment', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ entity_type: 'job', entity_id: 5, note_index: null, uploaded_by: 'crm-1' }] });
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+
+        const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES))
+            .delete('/api/note-attachments/7');
+
+        expect(res.status).toBe(404);
+        expect(storageService.deleteFile).not.toHaveBeenCalled();
+    });
+
+    test('provider cannot use the staging delete route on a committed job attachment', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ entity_type: 'job', entity_id: 5, note_index: 0, uploaded_by: 'crm-1' }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+
+        const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).delete('/api/note-attachments/7');
+
+        expect(res.status).toBe(403);
+        expect(mockQuery).toHaveBeenCalledTimes(2);
+        expect(storageService.deleteFile).not.toHaveBeenCalled();
+    });
+
+    test.each(['lead', 'contact'])('provider is denied a %s attachment delete', async (entityType) => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ entity_type: entityType }] });
+
+        const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).delete('/api/note-attachments/7');
+
+        expect(res.status).toBe(403);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(storageService.deleteFile).not.toHaveBeenCalled();
+    });
+});
+
+describe('Wave 1 attachment tenant isolation', () => {
+    test('T-foreign GET: foreign attachment is 404 before RBAC or S3 access', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+
+        const res = await request(makeApp()).get('/api/note-attachments/999/url');
+
+        expect(res.status).toBe(404);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(mockQuery.mock.calls[0][1]).toEqual([999, COMPANY]);
+        expect(storageService.getPresignedUrl).not.toHaveBeenCalled();
+    });
+
+    test('T-foreign DELETE: foreign attachment is 404 and no delete runs', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+
+        const res = await request(makeApp()).delete('/api/note-attachments/999');
+
+        expect(res.status).toBe(404);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(mockQuery.mock.calls[0][0]).toMatch(/^\s*SELECT entity_type/);
+        expect(mockQuery.mock.calls[0][1]).toEqual([999, COMPANY]);
+        expect(storageService.deleteFile).not.toHaveBeenCalled();
     });
 });
 

@@ -59,7 +59,11 @@ jest.mock('../backend/src/services/groupRouting', () => ({
 }));
 
 // routes/voice.js top-level deps not exercised here — inert stubs
-jest.mock('../backend/src/services/callAvailability', () => ({ isContactBusy: jest.fn() }));
+jest.mock('../backend/src/services/callAvailability', () => ({
+    STALE_FILTER_SQL: 'is_final = false',
+    FINAL_STATUSES: [],
+}));
+jest.mock('../backend/src/services/twilioClient', () => ({ getTwilioClient: jest.fn() }));
 jest.mock('../backend/src/services/agentPresence', () => ({ setAgentStatus: jest.fn() }));
 jest.mock('../backend/src/services/walletService', () => ({ isServiceBlocked: jest.fn() }));
 
@@ -83,10 +87,11 @@ function decodeJwtPayload(token) {
     return JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8'));
 }
 
-function appAs({ user, companyId } = {}) {
+function appAs({ user, companyId, permissions = ['phone_calls.use'] } = {}) {
     const app = express();
     app.use((req, _res, next) => {
         req.user = user;
+        req.authz = { permissions, company: companyId ? { id: companyId } : null };
         req.companyFilter = companyId ? { company_id: companyId } : undefined;
         next();
     });
