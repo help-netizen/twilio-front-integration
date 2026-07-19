@@ -1,8 +1,14 @@
+// db/connection must be mocked at MODULE scope: a jest.mock() inside beforeEach
+// never applies, because inboxWorker below is required (and captures the real db
+// handle) before any hook runs. `mockDbQuery` carries the `mock` prefix so the
+// factory is allowed to close over it.
+const mockDbQuery = jest.fn();
+jest.mock('../backend/src/db/connection', () => ({ query: mockDbQuery }));
+
 const {
     normalizeVoiceEvent,
     normalizeRecordingEvent,
     isFinalStatus,
-    upsertMessage,
     processEvent
 } = require('../backend/src/services/inboxWorker');
 
@@ -27,20 +33,23 @@ describe('Inbox Worker', () => {
             const normalized = normalizeVoiceEvent(payload);
 
             expect(normalized).toMatchObject({
-                call_sid: 'CA1234567890abcdef',
-                event_type: 'call.status_changed',
-                event_status: 'completed',
-                from_number: '+15551234567',
-                to_number: '+15559876543',
-                direction: 'outbound-api',
-                duration: 120,
-                parent_call_sid: 'CA0987654321fedcba'
+                callSid: 'CA1234567890abcdef',
+                eventType: 'call.status_changed',
+                eventStatus: 'completed',
+                fromNumber: '+15551234567',
+                toNumber: '+15559876543',
+                // Twilio's 'outbound-api' is normalized to the internal 'outbound'
+                direction: 'outbound',
+                durationSec: 120,
+                parentCallSid: 'CA0987654321fedcba'
             });
 
-            expect(normalized.event_time).toBeInstanceOf(Date);
+            expect(normalized.eventTime).toBeInstanceOf(Date);
             expect(normalized.metadata.answered_by).toBe('human');
             expect(normalized.metadata.queue_time).toBe('5');
-            expect(normalized.metadata.price).toBe('-0.0200');
+            // price is parsed out of Twilio's string into a real number
+            expect(normalized.price).toBe(-0.02);
+            expect(normalized.priceUnit).toBe('USD');
         });
 
         it('should handle missing optional fields', () => {
@@ -55,8 +64,8 @@ describe('Inbox Worker', () => {
             const normalized = normalizeVoiceEvent(payload);
 
             expect(normalized.direction).toBe('external');
-            expect(normalized.duration).toBe(0);
-            expect(normalized.parent_call_sid).toBeNull();
+            expect(normalized.durationSec).toBe(0);
+            expect(normalized.parentCallSid).toBeNull();
         });
     });
 
@@ -74,14 +83,15 @@ describe('Inbox Worker', () => {
             const normalized = normalizeRecordingEvent(payload);
 
             expect(normalized).toMatchObject({
-                call_sid: 'CA1234567890abcdef',
-                event_type: 'recording.status_changed',
-                event_status: 'completed'
+                callSid: 'CA1234567890abcdef',
+                recordingSid: 'RE1234567890abcdef',
+                status: 'completed'
             });
 
-            expect(normalized.metadata.recording_sid).toBe('RE1234567890abcdef');
-            expect(normalized.metadata.recording_duration).toBe('120');
-            expect(normalized.metadata.recording_url).toBe('https://api.twilio.com/recordings/RE123');
+            expect(normalized.eventTime).toBeInstanceOf(Date);
+            expect(normalized.recordingUrl).toBe('https://api.twilio.com/recordings/RE123');
+            // duration is parsed into a number, no longer a raw Twilio string
+            expect(normalized.durationSec).toBe(120);
         });
     });
 
@@ -103,88 +113,24 @@ describe('Inbox Worker', () => {
         });
     });
 
-    describe('upsertMessage', () => {
-        let mockDb;
-
-        beforeEach(() => {
-            mockDb = {
-                query: jest.fn()
-            };
-            // Mock the db module
-            jest.mock('../src/db/connection', () => mockDb);
-        });
-
-        afterEach(() => {
-            jest.clearAllMocks();
-        });
-
-        it('should insert new message', async () => {
-            const normalized = {
-                call_sid: 'CA123',
-                event_status: 'ringing',
-                event_time: new Date(),
-                from_number: '+15551234567',
-                to_number: '+15559876543',
-                direction: 'outbound-api',
-                duration: 0,
-                parent_call_sid: null,
-                metadata: {}
-            };
-
-            mockDb.query.mockResolvedValue({
-                rows: [{ id: 1, twilio_sid: 'CA123', status: 'ringing' }]
-            });
-
-            const result = await upsertMessage(normalized);
-
-            expect(result.id).toBe(1);
-            expect(mockDb.query).toHaveBeenCalled();
-
-            // Verify SQL includes last_event_time guard
-            const sql = mockDb.query.mock.calls[0][0];
-            expect(sql).toContain('last_event_time');
-            expect(sql).toContain('ON CONFLICT');
-        });
-
-        it('should set is_final for completed status', async () => {
-            const normalized = {
-                call_sid: 'CA123',
-                event_status: 'completed',
-                event_time: new Date(),
-                from_number: '+15551234567',
-                to_number: '+15559876543',
-                direction: 'outbound-api',
-                duration: 120,
-                parent_call_sid: null,
-                metadata: {}
-            };
-
-            mockDb.query.mockResolvedValue({
-                rows: [{ id: 1, twilio_sid: 'CA123', status: 'completed' }]
-            });
-
-            await upsertMessage(normalized);
-
-            // Verify is_final parameter is true
-            const params = mockDb.query.mock.calls[0][1];
-            expect(params[10]).toBe(true); // is_final parameter
-        });
-    });
+    // NOTE: the `upsertMessage` suite was removed here, not repaired. That helper
+    // ceased to exist in the v3 calls-first migration (0a6c7d0); inboxWorker now
+    // persists through `queries.upsertCall`, which owns its own coverage. The two
+    // tests asserted against an undefined import, so there was nothing left to assert.
 
     describe('processEvent', () => {
         let mockDb;
 
         beforeEach(() => {
-            mockDb = {
-                query: jest.fn().mockResolvedValue({ rows: [{ id: 1 }] })
-            };
-            jest.mock('../src/db/connection', () => mockDb);
+            mockDbQuery.mockReset();
+            mockDbQuery.mockResolvedValue({ rows: [{ id: 1 }] });
+            mockDb = { query: mockDbQuery };
         });
 
         it('should process voice event successfully', async () => {
             const inboxEvent = {
                 id: 123,
-                source: 'twilio_voice',
+                source: 'voice',
                 event_type: 'call-status',
                 payload: {
                     CallSid: 'CA123',
@@ -210,7 +156,7 @@ describe('Inbox Worker', () => {
                 payload: {}
             };
 
-            await expect(processEvent(inboxEvent)).rejects.toThrow('Unknown event source');
+            await expect(processEvent(inboxEvent)).rejects.toThrow(/^Unknown source: unknown_source$/);
         });
     });
 });
