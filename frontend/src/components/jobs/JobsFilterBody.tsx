@@ -21,7 +21,7 @@ interface JobsFilterBodyProps {
     allTags: JobTag[];
     /** Statuses to offer — FSM states when available, else BLANC_STATUSES. */
     statuses: string[];
-    /** Provider names derived from the current jobs list. */
+    /** Provider names from the complete server facet for the active base query. */
     providerNames: string[];
     /** Job-type names from lead-form settings. */
     dynamicJobTypes: string[];

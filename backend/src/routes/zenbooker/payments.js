@@ -9,6 +9,7 @@
 const express = require('express');
 const router = express.Router();
 const paymentsService = require('../../services/zenbookerPaymentsSyncService');
+const { requirePermission } = require('../../middleware/authorization');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // POST /api/zenbooker/payments/sync  — Sync from Zenbooker into local DB
@@ -102,14 +103,27 @@ router.get('/export', async (req, res) => {
 // GET /api/zenbooker/payments  — List payments from local DB
 // ═══════════════════════════════════════════════════════════════════════════════
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('payments.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         if (!companyId) {
             return res.status(403).json({ ok: false, error: 'No company context' });
         }
 
-        const { date_from, date_to, status, payment_method, search, sort_by, sort_order, offset, limit, quick_filter } = req.query;
+        const {
+            date_from,
+            date_to,
+            payment_method,
+            search,
+            provider,
+            paid_status,
+            sort_by,
+            sort_order,
+            offset,
+            limit,
+            cursor,
+            quick_filter,
+        } = req.query;
 
         if (!date_from || !date_to) {
             return res.status(400).json({ ok: false, error: 'date_from and date_to are required' });
@@ -121,18 +135,23 @@ router.get('/', async (req, res) => {
             paymentMethod: payment_method || undefined,
             quickFilter: quick_filter || undefined,
             search: search || undefined,
+            provider: provider || undefined,
+            paidStatus: paid_status || undefined,
             sortField: sort_by || 'payment_date',
             sortDir: sort_order || 'desc',
-            offset: parseInt(offset, 10) || 0,
-            limit: parseInt(limit, 10) || 200,
+            offset: offset === undefined ? undefined : offset,
+            limit: limit === undefined ? 50 : limit,
+            cursor: cursor || undefined,
         });
 
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] List error:', err.message);
-        res.status(500).json({
+        const status = err.statusCode || err.httpStatus || 500;
+        res.status(status).json({
             ok: false,
             error: err.message,
+            ...(err.code ? { code: err.code } : {}),
         });
     }
 });

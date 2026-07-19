@@ -138,12 +138,25 @@ function matchResolutions(conflicts, rawResolutions) {
 router.get('/', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
-        const { search, offset, limit } = req.query;
+        const { search, offset, limit, cursor } = req.query;
+        if (offset !== undefined && (!/^\d+$/.test(String(offset)) || !Number.isSafeInteger(Number(offset)))) {
+            return res.status(400).json(errorResponse('INVALID_QUERY', 'offset must be a non-negative integer', reqId));
+        }
+        if (limit !== undefined && (!/^\d+$/.test(String(limit)) || Number(limit) < 1 || Number(limit) > 100)) {
+            return res.status(400).json(errorResponse('INVALID_QUERY', 'limit must be 1-100', reqId));
+        }
+        if (cursor !== undefined && typeof cursor !== 'string') {
+            return res.status(400).json(errorResponse('INVALID_CURSOR', 'Invalid cursor', reqId));
+        }
+        if (search !== undefined && (typeof search !== 'string' || search.length > 500)) {
+            return res.status(400).json(errorResponse('INVALID_QUERY', 'search must be at most 500 characters', reqId));
+        }
 
         const params = {
             search: search || undefined,
-            offset: offset ? Number(offset) : 0,
-            limit: limit ? Math.min(Number(limit), 100) : 50,
+            offset: offset === undefined ? undefined : Number(offset),
+            limit: limit === undefined ? 50 : Number(limit),
+            cursor,
             companyId: req.companyFilter?.company_id,
             providerScope: getProviderScope(req),
         };
@@ -151,8 +164,15 @@ router.get('/', requirePermission('contacts.view'), async (req, res) => {
         const result = await contactsService.listContacts(params);
         res.json(successResponse(result, reqId));
     } catch (err) {
+        if (err?.httpStatus || err?.code === 'INVALID_CURSOR' || err?.code === 'INVALID_CURSOR_REQUEST') {
+            return res.status(err?.httpStatus || 400).json(errorResponse(err.code || 'INVALID_QUERY', err.message, reqId));
+        }
         console.error(`[ContactsAPI][${reqId}] Error:`, err);
-        res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));
+        res.status(err?.httpStatus || 500).json(errorResponse(
+            err?.code || 'INTERNAL_ERROR',
+            err?.httpStatus ? err.message : 'An unexpected error occurred',
+            reqId,
+        ));
     }
 });
 

@@ -82,23 +82,23 @@ const NON_REQUEST_FILE_RE = /backend\/src\/(?:cli|scripts|webhooks)\/|backend\/s
 
 // Exact, reviewed statement exceptions. Key format: rule:file:line.
 const SQL_ALLOWLIST = new Map([
-    ['R-write-scope:backend/src/routes/calls.js:343', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/contacts.js:426', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/contacts.js:702', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/calls.js:346', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/contacts.js:446', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/contacts.js:722', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
     ['R-write-scope:backend/src/routes/integrations-leads.js:101', 'Pre-existing integration write scoped only by entity id; remediation deferred.'],
     ['R-write-scope:backend/src/routes/integrations-leads.js:126', 'Pre-existing integration write scoped only by entity id; remediation deferred.'],
-    ['R-write-scope:backend/src/routes/jobs.js:693', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/jobs.js:710', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/leads.js:273', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/leads.js:311', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/leads.js:377', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/leads.js:440', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/leads.js:466', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/leads.js:586', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-write-scope:backend/src/routes/leads.js:639', 'Pre-existing lead UUID write lacks company_id; remediation deferred.'],
+    ['R-write-scope:backend/src/routes/jobs.js:724', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/jobs.js:741', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/leads.js:325', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/leads.js:363', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/leads.js:429', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/leads.js:492', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/leads.js:518', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/leads.js:638', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
+    ['R-write-scope:backend/src/routes/leads.js:691', 'Pre-existing lead UUID write lacks company_id; remediation deferred.'],
     ['R-write-scope:backend/src/routes/pulse.js:889', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
-    ['R-natural-key:backend/src/routes/calls.js:672', 'Pre-existing transcript delete uses only Twilio call SID; remediation deferred.'],
-    ['R-natural-key:backend/src/routes/leads.js:639', 'Pre-existing lead write uses only UUID; remediation deferred.'],
+    ['R-natural-key:backend/src/routes/calls.js:675', 'Pre-existing transcript delete uses only Twilio call SID; remediation deferred.'],
+    ['R-natural-key:backend/src/routes/leads.js:691', 'Pre-existing lead write uses only UUID; remediation deferred.'],
     ['R-natural-key:backend/src/db/conversationsQueries.js:247', 'Pre-existing message update uses only Twilio message SID; remediation deferred.'],
     ['R-natural-key:backend/src/services/callAvailability.js:56', 'Pre-existing call update uses only Twilio call SID; remediation deferred.'],
     ['R-natural-key:backend/src/services/inboxWorker.js:459', 'Pre-existing worker update uses only Twilio call SID; remediation deferred.'],
@@ -216,7 +216,6 @@ const ROUTE_PERMISSION_BASELINE = new Map([
     ['backend/src/routes/zenbooker/jobs.js:router:POST:/:id/complete', 'Known gap; suggest jobs.close.'],
     ['backend/src/routes/zenbooker/payments.js:router:POST:/sync', 'Known gap; suggest tenant.integrations.manage.'],
     ['backend/src/routes/zenbooker/payments.js:router:GET:/export', 'Known gap; suggest payments.view.'],
-    ['backend/src/routes/zenbooker/payments.js:router:GET:/', 'Known gap; suggest payments.view.'],
     ['backend/src/routes/zenbooker/payments.js:router:GET:/:id', 'Known gap; suggest payments.view.'],
     ['backend/src/routes/zenbooker/payments.js:router:PATCH:/:id', 'Known gap; suggest payments.collect_offline.'],
     ['backend/src/routes/zenbooker.js:router:GET:/service-area-check', 'Known gap; suggest schedule.view.'],
@@ -496,8 +495,8 @@ defineSuite('ALB-105 / TENANCY-RBAC-GUARD-001: tenant-safety sanitizer', () => {
         }
     });
 
-    it('keeps only the 24 retiring Zenbooker handlers in the RBAC gap baseline', () => {
-        expect(ROUTE_PERMISSION_BASELINE.size).toBe(24);
+    it('keeps only the 23 retiring Zenbooker handlers in the RBAC gap baseline', () => {
+        expect(ROUTE_PERMISSION_BASELINE.size).toBe(23);
         expect([...ROUTE_PERMISSION_BASELINE.keys()].every((key) => (
             key.includes('/zenbooker') || key.includes('integrations-zenbooker')
         ))).toBe(true);

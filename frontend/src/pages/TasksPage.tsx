@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -8,9 +8,12 @@ import { MobileListPage } from '../components/layout/MobileListPage';
 import { TaskSnoozeMenu } from '../components/tasks/TaskSnoozeMenu';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { FilterColumn } from '../components/jobs/jobsFilterHelpers';
-import { listTasks, completeTask, snoozeTask, parentPath, type Task, type TaskParentType } from '../components/tasks/tasksApi';
+import { listTasksPage, completeTask, snoozeTask, parentPath, type Task, type TaskParentType } from '../components/tasks/tasksApi';
 import { isOverdue } from '../components/tasks/taskUtils';
 import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../utils/companyTime';
+import { useLoadMoreList } from '../hooks/useLoadMoreList';
+import { useDebouncedSearch } from '../hooks/useDebouncedSearch';
+import { LoadMoreFooter, type LoadMoreFooterProps } from '../components/lists/LoadMoreFooter';
 
 const PARENT_META: Record<TaskParentType, { label: string; color: string }> = {
     job: { label: 'Job', color: '#378ADD' },
@@ -59,6 +62,8 @@ function initials(name?: string | null): string {
 }
 
 type SortKey = 'description' | 'parent_type' | 'parent_label' | 'assignee_name' | 'due_at';
+const TASKS_PAGE_SIZE = 50;
+const taskKey = (task: Task) => task.id;
 
 export function TasksPage() {
     const navigate = useNavigate();
@@ -68,63 +73,78 @@ export function TasksPage() {
     const myEmail = user?.email;
     const canManage = hasPermission('tasks.manage');
 
-    const [tasks, setTasks] = useState<Task[]>([]);
-    const [loading, setLoading] = useState(true);
     const [status, setStatus] = useState<'open' | 'all'>('open');
     const [parentType, setParentType] = useState<TaskParentType | ''>('');
     const [searchQuery, setSearchQuery] = useState('');
     const [sortBy, setSortBy] = useState<SortKey>('due_at');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            setTasks(await listTasks({ status, parent_type: parentType || undefined, limit: 500 }));
-        } catch {
-            toast.error('Failed to load tasks');
-        } finally {
-            setLoading(false);
-        }
-    }, [status, parentType]);
-
-    useEffect(() => { load(); }, [load]);
+    const debouncedSearch = useDebouncedSearch(searchQuery, 300);
+    const tasksList = useLoadMoreList<Task>({
+        queryKey: [
+            'tasks-list',
+            company?.id ?? null,
+            user?.sub ?? null,
+            canManage,
+            status,
+            parentType || null,
+            debouncedSearch,
+            sortBy,
+            sortOrder,
+        ],
+        pageSize: TASKS_PAGE_SIZE,
+        enabled: !!company?.id,
+        fetchPage: async ({ cursor, limit, signal }) => {
+            const page = await listTasksPage({
+                status,
+                parent_type: parentType || undefined,
+                search: debouncedSearch || undefined,
+                sort_by: sortBy,
+                sort_order: sortOrder,
+                limit,
+                cursor: cursor ?? undefined,
+            }, signal);
+            return {
+                items: page.tasks,
+                pagination: {
+                    ...page.pagination,
+                    mode: 'cursor' as const,
+                },
+                meta: null,
+            };
+        },
+        getItemKey: taskKey,
+    });
+    const tasks = tasksList.items;
+    const loading = tasksList.isLoadingFirst;
+    const footerProps: LoadMoreFooterProps = {
+        state: tasksList.state,
+        loadedCount: tasks.length,
+        totalCount: tasksList.total,
+        singularLabel: 'task',
+        pluralLabel: 'tasks',
+        errorPhase: tasksList.errorPhase,
+        onLoadMore: () => { void tasksList.loadMore(); },
+        onRetry: () => { void tasksList.retry(); },
+    };
 
     const canActOn = (t: Task) => canManage || (!!myEmail && t.assignee_email === myEmail);
 
     const onComplete = async (t: Task) => {
-        setTasks(prev => prev.map(x => x.id === t.id ? { ...x, status: 'done' as const } : x));
-        try { await completeTask(t.id); toast.success('Task completed'); load(); }
-        catch { toast.error('Failed'); load(); }
+        tasksList.updateItem(t.id, current => ({ ...current, status: 'done' as const }));
+        try {
+            await completeTask(t.id);
+            toast.success('Task completed');
+        } catch {
+            toast.error('Failed');
+        }
+        await tasksList.reset();
     };
     const onSnooze = async (t: Task, iso: string) => {
-        try { await snoozeTask(t.id, iso); toast.success('Task snoozed'); load(); }
+        try { await snoozeTask(t.id, iso); toast.success('Task snoozed'); await tasksList.reset(); }
         catch { toast.error('Failed'); }
     };
 
-    // Client-side search + sort over the (single-fetch) list — same UX as the
-    // Jobs unified header, without a server round-trip.
-    const filteredTasks = useMemo(() => {
-        const q = searchQuery.trim().toLowerCase();
-        const filtered = !q ? tasks : tasks.filter(t =>
-            (t.description || '').toLowerCase().includes(q)
-            || (t.parent_label || '').toLowerCase().includes(q)
-            || (t.assignee_name || '').toLowerCase().includes(q));
-        const dir = sortOrder === 'asc' ? 1 : -1;
-        return [...filtered].sort((a, b) => {
-            if (sortBy === 'due_at') {
-                // No-date tasks sink to the bottom regardless of direction.
-                if (!a.due_at && !b.due_at) return 0;
-                if (!a.due_at) return 1;
-                if (!b.due_at) return -1;
-                return (a.due_at < b.due_at ? -1 : a.due_at > b.due_at ? 1 : 0) * dir;
-            }
-            const av = (a[sortBy] || '').toString().toLowerCase();
-            const bv = (b[sortBy] || '').toString().toLowerCase();
-            return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
-        });
-    }, [tasks, searchQuery, sortBy, sortOrder]);
-
-    const groups = bucketTasks(filteredTasks, tz);
+    const groups = bucketTasks(tasks, tz);
 
     const TimeLabel = ({ t, compact }: { t: Task; compact?: boolean }) => {
         if (!t.due_at) return null;
@@ -217,6 +237,8 @@ export function TasksPage() {
             <div className="mobile-list-page__empty">
                 <Loader2 className="size-5 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
             </div>
+        ) : tasks.length === 0 && footerProps.state === 'error+retry' ? (
+            <LoadMoreFooter {...footerProps} />
         ) : groups.length === 0 ? (
             <div className="mobile-list-page__empty text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No tasks</div>
         ) : (
@@ -227,6 +249,7 @@ export function TasksPage() {
                         {group.tasks.map(t => renderTile(t, group))}
                     </div>
                 ))}
+                <LoadMoreFooter {...footerProps} />
             </div>
         );
 
@@ -234,8 +257,7 @@ export function TasksPage() {
             <MobileListPage
                 stickyBar={
                     <div className="space-y-2.5">
-                        {/* TASKS-SEARCH-001: mobile search — same client-side filter as
-                            desktop (filteredTasks already drives the mobile groups). */}
+                        {/* The debounced server query drives the same result set as desktop. */}
                         <div className="flex items-center gap-3">
                             <div className="blanc-eyebrow shrink-0" style={{ marginBottom: 0 }}>Tasks</div>
                             <label className="flex items-center min-h-[40px] px-3 gap-2 flex-1 min-w-0"
@@ -336,7 +358,11 @@ export function TasksPage() {
                         <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
                             <Loader2 className="size-5 animate-spin mr-2" /> Loading tasks...
                         </div>
-                    ) : filteredTasks.length === 0 ? (
+                    ) : tasks.length === 0 && footerProps.state === 'error+retry' ? (
+                        <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
+                            <LoadMoreFooter {...footerProps} />
+                        </div>
+                    ) : tasks.length === 0 ? (
                         <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
                             No tasks found
                         </div>
@@ -367,7 +393,7 @@ export function TasksPage() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filteredTasks.map(t => {
+                                        {tasks.map(t => {
                                             const meta = PARENT_META[t.parent_type];
                                             const done = t.status === 'done';
                                             return (
@@ -428,10 +454,7 @@ export function TasksPage() {
                                 </table>
                             </div>
 
-                            {/* Count line — flat on the canvas, mirrors the Jobs footer */}
-                            <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
-                                <span>{filteredTasks.length} {filteredTasks.length === 1 ? 'task' : 'tasks'}</span>
-                            </div>
+                            <LoadMoreFooter {...footerProps} />
                         </>
                     )}
                 </div>

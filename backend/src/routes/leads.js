@@ -62,24 +62,70 @@ function errorResponse(code, message, reqId, details = null) {
 router.get('/', requirePermission('leads.view'), async (req, res) => {
     const reqId = requestId();
     try {
-        const { start_date, end_date, offset, records, only_open, status } = req.query;
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) {
+            return res.status(403).json(errorResponse(
+                'TENANT_CONTEXT_REQUIRED',
+                'Company context is required',
+                reqId,
+            ));
+        }
+
+        const {
+            start_date,
+            end_date,
+            offset,
+            records,
+            limit,
+            cursor,
+            only_open,
+            status,
+            search,
+            source,
+            job_type,
+            rejected_only,
+            sort_by,
+            sort_order,
+        } = req.query;
 
         // Validate
-        if (offset !== undefined && (isNaN(Number(offset)) || Number(offset) < 0)) {
+        if (offset !== undefined && (!/^\d+$/.test(String(offset)) || !Number.isSafeInteger(Number(offset)))) {
             return res.status(400).json(errorResponse('INVALID_QUERY', 'offset must be a non-negative integer', reqId));
         }
-        if (records !== undefined && (isNaN(Number(records)) || Number(records) < 1 || Number(records) > 100)) {
-            return res.status(400).json(errorResponse('INVALID_QUERY', 'records must be 1-100', reqId));
+        const requestedLimit = limit ?? records;
+        if (requestedLimit !== undefined && (
+            !/^\d+$/.test(String(requestedLimit))
+            || Number(requestedLimit) < 1
+            || Number(requestedLimit) > 100
+        )) {
+            return res.status(400).json(errorResponse('INVALID_QUERY', 'limit must be 1-100', reqId));
+        }
+        if (cursor !== undefined && typeof cursor !== 'string') {
+            return res.status(400).json(errorResponse('INVALID_CURSOR', 'Invalid cursor', reqId));
+        }
+        if (search !== undefined && (typeof search !== 'string' || search.length > 500)) {
+            return res.status(400).json(errorResponse('INVALID_QUERY', 'search must be at most 500 characters', reqId));
+        }
+        if (rejected_only !== undefined && rejected_only !== 'true' && rejected_only !== 'false') {
+            return res.status(400).json(errorResponse('INVALID_QUERY', 'rejected_only must be true or false', reqId));
         }
 
         const params = {
             start_date,
             end_date,
-            offset: offset ? Number(offset) : 0,
-            records: records ? Number(records) : 100,
+            offset: offset === undefined ? undefined : Number(offset),
+            records: records === undefined ? undefined : Number(records),
+            limit: limit === undefined ? undefined : Number(limit),
+            cursor,
             only_open: only_open !== 'false',
             status: status ? (Array.isArray(status) ? status : [status]) : undefined,
-            companyId: req.companyFilter?.company_id,
+            search,
+            source: source ? (Array.isArray(source) ? source : [source]) : undefined,
+            job_type: job_type ? (Array.isArray(job_type) ? job_type : [job_type]) : undefined,
+            rejected_only: rejected_only === 'true',
+            sort_by: sort_by || 'CreatedDate',
+            sort_order: sort_order || 'desc',
+            companyId,
         };
 
         const result = await leadsService.listLeads(params);
@@ -91,6 +137,12 @@ router.get('/', requirePermission('leads.view'), async (req, res) => {
                 start_date: params.start_date || null,
                 only_open: params.only_open,
                 status: params.status || [],
+                search: params.search || '',
+                source: params.source || [],
+                job_type: params.job_type || [],
+                rejected_only: params.rejected_only,
+                sort_by: params.sort_by,
+                sort_order: params.sort_order,
             },
         }, reqId));
     } catch (err) {
@@ -761,6 +813,9 @@ function handleError(err, reqId, res) {
     if (err instanceof leadsService.LeadsServiceError) {
         const status = err.httpStatus || 500;
         return res.status(status).json(errorResponse(err.code, err.message, reqId));
+    }
+    if (err?.code === 'INVALID_CURSOR' || err?.code === 'INVALID_CURSOR_REQUEST') {
+        return res.status(err.statusCode || 400).json(errorResponse(err.code, err.message, reqId));
     }
     console.error(`[LeadsAPI][${reqId}] Unhandled error:`, err);
     res.status(500).json(errorResponse('INTERNAL_ERROR', err.message || 'An unexpected error occurred', reqId, err.stack));

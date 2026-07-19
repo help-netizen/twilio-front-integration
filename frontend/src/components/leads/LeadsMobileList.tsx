@@ -6,8 +6,7 @@
  * CreatedDate). Leads with no CreatedDate fall into a trailing "No date" group.
  * Groups are ordered by date descending (freshest first), matching the default
  * CreatedDate-desc client sort. Friendly headers: Today / Tomorrow / Yesterday,
- * else "EEE, MMM d". A "Load more" button appears at the end when there are more
- * pages.
+ * else "EEE, MMM d". The shared manual pagination footer follows the groups.
  *
  * Rendered only on mobile (LeadsPage gates it behind useIsMobile); desktop uses
  * LeadsTable, untouched.
@@ -19,14 +18,14 @@ import { format } from 'date-fns';
 import type { Lead } from '../../types/lead';
 import { dateKeyInTZ, todayInTZ } from '../../utils/companyTime';
 import { LeadMobileCard } from './LeadMobileCard';
+import { LoadMoreFooter, type LoadMoreFooterProps } from '../lists/LoadMoreFooter';
 
 const NO_DATE_KEY = '__no_date__';
 
 interface LeadsMobileListProps {
     filteredLeads: Lead[];
     loading: boolean;
-    hasMore: boolean;
-    onLoadMore: () => void;
+    footerProps: LoadMoreFooterProps;
     onSelectLead: (lead: Lead) => void;
     timezone?: string;
 }
@@ -48,7 +47,7 @@ function groupLabel(key: string, timezone?: string): string {
 }
 
 export const LeadsMobileList: React.FC<LeadsMobileListProps> = ({
-    filteredLeads, loading, hasMore, onLoadMore, onSelectLead, timezone,
+    filteredLeads, loading, footerProps, onSelectLead, timezone,
 }) => {
     const groups = useMemo(() => {
         const map = new Map<string, Lead[]>();
@@ -77,6 +76,9 @@ export const LeadsMobileList: React.FC<LeadsMobileListProps> = ({
     }
 
     if (filteredLeads.length === 0) {
+        if (footerProps.state === 'error+retry') {
+            return <LoadMoreFooter {...footerProps} />;
+        }
         return (
             <div className="mobile-list-page__empty" style={{ color: 'var(--blanc-ink-3)' }}>
                 <p className="text-sm">No leads</p>
@@ -105,18 +107,7 @@ export const LeadsMobileList: React.FC<LeadsMobileListProps> = ({
                 </div>
             ))}
 
-            {hasMore && (
-                <button
-                    type="button"
-                    onClick={onLoadMore}
-                    disabled={loading}
-                    className="flex items-center justify-center gap-2 w-full min-h-[46px] text-[14px] font-medium transition-opacity hover:opacity-70 disabled:opacity-50"
-                    style={{ color: 'var(--blanc-ink-2)', background: 'transparent', border: '1px solid var(--blanc-line)', borderRadius: '14px' }}
-                >
-                    {loading ? <Loader2 className="size-4 animate-spin" /> : null}
-                    {loading ? 'Loading…' : 'Load more'}
-                </button>
-            )}
+            <LoadMoreFooter {...footerProps} />
         </div>
     );
 };

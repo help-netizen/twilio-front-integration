@@ -1,10 +1,9 @@
 import type { JobTag } from '../../services/jobsApi';
 import { Badge } from '../ui/badge';
 import { SlidersHorizontal } from 'lucide-react';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { authedFetch } from '../../services/apiClient';
-import type { LocalJob } from '../../services/jobsApi';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 import { BLANC_STATUSES } from './jobsFilterHelpers';
 import { JobsFilterBody } from './JobsFilterBody';
@@ -20,18 +19,16 @@ interface JobsFiltersProps {
     startDate?: string; onStartDateChange: (d: string | undefined) => void;
     endDate?: string; onEndDateChange: (d: string | undefined) => void;
     tagFilter: number[]; onTagFilterChange: (v: number[]) => void; allTags: JobTag[];
-    jobs: LocalJob[];
+    providerNames: string[];
 }
 
-export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter, onProviderFilterChange, sourceFilter, onSourceFilterChange, jobTypeFilter, onJobTypeFilterChange, startDate, onStartDateChange, endDate, onEndDateChange, tagFilter, onTagFilterChange, allTags, jobs }: JobsFiltersProps) {
+export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter, onProviderFilterChange, sourceFilter, onSourceFilterChange, jobTypeFilter, onJobTypeFilterChange, startDate, onStartDateChange, endDate, onEndDateChange, tagFilter, onTagFilterChange, allTags, providerNames }: JobsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
     const { data: fsmData } = useFsmStates('job', true);
     const statuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : BLANC_STATUSES;
 
     useEffect(() => { authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => { if (data.success && data.jobTypes?.length > 0) setDynamicJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name)); }).catch(() => { }); }, []);
-
-    const providerNames = useMemo(() => { const names = new Set<string>(); jobs.forEach(j => { if (j.assigned_techs) j.assigned_techs.forEach((t: any) => { if (t.name) names.add(t.name); }); }); return [...names].sort(); }, [jobs]);
 
     const activeFilterCount = statusFilter.length + providerFilter.length + sourceFilter.length + jobTypeFilter.length + tagFilter.length;
 

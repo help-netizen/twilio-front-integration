@@ -49,8 +49,12 @@ router.get('/', requirePermission('tasks.view'), async (req, res) => {
             overdue: req.query.overdue === '1' || req.query.overdue === 'true',
             due_from: req.query.due_from || undefined,
             due_to: req.query.due_to || undefined,
-            limit: req.query.limit,
-            offset: req.query.offset,
+            search: req.query.search || undefined,
+            sort_by: req.query.sort_by || 'due_at',
+            sort_order: req.query.sort_order || 'asc',
+            cursor: req.query.cursor,
+            limit: req.query.limit === undefined ? 50 : Number(req.query.limit),
+            offset: req.query.offset === undefined ? undefined : Number(req.query.offset),
         };
         // Managers (tasks.manage) see all; everyone else only their own.
         if (canManage(req)) {
@@ -58,9 +62,15 @@ router.get('/', requirePermission('tasks.view'), async (req, res) => {
         } else {
             filters.scopeOwnerId = actorId(req);
         }
-        const tasks = await tasksQueries.listTasks(companyId(req), filters);
-        res.json({ ok: true, data: { tasks } });
+        const page = await tasksQueries.listTasksPage(companyId(req), filters);
+        res.json({ ok: true, data: page });
     } catch (err) {
+        if (err?.statusCode === 400 || err?.code === 'INVALID_CURSOR' || err?.code === 'INVALID_CURSOR_REQUEST') {
+            return res.status(400).json({
+                ok: false,
+                error: { code: err.code || 'INVALID_QUERY', message: err.message },
+            });
+        }
         console.error('[Tasks] GET / failed:', err.message);
         res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to load tasks' } });
     }

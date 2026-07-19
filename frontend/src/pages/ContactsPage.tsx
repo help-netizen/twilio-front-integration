@@ -1,42 +1,67 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ContactsList } from '../components/contacts/ContactsList';
 import { ContactDetailPanel } from '../components/contacts/ContactDetailPanel';
 import * as contactsApi from '../services/contactsApi';
 import type { Contact, ContactLead } from '../types/contact';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { useAuthz } from '../hooks/useAuthz';
+import { useDebouncedSearch } from '../hooks/useDebouncedSearch';
+import { useLoadMoreList } from '../hooks/useLoadMoreList';
+import type { LoadMoreFooterProps } from '../components/lists/LoadMoreFooter';
+
+const CONTACTS_PAGE_SIZE = 50;
+const contactKey = (contact: Contact) => contact.id;
 
 export function ContactsPage() {
     const navigate = useNavigate();
     const { contactId } = useParams<{ contactId?: string }>();
-    const [contacts, setContacts] = useState<Contact[]>([]);
-    const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
-    const [offset, setOffset] = useState(0);
-    const [hasMore, setHasMore] = useState(false);
-    const LIMIT = 50;
+    const { company, user, membership } = useAuthz();
+    const debouncedSearch = useDebouncedSearch(search, 300);
+    const contactsList = useLoadMoreList<Contact>({
+        queryKey: [
+            'contacts-list',
+            company?.id ?? null,
+            user?.sub ?? null,
+            membership?.role_key ?? null,
+            debouncedSearch,
+        ],
+        pageSize: CONTACTS_PAGE_SIZE,
+        enabled: !!company?.id,
+        fetchPage: async ({ cursor, limit, signal }) => {
+            const response = await contactsApi.listContacts({
+                search: debouncedSearch || undefined,
+                limit,
+                cursor: cursor ?? undefined,
+            }, signal);
+            return {
+                items: response.data.results,
+                pagination: {
+                    ...response.data.pagination,
+                    mode: 'cursor' as const,
+                },
+                meta: null,
+            };
+        },
+        getItemKey: contactKey,
+    });
+    const contacts = contactsList.items;
+    const loading = contactsList.isLoadingFirst;
+    const footerProps: LoadMoreFooterProps = {
+        state: contactsList.state,
+        loadedCount: contacts.length,
+        totalCount: contactsList.total,
+        singularLabel: 'contact',
+        pluralLabel: 'contacts',
+        errorPhase: contactsList.errorPhase,
+        onLoadMore: () => { void contactsList.loadMore(); },
+        onRetry: () => { void contactsList.retry(); },
+    };
 
     const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
     const [selectedLeads, setSelectedLeads] = useState<ContactLead[]>([]);
     const [detailLoading, setDetailLoading] = useState(false);
-
-    // Load contacts
-    const loadContacts = useCallback(async (newSearch?: string, newOffset?: number) => {
-        setLoading(true);
-        try {
-            const s = newSearch !== undefined ? newSearch : search;
-            const o = newOffset !== undefined ? newOffset : offset;
-            const res = await contactsApi.listContacts({ search: s, offset: o, limit: LIMIT });
-            setContacts(res.data.results);
-            setHasMore(res.data.pagination.has_more);
-        } catch (err) {
-            console.error('[ContactsPage] Failed to load contacts:', err);
-        } finally {
-            setLoading(false);
-        }
-    }, [search, offset]);
-
-    useEffect(() => { loadContacts(); }, [loadContacts]);
 
     // Auto-open contact from URL param (e.g. /contacts/:contactId)
     useEffect(() => {
@@ -58,26 +83,6 @@ export function ContactsPage() {
             }
         })();
     }, [contactId]);
-
-    // Handle search
-    const handleSearch = (value: string) => {
-        setSearch(value);
-        setOffset(0);
-        loadContacts(value, 0);
-    };
-
-    // Handle pagination
-    const handleNextPage = () => {
-        const newOffset = offset + LIMIT;
-        setOffset(newOffset);
-        loadContacts(undefined, newOffset);
-    };
-
-    const handlePrevPage = () => {
-        const newOffset = Math.max(0, offset - LIMIT);
-        setOffset(newOffset);
-        loadContacts(undefined, newOffset);
-    };
 
     // Handle contact selection
     const handleSelectContact = async (contact: Contact) => {
@@ -106,7 +111,7 @@ export function ContactsPage() {
                         type="text"
                         placeholder="type to find anything..."
                         value={search}
-                        onChange={(e) => handleSearch(e.target.value)}
+                        onChange={(e) => setSearch(e.target.value)}
                         className="blanc-search-input"
                     />
                 </div>
@@ -118,10 +123,7 @@ export function ContactsPage() {
                 loading={loading}
                 selectedContactId={selectedContact?.id}
                 onSelectContact={handleSelectContact}
-                offset={offset}
-                hasMore={hasMore}
-                onNextPage={handleNextPage}
-                onPrevPage={handlePrevPage}
+                footerProps={footerProps}
             />
             <FloatingDetailPanel open={!!selectedContact} onClose={() => { setSelectedContact(null); navigate('/contacts', { replace: true }); }} wide>
                 {selectedContact && (
@@ -130,7 +132,10 @@ export function ContactsPage() {
                         leads={selectedLeads}
                         loading={detailLoading}
                         onAddressesChanged={() => selectedContact && handleSelectContact(selectedContact)}
-                        onContactChanged={() => selectedContact && handleSelectContact(selectedContact)}
+                        onContactChanged={() => {
+                            if (!selectedContact) return;
+                            void handleSelectContact(selectedContact).then(() => contactsList.reset());
+                        }}
                     />
                 )}
             </FloatingDetailPanel>

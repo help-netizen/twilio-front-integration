@@ -7,6 +7,14 @@
 
 const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
+const {
+    createCursorFingerprint,
+    encodeCursor,
+    decodeCursor,
+    assertCursorOffsetExclusive,
+    buildKeysetPredicate,
+    bigintCursorExpression,
+} = require('../utils/listCursor');
 
 // =============================================================================
 // DB row → Contact object
@@ -47,13 +55,51 @@ function rowToContact(row) {
 // =============================================================================
 // List Contacts
 // =============================================================================
-async function listContacts({ search, offset = 0, limit = 50, companyId, providerScope } = {}) {
+async function listContacts({ search, offset, limit = 50, cursor, companyId, providerScope } = {}) {
     if (!companyId) {
         const err = new Error('Tenant context required');
         err.code = 'TENANT_CONTEXT_REQUIRED';
         err.httpStatus = 403;
         throw err;
     }
+    if (!Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 100) {
+        const err = new Error('limit must be an integer from 1 to 100');
+        err.code = 'INVALID_QUERY';
+        err.httpStatus = 400;
+        throw err;
+    }
+    const pageLimit = Number(limit);
+    if (offset !== undefined && (!Number.isInteger(Number(offset)) || Number(offset) < 0)) {
+        const err = new Error('offset must be a non-negative integer');
+        err.code = 'INVALID_QUERY';
+        err.httpStatus = 400;
+        throw err;
+    }
+    assertCursorOffsetExclusive(cursor, offset);
+
+    const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+    const mode = offset === undefined ? 'cursor' : 'offset';
+    const fingerprint = createCursorFingerprint({
+        endpoint: 'contacts',
+        company: String(companyId),
+        visibility: {
+            assigned_only: providerScope?.assignedOnly === true,
+            user_id: providerScope?.assignedOnly ? String(providerScope.userId || '') : null,
+        },
+        filters: { search: normalizedSearch.toLocaleLowerCase('en-US') },
+        sort: 'id',
+        direction: 'desc',
+        limit: pageLimit,
+    });
+    const cursorExpectation = {
+        endpoint: 'contacts',
+        sort: 'id',
+        direction: 'desc',
+        fingerprint,
+        valueTypes: ['bigint'],
+    };
+    const decodedCursor = cursor ? decodeCursor(cursor, cursorExpectation) : null;
+
     const conditions = [];
     const params = [];
     let paramIdx = 0;
@@ -78,9 +124,9 @@ async function listContacts({ search, offset = 0, limit = 50, companyId, provide
         }
     }
 
-    if (search && search.trim()) {
+    if (normalizedSearch) {
         paramIdx++;
-        const searchPattern = `%${search.trim()}%`;
+        const searchPattern = `%${normalizedSearch}%`;
         conditions.push(`(
             c.full_name ILIKE $${paramIdx}
             OR c.phone_e164 ILIKE $${paramIdx}
@@ -90,34 +136,68 @@ async function listContacts({ search, offset = 0, limit = 50, companyId, provide
         params.push(searchPattern);
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+    let total = null;
+    if (!decodedCursor) {
+        const countResult = await db.query(
+            `SELECT COUNT(*)::int AS total FROM contacts c ${whereClause}`,
+            params,
+        );
+        total = countResult.rows[0]?.total ?? 0;
+    }
 
-    paramIdx++;
-    const limitParam = paramIdx;
-    params.push(Math.min(limit, 100));
+    const pageParams = params.slice();
+    let cursorPredicate = '';
+    if (decodedCursor) {
+        const keyset = buildKeysetPredicate([
+            { expression: 'c.id', direction: 'desc', type: 'bigint' },
+        ], decodedCursor.values, pageParams.length + 1);
+        cursorPredicate = ` AND ${keyset.sql}`;
+        pageParams.push(...keyset.params);
+    }
 
-    paramIdx++;
-    const offsetParam = paramIdx;
-    params.push(offset);
+    const limitParam = pageParams.length + 1;
+    pageParams.push(pageLimit + 1);
+    let offsetSql = '';
+    if (mode === 'offset') {
+        const offsetParam = pageParams.length + 1;
+        pageParams.push(Number(offset));
+        offsetSql = ` OFFSET $${offsetParam}`;
+    }
 
     const sql = `
-        SELECT c.*
+        SELECT c.*, ${bigintCursorExpression('c.id')} AS __cursor_id
         FROM contacts c
-        ${whereClause}
+        ${whereClause}${cursorPredicate}
         ORDER BY c.id DESC
-        LIMIT $${limitParam} OFFSET $${offsetParam}
+        LIMIT $${limitParam}${offsetSql}
     `;
 
-    const { rows } = await db.query(sql, params);
+    const { rows: probedRows } = await db.query(sql, pageParams);
+    const rows = probedRows.slice(0, pageLimit);
+    const hasMore = probedRows.length > pageLimit;
     const results = rows.map(rowToContact);
+    const lastRow = rows.at(-1);
+    const nextCursor = mode === 'cursor' && hasMore && lastRow
+        ? encodeCursor({
+            endpoint: 'contacts',
+            sort: 'id',
+            direction: 'desc',
+            fingerprint,
+            values: [String(lastRow.__cursor_id)],
+        }, cursorExpectation)
+        : null;
 
     return {
         results,
         pagination: {
-            offset,
-            limit,
+            mode,
+            offset: mode === 'offset' ? Number(offset) : 0,
+            limit: pageLimit,
             returned: results.length,
-            has_more: results.length >= limit,
+            has_more: hasMore,
+            next_cursor: nextCursor,
+            total,
         },
     };
 }

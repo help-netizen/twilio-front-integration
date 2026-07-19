@@ -100,13 +100,17 @@ export type ContactsListParams = {
     search?: string;
     offset?: number;
     limit?: number;
+    cursor?: string;
 };
 
 export type ContactsPagination = {
-    offset: number;
+    mode: 'cursor' | 'offset';
+    offset?: number;
     limit: number;
     returned: number;
     has_more: boolean;
+    next_cursor: string | null;
+    total: number | null;
 };
 
 export type ContactsListResponse = {

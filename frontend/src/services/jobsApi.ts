@@ -69,10 +69,25 @@ export interface LocalJob {
 
 export interface JobsListResult {
     results: LocalJob[];
-    total: number;
+    total: number | null;
     offset: number;
     limit: number;
     has_more: boolean;
+    facets: JobsListFacets | null;
+    pagination: JobsPagination;
+}
+
+export interface JobsListFacets {
+    providers: string[];
+}
+
+export interface JobsPagination {
+    mode: 'cursor' | 'offset';
+    limit: number;
+    returned: number;
+    has_more: boolean;
+    next_cursor: string | null;
+    total: number | null;
 }
 
 export interface JobsListParams {
@@ -80,6 +95,7 @@ export interface JobsListParams {
     canceled?: string;
     search?: string;
     offset?: number;
+    cursor?: string;
     limit?: number;
     contact_id?: number;
     sort_by?: string;
@@ -88,6 +104,7 @@ export interface JobsListParams {
     start_date?: string;
     end_date?: string;
     service_name?: string;
+    job_source?: string;
     provider?: string;
     tag_ids?: string;
     tag_match?: 'any' | 'all';
@@ -109,7 +126,7 @@ async function jobsRequest<T>(url: string, options?: RequestInit): Promise<T> {
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
-export async function listJobs(params: JobsListParams = {}): Promise<JobsListResult> {
+export async function listJobs(params: JobsListParams = {}, signal?: AbortSignal): Promise<JobsListResult> {
     const qs = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
         if (value !== undefined && value !== '' && value !== null) {
@@ -117,7 +134,7 @@ export async function listJobs(params: JobsListParams = {}): Promise<JobsListRes
         }
     }
     const query = qs.toString();
-    return jobsRequest<JobsListResult>(`${JOBS_BASE}${query ? '?' + query : ''}`);
+    return jobsRequest<JobsListResult>(`${JOBS_BASE}${query ? '?' + query : ''}`, { signal });
 }
 
 export async function getJob(id: number): Promise<LocalJob> {

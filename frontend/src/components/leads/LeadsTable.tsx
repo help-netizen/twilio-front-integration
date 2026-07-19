@@ -5,17 +5,18 @@ import { Phone, MoreVertical, PhoneOff, CheckCircle2, Briefcase, ArrowUp, ArrowD
 import type { Lead, TableColumn } from '../../types/lead';
 import { renderCell } from './leadsTableHelpers';
 import { useAuthz } from '../../hooks/useAuthz';
+import { LoadMoreFooter, type LoadMoreFooterProps } from '../lists/LoadMoreFooter';
 
 interface LeadsTableProps {
     leads: Lead[]; loading: boolean; selectedLeadId?: string; columns: TableColumn[];
     onSelectLead: (lead: Lead) => void; onMarkLost: (uuid: string) => void;
     onActivate: (uuid: string) => void; onConvert: (uuid: string) => void;
-    offset: number; hasMore: boolean; onNextPage: () => void; onPrevPage: () => void;
+    footerProps: LoadMoreFooterProps;
     sortBy?: string; sortOrder?: 'asc' | 'desc';
     onSortChange?: (field: string, order: 'asc' | 'desc') => void;
 }
 
-export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLead, onMarkLost, onActivate, onConvert, offset, hasMore, onNextPage, onPrevPage, sortBy, sortOrder, onSortChange }: LeadsTableProps) {
+export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLead, onMarkLost, onActivate, onConvert, footerProps, sortBy, sortOrder, onSortChange }: LeadsTableProps) {
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
     const visibleColumns = columns
@@ -32,7 +33,12 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
     };
 
     if (loading) return <div className="flex-1 overflow-auto p-5"><div className="space-y-3">{[...Array(8)].map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}</div></div>;
-    if (leads.length === 0) return <div className="flex-1 flex items-center justify-center"><div className="text-center"><p className="text-lg mb-2" style={{ color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>No leads found</p><p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Try adjusting your filters or create a new lead</p></div></div>;
+    if (leads.length === 0) {
+        if (footerProps.state === 'error+retry') {
+            return <div className="flex-1 flex items-center justify-center"><LoadMoreFooter {...footerProps} /></div>;
+        }
+        return <div className="flex-1 flex items-center justify-center"><div className="text-center"><p className="text-lg mb-2" style={{ color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>No leads found</p><p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Try adjusting your filters or create a new lead</p></div></div>;
+    }
 
     return (
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -92,30 +98,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                     ))}</TableBody>
                 </Table>
             </div>
-            {/* Pagination — плоско на канвасе */}
-            <div className="px-5 py-3.5 flex items-center justify-between">
-                <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
-                    Showing {offset + 1} - {offset + leads.length} leads
-                </span>
-                <div className="flex gap-2">
-                    <button
-                        onClick={onPrevPage}
-                        disabled={offset === 0}
-                        className="inline-flex items-center px-4 text-sm font-medium transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{ minHeight: 38, borderRadius: 999, border: '1px solid var(--blanc-line)', background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-2)' }}
-                    >
-                        Previous
-                    </button>
-                    <button
-                        onClick={onNextPage}
-                        disabled={!hasMore}
-                        className="inline-flex items-center px-4 text-sm font-medium transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{ minHeight: 38, borderRadius: 999, border: '1px solid var(--blanc-line)', background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-2)' }}
-                    >
-                        Next
-                    </button>
-                </div>
-            </div>
+            <LoadMoreFooter {...footerProps} />
         </div>
     );
 }

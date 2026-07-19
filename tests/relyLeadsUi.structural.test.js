@@ -176,7 +176,7 @@ describe('RELY-LEADS-SETTINGS-001 rejected lead UI contracts', () => {
         expect(pillFor({})).toBeNull();
     });
 
-    test('TC-U8-01 · FLAGS filter strictly narrows marked leads on the client', () => {
+    test('TC-U8-01 · FLAGS filter sends the server-authoritative rejected-only predicate', () => {
         const pageSource = read('frontend/src/pages/LeadsPage.tsx');
         const bodySource = read('frontend/src/components/leads/LeadsFilterBody.tsx');
         const desktopSource = read('frontend/src/components/leads/LeadsFilters.tsx');
@@ -185,7 +185,8 @@ describe('RELY-LEADS-SETTINGS-001 rejected lead UI contracts', () => {
         const filterColumnSource = bodySource.slice(bodySource.indexOf('export function FilterColumn'));
 
         expect(pageSource).toContain('const [rejectedOnly, setRejectedOnly] = useState(false)');
-        expect(pageSource).toContain('l.rely_filter?.rejected === true');
+        expect(pageSource).toContain('rejected_only: rejectedOnly');
+        expect(pageSource).not.toContain('l.rely_filter?.rejected === true');
         expect(pageSource).toContain('rejectedOnly={rejectedOnly}');
         expect(collapse(bodySource)).toContain('<FilterColumn title="FLAGS" items={[\'Rejected\']} selected={rejectedOnly ? [\'Rejected\'] : []} onToggle={onToggleRejected} />');
         expect(bodySource).toContain('+ (rejectedOnly ? 1 : 0)');
@@ -198,15 +199,7 @@ describe('RELY-LEADS-SETTINGS-001 rejected lead UI contracts', () => {
             expect(source).toContain('onToggleRejected');
             expect(source).toContain('if (rejectedOnly) onToggleRejected()');
         }
-        expect(leadsApiSource).not.toContain('rejectedOnly');
+        expect(leadsApiSource).toContain("if (params.rejected_only !== undefined) searchParams.set('rejected_only', String(params.rejected_only))");
         expect(leadsApiSource).not.toContain('rely_filter');
-
-        const leads = [
-            { rely_filter: { rejected: true } },
-            { rely_filter: { rejected: false } },
-            { rely_filter: {} },
-            {},
-        ];
-        expect(leads.filter(lead => lead.rely_filter?.rejected === true)).toEqual([leads[0]]);
     });
 });

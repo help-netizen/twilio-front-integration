@@ -1,9 +1,20 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { authedFetch } from '../services/apiClient';
-import type { PaymentRow, PaymentDetail, SortField, SortDir } from '../components/payments/paymentTypes';
+import type {
+    PaymentRow,
+    PaymentDetail,
+    PaymentsListAggregates,
+    PaymentsListFacets,
+    PaymentsListResult,
+    SortField,
+    SortDir,
+} from '../components/payments/paymentTypes';
 import { defaultDateFrom, defaultDateTo } from '../components/payments/paymentTypes';
 import { exportPaymentsCSV } from './paymentExport';
+import { useAuthz } from './useAuthz';
+import { useDebouncedSearch } from './useDebouncedSearch';
+import { useLoadMoreList } from './useLoadMoreList';
 import {
     zenbookerPaymentsApi,
     zenbookerSyncResultMessage,
@@ -11,22 +22,25 @@ import {
 } from '../services/zenbookerPaymentsApi';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
+const PAYMENTS_PAGE_SIZE = 50;
+const paymentKey = (payment: PaymentRow) => payment.id;
+
+interface PaymentsPageMeta {
+    aggregates: PaymentsListAggregates;
+    facets: PaymentsListFacets;
+}
 
 export function usePaymentsPage() {
     const { paymentId: urlPaymentId } = useParams<{ paymentId?: string }>();
     const navigate = useNavigate();
+    const { company } = useAuthz();
     const [dateFrom, setDateFrom] = useState(defaultDateFrom);
     const [dateTo, setDateTo] = useState(defaultDateTo);
     const [methodFilter, setMethodFilter] = useState('');
     const [searchInput, setSearchInput] = useState('');
-    const [searchQuery, setSearchQuery] = useState('');
-    const [rows, setRows] = useState<PaymentRow[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+    const searchQuery = useDebouncedSearch(searchInput, 400);
     const [sortField, setSortField] = useState<SortField>('payment_date');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
-    const [page, setPage] = useState(0);
-    const perPage = 50;
     const [selectedId, setSelectedId] = useState<number | null>(urlPaymentId ? parseInt(urlPaymentId, 10) || null : null);
     const [detail, setDetail] = useState<PaymentDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
@@ -41,18 +55,75 @@ export function usePaymentsPage() {
     const filterRef = useRef<HTMLDivElement>(null);
     const [exporting, setExporting] = useState(false);
 
-    useEffect(() => { const handler = (e: MouseEvent) => { if (filterRef.current && !filterRef.current.contains(e.target as Node)) setFiltersOpen(false); }; if (filtersOpen) document.addEventListener('mousedown', handler); return () => document.removeEventListener('mousedown', handler); }, [filtersOpen]);
+    useEffect(() => {
+        const handler = (event: MouseEvent) => {
+            if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
+                setFiltersOpen(false);
+            }
+        };
+        if (filtersOpen) document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [filtersOpen]);
 
-    const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-    useEffect(() => { searchTimer.current = setTimeout(() => setSearchQuery(searchInput), 400); return () => clearTimeout(searchTimer.current); }, [searchInput]);
+    const paymentsList = useLoadMoreList<PaymentRow, PaymentsPageMeta>({
+        queryKey: [
+            'payments-list',
+            company?.id ?? null,
+            dateFrom,
+            dateTo,
+            methodFilter,
+            searchQuery,
+            providerFilter,
+            paidFilter,
+            quickFilter,
+            sortField,
+            sortDir,
+        ],
+        pageSize: PAYMENTS_PAGE_SIZE,
+        enabled: !!company?.id && !!dateFrom && !!dateTo,
+        fetchPage: async ({ cursor, limit, signal }) => {
+            const query = new URLSearchParams({
+                date_from: dateFrom,
+                date_to: dateTo,
+                limit: String(limit),
+                sort_by: sortField,
+                sort_order: sortDir,
+            });
+            if (cursor) query.set('cursor', cursor);
+            if (methodFilter) query.set('payment_method', methodFilter);
+            if (quickFilter !== 'all') query.set('quick_filter', quickFilter);
+            if (searchQuery) query.set('search', searchQuery);
+            if (providerFilter) query.set('provider', providerFilter);
+            if (paidFilter) query.set('paid_status', paidFilter);
 
-    const fetchPayments = useCallback(async () => {
-        setLoading(true); setError(''); setPage(0);
-        try { const qs = new URLSearchParams({ date_from: dateFrom, date_to: dateTo }); if (methodFilter) qs.set('payment_method', methodFilter); if (quickFilter === 'new_checks') { qs.set('quick_filter', 'new_checks'); qs.set('limit', '1000'); } if (searchQuery) qs.set('search', searchQuery); const res = await authedFetch(`${API_BASE}/api/zenbooker/payments?${qs.toString()}`); const json = await res.json(); if (!res.ok || !json.ok) throw new Error(json.error || `Request failed (${res.status})`); setRows(json.data.rows || []); }
-        catch (err: any) { setError(err.message || 'Failed to fetch payments'); setRows([]); } finally { setLoading(false); }
-    }, [dateFrom, dateTo, methodFilter, quickFilter, searchQuery]);
+            const response = await authedFetch(
+                `${API_BASE}/api/zenbooker/payments?${query.toString()}`,
+                { signal },
+            );
+            const json = await response.json() as {
+                ok?: boolean;
+                data?: PaymentsListResult;
+                error?: string | { message?: string };
+            };
+            if (!response.ok || !json.ok || !json.data) {
+                const message = typeof json.error === 'string' ? json.error : json.error?.message;
+                throw new Error(message || `Request failed (${response.status})`);
+            }
 
-    useEffect(() => { fetchPayments(); }, [fetchPayments]);
+            const data = json.data;
+            return {
+                items: data.rows || [],
+                pagination: {
+                    ...data.pagination,
+                    mode: 'cursor' as const,
+                },
+                meta: data.aggregates && data.facets
+                    ? { aggregates: data.aggregates, facets: data.facets }
+                    : null,
+            };
+        },
+        getItemKey: paymentKey,
+    });
 
     const handleSync = useCallback(async () => {
         setSyncingMode('range');
@@ -60,13 +131,13 @@ export function usePaymentsPage() {
         try {
             const result = await zenbookerPaymentsApi.syncRange(dateFrom, dateTo);
             setSyncResult(zenbookerSyncResultMessage(result));
-            await fetchPayments();
-        } catch (err: any) {
-            setSyncResult(`Sync error: ${err.message}`);
+            await paymentsList.reset();
+        } catch (error) {
+            setSyncResult(`Sync error: ${error instanceof Error ? error.message : 'Unknown error'}`);
         } finally {
             setSyncingMode(null);
         }
-    }, [dateFrom, dateTo, fetchPayments]);
+    }, [dateFrom, dateTo, paymentsList.reset]);
 
     const handleFullHistorySync = useCallback(async () => {
         setSyncingMode('full_history');
@@ -76,72 +147,142 @@ export function usePaymentsPage() {
             if (result.remaining) {
                 if (result.cursor == null) throw new Error('Progress was saved without a continuation cursor');
                 setFullHistoryCursor(result.cursor);
-                setSyncResult(zenbookerSyncResultMessage(result));
             } else {
                 setFullHistoryCursor(null);
-                setSyncResult(zenbookerSyncResultMessage(result));
             }
-            await fetchPayments();
-        } catch (err: any) {
-            setSyncResult(`Sync error: ${err.message}`);
+            setSyncResult(zenbookerSyncResultMessage(result));
+            await paymentsList.reset();
+        } catch (error) {
+            setSyncResult(`Sync error: ${error instanceof Error ? error.message : 'Unknown error'}`);
         } finally {
             setSyncingMode(null);
         }
-    }, [fetchPayments, fullHistoryCursor]);
+    }, [fullHistoryCursor, paymentsList.reset]);
 
     const fetchDetail = useCallback(async (paymentId: number) => {
         setDetailLoading(true);
-        try { const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/${paymentId}`); const json = await res.json(); if (!res.ok || !json.ok) throw new Error(json.error || 'Failed to load detail'); setDetail(json.data); }
-        catch { setDetail(null); } finally { setDetailLoading(false); }
+        try {
+            const response = await authedFetch(`${API_BASE}/api/zenbooker/payments/${paymentId}`);
+            const json = await response.json();
+            if (!response.ok || !json.ok) throw new Error(json.error || 'Failed to load detail');
+            setDetail(json.data);
+        } catch {
+            setDetail(null);
+        } finally {
+            setDetailLoading(false);
+        }
     }, []);
 
-    const handleSelectRow = (paymentId: number) => { setSelectedId(paymentId); navigate(`/payments/${paymentId}`, { replace: true }); fetchDetail(paymentId); };
-    const handleCloseDetail = () => { setSelectedId(null); setDetail(null); navigate('/payments', { replace: true }); };
+    const handleSelectRow = (paymentId: number) => {
+        setSelectedId(paymentId);
+        navigate(`/payments/${paymentId}`, { replace: true });
+        void fetchDetail(paymentId);
+    };
+    const handleCloseDetail = () => {
+        setSelectedId(null);
+        setDetail(null);
+        navigate('/payments', { replace: true });
+    };
 
     const handleToggleDeposited = useCallback(async (deposited: boolean) => {
         if (!detail || !selectedId) return;
-        try { const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/${selectedId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ check_deposited: deposited }) }); const json = await res.json(); if (!res.ok || !json.ok) throw new Error(json.error || 'Failed'); setDetail(prev => prev ? { ...prev, check_deposited: deposited } : prev); setRows(prev => prev.map(r => r.id === selectedId ? { ...r, check_deposited: deposited } : r)); }
-        catch (err: any) { console.error('Toggle deposited error:', err); }
-    }, [detail, selectedId]);
+        try {
+            const response = await authedFetch(`${API_BASE}/api/zenbooker/payments/${selectedId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ check_deposited: deposited }),
+            });
+            const json = await response.json();
+            if (!response.ok || !json.ok) throw new Error(json.error || 'Failed');
+            setDetail(previous => previous ? { ...previous, check_deposited: deposited } : previous);
+            paymentsList.updateItem(selectedId, row => ({ ...row, check_deposited: deposited }));
+            await paymentsList.reset();
+        } catch (error) {
+            console.error('Toggle deposited error:', error);
+        }
+    }, [detail, paymentsList.reset, paymentsList.updateItem, selectedId]);
 
-    useEffect(() => { const parsedId = urlPaymentId ? parseInt(urlPaymentId, 10) : null; if (parsedId && parsedId !== selectedId) { setSelectedId(parsedId); fetchDetail(parsedId); } }, [urlPaymentId]);
+    useEffect(() => {
+        const parsedId = urlPaymentId ? parseInt(urlPaymentId, 10) : null;
+        if (parsedId && parsedId !== selectedId) {
+            setSelectedId(parsedId);
+            void fetchDetail(parsedId);
+        }
+    }, [fetchDetail, selectedId, urlPaymentId]);
 
-    const handleSort = (field: SortField) => { if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortField(field); setSortDir('desc'); } setPage(0); };
+    const handleSort = (field: SortField) => {
+        if (sortField === field) setSortDir(direction => direction === 'asc' ? 'desc' : 'asc');
+        else {
+            setSortField(field);
+            setSortDir('desc');
+        }
+    };
 
-    const uniqueMethods = useMemo(() => { const set = new Set<string>(); rows.forEach(r => { if (r.display_payment_method) set.add(r.display_payment_method); }); return [...set].sort(); }, [rows]);
-    const uniqueProviders = useMemo(() => { const set = new Set<string>(); rows.forEach(r => { if (r.tech && r.tech !== '—') r.tech.split(',').forEach((t: string) => { const n = t.trim(); if (n) set.add(n); }); }); return [...set].sort(); }, [rows]);
     const activeFilterCount = (methodFilter ? 1 : 0) + (providerFilter ? 1 : 0) + (paidFilter ? 1 : 0);
-    const clearAllFilters = () => { setMethodFilter(''); setProviderFilter(''); setPaidFilter(''); };
-    const undepositedCheckCount = useMemo(() => rows.filter(r => (r.display_payment_method || '').toLowerCase() === 'check' && !r.check_deposited).length, [rows]);
+    const clearAllFilters = () => {
+        setMethodFilter('');
+        setProviderFilter('');
+        setPaidFilter('');
+    };
 
-    const sortedRows = useMemo(() => {
-        let filtered = [...rows];
-        if (quickFilter === 'new_checks') filtered = filtered.filter(r => (r.display_payment_method || '').toLowerCase() === 'check' && !r.check_deposited);
-        if (paidFilter === 'paid') filtered = filtered.filter(r => r.invoice_paid_in_full === true); else if (paidFilter === 'due') filtered = filtered.filter(r => r.invoice_paid_in_full !== true);
-        if (providerFilter) filtered = filtered.filter(r => r.tech && r.tech.includes(providerFilter));
-        filtered.sort((a, b) => { let va: string | number = (a[sortField] ?? '') as string; let vb: string | number = (b[sortField] ?? '') as string; if (sortField === 'amount_paid' || sortField === 'invoice_amount_due') { va = parseFloat(va as string) || 0; vb = parseFloat(vb as string) || 0; } else if (sortField === 'payment_date') { va = new Date(va as string).getTime() || 0; vb = new Date(vb as string).getTime() || 0; } else { va = (va as string || '').toLowerCase(); vb = (vb as string || '').toLowerCase(); } if (va < vb) return sortDir === 'asc' ? -1 : 1; if (va > vb) return sortDir === 'asc' ? 1 : -1; return 0; });
-        return filtered;
-    }, [rows, sortField, sortDir, paidFilter, providerFilter, quickFilter]);
+    const handleExportCSV = async () => {
+        setExporting(true);
+        try {
+            await exportPaymentsCSV(dateFrom, dateTo);
+        } catch (error) {
+            console.error('Export error:', error);
+        } finally {
+            setExporting(false);
+        }
+    };
 
-    const totalPages = Math.ceil(sortedRows.length / perPage);
-    const pagedRows = sortedRows.slice(page * perPage, (page + 1) * perPage);
-    const totalAmount = useMemo(() => sortedRows.reduce((sum, r) => sum + (parseFloat(r.amount_paid) || 0), 0), [sortedRows]);
-
-    // Export covers the entire selected date range — payment method / search
-    // / paid / provider / quick filters are intentionally NOT applied so the
-    // CSV is a complete picture for the period.
-    const handleExportCSV = async () => { setExporting(true); try { await exportPaymentsCSV(dateFrom, dateTo); } catch (err: any) { console.error('Export error:', err); } finally { setExporting(false); } };
+    const aggregates = paymentsList.meta?.aggregates ?? null;
+    const facets = paymentsList.meta?.facets ?? null;
 
     return {
-        rows, loading, error, sortedRows, pagedRows, totalPages, page, setPage, perPage, totalAmount,
-        dateFrom, setDateFrom, dateTo, setDateTo, methodFilter, setMethodFilter, searchInput, setSearchInput,
-        providerFilter, setProviderFilter, paidFilter, setPaidFilter, filtersOpen, setFiltersOpen,
-        datePickerOpen, setDatePickerOpen, quickFilter, setQuickFilter, filterRef,
-        uniqueMethods, uniqueProviders, activeFilterCount, clearAllFilters, undepositedCheckCount,
-        sortField, sortDir, handleSort, selectedId, detail, detailLoading,
-        handleSelectRow, handleCloseDetail, handleToggleDeposited,
-        syncing: syncingMode !== null, syncingMode, syncResult, handleSync,
-        handleFullHistorySync, fullHistoryRemaining: fullHistoryCursor != null,
-        exporting, handleExportCSV,
+        rows: paymentsList.items,
+        loading: paymentsList.isLoadingFirst,
+        listState: paymentsList.state,
+        listErrorPhase: paymentsList.errorPhase,
+        loadMore: paymentsList.loadMore,
+        retry: paymentsList.retry,
+        hasSummary: aggregates !== null,
+        transactionCount: aggregates?.transaction_count ?? 0,
+        totalAmount: aggregates?.total_amount ?? '0',
+
+        dateFrom, setDateFrom,
+        dateTo, setDateTo,
+        methodFilter, setMethodFilter,
+        searchInput, setSearchInput,
+        providerFilter, setProviderFilter,
+        paidFilter, setPaidFilter,
+        filtersOpen, setFiltersOpen,
+        datePickerOpen, setDatePickerOpen,
+        quickFilter, setQuickFilter,
+        filterRef,
+        uniqueMethods: facets?.payment_methods ?? [],
+        uniqueProviders: facets?.providers ?? [],
+        activeFilterCount,
+        clearAllFilters,
+        undepositedCheckCount: facets?.undeposited_check_count ?? 0,
+
+        sortField,
+        sortDir,
+        handleSort,
+        selectedId,
+        detail,
+        detailLoading,
+        handleSelectRow,
+        handleCloseDetail,
+        handleToggleDeposited,
+
+        syncing: syncingMode !== null,
+        syncingMode,
+        syncResult,
+        handleSync,
+        handleFullHistorySync,
+        fullHistoryRemaining: fullHistoryCursor != null,
+        exporting,
+        handleExportCSV,
     };
 }

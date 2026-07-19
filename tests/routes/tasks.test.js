@@ -62,31 +62,39 @@ describe('gating', () => {
 
 describe('GET / — visibility scope', () => {
     test('manager (tasks.manage) sees all — no owner scoping', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, parent_type: 'job' }] });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 1 }] })
+            .mockResolvedValueOnce({ rows: [{ id: 1, parent_type: 'job' }] });
         const res = await request(makeApp()).get('/api/tasks');
         expect(res.status).toBe(200);
         expect(res.body.data.tasks).toHaveLength(1);
-        const sql = mockQuery.mock.calls[0][0];
+        const sql = mockQuery.mock.calls[1][0];
         expect(sql).not.toMatch(/t\.owner_user_id = \$/);
     });
 
     test('provider (no manage) is scoped to own tasks', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [] });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+            .mockResolvedValueOnce({ rows: [] });
         const res = await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks');
         expect(res.status).toBe(200);
-        const [sql, params] = mockQuery.mock.calls[0];
+        const [sql, params] = mockQuery.mock.calls[1];
         expect(sql).toMatch(/t\.owner_user_id = \$2/);
         expect(params[1]).toBe(ME);
     });
 
     test('default filter is status=open; ?status=all drops it', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [] });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+            .mockResolvedValueOnce({ rows: [] });
         await request(makeApp()).get('/api/tasks');
-        expect(mockQuery.mock.calls[0][0]).toMatch(/t\.status = \$/);
+        expect(mockQuery.mock.calls[1][0]).toMatch(/t\.status = \$/);
         mockQuery.mockClear();
-        mockQuery.mockResolvedValueOnce({ rows: [] });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+            .mockResolvedValueOnce({ rows: [] });
         await request(makeApp()).get('/api/tasks?status=all');
-        expect(mockQuery.mock.calls[0][0]).not.toMatch(/t\.status = \$/);
+        expect(mockQuery.mock.calls[1][0]).not.toMatch(/t\.status = \$/);
     });
 });
 
@@ -127,9 +135,11 @@ describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
 
     test('count reuses the list predicate — same conditions/$n as GET / (TC-9 mock)', async () => {
         // Provider scope: GET / list and GET /count must build the same owner+status predicate.
-        mockQuery.mockResolvedValueOnce({ rows: [] });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+            .mockResolvedValueOnce({ rows: [] });
         await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks?status=open');
-        const listSql = mockQuery.mock.calls[0][0];
+        const listSql = mockQuery.mock.calls[1][0];
         mockQuery.mockClear();
         mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
         await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks/count');

@@ -75,6 +75,24 @@ export interface ListTasksParams {
     due_to?: string;
     limit?: number;
     offset?: number;
+    cursor?: string;
+    search?: string;
+    sort_by?: 'description' | 'parent_type' | 'parent_label' | 'assignee_name' | 'due_at';
+    sort_order?: 'asc' | 'desc';
+}
+
+export interface TasksPagination {
+    mode: 'cursor' | 'offset';
+    limit: number;
+    returned: number;
+    has_more: boolean;
+    next_cursor: string | null;
+    total: number | null;
+}
+
+export interface TasksPageResult {
+    tasks: Task[];
+    pagination: TasksPagination;
 }
 
 const BASE = '/api/tasks';
@@ -128,6 +146,27 @@ export async function listTasks(params: ListTasksParams = {}): Promise<Task[]> {
     const res = await authedFetch(`${BASE}${qs ? `?${qs}` : ''}`);
     const data = await unwrap<{ tasks: Task[] }>(res);
     return data.tasks;
+}
+
+export async function listTasksPage(
+    params: ListTasksParams = {},
+    signal?: AbortSignal,
+): Promise<TasksPageResult> {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.parent_type) query.set('parent_type', params.parent_type);
+    if (params.overdue) query.set('overdue', '1');
+    if (params.assignee_id) query.set('assignee_id', params.assignee_id);
+    if (params.due_from) query.set('due_from', params.due_from);
+    if (params.due_to) query.set('due_to', params.due_to);
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.cursor) query.set('cursor', params.cursor);
+    if (params.search) query.set('search', params.search);
+    if (params.sort_by) query.set('sort_by', params.sort_by);
+    if (params.sort_order) query.set('sort_order', params.sort_order);
+    const queryString = query.toString();
+    const response = await authedFetch(`${BASE}${queryString ? `?${queryString}` : ''}`, { signal });
+    return unwrap<TasksPageResult>(response);
 }
 
 export interface CreateTaskInput {

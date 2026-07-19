@@ -14,7 +14,15 @@ describe('zenbookerPaymentsSyncService listPayments new checks filter', () => {
 
     test('filters undeposited checks in SQL before applying limit', async () => {
         db.query
-            .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+            .mockResolvedValueOnce({
+                rows: [{
+                    transaction_count: 1,
+                    total_amount: '95.00',
+                    payment_methods: ['check'],
+                    providers: ['Russell'],
+                    undeposited_check_count: 1,
+                }],
+            })
             .mockResolvedValueOnce({
                 rows: [{
                     id: 1,
@@ -61,8 +69,9 @@ describe('zenbookerPaymentsSyncService listPayments new checks filter', () => {
         expect(countSql).toContain('payment_methods ILIKE');
         expect(countSql).toContain('display_payment_method ILIKE');
         expect(rowsSql).toContain('check_deposited IS NOT TRUE');
-        expect(rowsSql).toContain('LIMIT $5 OFFSET $6');
+        expect(rowsSql).toContain('LIMIT $5');
+        expect(rowsSql).not.toContain('OFFSET');
         expect(countParams).toEqual(['company-1', '2026-05-01', '2026-06-14', '%check%']);
-        expect(rowsParams).toEqual(['company-1', '2026-05-01', '2026-06-14', '%check%', 1000, 0]);
+        expect(rowsParams).toEqual(['company-1', '2026-05-01', '2026-06-14', '%check%', 1001]);
     });
 });

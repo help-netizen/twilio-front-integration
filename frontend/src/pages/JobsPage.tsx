@@ -14,6 +14,7 @@ import { getJob, type LocalJob } from '../services/jobsApi';
 import { Download, Loader2, Plus } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { MobileListPage } from '../components/layout/MobileListPage';
+import type { LoadMoreFooterProps } from '../components/lists/LoadMoreFooter';
 
 // ─── Jobs Page ───────────────────────────────────────────────────────────────
 
@@ -24,6 +25,16 @@ export function JobsPage() {
     const canCreateJob = hasPermission('jobs.create');
     const [newJobOpen, setNewJobOpen] = useState(false);
     const [copyFrom, setCopyFrom] = useState<CopyJobData | null>(null);
+    const footerProps: LoadMoreFooterProps = {
+        state: page.listState,
+        loadedCount: page.jobs.length,
+        totalCount: page.totalCount,
+        singularLabel: 'job',
+        pluralLabel: 'jobs',
+        errorPhase: page.listErrorPhase,
+        onLoadMore: () => { void page.loadMoreJobs(); },
+        onRetry: () => { void page.retryJobs(); },
+    };
 
     // List rows may be summary-only, so fetch the full job before copying.
     const handleCopyJob = (job: LocalJob) => {
@@ -91,20 +102,19 @@ export function JobsPage() {
                             sortBy={page.sortBy}
                             sortOrder={page.sortOrder}
                             onSortChange={page.handleSortChange}
-                            jobs={page.jobs}
+                            providerNames={page.providerNames}
                             onExportCSV={page.handleExportCSV}
                             exporting={page.exporting}
-                            canExport={page.filteredJobs.length > 0}
+                            canExport={page.jobs.length > 0}
                             onNewJob={() => setNewJobOpen(true)}
                             canCreateJob={canCreateJob}
                         />
                     }
                 >
                     <JobsMobileList
-                        filteredJobs={page.filteredJobs}
+                        jobs={page.jobs}
                         loading={page.loading}
-                        hasMore={page.hasMore}
-                        onLoadMore={page.loadMoreJobs}
+                        footerProps={footerProps}
                         onSelectJob={page.handleSelectJob}
                         timezone={company?.timezone}
                     />
@@ -157,7 +167,7 @@ export function JobsPage() {
                                 tagFilter={page.tagFilter}
                                 onTagFilterChange={page.setTagFilter}
                                 allTags={page.allTags}
-                                jobs={page.jobs}
+                                providerNames={page.providerNames}
                             />
                             <JobsFieldsButton
                                 visibleFields={page.visibleFields}
@@ -167,9 +177,9 @@ export function JobsPage() {
                             />
                             <button
                                 onClick={page.handleExportCSV}
-                                disabled={page.filteredJobs.length === 0 || page.exporting}
+                                disabled={page.jobs.length === 0 || page.exporting}
                                 className="blanc-control-chip"
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: (page.filteredJobs.length === 0 || page.exporting) ? 0.5 : 1 }}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: (page.jobs.length === 0 || page.exporting) ? 0.5 : 1 }}
                             >
                                 {page.exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
                                 Export
@@ -180,7 +190,7 @@ export function JobsPage() {
                     <div className="flex flex-1 flex-col min-h-0">
                         <div className="flex flex-1 flex-col overflow-hidden">
                             <JobsTable
-                                jobs={page.filteredJobs}
+                                jobs={page.jobs}
                                 loading={page.loading}
                                 selectedJobId={page.selectedJob?.id}
                                 visibleFields={page.visibleFields}
@@ -189,11 +199,7 @@ export function JobsPage() {
                                 sortOrder={page.sortOrder}
                                 onSortChange={page.handleSortChange}
                                 onSelectJob={page.handleSelectJob}
-                                offset={page.offset}
-                                totalCount={page.totalCount}
-                                hasMore={page.hasMore}
-                                limit={page.limit}
-                                onLoadJobs={page.loadJobs}
+                                footerProps={footerProps}
                                 onCopyJob={handleCopyJob}
                             />
                         </div>

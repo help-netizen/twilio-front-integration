@@ -13,6 +13,15 @@
 
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
+const {
+    createCursorFingerprint,
+    encodeCursor,
+    decodeCursor,
+    assertCursorOffsetExclusive,
+    buildKeysetPredicate,
+    timestampCursorExpression,
+    bigintCursorExpression,
+} = require('../utils/listCursor');
 
 const FULL_HISTORY_TIME_BUDGET_MS = Number(process.env.ZENBOOKER_PAYMENTS_FULL_HISTORY_BUDGET_MS) || 210000;
 const FULL_HISTORY_PAGE_SIZE = Number(process.env.ZENBOOKER_PAYMENTS_FULL_HISTORY_PAGE_SIZE) || 25;
@@ -898,99 +907,315 @@ async function reconcileJobLinks(companyId, { dryRun = false } = {}) {
 // listPayments — Read from local DB with filters
 // =============================================================================
 
+const PAYMENT_LIST_SORTS = Object.freeze({
+    payment_date: { expression: 'p.payment_date', type: 'timestamp', nullable: true },
+    amount_paid: { expression: 'COALESCE(p.amount_paid, 0)', type: 'numeric' },
+    invoice_amount_due: { expression: 'COALESCE(p.invoice_amount_due, 0)', type: 'numeric' },
+    job_number: { expression: `LOWER(COALESCE(p.job_number, '')) COLLATE "C"`, type: 'text' },
+    client: { expression: `LOWER(COALESCE(p.client, '')) COLLATE "C"`, type: 'text' },
+    payment_methods: { expression: `LOWER(COALESCE(p.payment_methods, '')) COLLATE "C"`, type: 'text' },
+    tech: { expression: `LOWER(COALESCE(p.tech, '')) COLLATE "C"`, type: 'text' },
+});
+
+function paymentsListError(code, message, statusCode) {
+    const error = new Error(message);
+    error.code = code;
+    error.statusCode = statusCode;
+    return error;
+}
+
 async function listPayments(companyId, {
-    dateFrom, dateTo, paymentMethod, quickFilter, search,
+    dateFrom, dateTo, paymentMethod, quickFilter, search, provider, paidStatus,
     sortField = 'payment_date', sortDir = 'desc',
-    offset = 0, limit = 200,
+    offset, limit = 50, cursor,
 } = {}) {
-    const conditions = ['company_id = $1'];
+    if (!companyId) {
+        throw paymentsListError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
+    }
+    if (!Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 1000) {
+        throw paymentsListError('INVALID_QUERY', 'limit must be an integer from 1 to 1000', 400);
+    }
+    const pageLimit = Number(limit);
+    if (offset !== undefined && (!Number.isInteger(Number(offset)) || Number(offset) < 0)) {
+        throw paymentsListError('INVALID_QUERY', 'offset must be a non-negative integer', 400);
+    }
+    assertCursorOffsetExclusive(cursor, offset);
+    if (!PAYMENT_LIST_SORTS[sortField]) {
+        throw paymentsListError('INVALID_QUERY', 'Invalid payment sort field', 400);
+    }
+    if (sortDir !== 'asc' && sortDir !== 'desc') {
+        throw paymentsListError('INVALID_QUERY', 'Invalid payment sort direction', 400);
+    }
+    if (quickFilter !== undefined && quickFilter !== '' && quickFilter !== 'all' && quickFilter !== 'new_checks') {
+        throw paymentsListError('INVALID_QUERY', 'Invalid payment quick filter', 400);
+    }
+    if (paidStatus !== undefined && paidStatus !== '' && paidStatus !== 'paid' && paidStatus !== 'due') {
+        throw paymentsListError('INVALID_QUERY', 'Invalid payment paid status', 400);
+    }
+
+    const mode = offset === undefined ? 'cursor' : 'offset';
+    const normalizedPaymentMethod = typeof paymentMethod === 'string' ? paymentMethod.trim() : '';
+    const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+    const normalizedProvider = typeof provider === 'string' ? provider.trim() : '';
+    if ((paymentMethod != null && typeof paymentMethod !== 'string')
+        || (search != null && typeof search !== 'string')
+        || (provider != null && typeof provider !== 'string')) {
+        throw paymentsListError('INVALID_QUERY', 'Payment filters must be strings', 400);
+    }
+
+    const sort = PAYMENT_LIST_SORTS[sortField];
+    const fingerprint = createCursorFingerprint({
+        endpoint: 'payments',
+        company: String(companyId),
+        filters: {
+            date_from: dateFrom || null,
+            date_to: dateTo || null,
+            payment_method: normalizedPaymentMethod.toLocaleLowerCase('en-US'),
+            quick_filter: quickFilter || 'all',
+            search: normalizedSearch.toLocaleLowerCase('en-US'),
+            provider: normalizedProvider,
+            paid_status: paidStatus || null,
+        },
+        sort: sortField,
+        direction: sortDir,
+        limit: pageLimit,
+    });
+    const cursorValueTypes = sort.nullable
+        ? ['boolean', { type: sort.type, nullable: true }, 'bigint']
+        : [sort.type, 'bigint'];
+    const cursorExpectation = {
+        endpoint: 'payments',
+        sort: sortField,
+        direction: sortDir,
+        fingerprint,
+        valueTypes: cursorValueTypes,
+    };
+    const decodedCursor = cursor ? decodeCursor(cursor, cursorExpectation) : null;
+
+    const baseConditions = ['p.company_id = $1'];
     const params = [companyId];
-    let paramIdx = 2;
 
     if (dateFrom) {
-        conditions.push(`payment_date >= $${paramIdx}`);
         params.push(dateFrom);
-        paramIdx++;
+        baseConditions.push(`p.payment_date >= $${params.length}::date`);
     }
     if (dateTo) {
-        // Add 1 day to include the entire "to" date
-        conditions.push(`payment_date < ($${paramIdx}::date + interval '1 day')`);
+        // Add 1 day to include the entire "to" date.
         params.push(dateTo);
-        paramIdx++;
+        baseConditions.push(`p.payment_date < ($${params.length}::date + interval '1 day')`);
     }
-    if (paymentMethod) {
-        conditions.push(`payment_methods ILIKE $${paramIdx}`);
-        params.push(`%${paymentMethod}%`);
-        paramIdx++;
+    if (normalizedPaymentMethod) {
+        params.push(`%${normalizedPaymentMethod}%`);
+        baseConditions.push(`p.payment_methods ILIKE $${params.length}`);
     }
     if (quickFilter === 'new_checks') {
-        conditions.push(`(
-            payment_methods ILIKE $${paramIdx}
-            OR display_payment_method ILIKE $${paramIdx}
-        )`);
         params.push('%check%');
-        paramIdx++;
-        conditions.push('check_deposited IS NOT TRUE');
-    }
-    if (search && search.trim()) {
-        const q = `%${search.trim()}%`;
-        conditions.push(`(
-            client ILIKE $${paramIdx}
-            OR job_number ILIKE $${paramIdx}
-            OR tags ILIKE $${paramIdx}
-            OR source ILIKE $${paramIdx}
-            OR transaction_id ILIKE $${paramIdx}
+        baseConditions.push(`(
+            p.payment_methods ILIKE $${params.length}
+            OR p.display_payment_method ILIKE $${params.length}
         )`);
-        params.push(q);
-        paramIdx++;
+        baseConditions.push('p.check_deposited IS NOT TRUE');
+    }
+    if (normalizedSearch) {
+        params.push(`%${normalizedSearch}%`);
+        baseConditions.push(`(
+            p.client ILIKE $${params.length}
+            OR p.job_number ILIKE $${params.length}
+            OR p.tags ILIKE $${params.length}
+            OR p.source ILIKE $${params.length}
+            OR p.transaction_id ILIKE $${params.length}
+        )`);
     }
 
-    const where = conditions.join(' AND ');
+    const finalConditions = baseConditions.slice();
+    if (normalizedProvider) {
+        params.push(normalizedProvider);
+        finalConditions.push(`EXISTS (
+            SELECT 1
+            FROM unnest(string_to_array(COALESCE(p.tech, ''), ',')) AS provider_name(value)
+            WHERE BTRIM(provider_name.value) = $${params.length}
+        )`);
+    }
+    if (paidStatus === 'paid') {
+        finalConditions.push('p.invoice_paid_in_full IS TRUE');
+    } else if (paidStatus === 'due') {
+        finalConditions.push('p.invoice_paid_in_full IS NOT TRUE');
+    }
 
-    // Validate sort field to prevent injection
-    const ALLOWED_SORT_FIELDS = ['payment_date', 'amount_paid', 'job_number', 'client', 'payment_methods'];
-    const safeSortField = ALLOWED_SORT_FIELDS.includes(sortField) ? sortField : 'payment_date';
-    const safeSortDir = sortDir === 'asc' ? 'ASC' : 'DESC';
+    const baseWhere = baseConditions.join(' AND ');
+    const finalWhere = finalConditions.join(' AND ');
+    const isFirstPage = !decodedCursor && (mode === 'cursor' || Number(offset) === 0);
+    let total = null;
+    let aggregates = null;
+    let facets = null;
 
-    // Count total
-    const countResult = await db.query(
-        `SELECT COUNT(*) as total FROM zb_payments WHERE ${where}`,
-        params
-    );
-    const total = parseInt(countResult.rows[0].total, 10);
+    if (isFirstPage) {
+        const metadataResult = await db.query(
+            `WITH base_rows AS (
+                SELECT p.display_payment_method, p.tech, p.check_deposited
+                FROM zb_payments p
+                WHERE ${baseWhere}
+             ), aggregate AS (
+                SELECT COUNT(*)::int AS transaction_count,
+                       COALESCE(SUM(COALESCE(p.amount_paid, 0)), 0)::text AS total_amount
+                FROM zb_payments p
+                WHERE ${finalWhere}
+             )
+             SELECT aggregate.transaction_count,
+                    aggregate.total_amount,
+                    COALESCE((
+                        SELECT json_agg(method_rows.method ORDER BY method_rows.method)
+                        FROM (
+                            SELECT DISTINCT BTRIM(base_rows.display_payment_method) AS method
+                            FROM base_rows
+                            WHERE BTRIM(COALESCE(base_rows.display_payment_method, '')) <> ''
+                        ) method_rows
+                    ), '[]'::json) AS payment_methods,
+                    COALESCE((
+                        SELECT json_agg(provider_rows.provider ORDER BY provider_rows.provider)
+                        FROM (
+                            SELECT DISTINCT BTRIM(provider_name.value) AS provider
+                            FROM base_rows
+                            CROSS JOIN LATERAL unnest(string_to_array(COALESCE(base_rows.tech, ''), ',')) AS provider_name(value)
+                            WHERE BTRIM(provider_name.value) <> ''
+                        ) provider_rows
+                    ), '[]'::json) AS providers,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM base_rows
+                        WHERE LOWER(BTRIM(COALESCE(base_rows.display_payment_method, ''))) = 'check'
+                          AND base_rows.check_deposited IS NOT TRUE
+                    ) AS undeposited_check_count
+             FROM aggregate`,
+            params,
+        );
+        const metadata = metadataResult.rows[0] || {};
+        total = Number(metadata.transaction_count || 0);
+        aggregates = {
+            transaction_count: total,
+            total_amount: metadata.total_amount || '0',
+        };
+        facets = {
+            payment_methods: metadata.payment_methods || [],
+            providers: metadata.providers || [],
+            undeposited_check_count: Number(metadata.undeposited_check_count || 0),
+        };
+    }
 
-    // Fetch rows
+    const pageParams = params.slice();
+    const cursorKeys = [];
+    const cursorProjections = [];
+    const orderParts = [];
+    if (sort.nullable) {
+        cursorKeys.push({ expression: `(${sort.expression} IS NULL)`, direction: 'asc', type: 'boolean' });
+        cursorProjections.push(`(${sort.expression} IS NULL) AS __cursor_null`);
+        orderParts.push(`(${sort.expression} IS NULL) ASC`);
+    }
+    cursorKeys.push({
+        expression: sort.expression,
+        direction: sortDir,
+        type: sort.type,
+        nullable: sort.nullable === true,
+    });
+    cursorKeys.push({ expression: 'p.id', direction: sortDir, type: 'bigint' });
+    if (sort.type === 'timestamp') {
+        cursorProjections.push(`${timestampCursorExpression(sort.expression)} AS __cursor_value`);
+    } else if (sort.type === 'numeric') {
+        cursorProjections.push(`(${sort.expression})::text AS __cursor_value`);
+    } else {
+        cursorProjections.push(`${sort.expression} AS __cursor_value`);
+    }
+    cursorProjections.push(`${bigintCursorExpression('p.id')} AS __cursor_id`);
+    orderParts.push(`${sort.expression} ${sortDir.toUpperCase()}`, `p.id ${sortDir.toUpperCase()}`);
+
+    let cursorPredicate = '';
+    if (decodedCursor) {
+        const keyset = buildKeysetPredicate(cursorKeys, decodedCursor.values, pageParams.length + 1);
+        cursorPredicate = ` AND ${keyset.sql}`;
+        pageParams.push(...keyset.params);
+    }
+    const limitParam = pageParams.length + 1;
+    pageParams.push(pageLimit + 1);
+    let offsetSql = '';
+    if (mode === 'offset') {
+        const offsetParam = pageParams.length + 1;
+        pageParams.push(Number(offset));
+        offsetSql = ` OFFSET $${offsetParam}`;
+    }
+
     const rowsResult = await db.query(
         `SELECT
-            id, transaction_id, invoice_id, job_id,
-            job_number, client, job_type, status,
-            payment_methods, display_payment_method,
-            amount_paid::text as amount_paid,
-            tags, payment_date, source, tech,
-            transaction_status, missing_job_link,
-            invoice_status,
-            invoice_total::text as invoice_total,
-            invoice_amount_paid::text as invoice_amount_paid,
-            invoice_amount_due::text as invoice_amount_due,
-            invoice_paid_in_full,
-            check_deposited,
-            custom_fields
-        FROM zb_payments
-        WHERE ${where}
-        ORDER BY ${safeSortField} ${safeSortDir}
-        LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
-        [...params, limit, offset]
+            p.id, p.transaction_id, p.invoice_id, p.job_id,
+            p.job_number, p.client, p.job_type, p.status,
+            p.payment_methods, p.display_payment_method,
+            p.amount_paid::text AS amount_paid,
+            p.tags, p.payment_date, p.source, p.tech,
+            p.transaction_status, p.missing_job_link,
+            p.invoice_status,
+            p.invoice_total::text AS invoice_total,
+            p.invoice_amount_paid::text AS invoice_amount_paid,
+            p.invoice_amount_due::text AS invoice_amount_due,
+            p.invoice_paid_in_full,
+            p.check_deposited,
+            p.custom_fields,
+            ${cursorProjections.join(', ')}
+         FROM zb_payments p
+         WHERE ${finalWhere}${cursorPredicate}
+         ORDER BY ${orderParts.join(', ')}
+         LIMIT $${limitParam}${offsetSql}`,
+        pageParams,
     );
+    const probedRows = rowsResult.rows;
+    const pageRows = probedRows.slice(0, pageLimit);
+    const hasMore = probedRows.length > pageLimit;
+    const rows = pageRows.map(({
+        __cursor_null,
+        __cursor_value,
+        __cursor_id,
+        ...row
+    }) => {
+        void __cursor_null;
+        void __cursor_value;
+        void __cursor_id;
+        return {
+            ...row,
+            amount_paid: row.amount_paid || '0.00',
+            invoice_total: row.invoice_total || null,
+            invoice_amount_paid: row.invoice_amount_paid || null,
+            invoice_amount_due: row.invoice_amount_due || null,
+        };
+    });
+    const lastPageRow = pageRows.at(-1);
+    const cursorValues = lastPageRow
+        ? [
+            ...(sort.nullable ? [Boolean(lastPageRow.__cursor_null)] : []),
+            lastPageRow.__cursor_value == null ? null : String(lastPageRow.__cursor_value),
+            String(lastPageRow.__cursor_id),
+        ]
+        : [];
+    const nextCursor = mode === 'cursor' && hasMore && lastPageRow
+        ? encodeCursor({
+            endpoint: 'payments',
+            sort: sortField,
+            direction: sortDir,
+            fingerprint,
+            values: cursorValues,
+        }, cursorExpectation)
+        : null;
 
     return {
-        rows: rowsResult.rows.map(r => ({
-            ...r,
-            amount_paid: r.amount_paid || '0.00',
-            invoice_total: r.invoice_total || null,
-            invoice_amount_paid: r.invoice_amount_paid || null,
-            invoice_amount_due: r.invoice_amount_due || null,
-        })),
+        rows,
         total,
+        aggregates,
+        facets,
+        pagination: {
+            mode,
+            limit: pageLimit,
+            returned: rows.length,
+            has_more: hasMore,
+            next_cursor: nextCursor,
+            total,
+        },
     };
 }
 

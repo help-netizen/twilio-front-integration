@@ -17,6 +17,15 @@
 
 const db = require('./connection');
 const { requireCompanyId, queryFor, clampLimit, clampOffset } = require('./crmUtils');
+const {
+    createCursorFingerprint,
+    encodeCursor,
+    decodeCursor,
+    assertCursorOffsetExclusive,
+    buildKeysetPredicate,
+    timestampCursorExpression,
+    bigintCursorExpression,
+} = require('../utils/listCursor');
 
 // parentType → { column, table+alias, label expression, frontend path }
 const PARENTS = {
@@ -34,6 +43,35 @@ function isValidParentType(t) {
     return Object.prototype.hasOwnProperty.call(PARENTS, t);
 }
 
+const PARENT_TYPE_EXPRESSION = `CASE
+    WHEN t.job_id      IS NOT NULL THEN 'job'
+    WHEN t.lead_id     IS NOT NULL THEN 'lead'
+    WHEN t.estimate_id IS NOT NULL THEN 'estimate'
+    WHEN t.invoice_id  IS NOT NULL THEN 'invoice'
+    WHEN t.contact_id  IS NOT NULL THEN 'contact'
+    WHEN t.thread_id   IS NOT NULL THEN 'timeline'
+END`;
+
+const PARENT_LABEL_EXPRESSION = `CASE
+    WHEN t.job_id      IS NOT NULL THEN COALESCE(NULLIF(j.service_name,''), NULLIF(j.customer_name,''), 'Job #' || j.id)
+    WHEN t.lead_id     IS NOT NULL THEN COALESCE(NULLIF(TRIM(CONCAT_WS(' ', l.first_name, l.last_name)),''), NULLIF(l.company,''), 'Lead')
+    WHEN t.estimate_id IS NOT NULL THEN COALESCE(NULLIF(e.estimate_number,''), 'Estimate')
+    WHEN t.invoice_id  IS NOT NULL THEN COALESCE(NULLIF(iv.invoice_number,''), 'Invoice')
+    WHEN t.contact_id  IS NOT NULL THEN COALESCE(NULLIF(co.full_name,''), 'Contact')
+    WHEN t.thread_id   IS NOT NULL THEN COALESCE(NULLIF(tlc.full_name,''), NULLIF(tl.phone_e164,''), 'Conversation')
+END`;
+
+const TASK_LIST_FROM = `FROM tasks t
+    LEFT JOIN crm_users ow ON ow.id = t.owner_user_id AND ow.company_id = t.company_id
+    LEFT JOIN crm_users au ON au.id = t.author_user_id AND au.company_id = t.company_id
+    LEFT JOIN jobs j       ON j.id  = t.job_id      AND j.company_id  = t.company_id
+    LEFT JOIN leads l      ON l.id  = t.lead_id     AND l.company_id  = t.company_id
+    LEFT JOIN estimates e  ON e.id  = t.estimate_id AND e.company_id  = t.company_id
+    LEFT JOIN invoices iv  ON iv.id = t.invoice_id  AND iv.company_id = t.company_id
+    LEFT JOIN contacts co  ON co.id = t.contact_id  AND co.company_id = t.company_id
+    LEFT JOIN timelines tl ON tl.id = t.thread_id   AND tl.company_id = t.company_id
+    LEFT JOIN contacts tlc ON tlc.id = tl.contact_id AND tlc.company_id = t.company_id`;
+
 // Shared SELECT projection — derives parent_type/_id/_label/_path via CASE so the
 // caller gets everything needed to render a row and deep-link to the parent card.
 const SELECT_TASK = `
@@ -42,33 +80,10 @@ const SELECT_TASK = `
            t.thread_id, t.kind, t.agent_type, t.agent_output, t.actions,
            ow.full_name AS assignee_name, ow.email AS assignee_email,
            au.full_name AS author_name,
-           CASE
-               WHEN t.job_id      IS NOT NULL THEN 'job'
-               WHEN t.lead_id     IS NOT NULL THEN 'lead'
-               WHEN t.estimate_id IS NOT NULL THEN 'estimate'
-               WHEN t.invoice_id  IS NOT NULL THEN 'invoice'
-               WHEN t.contact_id  IS NOT NULL THEN 'contact'
-               WHEN t.thread_id   IS NOT NULL THEN 'timeline'
-           END AS parent_type,
+           ${PARENT_TYPE_EXPRESSION} AS parent_type,
            COALESCE(t.job_id, t.lead_id, t.estimate_id, t.invoice_id, t.contact_id, t.thread_id) AS parent_id,
-           CASE
-               WHEN t.job_id      IS NOT NULL THEN COALESCE(NULLIF(j.service_name,''), NULLIF(j.customer_name,''), 'Job #' || j.id)
-               WHEN t.lead_id     IS NOT NULL THEN COALESCE(NULLIF(TRIM(CONCAT_WS(' ', l.first_name, l.last_name)),''), NULLIF(l.company,''), 'Lead')
-               WHEN t.estimate_id IS NOT NULL THEN COALESCE(NULLIF(e.estimate_number,''), 'Estimate')
-               WHEN t.invoice_id  IS NOT NULL THEN COALESCE(NULLIF(iv.invoice_number,''), 'Invoice')
-               WHEN t.contact_id  IS NOT NULL THEN COALESCE(NULLIF(co.full_name,''), 'Contact')
-               WHEN t.thread_id   IS NOT NULL THEN COALESCE(NULLIF(tlc.full_name,''), NULLIF(tl.phone_e164,''), 'Conversation')
-           END AS parent_label
-    FROM tasks t
-    LEFT JOIN crm_users ow ON ow.id = t.owner_user_id
-    LEFT JOIN crm_users au ON au.id = t.author_user_id
-    LEFT JOIN jobs j       ON j.id  = t.job_id      AND j.company_id  = t.company_id
-    LEFT JOIN leads l      ON l.id  = t.lead_id     AND l.company_id  = t.company_id
-    LEFT JOIN estimates e  ON e.id  = t.estimate_id AND e.company_id  = t.company_id
-    LEFT JOIN invoices iv  ON iv.id = t.invoice_id  AND iv.company_id = t.company_id
-    LEFT JOIN contacts co  ON co.id = t.contact_id  AND co.company_id = t.company_id
-    LEFT JOIN timelines tl ON tl.id = t.thread_id   AND tl.company_id = t.company_id
-    LEFT JOIN contacts tlc ON tlc.id = tl.contact_id AND tlc.company_id = t.company_id
+           ${PARENT_LABEL_EXPRESSION} AS parent_label
+    ${TASK_LIST_FROM}
 `;
 
 // Rows shown in the global cross-entity list: one of the 5 entity parents, OR a
@@ -188,6 +203,14 @@ function buildTaskListFilters(companyId, filters = {}) {
         params.push(filters.due_to);
         conditions.push(`t.due_at <= $${params.length}::timestamptz`);
     }
+    if (filters.search && String(filters.search).trim()) {
+        params.push(`%${String(filters.search).trim()}%`);
+        conditions.push(`(
+            t.title ILIKE $${params.length}
+            OR (${PARENT_LABEL_EXPRESSION}) ILIKE $${params.length}
+            OR ow.full_name ILIKE $${params.length}
+        )`);
+    }
 
     return { conditions, params };
 }
@@ -212,20 +235,216 @@ async function listTasks(companyId, filters = {}, client = null) {
     return rows;
 }
 
+const TASK_PAGE_SORTS = Object.freeze({
+    description: `LOWER(COALESCE(page_base.description, '')) COLLATE "C"`,
+    parent_type: `LOWER(COALESCE(page_base.parent_type, '')) COLLATE "C"`,
+    parent_label: `LOWER(COALESCE(page_base.parent_label, '')) COLLATE "C"`,
+    assignee_name: `LOWER(COALESCE(page_base.assignee_name, '')) COLLATE "C"`,
+});
+
+function tasksListError(code, message) {
+    const error = new Error(message);
+    error.code = code;
+    error.statusCode = 400;
+    return error;
+}
+
+/** Cursor page used only by GET /api/tasks; legacy listTasks remains array-returning. */
+async function listTasksPage(companyId, filters = {}, client = null) {
+    requireCompanyId(companyId);
+    const query = queryFor(client, db);
+    const requestedLimit = filters.limit ?? 50;
+    if (!Number.isInteger(Number(requestedLimit)) || Number(requestedLimit) < 1 || Number(requestedLimit) > 500) {
+        throw tasksListError('INVALID_QUERY', 'limit must be an integer from 1 to 500');
+    }
+    const limit = Number(requestedLimit);
+    if (filters.offset !== undefined && (
+        !Number.isInteger(Number(filters.offset)) || Number(filters.offset) < 0
+    )) {
+        throw tasksListError('INVALID_QUERY', 'offset must be a non-negative integer');
+    }
+    assertCursorOffsetExclusive(filters.cursor, filters.offset);
+
+    const sortBy = filters.sort_by || 'due_at';
+    const sortOrder = filters.sort_order || 'asc';
+    if ((sortBy !== 'due_at' && !TASK_PAGE_SORTS[sortBy]) || (sortOrder !== 'asc' && sortOrder !== 'desc')) {
+        throw tasksListError('INVALID_QUERY', 'Invalid task sort');
+    }
+
+    const mode = filters.offset === undefined ? 'cursor' : 'offset';
+    const normalizedSearch = typeof filters.search === 'string' ? filters.search.trim() : '';
+    const fingerprint = createCursorFingerprint({
+        endpoint: 'tasks',
+        company: String(companyId),
+        visibility: {
+            scope_owner_id: filters.scopeOwnerId ? String(filters.scopeOwnerId) : null,
+            assignee_id: filters.assignee_id ? String(filters.assignee_id) : null,
+        },
+        filters: {
+            status: filters.status || null,
+            parent_type: filters.parent_type || null,
+            overdue: Boolean(filters.overdue),
+            due_from: filters.due_from || null,
+            due_to: filters.due_to || null,
+            search: normalizedSearch.toLocaleLowerCase('en-US'),
+        },
+        sort: sortBy,
+        direction: sortOrder,
+        limit,
+    });
+    const cursorValueTypes = sortBy === 'due_at'
+        ? ['boolean', { type: 'timestamp', nullable: true }, 'timestamp', 'bigint']
+        : ['text', 'bigint'];
+    const cursorExpectation = {
+        endpoint: 'tasks',
+        sort: sortBy,
+        direction: sortOrder,
+        fingerprint,
+        valueTypes: cursorValueTypes,
+    };
+    const decodedCursor = filters.cursor
+        ? decodeCursor(filters.cursor, cursorExpectation)
+        : null;
+
+    const pageFilters = { ...filters, search: normalizedSearch || undefined };
+    const { conditions, params } = buildTaskListFilters(companyId, pageFilters);
+    let total = null;
+    if (!decodedCursor) {
+        const countResult = await query(
+            `SELECT COUNT(*)::int AS total ${TASK_LIST_FROM} WHERE ${conditions.join(' AND ')}`,
+            params,
+        );
+        total = countResult.rows[0]?.total ?? 0;
+    }
+
+    const pageParams = params.slice();
+    const cursorKeys = [];
+    const cursorProjections = [];
+    const orderParts = [];
+    if (sortBy === 'due_at') {
+        cursorKeys.push(
+            { expression: '(page_base.due_at IS NULL)', direction: 'asc', type: 'boolean' },
+            { expression: 'page_base.due_at', direction: sortOrder, type: 'timestamp', nullable: true },
+            { expression: 'page_base.created_at', direction: 'desc', type: 'timestamp' },
+            { expression: 'page_base.id', direction: 'desc', type: 'bigint' },
+        );
+        cursorProjections.push(
+            '(page_base.due_at IS NULL) AS __cursor_null',
+            `${timestampCursorExpression('page_base.due_at')} AS __cursor_value`,
+            `${timestampCursorExpression('page_base.created_at')} AS __cursor_created`,
+            `${bigintCursorExpression('page_base.id')} AS __cursor_id`,
+        );
+        orderParts.push(
+            '(page_base.due_at IS NULL) ASC',
+            `page_base.due_at ${sortOrder.toUpperCase()}`,
+            'page_base.created_at DESC',
+            'page_base.id DESC',
+        );
+    } else {
+        const expression = TASK_PAGE_SORTS[sortBy];
+        cursorKeys.push(
+            { expression, direction: sortOrder, type: 'text' },
+            { expression: 'page_base.id', direction: sortOrder, type: 'bigint' },
+        );
+        cursorProjections.push(
+            `${expression} AS __cursor_value`,
+            `${bigintCursorExpression('page_base.id')} AS __cursor_id`,
+        );
+        orderParts.push(`${expression} ${sortOrder.toUpperCase()}`, `page_base.id ${sortOrder.toUpperCase()}`);
+    }
+
+    let cursorWhere = 'TRUE';
+    if (decodedCursor) {
+        const keyset = buildKeysetPredicate(cursorKeys, decodedCursor.values, pageParams.length + 1);
+        cursorWhere = keyset.sql;
+        pageParams.push(...keyset.params);
+    }
+    const limitParam = pageParams.length + 1;
+    pageParams.push(limit + 1);
+    let offsetSql = '';
+    if (mode === 'offset') {
+        const offsetParam = pageParams.length + 1;
+        pageParams.push(Number(filters.offset));
+        offsetSql = ` OFFSET $${offsetParam}`;
+    }
+
+    const pageResult = await query(
+        `SELECT page_base.*, ${cursorProjections.join(', ')}
+         FROM (
+             ${SELECT_TASK}
+             WHERE ${conditions.join(' AND ')}
+         ) page_base
+         WHERE ${cursorWhere}
+         ORDER BY ${orderParts.join(', ')}
+         LIMIT $${limitParam}${offsetSql}`,
+        pageParams,
+    );
+    const probedRows = pageResult.rows;
+    const pageRows = probedRows.slice(0, limit);
+    const tasks = pageRows.map(({
+        __cursor_null,
+        __cursor_value,
+        __cursor_created,
+        __cursor_id,
+        ...task
+    }) => {
+        void __cursor_null;
+        void __cursor_value;
+        void __cursor_created;
+        void __cursor_id;
+        return task;
+    });
+    const hasMore = probedRows.length > limit;
+    const lastPageRow = pageRows.at(-1);
+    const cursorValues = !lastPageRow
+        ? []
+        : sortBy === 'due_at'
+            ? [
+                Boolean(lastPageRow.__cursor_null),
+                lastPageRow.__cursor_value == null ? null : String(lastPageRow.__cursor_value),
+                String(lastPageRow.__cursor_created),
+                String(lastPageRow.__cursor_id),
+            ]
+            : [String(lastPageRow.__cursor_value), String(lastPageRow.__cursor_id)];
+    const nextCursor = mode === 'cursor' && hasMore && lastPageRow
+        ? encodeCursor({
+            endpoint: 'tasks',
+            sort: sortBy,
+            direction: sortOrder,
+            fingerprint,
+            values: cursorValues,
+        }, cursorExpectation)
+        : null;
+
+    return {
+        tasks,
+        pagination: {
+            mode,
+            limit,
+            returned: tasks.length,
+            has_more: hasMore,
+            next_cursor: nextCursor,
+            total,
+        },
+    };
+}
+
 /**
  * Count of the global cross-entity list under the SAME predicate as `listTasks`
- * (TASKS-COUNT-BADGE-001). No `SELECT_TASK` join block: `HAS_ENTITY_PARENT` and
- * every filter reference only `t.*` columns, so `COUNT(*)` runs against the bare
- * `tasks t` — the label-hydration LEFT JOINs are irrelevant to a count and are
- * dropped to keep it cheap. Returns a non-negative integer.
+ * (TASKS-COUNT-BADGE-001). The common no-search path counts the bare `tasks t`;
+ * search uses the shared joins because parent label and assignee are predicates.
+ * Returns a non-negative integer.
  */
 async function countTasks(companyId, filters = {}, client = null) {
     requireCompanyId(companyId);
     const query = queryFor(client, db);
     const { conditions, params } = buildTaskListFilters(companyId, filters);
+    const fromClause = filters.search && String(filters.search).trim()
+        ? TASK_LIST_FROM
+        : 'FROM tasks t';
 
     const { rows } = await query(
-        `SELECT COUNT(*)::int AS count FROM tasks t WHERE ${conditions.join(' AND ')}`,
+        `SELECT COUNT(*)::int AS count ${fromClause} WHERE ${conditions.join(' AND ')}`,
         params
     );
     return rows[0]?.count || 0;
@@ -377,6 +596,7 @@ module.exports = {
     listEntityTasks,
     buildTaskListFilters,
     listTasks,
+    listTasksPage,
     countTasks,
     getTaskById,
     createTask,

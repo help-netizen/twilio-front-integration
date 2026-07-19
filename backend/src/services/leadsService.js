@@ -9,6 +9,15 @@ const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventBus = require('./eventBus');
+const {
+    createCursorFingerprint,
+    encodeCursor,
+    decodeCursor,
+    assertCursorOffsetExclusive,
+    buildKeysetPredicate,
+    timestampCursorExpression,
+    bigintCursorExpression,
+} = require('../utils/listCursor');
 
 // =============================================================================
 // UUID Generation (Workiz-style 6-char alphanumeric)
@@ -183,74 +192,239 @@ function mapFieldsToColumns(fields) {
 // =============================================================================
 // List Leads
 // =============================================================================
-async function listLeads({ start_date, end_date, offset = 0, records = 100, only_open = true, status, companyId } = {}) {
+const LEAD_LIST_SORTS = Object.freeze({
+    Status: { expression: `LOWER(COALESCE(l.status, '')) COLLATE "C"`, type: 'text' },
+    FirstName: { expression: `LOWER(COALESCE(l.first_name, '')) COLLATE "C"`, type: 'text' },
+    Phone: { expression: `LOWER(COALESCE(l.phone, '')) COLLATE "C"`, type: 'text' },
+    Email: { expression: `LOWER(COALESCE(l.email, '')) COLLATE "C"`, type: 'text' },
+    City: { expression: `LOWER(COALESCE(l.city, '')) COLLATE "C"`, type: 'text' },
+    JobType: { expression: `LOWER(COALESCE(l.job_type, '')) COLLATE "C"`, type: 'text' },
+    JobSource: { expression: `LOWER(COALESCE(l.job_source, '')) COLLATE "C"`, type: 'text' },
+    CreatedDate: {
+        expression: 'l.created_at',
+        projection: timestampCursorExpression('l.created_at'),
+        type: 'timestamp',
+    },
+    SerialId: { expression: 'l.serial_id', projection: bigintCursorExpression('l.serial_id'), type: 'bigint' },
+});
+
+function normalizeListValues(values) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values.map(value => String(value).trim()).filter(Boolean))].sort();
+}
+
+async function listLeads({
+    start_date,
+    end_date,
+    offset,
+    records,
+    limit,
+    cursor,
+    only_open = true,
+    status,
+    search,
+    source,
+    job_type,
+    rejected_only = false,
+    sort_by = 'CreatedDate',
+    sort_order = 'desc',
+    companyId,
+} = {}) {
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
+    }
+
+    const requestedLimit = limit ?? records ?? 100;
+    if (!Number.isInteger(Number(requestedLimit)) || Number(requestedLimit) < 1 || Number(requestedLimit) > 100) {
+        throw new LeadsServiceError('INVALID_QUERY', 'limit must be an integer from 1 to 100', 400);
+    }
+    const pageLimit = Number(requestedLimit);
+    if (offset !== undefined && (!Number.isInteger(Number(offset)) || Number(offset) < 0)) {
+        throw new LeadsServiceError('INVALID_QUERY', 'offset must be a non-negative integer', 400);
+    }
+    assertCursorOffsetExclusive(cursor, offset);
+
+    const sort = LEAD_LIST_SORTS[sort_by];
+    if (!sort || (sort_order !== 'asc' && sort_order !== 'desc')) {
+        throw new LeadsServiceError('INVALID_QUERY', 'Invalid lead sort', 400);
+    }
+
+    const normalizedStatus = normalizeListValues(status);
+    const normalizedSources = normalizeListValues(source);
+    const normalizedJobTypes = normalizeListValues(job_type);
+    const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+    const mode = offset === undefined ? 'cursor' : 'offset';
+    const fingerprint = createCursorFingerprint({
+        endpoint: 'leads',
+        company: String(companyId),
+        visibility: 'company',
+        filters: {
+            start_date: start_date || null,
+            end_date: end_date || null,
+            only_open: Boolean(only_open),
+            status: normalizedStatus,
+            search: normalizedSearch.toLocaleLowerCase('en-US'),
+            source: normalizedSources,
+            job_type: normalizedJobTypes,
+            rejected_only: Boolean(rejected_only),
+        },
+        sort: sort_by,
+        direction: sort_order,
+        limit: pageLimit,
+    });
+    const cursorExpectation = {
+        endpoint: 'leads',
+        sort: sort_by,
+        direction: sort_order,
+        fingerprint,
+        valueTypes: [sort.type, 'bigint'],
+    };
+    const decodedCursor = cursor ? decodeCursor(cursor, cursorExpectation) : null;
+
     const conditions = [];
     const params = [];
-    let paramIdx = 0;
-
-    if (companyId) {
-        paramIdx++;
-        conditions.push(`l.company_id = $${paramIdx}`);
-        params.push(companyId);
-    }
+    conditions.push('l.company_id = $1');
+    params.push(companyId);
 
     if (only_open) {
         conditions.push(`l.status NOT IN ('Lost', 'Converted')`);
     }
 
     if (start_date) {
-        paramIdx++;
-        conditions.push(`l.created_at >= $${paramIdx}::date`);
+        conditions.push(`l.created_at >= $${params.length + 1}::date`);
         params.push(start_date);
     }
 
     if (end_date) {
-        paramIdx++;
-        conditions.push(`l.created_at < ($${paramIdx}::date + interval '1 day')`);
+        conditions.push(`l.created_at < ($${params.length + 1}::date + interval '1 day')`);
         params.push(end_date);
     }
 
-    if (status && status.length > 0) {
-        paramIdx++;
-        conditions.push(`l.status = ANY($${paramIdx}::text[])`);
-        params.push(status);
+    if (normalizedStatus.length > 0) {
+        conditions.push(`l.status = ANY($${params.length + 1}::text[])`);
+        params.push(normalizedStatus);
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    if (normalizedSearch) {
+        const searchParam = `$${params.length + 1}`;
+        conditions.push(`(
+            CONCAT_WS(' ', l.first_name, l.last_name) ILIKE ${searchParam}
+            OR l.company ILIKE ${searchParam}
+            OR l.phone ILIKE ${searchParam}
+            OR l.email ILIKE ${searchParam}
+            OR l.serial_id::text ILIKE ${searchParam}
+            OR EXISTS (
+                SELECT 1
+                FROM lead_custom_fields lcf
+                WHERE lcf.company_id = l.company_id
+                  AND lcf.is_searchable = true
+                  AND lcf.is_system = false
+                  AND COALESCE(l.metadata ->> lcf.api_name, '') ILIKE ${searchParam}
+            )
+        )`);
+        params.push(`%${normalizedSearch}%`);
+    }
 
-    paramIdx++;
-    const limitParam = paramIdx;
-    params.push(Math.min(records, 100));
+    if (normalizedSources.length > 0) {
+        conditions.push(`l.job_source = ANY($${params.length + 1}::text[])`);
+        params.push(normalizedSources);
+    }
 
-    paramIdx++;
-    const offsetParam = paramIdx;
-    params.push(offset);
+    if (normalizedJobTypes.length > 0) {
+        conditions.push(`l.job_type = ANY($${params.length + 1}::text[])`);
+        params.push(normalizedJobTypes);
+    }
+
+    if (rejected_only) {
+        conditions.push(`l.metadata @> '{"rely_filter":{"rejected":true}}'::jsonb`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+    let total = null;
+    if (!decodedCursor) {
+        const countResult = await db.query(
+            `SELECT COUNT(*)::int AS total FROM leads l ${whereClause}`,
+            params,
+        );
+        total = countResult.rows[0]?.total ?? 0;
+    }
+
+    const pageParams = params.slice();
+    let cursorPredicate = '';
+    if (decodedCursor) {
+        const keyset = buildKeysetPredicate([
+            { expression: sort.expression, direction: sort_order, type: sort.type },
+            { expression: 'l.id', direction: sort_order, type: 'bigint' },
+        ], decodedCursor.values, pageParams.length + 1);
+        cursorPredicate = ` AND ${keyset.sql}`;
+        pageParams.push(...keyset.params);
+    }
+
+    const limitParam = pageParams.length + 1;
+    pageParams.push(pageLimit + 1);
+    let offsetSql = '';
+    if (mode === 'offset') {
+        const offsetParam = pageParams.length + 1;
+        pageParams.push(Number(offset));
+        offsetSql = ` OFFSET $${offsetParam}`;
+    }
 
     const sql = `
         SELECT l.*, c.full_name AS contact_name,
-            COALESCE(
-                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
-                FILTER (WHERE lta.id IS NOT NULL), '[]'
-            ) AS team
+            ${sort.projection || sort.expression} AS __cursor_value,
+            ${bigintCursorExpression('l.id')} AS __cursor_id
         FROM leads l
-        LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
-        LEFT JOIN contacts c ON c.id = l.contact_id
-        ${whereClause}
-        GROUP BY l.id, c.full_name
-        ORDER BY l.created_at DESC
-        LIMIT $${limitParam} OFFSET $${offsetParam}
+        LEFT JOIN contacts c ON c.id = l.contact_id AND c.company_id = l.company_id
+        ${whereClause}${cursorPredicate}
+        ORDER BY ${sort.expression} ${sort_order.toUpperCase()}, l.id ${sort_order.toUpperCase()}
+        LIMIT $${limitParam}${offsetSql}
     `;
 
-    const { rows } = await db.query(sql, params);
-    const results = rows.map(rowToLead);
+    const { rows: probedRows } = await db.query(sql, pageParams);
+    const pageRows = probedRows.slice(0, pageLimit);
+    const hasMore = probedRows.length > pageLimit;
+
+    let teamsByLeadId = new Map();
+    if (pageRows.length > 0) {
+        const pageIds = pageRows.map(row => String(row.id));
+        const teamResult = await db.query(
+            `SELECT lta.lead_id::text AS lead_id,
+                json_agg(json_build_object('id', lta.id, 'name', lta.user_name) ORDER BY lta.id) AS team
+             FROM lead_team_assignments lta
+             WHERE lta.company_id = $1 AND lta.lead_id = ANY($2::bigint[])
+             GROUP BY lta.lead_id`,
+            [companyId, pageIds],
+        );
+        teamsByLeadId = new Map(teamResult.rows.map(row => [String(row.lead_id), row.team]));
+    }
+
+    const hydratedRows = pageRows.map(row => ({
+        ...row,
+        team: teamsByLeadId.get(String(row.id)) || row.team || [],
+    }));
+    const results = hydratedRows.map(rowToLead);
+    const lastRow = pageRows.at(-1);
+    const nextCursor = mode === 'cursor' && hasMore && lastRow
+        ? encodeCursor({
+            endpoint: 'leads',
+            sort: sort_by,
+            direction: sort_order,
+            fingerprint,
+            values: [String(lastRow.__cursor_value), String(lastRow.__cursor_id)],
+        }, cursorExpectation)
+        : null;
 
     return {
         results,
         pagination: {
-            offset,
-            records,
+            mode,
+            offset: mode === 'offset' ? Number(offset) : 0,
+            records: pageLimit,
+            limit: pageLimit,
             returned: results.length,
-            has_more: results.length >= records,
+            has_more: hasMore,
+            next_cursor: nextCursor,
+            total,
         },
     };
 }

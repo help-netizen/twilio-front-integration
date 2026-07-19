@@ -60,9 +60,10 @@ export class ContactsApiError extends Error {
     }
 }
 
-async function request<T>(url: string): Promise<T> {
+async function request<T>(url: string, options?: RequestInit): Promise<T> {
     const res = await authedFetch(url, {
         headers: { 'Content-Type': 'application/json' },
+        ...options,
     });
     const data = await res.json();
     if (!data.ok) {
@@ -80,14 +81,15 @@ async function request<T>(url: string): Promise<T> {
 /**
  * List contacts with optional search and pagination
  */
-export async function listContacts(params: ContactsListParams = {}): Promise<ContactsListResponse> {
+export async function listContacts(params: ContactsListParams = {}, signal?: AbortSignal): Promise<ContactsListResponse> {
     const searchParams = new URLSearchParams();
     if (params.search) searchParams.set('search', params.search);
     if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
     if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params.cursor) searchParams.set('cursor', params.cursor);
 
     const qs = searchParams.toString();
-    return request<ContactsListResponse>(`${API_BASE}${qs ? `?${qs}` : ''}`);
+    return request<ContactsListResponse>(`${API_BASE}${qs ? `?${qs}` : ''}`, { signal });
 }
 
 /**

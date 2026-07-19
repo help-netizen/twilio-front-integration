@@ -5,7 +5,7 @@
 
 import {
     Loader2, Download, DollarSign, X,
-    ChevronLeft, ChevronRight, RefreshCw, CalendarIcon,
+    RefreshCw, CalendarIcon,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -22,11 +22,22 @@ import './PaymentsPage.css';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { BottomSheet } from '../components/ui/BottomSheet';
 import { isMobileViewport } from '../hooks/useViewportSafePosition';
+import { LoadMoreFooter, type LoadMoreFooterProps } from '../components/lists/LoadMoreFooter';
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function PaymentsPage() {
     const pm = usePaymentsPage();
+    const footerProps: LoadMoreFooterProps = {
+        state: pm.listState,
+        loadedCount: pm.rows.length,
+        totalCount: pm.transactionCount,
+        singularLabel: 'transaction',
+        pluralLabel: 'transactions',
+        errorPhase: pm.listErrorPhase,
+        onLoadMore: () => { void pm.loadMore(); },
+        onRetry: () => { void pm.retry(); },
+    };
 
     return (
         <div className="blanc-page-wrapper">
@@ -117,11 +128,11 @@ export default function PaymentsPage() {
                 <div className="blanc-controls-group">
                     <button
                         className={`blanc-control-chip ${pm.quickFilter === 'all' ? 'active' : ''}`}
-                        onClick={() => { pm.setQuickFilter('all'); pm.setPage(0); }}
+                        onClick={() => pm.setQuickFilter('all')}
                     >All</button>
                     <button
                         className={`blanc-control-chip ${pm.quickFilter === 'new_checks' ? 'active' : ''}`}
-                        onClick={() => { pm.setQuickFilter('new_checks'); pm.setPage(0); }}
+                        onClick={() => pm.setQuickFilter('new_checks')}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     >
                         New checks
@@ -198,31 +209,28 @@ export default function PaymentsPage() {
                                 ? 'Continue full history'
                                 : 'Sync full history'}
                     </button>
-                    <button className="blanc-control-chip" onClick={pm.handleExportCSV} disabled={pm.sortedRows.length === 0 || pm.exporting} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: (pm.sortedRows.length === 0 || pm.exporting) ? 0.5 : 1 }}>
+                    <button className="blanc-control-chip" onClick={pm.handleExportCSV} disabled={pm.rows.length === 0 || pm.exporting} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: (pm.rows.length === 0 || pm.exporting) ? 0.5 : 1 }}>
                         {pm.exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
                         {pm.exporting ? 'Exporting…' : 'Export'}
                     </button>
                 </div>
             </div>
 
-            {pm.rows.length > 0 && (
+            {pm.hasSummary && (
                 <div className="payments-summary-bar" style={{ padding: '0 4px 12px' }}>
-                    <span>{pm.sortedRows.length} transactions</span><span>·</span>
-                    <span className="payments-summary-amount">{formatCurrency(pm.totalAmount.toFixed(2))}</span>
+                    <span>{pm.transactionCount} transactions</span><span>·</span>
+                    <span className="payments-summary-amount">{formatCurrency(pm.totalAmount)}</span>
                 </div>
             )}
 
             {/* Аквариум снесён (правило 7): невидимый layout-контейнер */}
             <div className="flex flex-1 flex-col min-h-0">
                 <div className="payments-list-panel">
-                {/* Error */}
-                {pm.error && <div className="payments-error">⚠️ {pm.error}</div>}
-
                 {/* Table */}
                 <div className="payments-table-scroll">
                     {pm.loading ? (
                         <div className="payments-loading"><Loader2 size={20} className="animate-spin" style={{ color: '#9ca3af' }} /><span>Loading payments…</span></div>
-                    ) : pm.rows.length === 0 ? (
+                    ) : pm.rows.length === 0 && pm.listState === 'error+retry' ? null : pm.rows.length === 0 ? (
                         <div className="payments-empty"><DollarSign className="payments-empty-icon" /><div className="payments-empty-title">No payments found</div><div className="payments-empty-sub">Try adjusting the date range or filters.</div></div>
                     ) : (
                         <table className="payments-table">
@@ -236,7 +244,7 @@ export default function PaymentsPage() {
                                 })}
                             </tr></thead>
                             <tbody>
-                                {pm.pagedRows.map(row => (
+                                {pm.rows.map(row => (
                                     <tr key={row.id} className={pm.selectedId === row.id ? 'selected' : ''} onClick={() => pm.handleSelectRow(row.id)}>
                                         <td>{formatPaymentDate(row.payment_date)}</td>
                                         <td className="amount-cell">{formatCurrency(row.amount_paid)}</td>
@@ -252,16 +260,7 @@ export default function PaymentsPage() {
                     )}
                 </div>
 
-                {/* Pagination */}
-                {pm.rows.length > 0 && (
-                    <div className="payments-pagination">
-                        <span className="payments-pagination-info">{pm.page * pm.perPage + 1}–{Math.min((pm.page + 1) * pm.perPage, pm.sortedRows.length)} of {pm.sortedRows.length}</span>
-                        <div className="payments-pagination-btns">
-                            <button disabled={pm.page === 0} onClick={() => pm.setPage(p => p - 1)}><ChevronLeft size={14} /></button>
-                            <button disabled={pm.page >= pm.totalPages - 1} onClick={() => pm.setPage(p => p + 1)}><ChevronRight size={14} /></button>
-                        </div>
-                    </div>
-                )}
+                <LoadMoreFooter {...footerProps} />
                 </div>
 
             </div>
