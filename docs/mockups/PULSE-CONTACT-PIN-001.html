@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pulse pinned contact bar — UX mockup</title>
+  <style>
+    :root {
+      --blanc-bg: #f1f1f0;
+      --blanc-bg-deep: #e8e8e6;
+      --blanc-surface-strong: #ffffff;
+      --blanc-surface: rgba(255, 255, 255, 0.9);
+      --blanc-surface-muted: #f6f6f6;
+      --blanc-field: #f0f0f0;
+      --blanc-ink-1: #191919;
+      --blanc-ink-2: #6e6e6e;
+      --blanc-ink-3: #8a8a8a;
+      --blanc-accent: #7f42e1;
+      --blanc-accent-soft: #e7dbfd;
+      --blanc-line: rgba(25, 25, 25, 0.08);
+      --blanc-line-strong: rgba(25, 25, 25, 0.2);
+      --blanc-success: #1b8b63;
+      --blanc-job: #2f63d8;
+      --blanc-lead: #b26a1d;
+      --blanc-danger: #f0503f;
+      --blanc-scrim: rgba(25, 25, 25, 0.42);
+      --blanc-shadow-float: rgba(25, 25, 25, 0.14);
+      --blanc-font-body: "IBM Plex Sans", Inter, ui-sans-serif, system-ui, sans-serif;
+      --blanc-font-heading: Manrope, Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--blanc-bg-deep); color: var(--blanc-ink-1); font-family: var(--blanc-font-body); }
+    button, select, textarea { font: inherit; }
+    button { color: inherit; }
+
+    .review-shell { min-height: 100vh; padding: 18px; }
+    .review-toolbar {
+      max-width: 1240px;
+      margin: 0 auto 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .review-title { margin: 0; font: 700 18px/1.2 var(--blanc-font-heading); }
+    .review-subtitle { margin: 4px 0 0; color: var(--blanc-ink-2); font-size: 13px; }
+    .review-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .review-control,
+    .review-select {
+      min-height: 40px;
+      border: 0;
+      border-radius: 12px;
+      padding: 0 14px;
+      background: var(--blanc-surface-strong);
+      box-shadow: inset 0 0 0 1px var(--blanc-line);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .review-control[aria-pressed="true"] { background: var(--blanc-accent-soft); color: var(--blanc-accent); box-shadow: none; }
+
+    .device {
+      position: relative;
+      width: min(1180px, calc(100vw - 36px));
+      height: min(760px, calc(100vh - 112px));
+      min-height: 620px;
+      margin: 0 auto;
+      overflow: hidden;
+      border-radius: 24px;
+      background: var(--blanc-bg);
+      box-shadow: 0 22px 70px var(--blanc-shadow-float), inset 0 0 0 1px var(--blanc-line);
+      transition: width 240ms ease, height 240ms ease, border-radius 240ms ease;
+    }
+    .device.mobile { width: 390px; max-width: calc(100vw - 24px); height: min(780px, calc(100vh - 108px)); min-height: 620px; border-radius: 30px; }
+
+    .app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+    .app-header {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: auto minmax(180px, 1fr) auto;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 18px;
+    }
+    .app-title { font: 750 27px/1 var(--blanc-font-heading); letter-spacing: -0.04em; }
+    .search { min-height: 42px; padding: 0 15px; display: flex; align-items: center; border-radius: 14px; background: var(--blanc-surface-strong); color: var(--blanc-ink-3); font-size: 13px; }
+    .filters { display: flex; gap: 6px; }
+    .filter { min-height: 38px; padding: 0 13px; border: 0; border-radius: 12px; background: transparent; font-size: 12px; font-weight: 650; }
+    .filter.active { background: var(--blanc-surface-strong); color: var(--blanc-accent); }
+
+    .pulse-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 14px; padding: 0 16px 16px; }
+    .sidebar, .thread-scroll { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+    .sidebar { display: flex; flex-direction: column; gap: 8px; }
+    .eyebrow { color: var(--blanc-ink-2); font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+    .sidebar-label { padding: 7px 11px 2px; }
+    .contact-tile { padding: 11px 12px; border: 0; border-radius: 14px; background: var(--blanc-surface-strong); text-align: left; }
+    .contact-tile.active { background: var(--blanc-accent-soft); }
+    .tile-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .tile-name { font-size: 13px; font-weight: 700; }
+    .tile-preview { margin-top: 5px; color: var(--blanc-ink-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tile-time { color: var(--blanc-ink-3); font-size: 10px; }
+
+    .thread-scroll { position: relative; display: flex; flex-direction: column; gap: 14px; overflow-anchor: none; padding-bottom: 14px; }
+    .sticky-stack { position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
+    .action-required { min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 14px; background: var(--blanc-accent-soft); }
+    .action-label { flex: 0 0 auto; color: var(--blanc-accent); font-size: 10px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
+    .action-copy { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+    .action-due { color: var(--blanc-danger); font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+    .pin-bar {
+      min-height: 76px;
+      display: grid;
+      grid-template-columns: minmax(170px, 1fr) auto auto auto;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 14px 12px 17px;
+      border-radius: 16px;
+      background: var(--blanc-surface-strong);
+      box-shadow: inset 3px 0 0 var(--blanc-accent);
+    }
+    .identity { min-width: 0; }
+    .identity-name { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 750 23px/1.15 var(--blanc-font-heading); letter-spacing: -0.035em; }
+    .identity-company { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--blanc-ink-3); font-size: 12px; }
+    .primary-actions { display: flex; align-items: center; gap: 7px; }
+    .pin-action {
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 13px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--blanc-surface-muted);
+      color: var(--blanc-ink-1);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pin-action:hover, .pin-action:focus-visible { color: var(--blanc-accent); outline: 0; box-shadow: inset 0 0 0 1px var(--blanc-line-strong); }
+    .pin-action.intent { background: var(--blanc-accent); color: var(--blanc-surface-strong); }
+    .pin-action.intent:hover { color: var(--blanc-surface-strong); opacity: 0.9; }
+    .pin-action.unavailable { color: var(--blanc-ink-2); }
+    .pin-action svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .summary-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+    .summary-link {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--blanc-ink-2);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .summary-link:hover { background: var(--blanc-surface-muted); color: var(--blanc-ink-1); }
+    .summary-link strong { color: var(--blanc-ink-1); font-size: 13px; }
+    .expand-button { width: 42px; min-width: 42px; padding: 0; }
+    .expand-button svg { transition: transform 220ms ease; }
+    .expand-button[aria-expanded="true"] svg { transform: rotate(180deg); }
+
+    .timeline { display: flex; flex-direction: column; gap: 10px; padding: 4px 16px 90px; }
+    .date { align-self: center; margin: 5px 0; color: var(--blanc-ink-3); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+    .message { max-width: min(72%, 510px); padding: 11px 13px; border-radius: 16px; background: var(--blanc-surface-strong); font-size: 12px; line-height: 1.45; }
+    .message.out { align-self: flex-end; background: var(--blanc-accent-soft); }
+    .message-time { display: block; margin-top: 5px; color: var(--blanc-ink-3); font-size: 9px; }
+    .jump { position: sticky; bottom: 10px; z-index: 4; align-self: flex-end; margin-right: 16px; min-height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--blanc-ink-1); color: var(--blanc-surface-strong); font-size: 11px; font-weight: 700; }
+
+    .composer-card { display: none; flex: 0 0 auto; margin: 0 0 2px; padding: 14px; border-radius: 16px; background: var(--blanc-surface-strong); }
+    .composer-card.open { display: block; animation: composerIn 180ms ease-out; }
+    .composer-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .composer-channel { color: var(--blanc-accent); font-size: 12px; font-weight: 750; }
+    .composer-close { width: 36px; height: 36px; border: 0; border-radius: 11px; background: var(--blanc-surface-muted); cursor: pointer; }
+    .composer-field { width: 100%; min-height: 84px; resize: none; border: 0; outline: 0; border-radius: 13px; padding: 12px; background: var(--blanc-field); color: var(--blanc-ink-1); }
+    .composer-footer { display: flex; justify-content: flex-end; margin-top: 10px; }
+    .connect-copy { margin: 2px 0 12px; color: var(--blanc-ink-2); font-size: 12px; line-height: 1.5; }
+
+    .detail-scrim { position: absolute; inset: 0; z-index: 60; pointer-events: none; background: transparent; transition: background 220ms ease; }
+    .detail-scrim.open { pointer-events: auto; }
+    .detail-panel {
+      position: absolute;
+      z-index: 70;
+      top: 10px;
+      right: 10px;
+      bottom: 10px;
+      width: min(590px, calc(100% - 70px));
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 22px;
+      background: var(--blanc-surface-strong);
+      box-shadow: 0 24px 70px var(--blanc-shadow-float);
+      transform: translateX(calc(100% + 28px));
+      transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .detail-panel.open { transform: translateX(0); }
+    .sheet-handle { display: none; }
+    .detail-header { flex: 0 0 auto; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 22px 12px; }
+    .detail-kicker { margin-bottom: 5px; color: var(--blanc-success); font-size: 10px; font-weight: 750; letter-spacing: 0.14em; text-transform: uppercase; }
+    .detail-name { margin: 0; font: 750 27px/1.15 var(--blanc-font-heading); letter-spacing: -0.035em; }
+    .close-button { width: 42px; height: 42px; flex: 0 0 auto; border: 0; border-radius: 14px; background: var(--blanc-surface-muted); cursor: pointer; font-size: 21px; }
+    .detail-body { min-height: 0; overflow-y: auto; padding: 2px 22px 24px; }
+    .contact-lines { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 3px 0 22px; color: var(--blanc-ink-2); font-size: 13px; }
+    .detail-section { margin-top: 22px; scroll-margin-top: 12px; }
+    .note-surface { min-height: 90px; padding: 14px 15px; border-radius: 16px; background: var(--blanc-surface-muted); font-size: 13px; line-height: 1.55; }
+    .note-surface.empty { color: var(--blanc-ink-3); }
+    .entity-list { display: flex; flex-direction: column; gap: 8px; }
+    .entity-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 13px; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--blanc-line); font-size: 12px; }
+    .entity-title { font-weight: 700; }
+    .entity-meta { margin-top: 3px; color: var(--blanc-ink-3); font-size: 10px; }
+    .entity-status { font-size: 10px; font-weight: 750; }
+    .entity-status.lead { color: var(--blanc-lead); }
+    .entity-status.job { color: var(--blanc-job); }
+    .task-row { padding: 13px 14px; border-radius: 14px; background: var(--blanc-accent-soft); font-size: 12px; }
+    .task-row strong { display: block; margin-bottom: 4px; color: var(--blanc-accent); }
+    .address-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .address { padding: 13px; border-radius: 13px; background: var(--blanc-surface-muted); font-size: 12px; line-height: 1.45; }
+
+    .mobile-composer-scrim { display: none; }
+
+    .device.mobile .app-header { grid-template-columns: auto 1fr; padding: 10px; gap: 9px; }
+    .device.mobile .app-title { font-size: 22px; }
+    .device.mobile .search { min-height: 40px; }
+    .device.mobile .filters, .device.mobile .sidebar { display: none; }
+    .device.mobile .pulse-layout { display: block; padding: 0 8px 8px; }
+    .device.mobile .thread-scroll { height: 100%; gap: 8px; }
+    .device.mobile .sticky-stack { gap: 6px; }
+    .device.mobile .action-required { min-height: 46px; padding: 8px 10px; border-radius: 13px; }
+    .device.mobile .action-label { font-size: 9px; }
+    .device.mobile .action-copy { font-size: 11px; }
+    .device.mobile .action-due { display: none; }
+    .device.mobile .pin-bar {
+      min-height: 136px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "identity expand" "actions actions" "summary summary";
+      gap: 7px 9px;
+      padding: 12px;
+      border-radius: 15px;
+    }
+    .device.mobile .identity { grid-area: identity; }
+    .device.mobile .identity-name { font-size: 20px; }
+    .device.mobile .primary-actions { grid-area: actions; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+    .device.mobile .pin-action { padding: 0 10px; }
+    .device.mobile .summary-actions { grid-area: summary; justify-content: flex-start; }
+    .device.mobile .expand-button { grid-area: expand; }
+    .device.mobile .timeline { padding: 3px 8px 82px; }
+    .device.mobile .message { max-width: 84%; }
+    .device.mobile .jump { margin-right: 8px; }
+    .device.mobile .composer-card { display: none !important; }
+    .device.mobile .detail-scrim.open { background: var(--blanc-scrim); }
+    .device.mobile .detail-panel {
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 82%;
+      border-radius: 22px 22px 0 0;
+      transform: translateY(105%);
+    }
+    .device.mobile .detail-panel.open { transform: translateY(0); }
+    .device.mobile .sheet-handle { display: block; width: 40px; height: 4px; flex: 0 0 auto; margin: 10px auto 1px; border-radius: 999px; background: var(--blanc-line-strong); }
+    .device.mobile .detail-header { padding: 11px 18px 11px; }
+    .device.mobile .detail-name { font-size: 24px; }
+    .device.mobile .detail-body { padding: 0 18px 24px; }
+    .device.mobile .address-grid { grid-template-columns: 1fr; }
+    .device.mobile .mobile-composer-scrim.open { position: absolute; inset: 0; z-index: 80; display: block; background: var(--blanc-scrim); }
+    .device.mobile .composer-sheet {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 90;
+      padding: 0 18px max(18px, env(safe-area-inset-bottom));
+      border-radius: 22px 22px 0 0;
+      background: var(--blanc-surface-strong);
+      transform: translateY(105%);
+      transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .device.mobile .composer-sheet.open { transform: translateY(0); }
+    .device:not(.mobile) .composer-sheet { display: none; }
+    .composer-sheet .sheet-handle { display: block; }
+    .composer-sheet .composer-card { display: block !important; padding: 12px 0 0; }
+
+    @keyframes composerIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    @media (max-width: 620px) {
+      .review-shell { padding: 12px; }
+      .review-toolbar { align-items: flex-start; }
+      .review-controls { width: 100%; }
+      .review-select { flex: 1; min-width: 150px; }
+      .device { max-width: calc(100vw - 24px); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="review-shell">
+    <div class="review-toolbar">
+      <div>
+        <h1 class="review-title">PULSE-CONTACT-PIN-001</h1>
+        <p class="review-subtitle">Scroll the timeline, expand the contact, and try Text / Email.</p>
+      </div>
+      <div class="review-controls" aria-label="Mockup controls">
+        <button class="review-control" id="desktopToggle" aria-pressed="true">Desktop</button>
+        <button class="review-control" id="mobileToggle" aria-pressed="false">Mobile</button>
+        <select class="review-select" id="scenarioSelect" aria-label="Contact edge case">
+          <option value="default">Full contact</option>
+          <option value="empty">No notes · 0 leads/jobs</option>
+          <option value="no-email">No email</option>
+          <option value="email-only">No phone · email only</option>
+          <option value="no-channels">No phone or email</option>
+          <option value="disconnected">Email exists · mailbox disconnected</option>
+        </select>
+      </div>
+    </div>
+
+    <section class="device" id="device" aria-label="Albusto Pulse mockup">
+      <div class="app">
+        <header class="app-header">
+          <div class="app-title">Pulse</div>
+          <div class="search">type to find anything...</div>
+          <div class="filters" aria-hidden="true">
+            <button class="filter active">All</button>
+            <button class="filter">Unread</button>
+            <button class="filter">Action Required</button>
+          </div>
+        </header>
+
+        <div class="pulse-layout">
+          <aside class="sidebar" aria-label="Contacts">
+            <div class="sidebar-label eyebrow">Action Required</div>
+            <button class="contact-tile active">
+              <div class="tile-line"><span class="tile-name">Maria Rodriguez</span><span class="tile-time">2m</span></div>
+              <div class="tile-preview">Can we approve the estimate today?</div>
+            </button>
+            <div class="sidebar-label eyebrow">Today</div>
+            <button class="contact-tile"><div class="tile-line"><span class="tile-name">Theo Williams</span><span class="tile-time">11m</span></div><div class="tile-preview">Thanks, see you Thursday.</div></button>
+            <button class="contact-tile"><div class="tile-line"><span class="tile-name">Ari Patel</span><span class="tile-time">34m</span></div><div class="tile-preview">Missed call · 0:42</div></button>
+            <button class="contact-tile"><div class="tile-line"><span class="tile-name">Nora Bennett</span><span class="tile-time">1h</span></div><div class="tile-preview">Email · Re: installation photos</div></button>
+            <div class="sidebar-label eyebrow">Yesterday</div>
+            <button class="contact-tile"><div class="tile-line"><span class="tile-name">Dennis Liu</span><span class="tile-time">1d</span></div><div class="tile-preview">Outbound call · 3:18</div></button>
+          </aside>
+
+          <section class="thread-scroll" id="threadScroll" aria-label="Timeline">
+            <div class="sticky-stack">
+              <div class="action-required">
+                <span class="action-label">Action Required</span>
+                <span class="action-copy">Follow up on estimate approval</span>
+                <span class="action-due">Due 4:30 PM</span>
+              </div>
+
+              <div class="pin-bar" id="pinBar">
+                <div class="identity">
+                  <h2 class="identity-name" id="pinName">Maria Rodriguez</h2>
+                  <p class="identity-company" id="pinCompany">Rodriguez Property Group</p>
+                </div>
+                <div class="primary-actions" id="primaryActions"></div>
+                <div class="summary-actions" id="summaryActions"></div>
+                <button class="pin-action expand-button" id="expandButton" aria-expanded="false" aria-label="Open full contact card" title="Open full contact card">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="timeline" id="timeline">
+              <div class="date">Earlier</div>
+              <div class="message">Hi Maria, we received your request and are reviewing the photos.<span class="message-time">Mon · 9:42 AM · SMS</span></div>
+              <div class="message out">Thank you — I’ll send the updated estimate shortly.<span class="message-time">Mon · 10:03 AM · SMS</span></div>
+              <div class="message">The side gate will be open. Please use the driveway entrance.<span class="message-time">Tue · 8:18 AM · Email</span></div>
+              <div class="message out">Got it. The technician has the access note.<span class="message-time">Tue · 8:31 AM · Email</span></div>
+              <div class="date">Yesterday</div>
+              <div class="message">Could we add the upstairs unit to the estimate?<span class="message-time">2:14 PM · SMS</span></div>
+              <div class="message out">Yes. I’m updating it now and will send the revised total.<span class="message-time">2:21 PM · SMS</span></div>
+              <div class="message">Perfect, thank you.<span class="message-time">2:23 PM · SMS</span></div>
+              <div class="message out">Updated estimate sent.<span class="message-time">3:02 PM · Email</span></div>
+              <div class="date">Today</div>
+              <div class="message">I found it. Can we approve the estimate today?<span class="message-time">10:16 AM · SMS</span></div>
+              <div class="message out">Absolutely. I can help with the next step.<span class="message-time">10:18 AM · SMS</span></div>
+            </div>
+
+            <button class="jump" id="jumpButton">↓ Jump to latest</button>
+
+            <div class="composer-card" id="desktopComposer">
+              <div class="composer-top"><span class="composer-channel" data-channel-label>Text</span><button class="composer-close" data-close-composer aria-label="Close composer">×</button></div>
+              <p class="connect-copy" data-connect-copy hidden></p>
+              <textarea class="composer-field" data-composer-field placeholder="Type your message..."></textarea>
+              <div class="composer-footer"><button class="pin-action intent" data-send-button>Send</button></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="detail-scrim" id="detailScrim"></div>
+      <aside class="detail-panel" id="detailPanel" role="dialog" aria-modal="true" aria-label="Full contact card">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <header class="detail-header">
+          <div><div class="detail-kicker">Contact</div><h2 class="detail-name" id="detailName">Maria Rodriguez</h2></div>
+          <button class="close-button" id="closeDetail" aria-label="Close full contact card">×</button>
+        </header>
+        <div class="detail-body">
+          <div class="contact-lines" id="contactLines"></div>
+
+          <section class="detail-section" id="notesSection">
+            <div class="eyebrow">Notes</div>
+            <div class="note-surface" id="noteSurface"></div>
+          </section>
+
+          <section class="detail-section" id="taskSection">
+            <div class="eyebrow">Tasks</div>
+            <div class="task-row"><strong>Follow up on estimate approval</strong>Due today at 4:30 PM</div>
+          </section>
+
+          <section class="detail-section" id="entitiesSection">
+            <div class="eyebrow" id="entityHeading">Leads &amp; Jobs</div>
+            <div class="entity-list" id="entityList"></div>
+          </section>
+
+          <section class="detail-section">
+            <div class="eyebrow">Addresses</div>
+            <div class="address-grid">
+              <div class="address"><strong>Main property</strong><br />714 Westfield Avenue<br />Brooklyn, NY 11215</div>
+              <div class="address"><strong>Upstairs unit</strong><br />714 Westfield Avenue, Unit 2<br />Brooklyn, NY 11215</div>
+            </div>
+          </section>
+        </div>
+      </aside>
+
+      <div class="mobile-composer-scrim" id="composerScrim"></div>
+      <section class="composer-sheet" id="mobileComposer" role="dialog" aria-modal="true" aria-label="Message composer">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <div class="composer-card">
+          <div class="composer-top"><span class="composer-channel" data-channel-label>Text</span><button class="composer-close" data-close-composer aria-label="Close composer">×</button></div>
+          <p class="connect-copy" data-connect-copy hidden></p>
+          <textarea class="composer-field" data-composer-field placeholder="Type your message..."></textarea>
+          <div class="composer-footer"><button class="pin-action intent" data-send-button>Send</button></div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const icons = {
+      call: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.69 2.8a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.33 1.84.56 2.8.69A2 2 0 0 1 22 16.92Z" /></svg>',
+      text: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" /></svg>',
+      email: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>'
+    };
+
+    const scenarios = {
+      default: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', phone: true, email: true, connected: true, notes: true, leads: 2, jobs: 3 },
+      empty: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', phone: true, email: true, connected: true, notes: false, leads: 0, jobs: 0 },
+      'no-email': { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', phone: true, email: false, connected: true, notes: true, leads: 1, jobs: 1 },
+      'email-only': { name: 'Nora Bennett', company: 'Bennett Studio', phone: false, email: true, connected: true, notes: true, leads: 1, jobs: 0 },
+      'no-channels': { name: 'Ari Patel', company: 'Patel Holdings', phone: false, email: false, connected: true, notes: false, leads: 0, jobs: 0 },
+      disconnected: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', phone: true, email: true, connected: false, notes: true, leads: 2, jobs: 3 }
+    };
+
+    const device = document.getElementById('device');
+    const threadScroll = document.getElementById('threadScroll');
+    const primaryActions = document.getElementById('primaryActions');
+    const summaryActions = document.getElementById('summaryActions');
+    const expandButton = document.getElementById('expandButton');
+    const detailPanel = document.getElementById('detailPanel');
+    const detailScrim = document.getElementById('detailScrim');
+    const desktopComposer = document.getElementById('desktopComposer');
+    const mobileComposer = document.getElementById('mobileComposer');
+    const composerScrim = document.getElementById('composerScrim');
+    let activeScenario = scenarios.default;
+
+    function actionButton(kind, label, extraClass = '') {
+      return `<button class="pin-action ${extraClass}" data-action="${kind}">${icons[kind]}<span>${label}</span></button>`;
+    }
+
+    function renderEntities(data) {
+      const rows = [];
+      for (let i = 0; i < data.leads; i += 1) rows.push(`<div class="entity-row"><div><div class="entity-title">${i ? 'Upstairs unit' : 'Exterior repair'}</div><div class="entity-meta">Lead · created Jul ${12 - i}</div></div><span class="entity-status lead">Open</span></div>`);
+      for (let i = 0; i < data.jobs; i += 1) rows.push(`<div class="entity-row"><div><div class="entity-title">${i ? 'Follow-up service' : 'Main property visit'}</div><div class="entity-meta">Job #${8241 + i}</div></div><span class="entity-status job">Scheduled</span></div>`);
+      document.getElementById('entityList').innerHTML = rows.join('');
+      document.getElementById('entityHeading').textContent = `Leads & Jobs · ${data.leads + data.jobs}`;
+    }
+
+    function renderScenario(data) {
+      activeScenario = data;
+      document.getElementById('pinName').textContent = data.name;
+      document.getElementById('pinCompany').textContent = data.company;
+      document.getElementById('detailName').textContent = data.name;
+
+      const actions = [];
+      if (data.phone) {
+        actions.push(actionButton('call', 'Call'));
+        actions.push(actionButton('text', 'Text', 'intent'));
+      }
+      if (data.email) actions.push(actionButton('email', 'Email', data.connected ? '' : 'unavailable'));
+      primaryActions.innerHTML = actions.join('');
+
+      const summary = [];
+      if (data.notes) summary.push('<button class="summary-link" data-open-section="notesSection">Notes</button>');
+      summary.push(`<button class="summary-link" data-open-section="entitiesSection">Leads &amp; Jobs <strong>${data.leads + data.jobs}</strong></button>`);
+      summaryActions.innerHTML = summary.join('');
+
+      const lines = [];
+      if (data.phone) lines.push('<span>(929) 555-0148</span>');
+      if (data.email) lines.push('<span>maria@example.com</span>');
+      if (!data.email) lines.push('<span>Add email</span>');
+      document.getElementById('contactLines').innerHTML = lines.join('');
+
+      const note = document.getElementById('noteSurface');
+      note.textContent = data.notes ? 'Gate code is 1957. Call before entering the upstairs unit.' : 'Add notes…';
+      note.classList.toggle('empty', !data.notes);
+      renderEntities(data);
+      closeComposer();
+      closeDetail();
+    }
+
+    function openDetail(sectionId) {
+      closeComposer();
+      detailPanel.classList.add('open');
+      detailScrim.classList.add('open');
+      expandButton.setAttribute('aria-expanded', 'true');
+      window.setTimeout(() => {
+        const target = sectionId ? document.getElementById(sectionId) : null;
+        target?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }, 260);
+    }
+
+    function closeDetail() {
+      detailPanel.classList.remove('open');
+      detailScrim.classList.remove('open');
+      expandButton.setAttribute('aria-expanded', 'false');
+    }
+
+    function configureComposer(channel) {
+      const isEmail = channel === 'email';
+      const disconnected = isEmail && !activeScenario.connected;
+      document.querySelectorAll('[data-channel-label]').forEach(el => { el.textContent = isEmail ? 'Email' : 'Text'; });
+      document.querySelectorAll('[data-composer-field]').forEach(el => {
+        el.placeholder = isEmail ? 'Write an email...' : 'Type your message...';
+        el.hidden = disconnected;
+      });
+      document.querySelectorAll('[data-connect-copy]').forEach(el => {
+        el.hidden = !disconnected;
+        el.textContent = disconnected ? 'Google email is not connected. An admin can connect it in Settings; other users can ask an admin.' : '';
+      });
+      document.querySelectorAll('[data-send-button]').forEach(el => {
+        el.hidden = disconnected;
+        el.textContent = isEmail ? 'Email' : 'Send';
+      });
+    }
+
+    function openComposer(channel) {
+      closeDetail();
+      configureComposer(channel);
+      if (device.classList.contains('mobile')) {
+        mobileComposer.classList.add('open');
+        composerScrim.classList.add('open');
+        if (!(channel === 'email' && !activeScenario.connected)) window.setTimeout(() => mobileComposer.querySelector('textarea')?.focus(), 260);
+      } else {
+        desktopComposer.classList.add('open');
+        window.setTimeout(() => {
+          threadScroll.scrollTo({ top: threadScroll.scrollHeight, behavior: 'smooth' });
+          if (!(channel === 'email' && !activeScenario.connected)) desktopComposer.querySelector('textarea')?.focus();
+        }, 30);
+      }
+    }
+
+    function closeComposer() {
+      desktopComposer.classList.remove('open');
+      mobileComposer.classList.remove('open');
+      composerScrim.classList.remove('open');
+    }
+
+    function setViewport(mobile) {
+      closeComposer();
+      closeDetail();
+      device.classList.toggle('mobile', mobile);
+      document.getElementById('desktopToggle').setAttribute('aria-pressed', String(!mobile));
+      document.getElementById('mobileToggle').setAttribute('aria-pressed', String(mobile));
+    }
+
+    expandButton.addEventListener('click', () => detailPanel.classList.contains('open') ? closeDetail() : openDetail());
+    document.getElementById('closeDetail').addEventListener('click', closeDetail);
+    detailScrim.addEventListener('click', closeDetail);
+    composerScrim.addEventListener('click', closeComposer);
+    document.querySelectorAll('[data-close-composer]').forEach(el => el.addEventListener('click', closeComposer));
+    document.getElementById('jumpButton').addEventListener('click', () => threadScroll.scrollTo({ top: threadScroll.scrollHeight, behavior: 'smooth' }));
+
+    primaryActions.addEventListener('click', event => {
+      const button = event.target.closest('[data-action]');
+      if (!button) return;
+      const action = button.dataset.action;
+      if (action === 'text' || action === 'email') openComposer(action);
+    });
+    summaryActions.addEventListener('click', event => {
+      const button = event.target.closest('[data-open-section]');
+      if (button) openDetail(button.dataset.openSection);
+    });
+    document.getElementById('desktopToggle').addEventListener('click', () => setViewport(false));
+    document.getElementById('mobileToggle').addEventListener('click', () => setViewport(true));
+    document.getElementById('scenarioSelect').addEventListener('change', event => renderScenario(scenarios[event.target.value]));
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeComposer(); closeDetail(); } });
+
+    renderScenario(scenarios.default);
+  </script>
+</body>
+</html>
