@@ -21,7 +21,7 @@ import {
     type PlayerTrack,
     type PulsePlayerApi,
 } from './pulsePlayer';
-import { PulsePlayerBarView } from './PulsePlayerBar';
+import { PulsePlayerBarView, PulsePlayerSheetControls } from './PulsePlayerBar';
 
 const trackA: PlayerTrack = { callSid: 'CA_a', audioUrl: '/api/calls/CA_a/recording', label: '(857) 389-5812 · 1:18 PM', durationHint: 95 };
 const trackB: PlayerTrack = { callSid: 'CA_b', audioUrl: '/api/calls/CA_b/recording', label: '(617) 555-0100 · 2:03 PM' };
@@ -122,5 +122,27 @@ describe('PulsePlayerBarView', () => {
     it('sits BELOW panels/dialogs: z-70 under OVERLAY_Z.panel(80)', () => {
         const html = renderToStaticMarkup(<PulsePlayerBarView p={api({ track: trackA })} />);
         expect(html).toContain('z-[70]');
+    });
+});
+
+describe('PulsePlayerSheetControls (mobile sheet body)', () => {
+    it('renders nothing while no track is loaded', () => {
+        expect(renderToStaticMarkup(<PulsePlayerSheetControls p={api({})} />)).toBe('');
+    });
+
+    it('roomy transport: ±10, big play/pause, speed, seek, both times on their own row', () => {
+        const html = renderToStaticMarkup(
+            <PulsePlayerSheetControls p={api({ track: trackA, isPlaying: true, currentTime: 65, duration: 95, rate: 2 })} />,
+        );
+        expect(html).toContain('aria-label="Rewind 10 seconds"');
+        expect(html).toContain('aria-label="Forward 10 seconds"');
+        expect(html).toContain('aria-label="Pause"');
+        expect(html).toContain('aria-label="Seek"');
+        expect(html).toContain('aria-label="Playback speed"');
+        expect(html).toContain('2×');
+        expect(html).toContain('1:05');
+        expect(html).toContain('1:35');
+        // The label lives in the sheet HEADER (BottomSheet title), not in the body.
+        expect(html).not.toContain(trackA.label);
     });
 });
