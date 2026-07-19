@@ -10,16 +10,16 @@ handler in `src/server.js`. Of those, 245 contain literal inline
 
 | Category | Handlers | Result |
 |---|---:|---|
-| (a) effective RBAC outside the literal handler declaration | 176 | Fine: mount-level, router-level/alias, platform-role, or reviewed local role gate |
+| (a) effective RBAC outside the literal handler declaration | 182 | Fine: mount-level, router-level/alias, platform-role, reviewed local role gate, or reviewed per-tool MCP gate |
 | (b) public/machine/role-neutral by design | 84 | Compensating controls recorded; seven weak or missing-control cases are flagged |
-| (c) REAL GAP | 30 | Exact route and suggested catalog permission recorded |
+| (c) REAL GAP | 24 | Exact route and suggested catalog permission recorded; all are retiring Zenbooker surfaces |
 
 The scanner recognizes server mount guards by resolving route imports into the
 `app.use(... requirePermission/requirePlatformRole ..., router)` call. Existing real
 gaps are baselined by exact `file:receiver:method:path`, so a new ungated signature
 fails the lint without treating the baseline as approval.
 
-## (a) Effective gate outside literal inline `requirePermission` — 176
+## (a) Effective gate outside literal inline `requirePermission` — 182
 
 Every handler is listed as `line METHOD path`; mount citations point to `src/server.js`.
 
@@ -39,6 +39,8 @@ Every handler is listed as `line METHOD path`; mount citations point to `src/ser
 | `lead-form-settings.js` | 7 GET `/`; 29 PUT `/` | `tenant.company.manage`, mount line 311 |
 | `mailAgent.js` | 35 GET `/settings`; 61 PUT `/settings`; 91 POST `/test-rules`; 113 POST `/dry-run`; 126 GET `/reviews` | `tenant.integrations.manage`, mount line 279 |
 | `marketplace.js` | 33 GET `/apps`; 42 GET `/installations`; 52 GET `/apps/:appKey/settings`; 64 PUT `/apps/:appKey/settings`; 79 PUT `/apps/rate-me/domain`; 92 POST `/apps/rate-me/domain/verify`; 104 DELETE `/apps/rate-me/domain`; 113 POST `/apps/rate-me/tokens`; 130 POST `/apps/:appKey/install`; 144 POST `/installations/:id/disconnect`; 158 POST `/installations/:id/retry-provisioning` | `tenant.integrations.manage`, mount line 277 |
+| `agentSkillsMcp.js` | 46 GET `/tools`; 59 POST `/call`; 78 POST `/jsonrpc` | Authenticated + tenant-resolved transport; registry-declared per-tool permissions enforced before dispatch, discovery filtered, unmapped tools denied |
+| `crmMcp.js` | 33 GET `/tools`; 46 POST `/call`; 65 POST `/jsonrpc` | Authenticated + tenant-resolved transport; registry-declared per-tool permissions enforced before dispatch, discovery filtered, unmapped tools denied |
 | `messaging.js` | 35 GET `/`; 55 GET `/:id`; 67 GET `/:id/messages`; 126 POST `/:id/mark-read`; 143 POST `/:id/mark-unread` | Inline `msgRead` permission alias |
 | `outboundLeadCall.js` | 37 GET `/settings`; 78 PUT `/settings` | `tenant.integrations.manage`, mount line 282 |
 | `platformCompanies.js` | 11 GET `/`; 28 GET `/:id`; 41 PATCH `/:id` | `super_admin`, mount line 349 |
@@ -92,17 +94,13 @@ Every handler is listed as `line METHOD path`; mount citations point to `src/ser
 | `webhooks.js` | 14/17/20/23/26/29/32/35 POST voice callbacks; 42/43 POST Conversations callbacks; 46 GET `/health` | Main voice callbacks validate Twilio signatures. **FLAG:** voice fallback and Conversations pre do not validate; Conversations post fails open when token/signature is absent |
 | `src/server.js` | 129 GET `/api/messaging/media/:mediaId/temporary-url` | **FLAG:** opaque UUID is the sole control; no auth or rate limit |
 
-## (c) REAL GAP — 30
+## (c) REAL GAP — 24
 
 All are authenticated/tenant-mounted unless noted, but lack role authorization.
-Suggested keys are from `permissionCatalog.js`; the catalog has no dedicated sales/service
-CRM read key, so the closest existing key is identified where needed.
+Suggested keys are from `permissionCatalog.js`.
 
 | Route file | Handler | Suggested permission |
 |---|---|---|
-| `agentSkillsMcp.js` | 45 GET `/tools` | `contacts.view` (catalog lacks service-CRM read) |
-|  | 54 POST `/call`; 73 POST `/jsonrpc` | `contacts.view` transport floor; retain per-tool write gate |
-| `crmMcp.js` | 32 GET `/tools`; 41 POST `/call`; 60 POST `/jsonrpc` | `contacts.view` transport floor; retain per-tool write gate |
 | `integrations-zenbooker.js` | 185 GET `/webhook-url`; 219 POST `/webhook-url/regenerate`; 361 GET `/api-key`; 386 PUT `/api-key` | `tenant.integrations.manage` |
 |  | 244 POST `/contacts/:contactId/create-customer`; 272 POST `/contacts/:contactId/sync` | `contacts.edit` |
 |  | 300 GET `/jobs` | `jobs.view` |

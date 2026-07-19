@@ -33,6 +33,19 @@
 // than the framework write-gate alone (spec §8.2).
 const SERVICE_WRITE_PERMISSION = 'service.crm.write';
 
+const TOOL_PERMISSION_MAP = Object.freeze({
+    'svc.identify_caller': ['contacts.view'],
+    'svc.get_customer_overview': ['contacts.view'],
+    'svc.get_job_status': ['jobs.view'],
+    'svc.get_appointments': ['jobs.view'],
+    'svc.get_job_history': ['jobs.view'],
+    'svc.get_estimate_summary': ['estimates.view'],
+    'svc.get_invoice_summary': ['invoices.view'],
+    'svc.reschedule_appointment': ['jobs.edit'],
+    'svc.cancel_appointment': ['jobs.close'],
+    'svc.book_on_lead': ['leads.edit', 'leads.create'],
+});
+
 /**
  * The identity block every skill additionally accepts as *claims* (spec §2.1).
  * The skill layer re-derives the verification level from the DB against these —
@@ -258,17 +271,20 @@ function newPreferredSlotSchema() {
 /**
  * Freeze a tool descriptor with the derived kind-driven fields. Mirrors
  * `crmMcpToolRegistry.normalizeTool` but keeps the projection-only `skill` and
- * `requiredLevel` fields intact.
+ * `requiredLevel` fields intact and attaches fail-closed business permissions.
  * @param {Object} tool Raw tool def (name/skill/requiredLevel/description/inputSchema).
  * @param {'read'|'write'} kind Read vs. state-mutating write.
  * @returns {Readonly<Object>} Frozen normalized tool descriptor.
  */
 function normalizeTool(tool, kind) {
+    const requiredPermissions = TOOL_PERMISSION_MAP[tool.name] || [];
     return Object.freeze({
         ...tool,
         kind,
         requiresConfirmation: kind === 'write',
-        requiredPermission: kind === 'write' ? SERVICE_WRITE_PERMISSION : null,
+        requiredPermission: requiredPermissions[0] || null,
+        requiredPermissions: Object.freeze([...requiredPermissions]),
+        frameworkWritePermission: kind === 'write' ? SERVICE_WRITE_PERMISSION : null,
     });
 }
 
@@ -307,6 +323,7 @@ function skillFor(name) {
 
 module.exports = {
     SERVICE_WRITE_PERMISSION,
+    TOOL_PERMISSION_MAP,
     listTools,
     getTool,
     skillFor,

@@ -32,6 +32,7 @@
 const crypto = require('crypto');
 const registry = require('./agentSkillsMcpRegistry');
 const mcpResponse = require('./crmMcpResponse');
+const mcpToolAuthorization = require('./mcpToolAuthorization');
 const { validateArguments } = require('./crmMcpSchemaValidator');
 const agentSkills = require('./agentSkills');
 
@@ -113,8 +114,9 @@ function requireWriteAccess(context, tool, confirmation) {
 
 /**
  * Execute a `svc.*` tool call. Same shape as `crmMcpToolExecutor.execute`:
- * resolve tool → build context → require tenant → validate args (reused
- * validator) → require write access (framework outer gate) → dispatch.
+ * resolve tool → build context → require tenant → require the tool's business
+ * permission → strip caller tenant selectors → validate args (reused validator)
+ * → require write access (framework outer gate) → dispatch.
  * @param {Object} req Express-like request.
  * @param {string} toolName MCP tool name (`svc.*`).
  * @param {Object} [toolArguments] Client arguments (identity block + skill fields).
@@ -130,9 +132,11 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
     }
     const context = buildContext(req);
     requireCompanyContext(context);
-    validateArguments(tool, toolArguments || {});
+    mcpToolAuthorization.requireToolAccess(tool, context.permissions);
+    const sanitizedArguments = mcpToolAuthorization.sanitizeArguments(toolArguments);
+    validateArguments(tool, sanitizedArguments);
     requireWriteAccess(context, tool, confirmation);
-    return dispatch(tool, contextWithConfirmation(context, confirmation), toolArguments || {});
+    return dispatch(tool, contextWithConfirmation(context, confirmation), sanitizedArguments);
 }
 
 /**
@@ -143,7 +147,7 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
  * identically to the voice transport. No per-tool branching, no CRM logic.
  * @param {Object} tool The resolved tool descriptor (carries `skill`).
  * @param {Object} context Built context (used as `rawContext` — logging only).
- * @param {Object} args Client arguments passed straight through as skill `input`.
+ * @param {Object} args Sanitized client arguments passed through as skill `input`.
  * @returns {Promise<Object>} The skill result (already safe-shaped by `runSkill`).
  */
 async function dispatch(tool, context, args) {

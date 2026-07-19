@@ -13,6 +13,60 @@ const SALES_WORKFLOW_KEYS = Object.freeze([
     'tasks_due_this_week',
 ]);
 
+const TOOL_PERMISSION_MAP = Object.freeze({
+    'crm.search_accounts': ['contacts.view'],
+    'crm.get_account': ['contacts.view'],
+    'crm.find_stale_accounts': ['contacts.view'],
+    'crm.search_contacts': ['contacts.view'],
+    'crm.get_contact': ['contacts.view'],
+    'crm.get_key_contacts': ['contacts.view'],
+    'crm.search_deals': ['leads.view'],
+    'crm.get_deal': ['leads.view'],
+    'crm.get_attention_deals': ['leads.view'],
+    'crm.get_pipeline': ['leads.view'],
+    'crm.get_pipeline_by_owner': ['leads.view'],
+    'crm.get_pipeline_by_team': ['leads.view'],
+    'crm.get_pipeline_by_period': ['leads.view'],
+    'crm.group_pipeline_by_stage': ['leads.view'],
+    'crm.group_pipeline_by_forecast_category': ['leads.view'],
+    'crm.get_forecast_totals': ['leads.view'],
+    'crm.get_pipeline_changes': ['leads.view'],
+    'crm.get_pipeline_risky_deals': ['leads.view'],
+    'crm.get_pipeline_slippage': ['leads.view'],
+    'crm.list_activities': ['contacts.view'],
+    'crm.list_tasks': ['tasks.view'],
+    'crm.list_notes': ['contacts.view'],
+    'crm.get_metadata': ['contacts.view'],
+    'crm.list_sales_workflows': ['contacts.view'],
+    'crm.get_sales_list': ['contacts.view'],
+    'crm.list_my_open_deals': ['leads.view'],
+    'crm.get_last_customer_facing_activity': ['contacts.view'],
+    'crm.find_deals_without_next_step': ['leads.view'],
+    'crm.find_overdue_close_date_deals': ['leads.view'],
+    'crm.find_deals_without_activity': ['leads.view'],
+    'crm.find_deals_closing_between': ['leads.view'],
+    'crm.find_deals_closing_this_month': ['leads.view'],
+    'crm.find_deals_closing_this_quarter': ['leads.view'],
+    'crm.find_risky_deals': ['leads.view'],
+    'crm.top_accounts_by_pipeline': ['contacts.view'],
+    'crm.accounts_needing_follow_up': ['contacts.view'],
+    'crm.contacts_missing_role_title_email': ['contacts.view'],
+    'crm.tasks_due_this_week': ['tasks.view'],
+    'crm.find_overdue_tasks': ['tasks.view'],
+    'crm.get_deal_history': ['leads.view'],
+    'crm.update_deal_field': ['sales.crm.write'],
+    'crm.update_deal_next_step': ['sales.crm.write'],
+    'crm.update_deal_stage': ['sales.crm.write'],
+    'crm.update_deal_forecast_category': ['sales.crm.write'],
+    'crm.update_deal_close_date': ['sales.crm.write'],
+    'crm.update_deal_amount': ['sales.crm.write'],
+    'crm.update_deal_risk_summary': ['sales.crm.write'],
+    'crm.update_deal_competitor': ['sales.crm.write'],
+    'crm.create_task': ['sales.crm.write'],
+    'crm.update_task_status': ['sales.crm.write'],
+    'crm.create_note': ['sales.crm.write'],
+});
+
 const READ_TOOLS = [
     {
         name: 'crm.search_accounts',
@@ -426,11 +480,14 @@ function dealFieldWriteTool(name, field, valueSchema) {
 }
 
 function normalizeTool(tool, kind) {
+    const requiredPermissions = TOOL_PERMISSION_MAP[tool.name] || [];
     return Object.freeze({
         ...tool,
         kind,
         requiresConfirmation: kind === 'write',
-        requiredPermission: kind === 'write' ? 'sales.crm.write' : null,
+        requiredPermission: requiredPermissions[0] || null,
+        requiredPermissions: Object.freeze([...requiredPermissions]),
+        frameworkWritePermission: kind === 'write' ? 'sales.crm.write' : null,
     });
 }
 
@@ -446,6 +503,7 @@ function getTool(name) {
 }
 
 module.exports = {
+    TOOL_PERMISSION_MAP,
     listTools,
     getTool,
 };

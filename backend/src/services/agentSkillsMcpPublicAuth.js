@@ -7,10 +7,11 @@
  *   - env names are `SVC_MCP_*` (never the sales `SALES_MCP_*`);
  *   - **company context is env-bound** (`SVC_MCP_PUBLIC_COMPANY_ID`, default
  *     `…0001` = DEFAULT_COMPANY_ID) — never taken from the client payload;
+ *   - the machine identity has an explicit read permission set matching the
+ *     published tools;
  *   - **writes are DISABLED unless explicitly enabled** (`SVC_MCP_PUBLIC_WRITE_ENABLED`
- *     === 'true'); when off, no `service.crm.write` permission is granted, so the
- *     executor's framework write-gate refuses every `svc.*` write;
- *   - the granted permission is `service.crm.write` (not `sales.crm.write`).
+ *     === 'true'); enabling adds both `service.crm.write` and the business
+ *     permissions declared by the published write tools.
  *
  * The public transport is FULLY DISABLED unless `SVC_MCP_PUBLIC_ENABLED === 'true'`.
  * The sales public-auth (`crmMcpPublicAuth.js`) is UNTOUCHED — additive only.
@@ -21,6 +22,19 @@ const crypto = require('crypto');
 // Single-tenant default for the voice/public surface (== ZENBOOKER_DEFAULT_COMPANY_ID).
 const DEFAULT_PUBLIC_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 const SERVICE_WRITE_PERMISSION = 'service.crm.write';
+const SERVICE_READ_PERMISSIONS = Object.freeze([
+    'contacts.view',
+    'jobs.view',
+    'estimates.view',
+    'invoices.view',
+]);
+const SERVICE_WRITE_PERMISSIONS = Object.freeze([
+    SERVICE_WRITE_PERMISSION,
+    'jobs.edit',
+    'jobs.close',
+    'leads.edit',
+    'leads.create',
+]);
 
 function timingSafeEqual(a, b) {
     const left = Buffer.from(String(a || ''));
@@ -83,8 +97,8 @@ function requireStdioContext() {
 
 /**
  * Assemble the request-shaped context. `companyFilter.company_id` is the
- * env-bound tenant; `authz.permissions` carries `service.crm.write` only when
- * writes are enabled. No `crmUser` id is required here (the skill layer scopes by
+ * env-bound tenant; `authz.permissions` carries explicit machine read scope plus
+ * write scope only when enabled. No `crmUser` id is required here (the skill layer scopes by
  * companyId; audit authorship is stamped as 'AI Phone' inside the write skills).
  * @param {{companyId:string,userEmail:string,timezone:string,writeEnabled:boolean,ip:?string,requestId:?string}} opts
  * @returns {Object} Context object.
@@ -104,7 +118,10 @@ function buildContext({ companyId, userEmail, timezone, writeEnabled, ip, reques
             email: userEmail,
         },
         authz: {
-            permissions: writeEnabled ? [SERVICE_WRITE_PERMISSION] : [],
+            permissions: [
+                ...SERVICE_READ_PERMISSIONS,
+                ...(writeEnabled ? SERVICE_WRITE_PERMISSIONS : []),
+            ],
             company: { id: companyId, status: 'active', timezone: timezone || 'America/New_York' },
         },
     };

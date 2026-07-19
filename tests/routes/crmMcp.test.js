@@ -63,9 +63,12 @@ const pipelineService = require('../../backend/src/services/crmPipelineService')
 const tasksService = require('../../backend/src/services/crmTasksService');
 const notesService = require('../../backend/src/services/crmNotesService');
 const activitiesService = require('../../backend/src/services/crmActivitiesService');
+const registry = require('../../backend/src/services/crmMcpToolRegistry');
 const crmMcpRouter = require('../../backend/src/routes/crmMcp');
 
-function makeApp({ companyId = 'company-1', permissions = [], requestId = 'req-test' } = {}) {
+const READ_PERMISSIONS = ['contacts.view', 'leads.view', 'tasks.view'];
+
+function makeApp({ companyId = 'company-1', permissions = READ_PERMISSIONS, requestId = 'req-test' } = {}) {
     const app = express();
     app.use(express.json());
     app.use((req, res, next) => {
@@ -97,7 +100,8 @@ describe('/api/crm/mcp routes', () => {
     });
 
     test('GET /tools returns stable tool definitions', async () => {
-        const res = await request(makeApp()).get('/api/crm/mcp/tools');
+        const res = await request(makeApp({ permissions: [...READ_PERMISSIONS, 'sales.crm.write'] }))
+            .get('/api/crm/mcp/tools');
 
         expect(res.status).toBe(200);
         expect(res.body.ok).toBe(true);
@@ -118,6 +122,17 @@ describe('/api/crm/mcp routes', () => {
         expect(res.body.data.tools.map(tool => tool.name)).not.toContain('crm.update_deal_field');
     });
 
+    test('GET /tools filters discovery to the caller permissions', async () => {
+        const res = await request(makeApp({ permissions: ['contacts.view'] }))
+            .get('/api/crm/mcp/tools');
+        const names = res.body.data.tools.map(tool => tool.name);
+
+        expect(names).toContain('crm.search_accounts');
+        expect(names).not.toContain('crm.search_deals');
+        expect(names).not.toContain('crm.list_tasks');
+        expect(names).not.toContain('crm.update_deal_field');
+    });
+
     test('GET /tools exposes no delete or bulk mutation tools', async () => {
         const res = await request(makeApp()).get('/api/crm/mcp/tools');
         const names = res.body.data.tools.map(tool => tool.name);
@@ -131,12 +146,43 @@ describe('/api/crm/mcp routes', () => {
 
         const res = await request(makeApp())
             .post('/api/crm/mcp/call')
-            .send({ tool: 'crm.search_accounts', arguments: { q: 'acme', limit: 5 } });
+            .send({
+                tool: 'crm.search_accounts',
+                arguments: { q: 'acme', limit: 5, company_id: 'company-foreign' },
+            });
 
         expect(res.status).toBe(200);
         expect(res.body.structuredContent).toEqual([{ id: 1, name: 'Acme' }]);
         expect(res.body.content[0]).toEqual({ type: 'json', json: [{ id: 1, name: 'Acme' }] });
         expect(accountsService.listAccounts).toHaveBeenCalledWith('company-1', { q: 'acme', limit: 5 });
+    });
+
+    test('POST /call denies a tool outside the caller permission set', async () => {
+        const res = await request(makeApp({ permissions: ['contacts.view'] }))
+            .post('/api/crm/mcp/call')
+            .send({ tool: 'crm.search_deals', arguments: {} });
+
+        expect(res.status).toBe(403);
+        expect(res.body.error.code).toBe('access_denied');
+        expect(dealsService.listDeals).not.toHaveBeenCalled();
+    });
+
+    test('POST /call fails closed when a registered tool has no permission mapping', async () => {
+        const spy = jest.spyOn(registry, 'getTool').mockReturnValueOnce({
+            name: 'crm.unmapped',
+            kind: 'read',
+            inputSchema: { type: 'object', properties: {}, required: [] },
+        });
+        try {
+            const res = await request(makeApp({ permissions: ['contacts.view'] }))
+                .post('/api/crm/mcp/call')
+                .send({ tool: 'crm.unmapped', arguments: {} });
+
+            expect(res.status).toBe(403);
+            expect(res.body.error.details.reason).toBe('TOOL_PERMISSION_UNMAPPED');
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     test('POST /call validates tool arguments against runtime schema', async () => {
@@ -174,8 +220,8 @@ describe('/api/crm/mcp routes', () => {
         expect(dealsService.updateDeal).not.toHaveBeenCalled();
     });
 
-    test('write tool requires CRM write permission', async () => {
-        const res = await request(makeApp())
+    test('caller with read permissions cannot invoke a write tool', async () => {
+        const res = await request(makeApp({ permissions: ['leads.view'] }))
             .post('/api/crm/mcp/call')
             .send({
                 tool: 'crm.update_deal_field',

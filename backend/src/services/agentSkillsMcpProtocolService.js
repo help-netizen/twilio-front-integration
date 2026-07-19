@@ -21,6 +21,7 @@
 const registry = require('./agentSkillsMcpRegistry');
 const executor = require('./agentSkillsMcpExecutor');
 const mcpResponse = require('./crmMcpResponse');
+const mcpToolAuthorization = require('./mcpToolAuthorization');
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = Object.freeze({ name: 'albusto-service-crm-mcp', version: '1.0.0' });
@@ -73,7 +74,11 @@ async function dispatch(req, method, params) {
         case 'ping':
             return {};
         case 'tools/list':
-            return { tools: registry.listTools({ kind: params.kind }).map(toProtocolTool) };
+            return {
+                tools: mcpToolAuthorization
+                    .filterTools(registry.listTools({ kind: params.kind }), req.authz?.permissions)
+                    .map(toProtocolTool),
+            };
         case 'tools/call': {
             const toolName = params.name || params.tool;
             if (!toolName) {
@@ -109,6 +114,8 @@ function toProtocolTool(tool) {
             readOnlyHint: tool.kind === 'read',
             requiresConfirmation: tool.requiresConfirmation,
             requiredPermission: tool.requiredPermission,
+            requiredPermissions: tool.requiredPermissions,
+            frameworkWritePermission: tool.frameworkWritePermission,
             // svc.* extension: the skill-layer verification level the caller must reach.
             requiredLevel: tool.requiredLevel,
         },

@@ -161,6 +161,12 @@ const PUBLIC_ROUTE_FILES = new Map([
 
 // Route-specific legitimate exceptions for mixed public/authenticated routers.
 const ROUTE_PERMISSION_EXCEPTIONS = new Map([
+    ['backend/src/routes/agentSkillsMcp.js:router:GET:/tools', 'Authenticated tenant transport filters discovery through per-tool permission metadata; unmapped tools fail closed.'],
+    ['backend/src/routes/agentSkillsMcp.js:router:POST:/call', 'Authenticated tenant transport enforces each tool permission in the shared executor before dispatch.'],
+    ['backend/src/routes/agentSkillsMcp.js:router:POST:/jsonrpc', 'Authenticated tenant JSON-RPC uses filtered discovery and the shared per-tool executor gate.'],
+    ['backend/src/routes/crmMcp.js:router:GET:/tools', 'Authenticated tenant transport filters discovery through per-tool permission metadata; unmapped tools fail closed.'],
+    ['backend/src/routes/crmMcp.js:router:POST:/call', 'Authenticated tenant transport enforces each tool permission in the shared executor before dispatch.'],
+    ['backend/src/routes/crmMcp.js:router:POST:/jsonrpc', 'Authenticated tenant JSON-RPC uses filtered discovery and the shared per-tool executor gate.'],
     ['backend/src/routes/events.js:router:GET:/stats', 'Public operational counters endpoint; no tenant records returned (audit flags absent rate/host gate).'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/webhooks', 'Zenbooker legacy callback is public by design (audit flags optional-secret fail-open behavior).'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/wh/:key', 'Zenbooker callback derives tenant from a minimum-32-character opaque URL key.'],
@@ -192,12 +198,6 @@ const ROUTE_PERMISSION_EXCEPTIONS = new Map([
 // Exact known gaps from TENANCY-RBAC-AUDIT-001. This is a regression baseline,
 // not approval of the gap: new signatures are rejected until explicitly triaged.
 const ROUTE_PERMISSION_BASELINE = new Map([
-    ['backend/src/routes/agentSkillsMcp.js:router:GET:/tools', 'Known gap; suggest contacts.view pending a dedicated service-CRM read permission.'],
-    ['backend/src/routes/agentSkillsMcp.js:router:POST:/call', 'Known gap; suggest contacts.view transport floor plus existing per-tool write checks.'],
-    ['backend/src/routes/agentSkillsMcp.js:router:POST:/jsonrpc', 'Known gap; suggest contacts.view transport floor plus existing per-tool write checks.'],
-    ['backend/src/routes/crmMcp.js:router:GET:/tools', 'Known gap; suggest contacts.view pending a catalog CRM-read permission.'],
-    ['backend/src/routes/crmMcp.js:router:POST:/call', 'Known gap; suggest contacts.view transport floor plus existing per-tool write checks.'],
-    ['backend/src/routes/crmMcp.js:router:POST:/jsonrpc', 'Known gap; suggest contacts.view transport floor plus existing per-tool write checks.'],
     ['backend/src/routes/integrations-zenbooker.js:router:GET:/webhook-url', 'Known gap; suggest tenant.integrations.manage.'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/webhook-url/regenerate', 'Known gap; suggest tenant.integrations.manage.'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/contacts/:contactId/create-customer', 'Known gap; suggest contacts.edit.'],
@@ -494,6 +494,13 @@ defineSuite('ALB-105 / TENANCY-RBAC-GUARD-001: tenant-safety sanitizer', () => {
                 expect(reason).not.toContain('\n');
             }
         }
+    });
+
+    it('keeps only the 24 retiring Zenbooker handlers in the RBAC gap baseline', () => {
+        expect(ROUTE_PERMISSION_BASELINE.size).toBe(24);
+        expect([...ROUTE_PERMISSION_BASELINE.keys()].every((key) => (
+            key.includes('/zenbooker') || key.includes('integrations-zenbooker')
+        ))).toBe(true);
     });
 
     it.each(LINE_RULES.map(rule => [rule.id, rule]))('%s has no violations', (ruleId, rule) => {

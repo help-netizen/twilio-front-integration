@@ -20,6 +20,7 @@ const registry = require('../services/agentSkillsMcpRegistry');
 const executor = require('../services/agentSkillsMcpExecutor');
 const mcpResponse = require('../services/crmMcpResponse');
 const protocol = require('../services/agentSkillsMcpProtocolService');
+const mcpToolAuthorization = require('../services/mcpToolAuthorization');
 
 const router = express.Router();
 
@@ -45,7 +46,11 @@ function ensureCompanyContext(req) {
 router.get('/tools', (req, res) => {
     try {
         ensureCompanyContext(req);
-        res.json(mcpResponse.toolList(registry.listTools({ kind: req.query.kind }), requestMeta(req)));
+        const tools = mcpToolAuthorization.filterTools(
+            registry.listTools({ kind: req.query.kind }),
+            req.authz?.permissions,
+        );
+        res.json(mcpResponse.toolList(tools, requestMeta(req)));
     } catch (err) {
         sendMcpError(res, null, err, req);
     }

@@ -2,6 +2,12 @@
 
 const crypto = require('crypto');
 
+const SALES_READ_PERMISSIONS = Object.freeze([
+    'contacts.view',
+    'leads.view',
+    'tasks.view',
+]);
+
 function timingSafeEqual(a, b) {
     const left = Buffer.from(String(a || ''));
     const right = Buffer.from(String(b || ''));
@@ -66,7 +72,10 @@ function buildContext({ companyId, userId, userEmail, timezone, writeEnabled, ip
             crmUser: { id: userId },
         },
         authz: {
-            permissions: writeEnabled ? ['sales.crm.write'] : [],
+            permissions: [
+                ...SALES_READ_PERMISSIONS,
+                ...(writeEnabled ? ['sales.crm.write'] : []),
+            ],
             company: { id: companyId, status: 'active', timezone: timezone || 'America/New_York' },
         },
     };
