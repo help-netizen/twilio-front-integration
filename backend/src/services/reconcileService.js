@@ -64,7 +64,7 @@ async function fetchCallFromTwilio(callSid) {
 /**
  * Reconcile a single call from Twilio API data
  */
-async function reconcileCall(twilioPayload, source) {
+async function reconcileCall(twilioPayload, source, companyId = null) {
     const normalized = normalizeVoiceEvent(twilioPayload);
 
     // Resolve contact
@@ -82,7 +82,7 @@ async function reconcileCall(twilioPayload, source) {
     let contactId = null;
     let timelineId = null;
     if (externalParty?.formatted && processed.direction !== 'internal') {
-        const timeline = await queries.findOrCreateTimeline(externalParty.formatted);
+        const timeline = await queries.findOrCreateTimeline(externalParty.formatted, companyId || undefined);
         timelineId = timeline.id;
         contactId = timeline.contact_id || null;
     }
@@ -95,6 +95,7 @@ async function reconcileCall(twilioPayload, source) {
         parentCallSid: normalized.parentCallSid,
         contactId,
         timelineId,
+        companyId: companyId || undefined,
         direction: processed.direction,
         fromNumber: (() => {
             const extracted = extractPhoneFromSIP(normalized.fromNumber);
@@ -130,6 +131,7 @@ async function reconcileCall(twilioPayload, source) {
             const realtimeService = require('./realtimeService');
             realtimeService.publishCallUpdate({
                 eventType: 'call.updated',
+                company_id: call.company_id,
                 call_sid: call.call_sid,
                 status: call.status,
                 is_final: call.is_final,

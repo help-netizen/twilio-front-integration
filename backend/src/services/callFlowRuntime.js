@@ -205,6 +205,7 @@ async function completeVoicemailCall(execution, context) {
     );
 
     realtimeService.broadcast('group.call.voicemail', {
+        company_id: execution.company_id,
         call_sid: execution.call_sid,
         group_id: context.groupId,
         from_number: context.callerNumber,
@@ -233,6 +234,7 @@ async function renderQueueNode({ execution, node, context, traceId }) {
 
     if (agents.length === 0) {
         realtimeService.broadcast('group.call.queued', {
+            company_id: execution.company_id,
             call_sid: execution.call_sid,
             group_id: context.groupId,
             from_number: context.callerNumber,
@@ -257,6 +259,7 @@ async function renderQueueNode({ execution, node, context, traceId }) {
                 statusCallbackMethod="POST">${escapeXml(agent.identity)}</Client>`).join('\n');
 
     realtimeService.broadcast('group.call.queued', {
+        company_id: execution.company_id,
         call_sid: execution.call_sid,
         group_id: context.groupId,
         from_number: context.callerNumber,
@@ -596,6 +599,7 @@ async function advance(callSid, event, traceId = 'call-flow') {
     if (resolvedEvent === 'queue.connected' || resolvedEvent === 'call.handoff') {
         await saveExecutionState(callSid, execution.company_id, { status: 'completed' });
         realtimeService.broadcast('group.call.accepted', {
+            company_id: execution.company_id,
             call_sid: callSid,
             group_id: context.groupId,
             from_number: context.callerNumber,

@@ -31,6 +31,10 @@ class RealtimeService extends EventEmitter {
      */
     addClient(req, res) {
         const connectionId = ++this.stats.totalConnections;
+        const companyId = req.companyFilter?.company_id || null;
+        if (!companyId) {
+            throw new Error('SSE company context required');
+        }
 
         // Set SSE headers
         res.writeHead(200, {
@@ -46,6 +50,7 @@ class RealtimeService extends EventEmitter {
         // Store client
         this.clients.set(connectionId, {
             res,
+            companyId,
             connectedAt: new Date(),
             lastEventAt: new Date(),
             ip: req.ip || req.connection.remoteAddress
@@ -104,11 +109,29 @@ class RealtimeService extends EventEmitter {
     /**
      * Broadcast event to all connected clients
      */
-    broadcast(eventType, data) {
+    broadcast(eventType, data, explicitCompanyId = null) {
         let sent = 0;
         let failed = 0;
+        const companyId = explicitCompanyId
+            || data?.company_id
+            || data?.companyId
+            || data?.call?.company_id
+            || data?.message?.company_id
+            || data?.conversation?.company_id
+            || data?.job?.company_id
+            || data?.task?.company_id
+            || null;
+
+        // Fail closed: an unscoped tenant event must never fall back to a
+        // process-wide fan-out. Producers should pass the company explicitly or
+        // include it in the payload/entity used to publish the event.
+        if (!companyId) {
+            console.warn(`[SSE] Dropped unscoped ${eventType} event`);
+            return { sent, failed };
+        }
 
         for (const [connectionId, client] of this.clients.entries()) {
+            if (String(client.companyId) !== String(companyId)) continue;
             const success = this.sendEvent(client.res, eventType, data);
             if (success) {
                 client.lastEventAt = new Date();
@@ -131,8 +154,10 @@ class RealtimeService extends EventEmitter {
      */
     publishCallUpdate(data) {
         const eventType = data.eventType || 'call.updated';
+        const companyId = data.company_id || data.companyId || null;
         // Forward all available fields from the call record
         this.broadcast(eventType, {
+            company_id: companyId,
             id: data.id,
             call_sid: data.call_sid,
             parent_call_sid: data.parent_call_sid,
@@ -151,7 +176,7 @@ class RealtimeService extends EventEmitter {
             contact: data.contact ? (typeof data.contact === 'string' ? JSON.parse(data.contact) : data.contact) : undefined,
             updated_at: data.updated_at || new Date(),
             created_at: data.created_at,
-        });
+        }, companyId);
     }
 
     /**
@@ -159,6 +184,7 @@ class RealtimeService extends EventEmitter {
      */
     publishCallCreated(call) {
         this.broadcast('call.created', {
+            company_id: call.company_id || call.companyId || null,
             id: call.id,
             call_sid: call.call_sid,
             parent_call_sid: call.parent_call_sid,
@@ -171,7 +197,7 @@ class RealtimeService extends EventEmitter {
             contact_id: call.contact_id,
             contact: call.contact ? (typeof call.contact === 'string' ? JSON.parse(call.contact) : call.contact) : undefined,
             created_at: call.started_at || call.created_at,
-        });
+        }, call.company_id || call.companyId || null);
     }
 
     // ─── Messaging SSE events ───
@@ -180,29 +206,35 @@ class RealtimeService extends EventEmitter {
      * Broadcast new message to all connected clients
      */
     publishMessageAdded(message, conversation, timelineId) {
+        const companyId = message?.company_id || conversation?.company_id || null;
         this.broadcast('message.added', {
+            company_id: companyId,
             message,
             conversationId: conversation.id,
             timelineId: timelineId || null,
-        });
+        }, companyId);
     }
 
     /**
      * Broadcast delivery status update
      */
-    publishMessageDelivery(messageSid, status, errorCode) {
+    publishMessageDelivery(messageSid, status, errorCode, companyId = null) {
         this.broadcast('message.delivery', {
+            company_id: companyId,
             messageSid,
             status,
             errorCode,
-        });
+        }, companyId);
     }
 
     /**
      * Broadcast conversation update (new message preview, state change)
      */
     publishConversationUpdate(conversation) {
-        this.broadcast('conversation.updated', { conversation });
+        this.broadcast('conversation.updated', {
+            company_id: conversation?.company_id || null,
+            conversation,
+        }, conversation?.company_id || null);
     }
 
     // ─── Jobs SSE events ───
@@ -211,7 +243,10 @@ class RealtimeService extends EventEmitter {
      * Broadcast job update to all connected clients
      */
     publishJobUpdate(job) {
-        this.broadcast('job.updated', { job });
+        this.broadcast('job.updated', {
+            company_id: job?.company_id || null,
+            job,
+        }, job?.company_id || null);
     }
 
     /**

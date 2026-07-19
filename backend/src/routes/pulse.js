@@ -948,7 +948,9 @@ router.post('/threads/:id/mark-handled', async (req, res) => {
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
 
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('thread.handled', { timelineId });
+        realtimeService.broadcast('thread.handled', {
+            company_id: tenantCompanyId(req), timelineId,
+        });
 
         res.json({ timeline: tl });
     } catch (error) {
@@ -975,7 +977,9 @@ router.post('/threads/:id/snooze', async (req, res) => {
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
 
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('thread.snoozed', { timelineId, snoozed_until });
+        realtimeService.broadcast('thread.snoozed', {
+            company_id: tenantCompanyId(req), timelineId, snoozed_until,
+        });
 
         res.json({ timeline: tl });
     } catch (error) {
@@ -1002,7 +1006,9 @@ router.post('/threads/:id/assign', async (req, res) => {
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
 
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('thread.assigned', { timelineId, owner_user_id });
+        realtimeService.broadcast('thread.assigned', {
+            company_id: tenantCompanyId(req), timelineId, owner_user_id,
+        });
 
         res.json({ timeline: tl });
     } catch (error) {
@@ -1045,7 +1051,9 @@ router.post('/threads/:id/tasks', async (req, res) => {
         }
 
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('thread.action_required', { timelineId, reason: 'manual', task });
+        realtimeService.broadcast('thread.action_required', {
+            company_id: tl.company_id, timelineId, reason: 'manual', task,
+        });
 
         res.json({ task });
     } catch (error) {
@@ -1069,7 +1077,9 @@ router.post('/threads/:id/set-action-required', async (req, res) => {
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
 
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('thread.action_required', { timelineId, reason: 'manual' });
+        realtimeService.broadcast('thread.action_required', {
+            company_id: tenantCompanyId(req), timelineId, reason: 'manual',
+        });
 
         res.json({ timeline: tl });
     } catch (error) {

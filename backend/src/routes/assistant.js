@@ -8,6 +8,7 @@ const express = require('express');
 const { randomUUID } = require('node:crypto');
 const assistantService = require('../services/assistantService');
 const db = require('../db/connection');
+const { requirePermission } = require('../middleware/authorization');
 
 const router = express.Router();
 
@@ -83,7 +84,7 @@ async function writeTranscript({ sessionKey, message, result, telemetry }) {
     );
 }
 
-router.post('/chat', async (req, res) => {
+router.post('/chat', requirePermission('pulse.view'), async (req, res) => {
     const input = validateBody(req.body);
     if (!input) {
         return res.status(400).json({ error: 'Invalid assistant chat request' });

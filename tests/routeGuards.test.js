@@ -46,6 +46,13 @@ describe('App.tsx route guards', () => {
             const routePath = pathOf(line);
             if (!routePath) continue;
             if (/<Navigate\b/.test(line)) continue;        // pure redirect → target is guarded
+            // SETTINGS-IA-001: the settings group landings render
+            // <SettingsLandingRedirect>, which reads useAuthz and returns a
+            // <Navigate> to the first page the user may actually see — a
+            // permission-AWARE pure redirect, i.e. the same case as <Navigate>
+            // above. It renders no settings content of its own, and every
+            // redirect target carries its own ProtectedRoute.
+            if (/<SettingsLandingRedirect\b/.test(line)) continue;
             if (ALLOWED_UNGUARDED.has(routePath)) continue; // intentionally public/auth-only
             if (/<ProtectedRoute\b/.test(line)) continue;   // guarded
             unguarded.push(routePath);

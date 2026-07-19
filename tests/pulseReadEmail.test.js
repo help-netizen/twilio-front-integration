@@ -96,7 +96,7 @@ describe('POST /api/calls/timeline/:timelineId/mark-read', () => {
         expect(res.status).toBe(200);
         expect(mockMarkTimelineRead).toHaveBeenCalledWith(77);
         expect(markEmailRead).toHaveBeenCalledWith(42, COMPANY_A);
-        expect(mockBroadcast).toHaveBeenCalledWith('timeline.read', { timelineId: 77 });
+        expect(mockBroadcast).toHaveBeenCalledWith('timeline.read', { timelineId: 77, company_id: COMPANY_A });
     });
 
     test('email mark-read failure is best-effort and never turns the endpoint into a 500', async () => {
@@ -111,6 +111,6 @@ describe('POST /api/calls/timeline/:timelineId/mark-read', () => {
             '[mark-read] email thread mark-read failed:',
             'email db unavailable'
         );
-        expect(mockBroadcast).toHaveBeenCalledWith('timeline.read', { timelineId: 77 });
+        expect(mockBroadcast).toHaveBeenCalledWith('timeline.read', { timelineId: 77, company_id: COMPANY_A });
     });
 });

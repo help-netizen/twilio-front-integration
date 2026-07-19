@@ -12,6 +12,7 @@
 const express = require('express');
 const service = require('../services/estimateItemPresetsService');
 const { EstimateItemPresetError } = service;
+const { requirePermission } = require('../middleware/authorization');
 
 const router = express.Router();
 
@@ -30,7 +31,7 @@ function sendServiceError(res, err) {
     return res.status(500).json({ error: 'internal_error', message: 'Unexpected error' });
 }
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('price_book.view'), async (req, res) => {
     const companyId = getCompanyId(req);
     if (!companyId) return res.status(403).json({ error: 'forbidden' });
     try {
@@ -43,18 +44,18 @@ router.get('/', async (req, res) => {
     }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('price_book.manage'), async (req, res) => {
     const companyId = getCompanyId(req);
     if (!companyId) return res.status(403).json({ error: 'forbidden' });
     try {
-        const created = await service.create(companyId, req.body || {}, { createdBy: req.user?.id || null });
+        const created = await service.create(companyId, req.body || {}, { createdBy: req.user?.crmUser?.id || null });
         res.status(201).json(created);
     } catch (err) {
         sendServiceError(res, err);
     }
 });
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requirePermission('price_book.manage'), async (req, res) => {
     const companyId = getCompanyId(req);
     if (!companyId) return res.status(403).json({ error: 'forbidden' });
     try {
@@ -65,7 +66,7 @@ router.patch('/:id', async (req, res) => {
     }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('price_book.manage'), async (req, res) => {
     const companyId = getCompanyId(req);
     if (!companyId) return res.status(403).json({ error: 'forbidden' });
     try {
@@ -76,7 +77,7 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-router.post('/:id/used', async (req, res) => {
+router.post('/:id/used', requirePermission('price_book.view'), async (req, res) => {
     const companyId = getCompanyId(req);
     if (!companyId) return res.status(403).json({ error: 'forbidden' });
     try {

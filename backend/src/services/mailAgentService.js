@@ -252,7 +252,7 @@ async function reviewInboundEmail(companyId, msg, ctx = {}) {
         try {
             await timelinesQueries.setActionRequired(timelineId, 'new_message', 'system');
             realtimeService.broadcast('thread.action_required', {
-                timelineId, reason: 'new_message',
+                company_id: companyId, timelineId, reason: 'new_message',
             });
         } catch (e) {
             console.error('[MailAgent] setActionRequired failed:', e.message);

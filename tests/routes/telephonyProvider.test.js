@@ -19,9 +19,8 @@ function makeApp(companyId = 'company-1') {
     return app;
 }
 
-// App where the caller has an authenticated company context but NOT
-// tenant.telephony.manage — used to prove the PATCH gate. requirePermission is
-// the REAL middleware here (mounted inside the router), so `permissions` drives it.
+// App where the caller has an authenticated company context and a selectable
+// effective-permission set. The REAL route middleware reads `permissions`.
 function makeAppWithPermissions(permissions, companyId = 'company-1') {
     const app = express();
     app.use(express.json());
@@ -87,11 +86,10 @@ describe('TELEPHONY-AUTONOMOUS-MODE-001 autonomous-mode API', () => {
         jest.clearAllMocks();
     });
 
-    // ── GET is readable by ANY authenticated company user (no manage perm) ──
-    test('GET returns the flag for a user WITHOUT tenant.telephony.manage', async () => {
+    test('provider can read the flag with phone_calls.use and no manage permission', async () => {
         mockQuery.mockResolvedValue({ rows: [{ autonomous_mode: true }] });
 
-        const res = await request(makeAppWithPermissions([])) // no permissions at all
+        const res = await request(makeAppWithPermissions(['phone_calls.use']))
             .get('/api/telephony/provider/autonomous-mode');
 
         expect(res.status).toBe(200);
@@ -102,10 +100,22 @@ describe('TELEPHONY-AUTONOMOUS-MODE-001 autonomous-mode API', () => {
         );
     });
 
+    test('effective-permission deny blocks GET without phone_calls.use', async () => {
+        const res = await request(makeAppWithPermissions(['pulse.view']))
+            .get('/api/telephony/provider/autonomous-mode');
+
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('ACCESS_DENIED');
+        expect(mockQuery).not.toHaveBeenCalledWith(
+            expect.stringContaining('SELECT autonomous_mode'),
+            expect.anything()
+        );
+    });
+
     test('GET COALESCEs a missing company_telephony row to false', async () => {
         mockQuery.mockResolvedValue({ rows: [] }); // company never connected a subaccount
 
-        const res = await request(makeAppWithPermissions(['tenant.telephony.manage']))
+        const res = await request(makeAppWithPermissions(['phone_calls.use']))
             .get('/api/telephony/provider/autonomous-mode');
 
         expect(res.status).toBe(200);
@@ -165,7 +175,7 @@ describe('TELEPHONY-AUTONOMOUS-MODE-001 autonomous-mode API', () => {
     test('company scoping: the flag is read/written only for the caller company', async () => {
         mockQuery.mockResolvedValue({ rows: [{ autonomous_mode: false }] });
 
-        await request(makeAppWithPermissions(['tenant.telephony.manage'], 'company-XYZ'))
+        await request(makeAppWithPermissions(['phone_calls.use'], 'company-XYZ'))
             .get('/api/telephony/provider/autonomous-mode');
 
         expect(mockQuery).toHaveBeenCalledWith(

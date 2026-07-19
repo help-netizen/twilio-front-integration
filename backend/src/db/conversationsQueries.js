@@ -243,10 +243,12 @@ async function getMessagesPageDesc(conversationIds, companyId, { limit, cursorPr
 }
 
 async function updateDeliveryStatus(messageSid, status, errorCode, errorMessage) {
-    await db.query(`
+    const result = await db.query(`
         UPDATE sms_messages SET delivery_status = $2, error_code = $3, error_message = $4, updated_at = now()
         WHERE twilio_message_sid = $1
+        RETURNING company_id
     `, [messageSid, status, errorCode, errorMessage]);
+    return result.rows[0] || null;
 }
 
 // ─── sms_media ───

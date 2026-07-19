@@ -102,7 +102,7 @@ describe('ASSISTANT-BOT-001 structural isolation', () => {
         expect(source).not.toMatch(/require\([^)]*Queries/i);
     });
 
-    test('assistant route imports only its service, operational DB, and runtime primitives', () => {
+    test('assistant route imports only its service, operational DB, RBAC, and runtime primitives', () => {
         const source = fs.readFileSync(ASSISTANT_ROUTE, 'utf8');
         const imports = [...source.matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)]
             .map(match => match[1]);
@@ -112,6 +112,7 @@ describe('ASSISTANT-BOT-001 structural isolation', () => {
             'node:crypto',
             '../services/assistantService',
             '../db/connection',
+            '../middleware/authorization',
         ]);
         expect(source).not.toMatch(/agentSkills/i);
         expect(source).not.toMatch(/require\([^)]*Queries/i);

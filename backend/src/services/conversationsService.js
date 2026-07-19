@@ -427,6 +427,7 @@ async function handleMessageAdded(payload) {
 
                     // SSE broadcast
                     realtimeService.broadcast('thread.action_required', {
+                        company_id: conv.company_id || timeline.company_id,
                         timelineId: timeline.id,
                         reason: 'new_message',
                     });
@@ -470,10 +471,12 @@ async function handleDeliveryUpdated(payload) {
     if (payload.MessageSid) {
         const status = payload.DeliveryStatus || payload.Status;
         const errorCode = payload.ErrorCode ? parseInt(payload.ErrorCode) : null;
-        await convQueries.updateDeliveryStatus(
+        const updatedMessage = await convQueries.updateDeliveryStatus(
             payload.MessageSid, status, errorCode, payload.ErrorMessage
         );
-        realtimeService.publishMessageDelivery(payload.MessageSid, status, errorCode);
+        realtimeService.publishMessageDelivery(
+            payload.MessageSid, status, errorCode, updatedMessage?.company_id
+        );
     }
 }
 

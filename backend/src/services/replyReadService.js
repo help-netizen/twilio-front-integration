@@ -98,7 +98,10 @@ async function markReadAfterReply(companyId, { timelineId, contactId = null, rep
         }
 
         try {
-            realtimeService.broadcast('timeline.read', { timelineId: Number(timelineId) });
+            realtimeService.broadcast('timeline.read', {
+                company_id: companyId,
+                timelineId: Number(timelineId),
+            });
         } catch { /* non-blocking */ }
 
         return { cleared: true };

@@ -58,11 +58,11 @@ router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) =
 // ── Autonomous mode (TELEPHONY-AUTONOMOUS-MODE-001) ──────────────────────────
 //
 // Company-wide toggle that forces EVERY inbound call down its After-Hours
-// branch. The GET is deliberately readable by ANY authenticated company user
-// (no tenant.telephony.manage) so the global banner renders for every role;
-// the PATCH is gated by tenant.telephony.manage.
+// branch. The GET uses phone_calls.use (seeded to every standard company role)
+// so the global banner remains visible without exposing it to custom roles that
+// have no telephony access; the PATCH is gated by tenant.telephony.manage.
 
-router.get('/autonomous-mode', async (req, res) => {
+router.get('/autonomous-mode', requirePermission('phone_calls.use'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });

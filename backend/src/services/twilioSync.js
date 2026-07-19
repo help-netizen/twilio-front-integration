@@ -15,6 +15,13 @@ const client = new Proxy({}, {
     },
 });
 
+async function getSyncClient(companyId) {
+    if (!companyId) {
+        return { client, accountSid: process.env.TWILIO_ACCOUNT_SID || null };
+    }
+    return require('./telephonyTenantService').getClientForCompany(companyId);
+}
+
 /**
  * Sync historical calls from Twilio
  */
@@ -32,7 +39,7 @@ async function syncHistoricalCalls(days = 7) {
 /**
  * Sync recent calls (last hour)
  */
-async function syncRecentCalls() {
+async function syncRecentCalls(companyId = null) {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setHours(startDate.getHours() - 1);
@@ -41,7 +48,8 @@ async function syncRecentCalls() {
 
     let synced = 0;
     try {
-        const calls = await client.calls.list({
+        const tenant = await getSyncClient(companyId);
+        const calls = await tenant.client.calls.list({
             startTimeAfter: startDate,
             startTimeBefore: endDate,
             pageSize: 100,
@@ -60,8 +68,9 @@ async function syncRecentCalls() {
                     ParentCallSid: call.parentCallSid,
                     Price: call.price,
                     PriceUnit: call.priceUnit,
+                    AccountSid: tenant.accountSid,
                 };
-                await reconcileCall(twilioPayload, 'sync_recent');
+                await reconcileCall(twilioPayload, 'sync_recent', companyId);
                 synced++;
                 await new Promise(r => setTimeout(r, 100));
             } catch (error) {
@@ -80,7 +89,7 @@ async function syncRecentCalls() {
 /**
  * Sync today's calls (last 3 days, as per original behavior)
  */
-async function syncTodayCalls() {
+async function syncTodayCalls(companyId = null) {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 3);
@@ -92,7 +101,8 @@ async function syncTodayCalls() {
     let total = 0;
 
     try {
-        const calls = await client.calls.list({
+        const tenant = await getSyncClient(companyId);
+        const calls = await tenant.client.calls.list({
             startTimeAfter: startDate,
             startTimeBefore: endDate,
             pageSize: 200,
@@ -114,8 +124,9 @@ async function syncTodayCalls() {
                     ParentCallSid: call.parentCallSid,
                     Price: call.price,
                     PriceUnit: call.priceUnit,
+                    AccountSid: tenant.accountSid,
                 };
-                await reconcileCall(twilioPayload, 'sync_today');
+                await reconcileCall(twilioPayload, 'sync_today', companyId);
                 synced++;
                 await new Promise(r => setTimeout(r, 100));
             } catch (error) {

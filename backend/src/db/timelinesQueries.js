@@ -822,9 +822,9 @@ async function unsnoozeExpiredThreads() {
                 OR EXISTS (SELECT 1 FROM tasks WHERE tasks.thread_id = timelines.id AND tasks.status = 'open'))
            AND snoozed_until IS NOT NULL
            AND snoozed_until <= now()
-         RETURNING id`
+         RETURNING id, company_id`
     );
-    return result.rows.map(r => r.id);
+    return result.rows.map(r => ({ timelineId: r.id, companyId: r.company_id }));
 }
 
 async function assignThread(timelineId, ownerUserId) {

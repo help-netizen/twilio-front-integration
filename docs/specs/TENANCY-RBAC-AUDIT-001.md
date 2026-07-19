@@ -5,14 +5,14 @@ Date: 2026-07-18
 ## Scope and result
 
 The audit parsed 534 handlers in `backend/src/routes` plus the one direct `/api/*`
-handler in `src/server.js`. Of those, 220 contain literal inline
-`requirePermission(...)`; the remaining 315 are classified below.
+handler in `src/server.js`. Of those, 245 contain literal inline
+`requirePermission(...)`; the remaining 290 are classified below.
 
 | Category | Handlers | Result |
 |---|---:|---|
 | (a) effective RBAC outside the literal handler declaration | 176 | Fine: mount-level, router-level/alias, platform-role, or reviewed local role gate |
 | (b) public/machine/role-neutral by design | 84 | Compensating controls recorded; seven weak or missing-control cases are flagged |
-| (c) REAL GAP | 55 | Exact route and suggested catalog permission recorded |
+| (c) REAL GAP | 30 | Exact route and suggested catalog permission recorded |
 
 The scanner recognizes server mount guards by resolving route imports into the
 `app.use(... requirePermission/requirePlatformRole ..., router)` call. Existing real
@@ -92,7 +92,7 @@ Every handler is listed as `line METHOD path`; mount citations point to `src/ser
 | `webhooks.js` | 14/17/20/23/26/29/32/35 POST voice callbacks; 42/43 POST Conversations callbacks; 46 GET `/health` | Main voice callbacks validate Twilio signatures. **FLAG:** voice fallback and Conversations pre do not validate; Conversations post fails open when token/signature is absent |
 | `src/server.js` | 129 GET `/api/messaging/media/:mediaId/temporary-url` | **FLAG:** opaque UUID is the sole control; no auth or rate limit |
 
-## (c) REAL GAP — 55
+## (c) REAL GAP — 30
 
 All are authenticated/tenant-mounted unless noted, but lack role authorization.
 Suggested keys are from `permissionCatalog.js`; the catalog has no dedicated sales/service
@@ -102,19 +102,10 @@ CRM read key, so the closest existing key is identified where needed.
 |---|---|---|
 | `agentSkillsMcp.js` | 45 GET `/tools` | `contacts.view` (catalog lacks service-CRM read) |
 |  | 54 POST `/call`; 73 POST `/jsonrpc` | `contacts.view` transport floor; retain per-tool write gate |
-| `assistant.js` | 86 POST `/chat` | `dashboard.view` |
-| `crm.js` | 108 GET `/accounts/stale`; 116 GET `/accounts/:id`; 120 GET `/accounts`; 134 GET `/deals/attention`; 142 GET `/deals/:id`; 146 GET `/deals`; 151 GET `/pipeline`; 155 GET `/activities`; 182 GET `/metadata`; 186 GET `/lists/:listKey` | `contacts.view` for account/activity/metadata; `leads.view` for deal/pipeline routes (catalog lacks CRM-read) |
-|  | 112 GET `/accounts/:id/key-contacts`; 125 GET `/contacts/:id`; 129 GET `/contacts`; 177 GET `/notes` | `contacts.view` |
-|  | 168 GET `/tasks` | `tasks.view` |
 | `crmMcp.js` | 32 GET `/tools`; 41 POST `/call`; 60 POST `/jsonrpc` | `contacts.view` transport floor; retain per-tool write gate |
-| `estimate-item-presets.js` | 33 GET `/`; 79 POST `/:id/used` | `price_book.view` |
-|  | 46 POST `/`; 57 PATCH `/:id`; 68 DELETE `/:id` | `price_book.manage` |
-| `events.js` | 19 GET `/calls` | `reports.calls.view` or `pulse.view` |
 | `integrations-zenbooker.js` | 185 GET `/webhook-url`; 219 POST `/webhook-url/regenerate`; 361 GET `/api-key`; 386 PUT `/api-key` | `tenant.integrations.manage` |
 |  | 244 POST `/contacts/:contactId/create-customer`; 272 POST `/contacts/:contactId/sync` | `contacts.edit` |
 |  | 300 GET `/jobs` | `jobs.view` |
-| `sync.js` | 16 POST `/today`; 42 POST `/recent` | `tenant.integrations.manage` |
-| `telephonyProvider.js` | 65 GET `/autonomous-mode` | `tenant.telephony.manage` |
 | `zenbooker/jobs.js` | 25 GET `/`; 41 GET `/:id` | `jobs.view` |
 |  | 57 POST `/:id/cancel`; 190 POST `/:id/complete` | `jobs.close` |
 |  | 73 POST `/:id/reschedule`; 126 POST `/:id/notes`; 151 POST `/:id/enroute`; 171 POST `/:id/start` | `jobs.edit` |
@@ -158,6 +149,4 @@ backend/src/routes/__tenantSafetyNegativeControl.js:1 [R-write-scope]
 
 1. Fix the phone/digits/SID write baselines and public callbacks with missing/fail-open signatures.
 2. Gate TwiML operations and integration key/configuration routes.
-3. Gate CRM/MCP and Zenbooker job/payment surfaces.
-4. Add catalog keys for sales/service CRM read access instead of permanently overloading
-   `contacts.view`/`leads.view`.
+3. Gate MCP and Zenbooker job/payment surfaces.

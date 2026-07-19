@@ -105,33 +105,33 @@ function handler(fn) {
 }
 
 // Accounts
-router.get('/accounts/stale', handler(async (req, companyId) => (
+router.get('/accounts/stale', requirePermission('contacts.view'), handler(async (req, companyId) => (
     accountsService.getStaleAccounts(companyId, req.query.days, req.query)
 )));
 
-router.get('/accounts/:id/key-contacts', handler(async (req, companyId) => (
+router.get('/accounts/:id/key-contacts', requirePermission('contacts.view'), handler(async (req, companyId) => (
     contactsService.getKeyContactsByAccount(companyId, numberParam(req.params.id, 'account id'))
 )));
 
-router.get('/accounts/:id', handler(async (req, companyId) => (
+router.get('/accounts/:id', requirePermission('contacts.view'), handler(async (req, companyId) => (
     accountsService.getAccountCard(companyId, numberParam(req.params.id, 'account id'))
 )));
 
-router.get('/accounts', handler(async (req, companyId) => (
+router.get('/accounts', requirePermission('contacts.view'), handler(async (req, companyId) => (
     accountsService.listAccounts(companyId, req.query)
 )));
 
 // Contacts
-router.get('/contacts/:id', handler(async (req, companyId) => (
+router.get('/contacts/:id', requirePermission('contacts.view'), handler(async (req, companyId) => (
     contactsService.getContactCard(companyId, numberParam(req.params.id, 'contact id'), req.query)
 )));
 
-router.get('/contacts', handler(async (req, companyId) => (
+router.get('/contacts', requirePermission('contacts.view'), handler(async (req, companyId) => (
     contactsService.listContacts(companyId, req.query)
 )));
 
 // Deals
-router.get('/deals/attention', handler(async (req, companyId) => (
+router.get('/deals/attention', requirePermission('leads.view'), handler(async (req, companyId) => (
     dealsService.getAttentionDeals(companyId)
 )));
 
@@ -139,20 +139,20 @@ router.patch('/deals/:id', requirePermission('sales.crm.write'), handler(async (
     dealsService.updateDeal(companyId, numberParam(req.params.id, 'deal id'), writePayload(req), actorContext(req))
 )));
 
-router.get('/deals/:id', handler(async (req, companyId) => (
+router.get('/deals/:id', requirePermission('leads.view'), handler(async (req, companyId) => (
     dealsService.getDealCard(companyId, numberParam(req.params.id, 'deal id'))
 )));
 
-router.get('/deals', handler(async (req, companyId) => (
+router.get('/deals', requirePermission('leads.view'), handler(async (req, companyId) => (
     dealsService.listDeals(companyId, req.query)
 )));
 
 // Pipeline and activity
-router.get('/pipeline', handler(async (req, companyId) => (
+router.get('/pipeline', requirePermission('leads.view'), handler(async (req, companyId) => (
     pipelineService.getPipeline(companyId, req.query)
 )));
 
-router.get('/activities', handler(async (req, companyId) => (
+router.get('/activities', requirePermission('contacts.view'), handler(async (req, companyId) => (
     activitiesService.listActivities(companyId, req.query)
 )));
 
@@ -165,7 +165,7 @@ router.post('/tasks', requirePermission('sales.crm.write'), handler(async (req, 
     tasksService.createTask(companyId, writePayload(req), actorContext(req))
 )));
 
-router.get('/tasks', handler(async (req, companyId) => (
+router.get('/tasks', requirePermission('tasks.view'), handler(async (req, companyId) => (
     tasksService.listTasks(companyId, req.query)
 )));
 
@@ -174,16 +174,16 @@ router.post('/notes', requirePermission('sales.crm.write'), handler(async (req, 
     notesService.createNote(companyId, req.body || {}, actorContext(req))
 )));
 
-router.get('/notes', handler(async (req, companyId) => (
+router.get('/notes', requirePermission('contacts.view'), handler(async (req, companyId) => (
     notesService.listNotes(companyId, req.query)
 )));
 
 // Metadata and ready-made lists
-router.get('/metadata', handler(async (req, companyId) => (
+router.get('/metadata', requirePermission('contacts.view'), handler(async (req, companyId) => (
     metadataService.getMetadata(companyId)
 )));
 
-router.get('/lists/:listKey', handler(async (req, companyId) => (
+router.get('/lists/:listKey', requirePermission('contacts.view'), handler(async (req, companyId) => (
     listsService.getList(companyId, req.params.listKey, req.query, actorContext(req))
 )));
 

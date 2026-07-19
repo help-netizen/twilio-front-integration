@@ -18,6 +18,7 @@ const http = require('http');
 const express = require('express');
 const db = require('../backend/src/db/connection');
 const syncQueries = require('../backend/src/db/syncQueries');
+const twilioSync = require('../backend/src/services/twilioSync');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const COMPANY_B = '00000000-0000-0000-0000-00000000000b';
@@ -25,6 +26,8 @@ const PROVIDER_A = '11111111-1111-1111-1111-11111111111a';
 
 beforeEach(() => {
     db.query.mockReset();
+    twilioSync.syncTodayCalls.mockReset();
+    twilioSync.syncRecentCalls.mockReset();
 });
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -374,5 +377,45 @@ describe('GET /api/sync/jobs route', () => {
         const limitParam = params[params.length - 1];
         expect(limitParam).toBe(501);
         expect(sql).toMatch(/LIMIT \$\d+/);
+    });
+});
+
+describe('POST /api/sync manual call refresh RBAC', () => {
+    it.each([
+        ['provider', '/today'],
+        ['provider', '/recent'],
+    ])('R-matrix: %s without reports.calls.view is denied %s', async (_role, path) => {
+        const res = await request(
+            appWithAuthz({ permissions: ['pulse.view'] }),
+            'POST', path
+        );
+
+        expect(res.status).toBe(403);
+        expect(twilioSync.syncTodayCalls).not.toHaveBeenCalled();
+        expect(twilioSync.syncRecentCalls).not.toHaveBeenCalled();
+    });
+
+    it('dispatcher can run the company-scoped today refresh', async () => {
+        twilioSync.syncTodayCalls.mockResolvedValue({ synced: 2, skipped: 0, total: 2 });
+
+        const res = await request(
+            appWithAuthz({ permissions: ['reports.calls.view'], companyId: COMPANY_B }),
+            'POST', '/today'
+        );
+
+        expect(res.status).toBe(200);
+        expect(twilioSync.syncTodayCalls).toHaveBeenCalledWith(COMPANY_B);
+    });
+
+    it('dispatcher can run the company-scoped recent refresh', async () => {
+        twilioSync.syncRecentCalls.mockResolvedValue(3);
+
+        const res = await request(
+            appWithAuthz({ permissions: ['reports.calls.view'], companyId: COMPANY_B }),
+            'POST', '/recent'
+        );
+
+        expect(res.status).toBe(200);
+        expect(twilioSync.syncRecentCalls).toHaveBeenCalledWith(COMPANY_B);
     });
 });

@@ -13,10 +13,10 @@ const SYNC_JOBS_DEFAULT_WINDOW_DAYS = 30;
  * POST /api/sync/today
  * Sync all calls from today (00:00 EST to now)
  */
-router.post('/today', async (req, res) => {
+router.post('/today', requirePermission('reports.calls.view'), async (req, res) => {
     try {
         console.log('🔄 Manual sync triggered: Today\'s calls');
-        const result = await twilioSync.syncTodayCalls();
+        const result = await twilioSync.syncTodayCalls(req.companyFilter?.company_id);
 
         res.json({
             success: true,
@@ -39,10 +39,10 @@ router.post('/today', async (req, res) => {
  * POST /api/sync/recent
  * Sync recent calls (last hour)
  */
-router.post('/recent', async (req, res) => {
+router.post('/recent', requirePermission('reports.calls.view'), async (req, res) => {
     try {
         console.log('🔄 Manual sync triggered: Recent calls');
-        const synced = await twilioSync.syncRecentCalls();
+        const synced = await twilioSync.syncRecentCalls(req.companyFilter?.company_id);
 
         res.json({
             success: true,

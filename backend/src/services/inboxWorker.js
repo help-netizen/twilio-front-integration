@@ -291,7 +291,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
 
                     const realtimeService = require('./realtimeService');
                     realtimeService.broadcast('thread.action_required', {
-                        timelineId, reason: 'new_call',
+                        company_id: eventCompanyId, timelineId, reason: 'new_call',
                     });
                     console.log(`[${traceId}] Action Required set for inbound call on timeline ${timelineId}`);
                 }

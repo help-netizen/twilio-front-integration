@@ -92,7 +92,7 @@ beforeEach(() => {
         platform_role: 'none',
         company: { id: COMPANY_A, name: 'Company A' },
         membership: { role_key: 'dispatcher' },
-        permissions: [],
+        permissions: ['pulse.view'],
     };
     mockChat.mockResolvedValue({
         reply: 'Open Integrations and select Stripe Payments.',
@@ -244,6 +244,17 @@ describe('POST /api/assistant/chat', () => {
             membership: null,
             permissions: [],
         };
+
+        const response = await postChat();
+
+        expect(response.status).toBe(403);
+        expect(mockChat).not.toHaveBeenCalled();
+        expect(mockDbQuery).not.toHaveBeenCalled();
+    });
+
+    test('effective-permission deny blocks chat before assistant data access', async () => {
+        mockAuthz.permissions = [];
+        mockAuthz.membership = { role_key: 'custom_no_pulse' };
 
         const response = await postChat();
 

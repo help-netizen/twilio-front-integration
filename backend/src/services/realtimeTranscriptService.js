@@ -41,6 +41,7 @@ function createSession(callSid, meta = {}) {
     const session = {
         callSid,
         meta,
+        companyId: meta.companyId || DEFAULT_COMPANY_ID,
         segments: [],           // merged transcript segments from both tracks
         aaiInbound: null,       // AssemblyAI session for inbound (customer)
         aaiOutbound: null,      // AssemblyAI session for outbound (agent)
@@ -74,6 +75,7 @@ function createSession(callSid, meta = {}) {
 
             // Broadcast live delta via SSE
             realtimeService.broadcast('transcript.delta', {
+                company_id: session.companyId,
                 callSid,
                 track: trackName,
                 speaker,
@@ -251,6 +253,7 @@ async function finalizeSession(callSid) {
 
         // Broadcast finalized event
         realtimeService.broadcast('transcript.finalized', {
+            company_id: session.companyId,
             callSid,
             text: fullText,
             segmentCount: sorted.length,

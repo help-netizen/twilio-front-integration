@@ -57,6 +57,7 @@ function toEmailItem(row) {
         ? row.is_outbound
         : row.direction === 'outbound';
     return {
+        company_id: row.company_id || null,
         id: row.id,
         type: 'email',
         direction: row.direction,
@@ -337,6 +338,7 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
                     });
                 }
                 realtimeService.broadcast('thread.action_required', {
+                    company_id: companyId,
                     timelineId,
                     reason: 'new_message',
                 });
@@ -809,6 +811,7 @@ async function sendForContact(companyId, contactId, { body, toEmail, userId, use
                 body_text: body || '',
                 gmail_internal_at: new Date().toISOString(),
                 sent_by_user_email: userEmail || null,
+                company_id: companyId,
             });
         }
 

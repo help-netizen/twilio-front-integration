@@ -7,11 +7,10 @@
  * (leadsService.js): best-effort, company-scoped, never blocks the write.
  *
  * The payload is EXACTLY { company_id } — no owner_user_id / id / status / PII.
- * realtimeService.broadcast fans out to EVERY connected client regardless of
- * tenant, so a richer payload would tempt client-side count math that could
- * drift from the server predicate (the very failure AC-3 forbids). Clients
- * simply refetch their own company-scoped /api/tasks/count and filter by
- * company_id.
+ * realtimeService broadcasts only to same-company clients. A richer payload
+ * would tempt client-side count math that could drift from the server predicate
+ * (the very failure AC-3 forbids), so clients simply refetch their own
+ * company-scoped /api/tasks/count.
  */
 
 function emitTaskChange(companyId) {

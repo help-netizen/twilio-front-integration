@@ -277,7 +277,10 @@ router.post('/contact/:contactId/mark-read', requirePermission('pulse.view', 're
         }
         // SSE broadcast so all users see the read state
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('contact.read', { contactId: parseInt(contactId) });
+        realtimeService.broadcast('contact.read', {
+            company_id: req.companyFilter?.company_id,
+            contactId: parseInt(contactId),
+        });
         res.json({ contact });
     } catch (error) {
         console.error('Error marking contact read:', error);
@@ -297,7 +300,10 @@ router.post('/contact/:contactId/mark-unread', requirePermission('pulse.view', '
         }
         // SSE broadcast so all users see the unread state
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('contact.unread', { contactId: parseInt(contactId) });
+        realtimeService.broadcast('contact.unread', {
+            company_id: req.companyFilter?.company_id,
+            contactId: parseInt(contactId),
+        });
         res.json({ contact });
     } catch (error) {
         console.error('Error marking contact unread:', error);
@@ -351,7 +357,10 @@ router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', '
                 });
         }
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) });
+        realtimeService.broadcast('timeline.read', {
+            company_id: req.companyFilter?.company_id,
+            timelineId: parseInt(timelineId),
+        });
         res.json({ timeline: tl });
     } catch (error) {
         console.error('Error marking timeline read:', error);
@@ -372,7 +381,10 @@ router.post('/timeline/:timelineId/mark-unread', requirePermission('pulse.view',
             await queries.markContactUnread(tl.contact_id).catch(() => { });
         }
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('timeline.unread', { timelineId: parseInt(timelineId) });
+        realtimeService.broadcast('timeline.unread', {
+            company_id: req.companyFilter?.company_id,
+            timelineId: parseInt(timelineId),
+        });
         res.json({ timeline: tl });
     } catch (error) {
         console.error('Error marking timeline unread:', error);

@@ -1328,11 +1328,10 @@ async function countNewLeads(companyId) {
     return rows[0]?.count || 0;
 }
 
-// Notify connected clients so the "new leads" badge refreshes live. Payload is
-// intentionally MINIMAL (company_id + status only, NO PII) because
-// realtimeService.broadcast fans out to every connected client regardless of
-// tenant; the client refetches its own company-scoped count and filters by
-// company_id. Best-effort — a broadcast failure never breaks the lead write.
+// Notify same-company clients so the "new leads" badge refreshes live. Payload
+// stays intentionally minimal (company_id + status only, NO PII); the client
+// refetches its own company-scoped count. Best-effort — a broadcast failure
+// never breaks the lead write.
 function emitLeadChange(eventType, companyId, status, leadId = null) {
     if (!companyId) return;
     try {
