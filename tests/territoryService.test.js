@@ -28,12 +28,17 @@ function googleResult({
     lng = -71.1627,
     city = 'Brighton',
     state = 'MA',
+    zip = '02135',
+    placeId = 'postal-place-02135',
 } = {}) {
     return {
         status: 'OK',
         results: [{
+            place_id: placeId,
+            types: ['postal_code'],
             geometry: { location: { lat, lng } },
             address_components: [
+                { long_name: zip, short_name: zip, types: ['postal_code'] },
                 { long_name: city, short_name: city, types: ['locality'] },
                 { long_name: 'Massachusetts', short_name: state, types: ['administrative_area_level_1'] },
             ],
@@ -116,9 +121,9 @@ describe('territoryGeoService.geocodeZip', () => {
         const calledUrl = new URL(String(global.fetch.mock.calls[0][0]));
         expect(calledUrl.searchParams.get('components')).toBe('postal_code:02135|country:US');
         expect(calledUrl.searchParams.get('key')).toBe('geocoding-key');
-        expect(mockDbQuery.mock.calls[1][0]).toContain('ON CONFLICT (zip) DO NOTHING');
+        expect(mockDbQuery.mock.calls[1][0]).toContain('ON CONFLICT (zip) DO UPDATE');
         expect(mockDbQuery.mock.calls[1][1]).toEqual([
-            '02135', 42.3467, -71.1627, 'Brighton', 'MA',
+            '02135', 42.3467, -71.1627, 'Brighton', 'MA', 'postal-place-02135',
         ]);
     });
 
@@ -210,8 +215,63 @@ describe('territoryGeoService.geocodeZip', () => {
         await territoryGeoService.geocodeZip('02135');
 
         expect(global.fetch).toHaveBeenCalledTimes(2);
-        expect(mockDbQuery.mock.calls[1][0]).toContain('ON CONFLICT (zip) DO NOTHING');
-        expect(mockDbQuery.mock.calls[3][0]).toContain('ON CONFLICT (zip) DO NOTHING');
+        expect(mockDbQuery.mock.calls[1][0]).toContain('ON CONFLICT (zip) DO UPDATE');
+        expect(mockDbQuery.mock.calls[3][0]).toContain('ON CONFLICT (zip) DO UPDATE');
+    });
+});
+
+describe('territoryGeoService.resolveZipPlaceId', () => {
+    test('returns a fresh cached place ID without a Google request', async () => {
+        mockDbQuery.mockResolvedValue({
+            rows: [{
+                google_place_id: 'postal-place-02135',
+                place_id_resolved_at: new Date().toISOString(),
+            }],
+        });
+
+        await expect(territoryGeoService.resolveZipPlaceId('02135'))
+            .resolves.toBe('postal-place-02135');
+        expect(mockDbQuery).toHaveBeenCalledTimes(1);
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('resolves and persistently caches an exact ZIP place ID on a cache miss', async () => {
+        process.env.GOOGLE_GEOCODING_KEY = 'geocoding-key';
+        mockDbQuery
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [] });
+        mockGoogle();
+
+        await expect(territoryGeoService.resolveZipPlaceId('02135'))
+            .resolves.toBe('postal-place-02135');
+        expect(mockDbQuery).toHaveBeenCalledTimes(2);
+        expect(mockDbQuery.mock.calls[1][0]).toContain('google_place_id');
+        expect(mockDbQuery.mock.calls[1][1]).toEqual([
+            '02135', 42.3467, -71.1627, 'Brighton', 'MA', 'postal-place-02135',
+        ]);
+    });
+
+    test('rejects a mismatched postal-code result instead of caching the wrong boundary', async () => {
+        process.env.GOOGLE_GEOCODING_KEY = 'geocoding-key';
+        mockDbQuery.mockResolvedValue({ rows: [] });
+        mockGoogle(googleResult({ zip: '99999', placeId: 'wrong-place' }));
+
+        await expect(territoryGeoService.resolveZipPlaceId('02135')).resolves.toBeNull();
+        expect(mockDbQuery).toHaveBeenCalledTimes(1);
+    });
+
+    test('keeps a stale cached ID available when its refresh fails', async () => {
+        process.env.GOOGLE_GEOCODING_KEY = 'geocoding-key';
+        mockDbQuery.mockResolvedValue({
+            rows: [{
+                google_place_id: 'stale-place-id',
+                place_id_resolved_at: '2020-01-01T00:00:00.000Z',
+            }],
+        });
+        global.fetch.mockRejectedValue(new Error('network down'));
+
+        await expect(territoryGeoService.resolveZipPlaceId('02135'))
+            .resolves.toBe('stale-place-id');
     });
 });
 

@@ -10,6 +10,11 @@
 # up (or point MAIL_AGENT_OLLAMA_MODEL at qwen3:8b, which is already resident -> no cold load).
 services:
   app:
+    build:
+      args:
+        # Vite embeds this value while building the frontend bundle. A runtime
+        # environment-only value or container restart cannot change the Map ID.
+        VITE_GOOGLE_MAPS_MAP_ID: ${VITE_GOOGLE_MAPS_MAP_ID:-}
     environment:
       MAIL_AGENT_PROVIDER: "gemini"
       MAIL_AGENT_OLLAMA_URL: "http://100.78.119.41:11434"

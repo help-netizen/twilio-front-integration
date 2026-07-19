@@ -2,7 +2,8 @@
  * Dynamic Google Maps JS API loader.
  *
  * Loads the script once with `loading=async` (recommended by Google)
- * using the VITE_GOOGLE_MAPS_API_KEY env var via import.meta.env.
+ * using the VITE_GOOGLE_MAPS_API_KEY env var via import.meta.env. The optional
+ * vector Map ID is consumed by map constructors, not by the script loader.
  *
  * Usage:
  *   await loadGoogleMaps();          // resolves when google.maps is ready
@@ -10,6 +11,11 @@
  */
 
 let loadPromise: Promise<void> | null = null;
+
+export function getGoogleMapsMapId(): string | null {
+    const mapId = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID?.trim();
+    return mapId || null;
+}
 
 export function loadGoogleMaps(): Promise<void> {
     if (loadPromise) return loadPromise;

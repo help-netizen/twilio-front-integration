@@ -87,6 +87,28 @@
     --blanc-warning: #b26a1d;
     --blanc-info: #2f63d8;
 
+    /* ── Service-area map palette ──
+       Saturated mid-dark hues remain distinguishable over Google's light
+       basemap when applied as semi-transparent ZIP fills. The complete sorted
+       registry in territoryCoveragePolygons.ts is the single assignment seam
+       for map and future legend use. */
+    --blanc-map-area-1: #7F42E1;
+    --blanc-map-area-2: #4F5BA8;
+    --blanc-map-area-3: #2F63D8;
+    --blanc-map-area-4: #147A9C;
+    --blanc-map-area-5: #087E8B;
+    --blanc-map-area-6: #1B8B63;
+    --blanc-map-area-7: #5F7A1F;
+    --blanc-map-area-8: #B26A1D;
+    --blanc-map-area-9: #D56A1F;
+    --blanc-map-area-10: #D85A3F;
+    --blanc-map-area-11: #C74646;
+    --blanc-map-area-12: #A43A78;
+    --blanc-map-area-13: #B5415C;
+    --blanc-map-area-14: #7B4D9D;
+    --blanc-map-area-15: #466B9E;
+    --blanc-map-area-16: #8A5A32;
+
     /* ── Shadows ── */
     --blanc-shadow-sm: 0 2px 8px rgba(36, 31, 25, 0.06);
     --blanc-shadow-md: 0 8px 24px rgba(36, 31, 25, 0.08);

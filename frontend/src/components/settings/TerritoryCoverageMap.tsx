@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { loadGoogleMaps } from '../../utils/loadGoogleMaps';
+import { getGoogleMapsMapId, loadGoogleMaps } from '../../utils/loadGoogleMaps';
+import {
+    applyPostalCodeBoundaries,
+    SERVICE_AREA_COLOR_TOKENS,
+    type ListCentroid,
+    type TerritoryCoverageMode,
+} from './territoryCoveragePolygons';
 
-export type TerritoryCoverageMode = 'list' | 'radius';
+export type { ListCentroid, TerritoryCoverageMode };
 
 export interface CoverageRadius {
     id: string;
@@ -10,15 +16,10 @@ export interface CoverageRadius {
     radius_miles: number;
 }
 
-export interface ListCentroid {
-    zip: string;
-    lat: number;
-    lon: number;
-}
-
 interface TerritoryCoverageMapProps {
     mode: TerritoryCoverageMode;
     radii: readonly CoverageRadius[];
+    areaNames: readonly string[];
     listCentroids: readonly ListCentroid[];
 }
 
@@ -33,14 +34,24 @@ function isFiniteCoordinate(lat: number, lon: number) {
         && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
 }
 
-export function TerritoryCoverageMap({ mode, radii, listCentroids }: TerritoryCoverageMapProps) {
+export function TerritoryCoverageMap({
+    mode,
+    radii,
+    areaNames,
+    listCentroids,
+}: TerritoryCoverageMapProps) {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<google.maps.Map | null>(null);
     const markersRef = useRef<google.maps.Marker[]>([]);
     const circlesRef = useRef<google.maps.Circle[]>([]);
+    const postalCodeLayerRef = useRef<google.maps.FeatureLayer | null>(null);
+    const boundaryMapIdRef = useRef<string | null>(null);
     const idleListenerRef = useRef<google.maps.MapsEventListener | null>(null);
+    const capabilityListenerRef = useRef<google.maps.MapsEventListener | null>(null);
     const mapsReadyRef = useRef(false);
     const [loadState, setLoadState] = useState<LoadState>('idle');
+    const [capabilityRevision, setCapabilityRevision] = useState(0);
+    const configuredMapId = getGoogleMapsMapId();
 
     const validRadii = useMemo(() => radii.filter(radius => (
         isFiniteCoordinate(radius.lat, radius.lon)
@@ -61,6 +72,10 @@ export function TerritoryCoverageMap({ mode, radii, listCentroids }: TerritoryCo
         markersRef.current = [];
         circlesRef.current.forEach(circle => circle.setMap(null));
         circlesRef.current = [];
+        if (postalCodeLayerRef.current) {
+            postalCodeLayerRef.current.style = null;
+            postalCodeLayerRef.current = null;
+        }
     }, []);
 
     useEffect(() => {
@@ -91,20 +106,45 @@ export function TerritoryCoverageMap({ mode, radii, listCentroids }: TerritoryCo
         if (loadState !== 'ready' || !hasCoverage || !mapRef.current) return;
         if (typeof google === 'undefined' || !google.maps) return;
 
-        mapInstanceRef.current = new google.maps.Map(mapRef.current, {
+        const baseOptions: google.maps.MapOptions = {
             center: DEFAULT_CENTER,
             zoom: DEFAULT_ZOOM,
             disableDefaultUI: true,
             gestureHandling: 'none',
             clickableIcons: false,
             keyboardShortcuts: false,
-        });
+        };
+        boundaryMapIdRef.current = null;
+        if (mode === 'list' && configuredMapId) {
+            try {
+                mapInstanceRef.current = new google.maps.Map(mapRef.current, {
+                    ...baseOptions,
+                    mapId: configuredMapId,
+                });
+                boundaryMapIdRef.current = configuredMapId;
+                capabilityListenerRef.current = mapInstanceRef.current.addListener(
+                    'mapcapabilities_changed',
+                    () => setCapabilityRevision(revision => revision + 1),
+                );
+            } catch (error) {
+                console.warn(
+                    '[TerritoryCoverageMap] Vector Map ID initialization failed; using the legacy map:',
+                    error
+                );
+                mapInstanceRef.current = new google.maps.Map(mapRef.current, baseOptions);
+            }
+        } else {
+            mapInstanceRef.current = new google.maps.Map(mapRef.current, baseOptions);
+        }
 
         return () => {
+            capabilityListenerRef.current?.remove();
+            capabilityListenerRef.current = null;
             clearOverlays();
             mapInstanceRef.current = null;
+            boundaryMapIdRef.current = null;
         };
-    }, [clearOverlays, hasCoverage, loadState]);
+    }, [clearOverlays, configuredMapId, hasCoverage, loadState, mode]);
 
     useEffect(() => {
         const map = mapInstanceRef.current;
@@ -112,11 +152,15 @@ export function TerritoryCoverageMap({ mode, radii, listCentroids }: TerritoryCo
 
         clearOverlays();
 
+        const accent = getComputedStyle(document.documentElement)
+            .getPropertyValue('--blanc-accent')
+            .trim();
+        const areaColors = SERVICE_AREA_COLOR_TOKENS.map(token => (
+            getComputedStyle(document.documentElement).getPropertyValue(token).trim()
+        ));
+
         if (mode === 'radius') {
             const bounds = new google.maps.LatLngBounds();
-            const accent = getComputedStyle(document.documentElement)
-                .getPropertyValue('--blanc-accent')
-                .trim();
 
             validRadii.forEach(radius => {
                 const circle = new google.maps.Circle({
@@ -138,8 +182,23 @@ export function TerritoryCoverageMap({ mode, radii, listCentroids }: TerritoryCo
             return clearOverlays;
         }
 
+        const boundaryResult = applyPostalCodeBoundaries({
+            mode,
+            map,
+            mapId: boundaryMapIdRef.current,
+            centroids: validListCentroids,
+            areaNames,
+            areaColors,
+            postalCodeFeatureType: google.maps.FeatureType?.POSTAL_CODE
+                || ('POSTAL_CODE' as google.maps.FeatureType),
+        });
+        postalCodeLayerRef.current = boundaryResult.featureLayer;
+
         const bounds = new google.maps.LatLngBounds();
         validListCentroids.forEach(centroid => {
+            bounds.extend({ lat: centroid.lat, lng: centroid.lon });
+        });
+        boundaryResult.markerCentroids.forEach(centroid => {
             const position = { lat: centroid.lat, lng: centroid.lon };
             const marker = new google.maps.Marker({
                 map,
@@ -149,7 +208,6 @@ export function TerritoryCoverageMap({ mode, radii, listCentroids }: TerritoryCo
                 draggable: false,
             });
             markersRef.current.push(marker);
-            bounds.extend(position);
         });
 
         if (validListCentroids.length === 1) {
@@ -165,7 +223,7 @@ export function TerritoryCoverageMap({ mode, radii, listCentroids }: TerritoryCo
         }
 
         return clearOverlays;
-    }, [clearOverlays, hasCoverage, loadState, mode, validListCentroids, validRadii]);
+    }, [areaNames, capabilityRevision, clearOverlays, hasCoverage, loadState, mode, validListCentroids, validRadii]);
 
     if (!hasCoverage || loadState !== 'ready') return null;
 

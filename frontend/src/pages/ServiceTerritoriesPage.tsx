@@ -51,7 +51,8 @@ interface TerritoryConfig {
     radii: TerritoryRadius[];
     counts: { list_zips: number; radii: number };
     company_zip: string | null;
-    list_centroids: { zip: string; lat: number; lon: number }[];
+    area_names: string[];
+    list_centroids: { zip: string; lat: number; lon: number; area: string; place_id?: string }[];
 }
 
 function technicianNames(
@@ -100,6 +101,9 @@ async function fetchTerritoryConfig(): Promise<TerritoryConfig> {
     const data = await r.json() as { config: TerritoryConfig };
     return {
         ...data.config,
+        area_names: Array.isArray(data.config.area_names)
+            ? data.config.area_names.filter(name => typeof name === 'string')
+            : [],
         radii: data.config.radii.map(radius => ({
             ...radius,
             radius_miles: Number(radius.radius_miles),
@@ -874,6 +878,7 @@ const ServiceTerritoriesPage: React.FC = () => {
                     <TerritoryCoverageMap
                         mode={activeMode}
                         radii={config.radii}
+                        areaNames={config.area_names}
                         listCentroids={config.list_centroids}
                     />
                 )}

@@ -12,6 +12,8 @@ const territoryGeoService = require('../services/territoryGeoService');
 const technicianServiceAreaService = require('../services/technicianServiceAreaService');
 const { normalizeZip } = require('../utils/zip');
 
+const LAZY_GEOGRAPHY_RESOLUTION_LIMIT = 10;
+
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
 }
@@ -36,7 +38,7 @@ async function getCompanyZip(companyId) {
 
 async function getListZipGeographies(companyId) {
     const { rows } = await db.query(
-        `SELECT st.zip, z.lat, z.lon
+        `SELECT st.zip, st.area, z.lat, z.lon, z.google_place_id, z.place_id_resolved_at
          FROM service_territories st
          LEFT JOIN zip_geocache z ON z.zip = st.zip
          WHERE st.company_id = $1
@@ -47,6 +49,9 @@ async function getListZipGeographies(companyId) {
 }
 
 function splitListZipGeographies(rows) {
+    const areaNames = Array.from(new Set(
+        rows.map(row => (typeof row.area === 'string' ? row.area : ''))
+    )).sort();
     const unique = new Map();
     for (const row of rows) {
         const current = unique.get(row.zip);
@@ -56,15 +61,42 @@ function splitListZipGeographies(rows) {
     }
 
     const listCentroids = [];
-    const missingZips = [];
+    const missingCentroidCandidates = [];
+    const placeIdResolutionCandidates = [];
     for (const row of unique.values()) {
         if (row.lat != null && row.lon != null) {
-            listCentroids.push({ zip: row.zip, lat: row.lat, lon: row.lon });
-        } else if (missingZips.length < 10) {
-            missingZips.push(row.zip);
+            const centroid = {
+                zip: row.zip,
+                area: typeof row.area === 'string' ? row.area : '',
+                lat: row.lat,
+                lon: row.lon,
+            };
+            const placeId = typeof row.google_place_id === 'string'
+                ? row.google_place_id.trim()
+                : '';
+            if (placeId) centroid.place_id = placeId;
+            listCentroids.push(centroid);
+
+            if (!placeId || !territoryGeoService.isPlaceIdFresh(row.place_id_resolved_at)) {
+                placeIdResolutionCandidates.push(row.zip);
+            }
+        } else {
+            missingCentroidCandidates.push(row.zip);
         }
     }
-    return { listCentroids, missingZips };
+
+    // Preserve SERVICE-TERR-002's original centroid priority and cap. Place-ID
+    // resolution gets only the remaining budget, so a config view can never fan
+    // out into one Google request per ZIP.
+    const missingZips = missingCentroidCandidates.slice(
+        0,
+        LAZY_GEOGRAPHY_RESOLUTION_LIMIT
+    );
+    const missingPlaceIdZips = placeIdResolutionCandidates.slice(
+        0,
+        LAZY_GEOGRAPHY_RESOLUTION_LIMIT - missingZips.length
+    );
+    return { areaNames, listCentroids, missingZips, missingPlaceIdZips };
 }
 
 function seedListCentroids(zips) {
@@ -84,6 +116,23 @@ function seedListCentroids(zips) {
     });
 }
 
+function seedListPlaceIds(zips) {
+    if (zips.length === 0) return;
+    setImmediate(async () => {
+        const results = await Promise.allSettled(
+            zips.map(zip => territoryGeoService.resolveZipPlaceId(zip))
+        );
+        for (const result of results) {
+            if (result.status === 'rejected') {
+                console.warn(
+                    '[ServiceTerritories] lazy ZIP place ID seed failed (non-fatal):',
+                    result.reason?.message || String(result.reason)
+                );
+            }
+        }
+    });
+}
+
 // GET /config — radius/list configuration and map data
 router.get('/config', async (req, res) => {
     try {
@@ -95,8 +144,14 @@ router.get('/config', async (req, res) => {
             getCompanyZip(companyId),
             getListZipGeographies(companyId),
         ]);
-        const { listCentroids, missingZips } = splitListZipGeographies(listZipGeographies);
+        const {
+            areaNames,
+            listCentroids,
+            missingZips,
+            missingPlaceIdZips,
+        } = splitListZipGeographies(listZipGeographies);
         seedListCentroids(missingZips);
+        seedListPlaceIds(missingPlaceIdZips);
 
         res.json({
             config: {
@@ -104,6 +159,7 @@ router.get('/config', async (req, res) => {
                 radii,
                 counts: { list_zips: listZipCount, radii: radii.length },
                 company_zip: companyZip,
+                area_names: areaNames,
                 list_centroids: listCentroids,
             },
         });

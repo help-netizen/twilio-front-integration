@@ -171,8 +171,16 @@ describe('GET /config', () => {
             listZipCount: 3,
             companyZip: '02135',
             listZipGeographies: [
-                { zip: '02135', lat: '42.346700', lon: '-71.162700' },
-                { zip: '02461', lat: '42.316800', lon: '-71.209500' },
+                {
+                    zip: '02135', area: 'Boston', lat: '42.346700', lon: '-71.162700',
+                    google_place_id: 'postal-place-02135',
+                    place_id_resolved_at: new Date().toISOString(),
+                },
+                {
+                    zip: '02461', area: 'Newton', lat: '42.316800', lon: '-71.209500',
+                    google_place_id: 'postal-place-02461',
+                    place_id_resolved_at: new Date().toISOString(),
+                },
             ],
         });
 
@@ -185,9 +193,16 @@ describe('GET /config', () => {
                 radii,
                 counts: { list_zips: 3, radii: 2 },
                 company_zip: '02135',
+                area_names: ['Boston', 'Newton'],
                 list_centroids: [
-                    { zip: '02135', lat: '42.346700', lon: '-71.162700' },
-                    { zip: '02461', lat: '42.316800', lon: '-71.209500' },
+                    {
+                        zip: '02135', area: 'Boston', lat: '42.346700', lon: '-71.162700',
+                        place_id: 'postal-place-02135',
+                    },
+                    {
+                        zip: '02461', area: 'Newton', lat: '42.316800', lon: '-71.209500',
+                        place_id: 'postal-place-02461',
+                    },
                 ],
             },
         });
@@ -199,9 +214,9 @@ describe('GET /config', () => {
 
     test('TC-TERR2-014: lazy seed deduplicates missing ZIPs, caps at 10, and safe-fails', async () => {
         const listZipGeographies = Array.from({ length: 15 }, (_, index) => ({
-            zip: String(10000 + index), lat: null, lon: null,
+            zip: String(10000 + index), area: `Area ${index}`, lat: null, lon: null,
         }));
-        listZipGeographies.push({ zip: '10000', lat: null, lon: null });
+        listZipGeographies.push({ zip: '10000', area: 'Area 0', lat: null, lon: null });
         mockConfigQueries({ listZipCount: 15, listZipGeographies });
         const geocode = jest.spyOn(territoryGeoService, 'geocodeZip')
             .mockImplementation(async zip => {
@@ -212,12 +227,44 @@ describe('GET /config', () => {
         const res = await request(appWith()).get(`${BASE_PATH}/config`);
         expect(res.status).toBe(200);
         expect(res.body.config.list_centroids).toEqual([]);
+        expect(res.body.config.area_names).toEqual(
+            Array.from({ length: 15 }, (_, index) => `Area ${index}`).sort()
+        );
 
         await flushLazySeed();
         expect(geocode).toHaveBeenCalledTimes(10);
         expect(new Set(geocode.mock.calls.map(([zip]) => zip)).size).toBe(10);
         expect(geocode.mock.calls.map(([zip]) => zip)).toEqual(
             Array.from({ length: 10 }, (_, index) => String(10000 + index))
+        );
+    });
+
+    test('lazily resolves at most 10 uncached ZIP place IDs without delaying the response', async () => {
+        const listZipGeographies = Array.from({ length: 12 }, (_, index) => ({
+            zip: String(20000 + index),
+            area: `Area ${index}`,
+            lat: String(40 + index / 100),
+            lon: String(-70 - index / 100),
+            google_place_id: null,
+            place_id_resolved_at: null,
+        }));
+        mockConfigQueries({ listZipCount: 12, listZipGeographies });
+        const resolvePlaceId = jest.spyOn(territoryGeoService, 'resolveZipPlaceId')
+            .mockResolvedValue('postal-place');
+
+        const res = await request(appWith()).get(`${BASE_PATH}/config`);
+
+        expect(res.status).toBe(200);
+        expect(res.body.config.list_centroids).toHaveLength(12);
+        expect(res.body.config.area_names).toEqual(
+            Array.from({ length: 12 }, (_, index) => `Area ${index}`).sort()
+        );
+        expect(res.body.config.list_centroids.every(row => row.place_id === undefined)).toBe(true);
+
+        await flushLazySeed();
+        expect(resolvePlaceId).toHaveBeenCalledTimes(10);
+        expect(resolvePlaceId.mock.calls.map(([zip]) => zip)).toEqual(
+            Array.from({ length: 10 }, (_, index) => String(20000 + index))
         );
     });
 });
