@@ -44,6 +44,8 @@ export interface SettingsNavLink {
     platformRoles?: readonly string[];
     /** Overrides default matching when several subsections share one pathname. */
     matches?: readonly SettingsNavMatch[];
+    /** Clickable destinations owned by this subsection rather than the top-level Settings list. */
+    inSectionLinks?: readonly SettingsNavLink[];
 }
 
 export interface SettingsNavGroup {
@@ -71,6 +73,16 @@ export const SETTINGS_GROUP_PATHS: Record<SettingsGroupId, string> = {
     billing: '/settings/billing-group',
     'platform-administration': '/settings/platform-administration',
 };
+
+export const PHONE_SYSTEM_LINKS = [
+    { id: 'phone-user-groups', label: 'User Groups', to: '/settings/telephony/user-groups', permissions: ['tenant.telephony.manage'] },
+    { id: 'phone-numbers', label: 'Phone Numbers', to: '/settings/telephony/phone-numbers', permissions: ['tenant.telephony.manage'] },
+    { id: 'phone-audio-library', label: 'Audio Library', to: '/settings/telephony/audio-library', permissions: ['tenant.telephony.manage'] },
+    { id: 'phone-blacklist', label: 'Blacklist', to: '/settings/telephony/blacklist', permissions: ['tenant.telephony.manage'] },
+    { id: 'phone-provider-settings', label: 'Provider Settings', to: '/settings/telephony/provider-settings', permissions: ['tenant.telephony.manage'] },
+    { id: 'phone-routing-logs', label: 'Routing Logs', to: '/settings/telephony/routing-logs', permissions: ['tenant.telephony.manage'] },
+    { id: 'phone-dashboard', label: 'Live Operations', to: '/settings/telephony/dashboard', permissions: ['tenant.telephony.manage'] },
+] as const satisfies readonly SettingsNavLink[];
 
 export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     {
@@ -124,7 +136,10 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         landingPath: SETTINGS_GROUP_PATHS['phone-ai'],
         kind: 'tenant',
         links: [
-            { id: 'phone-system', label: 'Phone system', to: '/settings/telephony', permissions: ['tenant.telephony.manage'] },
+            {
+                id: 'phone-system', label: 'Phone system', to: '/settings/telephony',
+                permissions: ['tenant.telephony.manage'], inSectionLinks: PHONE_SYSTEM_LINKS,
+            },
             { id: 'phone-setup', label: 'Phone setup', to: '/settings/integrations/telephony-twilio', permissions: ['tenant.integrations.manage'] },
             { id: 'ai-phone-agent', label: 'AI phone agent', to: '/settings/integrations/vapi-ai', permissions: ['tenant.integrations.manage'] },
             { id: 'email-assistant', label: 'Email assistant', to: '/settings/integrations/mail-secretary', permissions: ['tenant.integrations.manage'] },

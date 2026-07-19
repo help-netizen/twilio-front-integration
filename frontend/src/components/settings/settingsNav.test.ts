@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    PHONE_SYSTEM_LINKS,
     SETTINGS_NAV,
     findActiveSettingsGroup,
     getVisibleSettingsGroups,
@@ -137,6 +138,17 @@ describe('SETTINGS-IA-001 navigation model', () => {
         ].forEach(pathname => {
             expect(isSettingsNavLinkActive(phoneSystem, { pathname })).toBe(true);
         });
+
+        expect(phoneSystem.inSectionLinks).toBe(PHONE_SYSTEM_LINKS);
+        expect(PHONE_SYSTEM_LINKS.map(link => [link.label, link.to])).toEqual([
+            ['User Groups', '/settings/telephony/user-groups'],
+            ['Phone Numbers', '/settings/telephony/phone-numbers'],
+            ['Audio Library', '/settings/telephony/audio-library'],
+            ['Blacklist', '/settings/telephony/blacklist'],
+            ['Provider Settings', '/settings/telephony/provider-settings'],
+            ['Routing Logs', '/settings/telephony/routing-logs'],
+            ['Live Operations', '/settings/telephony/dashboard'],
+        ]);
     });
 });
 

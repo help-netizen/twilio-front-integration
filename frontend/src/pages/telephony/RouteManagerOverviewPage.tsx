@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Phone, Users, LayoutDashboard, Music, Zap } from 'lucide-react';
+import { FileText, LayoutDashboard, Music, Phone, Shield, ShieldBan, Users, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { PHONE_SYSTEM_LINKS } from '../../components/settings/settingsNav';
 import { telephonyApi } from '../../services/telephonyApi';
 import { useAutonomousModeContext } from '../../contexts/AutonomousModeContext';
 import { useAuthz } from '../../hooks/useAuthz';
@@ -51,12 +52,21 @@ export default function RouteManagerOverviewPage() {
         }
     };
 
-    const cards = [
-        { title: 'User Groups', desc: 'Agent groups with numbers, schedules & call flows', icon: Users, path: '/settings/telephony/user-groups', count: `${counts.user_groups_count} groups` },
-        { title: 'Phone Numbers', desc: 'Buy, route, and assign numbers; SMS compliance', icon: Phone, path: '/settings/telephony/phone-numbers', count: `${counts.phone_numbers_count} numbers` },
-        { title: 'Audio Library', desc: 'Greetings, prompts, hold music', icon: Music, path: '/settings/telephony/audio-library', count: null },
-        { title: 'Live Operations', desc: 'Active calls, queues, and agent presence', icon: LayoutDashboard, path: '/settings/telephony/dashboard', count: 'Live' },
-    ];
+    const cardContent: Record<(typeof PHONE_SYSTEM_LINKS)[number]['id'], {
+        desc: string;
+        icon: typeof LayoutDashboard;
+        count: string | null;
+    }> = {
+        'phone-dashboard': { desc: 'Active calls, queues, and agent presence', icon: LayoutDashboard, count: 'Live' },
+        'phone-numbers': { desc: 'Buy, route, and assign numbers; SMS compliance', icon: Phone, count: `${counts.phone_numbers_count} numbers` },
+        'phone-user-groups': { desc: 'Agent groups with numbers, schedules & call flows', icon: Users, count: `${counts.user_groups_count} groups` },
+        'phone-audio-library': { desc: 'Greetings, prompts, hold music', icon: Music, count: null },
+        'phone-blacklist': { desc: 'Block unwanted callers and destinations', icon: ShieldBan, count: null },
+        'phone-provider-settings': { desc: 'Configure telephony provider credentials', icon: Shield, count: null },
+        'phone-routing-logs': { desc: 'Inspect call-routing decisions and outcomes', icon: FileText, count: null },
+    };
+
+    const cards = PHONE_SYSTEM_LINKS.map(link => ({ ...link, ...cardContent[link.id] }));
 
     return (
         <div style={{ padding: isMobile ? '20px 16px' : '28px 24px' }}>
@@ -104,16 +114,16 @@ export default function RouteManagerOverviewPage() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))', gap: isMobile ? 12 : 16 }}>
-                {cards.map(c => {
-                    const Icon = c.icon;
+                {cards.map(card => {
+                    const Icon = card.icon;
                     return (
-                        <div key={c.title} onClick={() => navigate(c.path)} style={{ background: 'var(--blanc-surface-strong, #fffdf9)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20, cursor: 'pointer', transition: 'border-color 0.15s' }}
+                        <div key={card.id} onClick={() => navigate(card.to)} style={{ background: 'var(--blanc-surface-strong, #fffdf9)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20, cursor: 'pointer', transition: 'border-color 0.15s' }}
                             onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(25,25,25,0.28)')}
                             onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}>
                             <Icon size={20} style={{ color: INK3, marginBottom: 12 }} />
-                            <div style={{ fontSize: 15, fontWeight: 600, color: INK1 }}>{c.title}</div>
-                            <div style={{ fontSize: 12, color: INK2, marginBottom: 8 }}>{c.desc}</div>
-                            {c.count && <div style={{ fontSize: 11, color: JOB, fontWeight: 600 }}>{c.count}</div>}
+                            <div style={{ fontSize: 15, fontWeight: 600, color: INK1 }}>{card.label}</div>
+                            <div style={{ fontSize: 12, color: INK2, marginBottom: 8 }}>{card.desc}</div>
+                            {card.count && <div style={{ fontSize: 11, color: JOB, fontWeight: 600 }}>{card.count}</div>}
                         </div>
                     );
                 })}
