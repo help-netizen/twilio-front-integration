@@ -159,6 +159,7 @@ function App() {
                 <Route path="/settings/apps-integrations" element={<SettingsLandingRedirect groupId="apps-integrations" />} />
                 <Route path="/settings/team-access" element={<SettingsLandingRedirect groupId="team-access" />} />
                 <Route path="/settings/alerts-notifications" element={<SettingsLandingRedirect groupId="alerts-notifications" />} />
+                <Route path="/settings/billing-group" element={<SettingsLandingRedirect groupId="billing" />} />
                 <Route path="/settings/platform-administration" element={<SettingsLandingRedirect groupId="platform-administration" />} />
                 <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/scheduling/company-schedule" element={<ProtectedRoute permissions={['schedule.dispatch', 'tenant.company.manage']}><CompanySchedulePage /></ProtectedRoute>} />

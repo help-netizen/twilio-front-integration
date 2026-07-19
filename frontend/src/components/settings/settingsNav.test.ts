@@ -20,16 +20,19 @@ const allPermissions = [
 ];
 
 describe('SETTINGS-IA-001 navigation model', () => {
-    it('defines the eight approved tenant groups and a separate platform group', () => {
+    it('defines the approved tenant groups and a separate platform group', () => {
+        // Albusto's own subscription ("Billing") is deliberately last and split
+        // from the money the company collects from customers ("Payments").
         expect(SETTINGS_NAV.filter(group => group.kind === 'tenant').map(group => group.title)).toEqual([
             'Business',
             'Scheduling & service areas',
             'Jobs and Leads',
             'Communication and AI',
-            'Billing & payments',
+            'Payments',
             'Apps & integrations',
             'Team & access',
             'Alerts & notifications',
+            'Billing',
         ]);
         expect(SETTINGS_NAV.filter(group => group.kind === 'platform').map(group => group.title))
             .toEqual(['Platform administration']);
@@ -50,6 +53,7 @@ describe('SETTINGS-IA-001 navigation model', () => {
             'phone-ai',
             'billing-payments',
             'alerts-notifications',
+            'billing',
         ]);
         expect(companyManager.find(group => group.id === 'scheduling')?.links.map(link => link.label)).toEqual([
             'Company schedule', 'Service areas', 'Technicians',
@@ -101,10 +105,15 @@ describe('SETTINGS-IA-001 navigation model', () => {
     });
 
     it('does not highlight plan and bank-transfer leaves at the same time', () => {
-        const billing = getVisibleSettingsGroups({ permissions: ['tenant.company.manage'] })
-            .find(group => group.id === 'billing-payments')!;
-        const plan = billing.links.find(link => link.id === 'plan-usage')!;
-        const bank = billing.links.find(link => link.id === 'bank-transfer-details')!;
+        // Plan lives in the standalone "Billing" group, bank details under
+        // "Payments" — but their paths still nest (/settings/billing vs
+        // /settings/billing/bank-transfer-details), so the exact-match guard
+        // still matters across groups.
+        const groups = getVisibleSettingsGroups({ permissions: ['tenant.company.manage'] });
+        const plan = groups.find(group => group.id === 'billing')!
+            .links.find(link => link.id === 'plan-usage')!;
+        const bank = groups.find(group => group.id === 'billing-payments')!
+            .links.find(link => link.id === 'bank-transfer-details')!;
         const location = { pathname: '/settings/billing/bank-transfer-details' };
         expect(isSettingsNavLinkActive(plan, location)).toBe(false);
         expect(isSettingsNavLinkActive(bank, location)).toBe(true);

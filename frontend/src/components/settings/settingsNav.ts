@@ -14,6 +14,7 @@ export type SettingsGroupId =
     | 'apps-integrations'
     | 'team-access'
     | 'alerts-notifications'
+    | 'billing'
     | 'platform-administration';
 
 export interface SettingsNavLocation {
@@ -67,6 +68,7 @@ export const SETTINGS_GROUP_PATHS: Record<SettingsGroupId, string> = {
     'apps-integrations': '/settings/apps-integrations',
     'team-access': '/settings/team-access',
     'alerts-notifications': '/settings/alerts-notifications',
+    billing: '/settings/billing-group',
     'platform-administration': '/settings/platform-administration',
 };
 
@@ -132,14 +134,13 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     },
     {
         id: 'billing-payments',
-        title: 'Billing & payments',
+        title: 'Payments',
         landingPath: SETTINGS_GROUP_PATHS['billing-payments'],
         kind: 'tenant',
         links: [
-            {
-                id: 'plan-usage', label: 'Albusto plan & usage', to: '/settings/billing', permissions: ['tenant.company.manage'],
-                matches: [{ pathname: '/settings/billing', exact: true }],
-            },
+            // Albusto's own subscription lives in the separate "Billing" group at
+            // the end of the menu — money we take from customers and money we pay
+            // Albusto are deliberately not mixed (owner decision).
             { id: 'customer-payments', label: 'Customer payments', to: '/settings/integrations/stripe-payments', permissions: ['tenant.integrations.manage'] },
             { id: 'bank-transfer-details', label: 'Bank transfer details', to: '/settings/billing/bank-transfer-details', permissions: ['tenant.company.manage'] },
             { id: 'price-book', label: 'Price book', to: '/settings/price-book', permissions: ['price_book.manage'] },
@@ -192,6 +193,20 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         kind: 'tenant',
         links: [
             { id: 'alerts-notifications', label: 'Alerts & notifications', to: '/settings/actions-notifications', permissions: ['tenant.company.manage'] },
+        ],
+    },
+    {
+        // What the company pays Albusto — deliberately last and separate from the
+        // money it collects from its own customers ("Payments").
+        id: 'billing',
+        title: 'Billing',
+        landingPath: SETTINGS_GROUP_PATHS.billing,
+        kind: 'tenant',
+        links: [
+            {
+                id: 'plan-usage', label: 'Albusto plan & usage', to: '/settings/billing', permissions: ['tenant.company.manage'],
+                matches: [{ pathname: '/settings/billing', exact: true }],
+            },
         ],
     },
     {
