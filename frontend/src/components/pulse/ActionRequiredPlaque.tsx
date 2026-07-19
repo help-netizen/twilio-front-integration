@@ -72,7 +72,9 @@ export function ActionRequiredPlaque({
     const manualSnoozed = manualOnly && !!snoozedUntil && new Date(snoozedUntil) > new Date();
 
     return (
-        <section className="pulse-card pulse-card-visible-overflow pulse-ar-sticky pulse-ar-plaque" aria-label="Action Required">
+        // Sticky moved to the shared .pulse-sticky-stack wrapper (PULSE-CONTACT-PIN-001):
+        // the plaque and the pinned contact bar must stick as ONE stack, not fight for top:0.
+        <section className="pulse-card pulse-card-visible-overflow pulse-ar-plaque" aria-label="Action Required">
             <div className="blanc-eyebrow pulse-ar-eyebrow">Action Required</div>
             {visibleTasks.length > 0 && (
                 <div className="pulse-ar-task-list">

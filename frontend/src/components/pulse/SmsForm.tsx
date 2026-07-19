@@ -16,7 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
-export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, secondaryPhone, secondaryPhoneName, emails, emailConnected, selectedTarget, onTargetChange }: SmsFormProps) {
+export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, secondaryPhone, secondaryPhoneName, emails, emailConnected, selectedTarget, onTargetChange, focusSignal }: SmsFormProps) {
     const [message, setMessage] = useState('');
     const [isPresetsOpen, setIsPresetsOpen] = useState(false);
     const [isAiFormatting, setIsAiFormatting] = useState(false);
@@ -32,6 +32,10 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
     const canManageIntegrations = hasPermission('tenant.integrations.manage');
 
     useEffect(() => { const ta = textareaRef.current; if (!ta) return; ta.style.height = 'auto'; const lh = parseInt(getComputedStyle(ta).lineHeight) || 20; ta.style.height = `${Math.min(Math.max(ta.scrollHeight, lh * 3 + 16), lh * 10 + 16)}px`; }, [message]);
+
+    // PULSE-CONTACT-PIN-001: bar actions focus the composer; focus() also scrolls
+    // it into view natively, so the timeline scroll logic stays untouched.
+    useEffect(() => { if (focusSignal) textareaRef.current?.focus(); }, [focusSignal]);
 
     const fetchQuickMessages = useCallback(async () => { try { const res = await authedFetch(`${API_BASE}/api/quick-messages`); const data = await res.json(); setQuickMessages(data.messages || []); } catch (err) { console.error('Failed to load quick messages:', err); } }, []);
     useEffect(() => { fetchQuickMessages(); }, [fetchQuickMessages]);

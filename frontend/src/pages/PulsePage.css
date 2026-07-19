@@ -149,6 +149,172 @@
     z-index: 5;
 }
 
+/* ── PULSE-CONTACT-PIN-001: sticky stack = AR plaque + condensed contact bar ──
+   One sticky wrapper: two independent sticky siblings would both pin to top:0
+   and overlap. Same z as the old .pulse-ar-sticky. */
+.pulse-sticky-stack {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+/* Empty when the thread has no plaque and no bar (lead branch renders its own
+   card in-flow) — collapse so it doesn't add phantom gap. */
+.pulse-sticky-stack:empty { display: none; }
+
+/* The bar itself. Grid mirrors the approved mockup: identity | actions | summary | expand.
+   minmax(0, …) everywhere: a hard min once pushed the expand button outside the card. */
+.pulse-contact-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    align-items: center;
+    gap: 14px;
+    min-height: 68px;
+    padding: 10px 14px 10px 17px;
+    box-shadow: inset 3px 0 0 var(--blanc-success);
+    container-type: inline-size;
+    container-name: contactbar;
+}
+.pulse-contact-bar > * { min-width: 0; }
+.pulse-contact-bar-name {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 21px;
+    font-weight: 750;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    color: var(--blanc-ink-1);
+}
+.pulse-contact-bar-address {
+    margin: 3px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--blanc-ink-3);
+    font-size: 12px;
+}
+.pulse-contact-bar-street::after { content: ' · '; }
+
+.pulse-contact-bar-actions { display: flex; align-items: center; gap: 7px; }
+.pulse-contact-bar-action {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 13px;
+    border: 0;
+    border-radius: 13px;
+    background: var(--blanc-surface-muted);
+    color: var(--blanc-ink-1);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+}
+.pulse-contact-bar-action:hover { color: var(--blanc-accent); }
+.pulse-contact-bar-action.is-primary { background: var(--blanc-accent); color: #fff; }
+.pulse-contact-bar-action.is-primary:hover { color: #fff; opacity: 0.9; }
+.pulse-contact-bar-action.is-unavailable { color: var(--blanc-ink-2); }
+
+/* Call reuses ClickToCallButton (softphone desktop / tel: mobile) restyled as the
+   bar's primary violet action. */
+.pulse-contact-bar-call .click-to-call-btn {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 13px;
+    border: 0;
+    border-radius: 13px;
+    background: var(--blanc-accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    opacity: 1;
+    text-decoration: none;
+}
+.pulse-contact-bar-call .click-to-call-btn:hover { opacity: 0.9; background: var(--blanc-accent); color: #fff; }
+
+.pulse-contact-bar-summary { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.pulse-contact-bar-link {
+    border: 0;
+    background: transparent;
+    padding: 6px 9px;
+    border-radius: 10px;
+    color: var(--blanc-ink-2);
+    font-size: 12px;
+    font-weight: 650;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.pulse-contact-bar-link:hover { background: var(--blanc-surface-muted); color: var(--blanc-ink-1); }
+.pulse-contact-bar-link strong { color: var(--blanc-ink-1); font-size: 13px; }
+
+.pulse-contact-bar-expand {
+    width: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 13px;
+    background: var(--blanc-surface-muted);
+    color: var(--blanc-ink-2);
+    cursor: pointer;
+}
+.pulse-contact-bar-expand:hover { color: var(--blanc-accent); }
+
+/* Degradation ladder — DESKTOP ONLY (container query on the BAR: the timeline
+   column is narrow beside the conversation list even on wide monitors). Order:
+   button labels go first (chrome), then the address line; the NAME never
+   truncates before labels. Mobile is excluded: its bar is narrow by definition
+   and keeps labels via the stacked grid below (approved mockup). */
+@media (min-width: 769px) {
+    @container contactbar (max-width: 640px) {
+        .pulse-contact-bar-action-label { display: none; }
+        .pulse-contact-bar-action { padding: 0; width: 40px; }
+        .pulse-contact-bar-call .click-to-call-btn { padding: 0; width: 40px; }
+        .pulse-contact-bar-call .click-to-call-btn span { display: none; }
+    }
+    @container contactbar (max-width: 440px) {
+        .pulse-contact-bar-address { display: none; }
+        .pulse-contact-bar-summary { display: none; }
+    }
+}
+
+/* Mobile: stacked grid — identity+expand row, then full-width labelled action row,
+   then the summary links. Matches the approved mockup. */
+@media (max-width: 768px) {
+    .pulse-contact-bar {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            'identity expand'
+            'actions actions'
+            'summary summary';
+        row-gap: 9px;
+        column-gap: 10px;
+        padding: 10px 12px 11px;
+    }
+    .pulse-contact-bar-identity { grid-area: identity; }
+    .pulse-contact-bar-expand { grid-area: expand; }
+    .pulse-contact-bar-name { font-size: 18px; }
+    .pulse-contact-bar-actions {
+        grid-area: actions;
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 1fr;
+        gap: 6px;
+    }
+    .pulse-contact-bar-call { display: contents; }
+    .pulse-contact-bar-call .click-to-call-btn { width: auto; }
+    .pulse-contact-bar-summary { grid-area: summary; justify-content: flex-start; }
+}
+
 /* AR-TASKS-001: one compact action row per open task. The task list scrolls
    internally once it would consume too much of the reverse-paginated timeline;
    every task remains reachable and none is truncated. */

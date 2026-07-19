@@ -7,6 +7,7 @@ import { usePulseTimeline } from './usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
 import * as contactsApi from '../services/contactsApi';
 import * as emailApi from '../services/emailApi';
+import * as jobsApi from '../services/jobsApi';
 import { buildMessageTargets, type MessageTarget } from '../components/pulse/smsFormHelpers';
 import { useRealtimeEvents, type SSECallEvent, type SSEMessageAddedEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from './useRealtimeEvents';
 import { appendTranscriptDelta, finalizeTranscript } from './useLiveTranscript';
@@ -102,6 +103,19 @@ export function usePulsePage() {
     const [contactDetail, setContactDetail] = useState<{ contact: any; leads: ContactLead[] } | null>(null);
     const [contactDetailLoading, setContactDetailLoading] = useState(false);
     React.useEffect(() => { if (lead || leadLoading || !contact?.id) { setContactDetail(null); return; } let cancelled = false; setContactDetailLoading(true); contactsApi.getContact(contact.id).then(res => { if (!cancelled) setContactDetail({ contact: res.data.contact, leads: res.data.leads }); }).catch(() => { if (!cancelled) setContactDetail(null); }).finally(() => { if (!cancelled) setContactDetailLoading(false); }); return () => { cancelled = true; }; }, [lead, leadLoading, contact?.id]);
+
+    // PULSE-CONTACT-PIN-001: the pinned bar needs the jobs (open count + freshest
+    // address) BEFORE the full panel is expanded, so the fetch lives here — one
+    // fetch shared by bar and panel instead of the panel's former mount-time fetch.
+    const [contactJobs, setContactJobs] = useState<jobsApi.LocalJob[]>([]);
+    React.useEffect(() => {
+        if (lead || leadLoading || !contact?.id) { setContactJobs([]); return; }
+        let cancelled = false;
+        jobsApi.listJobs({ contact_id: contact.id, limit: 50 })
+            .then(data => { if (!cancelled) setContactJobs(data.results); })
+            .catch(() => { if (!cancelled) setContactJobs([]); });
+        return () => { cancelled = true; };
+    }, [lead, leadLoading, contact?.id]);
 
     const secondaryPhone = lead?.SecondPhone || contact?.secondary_phone || '';
     const secondaryPhoneName = lead?.SecondPhoneName || contact?.secondary_phone_name || '';
@@ -239,14 +253,19 @@ export function usePulsePage() {
         contactsLoading, filteredCalls, loadMoreRef, isFetchingNextPage,
         timelineLoading, items, messages, financialEvents, emailMessages, phone, hasActiveCall,
         hasOlder, isFetchingOlder, fetchOlder, scrollToBottomSignal, refreshNewestPage,
-        lead, leadLoading, contact, contactDetail, contactDetailLoading, selectedConv,
+        lead, leadLoading, contact, contactDetail, contactDetailLoading, contactJobs, selectedConv,
         editingLead, setEditingLead, convertingLead, setConvertingLead,
         secondaryPhone, secondaryPhoneName, contactEmails, emailConnected, selectedTarget, setSelectedTarget,
+        messageTargets,
         handleUpdateStatus: actions.handleUpdateStatus, handleUpdateSource: actions.handleUpdateSource,
         handleUpdateComments: actions.handleUpdateComments, handleMarkLost: actions.handleMarkLost,
         handleActivate: actions.handleActivate, handleConvert, handleConvertSuccess, handleDelete, handleUpdateLead,
         handleSendMessage, handleAiFormat, refetchContacts, refetchTimeline: refreshNewestPage,
         getLeadForPhone,
-        refreshContactDetail: () => { if (contact?.id) contactsApi.getContact(contact.id).then(res => setContactDetail({ contact: res.data.contact, leads: res.data.leads })).catch(() => { }); },
+        refreshContactDetail: () => {
+            if (!contact?.id) return;
+            contactsApi.getContact(contact.id).then(res => setContactDetail({ contact: res.data.contact, leads: res.data.leads })).catch(() => { });
+            jobsApi.listJobs({ contact_id: contact.id, limit: 50 }).then(data => setContactJobs(data.results)).catch(() => { });
+        },
     };
 }

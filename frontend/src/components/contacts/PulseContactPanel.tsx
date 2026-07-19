@@ -24,17 +24,26 @@ import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import type { Contact, ContactLead } from '../../types/contact';
 import { getLeadStatusColor, getJobStatusStyle, AddressCard } from './PulseContactHelpers';
+import { isOpenLead, isOpenJob } from './contactBarHelpers';
 import { TaskStack } from '../tasks/TaskStack';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogTitle, DialogDescription } from '../ui/dialog';
 import { CreateLeadJobWizard } from '../conversations/CreateLeadJobWizard';
 
-interface PulseContactPanelProps { contact: Contact; leads: ContactLead[]; loading: boolean; timelineId?: number | null; onAddressesChanged?: () => void; onContactChanged?: () => void; onTasksChanged?: () => void; }
+interface PulseContactPanelProps {
+    contact: Contact; leads: ContactLead[]; loading: boolean; timelineId?: number | null;
+    /** PULSE-CONTACT-PIN-001: jobs fetched once at page level (shared with the pinned
+     *  bar). When absent the panel fetches its own — other hosts stay unaffected. */
+    jobs?: jobsApi.LocalJob[];
+    /** Scroll a section into view on mount — the bar's Notes / Leads & Jobs links. */
+    focusSection?: 'notes' | 'leads-jobs' | null;
+    onAddressesChanged?: () => void; onContactChanged?: () => void; onTasksChanged?: () => void;
+}
 
 const ZENBOOKER_BASE_URL = 'https://zenbooker.com';
 
 /* No background cards — clean flat layout, content breathes */
 
-export function PulseContactPanel({ contact, leads, loading, timelineId, onAddressesChanged, onContactChanged, onTasksChanged }: PulseContactPanelProps) {
+export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: jobsProp, focusSection, onAddressesChanged, onContactChanged, onTasksChanged }: PulseContactPanelProps) {
     const navigate = useNavigate();
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
@@ -56,15 +65,30 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
 
     useEffect(() => { setNotes(contact.notes || ''); }, [contact.notes]);
     useEffect(() => {
+        if (jobsProp) { setJobs(jobsProp); setJobsLoaded(true); return; }
         if (!contact.id) return;
         setJobsLoaded(false);
         jobsApi.listJobs({ contact_id: contact.id, limit: 50 })
             .then(data => { setJobs(data.results); setJobsLoaded(true); })
             .catch(() => { setJobs([]); setJobsLoaded(true); });
-    }, [contact.id]);
+    }, [contact.id, jobsProp]);
 
-    const filteredLeads = onlyOpenLeads ? leads.filter(l => !['Lost', 'Converted'].includes(l.status)) : leads;
-    const hasActivity = filteredLeads.length > 0 || jobs.length > 0;
+    // PULSE-CONTACT-PIN-001: the bar's Notes / Leads & Jobs links land on their section.
+    const notesSectionRef = useRef<HTMLDivElement>(null);
+    const entitiesSectionRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const target = focusSection === 'notes' ? notesSectionRef.current
+            : focusSection === 'leads-jobs' ? entitiesSectionRef.current : null;
+        if (target) setTimeout(() => target.scrollIntoView({ block: 'start', behavior: 'smooth' }), 60);
+    }, [focusSection]);
+
+    // Shared predicates (contactBarHelpers) — the pinned bar's count uses the same
+    // ones, so the number on the bar and this list can never disagree. "Only Open"
+    // now filters JOBS too: it historically filtered leads only, which would show
+    // more jobs than the bar counts.
+    const filteredLeads = onlyOpenLeads ? leads.filter(isOpenLead) : leads;
+    const filteredJobs = onlyOpenLeads ? jobs.filter(isOpenJob) : jobs;
+    const hasActivity = filteredLeads.length > 0 || filteredJobs.length > 0;
 
     const handleSaveNotes = async () => {
 
@@ -176,7 +200,7 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
                 {/* Right: Notes + Tasks — identity-adjacent, aligned with name */}
                 <div className="space-y-3">
                     {/* Notes — sticky note */}
-                    <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
+                    <div ref={notesSectionRef} style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
                         <h4 className="blanc-eyebrow mb-2">Notes</h4>
                         <textarea
                             ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
@@ -205,7 +229,7 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
             {/* ── Body ── */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 px-5 pb-5">
                 {/* Left column — Leads & Jobs */}
-                <div>
+                <div ref={entitiesSectionRef}>
                     <div className="flex items-center gap-2 mb-3">
                         <h4 className="blanc-eyebrow" style={{ marginBottom: 0 }}>Leads & Jobs</h4>
                         <Switch id="pulse-leads-only-open" checked={onlyOpenLeads} onCheckedChange={setOnlyOpenLeads} />
@@ -246,7 +270,7 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
                                 </div>
                             ))}
 
-                            {jobs.map(job => {
+                            {filteredJobs.map(job => {
                                 const st = getJobStatusStyle(job.blanc_status);
                                 const date = job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
                                 return (

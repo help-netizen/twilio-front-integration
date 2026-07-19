@@ -25,6 +25,9 @@ export interface SmsFormProps {
     /** Currently selected target (phone or email). */
     selectedTarget?: MessageTarget;
     onTargetChange?: (target: MessageTarget) => void;
+    /** PULSE-CONTACT-PIN-001: increment to focus the composer textarea (the pinned
+     *  bar's Text / Email actions land the user ready to type). */
+    focusSignal?: number;
 }
 
 /**

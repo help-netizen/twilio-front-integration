@@ -12,6 +12,9 @@ import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
+import { PulseContactBar } from '../components/contacts/PulseContactBar';
+import { openLeadsJobsCount, pickBarAddress, hasNotes } from '../components/contacts/contactBarHelpers';
+import { Dialog, DialogContent, DialogBody, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { TaskFormDialog } from '../components/tasks/TaskFormDialog';
 import { createTask, type Task } from '../components/tasks/tasksApi';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
@@ -63,6 +66,14 @@ export const PulsePage: React.FC = () => {
     // Page-level task editor — opened right after flagging a timeline for action
     // so the user can refine the freshly-created default task.
     const [taskEditor, setTaskEditor] = useState<{ parentId: number; task: Task } | null>(null);
+
+    // PULSE-CONTACT-PIN-001: the condensed bar replaces the in-flow contact card;
+    // the full card opens as an overlay panel so expansion never changes the scroll
+    // container's height (reverse pagination compensates by scrollHeight).
+    const [contactCardOpen, setContactCardOpen] = useState(false);
+    const [contactCardSection, setContactCardSection] = useState<'notes' | 'leads-jobs' | null>(null);
+    const [composerFocusSignal, setComposerFocusSignal] = useState(0);
+    useEffect(() => { setContactCardOpen(false); setContactCardSection(null); }, [p.contact?.id, p.timelineId]);
 
     const isContactSelected = !!(p.contactId || p.timelineId);
 
@@ -276,8 +287,15 @@ export const PulsePage: React.FC = () => {
                         // handles the email channel itself, so surface it whenever there's a phone
                         // OR an email reply is possible.
                         const canEmailReply = p.emailConnected && (p.contactEmails?.length ?? 0) > 0;
+                        const showContactBar = !isAnonTimeline && !p.lead && !p.leadLoading && !!p.contact?.id && !!p.contactDetail;
+                        const smsTarget = p.messageTargets.find(t => t.channel === 'sms');
+                        const emailTarget = p.messageTargets.find(t => t.channel === 'email');
                         return (
                         <>
+                            {/* PULSE-CONTACT-PIN-001: ONE sticky stack for the AR plaque and the
+                                condensed contact bar — two independent sticky elements would both
+                                pin to top:0 and overlap. */}
+                            <div className="pulse-sticky-stack">
                             {/* One row per task; taskless manual flags keep thread-level controls. */}
                             <ActionRequiredPlaque
                                 timelineId={(p.selectedConv as any)?.timeline_id || null}
@@ -306,6 +324,34 @@ export const PulsePage: React.FC = () => {
                                         .catch(() => toast.error('Failed'));
                                 }}
                             />
+
+                            {showContactBar && (
+                                <PulseContactBar
+                                    name={p.contactDetail!.contact.full_name || 'Unknown'}
+                                    address={pickBarAddress(p.contactJobs, p.contactDetail!.contact)}
+                                    phone={p.phone || p.contactDetail!.contact.phone_e164 || null}
+                                    hasEmail={(p.contactEmails?.length ?? 0) > 0}
+                                    emailConnected={p.emailConnected}
+                                    showNotes={hasNotes(p.contactDetail!.contact)}
+                                    openCount={openLeadsJobsCount(p.contactDetail!.leads, p.contactJobs)}
+                                    onText={() => { if (smsTarget) { p.setSelectedTarget(smsTarget); setComposerFocusSignal(s => s + 1); } }}
+                                    onEmail={() => {
+                                        if (!p.emailConnected) {
+                                            // Owner decision: the button stays visible; the click leads to
+                                            // connecting a mailbox rather than silently doing nothing.
+                                            toast.info('Connect a mailbox to send email', {
+                                                action: { label: 'Connect', onClick: () => navigate('/settings/integrations/google-email') },
+                                            });
+                                            return;
+                                        }
+                                        if (emailTarget) { p.setSelectedTarget(emailTarget); setComposerFocusSignal(s => s + 1); }
+                                    }}
+                                    onOpenNotes={() => { setContactCardSection('notes'); setContactCardOpen(true); }}
+                                    onOpenLeadsJobs={() => { setContactCardSection('leads-jobs'); setContactCardOpen(true); }}
+                                    onExpand={() => { setContactCardSection(null); setContactCardOpen(true); }}
+                                />
+                            )}
+                            </div>
 
                             {/* Anonymous header card — replaces detail/wizard for the shared Anonymous timeline */}
                             {isAnonTimeline && (
@@ -337,17 +383,10 @@ export const PulsePage: React.FC = () => {
                                         />
                                     </div>
                                 ) : !p.leadLoading && p.contact?.id && p.contactDetail ? (
-                                    <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-success)' } as React.CSSProperties}>
-                                        <PulseContactPanel
-                                            contact={p.contactDetail.contact}
-                                            leads={p.contactDetail.leads}
-                                            loading={false}
-                                            timelineId={p.timelineId || (p.selectedConv as any)?.timeline_id || null}
-                                            onAddressesChanged={p.refreshContactDetail}
-                                            onContactChanged={p.refreshContactDetail}
-                                            onTasksChanged={p.refetchContacts}
-                                        />
-                                    </div>
+                                    // PULSE-CONTACT-PIN-001: the full contact card left the flow — the
+                                    // sticky bar above represents the contact; the card opens as an
+                                    // overlay panel (see the Dialog below the timeline).
+                                    null
                                 ) : !p.leadLoading && !p.contact?.id ? (
                                     <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-warning)' } as React.CSSProperties}>
                                         <div className="px-5 pt-3 pb-0">
@@ -392,8 +431,34 @@ export const PulsePage: React.FC = () => {
                                         emailConnected={p.emailConnected}
                                         selectedTarget={p.selectedTarget}
                                         onTargetChange={p.setSelectedTarget}
+                                        focusSignal={composerFocusSignal}
                                     />
                                 </div>
+                            )}
+
+                            {/* PULSE-CONTACT-PIN-001: the full contact card as a canonical panel
+                                (bottom sheet on mobile). Overlay, so opening it cannot disturb
+                                the timeline's scroll compensation. */}
+                            {showContactBar && (
+                                <Dialog open={contactCardOpen} onOpenChange={(open) => { setContactCardOpen(open); if (!open) setContactCardSection(null); }}>
+                                    <DialogContent variant="panel">
+                                        <DialogTitle className="sr-only">Contact details</DialogTitle>
+                                        <DialogDescription className="sr-only">Full contact card with notes, tasks, leads, jobs and addresses.</DialogDescription>
+                                        <DialogBody className="p-0">
+                                            <PulseContactPanel
+                                                contact={p.contactDetail!.contact}
+                                                leads={p.contactDetail!.leads}
+                                                jobs={p.contactJobs}
+                                                loading={false}
+                                                focusSection={contactCardSection}
+                                                timelineId={p.timelineId || (p.selectedConv as any)?.timeline_id || null}
+                                                onAddressesChanged={p.refreshContactDetail}
+                                                onContactChanged={p.refreshContactDetail}
+                                                onTasksChanged={p.refetchContacts}
+                                            />
+                                        </DialogBody>
+                                    </DialogContent>
+                                </Dialog>
                             )}
                         </>
                         );
