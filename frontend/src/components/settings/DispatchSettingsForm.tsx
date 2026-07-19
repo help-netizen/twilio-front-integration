@@ -55,7 +55,8 @@ export function DispatchSettingsForm({
     const [validationError, setValidationError] = useState('');
 
     useEffect(() => {
-        setForm({ ...settings, distance_unit: settings.distance_unit || 'mi' });
+        // Distances are always miles (US-only product); the unit is no longer configurable.
+        setForm({ ...settings, distance_unit: 'mi' });
         setValidationError('');
     }, [settings]);
 
@@ -89,31 +90,16 @@ export function DispatchSettingsForm({
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                <FloatingSelect
-                    label="Timezone"
-                    id={`${idPrefix}-timezone`}
-                    value={form.timezone}
-                    onValueChange={timezone => setForm(current => ({ ...current, timezone }))}
-                >
-                    {POPULAR_TIMEZONES.map(timezone => (
-                        <SelectItem key={timezone} value={timezone}>{timezone.replace(/_/g, ' ')}</SelectItem>
-                    ))}
-                </FloatingSelect>
-
-                <FloatingSelect
-                    label="Distance unit"
-                    id={`${idPrefix}-distance-unit`}
-                    value={form.distance_unit || 'mi'}
-                    onValueChange={distance_unit => setForm(current => ({
-                        ...current,
-                        distance_unit: distance_unit as 'mi' | 'km',
-                    }))}
-                >
-                    <SelectItem value="mi">Miles (mi)</SelectItem>
-                    <SelectItem value="km">Kilometers (km)</SelectItem>
-                </FloatingSelect>
-            </div>
+            <FloatingSelect
+                label="Timezone"
+                id={`${idPrefix}-timezone`}
+                value={form.timezone}
+                onValueChange={timezone => setForm(current => ({ ...current, timezone }))}
+            >
+                {POPULAR_TIMEZONES.map(timezone => (
+                    <SelectItem key={timezone} value={timezone}>{timezone.replace(/_/g, ' ')}</SelectItem>
+                ))}
+            </FloatingSelect>
 
             <div className="space-y-3.5">
                 <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">

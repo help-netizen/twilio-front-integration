@@ -109,7 +109,12 @@ export interface DispatchSettings {
     work_end_time: string;   // "18:00"
     work_days: number[];
     slot_duration: number;
-    distance_unit?: 'mi' | 'km';  // SCHED-ROUTE-001 C-13: route-leg distance unit
+    /**
+     * @deprecated Distances are always miles (US-only product). The picker was
+     * removed and the form always writes 'mi'; the column may still hold a
+     * legacy 'km' on old rows, so nothing reads this to choose a unit.
+     */
+    distance_unit?: 'mi' | 'km';
 }
 
 export interface ScheduleFilters {

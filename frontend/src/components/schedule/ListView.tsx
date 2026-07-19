@@ -50,7 +50,7 @@ export const ListView: React.FC<ListViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
-    const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
+    const unit = 'mi'; // Distances are always miles (US-only product).
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
     const dayKeys = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);

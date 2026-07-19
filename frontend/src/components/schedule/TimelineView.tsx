@@ -129,7 +129,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReschedule, onReassign, onCreateFromSlot, routeByPair, unavailability, providerFilterIds,
 }) => {
     const tz = settings.timezone || 'America/New_York';
-    const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
+    const unit = 'mi'; // Distances are always miles (US-only product).
     const slotDuration = settings.slot_duration || 60;
     const startHour = parseTime(settings.work_start_time);
     const endHour = parseTime(settings.work_end_time);
