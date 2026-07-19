@@ -106,8 +106,10 @@
     .sticky-stack { position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
     /* Every open task is listed, one under another (owner). The label stays a
        single eyebrow for the whole plaque instead of repeating per row. */
-    .action-required { min-height: 52px; display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: 14px; background: var(--blanc-accent-soft); }
-    .action-tasks { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+    /* Label sits ABOVE the list, not beside it (owner): as an eyebrow it ate ~110px
+       of every row's width on desktop and a quarter of the plaque on mobile. */
+    .action-required { min-height: 52px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 14px; border-radius: 14px; background: var(--blanc-accent-soft); }
+    .action-tasks { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
     .action-task { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .action-task > .action-copy { flex: 1; }
     .task-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }
@@ -139,7 +141,7 @@
     .device.mobile .task-action-label { display: none; }
     .device.mobile .task-action { padding: 0; width: 30px; }
     .task-action svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-    .action-label { flex: 0 0 auto; padding-top: 3px; color: var(--blanc-accent); font-size: 10px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
+    .action-label { flex: 0 0 auto; color: var(--blanc-accent); font-size: 10px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
     .action-copy { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
     .action-due { color: var(--blanc-danger); font-size: 11px; font-weight: 700; white-space: nowrap; }
 
@@ -195,10 +197,17 @@
     @container pinbar (max-width: 720px) {
       .identity-street { display: none; }
     }
-    @container pinbar (max-width: 620px) {
+    /* 760, not 620: below this the identity column got squeezed enough to ellipsise
+       the contact name while the buttons still carried labels. The name is the entry
+       point to the card — button labels are the cheaper thing to lose first. */
+    @container pinbar (max-width: 760px) {
       .pin-action-label { display: none; }
       .pin-action { padding: 0; width: 42px; }
       .identity { min-width: 0; }
+    }
+    /* The address line outlives the button labels — it is content, they are chrome.
+       It only goes when the bar is genuinely too narrow to carry two lines. */
+    @container pinbar (max-width: 470px) {
       .identity-company { display: none; }
     }
     .pin-action svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
