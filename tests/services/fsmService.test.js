@@ -18,11 +18,11 @@ const LEAD_SCXML = fs.readFileSync(path.resolve(__dirname, '../../fsm/lead.scxml
 describe('parseSCXML', () => {
   // TC-FSM-001: Valid SCXML produces correct graph
   describe('TC-FSM-001: valid SCXML produces correct graph', () => {
-    test('parses job.scxml with 7 states and correct transitions', () => {
+    test('parses job.scxml with 8 states and correct transitions', () => {
       const graph = parseSCXML(JOB_SCXML);
 
       expect(graph.initialState).toBe('Submitted');
-      expect(graph.states.size).toBe(7);
+      expect(graph.states.size).toBe(8);
       expect(graph.finalStates).toContain('Canceled');
       expect(graph.finalStates).toContain('Job_is_Done');
       expect(graph.finalStates).toHaveLength(2);
@@ -31,9 +31,13 @@ describe('parseSCXML', () => {
       expect(graph.metadata.machine).toBe('job');
       expect(graph.metadata.title).toBe('Job Workflow');
 
-      // Submitted has 3 outgoing transitions
+      // Submitted has 4 outgoing transitions (ONWAY-001 added TO_ON_THE_WAY)
       const submitted = graph.states.get('Submitted');
-      expect(submitted.transitions).toHaveLength(3);
+      expect(submitted.transitions).toHaveLength(4);
+
+      const toOnTheWay = submitted.transitions.find(t => t.event === 'TO_ON_THE_WAY');
+      expect(toOnTheWay).toBeDefined();
+      expect(toOnTheWay.target).toBe('On_the_way');
 
       const toFollowUp = submitted.transitions.find(t => t.event === 'TO_FOLLOW_UP');
       expect(toFollowUp).toBeDefined();
@@ -77,6 +81,7 @@ describe('parseSCXML', () => {
         'Canceled',
         'Follow_Up_with_Client',
         'Job_is_Done',
+        'On_the_way',
         'Rescheduled',
         'Submitted',
         'Visit_completed',
@@ -450,16 +455,16 @@ describe('getAvailableActions', () => {
   test('returns action buttons for Submitted state', async () => {
     const result = await getAvailableActions(COMPANY, MACHINE, 'Submitted', []);
     expect(result.fallback).toBe(false);
-    expect(result.actions.length).toBe(3);
+    expect(result.actions.length).toBe(4);
     expect(result.actions.map(a => a.event)).toEqual(
-      expect.arrayContaining(['TO_FOLLOW_UP', 'TO_WAITING_PARTS', 'TO_CANCELED']),
+      expect.arrayContaining(['TO_ON_THE_WAY', 'TO_FOLLOW_UP', 'TO_WAITING_PARTS', 'TO_CANCELED']),
     );
   });
 
   test('actions are sorted by order', async () => {
     const result = await getAvailableActions(COMPANY, MACHINE, 'Submitted', []);
     const orders = result.actions.map(a => a.order);
-    expect(orders).toEqual([1, 2, 3]);
+    expect(orders).toEqual([0, 1, 2, 3]);
   });
 
   // TC-FSM-023: Confirm metadata returned
@@ -562,8 +567,9 @@ describe('getAllStates', () => {
 
   test('returns all state statusNames from published graph', async () => {
     const states = await getAllStates(COMPANY, MACHINE);
-    expect(states).toHaveLength(7);
+    expect(states).toHaveLength(8);
     expect(states).toContain('Submitted');
+    expect(states).toContain('On the way');
     expect(states).toContain('Waiting for parts');
     expect(states).toContain('Follow Up with Client');
     expect(states).toContain('Visit completed');
