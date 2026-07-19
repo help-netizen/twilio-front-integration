@@ -16,6 +16,7 @@ import { CreateDialog, SecretDialog, RevokeDialog, RegenerateDialog } from './In
 import { RelyLeadsSettingsDialog } from './RelyLeadsSettingsDialog';
 import { RateMeSettingsDialog } from './RateMeSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { MarketplaceBrowser } from '../components/settings/MarketplaceBrowser';
 import { INTEGRATION_TAB_COPY, integrationTabFromSearchParams } from './integrationSettingsTabs';
 
 function formatDate(dateStr: string | null | undefined) {
@@ -229,12 +230,13 @@ export function IntegrationsPage() {
                             <p className="text-[var(--blanc-ink-2)]">No marketplace apps are published yet</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                            {apps.map(app => (
-                                <div key={app.app_key} className="flex min-h-[230px] flex-col rounded-xl border border-[var(--blanc-line)] bg-[var(--blanc-surface-strong)] p-5">
+                        <MarketplaceBrowser
+                            apps={apps}
+                            renderApp={app => (
+                                <div className="flex min-h-[230px] flex-col rounded-xl border border-[var(--blanc-line)] bg-[var(--blanc-surface-strong)] p-5">
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="min-w-0">
-                                            <h2 className="text-lg font-semibold truncate text-[var(--blanc-ink-1)]">{app.name}</h2>
+                                            <h3 className="text-lg font-semibold truncate text-[var(--blanc-ink-1)]">{app.name}</h3>
                                             <p className="text-sm text-[var(--blanc-ink-2)] mt-1">{app.provider_name} · {app.category.replace(/_/g, ' ')}</p>
                                         </div>
                                         {marketplaceStatusBadge(app)}
@@ -343,8 +345,8 @@ export function IntegrationsPage() {
                                         </div>
                                     </div>
                                 </div>
-                            ))}
-                        </div>
+                            )}
+                        />
                     )}
                 </TabsContent>
 

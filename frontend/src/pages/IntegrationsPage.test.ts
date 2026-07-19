@@ -17,4 +17,10 @@ describe('addressable Integrations tabs', () => {
         expect(pageSource).toContain("next.set('tab', value)");
         expect(pageSource).toContain("navigate('/settings/api-docs')");
     });
+
+    it('renders published Marketplace apps through the grouped catalog browser', () => {
+        expect(pageSource).toContain('<MarketplaceBrowser');
+        expect(pageSource).toContain('apps={apps}');
+        expect(pageSource).toContain('renderApp={app => (');
+    });
 });
