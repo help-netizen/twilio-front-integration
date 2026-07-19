@@ -80,3 +80,7 @@
 - **media-прокси** — НЕ дыра (случайный UUID выдаётся только внутри company-скоупнутого DTO; `<img src>` не шлёт JWT); задокументировано by-design.
 
 Замки: `twilioSignatureEnforcement`, `portalPublicGate` (behavioral), `publicSurfaceGates.structural` (регрессия). Оба гейта sabotage-проверены. **Оставшийся долг из этого — только выключенный портал: спроектировать OTP-доставку перед запуском.**
+
+## OB-13 (2026-07-19) — PULSE-PLAYER-001 — плавающий плеер записей в Pulse — **СДЕЛАН (в ветке)**
+
+Плеер записей из карточки звонка → плавающий hover-бар поверх Pulse (полоса прогресса с перемоткой, ±10s, скорость, нормальные размеры); карточка чище (чип + Summary/Transcript). Только Pulse: уход со страницы глушит звук. Ничего лишнего (без download/waveform/persist). Спека: `docs/specs/PULSE-PLAYER-001.md`.

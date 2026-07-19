@@ -6,11 +6,12 @@
  * no decorative backgrounds on summary/entities.
  */
 import { useState, useRef, useEffect } from 'react';
-import { useAuth } from '@/auth/AuthProvider';
 import { authedFetch } from '@/services/apiClient';
 import { useLiveTranscript } from '@/hooks/useLiveTranscript';
-import { Play, Pause, RotateCcw, RotateCw, Copy, Check } from 'lucide-react';
+import { Play, Pause, Copy, Check } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { formatPhoneDisplay } from '@/utils/phoneUtils';
+import { usePulsePlayer, buildTrackLabel, type PlayerTrack } from './pulsePlayer';
 import type { CallData, Entity, GeminiEntity } from '../call-list-item';
 
 const fmtAudio = (s: number) => {
@@ -28,8 +29,20 @@ const getSentiment = (score: number | null) => {
 };
 
 export function PulseCallAudioPlayer({ call }: { call: CallData }) {
-    const { token } = useAuth();
+    const player = usePulsePlayer();
     const liveLines = useLiveTranscript(call.callSid || '');
+
+    // PULSE-PLAYER-001: playback moved to the shared floating bar. The card only
+    // starts/stops ITS recording and forwards seeks; all transport UI lives there.
+    const track: PlayerTrack = {
+        callSid: call.callSid || '',
+        audioUrl: call.audioUrl || '',
+        label: buildTrackLabel(formatPhoneDisplay(call.direction === 'incoming' ? call.from : call.to), call.startTime),
+        durationHint: call.recordingDuration || call.totalDuration || call.duration || 0,
+    };
+    const isActiveTrack = !!call.callSid && player.track?.callSid === call.callSid;
+    const isPlaying = isActiveTrack && player.isPlaying;
+    const currentTime = isActiveTrack ? player.currentTime : 0;
     const isLiveStreaming = liveLines.length > 0 && !call.audioUrl;
 
     const [activeSection, setActiveSection] = useState<'summary' | 'transcription' | null>(
@@ -48,21 +61,6 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
     const [copiedSummary, setCopiedSummary] = useState(false);
     const geminiLoadedRef = useRef(false);
 
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [currentTime, setCurrentTime] = useState(0);
-    const [duration, setDuration] = useState(call.recordingDuration || call.totalDuration || call.duration || 0);
-    const audioRef = useRef<HTMLAudioElement>(null);
-
-    useEffect(() => {
-        const a = audioRef.current; if (!a) return;
-        const u = () => setCurrentTime(a.currentTime);
-        const d = () => { if (isFinite(a.duration)) setDuration(a.duration); };
-        const e = () => setIsPlaying(false);
-        a.addEventListener('timeupdate', u); a.addEventListener('loadedmetadata', d);
-        a.addEventListener('durationchange', d); a.addEventListener('ended', e);
-        return () => { a.removeEventListener('timeupdate', u); a.removeEventListener('loadedmetadata', d); a.removeEventListener('durationchange', d); a.removeEventListener('ended', e); };
-    }, []);
-
     useEffect(() => { if (liveLines.length > 0 && activeSection !== 'transcription') setActiveSection('transcription'); }, [liveLines.length > 0]);
 
     const mediaLoadedRef = useRef(false);
@@ -77,9 +75,6 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
         geminiLoadedRef.current = true; setGeminiStatus('loading');
         (async () => { try { const res = await authedFetch(`/api/calls/${call.callSid}/media`); if (!res.ok) throw new Error(); const data = await res.json(); const t = data.transcript; if (t) { if (!transcriptionText && t.text) setTranscriptionText(t.text); if (entities.length === 0 && t.entities?.length) setEntities(t.entities); if (sentimentScore === null && t.sentimentScore != null) setSentimentScore(t.sentimentScore); if (t.gemini_summary) { setGeminiSummary(t.gemini_summary); setGeminiEntities(t.gemini_entities || []); setGeminiStatus('ready'); } else setGeminiStatus('idle'); } else setGeminiStatus('idle'); } catch { setGeminiStatus('error'); } })();
     }, [activeSection, call.callSid]);
-
-    const handlePlayPause = () => { if (!audioRef.current) return; if (isPlaying) audioRef.current.pause(); else audioRef.current.play(); setIsPlaying(!isPlaying); };
-    const handleSkip = (s: number) => { if (!audioRef.current) return; audioRef.current.currentTime = Math.max(0, Math.min(audioRef.current.currentTime + s, duration)); };
 
     const handleResetTranscription = async () => { setIsTranscribing(true); setTranscribeError(null); try { await authedFetch(`/api/calls/${call.callSid}/transcript`, { method: 'DELETE' }); setTranscriptionText(null); setEntities([]); setSentimentScore(null); setGeminiSummary(null); setGeminiEntities([]); setGeminiStatus('idle'); setActiveGeminiIdx(null); geminiLoadedRef.current = false; mediaLoadedRef.current = false; const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' }); const data = await res.json(); if (!res.ok) throw new Error(data.error || 'Failed'); setTranscriptionText(data.transcript); if (data.entities) setEntities(data.entities); if (data.gemini_summary) { setGeminiSummary(data.gemini_summary); setGeminiEntities(data.gemini_entities || []); setGeminiStatus('ready'); } if (data.sentimentScore != null) setSentimentScore(data.sentimentScore); } catch (err: any) { setTranscribeError(err.message); } finally { setIsTranscribing(false); } };
     const handleGenerateTranscription = async () => { setIsTranscribing(true); setTranscribeError(null); try { const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' }); const data = await res.json(); if (!res.ok) throw new Error(data.error || 'Failed'); setTranscriptionText(data.transcript); if (data.entities) setEntities(data.entities); if (data.gemini_summary) { setGeminiSummary(data.gemini_summary); setGeminiEntities(data.gemini_entities || []); setGeminiStatus('ready'); } if (data.sentimentScore != null) setSentimentScore(data.sentimentScore); } catch (err: any) { setTranscribeError(err.message); } finally { setIsTranscribing(false); } };
@@ -121,10 +116,21 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
 
     return (
         <div className="px-4 pb-4">
-            <audio ref={audioRef} src={token ? `${call.audioUrl}?token=${encodeURIComponent(token)}` : call.audioUrl} preload="metadata" />
             <div className="space-y-3">
-                {/* Controls row: tabs + player + time */}
+                {/* Compact row: play chip + section tabs (transport lives in the floating bar) */}
                 <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => player.playTrack(track)}
+                        title={isPlaying ? 'Pause' : 'Play recording'}
+                        aria-label={isPlaying ? 'Pause' : 'Play recording'}
+                        className="h-7 shrink-0 flex items-center gap-1.5 pl-2 pr-2.5 rounded-full text-[11px] font-semibold transition-opacity hover:opacity-90"
+                        style={isActiveTrack
+                            ? { background: 'var(--blanc-accent)', color: '#fff' }
+                            : { background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
+                    >
+                        {isPlaying ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+                        {isPlaying ? 'Pause' : 'Play'}
+                    </button>
                     <div className="flex items-center gap-3 shrink-0">
                         {(() => {
                             const sd = getSentiment(sentimentScore);
@@ -153,20 +159,6 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                             {isLiveStreaming && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
                         </button>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => handleSkip(-10)} title="Rewind 10s" className="h-8 w-8 flex items-center justify-center transition-colors relative" style={{ color: 'var(--blanc-ink-3)' }}>
-                            <RotateCcw className="w-[18px] h-[18px]" /><span className="absolute text-[8px] font-semibold" style={{ marginTop: '1px' }}>10</span>
-                        </button>
-                        <button onClick={handlePlayPause} className="h-8 w-8 flex items-center justify-center transition-colors" style={{ color: 'var(--blanc-ink-2)' }}>
-                            {isPlaying ? <Pause className="w-[18px] h-[18px]" /> : <Play className="w-[18px] h-[18px]" />}
-                        </button>
-                        <button onClick={() => handleSkip(10)} title="Forward 10s" className="h-8 w-8 flex items-center justify-center transition-colors relative" style={{ color: 'var(--blanc-ink-3)' }}>
-                            <RotateCw className="w-[18px] h-[18px]" /><span className="absolute text-[8px] font-semibold" style={{ marginTop: '1px' }}>10</span>
-                        </button>
-                    </div>
-                    <span className="text-xs font-mono" style={{ color: 'var(--blanc-ink-3)' }}>
-                        {fmtAudio(currentTime)} / {fmtAudio(duration)}
-                    </span>
                 </div>
 
                 {/* ── Summary panel ── */}
@@ -223,12 +215,8 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                                         key={`ge-${ge.label}-${idx}`}
                                                         onClick={() => {
                                                             if (!hasTs) return;
-                                                            if (audioRef.current) {
-                                                                audioRef.current.currentTime = sec;
-                                                                setCurrentTime(sec);
-                                                                setActiveGeminiIdx(idx);
-                                                                if (!isPlaying) { audioRef.current.play(); setIsPlaying(true); }
-                                                            }
+                                                            player.seekTrack(track, sec);
+                                                            setActiveGeminiIdx(idx);
                                                         }}
                                                         className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors group ${hasTs ? 'cursor-pointer' : 'cursor-default'}`}
                                                         style={{
@@ -312,7 +300,7 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                             return (
                                                 <button
                                                     key={idx}
-                                                    onClick={() => { if (audioRef.current && sec != null) { audioRef.current.currentTime = sec; setCurrentTime(sec); if (!isPlaying) { audioRef.current.play(); setIsPlaying(true); } } }}
+                                                    onClick={() => { if (sec != null) player.seekTrack(track, sec); }}
                                                     className={`w-full flex items-baseline gap-2 px-2 py-1.5 rounded-lg text-left text-xs transition-colors ${sec != null ? 'cursor-pointer' : 'cursor-default'}`}
                                                     style={sec != null ? { color: 'var(--blanc-ink-1)' } : { color: 'var(--blanc-ink-2)' }}
                                                     onMouseEnter={e => { if (sec != null) e.currentTarget.style.background = 'rgba(25,25,25,0.05)'; }}

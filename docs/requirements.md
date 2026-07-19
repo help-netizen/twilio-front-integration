@@ -6914,3 +6914,7 @@ email = best-effort via the platform-sender company mailbox).
 - Marketplace install/disconnect + `marketplace_events` writes — extend, don't modify.
 - `technician_profiles` / `jobs.assigned_techs` / `jobsService` shapes — read-only.
 - FSM subsystem, leads/jobs flows, Pulse timeline, softphone — untouched.
+
+## PULSE-PLAYER-001 — плавающий плеер записей звонков в Pulse (OB-13) (2026-07-19)
+
+**Как владелец**, я слушаю записи звонков в Pulse и хочу нормальный плеер: полоса прогресса с перемоткой, нормальные размеры кнопок, скорость — при этом карточка звонка должна стать чище (кнопочный ряд уходит из неё в плавающий hover-бар поверх страницы). Плеер живёт только в Pulse: ушёл на другую страницу — звук остановился. Ничего лишнего: без download, waveform, запоминания скорости, глобального плеера. Seek по клику из транскрипта/entities обязан продолжать работать. Спека: `docs/specs/PULSE-PLAYER-001.md`.
