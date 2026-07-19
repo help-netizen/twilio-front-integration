@@ -934,7 +934,7 @@ router.post('/ensure-timeline', async (req, res) => {
 });
 
 // =============================================================================
-// POST /api/pulse/threads/:id/mark-handled — clear Action Required + close task
+// POST /api/pulse/threads/:id/mark-handled — clear a taskless manual AR flag
 // =============================================================================
 router.post('/threads/:id/mark-handled', async (req, res) => {
     try {
@@ -944,8 +944,11 @@ router.post('/threads/:id/mark-handled', async (req, res) => {
         const inCompany = await getTimelineInCompany(timelineId, tenantCompanyId(req));
         if (!inCompany) return res.status(404).json({ error: 'Timeline not found' });
 
-        const tl = await queries.markThreadHandled(timelineId);
-        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+        const tl = await queries.markThreadHandled(timelineId, tenantCompanyId(req));
+        // AR-TASKS-001: task-backed Action Required state must be handled one
+        // task at a time through PATCH /api/tasks/:id. This endpoint is retained
+        // only for a manual legacy flag with no open tasks.
+        if (!tl) return res.status(409).json({ error: 'Complete open tasks individually' });
 
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('thread.handled', {

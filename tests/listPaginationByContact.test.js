@@ -97,13 +97,24 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         expect(sql).toContain('COUNT(*) OVER()');
     });
 
+    it('aggregates every company-owned open task in due order without an N+1', async () => {
+        const [sql] = await run();
+        expect(sql).toContain("COALESCE(open_tasks.tasks, '[]'::jsonb) as open_tasks");
+        expect(sql).toContain('jsonb_agg(');
+        expect(sql).toContain('ot.company_id = tl.company_id');
+        expect(sql).toContain("ot.thread_id = tl.id");
+        expect(sql).toContain("ot.status = 'open'");
+        expect(sql).toContain('ORDER BY ot.due_at ASC NULLS LAST, ot.created_at ASC, ot.id ASC');
+        expect(db.query).toHaveBeenCalledTimes(1);
+    });
+
     it('ORDER BY = AR-band CASE + unread band + last_interaction DESC + timeline_id DESC tiebreak', async () => {
         const [sql] = await run();
         const orderIdx = sql.indexOf('ORDER BY');
         expect(orderIdx).toBeGreaterThan(-1);
         const order = sql.slice(orderIdx);
         // Band 1: Action-Required (open task) AND not snoozed → 0
-        expect(order).toContain('open_task.id IS NOT NULL');
+        expect(order).toContain('COALESCE(open_tasks.task_count, 0) > 0');
         expect(order).toContain('tl.snoozed_until IS NULL OR tl.snoozed_until <= now()');
         // AR rows ordered by action_required_set_at DESC
         expect(order).toContain('tl.action_required_set_at END DESC NULLS LAST');
@@ -131,9 +142,9 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
 
     // BLOCKER 1 — an open-task-only timeline (no call/sms/email, is_action_required
     // false, has_unread false) must still SURFACE. The regression was a WHERE that
-    // dropped `open_task.id IS NOT NULL`; the AR band pins exactly those rows, so
+    // dropped the open-task count predicate; the AR band pins exactly those rows, so
     // the surfacing predicate must include it (mirrors the pre-rewrite route).
-    it('surfacing WHERE includes open_task.id IS NOT NULL (open-task-only rows appear)', async () => {
+    it('surfacing WHERE includes open task count (open-task-only rows appear)', async () => {
         const [sql] = await run();
         // The outer WHERE is uniquely `WHERE tl.company_id = $1` (inner laterals use
         // their own aliases); the top-level ORDER BY is the LAST one (laterals/CTE
@@ -143,7 +154,7 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         expect(whereIdx).toBeGreaterThan(-1);
         expect(orderIdx).toBeGreaterThan(whereIdx);
         const where = sql.slice(whereIdx, orderIdx);
-        expect(where).toContain('open_task.id IS NOT NULL');
+        expect(where).toContain('COALESCE(open_tasks.task_count, 0) > 0');
         // The full surfacing set (all 3 channels + open task + legacy flag + unread).
         expect(where).toContain('latest_call.id IS NOT NULL');
         expect(where).toContain('sms.sms_conversation_id IS NOT NULL');
@@ -177,9 +188,9 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
     });
 
     // SHOULD-FIX — AR must mean ONE thing. Both the WHERE surfacing and the ORDER BY
-    // tier-0 band key on open_task.id (the signal the frontend pins on); the legacy
+    // tier-0 band keys on the open task count (the signal the frontend pins on); the legacy
     // is_action_required is a surfacing-only signal, never the pin.
-    it('AR signal is consistent: open_task.id in BOTH the surfacing WHERE and the tier-0 ORDER BY band', async () => {
+    it('AR signal is consistent: task count in BOTH the surfacing WHERE and tier-0 ORDER BY', async () => {
         const [sql] = await run();
         // Strip -- line comments so token assertions test real SQL, not prose.
         const code = sql.replace(/--[^\n]*/g, '');
@@ -188,10 +199,10 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         const where = code.slice(whereIdx, orderIdx);
         const order = code.slice(orderIdx);
         // Same AR signal on both sides.
-        expect(where).toContain('open_task.id IS NOT NULL');
-        expect(order).toContain('open_task.id IS NOT NULL');
-        // The tier-0 (value 0) band is guarded by open_task.id + not-snoozed.
-        expect(order).toMatch(/CASE WHEN open_task\.id IS NOT NULL\s+AND \(tl\.snoozed_until IS NULL OR tl\.snoozed_until <= now\(\)\)\s+THEN 0/);
+        expect(where).toContain('COALESCE(open_tasks.task_count, 0) > 0');
+        expect(order).toContain('COALESCE(open_tasks.task_count, 0) > 0');
+        // The tier-0 (value 0) band is guarded by task count + not-snoozed.
+        expect(order).toMatch(/CASE WHEN COALESCE\(open_tasks\.task_count, 0\) > 0\s+AND \(tl\.snoozed_until IS NULL OR tl\.snoozed_until <= now\(\)\)\s+THEN 0/);
         // is_action_required is NEVER used to pin (absent from the real ORDER BY SQL).
         expect(order).not.toContain('is_action_required');
     });
@@ -642,6 +653,25 @@ describe('GET /api/calls/by-contact — route', () => {
         expect(conv.open_task).toMatchObject({ id: 900 });
     });
 
+    it('OB-11 projection: returns every ordered open task and keeps the first-task alias', async () => {
+        const tasks = [
+            { id: 101, title: 'Confirm access', due_at: '2026-07-20T13:00:00Z' },
+            { id: 102, title: 'Send revised estimate', due_at: '2026-07-20T15:00:00Z' },
+        ];
+        mockGetUnifiedTimelinePage.mockResolvedValue([row(12, {
+            open_tasks: tasks,
+            open_task_count: 2,
+            is_action_required: true,
+        })]);
+
+        const res = await request(callsApp(), 'GET', '/api/calls/by-contact');
+        const conv = res.body.conversations[0];
+        expect(conv.has_open_task).toBe(true);
+        expect(conv.open_task_count).toBe(2);
+        expect(conv.open_tasks).toEqual(tasks);
+        expect(conv.open_task).toEqual(tasks[0]);
+    });
+
     // BLOCKER 2 (route contract) — dedup happens in SQL, so the route receives ONE
     // canonical (contact-linked) row per person and must not re-expand it. Given the
     // post-dedup SQL result, the response contains exactly one row for that person.
@@ -784,11 +814,11 @@ describe('GET /api/calls/by-contact — route', () => {
             'email_thread_id', 'has_unread', 'tl_has_unread', 'sms_has_unread',
             'sms_conversation_id', 'timeline_id', 'tl_phone', 'is_action_required',
             'action_required_reason', 'action_required_set_at', 'snoozed_until',
-            'owner_user_id', 'has_open_task', 'open_task_count', 'open_task',
+            'owner_user_id', 'has_open_task', 'open_task_count', 'open_tasks', 'open_task',
         ]) {
             expect(conv).toHaveProperty(key);
         }
-        // …and NOTHING was added/removed/renamed vs the pre-change route shape
+        // …and only the additive full open_tasks array changes the route shape
         // (formatCall spread + contact + the mapped fields; price/price_unit are
         // undefined on this fixture and JSON-dropped, exactly as before).
         // display_name/external_source joined the frozen set in YELP-TL-DEDUP-002
@@ -802,7 +832,7 @@ describe('GET /api/calls/by-contact — route', () => {
             'duration_sec', 'email_thread_id', 'ended_at', 'external_source', 'from_number',
             'has_open_task', 'has_unread', 'id', 'is_action_required', 'is_final',
             'last_interaction_at', 'last_interaction_phone', 'last_interaction_type',
-            'open_task', 'open_task_count', 'owner_user_id', 'parent_call_sid',
+            'open_task', 'open_task_count', 'open_tasks', 'owner_user_id', 'parent_call_sid',
             'sms_conversation_id', 'sms_has_unread', 'snoozed_until', 'started_at',
             'status', 'timeline_id', 'tl_has_unread', 'tl_phone', 'to_number',
             'updated_at',

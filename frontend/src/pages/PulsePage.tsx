@@ -6,22 +6,20 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { usePulsePage } from '../hooks/usePulsePage';
-import { PulseContactItem, REASON_LABELS } from '../components/pulse/PulseContactItem';
-import { AssignOwnerDropdown } from '../components/pulse/AssignOwnerDropdown';
-import { SnoozeDropdown } from '../components/pulse/SnoozeDropdown';
+import { PulseContactItem } from '../components/pulse/PulseContactItem';
+import { ActionRequiredPlaque } from '../components/pulse/ActionRequiredPlaque';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
 import { TaskFormDialog } from '../components/tasks/TaskFormDialog';
-import { TaskActionButtons } from '../components/tasks/TaskActionButtons';
 import { createTask, type Task } from '../components/tasks/tasksApi';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
 import { OnboardingChecklistCard } from '../components/onboarding/OnboardingChecklistCard';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Skeleton } from '../components/ui/skeleton';
-import { PhoneOff, Activity, Clock, CheckCircle2, AlertTriangle, ChevronLeft, Sparkles } from 'lucide-react';
+import { PhoneOff, Activity, ChevronLeft } from 'lucide-react';
 import { callsApi } from '../services/api';
 import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
@@ -32,6 +30,10 @@ import { dateKeyInTZ, todayInTZ } from '../utils/companyTime';
 import './PulsePage.css';
 
 const NO_DATE_KEY = '__no_date__';
+
+const conversationNeedsAction = (conversation: any) =>
+    conversation.has_open_task === true
+    || (conversation.is_action_required === true && conversation.action_required_reason === 'manual');
 
 /** Friendly group label from a "YYYY-MM-DD" date-key (mirrors JobsMobileList). */
 function groupLabel(key: string, timezone: string): string {
@@ -68,7 +70,7 @@ export const PulsePage: React.FC = () => {
         ? p.filteredCalls
         : activeFilter === 'unread'
             ? p.filteredCalls.filter((c: any) => c.tl_has_unread || c.sms_has_unread || c.has_unread)
-            : p.filteredCalls.filter((c: any) => c.has_open_task);
+            : p.filteredCalls.filter(conversationNeedsAction);
 
     // Grouped sidebar: an "Action Required" section pinned at the top (AR and not
     // currently snoozed), then the rest grouped by activity day (descending).
@@ -80,7 +82,7 @@ export const PulsePage: React.FC = () => {
         for (const call of displayedCalls) {
             const c = call as any;
             const isSnoozed = c.snoozed_until && new Date(c.snoozed_until).getTime() > now;
-            if (c.has_open_task === true && !isSnoozed) {
+            if (conversationNeedsAction(c) && !isSnoozed) {
                 actionRequired.push(call);
                 continue;
             }
@@ -276,105 +278,34 @@ export const PulsePage: React.FC = () => {
                         const canEmailReply = p.emailConnected && (p.contactEmails?.length ?? 0) > 0;
                         return (
                         <>
-                            {/* Action Required bar — its own floating card */}
-                            {(() => {
-                                const conv = p.selectedConv as any;
-                                if (!conv?.has_open_task) return null;
-                                const isSnoozed = conv.snoozed_until && new Date(conv.snoozed_until) > new Date();
-                                const tlId = conv.timeline_id;
-                                return (
-                                    <div
-                                        className="pulse-card pulse-card-visible-overflow pulse-ar-sticky"
-                                        style={{ backgroundColor: isSnoozed ? 'var(--blanc-surface-muted)' : '#fff7ed' }}
-                                    >
-                                        <div className="flex items-center gap-2.5 px-5 py-3">
-                                            <span
-                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold"
-                                                style={{
-                                                    backgroundColor: isSnoozed ? 'rgba(118,106,89,0.12)' : '#fed7aa',
-                                                    color: isSnoozed ? 'var(--blanc-ink-2)' : '#9a3412',
-                                                }}
-                                            >
-                                                {isSnoozed ? <Clock className="size-3.5" /> : <AlertTriangle className="size-3.5" />}
-                                                {isSnoozed ? 'Snoozed' : 'Action Required'}
-                                            </span>
-                                            {conv.action_required_reason && (
-                                                <span className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>{REASON_LABELS[conv.action_required_reason] || conv.action_required_reason}</span>
-                                            )}
-                                            {conv.open_task?.due_at && !isSnoozed && (
-                                                <span className="text-sm font-medium" style={{ color: 'var(--blanc-danger)' }}>
-                                                    Due {new Date(conv.open_task.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: companyTz })}
-                                                </span>
-                                            )}
-                                            {isSnoozed && (
-                                                <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
-                                                    until {new Date(conv.snoozed_until).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                                                </span>
-                                            )}
-                                        </div>
-                                        {/* Task text — the "why" of this Action Required. Shown for any task whose
-                                            detail isn't already surfaced by the Mail Secretary reason block below. */}
-                                        {!(conv.open_task?.kind === 'agent' && conv.open_task?.agent_output?.reason) && (conv.open_task?.description || conv.open_task?.title) && (
-                                            <div className="px-5 pb-3">
-                                                <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-1)' }}>
-                                                    {conv.open_task.description || conv.open_task.title}
-                                                </p>
-                                            </div>
-                                        )}
-                                        {/* MAIL-AGENT-001: agent comment — why the Mail Secretary flagged this thread */}
-                                        {conv.open_task?.kind === 'agent' && conv.open_task?.agent_output?.reason && (
-                                            <div className="flex items-start gap-2.5 px-5 pb-3">
-                                                <span
-                                                    className="inline-flex items-center gap-1 shrink-0"
-                                                    style={{
-                                                        fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
-                                                        background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)',
-                                                        padding: '3px 8px', borderRadius: 8, fontWeight: 600, marginTop: 1,
-                                                    }}
-                                                >
-                                                    <Sparkles className="size-3" /> Mail Secretary
-                                                </span>
-                                                <span className="text-sm min-w-0" style={{ color: 'var(--blanc-ink-1)' }}>
-                                                    {conv.open_task.title && <span className="font-medium">{conv.open_task.title}. </span>}
-                                                    <span style={{ color: 'var(--blanc-ink-2)' }}>{conv.open_task.agent_output.reason}</span>
-                                                </span>
-                                            </div>
-                                        )}
-                                        {!isSnoozed && (
-                                            <div className="flex items-center gap-2.5 px-5 pb-3">
-                                                <button
-                                                    onClick={() => { if (tlId) pulseApi.markHandled(tlId).then(() => { p.refetchContacts(); toast.success('Marked as done'); }).catch(() => toast.error('Failed')); }}
-                                                    className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-80"
-                                                    style={{ color: 'var(--blanc-success)', backgroundColor: 'rgba(27,139,99,0.1)', minHeight: 42, borderRadius: 14 }}
-                                                >
-                                                    <CheckCircle2 className="size-4" /> Done
-                                                </button>
-                                                <SnoozeDropdown
-                                                    companyTz={companyTz}
-                                                    onSnooze={(until) => { if (tlId) pulseApi.snoozeThread(tlId, until).then(() => { p.refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed')); }}
-                                                />
-                                                <AssignOwnerDropdown timelineId={tlId} onAssigned={() => p.refetchContacts()} />
-                                            </div>
-                                        )}
-                                        {/* OUTBOUND-PARTS-CALL-BTN-001: typed action buttons (🤖 robot_call /
-                                            📞 manual_call) hydrated onto open_task — ADDITIONAL to Done/Snooze/Assign.
-                                            Hidden while snoozed; TaskActionButtons self-gates on tasks.manage. */}
-                                        {!isSnoozed && (conv.open_task?.actions?.length ?? 0) > 0 && (
-                                            <div className="px-5 pb-3">
-                                                <TaskActionButtons
-                                                    id={conv.open_task.id}
-                                                    actions={conv.open_task.actions}
-                                                    done={false}
-                                                    phone={p.phone}
-                                                    contactName={p.contact?.full_name || conv.contact?.full_name || undefined}
-                                                    jobId={conv.open_task?.parent_type === 'job' ? conv.open_task?.parent_id : undefined}
-                                                    onChanged={p.refetchContacts}
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })()}
+                            {/* One row per task; taskless manual flags keep thread-level controls. */}
+                            <ActionRequiredPlaque
+                                timelineId={(p.selectedConv as any)?.timeline_id || null}
+                                tasks={(p.selectedConv as any)?.open_tasks || ((p.selectedConv as any)?.open_task ? [(p.selectedConv as any).open_task] : [])}
+                                isManuallyRequired={!!(p.selectedConv as any)?.is_action_required
+                                    && (p.selectedConv as any)?.action_required_reason === 'manual'
+                                    && !(p.selectedConv as any)?.has_open_task}
+                                reason={(p.selectedConv as any)?.action_required_reason}
+                                snoozedUntil={(p.selectedConv as any)?.snoozed_until}
+                                companyTz={companyTz}
+                                phone={p.phone}
+                                contactName={p.contact?.full_name || (p.selectedConv as any)?.contact?.full_name}
+                                onChanged={p.refetchContacts}
+                                onClearManual={() => {
+                                    const tlId = (p.selectedConv as any)?.timeline_id;
+                                    if (!tlId) return;
+                                    pulseApi.markHandled(tlId)
+                                        .then(() => { p.refetchContacts(); toast.success('Marked as done'); })
+                                        .catch(() => toast.error('Failed'));
+                                }}
+                                onSnoozeManual={(until) => {
+                                    const tlId = (p.selectedConv as any)?.timeline_id;
+                                    if (!tlId) return;
+                                    pulseApi.snoozeThread(tlId, until)
+                                        .then(() => { p.refetchContacts(); toast.success('Snoozed'); })
+                                        .catch(() => toast.error('Failed'));
+                                }}
+                            />
 
                             {/* Anonymous header card — replaces detail/wizard for the shared Anonymous timeline */}
                             {isAnonTimeline && (

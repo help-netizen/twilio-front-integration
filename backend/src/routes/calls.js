@@ -185,6 +185,24 @@ router.get('/by-contact', async (req, res) => {
                 last_interaction_phone = pickPhone(tlPhone, c.contact?.phone_e164);
             }
 
+            // AR-TASKS-001: the unified page query returns the complete ordered
+            // task list in one JSON aggregate. Keep `open_task` as the first-item
+            // compatibility alias for sidebar previews and older consumers.
+            const openTasks = Array.isArray(c.open_tasks)
+                ? c.open_tasks
+                : (c.open_task_id ? [{
+                    id: c.open_task_id,
+                    title: c.open_task_title,
+                    description: c.open_task_description || null,
+                    due_at: c.open_task_due_at,
+                    priority: c.open_task_priority,
+                    kind: c.open_task_kind || 'user',
+                    agent_output: c.open_task_agent_output || null,
+                    actions: c.open_task_actions || null,
+                    parent_id: c.open_task_parent_id ?? null,
+                    parent_type: c.open_task_parent_type || null,
+                }] : []);
+
             return {
                 ...formatted,
                 timeline_id: c.tl_id || c.timeline_id || null,
@@ -211,25 +229,10 @@ router.get('/by-contact', async (req, res) => {
                 snoozed_until: c.snoozed_until || null,
                 owner_user_id: c.owner_user_id || null,
                 // AR-TASK-UNIFY-001: "Action Required" is derived from open tasks.
-                has_open_task: !!c.open_task_id,
-                open_task_count: Number(c.open_task_count) || 0,
-                open_task: c.open_task_id ? {
-                    id: c.open_task_id,
-                    title: c.open_task_title,
-                    description: c.open_task_description || null,
-                    due_at: c.open_task_due_at,
-                    priority: c.open_task_priority,
-                    // MAIL-AGENT-001: agent tasks carry the triage comment for the AR bar.
-                    kind: c.open_task_kind || 'user',
-                    agent_output: c.open_task_agent_output || null,
-                    // OUTBOUND-PARTS-CALL-BTN-001: typed action buttons for the AR bar.
-                    actions: c.open_task_actions || null,
-                    // SLOTPICK-001 (SP-03): the task's parent (job) id/type so the Pulse AR
-                    // robot-call button can getJob(jobId) for coords — mirrors TaskCard's
-                    // parent_type/parent_id. Additive.
-                    parent_id: c.open_task_parent_id ?? null,
-                    parent_type: c.open_task_parent_type || null,
-                } : null,
+                has_open_task: openTasks.length > 0,
+                open_task_count: Number(c.open_task_count) || openTasks.length,
+                open_tasks: openTasks,
+                open_task: openTasks[0] || null,
             };
         });
 

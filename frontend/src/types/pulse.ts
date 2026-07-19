@@ -122,6 +122,11 @@ export interface PulseTask {
      *  banner resolve the jobId for the robot_call slot-picker. */
     parent_id?: number;
     parent_type?: string;
+    owner_user_id?: string | null;
+    author_user_id?: string | null;
+    assignee_name?: string | null;
+    assignee_email?: string | null;
+    author_email?: string | null;
 }
 
 export interface ActionRequiredState {
@@ -130,5 +135,6 @@ export interface ActionRequiredState {
     action_required_set_at: string | null;
     snoozed_until: string | null;
     owner_user_id: string | null;
+    open_tasks: PulseTask[];
     open_task: PulseTask | null;
 }

@@ -51,6 +51,13 @@ describe('gating', () => {
         expect(res.status).toBe(403);
         expect(mockQuery).not.toHaveBeenCalled();
     });
+
+    test('PATCH /:id without tasks.view → 403, no query (R-matrix deny)', async () => {
+        const res = await request(makeApp({ permissions: ['pulse.view'] }))
+            .patch('/api/tasks/7').send({ status: 'done' });
+        expect(res.status).toBe(403);
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
 });
 
 describe('GET / — visibility scope', () => {
@@ -370,6 +377,37 @@ describe('PATCH /:id — edit / complete / snooze', () => {
         const res = await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] }))
             .patch('/api/tasks/8').send({ status: 'done' });
         expect(res.status).toBe(200);
+    });
+
+    test('timeline completion clears the legacy flag only when no company-owned open task remains', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 10, thread_id: 77, owner_user_id: ME, author_user_id: OTHER, status: 'open' }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 10 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 10, thread_id: 77, status: 'done' }] });
+        // A second open task still exists, so the conditional timeline UPDATE affects 0 rows.
+        mockQuery.mockResolvedValueOnce({ rowCount: 0 });
+
+        const res = await request(makeApp()).patch('/api/tasks/10').send({ status: 'done' });
+
+        expect(res.status).toBe(200);
+        const [sql, params] = mockQuery.mock.calls[3];
+        expect(sql).toContain('tl.company_id = $1 AND tl.id = $2');
+        expect(sql).toContain('remaining.company_id = $1');
+        expect(sql).toContain("remaining.status = 'open'");
+        expect(params).toEqual([COMPANY, 77]);
+    });
+
+    test('per-task assignment patches only the requested company-owned task', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 11, owner_user_id: ME, author_user_id: ME, status: 'open' }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 11 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 11, owner_user_id: OTHER, status: 'open' }] });
+
+        const res = await request(makeApp()).patch('/api/tasks/11').send({ owner_user_id: OTHER });
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.task.owner_user_id).toBe(OTHER);
+        const [sql, params] = mockQuery.mock.calls[1];
+        expect(sql).toContain('WHERE company_id = $1 AND id = $2');
+        expect(params).toEqual([COMPANY, '11', OTHER]);
     });
 });
 

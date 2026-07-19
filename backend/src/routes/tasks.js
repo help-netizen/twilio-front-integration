@@ -188,6 +188,16 @@ router.patch('/:id', requirePermission('tasks.view'), async (req, res) => {
         }
 
         const task = await tasksQueries.updateTask(companyId(req), req.params.id, patch);
+        // AR-TASKS-001: the timeline flag is legacy metadata, but manual-flag
+        // rows still depend on it. Clear it only after the FINAL open task on
+        // this company-owned timeline is completed. A task may be job-parented
+        // and thread-linked at the same time, so use the raw thread_id rather
+        // than the derived parent_type.
+        if (patch.status === 'done' && existing.thread_id != null) {
+            await tasksQueries.clearTimelineActionRequiredIfNoOpenTasks(
+                companyId(req), existing.thread_id
+            );
+        }
         // TASKS-COUNT-BADGE-001: emit ONCE when a status flip (complete/reopen) or
         // an owner reassign was in the patch — those move the open-count. A pure
         // description/due/snooze edit does NOT change any count → stay silent (S7).

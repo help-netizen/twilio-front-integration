@@ -392,11 +392,12 @@ async function resolveYelpTimeline(companyId, convId, msg, client = db) {
  *
  * SURFACING + AR: a timeline surfaces if it has ANY signal — call, SMS, email,
  * an OPEN TASK, the legacy is_action_required flag, or unread. The AR band (sort
- * tier 0) pins on the SAME canonical signal the frontend pins on: `open_task.id`
+ * tier 0) pins on the SAME canonical signal the frontend pins on: open task count
  * (has an open task) AND not snoozed — NOT is_action_required, which AR-TASK-
  * UNIFY-001 deprecated as a pin (kept here only as a surfacing signal so the old
  * route's rows still appear). WHERE and ORDER BY therefore reference one AR
- * definition.
+ * definition. The lateral task aggregate returns every open task in due order;
+ * it is part of this one page query, not a per-conversation API fetch.
  *
  * DEDUP: one row per person, enforced in SQL BEFORE the LIMIT (never in JS after,
  * which would shrink a page below `limit` and break the frontend's
@@ -564,20 +565,8 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              tl.snoozed_until,
              tl.owner_user_id,
              co.has_unread as contact_has_unread,
-             open_task.id as open_task_id,
-             open_task.title as open_task_title,
-             open_task.description as open_task_description,
-             open_task.due_at as open_task_due_at,
-             open_task.priority as open_task_priority,
-             open_task.kind as open_task_kind,
-             open_task.agent_output as open_task_agent_output,
-             open_task.actions as open_task_actions,
-             -- SLOTPICK-001 (SP-03): expose the open task's parent (job) id/type so the
-             -- Pulse AR robot-call button can getJob(jobId) for coords. Mirrors the
-             -- getTaskById SELECT_TASK projection. Additive — WHERE/ORDER/params unchanged.
-             open_task.parent_id as open_task_parent_id,
-             open_task.parent_type as open_task_parent_type,
-             COALESCE(open_task.task_count, 0) as open_task_count,
+             COALESCE(open_tasks.tasks, '[]'::jsonb) as open_tasks,
+             COALESCE(open_tasks.task_count, 0) as open_task_count,
              sms.last_message_at as sms_last_message_at,
              sms.last_message_direction as sms_last_message_direction,
              sms.last_message_preview as sms_last_message_preview,
@@ -613,28 +602,43 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              LIMIT 1
          ) latest_call ON true
          LEFT JOIN LATERAL (
-             SELECT ot.id, ot.title, ot.description, ot.due_at, ot.priority,
-                    ot.kind, ot.agent_output, ot.actions,
-                    -- SLOTPICK-001 (SP-03): derive parent_type/_id via the SAME CASE the
-                    -- getTaskById SELECT_TASK projection uses (job/lead/estimate/invoice/
-                    -- contact/timeline), so a Pulse AR consumer resolves the job id exactly
-                    -- as the Job-card TaskCard does.
-                    CASE
-                        WHEN ot.job_id      IS NOT NULL THEN 'job'
-                        WHEN ot.lead_id     IS NOT NULL THEN 'lead'
-                        WHEN ot.estimate_id IS NOT NULL THEN 'estimate'
-                        WHEN ot.invoice_id  IS NOT NULL THEN 'invoice'
-                        WHEN ot.contact_id  IS NOT NULL THEN 'contact'
-                        WHEN ot.thread_id   IS NOT NULL THEN 'timeline'
-                    END AS parent_type,
-                    COALESCE(ot.job_id, ot.lead_id, ot.estimate_id, ot.invoice_id, ot.contact_id, ot.thread_id) AS parent_id,
-                    (SELECT count(*) FROM tasks tc
-                      WHERE tc.thread_id = tl.id AND tc.status = 'open') AS task_count
+             SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'id', ot.id,
+                            'title', ot.title,
+                            'description', ot.description,
+                            'due_at', ot.due_at,
+                            'priority', ot.priority,
+                            'kind', ot.kind,
+                            'agent_output', ot.agent_output,
+                            'actions', ot.actions,
+                            'owner_user_id', ot.owner_user_id,
+                            'author_user_id', ot.author_user_id,
+                            'assignee_name', assignee.full_name,
+                            'assignee_email', assignee.email,
+                            'author_email', author.email,
+                            -- SLOTPICK-001: retain the task's actual parent so a
+                            -- job-linked Pulse task can open the slot picker.
+                            'parent_type', CASE
+                                WHEN ot.job_id      IS NOT NULL THEN 'job'
+                                WHEN ot.lead_id     IS NOT NULL THEN 'lead'
+                                WHEN ot.estimate_id IS NOT NULL THEN 'estimate'
+                                WHEN ot.invoice_id  IS NOT NULL THEN 'invoice'
+                                WHEN ot.contact_id  IS NOT NULL THEN 'contact'
+                                WHEN ot.thread_id   IS NOT NULL THEN 'timeline'
+                            END,
+                            'parent_id', COALESCE(ot.job_id, ot.lead_id, ot.estimate_id, ot.invoice_id, ot.contact_id, ot.thread_id)
+                        )
+                        ORDER BY ot.due_at ASC NULLS LAST, ot.created_at ASC, ot.id ASC
+                    ) AS tasks,
+                    COUNT(*)::int AS task_count
              FROM tasks ot
-             WHERE ot.thread_id = tl.id AND ot.status = 'open'
-             ORDER BY ot.due_at ASC NULLS LAST, ot.created_at ASC
-             LIMIT 1
-         ) open_task ON true
+             LEFT JOIN crm_users assignee ON assignee.id = ot.owner_user_id
+             LEFT JOIN crm_users author ON author.id = ot.author_user_id
+             WHERE ot.company_id = tl.company_id
+               AND ot.thread_id = tl.id
+               AND ot.status = 'open'
+         ) open_tasks ON true
          LEFT JOIN LATERAL (
              SELECT sc.last_message_at, sc.last_message_direction,
                     sc.last_message_preview, sc.friendly_name, sc.has_unread,
@@ -682,7 +686,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
          WHERE tl.company_id = $1
            -- Surfacing predicate: a timeline appears if it has ANY signal. This
            -- mirrors the pre-rewrite /by-contact WHERE exactly, including
-           -- open_task.id IS NOT NULL — a timeline whose ONLY signal is an open
+           -- open_tasks.task_count > 0 — a timeline whose ONLY signal is an open
            -- task (dispatcher follow-up on a contact that never called/texted/
            -- emailed; is_action_required stays false because task creation does
            -- NOT set it, per AR-TASK-UNIFY-001) must still surface, since the AR
@@ -698,7 +702,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
                 -- YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline surfaces on
                 -- its timeline-keyed email signal (no contact/call/SMS to lean on).
                 OR eml_tl.email_thread_id IS NOT NULL
-                OR open_task.id IS NOT NULL
+                OR COALESCE(open_tasks.task_count, 0) > 0
                 OR tl.is_action_required = true OR tl.has_unread = true)
            -- Orphan-shadow dedup (done in SQL, BEFORE the LIMIT, so the page stays
            -- exactly <= limit — a post-LIMIT JS dedup would shrink a page below the
@@ -726,16 +730,16 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
            )
            ${searchFilter}
          ORDER BY
-           -- Tier 0 = Action Required. Canonical AR signal = open_task.id (has an
+           -- Tier 0 = Action Required. Canonical AR signal = task_count > 0 (has an
            -- open task) AND not currently snoozed. This is the SAME signal the WHERE
-           -- surfaces on (open_task.id above) and the SAME signal the frontend pins
+           -- surfaces on (open_tasks above) and the SAME signal the frontend pins
            -- on (PulsePage sidebar builds its "Action Required" section from
-           -- has_open_task = !!open_task_id, NOT from is_action_required — see
+           -- has_open_task = open_tasks.length > 0, NOT from is_action_required — see
            -- AR-TASK-UNIFY-001, which deprecated is_action_required as a pin signal).
            -- is_action_required is kept only as a *surfacing* signal (row appears)
            -- to match the old route, never as a pin — so nothing the old route
            -- pinned is un-pinned and nothing it showed is hidden.
-           CASE WHEN open_task.id IS NOT NULL
+           CASE WHEN COALESCE(open_tasks.task_count, 0) > 0
                  AND (tl.snoozed_until IS NULL OR tl.snoozed_until <= now())
                 THEN 0
                 WHEN tl.has_unread = true OR COALESCE(sms.has_unread, false) = true
@@ -743,7 +747,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
                 THEN 1
                 ELSE 2
            END ASC,
-           CASE WHEN open_task.id IS NOT NULL
+           CASE WHEN COALESCE(open_tasks.task_count, 0) > 0
                  AND (tl.snoozed_until IS NULL OR tl.snoozed_until <= now())
                 THEN tl.action_required_set_at END DESC NULLS LAST,
            -- MAIL-MUTE-001: mirror the SELECT last_interaction_at exactly (drop a
@@ -777,7 +781,7 @@ async function setActionRequired(timelineId, reason, setBy = 'system') {
     return result.rows[0] || null;
 }
 
-async function markThreadHandled(timelineId) {
+async function markThreadHandled(timelineId, companyId) {
     const tl = await db.query(
         `UPDATE timelines SET
             is_action_required = false,
@@ -786,14 +790,15 @@ async function markThreadHandled(timelineId) {
             action_required_set_by = NULL,
             snoozed_until = NULL,
             updated_at = now()
-         WHERE id = $1
+         WHERE id = $1 AND company_id = $2
+           AND NOT EXISTS (
+               SELECT 1 FROM tasks open_task
+                WHERE open_task.company_id = $2
+                  AND open_task.thread_id = timelines.id
+                  AND open_task.status = 'open'
+           )
          RETURNING *`,
-        [timelineId]
-    );
-    await db.query(
-        `UPDATE tasks SET status = 'done', completed_at = now()
-         WHERE thread_id = $1 AND status = 'open'`,
-        [timelineId]
+        [timelineId, companyId]
     );
     return tl.rows[0] || null;
 }

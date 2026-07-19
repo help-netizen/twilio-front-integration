@@ -64,7 +64,7 @@ export function usePulsePage() {
             if (timelineId && Number(evtTimelineId) === timelineId) refreshNewestPage();
         },
         onContactRead: () => refetchContacts(),
-        onGenericEvent: (et: string) => { if (['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned', 'timeline.read', 'timeline.unread'].includes(et)) refetchContacts(); },
+        onGenericEvent: (et: string) => { if (['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned', 'timeline.read', 'timeline.unread', 'task.changed'].includes(et)) refetchContacts(); },
         onTranscriptDelta: (e: SSETranscriptDeltaEvent) => { appendTranscriptDelta(e.callSid, { text: e.text, speaker: e.speaker, turnOrder: e.turnOrder, isFinal: e.isFinal, receivedAt: e.receivedAt }); },
         onTranscriptFinalized: (e: SSETranscriptFinalizedEvent) => { finalizeTranscript(e.callSid, e.text); if (contactId || timelineId) refreshNewestPage(); },
     });

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { Clock, CalendarDays } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { snoozePresets, customDateToDueIso } from './taskUtils';
@@ -8,6 +9,8 @@ interface Props {
     onSnooze: (dueIso: string) => void;
     /** Render just the icon (compact list rows) vs. icon + label. */
     iconOnly?: boolean;
+    /** Optional surface-owned trigger; the shared menu keeps the snooze semantics. */
+    trigger?: ReactNode;
 }
 
 const itemStyle: React.CSSProperties = {
@@ -16,7 +19,7 @@ const itemStyle: React.CSSProperties = {
     border: 'none', borderRadius: 8, cursor: 'pointer',
 };
 
-export function TaskSnoozeMenu({ tz, onSnooze, iconOnly }: Props) {
+export function TaskSnoozeMenu({ tz, onSnooze, iconOnly, trigger }: Props) {
     const [open, setOpen] = useState(false);
     const [pickDate, setPickDate] = useState(false);
     const presets = snoozePresets(tz);
@@ -30,17 +33,19 @@ export function TaskSnoozeMenu({ tz, onSnooze, iconOnly }: Props) {
     return (
         <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPickDate(false); }}>
             <PopoverTrigger asChild>
-                <button
-                    type="button"
-                    title="Snooze"
-                    className="inline-flex items-center gap-1.5 transition-opacity hover:opacity-70"
-                    style={{
-                        fontSize: 12, padding: iconOnly ? '4px 7px' : '4px 10px', borderRadius: 8,
-                        border: '1px solid var(--blanc-line)', background: 'transparent', color: 'var(--blanc-ink-2)', cursor: 'pointer',
-                    }}
-                >
-                    <Clock className="size-3.5" />{!iconOnly && 'Snooze'}
-                </button>
+                {trigger || (
+                    <button
+                        type="button"
+                        title="Snooze"
+                        className="inline-flex items-center gap-1.5 transition-opacity hover:opacity-70"
+                        style={{
+                            fontSize: 12, padding: iconOnly ? '4px 7px' : '4px 10px', borderRadius: 8,
+                            border: '1px solid var(--blanc-line)', background: 'transparent', color: 'var(--blanc-ink-2)', cursor: 'pointer',
+                        }}
+                    >
+                        <Clock className="size-3.5" />{!iconOnly && 'Snooze'}
+                    </button>
+                )}
             </PopoverTrigger>
             <PopoverContent align="end" className="w-56 p-1" style={{ background: 'var(--blanc-surface-strong, #fffdf9)', border: '1px solid var(--blanc-line)' }}>
                 {presets.map(p => (

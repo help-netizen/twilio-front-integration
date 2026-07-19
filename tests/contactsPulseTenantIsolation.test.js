@@ -11,6 +11,7 @@ const express = require('express');
 const db = require('../backend/src/db/connection');
 const contactsService = require('../backend/src/services/contactsService');
 const contactsQueries = require('../backend/src/db/contactsQueries');
+const timelinesQueries = require('../backend/src/db/timelinesQueries');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const COMPANY_B = '00000000-0000-0000-0000-00000000000b';
@@ -155,6 +156,33 @@ describe('pulse tenant isolation', () => {
         expect(res.status).toBe(404);
         const [sql, params] = db.query.mock.calls[0];
         expect(sql).toContain('company_id = $2');
+        expect(params).toEqual([9, COMPANY_A]);
+    });
+});
+
+describe('AR-TASKS-001 manual mark-handled guard', () => {
+    it('clears a taskless manual flag without issuing any task write', async () => {
+        db.query.mockResolvedValueOnce({ rows: [{ id: 9, company_id: COMPANY_A, is_action_required: false }] });
+
+        const result = await timelinesQueries.markThreadHandled(9, COMPANY_A);
+
+        expect(result).toMatchObject({ id: 9, is_action_required: false });
+        expect(db.query).toHaveBeenCalledTimes(1);
+        expect(db.query.mock.calls[0][0]).not.toMatch(/UPDATE tasks/i);
+    });
+
+    it('is company-scoped, refuses task-backed threads, and never bulk-updates tasks', async () => {
+        db.query.mockResolvedValueOnce({ rows: [] });
+
+        const result = await timelinesQueries.markThreadHandled(9, COMPANY_A);
+
+        expect(result).toBeNull();
+        expect(db.query).toHaveBeenCalledTimes(1);
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain('WHERE id = $1 AND company_id = $2');
+        expect(sql).toContain('open_task.company_id = $2');
+        expect(sql).toContain("open_task.status = 'open'");
+        expect(sql).not.toMatch(/UPDATE tasks/i);
         expect(params).toEqual([9, COMPANY_A]);
     });
 });

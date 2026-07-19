@@ -8,9 +8,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 interface SnoozeDropdownProps {
     onSnooze: (until: string) => void;
     companyTz: string;
+    compact?: boolean;
 }
 
-export function SnoozeDropdown({ onSnooze, companyTz }: SnoozeDropdownProps) {
+export function SnoozeDropdown({ onSnooze, companyTz, compact = false }: SnoozeDropdownProps) {
     const [open, setOpen] = useState(false);
     const isMobile = isMobileViewport();
 
@@ -54,10 +55,14 @@ export function SnoozeDropdown({ onSnooze, companyTz }: SnoozeDropdownProps) {
             <Popover open={open && !isMobile} onOpenChange={setOpen}>
                 <PopoverTrigger asChild>
                     <button
-                        className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
-                        style={{ color: 'var(--blanc-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid rgba(104, 95, 80, 0.14)', minHeight: 42, borderRadius: 14, boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                        type="button"
+                        className={compact ? 'pulse-ar-task-action' : 'inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70'}
+                        style={compact ? undefined : { color: 'var(--blanc-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid rgba(104, 95, 80, 0.14)', minHeight: 42, borderRadius: 14, boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                        aria-label="Snooze"
+                        title="Snooze"
                     >
-                        <Clock className="size-4" /> Snooze
+                        <Clock className="size-4" />
+                        <span className={compact ? 'pulse-ar-task-action-label' : undefined}>Snooze</span>
                     </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" sideOffset={4} className="w-auto min-w-[190px] p-0 py-1 rounded-xl">

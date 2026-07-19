@@ -149,6 +149,117 @@
     z-index: 5;
 }
 
+/* AR-TASKS-001: one compact action row per open task. The task list scrolls
+   internally once it would consume too much of the reverse-paginated timeline;
+   every task remains reachable and none is truncated. */
+.pulse-ar-plaque {
+    container: pulse-ar / inline-size;
+    padding: 10px 14px;
+    background: var(--blanc-accent-soft);
+}
+
+.pulse-ar-eyebrow {
+    margin-bottom: 6px;
+    color: var(--blanc-accent);
+}
+
+.pulse-ar-task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    max-height: min(38dvh, 380px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+
+.pulse-ar-task-item {
+    min-width: 0;
+}
+
+.pulse-ar-task-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.pulse-ar-task-copy {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--blanc-ink-1);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.pulse-ar-task-due {
+    color: var(--blanc-danger);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.pulse-ar-task-actions {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+}
+
+.pulse-ar-task-action {
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--blanc-surface-strong);
+    color: var(--blanc-ink-2);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.pulse-ar-task-action:hover,
+.pulse-ar-task-action:focus-visible {
+    outline: 0;
+    box-shadow: inset 0 0 0 1px var(--blanc-line-strong);
+}
+
+.pulse-ar-task-action-done {
+    color: var(--blanc-success);
+}
+
+.pulse-ar-task-action svg {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+}
+
+.pulse-ar-task-extra-actions {
+    margin-top: 5px;
+}
+
+.pulse-ar-manual-row {
+    min-height: 30px;
+}
+
+@container pulse-ar (max-width: 680px) {
+    .pulse-ar-task-action-label {
+        display: none;
+    }
+
+    .pulse-ar-task-action {
+        width: 30px;
+        padding: 0;
+    }
+}
+
 /* Empty state sits directly on the canvas — no card around it */
 .pulse-empty-state {
     display: flex;
@@ -294,6 +405,45 @@
 
     .pulse-layout[data-mobile-panel="content"] .pulse-right-column {
         flex: 1;
+    }
+
+    .pulse-ar-plaque {
+        padding: 8px 10px;
+    }
+
+    .pulse-ar-task-list {
+        max-height: 34dvh;
+    }
+
+    .pulse-ar-task-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-rows: auto auto;
+        column-gap: 8px;
+        row-gap: 2px;
+    }
+
+    .pulse-ar-task-copy {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .pulse-ar-task-due {
+        grid-column: 1;
+        grid-row: 2;
+    }
+
+    .pulse-ar-task-actions {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+    }
+
+    .pulse-ar-task-action-label {
+        display: none;
+    }
+
+    .pulse-ar-task-action {
+        width: 30px;
+        padding: 0;
     }
 
     /* Back button visible on mobile content panel */

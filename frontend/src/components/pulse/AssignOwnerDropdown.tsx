@@ -7,7 +7,7 @@ import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
-export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: number | null; onAssigned?: () => void }) {
+export function AssignOwnerDropdown({ timelineId, onAssigned, compact = false }: { timelineId: number | null; onAssigned?: () => void; compact?: boolean }) {
     const [open, setOpen] = useState(false);
     const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
     const [loaded, setLoaded] = useState(false);
@@ -67,10 +67,14 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
             <Popover open={open && !isMobile} onOpenChange={setOpen}>
                 <PopoverTrigger asChild>
                     <button
-                        className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
-                        style={{ color: 'var(--blanc-info)', background: 'rgba(37, 99, 235, 0.08)', minHeight: 42, borderRadius: 14 }}
+                        type="button"
+                        className={compact ? 'pulse-ar-task-action' : 'inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70'}
+                        style={compact ? undefined : { color: 'var(--blanc-info)', background: 'rgba(37, 99, 235, 0.08)', minHeight: 42, borderRadius: 14 }}
+                        aria-label="Assign"
+                        title="Assign"
                     >
-                        <UserRound className="size-4" /> Assign
+                        <UserRound className="size-4" />
+                        <span className={compact ? 'pulse-ar-task-action-label' : undefined}>Assign</span>
                     </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" sideOffset={4} className="w-auto min-w-[200px] max-h-[200px] overflow-y-auto p-0 py-1 rounded-xl">

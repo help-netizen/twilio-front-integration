@@ -39,7 +39,7 @@ function isValidParentType(t) {
 const SELECT_TASK = `
     SELECT t.id, t.company_id, t.title AS description, t.status, t.due_at,
            t.completed_at, t.created_at, t.owner_user_id, t.author_user_id,
-           t.kind, t.agent_type, t.agent_output, t.actions,
+           t.thread_id, t.kind, t.agent_type, t.agent_output, t.actions,
            ow.full_name AS assignee_name, ow.email AS assignee_email,
            au.full_name AS author_name,
            CASE
@@ -335,6 +335,30 @@ async function updateTask(companyId, taskId, patch = {}, client = null) {
     return getTaskById(companyId, taskId, client);
 }
 
+/** Clear the legacy timeline flag after its final open task is completed. */
+async function clearTimelineActionRequiredIfNoOpenTasks(companyId, timelineId, client = null) {
+    requireCompanyId(companyId);
+    const query = queryFor(client, db);
+    const { rowCount } = await query(
+        `UPDATE timelines tl SET
+            is_action_required = false,
+            action_required_reason = NULL,
+            action_required_set_at = NULL,
+            action_required_set_by = NULL,
+            snoozed_until = NULL,
+            updated_at = now()
+         WHERE tl.company_id = $1 AND tl.id = $2
+           AND NOT EXISTS (
+               SELECT 1 FROM tasks remaining
+                WHERE remaining.company_id = $1
+                  AND remaining.thread_id = tl.id
+                  AND remaining.status = 'open'
+           )`,
+        [companyId, timelineId]
+    );
+    return rowCount > 0;
+}
+
 async function deleteTask(companyId, taskId, client = null) {
     requireCompanyId(companyId);
     const query = queryFor(client, db);
@@ -357,5 +381,6 @@ module.exports = {
     getTaskById,
     createTask,
     updateTask,
+    clearTimelineActionRequiredIfNoOpenTasks,
     deleteTask,
 };

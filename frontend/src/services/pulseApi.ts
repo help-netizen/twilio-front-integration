@@ -42,7 +42,7 @@ export const pulseApi = {
 
     // ─── Action Required ───
 
-    /** Mark thread as handled: clears action_required + closes open task */
+    /** Clear a taskless manual Action Required flag. Task rows use /api/tasks/:id. */
     markHandled: async (timelineId: number): Promise<void> => {
         await apiClient.post(`/pulse/threads/${timelineId}/mark-handled`);
     },

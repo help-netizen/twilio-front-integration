@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Plus, ChevronDown, ChevronUp } from 'lucide-react';
-import { toast } from 'sonner';
 import { useAuthz } from '../../hooks/useAuthz';
 import { TaskCard } from './TaskCard';
 import { TaskFormDialog } from './TaskFormDialog';
 import { useEntityTasks } from './useEntityTasks';
-import { completeTask, reopenTask, snoozeTask, type Task, type TaskParentType } from './tasksApi';
+import { type Task, type TaskParentType } from './tasksApi';
+import { useTaskMutations } from './useTaskMutations';
 
 interface Props {
     parentType: TaskParentType;
@@ -39,28 +39,11 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
 
     const canActOn = (t: Task) => canManage || (!!myEmail && t.assignee_email === myEmail);
 
-    const handleComplete = async (t: Task) => {
-        setTasks(prev => prev.filter(x => x.id !== t.id));
-        try {
-            await completeTask(t.id);
-            toast.success('Task completed', { action: { label: 'Undo', onClick: () => { reopenTask(t.id).then(() => { refetch(); onTasksChanged?.(); }).catch(() => {}); } } });
-        } catch {
-            toast.error('Failed to complete task');
-            refetch();
-        }
-        onTasksChanged?.();
-    };
-
-    const handleSnooze = async (t: Task, iso: string) => {
-        try {
-            await snoozeTask(t.id, iso);
-            toast.success('Task snoozed');
-            refetch();
-            onTasksChanged?.();
-        } catch {
-            toast.error('Failed to snooze task');
-        }
-    };
+    const taskMutations = useTaskMutations({
+        refetch,
+        onOptimisticComplete: taskId => setTasks(prev => prev.filter(x => x.id !== taskId)),
+        onTasksChanged,
+    });
 
     const open = tasks;
     const hasMany = open.length > 1;
@@ -101,8 +84,8 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
                                     task={t}
                                     tz={tz}
                                     canAct={canActOn(t)}
-                                    onComplete={handleComplete}
-                                    onSnooze={handleSnooze}
+                                    onComplete={taskMutations.complete}
+                                    onSnooze={taskMutations.snooze}
                                     onEdit={setEditingTask}
                                     onChanged={() => { refetch(); onTasksChanged?.(); }}
                                 />

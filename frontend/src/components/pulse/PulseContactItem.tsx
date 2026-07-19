@@ -129,7 +129,11 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const openTask = (call as any).open_task || null;
     const openTaskCount = (call as any).open_task_count || 0;
     // AR-TASK-UNIFY-001: "Action Required" = the thread has an open task.
-    const isActionRequired = (call as any).has_open_task ?? !!openTask;
+    const hasOpenTask = (call as any).has_open_task ?? !!openTask;
+    const manualActionRequired = !hasOpenTask
+        && (call as any).is_action_required === true
+        && (call as any).action_required_reason === 'manual';
+    const isActionRequired = hasOpenTask || manualActionRequired;
     const arReason = (call as any).action_required_reason || null;
     const snoozedUntil = (call as any).snoozed_until;
     const isSnoozed = snoozedUntil && new Date(snoozedUntil) > new Date();
@@ -242,7 +246,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                     {isActionRequired && !isSnoozed && (
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-orange-100 text-orange-800">
-                                <AlertTriangle className="size-2.5" /> Task
+                                <AlertTriangle className="size-2.5" /> {hasOpenTask ? 'Task' : 'Action Required'}
                             </span>
                             {(openTask?.title || arReason) && (
                                 <span className="text-[10px] truncate max-w-[150px]" style={{ color: 'var(--blanc-ink-3)' }}>
@@ -308,7 +312,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                     <AlertTriangle className="size-3.5" /> Action Required
                                 </div>
                             )}
-                            {isActionRequired && (
+                            {manualActionRequired && (
                                 <div role="button" tabIndex={0}
                                     onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); }}
                                     onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); } }}
@@ -316,7 +320,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                     <CheckCircle2 className="size-3.5" /> Mark done
                                 </div>
                             )}
-                            {isActionRequired && (
+                            {manualActionRequired && (
                                 <div className="relative">
                                     <div role="button" tabIndex={0}
                                         onClick={(e) => { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); }}
