@@ -26,26 +26,28 @@ export const MARKETPLACE_CATALOGS: readonly MarketplaceCatalogDefinition[] = [
 ];
 
 /**
- * Marketplace seed categories predate the current Settings IA and are too broad
- * to derive these catalogs reliably (for example, `ai` spans calls, email, and
- * outbound leads). Keep the presentation taxonomy explicit by stable app_key.
- * Unknown/new apps intentionally fall back to Other so they can never disappear.
+ * Settings groups derive from the seed `category` column, never from app_key:
+ * per-source lead apps are interchangeable data (MARKETPLACE-LEADGEN-SPLIT-001),
+ * so a new lead source seeded with `lead_generation` lands in Jobs and Leads
+ * with no frontend change. Unknown categories intentionally fall back to Other
+ * so an app can never disappear.
+ */
+export const MARKETPLACE_CATEGORY_CATALOG: Readonly<Record<string, MarketplaceCatalogId>> = {
+    lead_generation: 'jobs-leads',
+    scheduling: 'scheduling',
+    payments: 'payments',
+    ai: 'communication-ai',
+    telephony: 'communication-ai',
+    communication: 'communication-ai',
+};
+
+/**
+ * Curated placement for singleton apps whose seed category (`operations`,
+ * `customer_experience`) is broader than the Settings IA. Per-source lead apps
+ * must never appear here — they flow through the `lead_generation` rule above.
  */
 export const MARKETPLACE_APP_CATALOG: Readonly<Record<string, MarketplaceCatalogId>> = {
-    'call-qa-agent': 'communication-ai',
-    'lead-generator': 'jobs-leads',
-    'mail-secretary': 'communication-ai',
-    'vapi-ai': 'communication-ai',
-    'stripe-payments': 'payments',
-    'smart-slot-engine': 'scheduling',
-    'google-email': 'communication-ai',
-    'telephony-twilio': 'communication-ai',
     'ai-repair-advisor': 'jobs-leads',
-    'pro-referral-leads': 'jobs-leads',
-    'rely-leads': 'jobs-leads',
-    'nsa-leads': 'jobs-leads',
-    'lhg-leads': 'jobs-leads',
-    'outbound-lead-caller': 'communication-ai',
     'rate-me': 'jobs-leads',
 };
 
@@ -53,12 +55,16 @@ const MARKETPLACE_CATALOG_BY_ID = new Map(
     MARKETPLACE_CATALOGS.map(catalog => [catalog.id, catalog]),
 );
 
-export function marketplaceCatalogIdForApp(appKey: string): MarketplaceCatalogId {
-    return MARKETPLACE_APP_CATALOG[appKey] ?? 'other';
+type MarketplaceCatalogSource = Pick<MarketplaceApp, 'app_key' | 'category'>;
+
+export function marketplaceCatalogIdForApp(app: MarketplaceCatalogSource): MarketplaceCatalogId {
+    return MARKETPLACE_APP_CATALOG[app.app_key]
+        ?? MARKETPLACE_CATEGORY_CATALOG[app.category]
+        ?? 'other';
 }
 
-export function marketplaceCatalogForApp(appKey: string): MarketplaceCatalogDefinition {
-    return MARKETPLACE_CATALOG_BY_ID.get(marketplaceCatalogIdForApp(appKey))!;
+export function marketplaceCatalogForApp(app: MarketplaceCatalogSource): MarketplaceCatalogDefinition {
+    return MARKETPLACE_CATALOG_BY_ID.get(marketplaceCatalogIdForApp(app))!;
 }
 
 function normalizeSearchValue(value: string): string {
@@ -77,7 +83,7 @@ export function filterMarketplaceApps(
     const query = normalizeSearchValue(searchQuery);
 
     return apps.filter(app => {
-        const catalog = marketplaceCatalogForApp(app.app_key);
+        const catalog = marketplaceCatalogForApp(app);
         const matchesCatalog = selectedCatalogs.length === 0
             || selectedCatalogs.includes(catalog.id);
         const matchesSearch = query.length === 0 || [app.name, catalog.label, app.category]
@@ -90,7 +96,7 @@ export function filterMarketplaceApps(
 export function groupMarketplaceApps(apps: MarketplaceApp[]): MarketplaceCatalogGroup[] {
     return MARKETPLACE_CATALOGS.flatMap(catalog => {
         const catalogApps = apps.filter(
-            app => marketplaceCatalogIdForApp(app.app_key) === catalog.id,
+            app => marketplaceCatalogIdForApp(app) === catalog.id,
         );
 
         return catalogApps.length > 0 ? [{ catalog, apps: catalogApps }] : [];
