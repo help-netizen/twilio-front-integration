@@ -110,6 +110,35 @@
     .action-tasks { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
     .action-task { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .action-task > .action-copy { flex: 1; }
+    .task-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }
+    .task-action {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--blanc-surface-strong);
+      color: var(--blanc-ink-2);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .task-action.done { color: var(--blanc-success); }
+    .task-action:hover, .task-action:focus-visible { outline: 0; box-shadow: inset 0 0 0 1px var(--blanc-line-strong); }
+    /* Same degradation rule as the pinned bar: labels drop, icons stay, names kept
+       via aria-label. Three labelled buttons per row do not fit a narrow column, and
+       the plaque is sticky — every extra pixel here is stolen from the conversation. */
+    .device:not(.mobile) .action-required { container-type: inline-size; container-name: arplaque; }
+    @container arplaque (max-width: 680px) {
+      .task-action-label { display: none; }
+      .task-action { padding: 0; width: 30px; }
+    }
+    .device.mobile .task-action-label { display: none; }
+    .device.mobile .task-action { padding: 0; width: 30px; }
+    .task-action svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
     .action-label { flex: 0 0 auto; padding-top: 3px; color: var(--blanc-accent); font-size: 10px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
     .action-copy { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
     .action-due { color: var(--blanc-danger); font-size: 11px; font-weight: 700; white-space: nowrap; }
@@ -264,7 +293,20 @@
     .device.mobile .action-required { min-height: 46px; padding: 8px 10px; border-radius: 13px; }
     .device.mobile .action-label { font-size: 9px; }
     .device.mobile .action-copy { font-size: 11px; }
-    .device.mobile .action-due { display: none; }
+    /* Was display:none back when the plaque held a single task and space was
+       tight. With every task listed, the due date is the whole point of the list —
+       "Overdue" vs "Due tomorrow" is what makes it triageable — so on mobile the
+       row becomes two lines instead of dropping it. */
+    .device.mobile .action-task {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "copy actions" "due actions";
+      column-gap: 8px;
+      row-gap: 1px;
+    }
+    .device.mobile .action-copy { grid-area: copy; }
+    .device.mobile .action-due { grid-area: due; }
+    .device.mobile .task-actions { grid-area: actions; align-self: center; }
     .device.mobile .pin-bar {
       min-height: 136px;
       display: grid;
@@ -484,7 +526,10 @@
     const icons = {
       call: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.69 2.8a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.33 1.84.56 2.8.69A2 2 0 0 1 22 16.92Z" /></svg>',
       text: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" /></svg>',
-      email: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>'
+      email: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>',
+      done: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></svg>',
+      snooze: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>',
+      assign: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1" /><circle cx="9" cy="7" r="3" /><path d="M18 8v6M21 11h-6" /></svg>'
     };
 
     const scenarios = {
@@ -533,9 +578,21 @@
       // entirely when there is none, so the bar does not sit under an empty band.
       const tasks = data.tasks || [];
       document.getElementById('actionRequired').style.display = tasks.length ? '' : 'none';
-      document.getElementById('actionTasks').innerHTML = tasks.map(t =>
-        `<div class="action-task"><span class="action-copy">${t.title}</span><span class="action-due">${t.due}</span></div>`
-      ).join('');
+      // Actions belong to the ROW, not the plaque — that is the whole point of
+      // listing every task (see OB-11: one thread-wide Done silently closed them all).
+      const taskAction = (kind, label, cls) =>
+        `<button class="task-action ${cls}" data-task-action="${kind}" aria-label="${label}" title="${label}">`
+        + `${icons[kind]}<span class="task-action-label">${label}</span></button>`;
+      document.getElementById('actionTasks').innerHTML = tasks.map(t => `
+        <div class="action-task">
+          <span class="action-copy">${t.title}</span>
+          <span class="action-due">${t.due}</span>
+          <span class="task-actions">
+            ${taskAction('done', 'Done', 'done')}
+            ${taskAction('snooze', 'Snooze', '')}
+            ${taskAction('assign', 'Assign', '')}
+          </span>
+        </div>`).join('');
 
       const secondary = [];
       if (data.cityZip) {
