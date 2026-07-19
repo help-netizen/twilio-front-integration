@@ -4,27 +4,22 @@ import {
     filterMarketplaceApps,
     groupMarketplaceApps,
     MARKETPLACE_APP_CATALOG,
+    MARKETPLACE_CATEGORY_CATALOG,
     marketplaceCatalogIdForApp,
     toggleMarketplaceCatalog,
     type MarketplaceCatalogId,
 } from './marketplaceCatalog';
 
-const SEEDED_APP_CATALOGS: Record<string, MarketplaceCatalogId> = {
-    'call-qa-agent': 'communication-ai',
-    'lead-generator': 'jobs-leads',
-    'mail-secretary': 'communication-ai',
-    'vapi-ai': 'communication-ai',
-    'stripe-payments': 'payments',
-    'smart-slot-engine': 'scheduling',
-    'google-email': 'communication-ai',
-    'telephony-twilio': 'communication-ai',
-    'ai-repair-advisor': 'jobs-leads',
-    'pro-referral-leads': 'jobs-leads',
-    'rely-leads': 'jobs-leads',
-    'nsa-leads': 'jobs-leads',
-    'lhg-leads': 'jobs-leads',
-    'outbound-lead-caller': 'communication-ai',
-    'rate-me': 'jobs-leads',
+// Seed categories actually shipped in backend/db/migrations — the catalog must
+// place every one of them without naming a single per-source lead app_key
+// (MARKETPLACE-LEADGEN-SPLIT-001: adding a lead source is a data-only change).
+const SEEDED_CATEGORY_CATALOGS: Record<string, MarketplaceCatalogId> = {
+    lead_generation: 'jobs-leads',
+    scheduling: 'scheduling',
+    payments: 'payments',
+    ai: 'communication-ai',
+    telephony: 'communication-ai',
+    communication: 'communication-ai',
 };
 
 function marketplaceApp(appKey: string, name: string, category: string): MarketplaceApp {
@@ -54,19 +49,44 @@ const APPS = [
     marketplaceApp('smart-slot-engine', 'Smart Slot Engine', 'scheduling'),
     marketplaceApp('stripe-payments', 'Stripe Payments', 'payments'),
     marketplaceApp('call-qa-agent', 'Call QA Agent', 'ai'),
-    marketplaceApp('lead-generator', 'Website Leads', 'lead_generation'),
+    marketplaceApp('website-leads', 'Website Leads', 'lead_generation'),
 ];
 
 describe('marketplace catalog taxonomy', () => {
-    it('assigns every seeded app_key and sends an unknown app to Other', () => {
-        expect(MARKETPLACE_APP_CATALOG).toEqual(SEEDED_APP_CATALOGS);
+    it('derives the Settings group from the seed category, never from lead app keys', () => {
+        expect(MARKETPLACE_CATEGORY_CATALOG).toEqual(SEEDED_CATEGORY_CATALOGS);
 
-        for (const [appKey, catalogId] of Object.entries(SEEDED_APP_CATALOGS)) {
-            expect(marketplaceCatalogIdForApp(appKey)).toBe(catalogId);
-            expect(marketplaceCatalogIdForApp(appKey)).not.toBe('other');
+        for (const [category, catalogId] of Object.entries(SEEDED_CATEGORY_CATALOGS)) {
+            const app = marketplaceApp('any-app', 'Any App', category);
+            expect(marketplaceCatalogIdForApp(app)).toBe(catalogId);
         }
+    });
 
-        expect(marketplaceCatalogIdForApp('new-unmapped-app')).toBe('other');
+    it('places a brand-new lead source with zero frontend changes', () => {
+        // The MARKETPLACE-LEADGEN-SPLIT-001 guarantee: a source added purely by
+        // seeding a `lead_generation` marketplace app groups correctly here.
+        const newSource = marketplaceApp('acme-leads', 'Acme Leads', 'lead_generation');
+        expect(marketplaceCatalogIdForApp(newSource)).toBe('jobs-leads');
+        expect(Object.keys(MARKETPLACE_APP_CATALOG).some(key => key.endsWith('-leads'))).toBe(false);
+    });
+
+    it('keeps curated placement for the two singleton apps with broad categories', () => {
+        expect(MARKETPLACE_APP_CATALOG).toEqual({
+            'ai-repair-advisor': 'jobs-leads',
+            'rate-me': 'jobs-leads',
+        });
+        expect(marketplaceCatalogIdForApp(
+            marketplaceApp('ai-repair-advisor', 'AI Repair Advisor', 'operations'),
+        )).toBe('jobs-leads');
+        expect(marketplaceCatalogIdForApp(
+            marketplaceApp('rate-me', 'Rate Me', 'customer_experience'),
+        )).toBe('jobs-leads');
+    });
+
+    it('sends an unknown category to Other so an app can never disappear', () => {
+        const unknown = marketplaceApp('new-unmapped-app', 'New App', 'not-a-category');
+        expect(marketplaceCatalogIdForApp(unknown)).toBe('other');
+        expect(groupMarketplaceApps([unknown]).map(group => group.catalog.id)).toEqual(['other']);
     });
 
     it('matches search by app name, Settings catalog, and legacy data category', () => {
@@ -75,7 +95,7 @@ describe('marketplace catalog taxonomy', () => {
         expect(filterMarketplaceApps(APPS, 'communication', []).map(app => app.app_key))
             .toEqual(['call-qa-agent']);
         expect(filterMarketplaceApps(APPS, 'lead generation', []).map(app => app.app_key))
-            .toEqual(['lead-generator']);
+            .toEqual(['website-leads']);
     });
 
     it('supports the category popover multi-select and deselection behavior', () => {

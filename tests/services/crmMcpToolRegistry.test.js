@@ -47,11 +47,13 @@ describe('crmMcpToolRegistry', () => {
         ];
 
         for (const name of requiredReadTools) {
-            expect(tools.find(tool => tool.name === name)).toMatchObject({
+            const tool = tools.find(candidate => candidate.name === name);
+            expect(tool).toMatchObject({
                 kind: 'read',
                 requiresConfirmation: false,
-                requiredPermission: null,
+                requiredPermission: registry.TOOL_PERMISSION_MAP[name][0],
             });
+            expect(tool.requiredPermissions).toEqual(registry.TOOL_PERMISSION_MAP[name]);
         }
         const requiredWriteTools = [
             'crm.update_deal_field',
@@ -67,12 +69,16 @@ describe('crmMcpToolRegistry', () => {
             'crm.create_note',
         ];
         for (const name of requiredWriteTools) {
-            expect(tools.find(tool => tool.name === name)).toMatchObject({
+            const tool = tools.find(candidate => candidate.name === name);
+            expect(tool).toMatchObject({
                 kind: 'write',
                 requiresConfirmation: true,
                 requiredPermission: 'sales.crm.write',
+                frameworkWritePermission: 'sales.crm.write',
             });
+            expect(tool.requiredPermissions).toEqual(['sales.crm.write']);
         }
+        expect(tools.every(tool => tool.requiredPermissions.length > 0)).toBe(true);
         expect(tools.map(tool => tool.name)).not.toContain('crm.bulk_update_deals');
         expect(tools.map(tool => tool.name)).not.toContain('crm.delete_deal');
     });

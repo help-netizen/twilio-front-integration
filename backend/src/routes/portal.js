@@ -8,10 +8,36 @@
  *   3. Portal-session authenticated — all client-facing endpoints
  */
 const express = require('express');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const router = express.Router();
 const portalService = require('../services/portalService');
 const { authenticate, requireCompanyAccess } = require('../middleware/keycloakAuth');
 const { requirePermission } = require('../middleware/authorization');
+
+// The public token flow (request-access / verify) currently returns a raw portal
+// token to the CALLER and takes company_id from the request body — it can mint a
+// portal session for any contact of any company, with no proof of identity. The
+// safe authenticated path (GET /links, company-scoped + permission-gated) is the
+// only supported way to mint a link. Keep the public flow FAIL CLOSED until it is
+// redesigned to deliver the token over a verified contact channel (OTP), never in
+// the HTTP response. Default off; 404 so we do not advertise a dormant surface.
+function requirePortalPublicEnabled(req, res, next) {
+    if (process.env.PORTAL_PUBLIC_ENABLED === 'true') return next();
+    return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Not found' } });
+}
+
+// Route-local throttle for when the flow is enabled: blunts contact-id guessing.
+const portalPublicRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req, res) => ipKeyGenerator(req, res),
+    handler: (_req, res) => res.status(429).json({
+        ok: false,
+        error: { code: 'RATE_LIMITED', message: 'Too many requests' },
+    }),
+});
 
 // =============================================================================
 // Helpers
@@ -80,7 +106,7 @@ async function portalAuth(req, res, next) {
 // =============================================================================
 
 // POST /api/portal/auth/request-access
-router.post('/auth/request-access', async (req, res) => {
+router.post('/auth/request-access', requirePortalPublicEnabled, portalPublicRateLimit, async (req, res) => {
     try {
         const { company_id, contact_id, scope, document_type, document_id } = req.body;
 
@@ -110,7 +136,7 @@ router.post('/auth/request-access', async (req, res) => {
 });
 
 // POST /api/portal/auth/verify
-router.post('/auth/verify', async (req, res) => {
+router.post('/auth/verify', requirePortalPublicEnabled, portalPublicRateLimit, async (req, res) => {
     try {
         const { token } = req.body;
 

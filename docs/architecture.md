@@ -8195,3 +8195,7 @@ In `public-rate.js`: `router.post('/rate/:token/click', postRateLimiter, require
 - `GET  /api/jobs/:id/rate-status` — `jobs.view`; job-scoped attribution timeline for the Job-card block.
 
 ### Does `src/server.js` change? **NO.** OPEN QUESTIONS FOR OWNER: **none** — the one Product flagged (expired vs invalid) is resolved by binding decision D-EXP; all other choices (send-link gate = `messages.send`, status gate = `jobs.view`, jobs-surface mount, `booking_url` as a setting, mint-fresh + rating-by-job_id) are within the Architect mandate.
+
+## PULSE-PLAYER-001 — architecture (2026-07-19)
+
+Frontend-only. Один общий `<audio>` в `PulsePlayerProvider` (контекст `pulsePlayer.tsx`), плавающий `PulsePlayerBar` (fixed bottom-center, z-70 — ниже OVERLAY_Z.panel 80, frosted `--blanc-surface`), карточный `PulseCallAudioPlayer` худеет до чипа Play/Pause + тумблеров Summary/Transcript и шлёт seek'и в контекст. Провайдер+бар смонтированы в `PulsePage` (единственная точка всех /pulse-маршрутов) → размонтирование страницы гарантированно глушит звук. Дефолт контекста — инертная заглушка (рендер карточки вне провайдера не падает). Бэкенд/миграции/API — не затронуты. Легаси `/calls` плеер вне скоупа. Спека: `docs/specs/PULSE-PLAYER-001.md`.

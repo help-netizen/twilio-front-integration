@@ -3,6 +3,7 @@
 const registry = require('./crmMcpToolRegistry');
 const executor = require('./crmMcpToolExecutor');
 const mcpResponse = require('./crmMcpResponse');
+const mcpToolAuthorization = require('./mcpToolAuthorization');
 
 const PROTOCOL_VERSION = '2025-06-18';
 
@@ -57,7 +58,11 @@ async function dispatch(req, method, params) {
         case 'ping':
             return {};
         case 'tools/list':
-            return { tools: registry.listTools({ kind: params.kind }).map(toProtocolTool) };
+            return {
+                tools: mcpToolAuthorization
+                    .filterTools(registry.listTools({ kind: params.kind }), req.authz?.permissions)
+                    .map(toProtocolTool),
+            };
         case 'tools/call': {
             const toolName = params.name || params.tool;
             if (!toolName) {
@@ -93,6 +98,8 @@ function toProtocolTool(tool) {
             readOnlyHint: tool.kind === 'read',
             requiresConfirmation: tool.requiresConfirmation,
             requiredPermission: tool.requiredPermission,
+            requiredPermissions: tool.requiredPermissions,
+            frameworkWritePermission: tool.frameworkWritePermission,
         },
     };
 }

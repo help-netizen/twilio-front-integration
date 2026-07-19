@@ -10741,3 +10741,11 @@ git diff --stat master -- tests/relyLead*   # ПУСТО
 - T4 (FE dialog) ✅ JobRecordPaymentDialog (FORM-CANON, 5 fields, prefill/date-default).
 - T5 (FE card) ✅ JobFinancialsTab «Pay by Card» rename + Option-A footer + Due calc (invoice_id-null, clamped, no double-count) + Payments list; useJobFinancials job-payment fetch. Commit 533a7d1.
 - Sabotage: SAB-CROSS-TENANT (TC-RP-2 red) + SAB-RECORDEDBY-SUB (TC-RP-1/4 red), restored. FE build clean; footer+dialog visually verified.
+
+## PULSE-PLAYER-001 — задачи (2026-07-19) [DONE 2026-07-19]
+
+- T1 — `pulsePlayer.tsx`: контекст/провайдер/хук, единый <audio>, API playTrack/toggle/seekTo/seekTrack/skip/cycleRate/close. ✅
+- T2 — `PulsePlayerBar.tsx`: бар по спеке (прогресс-range, ±10s, скорость, ✕, подпись). ✅
+- T3 — рефактор `PulseCallAudioPlayer.tsx`: минус локальный <audio>/стейт, чип Play/Pause, seek'и через контекст; live-режим не тронут. ✅
+- T4 — монтаж в `PulsePage.tsx` (провайдер + бар). ✅
+- T5 — vitest: TC-PP-01…09; прогон фронт-сьютов + `npm run build`. ✅

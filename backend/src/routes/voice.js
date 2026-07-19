@@ -17,6 +17,7 @@ const agentPresence = require('../services/agentPresence');
 const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
 const walletService = require('../services/walletService');
 const { requirePermission } = require('../middleware/authorization');
+const { validateTwilioSignature } = require('../webhooks/twilioWebhooks');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -304,6 +305,9 @@ const twimlRouter = express.Router();
  * Returns TwiML that dials the PSTN number.
  */
 twimlRouter.post('/twiml/outbound', async (req, res) => {
+    if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
+        return res.status(403).type('text/xml').send('<Response><Reject/></Response>');
+    }
     const to = req.body.To;
     const requestedCallerId = req.body.CallerId || process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
     const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
@@ -431,6 +435,9 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
  * have From=company_number instead of the caller's number.
  */
 twimlRouter.post('/twiml/inbound', async (req, res) => {
+    if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
+        return res.status(403).type('text/xml').send('<Response><Reject/></Response>');
+    }
     const defaultIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY || 'user_1';
     const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;

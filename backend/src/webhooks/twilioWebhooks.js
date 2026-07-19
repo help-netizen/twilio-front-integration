@@ -627,6 +627,9 @@ async function handleVoicemailComplete(req, res) {
 // =============================================================================
 async function handleVoiceFallback(req, res) {
     const traceId = generateTraceId();
+    if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
+        return res.status(403).json({ error: 'Invalid signature' });
+    }
     console.error(`[${traceId}] ⚠️ VOICE FALLBACK triggered`, {
         callSid: req.body.CallSid,
         from: req.body.From,

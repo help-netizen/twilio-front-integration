@@ -30,6 +30,8 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { useNavigate } from 'react-router-dom';
 import { isAnonymousPhone } from '../utils/phoneUtils';
 import { dateKeyInTZ, todayInTZ } from '../utils/companyTime';
+import { PulsePlayerProvider } from '../components/pulse/pulsePlayer';
+import { PulsePlayerBar } from '../components/pulse/PulsePlayerBar';
 import './PulsePage.css';
 
 const NO_DATE_KEY = '__no_date__';
@@ -52,7 +54,7 @@ function groupLabel(key: string, timezone: string): string {
     return format(toDate(key), 'EEE, MMM d');
 }
 
-export const PulsePage: React.FC = () => {
+const PulsePageInner: React.FC = () => {
     const p = usePulsePage();
     const { company } = useAuth();
     const navigate = useNavigate();
@@ -498,3 +500,15 @@ export const PulsePage: React.FC = () => {
         </div>
     );
 };
+
+/**
+ * PULSE-PLAYER-001 (OB-13): the shared recording player is scoped to Pulse by
+ * construction — provider + floating bar mount here, so navigating to any other
+ * page unmounts the <audio> element and playback stops.
+ */
+export const PulsePage: React.FC = () => (
+    <PulsePlayerProvider>
+        <PulsePageInner />
+        <PulsePlayerBar />
+    </PulsePlayerProvider>
+);

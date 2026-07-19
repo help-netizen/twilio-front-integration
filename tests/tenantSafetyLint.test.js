@@ -155,21 +155,27 @@ const PUBLIC_ROUTE_FILES = new Map([
     ['backend/src/routes/time.js', 'Public clock endpoint returns no tenant or user data.'],
     ['backend/src/routes/vapi-tools.js', 'Fail-closed x-vapi-secret middleware protects the machine endpoint.'],
     ['backend/src/routes/vapiCallStatus.js', 'Fail-closed x-vapi-secret middleware protects the machine webhook.'],
-    ['backend/src/routes/webhooks.js', 'Twilio callback/health surface is public by design; missing/fail-open signature cases are flagged in the audit.'],
+    ['backend/src/routes/webhooks.js', 'Twilio callback/health surface is public by design; every mutating handler now validates the Twilio signature and fails closed in production (TWILIO-SIG-ENFORCE-001).'],
     ['backend/src/routes/zip-check.js', 'Authenticated role-neutral service-area lookup is scoped by the selected company.'],
 ]);
 
 // Route-specific legitimate exceptions for mixed public/authenticated routers.
 const ROUTE_PERMISSION_EXCEPTIONS = new Map([
-    ['backend/src/routes/events.js:router:GET:/stats', 'Public operational counters endpoint; no tenant records returned (audit flags absent rate/host gate).'],
+    ['backend/src/routes/agentSkillsMcp.js:router:GET:/tools', 'Authenticated tenant transport filters discovery through per-tool permission metadata; unmapped tools fail closed.'],
+    ['backend/src/routes/agentSkillsMcp.js:router:POST:/call', 'Authenticated tenant transport enforces each tool permission in the shared executor before dispatch.'],
+    ['backend/src/routes/agentSkillsMcp.js:router:POST:/jsonrpc', 'Authenticated tenant JSON-RPC uses filtered discovery and the shared per-tool executor gate.'],
+    ['backend/src/routes/crmMcp.js:router:GET:/tools', 'Authenticated tenant transport filters discovery through per-tool permission metadata; unmapped tools fail closed.'],
+    ['backend/src/routes/crmMcp.js:router:POST:/call', 'Authenticated tenant transport enforces each tool permission in the shared executor before dispatch.'],
+    ['backend/src/routes/crmMcp.js:router:POST:/jsonrpc', 'Authenticated tenant JSON-RPC uses filtered discovery and the shared per-tool executor gate.'],
+    ['backend/src/routes/events.js:router:GET:/stats', 'Authenticated (role-neutral) operational counters; no longer public (TENANCY-RBAC-AUDIT-001 follow-up).'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/webhooks', 'Zenbooker legacy callback is public by design (audit flags optional-secret fail-open behavior).'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/wh/:key', 'Zenbooker callback derives tenant from a minimum-32-character opaque URL key.'],
     ['backend/src/routes/notification-settings.js:router:GET:/', 'Authenticated role-neutral settings read; mutation has tenant.company.manage inline.'],
     ['backend/src/routes/onboarding.js:router:POST:/', 'Authenticated pre-tenant bootstrap requires signup enabled, no membership, and a verified OTP.'],
     ['backend/src/routes/onboarding.js:router:GET:/status', 'Authenticated pre-tenant self-status lookup uses the caller CRM user id.'],
     ['backend/src/routes/onboarding.js:router:GET:/checklist', 'Route-local requireTenantAdmin middleware gates this tenant checklist.'],
-    ['backend/src/routes/portal.js:router:POST:/auth/request-access', 'Public portal entrypoint is token workflow by design (audit flags missing proof/rate control).'],
-    ['backend/src/routes/portal.js:router:POST:/auth/verify', 'Public portal verification exchanges an opaque expiring token for a scoped session.'],
+    ['backend/src/routes/portal.js:router:POST:/auth/request-access', 'Fail-closed behind PORTAL_PUBLIC_ENABLED (default off) + route-local rate limit; the safe mint path is the authenticated company-scoped GET /links (PORTAL-PUBLIC-GATE-001).'],
+    ['backend/src/routes/portal.js:router:POST:/auth/verify', 'Fail-closed behind PORTAL_PUBLIC_ENABLED (default off) + route-local rate limit (PORTAL-PUBLIC-GATE-001).'],
     ['backend/src/routes/portal.js:router:GET:/session', 'Portal-session middleware validates the bearer session.'],
     ['backend/src/routes/portal.js:router:GET:/documents', 'Portal-session middleware scopes client documents.'],
     ['backend/src/routes/portal.js:router:GET:/documents/:type/:id', 'Portal-session middleware scopes the requested document.'],
@@ -182,22 +188,16 @@ const ROUTE_PERMISSION_EXCEPTIONS = new Map([
     ['backend/src/routes/portal.js:router:PATCH:/profile', 'Portal-session middleware scopes the client profile update.'],
     ['backend/src/routes/schedule.js:router:GET:/availability', 'Authenticated placeholder returns only 501 NOT_IMPLEMENTED and no data.'],
     ['backend/src/routes/text-polish.js:router:GET:/health', 'Authenticated health endpoint returns static service/version data only.'],
-    ['backend/src/routes/twiml.js:router:POST:/voice', 'Twilio-called TwiML endpoint is public by design (audit flags absent signature validation).'],
+    ['backend/src/routes/twiml.js:router:POST:/voice', 'Twilio-called TwiML endpoint validates the Twilio signature, failing closed in production (TWILIO-SIG-ENFORCE-001).'],
     ['backend/src/routes/userGroups.js:router:GET:/my', 'Authenticated role-neutral self lookup returns only the current user groups.'],
-    ['backend/src/routes/voice.js:twimlRouter:POST:/twiml/outbound', 'Twilio-called TwiML endpoint is public by design (audit flags absent signature validation).'],
-    ['backend/src/routes/voice.js:twimlRouter:POST:/twiml/inbound', 'Twilio-called TwiML endpoint is public by design (audit flags absent signature validation).'],
-    ['src/server.js:app:GET:/api/messaging/media/:mediaId/temporary-url', 'Public media proxy uses an opaque UUID (audit flags this as a weak sole control).'],
+    ['backend/src/routes/voice.js:twimlRouter:POST:/twiml/outbound', 'Twilio-called TwiML endpoint validates the Twilio signature, failing closed in production (TWILIO-SIG-ENFORCE-001).'],
+    ['backend/src/routes/voice.js:twimlRouter:POST:/twiml/inbound', 'Twilio-called TwiML endpoint validates the Twilio signature, failing closed in production (TWILIO-SIG-ENFORCE-001).'],
+    ['src/server.js:app:GET:/api/messaging/media/:mediaId/temporary-url', 'Media proxy is reached by <img src> (cannot send a JWT); the sole control is a crypto-random UUID (gen_random_uuid) handed out only inside an already company-scoped message DTO, so it leaks to no one who cannot already see the message.'],
 ]);
 
 // Exact known gaps from TENANCY-RBAC-AUDIT-001. This is a regression baseline,
 // not approval of the gap: new signatures are rejected until explicitly triaged.
 const ROUTE_PERMISSION_BASELINE = new Map([
-    ['backend/src/routes/agentSkillsMcp.js:router:GET:/tools', 'Known gap; suggest contacts.view pending a dedicated service-CRM read permission.'],
-    ['backend/src/routes/agentSkillsMcp.js:router:POST:/call', 'Known gap; suggest contacts.view transport floor plus existing per-tool write checks.'],
-    ['backend/src/routes/agentSkillsMcp.js:router:POST:/jsonrpc', 'Known gap; suggest contacts.view transport floor plus existing per-tool write checks.'],
-    ['backend/src/routes/crmMcp.js:router:GET:/tools', 'Known gap; suggest contacts.view pending a catalog CRM-read permission.'],
-    ['backend/src/routes/crmMcp.js:router:POST:/call', 'Known gap; suggest contacts.view transport floor plus existing per-tool write checks.'],
-    ['backend/src/routes/crmMcp.js:router:POST:/jsonrpc', 'Known gap; suggest contacts.view transport floor plus existing per-tool write checks.'],
     ['backend/src/routes/integrations-zenbooker.js:router:GET:/webhook-url', 'Known gap; suggest tenant.integrations.manage.'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/webhook-url/regenerate', 'Known gap; suggest tenant.integrations.manage.'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/contacts/:contactId/create-customer', 'Known gap; suggest contacts.edit.'],
@@ -494,6 +494,13 @@ defineSuite('ALB-105 / TENANCY-RBAC-GUARD-001: tenant-safety sanitizer', () => {
                 expect(reason).not.toContain('\n');
             }
         }
+    });
+
+    it('keeps only the 24 retiring Zenbooker handlers in the RBAC gap baseline', () => {
+        expect(ROUTE_PERMISSION_BASELINE.size).toBe(24);
+        expect([...ROUTE_PERMISSION_BASELINE.keys()].every((key) => (
+            key.includes('/zenbooker') || key.includes('integrations-zenbooker')
+        ))).toBe(true);
     });
 
     it.each(LINE_RULES.map(rule => [rule.id, rule]))('%s has no violations', (ruleId, rule) => {

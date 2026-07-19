@@ -1,15 +1,23 @@
 const express = require('express');
 const router = express.Router();
+const { validateTwilioSignature } = require('../webhooks/twilioWebhooks');
 
 /**
  * TwiML endpoint for incoming voice calls
- * 
+ *
  * Generates TwiML that:
  * 1. Dials to Twilio SIP domain (connects to Bria)
  * 2. Sends status callbacks for ALL call events
  * 3. Routes to voice-dial-action for voicemail on no-answer
+ *
+ * Twilio-called: reject unsigned requests in production so an attacker who
+ * knows the URL cannot mint TwiML that exposes the SIP topology or redirects
+ * the call. Same guard the main webhooks already run (twilioWebhooks.js).
  */
-router.post('/voice', (req, res) => {
+router.post('/voice', async (req, res) => {
+    if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
+        return res.status(403).type('text/xml').send('<Response><Reject/></Response>');
+    }
     const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
 

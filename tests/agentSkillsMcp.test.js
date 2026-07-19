@@ -41,9 +41,18 @@ const agentSkillsMcpRouter = require('../backend/src/routes/agentSkillsMcp');
 const agentSkillsMcpPublicRouter = require('../backend/src/routes/agentSkillsMcpPublic');
 
 const WRITE_PERM = 'service.crm.write';
+const READ_PERMISSIONS = ['contacts.view', 'jobs.view', 'estimates.view', 'invoices.view'];
+const ALL_PERMISSIONS = [
+    ...READ_PERMISSIONS,
+    WRITE_PERM,
+    'jobs.edit',
+    'jobs.close',
+    'leads.edit',
+    'leads.create',
+];
 
 /** Authenticated app — middleware sets companyFilter/user/authz (mirrors crmMcp.test.js). */
-function makeApp({ companyId = 'company-1', permissions = [] } = {}) {
+function makeApp({ companyId = 'company-1', permissions = READ_PERMISSIONS } = {}) {
     const app = express();
     app.use(express.json());
     app.use((req, res, next) => {
@@ -112,10 +121,13 @@ describe('svc.* registry — tool defs + requiredLevel projection (ASK-MCP-01/02
         // (kind/confirmation are correct regardless of the level-annotation drift below).
         expect(registry.getTool('svc.reschedule_appointment').kind).toBe('write');
         expect(registry.getTool('svc.get_job_history').kind).toBe('read');
-        // writes carry the service write permission; reads carry none
-        expect(registry.getTool('svc.reschedule_appointment').requiredPermission).toBe(WRITE_PERM);
-        expect(registry.getTool('svc.book_on_lead').requiredPermission).toBe(WRITE_PERM);
-        expect(registry.getTool('svc.get_job_status').requiredPermission).toBeNull();
+        expect(registry.getTool('svc.reschedule_appointment')).toMatchObject({
+            requiredPermission: 'jobs.edit',
+            frameworkWritePermission: WRITE_PERM,
+        });
+        expect(registry.getTool('svc.book_on_lead').requiredPermissions).toEqual(['leads.edit', 'leads.create']);
+        expect(registry.getTool('svc.get_job_status').requiredPermission).toBe('jobs.view');
+        expect(tools.every((tool) => tool.requiredPermissions.length > 0)).toBe(true);
     });
 
     // AC-10 parity: the five relaxed tools' MCP requiredLevel now matches the skill
@@ -158,6 +170,21 @@ describe('svc.* registry — tool defs + requiredLevel projection (ASK-MCP-01/02
         expect(res.body.data.tools.every((t) => t.kind === 'read')).toBe(true);
         expect(res.body.data.tools.map((t) => t.name)).not.toContain('svc.reschedule_appointment');
     });
+
+    test('authed GET /tools filters discovery to the caller permissions', async () => {
+        const res = await request(makeApp({ permissions: ['jobs.view'] }))
+            .get('/api/agent-skills/mcp/tools');
+        const names = res.body.data.tools.map((tool) => tool.name);
+
+        expect(names).toEqual(expect.arrayContaining([
+            'svc.get_job_status',
+            'svc.get_appointments',
+            'svc.get_job_history',
+        ]));
+        expect(names).not.toContain('svc.identify_caller');
+        expect(names).not.toContain('svc.get_invoice_summary');
+        expect(names).not.toContain('svc.reschedule_appointment');
+    });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -175,11 +202,12 @@ describe('svc.* executor — tenant from context, reads ungated (ASK-MCP-03/08)'
         // runSkill(skill, companyId, ctx, args): companyId is 'company-1' (context), NEVER 'company-2'
         expect(agentSkills.runSkill).toHaveBeenCalledWith('getCustomerOverview', 'company-1', expect.any(Object), expect.objectContaining({ contact_id: '501' }));
         expect(agentSkills.runSkill.mock.calls[0][1]).toBe('company-1');
+        expect(agentSkills.runSkill.mock.calls[0][3]).not.toHaveProperty('company_id');
     });
 
     test('ASK-MCP-07: snake_case identity block + skill fields pass THROUGH to the skill layer', async () => {
         agentSkills.runSkill.mockResolvedValue({ ok: true, speak: 'x' });
-        await request(makeApp({ companyId: 'company-1', permissions: [WRITE_PERM] }))
+        await request(makeApp({ companyId: 'company-1', permissions: [WRITE_PERM, 'jobs.edit'] }))
             .post('/api/agent-skills/mcp/call')
             .send({
                 tool: 'svc.reschedule_appointment',
@@ -215,7 +243,7 @@ describe('svc.* executor — tenant from context, reads ungated (ASK-MCP-03/08)'
 
 describe('svc.* write-gate — permission + confirmation OUTER gate (ASK-MCP-04/05/06)', () => {
     test('ASK-MCP-04: write WITHOUT confirmation → confirmation_required, skill NEVER runs', async () => {
-        const res = await request(makeApp({ permissions: [WRITE_PERM] }))
+        const res = await request(makeApp({ permissions: [WRITE_PERM, 'jobs.edit'] }))
             .post('/api/agent-skills/mcp/call')
             .send({ tool: 'svc.reschedule_appointment', arguments: { contact_id: '501', job_id: '7', new_preferred_slot: { date: '2026-07-10', start: '10:00', end: '12:00' } } });
         expect(res.body.error.code).toBe('confirmation_required');
@@ -223,7 +251,7 @@ describe('svc.* write-gate — permission + confirmation OUTER gate (ASK-MCP-04/
     });
 
     test('ASK-MCP-05: write permission ABSENT → access_denied, skill NEVER runs', async () => {
-        const res = await request(makeApp({ permissions: [] }))
+        const res = await request(makeApp({ permissions: ['jobs.close'] }))
             .post('/api/agent-skills/mcp/call')
             .send({ tool: 'svc.cancel_appointment', arguments: { contact_id: '501', job_id: '7', reason: 'price', retention_attempted: true }, confirmation: { confirmed: true, confirmation_id: 'c-1' } });
         expect(res.body.error.code).toBe('access_denied');
@@ -232,13 +260,47 @@ describe('svc.* write-gate — permission + confirmation OUTER gate (ASK-MCP-04/
 
     test('ASK-MCP-04: WITH permission + confirmation → dispatches to skill layer (INNER L2 then enforced there)', async () => {
         agentSkills.runSkill.mockResolvedValue({ ok: false, needsVerification: true, speak: 'verify' });
-        const res = await request(makeApp({ permissions: [WRITE_PERM] }))
+        const res = await request(makeApp({ permissions: [WRITE_PERM, 'jobs.edit'] }))
             .post('/api/agent-skills/mcp/call')
             .send({ tool: 'svc.reschedule_appointment', arguments: { contact_id: '501', job_id: '7', new_preferred_slot: { date: '2026-07-10', start: '10:00', end: '12:00' } }, confirmation: { confirmed: true, confirmation_id: 'c-1' } });
         // Outer gate passed → the skill layer ran (and here returned its own L2 refusal).
         expect(res.status).toBe(200);
         expect(agentSkills.runSkill).toHaveBeenCalledWith('rescheduleAppointment', 'company-1', expect.any(Object), expect.any(Object));
         expect(res.body.structuredContent).toMatchObject({ needsVerification: true });
+    });
+
+    test('caller with a read permission cannot invoke a write tool', async () => {
+        const res = await request(makeApp({ permissions: [WRITE_PERM, 'jobs.view'] }))
+            .post('/api/agent-skills/mcp/call')
+            .send({
+                tool: 'svc.reschedule_appointment',
+                arguments: { contact_id: '501', job_id: '7', new_preferred_slot: { date: '2026-07-10', start: '10:00', end: '12:00' } },
+                confirmation: { confirmed: true, confirmation_id: 'c-read-only' },
+            });
+
+        expect(res.status).toBe(403);
+        expect(res.body.error.code).toBe('access_denied');
+        expect(agentSkills.runSkill).not.toHaveBeenCalled();
+    });
+
+    test('unmapped tool fails closed before skill dispatch', async () => {
+        const spy = jest.spyOn(registry, 'getTool').mockReturnValueOnce({
+            name: 'svc.unmapped',
+            skill: 'identifyCaller',
+            kind: 'read',
+            inputSchema: { type: 'object', properties: {}, required: [] },
+        });
+        try {
+            const res = await request(makeApp())
+                .post('/api/agent-skills/mcp/call')
+                .send({ tool: 'svc.unmapped', arguments: {} });
+
+            expect(res.status).toBe(403);
+            expect(res.body.error.details.reason).toBe('TOOL_PERMISSION_UNMAPPED');
+            expect(agentSkills.runSkill).not.toHaveBeenCalled();
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     test('ASK-MCP-06: reused schema validator rejects a missing required arg BEFORE dispatch', async () => {
@@ -267,17 +329,29 @@ describe('svc.* JSON-RPC protocol (ASK-MCP-13 / 14)', () => {
     });
 
     test('tools/list over JSON-RPC surfaces requiredLevel in annotations', async () => {
-        const res = await request(makeApp())
+        const res = await request(makeApp({ permissions: ALL_PERMISSIONS }))
             .post('/api/agent-skills/mcp/jsonrpc')
             .send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
         const reschedule = res.body.result.tools.find((t) => t.name === 'svc.reschedule_appointment');
         // kind/confirmation/permission are correct; requiredLevel is now L1 (AGENT-SKILLS-002
         // corrected the MCP projection to match the skill registry — see ASK-MCP-01).
-        expect(reschedule.annotations).toMatchObject({ kind: 'write', requiresConfirmation: true, requiredLevel: 'L1', requiredPermission: WRITE_PERM });
+        expect(reschedule.annotations).toMatchObject({
+            kind: 'write',
+            requiresConfirmation: true,
+            requiredLevel: 'L1',
+            requiredPermission: 'jobs.edit',
+            frameworkWritePermission: WRITE_PERM,
+        });
         // The new book_on_lead write tool is present with the correct L1 + confirmation annotations.
         const bookOnLead = res.body.result.tools.find((t) => t.name === 'svc.book_on_lead');
         expect(bookOnLead).toBeDefined();
-        expect(bookOnLead.annotations).toMatchObject({ kind: 'write', requiresConfirmation: true, requiredLevel: 'L1', requiredPermission: WRITE_PERM });
+        expect(bookOnLead.annotations).toMatchObject({
+            kind: 'write',
+            requiresConfirmation: true,
+            requiredLevel: 'L1',
+            requiredPermissions: ['leads.edit', 'leads.create'],
+            frameworkWritePermission: WRITE_PERM,
+        });
     });
 
     test('tools/call read over JSON-RPC returns structuredContent from the skill layer', async () => {

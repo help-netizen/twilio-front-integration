@@ -22,7 +22,10 @@ const HANDLERS = {
         const syntheticReq = {
             companyFilter: { company_id: task.company_id },
             user: { crmUser: { id: null }, email: 'automation@albusto' },
-            authz: { permissions: ['tenant.company.manage'], company: {} },
+            authz: {
+                permissions: ['tenant.company.manage', 'contacts.view', 'leads.view', 'tasks.view'],
+                company: {},
+            },
             ip: null,
             headers: {},
         };

@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const registry = require('./crmMcpToolRegistry');
 const mcpResponse = require('./crmMcpResponse');
+const mcpToolAuthorization = require('./mcpToolAuthorization');
 const accountsService = require('./crmAccountsService');
 const contactsService = require('./crmContactsService');
 const dealsService = require('./crmDealsService');
@@ -139,9 +140,11 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
     }
     const context = buildContext(req);
     requireCompanyContext(context);
-    validateArguments(tool, toolArguments || {});
+    mcpToolAuthorization.requireToolAccess(tool, context.permissions);
+    const sanitizedArguments = mcpToolAuthorization.sanitizeArguments(toolArguments);
+    validateArguments(tool, sanitizedArguments);
     requireWriteAccess(context, tool, confirmation);
-    return dispatch(tool.name, contextWithConfirmation(context, confirmation), toolArguments || {});
+    return dispatch(tool.name, contextWithConfirmation(context, confirmation), sanitizedArguments);
 }
 
 async function dispatch(toolName, context, args) {

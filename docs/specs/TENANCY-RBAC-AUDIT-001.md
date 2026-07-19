@@ -10,16 +10,16 @@ handler in `src/server.js`. Of those, 245 contain literal inline
 
 | Category | Handlers | Result |
 |---|---:|---|
-| (a) effective RBAC outside the literal handler declaration | 176 | Fine: mount-level, router-level/alias, platform-role, or reviewed local role gate |
+| (a) effective RBAC outside the literal handler declaration | 182 | Fine: mount-level, router-level/alias, platform-role, reviewed local role gate, or reviewed per-tool MCP gate |
 | (b) public/machine/role-neutral by design | 84 | Compensating controls recorded; seven weak or missing-control cases are flagged |
-| (c) REAL GAP | 30 | Exact route and suggested catalog permission recorded |
+| (c) REAL GAP | 24 | Exact route and suggested catalog permission recorded; all are retiring Zenbooker surfaces |
 
 The scanner recognizes server mount guards by resolving route imports into the
 `app.use(... requirePermission/requirePlatformRole ..., router)` call. Existing real
 gaps are baselined by exact `file:receiver:method:path`, so a new ungated signature
 fails the lint without treating the baseline as approval.
 
-## (a) Effective gate outside literal inline `requirePermission` — 176
+## (a) Effective gate outside literal inline `requirePermission` — 182
 
 Every handler is listed as `line METHOD path`; mount citations point to `src/server.js`.
 
@@ -39,6 +39,8 @@ Every handler is listed as `line METHOD path`; mount citations point to `src/ser
 | `lead-form-settings.js` | 7 GET `/`; 29 PUT `/` | `tenant.company.manage`, mount line 311 |
 | `mailAgent.js` | 35 GET `/settings`; 61 PUT `/settings`; 91 POST `/test-rules`; 113 POST `/dry-run`; 126 GET `/reviews` | `tenant.integrations.manage`, mount line 279 |
 | `marketplace.js` | 33 GET `/apps`; 42 GET `/installations`; 52 GET `/apps/:appKey/settings`; 64 PUT `/apps/:appKey/settings`; 79 PUT `/apps/rate-me/domain`; 92 POST `/apps/rate-me/domain/verify`; 104 DELETE `/apps/rate-me/domain`; 113 POST `/apps/rate-me/tokens`; 130 POST `/apps/:appKey/install`; 144 POST `/installations/:id/disconnect`; 158 POST `/installations/:id/retry-provisioning` | `tenant.integrations.manage`, mount line 277 |
+| `agentSkillsMcp.js` | 46 GET `/tools`; 59 POST `/call`; 78 POST `/jsonrpc` | Authenticated + tenant-resolved transport; registry-declared per-tool permissions enforced before dispatch, discovery filtered, unmapped tools denied |
+| `crmMcp.js` | 33 GET `/tools`; 46 POST `/call`; 65 POST `/jsonrpc` | Authenticated + tenant-resolved transport; registry-declared per-tool permissions enforced before dispatch, discovery filtered, unmapped tools denied |
 | `messaging.js` | 35 GET `/`; 55 GET `/:id`; 67 GET `/:id/messages`; 126 POST `/:id/mark-read`; 143 POST `/:id/mark-unread` | Inline `msgRead` permission alias |
 | `outboundLeadCall.js` | 37 GET `/settings`; 78 PUT `/settings` | `tenant.integrations.manage`, mount line 282 |
 | `platformCompanies.js` | 11 GET `/`; 28 GET `/:id`; 41 PATCH `/:id` | `super_admin`, mount line 349 |
@@ -79,30 +81,26 @@ Every handler is listed as `line METHOD path`; mount citations point to `src/ser
 | `vapi-tools.js` | 111 POST `/` | Fail-closed `x-vapi-secret` middleware |
 | `vapiCallStatus.js` | 165 POST `/` | Fail-closed `x-vapi-secret` middleware |
 | `zip-check.js` | 18 GET `/` | Authenticated role-neutral lookup scoped by selected company |
-| `events.js` | 30 GET `/stats` | **FLAG:** public operational counters have no auth, host gate, or local rate limit |
+| `events.js` | 30 GET `/stats` | ~~FLAG~~ **RESOLVED:** now `authenticate`-gated (role-neutral); no longer public |
 | `integrations-zenbooker.js` | 127 POST `/webhooks`; 148 POST `/wh/:key` | **FLAG:** legacy route accepts requests without a secret when the env var is unset; keyed route uses a 32+ character company key |
 | `notification-settings.js` | 35 GET `/` | Authenticated role-neutral read; PUT is separately admin-gated |
 | `onboarding.js` | 21 POST `/`; 94 GET `/status` | Authenticated pre-tenant flow; bootstrap requires no membership + verified OTP |
-| `portal.js` | 61 POST `/auth/request-access`; 91 POST `/auth/verify`; 158 GET `/session`; 181 GET `/documents`; 191 GET `/documents/:type/:id`; 202 POST `/documents/:type/:id/accept`; 213 POST `/documents/:type/:id/decline`; 224 POST `/payments`; 239 GET `/payments/history`; 249 GET `/bookings`; 259 GET `/profile`; 269 PATCH `/profile` | Portal-session bearer gate after token exchange. **FLAG:** `request-access` accepts company/contact ids and returns a raw token with no proof or route-local rate limit |
+| `portal.js` | 61 POST `/auth/request-access`; 91 POST `/auth/verify`; 158 GET `/session`; … | Portal-session bearer gate after token exchange. ~~FLAG~~ **RESOLVED:** public `request-access`/`verify` now fail closed behind `PORTAL_PUBLIC_ENABLED` (default off, returns 404) + a route-local rate limit; the safe mint path is the authenticated company-scoped `GET /links` (PORTAL-PUBLIC-GATE-001) |
 | `schedule.js` | 190 GET `/availability` | Authenticated placeholder; always 501, no data/action |
 | `text-polish.js` | 36 GET `/health` | Authenticated static health/version response |
-| `twiml.js` | 12 POST `/voice` | **FLAG:** Twilio-called endpoint has no Twilio signature validation |
+| `twiml.js` | 12 POST `/voice` | ~~FLAG~~ **RESOLVED:** validates the Twilio signature, failing closed (403) in production (TWILIO-SIG-ENFORCE-001) |
 | `userGroups.js` | 261 GET `/my` | Authenticated current-user group lookup |
-| `voice.js` | 271 POST `/twiml/outbound`; 398 POST `/twiml/inbound` | **FLAG:** Twilio-called TwiML handlers have no signature validation; outbound validates caller-id ownership only |
-| `webhooks.js` | 14/17/20/23/26/29/32/35 POST voice callbacks; 42/43 POST Conversations callbacks; 46 GET `/health` | Main voice callbacks validate Twilio signatures. **FLAG:** voice fallback and Conversations pre do not validate; Conversations post fails open when token/signature is absent |
-| `src/server.js` | 129 GET `/api/messaging/media/:mediaId/temporary-url` | **FLAG:** opaque UUID is the sole control; no auth or rate limit |
+| `voice.js` | 271 POST `/twiml/outbound`; 398 POST `/twiml/inbound` | ~~FLAG~~ **RESOLVED:** both validate the Twilio signature, failing closed (403) in production, on top of the outbound caller-id ownership check (TWILIO-SIG-ENFORCE-001) |
+| `webhooks.js` | voice callbacks; Conversations pre/post; `/health` | Main voice callbacks validate Twilio signatures. ~~FLAG~~ **RESOLVED:** voice-fallback now validates; Conversations post now fails **closed** when token/signature is absent. Conversations *pre* stays an unauthenticated no-op **by design** — it performs no work and touches no data, so a forged pre-event has no effect (TWILIO-SIG-ENFORCE-001) |
+| `src/server.js` | 129 GET `/api/messaging/media/:mediaId/temporary-url` | **BY DESIGN:** reached by `<img src>` (cannot carry a JWT). Sole control is a crypto-random `gen_random_uuid()` handed out only inside an already company-scoped message DTO — it never reaches anyone who cannot already see the message, so it is not a cross-tenant vector |
 
-## (c) REAL GAP — 30
+## (c) REAL GAP — 24
 
 All are authenticated/tenant-mounted unless noted, but lack role authorization.
-Suggested keys are from `permissionCatalog.js`; the catalog has no dedicated sales/service
-CRM read key, so the closest existing key is identified where needed.
+Suggested keys are from `permissionCatalog.js`.
 
 | Route file | Handler | Suggested permission |
 |---|---|---|
-| `agentSkillsMcp.js` | 45 GET `/tools` | `contacts.view` (catalog lacks service-CRM read) |
-|  | 54 POST `/call`; 73 POST `/jsonrpc` | `contacts.view` transport floor; retain per-tool write gate |
-| `crmMcp.js` | 32 GET `/tools`; 41 POST `/call`; 60 POST `/jsonrpc` | `contacts.view` transport floor; retain per-tool write gate |
 | `integrations-zenbooker.js` | 185 GET `/webhook-url`; 219 POST `/webhook-url/regenerate`; 361 GET `/api-key`; 386 PUT `/api-key` | `tenant.integrations.manage` |
 |  | 244 POST `/contacts/:contactId/create-customer`; 272 POST `/contacts/:contactId/sync` | `contacts.edit` |
 |  | 300 GET `/jobs` | `jobs.view` |
