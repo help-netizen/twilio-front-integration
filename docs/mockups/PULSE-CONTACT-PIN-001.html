@@ -143,6 +143,19 @@
     .pin-action.intent { background: var(--blanc-accent); color: var(--blanc-surface-strong); }
     .pin-action.intent:hover { color: var(--blanc-surface-strong); opacity: 0.9; }
     .pin-action.unavailable { color: var(--blanc-ink-2); }
+
+    /* Narrow layout: labels drop, icons stay. This is a CONTAINER query, not a
+       media query — the bar's width follows the timeline column, which is narrow
+       next to the conversation list even on a wide monitor.
+       Deliberately DESKTOP-only: the mobile bar is narrow by definition and keeps
+       its labels (its buttons are a full-width 3-column grid, so they fit). */
+    .device:not(.mobile) .pin-bar { container-type: inline-size; container-name: pinbar; }
+    @container pinbar (max-width: 620px) {
+      .pin-action-label { display: none; }
+      .pin-action { padding: 0; width: 42px; }
+      .identity { min-width: 0; }
+      .identity-company { display: none; }
+    }
     .pin-action svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     .summary-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
     .summary-link {
@@ -478,8 +491,10 @@
     const composerScrim = document.getElementById('composerScrim');
     let activeScenario = scenarios.default;
 
+    // The label is always present in the DOM and hidden by CSS in the narrow
+    // (icon-only) layout — aria-label/title keep the button named either way.
     function actionButton(kind, label, extraClass = '') {
-      return `<button class="pin-action ${extraClass}" data-action="${kind}">${icons[kind]}<span>${label}</span></button>`;
+      return `<button class="pin-action ${extraClass}" data-action="${kind}" aria-label="${label}" title="${label}">${icons[kind]}<span class="pin-action-label">${label}</span></button>`;
     }
 
     function renderEntities(data) {
@@ -497,11 +512,17 @@
       document.getElementById('detailName').textContent = data.name;
 
       const actions = [];
+      // Owner decision: Call is THE primary action (violet); Text and Email stay
+      // neutral grey. When there is no phone at all, the first reachable channel
+      // takes the primary slot so the bar always has one obvious action.
       if (data.phone) {
-        actions.push(actionButton('call', 'Call'));
-        actions.push(actionButton('text', 'Text', 'intent'));
+        actions.push(actionButton('call', 'Call', 'intent'));
+        actions.push(actionButton('text', 'Text'));
       }
-      if (data.email) actions.push(actionButton('email', 'Email', data.connected ? '' : 'unavailable'));
+      if (data.email) {
+        const emailClass = !data.connected ? 'unavailable' : (data.phone ? '' : 'intent');
+        actions.push(actionButton('email', 'Email', emailClass));
+      }
       primaryActions.innerHTML = actions.join('');
 
       const summary = [];
