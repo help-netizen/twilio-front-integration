@@ -127,14 +127,12 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const interactionType = call.last_interaction_type || 'call';
 
     const openTask = (call as any).open_task || null;
-    const openTaskCount = (call as any).open_task_count || 0;
     // AR-TASK-UNIFY-001: "Action Required" = the thread has an open task.
     const hasOpenTask = (call as any).has_open_task ?? !!openTask;
     const manualActionRequired = !hasOpenTask
         && (call as any).is_action_required === true
         && (call as any).action_required_reason === 'manual';
     const isActionRequired = hasOpenTask || manualActionRequired;
-    const arReason = (call as any).action_required_reason || null;
     const snoozedUntil = (call as any).snoozed_until;
     const isSnoozed = snoozedUntil && new Date(snoozedUntil) > new Date();
     const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
@@ -242,27 +240,14 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                         </div>
                     )}
 
-                    {/* Status badges */}
-                    {isActionRequired && !isSnoozed && (
-                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-orange-100 text-orange-800">
-                                <AlertTriangle className="size-2.5" /> {hasOpenTask ? 'Task' : 'Action Required'}
+                    {/* Non-snoozed AR tiles are exactly the ones the sidebar pins under its
+                        "Action Required" header, so a per-tile Task badge repeated what the
+                        group already says (owner). Only the due time carries information. */}
+                    {isActionRequired && !isSnoozed && openTask?.due_at && (
+                        <div className="mt-1">
+                            <span className="text-[10px]" style={{ color: 'var(--blanc-danger)' }}>
+                                Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: companyTz })}
                             </span>
-                            {(openTask?.title || arReason) && (
-                                <span className="text-[10px] truncate max-w-[150px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    {openTask?.title || REASON_LABELS[arReason] || arReason}
-                                </span>
-                            )}
-                            {openTaskCount > 1 && (
-                                <span className="text-[10px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    +{openTaskCount - 1}
-                                </span>
-                            )}
-                            {openTask?.due_at && (
-                                <span className="text-[10px]" style={{ color: 'var(--blanc-danger)' }}>
-                                    Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: companyTz })}
-                                </span>
-                            )}
                         </div>
                     )}
                     {isSnoozed && (
