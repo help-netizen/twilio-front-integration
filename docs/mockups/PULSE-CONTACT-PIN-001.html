@@ -104,15 +104,23 @@
 
     .thread-scroll { position: relative; display: flex; flex-direction: column; gap: 14px; overflow-anchor: none; padding-bottom: 14px; }
     .sticky-stack { position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
-    .action-required { min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 14px; background: var(--blanc-accent-soft); }
-    .action-label { flex: 0 0 auto; color: var(--blanc-accent); font-size: 10px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
+    /* Every open task is listed, one under another (owner). The label stays a
+       single eyebrow for the whole plaque instead of repeating per row. */
+    .action-required { min-height: 52px; display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: 14px; background: var(--blanc-accent-soft); }
+    .action-tasks { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+    .action-task { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .action-task > .action-copy { flex: 1; }
+    .action-label { flex: 0 0 auto; padding-top: 3px; color: var(--blanc-accent); font-size: 10px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
     .action-copy { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
     .action-due { color: var(--blanc-danger); font-size: 11px; font-weight: 700; white-space: nowrap; }
 
     .pin-bar {
       min-height: 76px;
       display: grid;
-      grid-template-columns: minmax(170px, 1fr) auto auto auto;
+      /* minmax(0, …) not minmax(170px, …): a hard min on the identity track made
+         the grid wider than the bar at narrow widths, and the overflow pushed the
+         expand button outside the card. The name ellipsises instead. */
+      grid-template-columns: minmax(0, 1fr) auto auto auto;
       align-items: center;
       gap: 16px;
       padding: 12px 14px 12px 17px;
@@ -120,6 +128,8 @@
       background: var(--blanc-surface-strong);
       box-shadow: inset 3px 0 0 var(--blanc-accent);
     }
+    /* Every grid child must be allowed to shrink, or it silently sets a floor. */
+    .pin-bar > * { min-width: 0; }
     .identity { min-width: 0; }
     .identity-name { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 750 23px/1.15 var(--blanc-font-heading); letter-spacing: -0.035em; }
     .identity-company { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--blanc-ink-3); font-size: 12px; }
@@ -376,10 +386,9 @@
 
           <section class="thread-scroll" id="threadScroll" aria-label="Timeline">
             <div class="sticky-stack">
-              <div class="action-required">
+              <div class="action-required" id="actionRequired">
                 <span class="action-label">Action Required</span>
-                <span class="action-copy">Follow up on estimate approval</span>
-                <span class="action-due">Due 4:30 PM</span>
+                <div class="action-tasks" id="actionTasks"></div>
               </div>
 
               <div class="pin-bar" id="pinBar">
@@ -479,12 +488,12 @@
     };
 
     const scenarios = {
-      default: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: true, connected: true, notes: true, leads: 2, jobs: 3 },
-      empty: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '', cityZip: '', phone: true, email: true, connected: true, notes: false, leads: 0, jobs: 0 },
-      'no-email': { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: false, connected: true, notes: true, leads: 1, jobs: 1 },
-      'email-only': { name: 'Nora Bennett', company: 'Bennett Studio', street: '89 Harrison Street, Apt 4B', cityZip: 'Jersey City, NJ 07302', phone: false, email: true, connected: true, notes: true, leads: 1, jobs: 0 },
-      'no-channels': { name: 'Ari Patel', company: 'Patel Holdings', street: '', cityZip: '', phone: false, email: false, connected: true, notes: false, leads: 0, jobs: 0 },
-      disconnected: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: true, connected: false, notes: true, leads: 2, jobs: 3 }
+      default: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: true, connected: true, notes: true, leads: 2, jobs: 3, tasks: [{ title: 'Follow up on estimate approval', due: 'Due 4:30 PM' }, { title: 'Confirm gate access with the tenant', due: 'Due tomorrow' }] },
+      empty: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '', cityZip: '', phone: true, email: true, connected: true, notes: false, leads: 0, jobs: 0, tasks: [] },
+      'no-email': { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: false, connected: true, notes: true, leads: 1, jobs: 1, tasks: [{ title: 'Follow up on estimate approval', due: 'Due 4:30 PM' }] },
+      'email-only': { name: 'Nora Bennett', company: 'Bennett Studio', street: '89 Harrison Street, Apt 4B', cityZip: 'Jersey City, NJ 07302', phone: false, email: true, connected: true, notes: true, leads: 1, jobs: 0, tasks: [{ title: 'Send revised quote by email', due: 'Due Fri' }] },
+      'no-channels': { name: 'Ari Patel', company: 'Patel Holdings', street: '', cityZip: '', phone: false, email: false, connected: true, notes: false, leads: 0, jobs: 0, tasks: [] },
+      disconnected: { name: 'Maria Rodriguez', company: 'Rodriguez Property Group', street: '714 Westfield Avenue', cityZip: 'Brooklyn, NY 11215', phone: true, email: true, connected: false, notes: true, leads: 2, jobs: 3, tasks: [{ title: 'Follow up on estimate approval', due: 'Due 4:30 PM' }, { title: 'Confirm gate access with the tenant', due: 'Due tomorrow' }, { title: 'Order replacement part', due: 'Overdue' }] }
     };
 
     const device = document.getElementById('device');
@@ -520,6 +529,14 @@
       // "where" is the operative fact. Street drops before city/ZIP as the bar
       // narrows, so the useful half survives instead of an ellipsised street.
       // No address on file → fall back to the company so the line is never empty.
+      // Action Required lists EVERY open task, stacked (owner). The plaque hides
+      // entirely when there is none, so the bar does not sit under an empty band.
+      const tasks = data.tasks || [];
+      document.getElementById('actionRequired').style.display = tasks.length ? '' : 'none';
+      document.getElementById('actionTasks').innerHTML = tasks.map(t =>
+        `<div class="action-task"><span class="action-copy">${t.title}</span><span class="action-due">${t.due}</span></div>`
+      ).join('');
+
       const secondary = [];
       if (data.cityZip) {
         if (data.street) secondary.push(`<span class="identity-street">${data.street}</span>`);
