@@ -52,7 +52,6 @@ import CompanyUsersPage from './pages/CompanyUsersPage';
 import RolesAccessPage from './pages/RolesAccessPage';
 import QuickMessagesPage from './pages/QuickMessagesPage';
 import PaymentsPage from './pages/PaymentsPage';
-import ProvidersPage from './pages/ProvidersPage';
 import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
 import AutomationPage from './pages/AutomationPage';
 import BillingPage from './pages/BillingPage';
@@ -144,8 +143,8 @@ function App() {
               <Route path="/settings/email" element={<Navigate to="/settings/integrations/google-email" replace />} />
 
               {/* Fullscreen settings surfaces — stay OUTSIDE SettingsLayout: API docs,
-                  the document-template editor (its list page is inside), telephony/*
-                  (own sidebar, below) and the workflow builder. */}
+                  the document-template editor (its list page is inside), the call-flow
+                  builder, and the workflow builder. */}
               <Route path="/settings/api-docs" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ApiDocsPage /></ProtectedRoute>} />
               <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
 
@@ -176,8 +175,20 @@ function App() {
                 <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
                 <Route path="/settings/automation" element={<ProtectedRoute permissions={['tenant.company.manage']}><AutomationPage /></ProtectedRoute>} />
                 <Route path="/settings/jobs/list-columns" element={<ProtectedRoute permissions={['tenant.company.manage']}><JobListColumnsPage /></ProtectedRoute>} />
-                <Route path="/settings/providers" element={<ProtectedRoute permissions={['tenant.company.manage']}><ProvidersPage /></ProtectedRoute>} />
+                <Route path="/settings/providers" element={<Navigate to="/settings/technicians" replace />} />
                 <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
+                {/* Telephony pages share the Settings shell. TelephonyLayout now owns
+                    only the existing connection gate; Phone system is their parent
+                    subsection in the shared navigation model. */}
+                <Route path="/settings/telephony" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/user-groups" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupsPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/user-groups/:groupId" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupDetailPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/audio-library" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/blacklist" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><BlacklistPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/mail-secretary" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><MailSecretarySettingsPage /></ProtectedRoute>} />
@@ -195,18 +206,8 @@ function App() {
               
               <Route path="/email" element={<ProtectedRoute permissions={['messages.view_internal']}><EmailPage /></ProtectedRoute>} />
 
-              {/* Telephony — Configuration (with sidebar) */}
-              <Route path="/settings/telephony" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/user-groups" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupsPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/user-groups/:groupId" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupDetailPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/audio-library" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/blacklist" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><BlacklistPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
-
-              {/* Call Flow Builder — full-screen, accessed from User Group detail */}
+              {/* Call Flow Builder — full-screen contextual Phone system route,
+                  accessed from User Group detail. */}
               <Route path="/settings/telephony/user-groups/:groupId/flow" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><CallFlowBuilderPage /></ProtectedRoute>} />
 
               {/* Workflow Builder — full-screen visual FSM editor */}

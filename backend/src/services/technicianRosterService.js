@@ -19,7 +19,25 @@ function displayName(member) {
         || String(member.id);
 }
 
-async function listActive(companyId) {
+function zenbookerProfile(member, name) {
+    const refs = value => (Array.isArray(value) ? value : [])
+        .filter(item => item?.id != null && item?.name != null)
+        .map(item => ({ id: String(item.id), name: String(item.name) }));
+    const nullableString = value => value == null || value === '' ? null : String(value);
+
+    return {
+        name,
+        phone: nullableString(member.phone),
+        email: nullableString(member.email),
+        user_status: nullableString(member.user_status),
+        assigned_territories: refs(member.assigned_territories),
+        skill_tags: refs(member.skill_tags),
+        calendar_color: nullableString(member.calendar_color),
+        avatar: nullableString(member.avatar),
+    };
+}
+
+async function listActive(companyId, { includeZenbookerProfile = false } = {}) {
     let members;
     try {
         members = await zenbookerClient.getTeamMembers(
@@ -37,11 +55,15 @@ async function listActive(companyId) {
 
     return (Array.isArray(members) ? members : [])
         .filter(member => member?.id != null && member.deactivated !== true && member.service_provider !== false)
-        .map(member => ({
-            id: String(member.id),
-            name: displayName(member),
-            active: true,
-        }));
+        .map(member => {
+            const name = displayName(member);
+            return {
+                id: String(member.id),
+                name,
+                active: true,
+                ...(includeZenbookerProfile ? { zenbooker: zenbookerProfile(member, name) } : {}),
+            };
+        });
 }
 
 async function requireActive(companyId, technicianId) {

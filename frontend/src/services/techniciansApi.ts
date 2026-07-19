@@ -3,6 +3,7 @@ import { authedFetch } from './apiClient';
 export interface Technician {
     tech_id: string;
     name: string | null;
+    zenbooker?: ZenbookerTechnicianProfile | null;
     has_photo: boolean;
     base?: object | null;
     inherits_company_schedule: boolean;
@@ -13,6 +14,17 @@ export interface Technician {
     service_area_mode?: 'list' | 'radius';
     service_area_summary?: string;
     service_area_wildcard?: boolean;
+}
+
+export interface ZenbookerTechnicianProfile {
+    name: string;
+    phone: string | null;
+    email: string | null;
+    user_status: string | null;
+    assigned_territories: { id: string; name: string }[];
+    skill_tags: { id: string; name: string }[];
+    calendar_color: string | null;
+    avatar: string | null;
 }
 
 export interface TechnicianScheduleDay {

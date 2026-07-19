@@ -35,7 +35,7 @@ function sendError(res, err, context) {
 router.get('/', requirePermission('tenant.company.manage'), async (req, res) => {
     try {
         const tenantId = companyId(req);
-        const roster = await rosterService.listActive(tenantId);
+        const roster = await rosterService.listActive(tenantId, { includeZenbookerProfile: true });
         const ids = roster.map(technician => technician.id);
         const [profiles, bases, schedules, serviceAreas] = await Promise.all([
             profileService.listProfiles(tenantId, ids),
@@ -53,6 +53,7 @@ router.get('/', requirePermission('tenant.company.manage'), async (req, res) => 
             return {
                 tech_id: technician.id,
                 name: profile?.name || technician.name,
+                zenbooker: technician.zenbooker || null,
                 has_photo: Boolean(profile?.has_photo),
                 base: base || null,
                 inherits_company_schedule: schedule?.inherits_company_schedule ?? true,

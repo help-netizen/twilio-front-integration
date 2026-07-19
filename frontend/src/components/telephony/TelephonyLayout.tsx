@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import TelephonyNav from './TelephonyNav';
-import { useIsMobile } from '../../hooks/useIsMobile';
 import { useAuthz } from '../../hooks/useAuthz';
 import { authedFetch } from '../../services/apiClient';
 
 // ONBTEL-001 §2.5: connection gate for all /settings/telephony/* pages.
-// Each route wraps its own TelephonyLayout, so the layout remounts on every
+// Each route wraps its page in this gate, so the gate remounts on every
 // tab switch. A confirmed-connected result is cached module-wide to keep tab
 // switches instant for connected companies; negative/error results are never
 // cached, so a company that just connected in the wizard gets a fresh check
@@ -15,7 +13,6 @@ type ConnState = 'loading' | 'connected' | 'not_connected' | 'error';
 let cachedConnected = false;
 
 export default function TelephonyLayout({ children }: { children: React.ReactNode }) {
-    const isMobile = useIsMobile();
     const { hasPermission } = useAuthz();
     const [connState, setConnState] = useState<ConnState>(cachedConnected ? 'connected' : 'loading');
 
@@ -48,7 +45,7 @@ export default function TelephonyLayout({ children }: { children: React.ReactNod
         // Not connected, no integrations permission: dead-end empty state
         // (no redirect — the wizard route would 403 and loop).
         return (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100dvh - 56px)', padding: 24 }}>
+            <div className="flex min-h-full items-center justify-center px-6 py-16">
                 <p style={{ margin: 0, fontSize: 14, color: 'var(--blanc-ink-2, #536070)', textAlign: 'center' }}>
                     Telephony is not connected yet — ask your administrator.
                 </p>
@@ -57,22 +54,7 @@ export default function TelephonyLayout({ children }: { children: React.ReactNod
     }
 
     // 'connected' (incl. the DEFAULT master company) or 'error' (fail-open —
-    // pages have their own not-connected states): render as before.
-    if (isMobile) {
-        // Mobile: stack — horizontal tab strip on top, content full-width below,
-        // one scroll flow. 100dvh for PWA/browser consistency.
-        return (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 'calc(100dvh - 56px)' }}>
-                <TelephonyNav />
-                <div style={{ flex: 1 }}>{children}</div>
-            </div>
-        );
-    }
-
-    return (
-        <div style={{ display: 'flex', height: '100%', minHeight: 'calc(100dvh - 56px)' }}>
-            <TelephonyNav />
-            <div style={{ flex: 1, overflowY: 'auto' }}>{children}</div>
-        </div>
-    );
+    // pages have their own not-connected states): the shared SettingsLayout owns
+    // navigation, height, and scrolling for regular telephony pages.
+    return <>{children}</>;
 }

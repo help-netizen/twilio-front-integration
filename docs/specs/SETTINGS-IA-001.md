@@ -1,12 +1,12 @@
 # SETTINGS-IA-001 — Settings information architecture
 
-Status: approved; Batch 1 implemented 2026-07-18; Batch 2 remains owner-gated. Owner amendments locked 2026-07-18.
+Status: implemented; Batch 1 and Batch 2 completed 2026-07-18. Owner amendments locked 2026-07-18.
 
 ## Goal
 
 Replace the flat Settings navigation with an intent-based hierarchy. Settings has eight tenant groups, each group reveals its subsections only while that group is active, and platform administration remains visually and authorization-wise separate. Existing leaf URLs remain valid.
 
-This is an information-architecture change. It does not grant new permissions, consolidate telephony internals, or merge the legacy Providers and Technicians surfaces in Batch 1.
+This is an information-architecture change. It does not grant new permissions. Batch 2 places the existing telephony surfaces under the shared Settings shell and folds the legacy Providers information into Technicians without changing either data source's authorization.
 
 ## Approved tenant structure
 
@@ -23,10 +23,10 @@ This is an information-architecture change. It does not grant new permissions, c
 
 After the tenant groups, a role-gated **Platform administration** divider/group contains Super admin. It is visible only to `super_admin`, exactly as before.
 
-### Staged exceptions
+### Implementation status
 
-- Batch 1 temporarily retains **Providers** beside **Technicians** under Scheduling & service areas. Batch 2 merges Providers into Technicians and then supplies the compatibility redirect. Batch 1 must not modify either surface's behavior.
-- Batch 1 keeps the existing Telephony routes and `TelephonyLayout` intact. The Phone & AI group supplies entry points, but unified telephony navigation is Batch 2.
+- Batch 1 introduced the shared navigation model, eight groups, Company schedule, addressable tabs, and route compatibility.
+- Batch 2 removes the temporary Providers leaf, redirects its URL to Technicians, and moves the regular telephony pages from the second telephony sidebar into the shared Settings layout.
 
 ## Navigation behavior
 
@@ -66,6 +66,16 @@ Group landing routes are:
 - Lead/job tabs are controlled by `?tab=settings|workflows`; the existing `/settings/lead-form` URL still opens Job setup.
 - Full-screen API documentation remains `/settings/api-docs`; API access links to it from the addressable API-access tab.
 - Contextual back links return to their new intent group or tab instead of assuming `/settings/integrations` is the Settings home.
+- `/settings/providers` redirects to `/settings/technicians`; the target retains the existing `tenant.company.manage` guard.
+
+## Telephony consolidation and technician merge
+
+- The regular `/settings/telephony`, `/settings/telephony/user-groups`, `/settings/telephony/user-groups/:groupId`, `/settings/telephony/phone-numbers`, `/settings/telephony/audio-library`, `/settings/telephony/blacklist`, `/settings/telephony/provider-settings`, `/settings/telephony/routing-logs`, and `/settings/telephony/dashboard` surfaces render under `SettingsLayout`.
+- `TelephonyLayout` retains the existing `/api/telephony/numbers/status` connection gate and fail-open behavior, but no longer owns a second sidebar, viewport height, or content scroller. The shared Settings shell owns navigation and scrolling.
+- `/settings/telephony/user-groups/:groupId/flow` remains a full-screen builder outside `SettingsLayout`. Its route prefix maps it contextually to the Phone system subsection, and its back action returns to User Groups.
+- All telephony URLs and `/calls/dashboard` remain valid. All regular telephony routes retain `tenant.telephony.manage`.
+- Technicians remains the canonical active roster and schedule/service-area surface. `GET /api/settings/technicians` includes the legacy Providers surface's avatar, status, phone, email, skill tags, assigned territories, and calendar color from its existing tenant-scoped Zenbooker roster read.
+- The canonical endpoint performs one roster read; the frontend does not issue a second `/api/zenbooker/team-members` request. No fallback invents or substitutes roster data.
 
 ## Authorization matrix (unchanged)
 
@@ -73,7 +83,7 @@ Group landing routes are:
 |---|---|
 | Company schedule working week | `schedule.dispatch` |
 | Company schedule recommendations | `tenant.company.manage` |
-| Business profile, Service areas, Providers, Technicians, Job setup/workflows, Automations, Job list columns, Bank transfer details, Alerts & notifications | `tenant.company.manage` |
+| Business profile, Service areas, Technicians, Job setup/workflows, Automations, Job list columns, Bank transfer details, Alerts & notifications | `tenant.company.manage` |
 | Phone system | `tenant.telephony.manage` |
 | Phone setup, AI apps, Customer payments, Marketplace/Zenbooker/Google Email/API access, Document templates | `tenant.integrations.manage` |
 | Price book | `price_book.manage` |
@@ -96,17 +106,18 @@ The unusual Customer payments and Document templates guards are deliberate compa
 - Back-link audit, approved user-facing renames, and `BLANC API` → `Albusto API` copy fix.
 - Focused navigation, redirect, addressability, and Company schedule tests.
 
-### Batch 2 (requires owner gate)
+### Batch 2 (implemented after owner gate)
 
-- Consolidate telephony navigation into Phone & AI.
-- Merge Providers into Technicians and add the approved compatibility redirect.
+- Consolidated all regular telephony routes into the shared Settings layout while retaining the connection gate and full-screen call-flow builder.
+- Merged the legacy Providers contact/skill/territory/profile visibility into Technicians and added the approved compatibility redirect.
+- Added route/layout smoke coverage for every telephony page, parent-subsection matching, the Providers redirect, and technician roster enrichment.
 
 ## Risks
 
 - A subsection can live in a group whose permission differs from adjacent subsections. The shared model and leaf `ProtectedRoute` must stay synchronized.
 - Query-addressed tabs need explicit active matching; pathname prefix matching alone would highlight several subsections at once.
 - Links into full-screen Settings surfaces do not render the Settings sidebar. Their contextual back links are therefore part of the IA contract.
-- The temporary Providers + Technicians duplication is visible in Batch 1 and must not be mistaken for the final IA.
+- The optional detailed-roster mode is reserved for the tenant-company-managed Technicians route. Operational roster consumers continue receiving the minimal `{ id, name, active }` shape.
 
 ## Acceptance
 
@@ -117,4 +128,7 @@ The unusual Customer payments and Document templates guards are deliberate compa
 - The Schedule gear navigates to Company schedule; Time off remains on Schedule.
 - Company schedule loads/saves through `/api/schedule/settings` and visibly contains Recommendation settings.
 - Integrations tabs can be linked and refreshed independently.
+- Every regular telephony page renders under the unified Settings navigation; the call-flow builder stays full-screen and maps to Phone system.
+- `/settings/providers` redirects to `/settings/technicians`, and no Providers navigation leaf remains.
+- Technician cards retain the legacy Providers page's Zenbooker profile, contact, skill, and territory visibility.
 - Frontend production build and the complete frontend Vitest suite pass.

@@ -52,7 +52,7 @@ describe('SETTINGS-IA-001 navigation model', () => {
             'alerts-notifications',
         ]);
         expect(companyManager.find(group => group.id === 'scheduling')?.links.map(link => link.label)).toEqual([
-            'Company schedule', 'Service areas', 'Providers', 'Technicians',
+            'Company schedule', 'Service areas', 'Technicians',
         ]);
         expect(companyManager.find(group => group.id === 'phone-ai')?.links.map(link => link.label))
             .toEqual(['Message templates']);
@@ -108,6 +108,26 @@ describe('SETTINGS-IA-001 navigation model', () => {
         const location = { pathname: '/settings/billing/bank-transfer-details' };
         expect(isSettingsNavLinkActive(plan, location)).toBe(false);
         expect(isSettingsNavLinkActive(bank, location)).toBe(true);
+    });
+
+    it('keeps every telephony context under the Phone system parent subsection', () => {
+        const phoneSystem = getVisibleSettingsGroups({ permissions: ['tenant.telephony.manage'] })
+            .find(group => group.id === 'phone-ai')!
+            .links.find(link => link.id === 'phone-system')!;
+
+        [
+            '/settings/telephony',
+            '/settings/telephony/dashboard',
+            '/settings/telephony/user-groups/group-1',
+            '/settings/telephony/user-groups/group-1/flow',
+            '/settings/telephony/phone-numbers',
+            '/settings/telephony/audio-library',
+            '/settings/telephony/blacklist',
+            '/settings/telephony/provider-settings',
+            '/settings/telephony/routing-logs',
+        ].forEach(pathname => {
+            expect(isSettingsNavLinkActive(phoneSystem, { pathname })).toBe(true);
+        });
     });
 });
 

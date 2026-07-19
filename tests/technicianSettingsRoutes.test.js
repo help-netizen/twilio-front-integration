@@ -35,7 +35,21 @@ const router = require('../backend/src/routes/technicians');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const COMPANY_B = '00000000-0000-0000-0000-00000000000b';
-const TECH = { id: 'tech-1', name: 'Alex Rivera', active: true };
+const TECH = {
+    id: 'tech-1',
+    name: 'Alex Rivera',
+    active: true,
+    zenbooker: {
+        name: 'Alex Rivera',
+        phone: '+12125550123',
+        email: 'alex@example.com',
+        user_status: 'activated',
+        assigned_territories: [{ id: 'territory-1', name: 'North' }],
+        skill_tags: [{ id: 'skill-1', name: 'HVAC' }],
+        calendar_color: '#7f42e1',
+        avatar: '//cdn.example.com/alex.jpg',
+    },
+};
 const EFFECTIVE = {
     technician_id: TECH.id,
     inherits_company_schedule: true,
@@ -98,16 +112,17 @@ it('lists the active roster with profile/base and visible effective schedule sum
     expect(response.body.data).toEqual([expect.objectContaining({
         tech_id: TECH.id,
         name: TECH.name,
+        zenbooker: TECH.zenbooker,
         schedule_summary: EFFECTIVE.schedule_summary,
         inherits_company_schedule: true,
     })]);
-    expect(rosterService.listActive).toHaveBeenCalledWith(COMPANY_A);
+    expect(rosterService.listActive).toHaveBeenCalledWith(COMPANY_A, { includeZenbookerProfile: true });
     expect(profileService.listProfiles).toHaveBeenCalledWith(COMPANY_A, [TECH.id]);
 });
 
 it('passes only the caller company into every list read', async () => {
     await request(appWith({ companyId: COMPANY_B })).get('/');
-    expect(rosterService.listActive).toHaveBeenCalledWith(COMPANY_B);
+    expect(rosterService.listActive).toHaveBeenCalledWith(COMPANY_B, { includeZenbookerProfile: true });
     expect(profileService.listProfiles).toHaveBeenCalledWith(COMPANY_B, [TECH.id]);
     expect(baseLocationQueries.listByCompany).toHaveBeenCalledWith(COMPANY_B);
     expect(workScheduleService.listEffective).toHaveBeenCalledWith(COMPANY_B, [TECH]);

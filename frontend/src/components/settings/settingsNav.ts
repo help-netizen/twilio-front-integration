@@ -91,8 +91,6 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
                 permissions: ['schedule.dispatch', 'tenant.company.manage'],
             },
             { id: 'service-areas', label: 'Service areas', to: '/settings/service-territories', permissions: ['tenant.company.manage'] },
-            // SETTINGS-IA-001 Batch 2 merges this legacy surface into Technicians.
-            { id: 'providers', label: 'Providers', to: '/settings/providers', permissions: ['tenant.company.manage'] },
             { id: 'technicians', label: 'Technicians', to: '/settings/technicians', permissions: ['tenant.company.manage'] },
         ],
     },

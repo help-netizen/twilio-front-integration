@@ -2498,3 +2498,9 @@ GPT-implementer: 2 волны ACCEPT (backend+frontend), 0 fix-раундов. T
 
 ---
 
+## 2026-07-18 — SETTINGS-IA-001 (батч 2): телефония в едином Settings-layout + Providers слит в Technicians
+
+Завершение перестройки Settings. (1) **Телефония**: все страницы /settings/telephony/* теперь живут в едином Settings-шелле (группа Phone & AI) — второй сайдбар TelephonyNav удалён; URL, гейт подключения, права и алиас /calls/dashboard не тронуты; полноэкранный Call-flow builder остался контекстным роутом. (2) **Providers → Technicians**: уникальные Zenbooker-поля (контакты/аватар/статус/скиллы/территории) подтягиваются через канонический tenant-scoped roster-эндпоинт (opt-in detail, операционные потребители не потяжелели); компактный ZB-блок на карточке техника; /settings/providers → редирект на /settings/technicians; ProvidersPage удалена. Тандем: FE build 0 + vitest 175/175, backend 13/13; саботаж providers-редиректа red→green. SETTINGS-IA-001 полностью реализован.
+
+---
+
