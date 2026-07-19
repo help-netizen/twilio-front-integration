@@ -577,5 +577,60 @@
   "7bf6d49": {
     "tag": "Polish",
     "text": "Distances are always shown in miles"
+  },
+  "ac37f5a": {
+    "text": "Faster lists — one “Load more” across jobs, leads, tasks, contacts and payments",
+    "tag": "Polish"
+  },
+  "b0311b0": {
+    "text": "A tidier Action Required list in Pulse",
+    "tag": "Polish"
+  },
+  "74bd7b2": {
+    "hide": true
+  },
+  "72de431": {
+    "text": "Play call recordings right from the timeline — floating player with scrubbing",
+    "tag": "Feature"
+  },
+  "d8005de": {
+    "text": "The contact card stays pinned while you scroll a long conversation",
+    "tag": "Feature"
+  },
+  "321cefa": {
+    "text": "Action Required now lists every open task — Done completes just that one",
+    "tag": "Fix"
+  },
+  "836b791": {
+    "hide": true
+  },
+  "a98d8f2": {
+    "hide": true
+  },
+  "2ae13ed": {
+    "hide": true
+  },
+  "9fa8ce6": {
+    "text": "The service-area map now shades whole ZIP codes, one colour per area",
+    "tag": "Feature"
+  },
+  "3b0f798": {
+    "hide": true
+  },
+  "1433579": {
+    "hide": true
+  },
+  "acc09b0": {
+    "hide": true
+  },
+  "b94270b": {
+    "hide": true
+  },
+  "758b5ff": {
+    "hide": true
+  },
+  "": {
+    "text": "The app marketplace is organised into catalogs, with search and filters",
+    "tag": "Polish"
   }
 }
