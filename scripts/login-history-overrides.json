@@ -536,5 +536,26 @@
   },
   "bf5b96f": {
     "hide": true
+  },
+  "88a9931": {
+    "tag": "Feature",
+    "text": "Settings, reorganised — telephony and technicians now sit with everything else"
+  },
+  "1c741b4": {
+    "hide": true
+  },
+  "f0c01f7": {
+    "tag": "Polish",
+    "text": "Continued access-control hardening across the app"
+  },
+  "8e6d2ce": {
+    "tag": "Fix",
+    "text": "Saving Dispatch Settings for the first time"
+  },
+  "0105088": {
+    "hide": true
+  },
+  "8e87df5": {
+    "hide": true
   }
 }
