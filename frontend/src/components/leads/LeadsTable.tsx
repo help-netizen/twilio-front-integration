@@ -97,8 +97,9 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                         </TableRow>
                     ))}</TableBody>
                 </Table>
+                {/* OB-17: footer at the end of the scroll container, not pinned below it. */}
+                <LoadMoreFooter {...footerProps} />
             </div>
-            <LoadMoreFooter {...footerProps} />
         </div>
     );
 }

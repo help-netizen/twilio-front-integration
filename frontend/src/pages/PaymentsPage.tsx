@@ -258,9 +258,9 @@ export default function PaymentsPage() {
                             </tbody>
                         </table>
                     )}
+                    {/* OB-17: footer at the end of the scroll container, not pinned below it. */}
+                    <LoadMoreFooter {...footerProps} />
                 </div>
-
-                <LoadMoreFooter {...footerProps} />
                 </div>
 
             </div>

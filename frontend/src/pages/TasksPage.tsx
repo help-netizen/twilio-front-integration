@@ -452,9 +452,9 @@ export function TasksPage() {
                                         })}
                                     </tbody>
                                 </table>
+                                {/* OB-17: footer at the end of the scroll container. */}
+                                <LoadMoreFooter {...footerProps} />
                             </div>
-
-                            <LoadMoreFooter {...footerProps} />
                         </>
                     )}
                 </div>

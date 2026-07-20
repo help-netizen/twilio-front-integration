@@ -145,9 +145,10 @@ export function JobsTable({
                         ))}
                     </tbody>
                 </table>
+                {/* OB-17: footer lives at the END of the scroll container, not pinned
+                    below it — it appears only when the user scrolls to the bottom. */}
+                <LoadMoreFooter {...footerProps} />
             </div>
-
-            <LoadMoreFooter {...footerProps} />
         </>
     );
 }
