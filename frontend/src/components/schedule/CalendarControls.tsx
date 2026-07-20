@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, X } from 'lucide-react';
+import { CalendarOff, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, X } from 'lucide-react';
 import { format, startOfWeek, endOfWeek } from 'date-fns';
 import type { ViewMode, ProviderInfo } from '../../hooks/useScheduleData';
 import type { ScheduleFilters } from '../../services/scheduleApi';
@@ -24,6 +24,7 @@ interface CalendarControlsProps {
     onNavigateDate: (direction: 'prev' | 'next' | 'today') => void;
     onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
     onOpenSettings?: () => void;
+    onTimeOff?: () => void;
 }
 
 const VIEW_OPTIONS: Array<{ value: ViewMode; label: string }> = [
@@ -274,7 +275,7 @@ export const ScheduleProviderChips: React.FC<{
 
 export const CalendarControls: React.FC<CalendarControlsProps> = ({
     viewMode, currentDate, filters, itemCounts, loading, providers = [], allTags = [],
-    onViewModeChange, onNavigateDate, onFiltersChange, onOpenSettings,
+    onViewModeChange, onNavigateDate, onFiltersChange, onOpenSettings, onTimeOff,
 }) => {
     const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
@@ -307,13 +308,13 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
         // задаёт родительский gap, не карта.
         <div className="schedule-calendar-controls relative z-[120] flex flex-col gap-3">
                 {/* Main controls row */}
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    {/* Left: View Selector — hidden on mobile (Day-only there) */}
-                    <div className="relative hidden md:block">
+                <div className="schedule-controls-row flex flex-wrap items-center gap-2">
+                    {/* View selector — fixed-size so long options never squeeze navigation. */}
+                    <div className="relative shrink-0">
                         <select
                             value={viewMode}
                             onChange={(e) => onViewModeChange(e.target.value as ViewMode)}
-                            className="blanc-control-chip appearance-none outline-none"
+                            className="blanc-control-chip min-w-[132px] appearance-none outline-none"
                             style={{ paddingRight: 36 }}
                         >
                             {VIEW_OPTIONS.map((opt) => (
@@ -326,30 +327,34 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                         />
                     </div>
 
-                    {/* Center: Date navigation + label */}
-                    <div className="flex items-center gap-2.5 flex-wrap justify-center w-full md:flex-nowrap md:justify-start md:w-auto">
+                    {/* Date navigation stays one non-shrinking cluster at middle widths. */}
+                    <div className="flex shrink-0 items-center gap-2">
                         <button
                             type="button"
                             onClick={() => onNavigateDate('prev')}
-                            className="blanc-control-chip-icon"
+                            className="blanc-control-chip-icon shrink-0"
                         >
                             <ChevronLeft className="size-4" />
                         </button>
                         <button
                             type="button"
                             onClick={() => onNavigateDate('today')}
-                            className="blanc-control-chip"
+                            className="blanc-control-chip shrink-0"
                         >
                             Today
                         </button>
                         <button
                             type="button"
                             onClick={() => onNavigateDate('next')}
-                            className="blanc-control-chip-icon"
+                            className="blanc-control-chip-icon shrink-0"
                         >
                             <ChevronRight className="size-4" />
                         </button>
-                        <span className="text-[15px] font-semibold ml-1" style={{ color: 'var(--sched-ink-1)' }}>
+                    </div>
+
+                    {/* The label absorbs spare width; the count may wrap below it without collisions. */}
+                    <div className="flex min-w-[210px] flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="whitespace-nowrap text-[15px] font-semibold" style={{ color: 'var(--sched-ink-1)' }}>
                             {getDateLabel(currentDate, viewMode)}
                         </span>
                         {!loading && itemCounts && itemCounts.total > 0 && (
@@ -359,32 +364,13 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                         )}
                     </div>
 
-                    {/* Right: Search + Filters + Settings */}
-                    <div className="flex items-center gap-2 w-full md:w-auto flex-wrap md:flex-nowrap">
-                        {/* Inline search — filled-канон: заливка var(--blanc-field), без бордера */}
-                        <label
-                            className="flex items-center min-h-[42px] px-4 gap-2 flex-1 md:flex-none w-full md:w-auto md:min-w-[180px]"
-                            style={{ background: 'var(--blanc-field)', borderRadius: '999px' }}
-                        >
-                            <svg className="size-4 shrink-0" style={{ color: 'var(--sched-ink-3)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-                            </svg>
-                            <input
-                                type="text"
-                                placeholder="Search..."
-                                value={filters.search || ''}
-                                onChange={(e) => onFiltersChange({ ...filters, search: e.target.value || undefined })}
-                                className="w-full bg-transparent border-0 text-[13px] outline-none placeholder:text-gray-400"
-                                style={{ color: 'var(--sched-ink-1)' }}
-                            />
-                        </label>
-
-                        {/* Filters button + dropdown */}
-                        <div className="relative" ref={dropdownRef}>
+                    {/* Management actions wrap together and align to the row's right edge. */}
+                    <div className="schedule-controls-actions ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                        <div className="relative shrink-0" ref={dropdownRef}>
                             <button
                                 type="button"
                                 onClick={() => setFilterDropdownOpen(!filterDropdownOpen)}
-                                className="blanc-control-chip"
+                                className="blanc-control-chip shrink-0"
                                 style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
                                 data-active={filterDropdownOpen || undefined}
                             >
@@ -477,13 +463,25 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                             <button
                                 type="button"
                                 onClick={onOpenSettings}
-                                className="blanc-control-chip-icon"
+                                className="blanc-control-chip-icon shrink-0"
                                 title="Dispatch Settings"
                             >
                                 <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.573-1.066z" />
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                 </svg>
+                            </button>
+                        )}
+
+                        {onTimeOff && (
+                            <button
+                                type="button"
+                                onClick={onTimeOff}
+                                className="blanc-control-chip shrink-0"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                            >
+                                <CalendarOff className="size-4" />
+                                Time off
                             </button>
                         )}
                     </div>

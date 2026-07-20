@@ -6952,3 +6952,31 @@ email = best-effort via the platform-sender company mailbox).
 ## PULSE-PLAYER-001 — плавающий плеер записей звонков в Pulse (OB-13) (2026-07-19)
 
 **Как владелец**, я слушаю записи звонков в Pulse и хочу нормальный плеер: полоса прогресса с перемоткой, нормальные размеры кнопок, скорость — при этом карточка звонка должна стать чище (кнопочный ряд уходит из неё в плавающий hover-бар поверх страницы). Плеер живёт только в Pulse: ушёл на другую страницу — звук остановился. Ничего лишнего: без download, waveform, запоминания скорости, глобального плеера. Seek по клику из транскрипта/entities обязан продолжать работать. Спека: `docs/specs/PULSE-PLAYER-001.md`.
+
+## PULSE-LEAD-PIN-001 — закреплённая компактная Lead-панель в Pulse (2026-07-20)
+
+**Status:** Implemented
+
+**Priority:** P0
+
+**Spec:** `docs/specs/PULSE-LEAD-PIN-001.md`
+
+**Approved mockup:** `docs/mockups/PULSE-LEAD-PIN-001.html`
+
+- **FR-LP-01:** Lead bar входит в тот же `.pulse-sticky-stack`, что AR plaque и
+  Contact bar; отдельного sticky-слоя нет.
+- **FR-LP-02:** Desktop bar ровно 68px и использует общую с Contact геометрию;
+  identity = `LEAD #id · repair type`, имя и inline status state-pill.
+- **FR-LP-03:** Status — полный pill с цветовым tint и leading dot, управляемый
+  существующим DB-FSM обработчиком; тот же treatment применяется в полном
+  `LeadDetailPanel`. Source остаётся только в полной панели.
+- **FR-LP-04:** В collapsed bar остаются Edit, Convert to Job, реальное overflow
+  menu, динамический Activate для lost-state и expand; Call/Text/Email не добавляются.
+- **FR-LP-05:** Полный `LeadDetailPanel` уходит из flow и открывается без копии в
+  `Dialog variant="panel"` / canonical mobile bottom sheet; высота timeline не меняется.
+- **FR-LP-06:** Contact и Lead используют общие shell/action/expand primitives и
+  один desktop-only container-query ladder; mobile stacked grid сохраняет labels.
+- **FR-LP-07:** Icon-only состояния имеют `aria-label`; dropdown/panel сохраняют
+  канонические keyboard focus и dismiss mechanics.
+- **NFR-LP-01:** Frontend-only: без backend, API, schema, tenancy или integration
+  изменений; существующие `usePulsePage` handlers переиспользуются напрямую.

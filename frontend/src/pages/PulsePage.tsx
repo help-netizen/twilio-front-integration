@@ -11,6 +11,7 @@ import { ActionRequiredPlaque } from '../components/pulse/ActionRequiredPlaque';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
+import { PulseLeadBar } from '../components/leads/PulseLeadBar';
 import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
 import { PulseContactBar } from '../components/contacts/PulseContactBar';
 import { openLeadsJobsCount, pickBarAddress, hasNotes } from '../components/contacts/contactBarHelpers';
@@ -73,9 +74,14 @@ const PulsePageInner: React.FC = () => {
     // the full card opens as an overlay panel so expansion never changes the scroll
     // container's height (reverse pagination compensates by scrollHeight).
     const [contactCardOpen, setContactCardOpen] = useState(false);
+    const [leadCardOpen, setLeadCardOpen] = useState(false);
     const [contactCardSection, setContactCardSection] = useState<'notes' | 'leads-jobs' | null>(null);
     const [composerFocusSignal, setComposerFocusSignal] = useState(0);
-    useEffect(() => { setContactCardOpen(false); setContactCardSection(null); }, [p.contact?.id, p.timelineId]);
+    useEffect(() => {
+        setContactCardOpen(false);
+        setLeadCardOpen(false);
+        setContactCardSection(null);
+    }, [p.contact?.id, p.lead?.UUID, p.timelineId]);
 
     const isContactSelected = !!(p.contactId || p.timelineId);
 
@@ -290,13 +296,14 @@ const PulsePageInner: React.FC = () => {
                         // OR an email reply is possible.
                         const canEmailReply = p.emailConnected && (p.contactEmails?.length ?? 0) > 0;
                         const showContactBar = !isAnonTimeline && !p.lead && !p.leadLoading && !!p.contact?.id && !!p.contactDetail;
+                        const showLeadBar = !isAnonTimeline && !p.leadLoading && !!p.lead;
                         const smsTarget = p.messageTargets.find(t => t.channel === 'sms');
                         const emailTarget = p.messageTargets.find(t => t.channel === 'email');
                         return (
                         <>
-                            {/* PULSE-CONTACT-PIN-001: ONE sticky stack for the AR plaque and the
-                                condensed contact bar — two independent sticky elements would both
-                                pin to top:0 and overlap. */}
+                            {/* PULSE-CONTACT/LEAD-PIN-001: ONE sticky stack for the AR plaque and
+                                selected entity bar — independent sticky elements would both pin
+                                to top:0 and overlap. */}
                             <div className="pulse-sticky-stack">
                             {/* One row per task; taskless manual flags keep thread-level controls. */}
                             <ActionRequiredPlaque
@@ -353,6 +360,18 @@ const PulsePageInner: React.FC = () => {
                                     onExpand={() => { setContactCardSection(null); setContactCardOpen(true); }}
                                 />
                             )}
+                            {showLeadBar && (
+                                <PulseLeadBar
+                                    lead={p.lead!}
+                                    onEdit={p.setEditingLead}
+                                    onMarkLost={p.handleMarkLost}
+                                    onActivate={p.handleActivate}
+                                    onConvert={p.handleConvert}
+                                    onUpdateStatus={p.handleUpdateStatus}
+                                    onDelete={p.handleDelete}
+                                    onExpand={() => setLeadCardOpen(true)}
+                                />
+                            )}
                             </div>
 
                             {/* Anonymous header card — replaces detail/wizard for the shared Anonymous timeline */}
@@ -370,20 +389,9 @@ const PulsePageInner: React.FC = () => {
                             {/* Detail card: Lead / Contact / Wizard */}
                             {!isAnonTimeline && (p.contactId || p.timelineId) && (p.phone || p.contact?.id) ? (
                                 p.lead ? (
-                                    <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-info)', height: 560 } as React.CSSProperties}>
-                                        <LeadDetailPanel
-                                            lead={p.lead}
-                                            onClose={() => { }}
-                                            onEdit={(lead) => p.setEditingLead(lead)}
-                                            onMarkLost={p.handleMarkLost}
-                                            onActivate={p.handleActivate}
-                                            onConvert={p.handleConvert}
-                                            onUpdateComments={p.handleUpdateComments}
-                                            onUpdateStatus={p.handleUpdateStatus}
-                                            onUpdateSource={p.handleUpdateSource}
-                                            onDelete={p.handleDelete}
-                                        />
-                                    </div>
+                                    // PULSE-LEAD-PIN-001: the full lead card left the flow. The
+                                    // pinned bar represents it here; expansion is the overlay below.
+                                    null
                                 ) : !p.leadLoading && p.contact?.id && p.contactDetail ? (
                                     // PULSE-CONTACT-PIN-001: the full contact card left the flow — the
                                     // sticky bar above represents the contact; the card opens as an
@@ -457,6 +465,28 @@ const PulsePageInner: React.FC = () => {
                                                 onAddressesChanged={p.refreshContactDetail}
                                                 onContactChanged={p.refreshContactDetail}
                                                 onTasksChanged={p.refetchContacts}
+                                            />
+                                        </DialogBody>
+                                    </DialogContent>
+                                </Dialog>
+                            )}
+                            {showLeadBar && (
+                                <Dialog open={leadCardOpen} onOpenChange={setLeadCardOpen}>
+                                    <DialogContent variant="panel">
+                                        <DialogTitle className="sr-only">Lead details</DialogTitle>
+                                        <DialogDescription className="sr-only">Full lead card with status, source, contact details, notes and actions.</DialogDescription>
+                                        <DialogBody className="p-0">
+                                            <LeadDetailPanel
+                                                lead={p.lead!}
+                                                onClose={() => setLeadCardOpen(false)}
+                                                onEdit={p.setEditingLead}
+                                                onMarkLost={p.handleMarkLost}
+                                                onActivate={p.handleActivate}
+                                                onConvert={p.handleConvert}
+                                                onUpdateComments={p.handleUpdateComments}
+                                                onUpdateStatus={p.handleUpdateStatus}
+                                                onUpdateSource={p.handleUpdateSource}
+                                                onDelete={p.handleDelete}
                                             />
                                         </DialogBody>
                                     </DialogContent>

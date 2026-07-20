@@ -6,20 +6,19 @@
  *
  * Embedded mode (Pulse): single-column with tiles, notes in header area.
  */
-import { ChevronDown, Users, RotateCcw } from 'lucide-react';
+import { ChevronDown, Users } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { Lead } from '../../types/lead';
-import { LEAD_STATUSES } from '../../types/lead';
 import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
-import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { MetadataSection, LeadDetailFooter } from './LeadDetailSections';
 import { LeadInfoSections } from './LeadInfoSections';
 import { LeadFinancialsTab } from './LeadFinancialsTab';
-import { LEAD_STATUS_COLORS, hexToRgba } from './leadStatusStyles';
 import { REJECTED_REASON_COPY } from './leadConstants';
+import { hexToRgba } from './leadStatusStyles';
 import { useAuthz } from '../../hooks/useAuthz';
+import { LeadStatusDropdown } from './LeadStatusDropdown';
 
 interface LeadDetailPanelProps {
     lead: Lead | null;
@@ -75,8 +74,6 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
     );
 
     const contactName = [lead.FirstName, lead.LastName].filter(Boolean).join(' ');
-    const statusColor = LEAD_STATUS_COLORS[lead.Status] || '#6B7280';
-
     // ─── Embedded (Pulse) — single column ────────────────────────────────────
     if (embedded) {
         return (
@@ -84,7 +81,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
                 {/* Header */}
                 <div className="pulse-contact-header-grid px-5 pt-5 pb-4">
                     <div>
-                        <LeadHeader lead={lead} contactName={contactName} statusColor={statusColor} onUpdateStatus={onUpdateStatus} onUpdateSource={onUpdateSource} />
+                        <LeadHeader lead={lead} contactName={contactName} onUpdateStatus={onUpdateStatus} onUpdateSource={onUpdateSource} />
                     </div>
                     <NotesHistoryTabs entityType="lead" entityId={lead.UUID} />
                 </div>
@@ -118,7 +115,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
                 <div className="w-full md:w-1/2 flex flex-col overflow-y-auto">
                     {/* Header */}
                     <div className="px-5 pt-5 pb-3">
-                        <LeadHeader lead={lead} contactName={contactName} statusColor={statusColor} onUpdateStatus={onUpdateStatus} onUpdateSource={onUpdateSource} />
+                        <LeadHeader lead={lead} contactName={contactName} onUpdateStatus={onUpdateStatus} onUpdateSource={onUpdateSource} />
                     </div>
 
                     {/* Contact + Address tiles */}
@@ -178,23 +175,14 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
 
 // ─── LeadHeader sub-component ────────────────────────────────────────────────
 
-function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSource }: {
+function LeadHeader({ lead, contactName, onUpdateStatus, onUpdateSource }: {
     lead: Lead;
     contactName: string;
-    statusColor: string;
     onUpdateStatus: (uuid: string, status: string) => void;
     onUpdateSource: (uuid: string, source: string) => void;
 }) {
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
-    const { data: fsmData } = useFsmStates('lead', true);
-    const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : (LEAD_STATUSES as unknown as string[]);
-    const initialState = fsmData?.initialState || null;
-    const { data: fsmActions } = useFsmActions('lead', lead.Status);
-    const allowedTargets = new Set(fsmActions?.map(a => a.target) || []);
-    const reachable = allStatuses.filter(s => s !== lead.Status && allowedTargets.has(s));
-    const unreachable = allStatuses.filter(s => s !== lead.Status && !allowedTargets.has(s));
-    const canReset = initialState && lead.Status !== initialState;
     const rejectedReason = lead.rely_filter?.reason
         ? REJECTED_REASON_COPY[lead.rely_filter.reason] ?? 'Rejected'
         : 'Rejected';
@@ -224,49 +212,7 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
 
             {/* Status + Source pills */}
             <div className="flex items-center gap-2 flex-wrap">
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <button
-                            type="button"
-                            className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-colors focus:outline-none"
-                            style={{
-                                background: hexToRgba(statusColor, 0.1),
-                                color: statusColor,
-                                minHeight: 42, borderRadius: 14, border: 'none',
-                            }}
-                        >
-                            {lead.Status}<ChevronDown className="size-3.5" />
-                        </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start">
-                        {reachable.map(status => (
-                            <DropdownMenuItem key={status} onClick={() => onUpdateStatus(lead.UUID, status)}>
-                                {status}
-                            </DropdownMenuItem>
-                        ))}
-                        {unreachable.length > 0 && reachable.length > 0 && (
-                            <div className="my-1" />
-                        )}
-                        {unreachable.map(status => (
-                            <DropdownMenuItem key={status} disabled className="text-[var(--blanc-ink-3)] opacity-50">
-                                {status}
-                            </DropdownMenuItem>
-                        ))}
-                        {canReset && (
-                            <>
-                                <div className="my-1.5 mx-2 h-px" style={{ background: 'var(--blanc-line)' }} />
-                                <DropdownMenuItem
-                                    onClick={() => onUpdateStatus(lead.UUID, initialState!)}
-                                    className="flex items-center gap-2 text-xs font-medium mx-1 mb-1 rounded-md"
-                                    style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)' }}
-                                >
-                                    <RotateCcw className="size-3" />
-                                    Reset to {initialState}
-                                </DropdownMenuItem>
-                            </>
-                        )}
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                <LeadStatusDropdown lead={lead} onUpdateStatus={onUpdateStatus} />
 
                 {canViewSource && (
                     <DropdownMenu>

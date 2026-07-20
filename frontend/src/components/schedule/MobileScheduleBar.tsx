@@ -5,7 +5,7 @@
  * ‹ / Today / › nav at 42px tap targets, and a single gear ⚙ on the right.
  * The gear opens a BottomSheet ("View options") that houses every secondary
  * control — search, filters, technician selector, reset, and (dispatch only)
- * New job / AI Assistant / Settings.
+ * New job / Time off / Settings.
  *
  * All filter/search/provider state lives in useScheduleData and is threaded in
  * via props/handlers — this component owns no schedule state, so the sheet
@@ -16,7 +16,7 @@
  */
 
 import React, { useState } from 'react';
-import { Settings2, Sparkles, Plus, X, RotateCcw, Map, List, CalendarOff } from 'lucide-react';
+import { Settings2, Plus, X, RotateCcw, Map, List, CalendarOff } from 'lucide-react';
 import { format } from 'date-fns';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import type { ScheduleFilters } from '../../services/scheduleApi';
@@ -44,7 +44,6 @@ interface MobileScheduleBarProps {
     onToggleMap: () => void;
     // Dispatch-only (omitted for field techs without schedule.dispatch).
     onNewJob?: () => void;
-    onToggleAIAssistant?: () => void;
     onOpenSettings?: () => void;
     // TECH-DAYOFF-001 (owner iteration): "Time off" lives inside this sheet on
     // mobile instead of a standalone chip above the calendar.
@@ -67,7 +66,7 @@ const eyebrow: React.CSSProperties = {
     fontWeight: 600,
 };
 
-/** Full-width action row inside the sheet (New job / AI Assistant / Settings). */
+/** Full-width action row inside the sheet (New job / Time off / Settings). */
 const SheetAction: React.FC<{ onClick: () => void; icon: React.ReactNode; label: string }> = ({ onClick, icon, label }) => (
     <button
         type="button"
@@ -82,11 +81,11 @@ const SheetAction: React.FC<{ onClick: () => void; icon: React.ReactNode; label:
 
 export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
     currentDate, timezone, filters, providers, allTags,
-    onNavigateDate, onSelectDate, onFiltersChange, mapOpen, onToggleMap, onNewJob, onToggleAIAssistant, onOpenSettings, onTimeOff,
+    onNavigateDate, onSelectDate, onFiltersChange, mapOpen, onToggleMap, onNewJob, onOpenSettings, onTimeOff,
 }) => {
     const [sheetOpen, setSheetOpen] = useState(false);
     const activeFilterCount = getActiveFilterCount(filters);
-    const hasDispatchActions = !!(onNewJob || onToggleAIAssistant || onOpenSettings || onTimeOff);
+    const hasDispatchActions = !!(onNewJob || onOpenSettings || onTimeOff);
     const isOnToday = format(currentDate, 'yyyy-MM-dd') === todayInTZ(timezone);
 
     const close = () => setSheetOpen(false);
@@ -229,9 +228,6 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                             <div style={eyebrow}>Dispatch</div>
                             {onNewJob && (
                                 <SheetAction onClick={() => { close(); onNewJob(); }} icon={<Plus className="size-5" />} label="New job" />
-                            )}
-                            {onToggleAIAssistant && (
-                                <SheetAction onClick={() => { close(); onToggleAIAssistant(); }} icon={<Sparkles className="size-5" />} label="AI Assistant" />
                             )}
                             {onTimeOff && (
                                 <SheetAction onClick={() => { close(); onTimeOff(); }} icon={<CalendarOff className="size-5" />} label="Time off" />

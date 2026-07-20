@@ -2,7 +2,7 @@
  * Overlay — THE shared plumbing core for every hand-rolled overlay surface
  * (OVERLAY-CANON-002, Phase 1).
  *
- * The 4 hand-rolled surfaces (BottomSheet, FloatingDetailPanel, AIAssistantModal,
+ * The hand-rolled surfaces (BottomSheet, FloatingDetailPanel,
  * FullscreenImageViewer) each re-implemented the SAME boilerplate: an SSR/closed
  * guard, `createPortal` to <body>, a backdrop element, the `useOverlayDismiss`
  * wiring, and picking a z-index off `OVERLAY_Z` / `OVERLAY_Z_BACKDROP`. That plumbing
@@ -25,11 +25,11 @@
  * CSS-class `.blanc-floating-backdrop`; the lightbox whose scrim IS its own container)
  * pass `backdrop={false}` and render their own scrim inside the child, wiring it with
  * the `backdropProps.onClick` the child receives. The default backdrop is only for the
- * plain inline-styled case (BottomSheet, AIAssistantModal).
+ * plain inline-styled case (BottomSheet and centered overlays).
  *
  * Stacking (Esc/Tab-trap gating on the top-most layer) comes for free: the single
- * `useOverlayDismiss` call carries the Phase-0 OverlayStack awareness, so all 4
- * surfaces gain it without touching their wrappers.
+ * `useOverlayDismiss` call carries the Phase-0 OverlayStack awareness, so every
+ * surface gains it without touching its wrapper.
  */
 
 import type * as React from 'react'
@@ -163,7 +163,7 @@ function resolveBehavior(variant: OverlayVariant, modal: boolean): Behavior {
                 stopEscPropagation: true,
             }
         case 'centered':
-            // scroll-lock + focus-trap. (AIAssistantModal enables the trap here.)
+            // scroll-lock + focus-trap.
             return {
                 esc: true,
                 closeOnBackdrop: true,

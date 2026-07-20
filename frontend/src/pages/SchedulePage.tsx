@@ -1,7 +1,7 @@
 /**
  * SchedulePage — Dispatch/schedule calendar.
  * Sprint 7 Design Refresh: warm gradient background, CSS Grid layout,
- * toolbar split (ScheduleToolbar + CalendarControls), AI Assistant modal.
+ * toolbar split (ScheduleToolbar + CalendarControls).
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
@@ -12,7 +12,6 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { ScheduleToolbar } from '../components/schedule/ScheduleToolbar';
 import { CalendarControls } from '../components/schedule/CalendarControls';
 import { MobileScheduleBar } from '../components/schedule/MobileScheduleBar';
-import { AIAssistantModal } from '../components/schedule/AIAssistantModal';
 import { WeekView } from '../components/schedule/WeekView';
 import { DayView } from '../components/schedule/DayView';
 import { ScheduleJobsMap } from '../components/schedule/ScheduleJobsMap';
@@ -27,7 +26,6 @@ import { getJob } from '../services/jobsApi';
 import { SidebarStack } from '../components/schedule/SidebarStack';
 import { UnscheduledPanel } from '../components/schedule/UnscheduledPanel';
 import { TimeOffDialog } from '../components/schedule/TimeOffDialog';
-import { CalendarOff } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { JobDetailPanel } from '../components/jobs/JobDetailPanel';
 import { Skeleton } from '../components/ui/skeleton';
@@ -41,7 +39,6 @@ export function SchedulePage() {
     const [timeOffOpen, setTimeOffOpen] = useState(false);
     // Dispatch-only controls hidden for providers without schedule.dispatch (PF007)
     const canDispatch = schedule.canDispatch;
-    const [showAIAssistant, setShowAIAssistant] = useState(false);
     // SCHEDULE-MOBILE-MAP-001: mobile day list⇄map toggle. Map is mobile-only —
     // reset to list whenever we leave mobile width so desktop never renders it.
     const [mobileMapOpen, setMobileMapOpen] = useState(false);
@@ -183,14 +180,14 @@ export function SchedulePage() {
                         mapOpen={mobileMapOpen}
                         onToggleMap={() => setMobileMapOpen(v => !v)}
                         onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
-                        onToggleAIAssistant={() => setShowAIAssistant(true)}
                         onOpenSettings={canDispatch ? () => navigate('/settings/scheduling/company-schedule') : undefined}
                         onTimeOff={canDispatch ? () => setTimeOffOpen(true) : undefined}
                     />
                 ) : (
-                    /* Toolbar: title + AI Assistant button */
+                    /* Desktop header: shared title + ghost-search + actions composition. */
                     <ScheduleToolbar
-                        onToggleAIAssistant={() => setShowAIAssistant(true)}
+                        searchValue={schedule.filters.search || ''}
+                        onSearchChange={(search) => schedule.setFilters({ ...schedule.filters, search: search || undefined })}
                         onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
                     />
                 )}
@@ -206,37 +203,22 @@ export function SchedulePage() {
                         />
                     )}
 
-                    {/* Calendar Controls — desktop only; on mobile every control lives in the sheet above.
-                        TECH-DAYOFF-001: the "Time off" chip sits beside the controls row (next to the
-                        settings gear), dispatch-only like the other management controls. */}
+                    {/* Calendar controls — one wrapping group on desktop; mobile controls live above. */}
                     {!isMobile && (
-                        <div className="flex items-start gap-2">
-                            <div className="min-w-0 flex-1">
-                                <CalendarControls
-                                    viewMode={schedule.viewMode}
-                                    currentDate={schedule.currentDate}
-                                    filters={schedule.filters}
-                                    itemCounts={schedule.itemCounts}
-                                    loading={schedule.loading}
-                                    providers={schedule.providers}
-                                    allTags={schedule.allTags}
-                                    onViewModeChange={schedule.setViewMode}
-                                    onNavigateDate={schedule.navigateDate}
-                                    onFiltersChange={schedule.setFilters}
-                                    onOpenSettings={canDispatch ? () => navigate('/settings/scheduling/company-schedule') : undefined}
-                                />
-                            </div>
-                            {canDispatch && (
-                                <button
-                                    type="button"
-                                    onClick={() => setTimeOffOpen(true)}
-                                    className="blanc-control-chip"
-                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}
-                                >
-                                    <CalendarOff className="size-4" /> Time off
-                                </button>
-                            )}
-                        </div>
+                        <CalendarControls
+                            viewMode={schedule.viewMode}
+                            currentDate={schedule.currentDate}
+                            filters={schedule.filters}
+                            itemCounts={schedule.itemCounts}
+                            loading={schedule.loading}
+                            providers={schedule.providers}
+                            allTags={schedule.allTags}
+                            onViewModeChange={schedule.setViewMode}
+                            onNavigateDate={schedule.navigateDate}
+                            onFiltersChange={schedule.setFilters}
+                            onOpenSettings={canDispatch ? () => navigate('/settings/scheduling/company-schedule') : undefined}
+                            onTimeOff={canDispatch ? () => setTimeOffOpen(true) : undefined}
+                        />
                     )}
 
                     {/* Calendar view */}
@@ -290,15 +272,6 @@ export function SchedulePage() {
                     />
                 )}
             </FloatingDetailPanel>
-
-            {/* AI Assistant Modal */}
-            <AIAssistantModal
-                isOpen={showAIAssistant}
-                onClose={() => setShowAIAssistant(false)}
-                onSubmit={(input) => {
-                    console.log('[AI Schedule Assistant] Submitted:', input);
-                }}
-            />
 
             {/* Time off management panel (TECH-DAYOFF-001) */}
             <TimeOffDialog

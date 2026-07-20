@@ -33,7 +33,7 @@ export const PANEL_CLOSE_RIGHT: Record<DialogSize, string> = {
  * Values PRESERVE the pre-existing z-order; this is centralization, not a re-stack.
  *
  *   panel(80)     FloatingDetailPanel — the non-modal right "view" card (desktop).
- *   modal(140)    Dialog + AIAssistantModal panel.
+ *   modal(140)    Dialog + centered Overlay panels.
  *   dropdown(150) Select / Popover / DropdownMenu content. INTENTIONALLY ABOVE
  *                 modal(140): a <Select> opened inside a <Dialog> must pop ABOVE the
  *                 dialog, or its options render behind the modal. Do NOT "fix" this
@@ -130,7 +130,7 @@ export function cardStackStyle(layersAbove: number, isMobile: boolean): CardStac
  *     Tailwind JIT (the utility would never be generated). So those sites keep the
  *     literal `z-[NNN]` class — kept in lock-step with this scale by the trailing
  *     comment — and only the hand-rolled inline-style overlays (BottomSheet,
- *     FullscreenImageViewer, AIAssistantModal) reference the const directly.
+ *     FullscreenImageViewer) reference the const directly.
  *   • FloatingDetailPanel's z lives in plain CSS (design-system.css .blanc-floating-panel:
  *     80 desktop / 120 mobile-cover) which can't import TS — it carries a comment there.
  */

@@ -149,7 +149,8 @@
     z-index: 5;
 }
 
-/* ── PULSE-CONTACT-PIN-001: sticky stack = AR plaque + condensed contact bar ──
+/* ── PULSE-CONTACT-PIN-001 / PULSE-LEAD-PIN-001: sticky stack = AR plaque
+   + the selected entity's condensed bar ──
    One sticky wrapper: two independent sticky siblings would both pin to top:0
    and overlap. Same z as the old .pulse-ar-sticky. */
 .pulse-sticky-stack {
@@ -160,24 +161,30 @@
     flex-direction: column;
     gap: 10px;
 }
-/* Empty when the thread has no plaque and no bar (lead branch renders its own
-   card in-flow) — collapse so it doesn't add phantom gap. */
+/* Empty when the thread has no plaque and no entity bar — collapse so it
+   doesn't add phantom gap. */
 .pulse-sticky-stack:empty { display: none; }
 
-/* The bar itself. Grid mirrors the approved mockup: identity | actions | summary | expand.
-   minmax(0, …) everywhere: a hard min once pushed the expand button outside the card. */
-.pulse-contact-bar {
+/* Shared 68px entity-bar shell. Contact and Lead own their grid tracks and
+   identity content; geometry, actions and degradation remain one primitive. */
+.pulse-pinned-bar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
     align-items: center;
     gap: 14px;
     min-height: 68px;
     padding: 10px 14px 10px 17px;
-    box-shadow: inset 3px 0 0 var(--blanc-success);
+    box-shadow: inset 3px 0 0 var(--pulse-pinned-bar-accent);
     container-type: inline-size;
-    container-name: contactbar;
 }
-.pulse-contact-bar > * { min-width: 0; }
+.pulse-pinned-bar > * { min-width: 0; }
+.pulse-contact-bar { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+.pulse-lead-bar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    height: 68px;
+}
+
+/* Entity identity stays entity-specific. Contact has an address line; Lead has
+   an operative repair type on the kicker and an inline status state-pill. */
 .pulse-contact-bar-name {
     margin: 0;
     overflow: hidden;
@@ -200,7 +207,50 @@
 .pulse-contact-bar-street::after { content: ' · '; }
 
 .pulse-contact-bar-actions { display: flex; align-items: center; gap: 7px; }
-.pulse-contact-bar-action {
+.pulse-lead-bar-identity { min-width: 0; }
+.pulse-lead-bar-kicker {
+    margin: 0 0 1px;
+    overflow: hidden;
+    color: var(--blanc-info);
+    font-size: 9px;
+    font-weight: 750;
+    letter-spacing: 0.12em;
+    line-height: 1.05;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.pulse-lead-bar-repair-type {
+    color: var(--blanc-ink-3);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+.pulse-lead-bar-repair-type::before { content: ' · '; }
+.pulse-lead-bar-name-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+.pulse-lead-bar-name {
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--blanc-ink-1);
+    font-size: 19px;
+    font-weight: 750;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.pulse-lead-bar-name-row .lead-status-pill { flex: 0 0 auto; }
+.pulse-lead-bar-actions { display: flex; align-items: center; gap: 7px; }
+
+/* Shared action convention: 40px, 13px radius, 15px glyphs. */
+.pulse-pinned-bar-action {
     min-height: 40px;
     display: inline-flex;
     align-items: center;
@@ -214,15 +264,31 @@
     cursor: pointer;
     font-size: 12px;
     font-weight: 700;
+    white-space: nowrap;
 }
-.pulse-contact-bar-action:hover { color: var(--blanc-accent); }
-.pulse-contact-bar-action.is-primary { background: var(--blanc-accent); color: #fff; }
-.pulse-contact-bar-action.is-primary:hover { color: #fff; opacity: 0.9; }
-.pulse-contact-bar-action.is-unavailable { color: var(--blanc-ink-2); }
+.pulse-pinned-bar-action svg {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+}
+.pulse-pinned-bar-action:hover { color: var(--blanc-accent); }
+.pulse-pinned-bar-action:focus-visible,
+.lead-status-pill:focus-visible {
+    outline: 2px solid var(--blanc-info);
+    outline-offset: 2px;
+}
+.pulse-pinned-bar-action.is-icon-only { width: 40px; min-width: 40px; padding: 0; }
+.pulse-pinned-bar-action.is-accent-primary { background: var(--blanc-accent); color: var(--blanc-surface-strong); }
+.pulse-pinned-bar-action.is-info-primary { background: var(--blanc-info); color: var(--blanc-surface-strong); }
+.pulse-pinned-bar-action.is-success { background: var(--blanc-success); color: var(--blanc-surface-strong); }
+.pulse-pinned-bar-action.is-accent-primary:hover,
+.pulse-pinned-bar-action.is-info-primary:hover,
+.pulse-pinned-bar-action.is-success:hover { color: var(--blanc-surface-strong); opacity: 0.9; }
+.pulse-pinned-bar-action.is-unavailable { color: var(--blanc-ink-2); }
 
 /* Call reuses ClickToCallButton (softphone desktop / tel: mobile) restyled as the
    bar's primary violet action. */
-.pulse-contact-bar-call .click-to-call-btn {
+.pulse-pinned-bar-call .click-to-call-btn {
     min-height: 40px;
     display: inline-flex;
     align-items: center;
@@ -232,13 +298,14 @@
     border: 0;
     border-radius: 13px;
     background: var(--blanc-accent);
-    color: #fff;
+    color: var(--blanc-surface-strong);
     font-size: 12px;
     font-weight: 700;
     opacity: 1;
     text-decoration: none;
 }
-.pulse-contact-bar-call .click-to-call-btn:hover { opacity: 0.9; background: var(--blanc-accent); color: #fff; }
+.pulse-pinned-bar-call .click-to-call-btn:hover { opacity: 0.9; background: var(--blanc-accent); color: var(--blanc-surface-strong); }
+.pulse-pinned-bar-call .click-to-call-btn svg { width: 15px; height: 15px; }
 
 .pulse-contact-bar-summary { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .pulse-contact-bar-link {
@@ -255,19 +322,7 @@
 .pulse-contact-bar-link:hover { background: var(--blanc-surface-muted); color: var(--blanc-ink-1); }
 .pulse-contact-bar-link strong { color: var(--blanc-ink-1); font-size: 13px; }
 
-.pulse-contact-bar-expand {
-    width: 40px;
-    min-height: 40px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-radius: 13px;
-    background: var(--blanc-surface-muted);
-    color: var(--blanc-ink-2);
-    cursor: pointer;
-}
-.pulse-contact-bar-expand:hover { color: var(--blanc-accent); }
+.pulse-pinned-bar-expand { color: var(--blanc-ink-2); }
 
 /* Degradation ladder — DESKTOP ONLY (container query on the BAR: the timeline
    column is narrow beside the conversation list even on wide monitors). Order:
@@ -275,15 +330,16 @@
    truncates before labels. Mobile is excluded: its bar is narrow by definition
    and keeps labels via the stacked grid below (approved mockup). */
 @media (min-width: 769px) {
-    @container contactbar (max-width: 640px) {
-        .pulse-contact-bar-action-label { display: none; }
-        .pulse-contact-bar-action { padding: 0; width: 40px; }
-        .pulse-contact-bar-call .click-to-call-btn { padding: 0; width: 40px; }
-        .pulse-contact-bar-call .click-to-call-btn span { display: none; }
+    @container (max-width: 640px) {
+        .pulse-pinned-bar-action-label { display: none; }
+        .pulse-pinned-bar-action { padding: 0; width: 40px; }
+        .pulse-pinned-bar-call .click-to-call-btn { padding: 0; width: 40px; }
+        .pulse-pinned-bar-call .click-to-call-btn span { display: none; }
     }
-    @container contactbar (max-width: 440px) {
+    @container (max-width: 440px) {
         .pulse-contact-bar-address { display: none; }
         .pulse-contact-bar-summary { display: none; }
+        .pulse-lead-bar-repair-type { display: none; }
     }
 }
 
@@ -301,7 +357,7 @@
         padding: 10px 12px 11px;
     }
     .pulse-contact-bar-identity { grid-area: identity; }
-    .pulse-contact-bar-expand { grid-area: expand; }
+    .pulse-pinned-bar-expand { grid-area: expand; }
     .pulse-contact-bar-name { font-size: 18px; }
     .pulse-contact-bar-actions {
         grid-area: actions;
@@ -311,8 +367,29 @@
         gap: 6px;
     }
     .pulse-contact-bar-call { display: contents; }
-    .pulse-contact-bar-call .click-to-call-btn { width: auto; }
+    .pulse-pinned-bar-call .click-to-call-btn { width: auto; }
     .pulse-contact-bar-summary { grid-area: summary; justify-content: flex-start; }
+
+    .pulse-lead-bar {
+        height: auto;
+        min-height: 136px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            'identity expand'
+            'actions actions';
+        align-content: center;
+        row-gap: 9px;
+        column-gap: 10px;
+        padding: 10px 12px 11px;
+    }
+    .pulse-lead-bar-identity { grid-area: identity; }
+    .pulse-lead-bar-name { font-size: 18px; }
+    .pulse-lead-bar-actions {
+        grid-area: actions;
+        display: flex;
+        gap: 6px;
+    }
+    .pulse-lead-bar-actions > .pulse-pinned-bar-action:not(.is-icon-only) { flex: 1 1 auto; }
 }
 
 /* AR-TASKS-001: one compact action row per open task. The task list scrolls

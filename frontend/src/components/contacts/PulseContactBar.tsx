@@ -13,8 +13,9 @@
  * Notes only when notes exist; open Leads & Jobs count. Tasks are NOT here — the
  * AR plaque above already lists them.
  */
-import { ChevronDown, Mail, MessageSquare } from 'lucide-react';
+import { Mail, MessageSquare } from 'lucide-react';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
+import { PulsePinnedBar, PulsePinnedBarAction, PulsePinnedBarExpand } from '../pulse/PulsePinnedBar';
 import type { BarAddress } from './contactBarHelpers';
 
 export interface PulseContactBarProps {
@@ -43,7 +44,7 @@ export function PulseContactBar({
     const emailIsPrimary = !phone && hasEmail;
 
     return (
-        <section className="pulse-card pulse-contact-bar" aria-label="Contact">
+        <PulsePinnedBar entityLabel="Contact" accent="var(--blanc-success)" className="pulse-contact-bar">
             <div className="pulse-contact-bar-identity">
                 <h2 className="pulse-contact-bar-name" style={{ fontFamily: 'var(--blanc-font-heading)' }}>{name}</h2>
                 {address && (
@@ -57,23 +58,18 @@ export function PulseContactBar({
             <div className="pulse-contact-bar-actions">
                 {phone && (
                     <>
-                        <span className="pulse-contact-bar-call"><ClickToCallButton phone={phone} contactName={name} /></span>
-                        <button type="button" className="pulse-contact-bar-action" aria-label="Text" title="Text" onClick={onText}>
-                            <MessageSquare aria-hidden className="size-[15px]" />
-                            <span className="pulse-contact-bar-action-label">Text</span>
-                        </button>
+                        <span className="pulse-pinned-bar-call pulse-contact-bar-call"><ClickToCallButton phone={phone} contactName={name} /></span>
+                        <PulsePinnedBarAction label="Text" icon={<MessageSquare aria-hidden />} onClick={onText} />
                     </>
                 )}
                 {hasEmail && (
-                    <button
-                        type="button"
-                        className={`pulse-contact-bar-action ${emailIsPrimary ? 'is-primary' : ''} ${!emailConnected ? 'is-unavailable' : ''}`}
-                        aria-label="Email" title={emailConnected ? 'Email' : 'Connect a mailbox to send email'}
+                    <PulsePinnedBarAction
+                        className={`${emailIsPrimary ? 'is-accent-primary' : ''} ${!emailConnected ? 'is-unavailable' : ''}`}
+                        label="Email"
+                        icon={<Mail aria-hidden />}
+                        title={emailConnected ? 'Email' : 'Connect a mailbox to send email'}
                         onClick={onEmail}
-                    >
-                        <Mail aria-hidden className="size-[15px]" />
-                        <span className="pulse-contact-bar-action-label">Email</span>
-                    </button>
+                    />
                 )}
             </div>
 
@@ -86,15 +82,7 @@ export function PulseContactBar({
                 </button>
             </div>
 
-            <button
-                type="button"
-                className="pulse-contact-bar-expand"
-                aria-label="Open full contact card"
-                title="Open full contact card"
-                onClick={onExpand}
-            >
-                <ChevronDown aria-hidden className="size-4" />
-            </button>
-        </section>
+            <PulsePinnedBarExpand label="Open full contact card" onClick={onExpand} />
+        </PulsePinnedBar>
     );
 }
