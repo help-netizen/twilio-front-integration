@@ -661,7 +661,20 @@
     "text": "A daily check flags jobs and leads that have gone quiet, as tasks for the dispatcher"
   },
   "1797d2e": {
-    "tag": "Fix",
-    "text": "Technicians only see the jobs assigned to them when their visibility setting is missing"
+    "text": "Tightened who can see which jobs and tasks inside your company",
+    "tag": "Fix"
+  },
+  "9a729c2": {
+    "hide": true
+  },
+  "25c7d85": {
+    "hide": true
+  },
+  "463bf15": {
+    "hide": true
+  },
+  "4100596": {
+    "text": "See every technician's route for the day on a map, right in Schedule",
+    "tag": "Feature"
   }
 }
