@@ -688,3 +688,32 @@ No conceptual decision remains. The only next gate is operational: run the print
 `--dry-run` against the owner-selected production company after migration 193 is
 deployed, show its complete plan to the owner, and do not run `--apply` without the
 owner’s explicit post-dry-run authorization.
+
+## Production deploy + import record — 2026-07-20
+
+Deployed master `d311522`; migrations **191, 192, 193** applied in order (190 was
+already on prod — probe by object, never by number: this deploy found 191/192
+pending from a parallel session, not just this feature's 193).
+
+Import ran inside the app container against company
+`00000000-0000-0000-0000-000000000001`. The dry run matched the pre-computed plan
+exactly, so it was applied without re-litigating the numbers:
+
+| | planned | applied | verified in DB |
+|---|---|---|---|
+| categories | 45 | 45 | 45 (9 root / 6 level-2 / 30 level-3) |
+| items | 393 | 393 | 393 with a code, plus the 6 legacy presets untouched |
+| groups | 121 | 121 | 121 |
+| group→item links | 275 | 275 | 275 |
+| dropped links (skipped credit row) | 121 | 121 | — |
+| groups left empty | 0 | 0 | — |
+| negative prices in the table | 0 | 0 | 0 |
+
+Sample of the resulting tree: `8 Education / Dishwasher / Commercial`.
+
+A bug found only at deploy time: the importer's `--company-id` validator demanded
+RFC-4122 version/variant nibbles, so this deployment's seeded company id was
+rejected outright — the script refused before opening a connection. The test
+suite had hidden it by using a synthetic v4-shaped id, i.e. a fixture shaped to
+satisfy the validator instead of matching production. Fixed in `d03e06a` with a
+regression test that pins the real seeded form.
