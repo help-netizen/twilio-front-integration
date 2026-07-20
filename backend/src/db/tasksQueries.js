@@ -177,9 +177,15 @@ function buildTaskListFilters(companyId, filters = {}) {
     const params = [companyId];
     const conditions = ['t.company_id = $1', HAS_ENTITY_PARENT];
 
-    if (filters.scopeOwnerId) {
-        params.push(filters.scopeOwnerId);
-        conditions.push(`t.owner_user_id = $${params.length}`);
+    if (Object.prototype.hasOwnProperty.call(filters, 'scopeOwnerId')) {
+        if (filters.scopeOwnerId) {
+            params.push(filters.scopeOwnerId);
+            conditions.push(`t.owner_user_id = $${params.length}`);
+        } else {
+            // A requested owner scope with no actor must never collapse into the
+            // company-wide branch. Routes reject it; this is query-layer defense.
+            conditions.push('FALSE');
+        }
     }
     if (filters.status) {
         params.push(filters.status);
@@ -277,6 +283,7 @@ async function listTasksPage(companyId, filters = {}, client = null) {
         endpoint: 'tasks',
         company: String(companyId),
         visibility: {
+            owner_scope_applied: Object.prototype.hasOwnProperty.call(filters, 'scopeOwnerId'),
             scope_owner_id: filters.scopeOwnerId ? String(filters.scopeOwnerId) : null,
             assignee_id: filters.assignee_id ? String(filters.assignee_id) : null,
         },

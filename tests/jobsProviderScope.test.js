@@ -19,6 +19,7 @@ const express = require('express');
 const db = require('../backend/src/db/connection');
 const jobsService = require('../backend/src/services/jobsService');
 const eventServiceMock = require('../backend/src/services/eventService');
+const { getProviderScope } = require('../backend/src/middleware/providerScope');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const PROVIDER_USER = '11111111-1111-1111-1111-111111111111';
@@ -26,6 +27,24 @@ const PROVIDER_USER = '11111111-1111-1111-1111-111111111111';
 beforeEach(() => {
     db.query.mockReset();
     eventServiceMock.logEvent.mockReset();
+});
+
+describe('getProviderScope fail-closed defaults', () => {
+    it.each([
+        ['missing', {}],
+        ['null', { job_visibility: null }],
+        ['unknown', { job_visibility: 'company_wide' }],
+    ])('treats %s job_visibility as assigned_only', (_label, scopes) => {
+        expect(getProviderScope({
+            authz: { scopes },
+            user: { crmUser: { id: PROVIDER_USER } },
+        })).toEqual({ assignedOnly: true, userId: PROVIDER_USER });
+    });
+
+    it('keeps only the explicit all value tenant-wide', () => {
+        expect(getProviderScope({ authz: { scopes: { job_visibility: 'all' } } }))
+            .toEqual({ assignedOnly: false, userId: null });
+    });
 });
 
 // ─── Service-level scope semantics ───────────────────────────────────────────

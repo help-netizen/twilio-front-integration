@@ -31,6 +31,31 @@ function canManage(req) {
     return !!req.user?._devMode || (req.authz?.permissions || []).includes('tasks.manage');
 }
 
+function applyListVisibility(req, filters) {
+    if (canManage(req)) {
+        if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id;
+        return;
+    }
+
+    const ownerId = actorId(req);
+    if (!ownerId) {
+        const err = new Error('Authenticated request is missing req.user.crmUser.id');
+        err.code = 'INVALID_AUTH_CONTEXT';
+        throw err;
+    }
+    filters.scopeOwnerId = ownerId;
+}
+
+function sendInvalidAuthContext(res, err, routeLabel) {
+    if (err?.code !== 'INVALID_AUTH_CONTEXT') return false;
+    console.error(`[Tasks] ${routeLabel} failed:`, err.message);
+    res.status(500).json({
+        ok: false,
+        error: { code: 'INVALID_AUTH_CONTEXT', message: 'Authenticated user context is incomplete' },
+    });
+    return true;
+}
+
 function bad(res, code, message) {
     return res.status(400).json({ ok: false, error: { code, message } });
 }
@@ -57,14 +82,11 @@ router.get('/', requirePermission('tasks.view'), async (req, res) => {
             offset: req.query.offset === undefined ? undefined : Number(req.query.offset),
         };
         // Managers (tasks.manage) see all; everyone else only their own.
-        if (canManage(req)) {
-            if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id;
-        } else {
-            filters.scopeOwnerId = actorId(req);
-        }
+        applyListVisibility(req, filters);
         const page = await tasksQueries.listTasksPage(companyId(req), filters);
         res.json({ ok: true, data: page });
     } catch (err) {
+        if (sendInvalidAuthContext(res, err, 'GET /')) return;
         if (err?.statusCode === 400 || err?.code === 'INVALID_CURSOR' || err?.code === 'INVALID_CURSOR_REQUEST') {
             return res.status(400).json({
                 ok: false,
@@ -83,14 +105,11 @@ router.get('/count', requirePermission('tasks.view'), async (req, res) => {
     try {
         const filters = { status: 'open', parent_type: req.query.parent_type || undefined };
         // Same visibility branch as GET /: managers count all; everyone else own.
-        if (canManage(req)) {
-            if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id;
-        } else {
-            filters.scopeOwnerId = actorId(req);
-        }
+        applyListVisibility(req, filters);
         const count = await tasksQueries.countTasks(companyId(req), filters);
         res.json({ ok: true, data: { count } });
     } catch (err) {
+        if (sendInvalidAuthContext(res, err, 'GET /count')) return;
         console.error('[Tasks] GET /count failed:', err.message);
         res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to count tasks' } });
     }

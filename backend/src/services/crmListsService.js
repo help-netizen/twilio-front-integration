@@ -151,11 +151,11 @@ async function getList(companyId, listKey, filters = {}, context = {}) {
 
     switch (listKey) {
         case 'my_open_deals': {
-            const ownerUserId = filters.owner_user_id || context.actorId;
+            const ownerUserId = context.actorId;
             if (!ownerUserId) {
                 throw badRequest('Current CRM user is required for my_open_deals', { field: 'owner_user_id' });
             }
-            if (context.actorId && filters.owner_user_id && filters.owner_user_id !== context.actorId) {
+            if (filters.owner_user_id && filters.owner_user_id !== ownerUserId) {
                 throw badRequest('my_open_deals cannot be scoped to another owner', { field: 'owner_user_id' });
             }
             return dealsService.getOpenDeals(companyId, { owner_user_id: ownerUserId, limit: filters.limit || 100 });

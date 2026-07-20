@@ -83,6 +83,13 @@ describe('GET / — visibility scope', () => {
         expect(params[1]).toBe(ME);
     });
 
+    test('provider with missing crmUser.id gets 500 and no company-wide query', async () => {
+        const res = await request(makeApp({ permissions: ['tasks.view'], me: null })).get('/api/tasks');
+        expect(res.status).toBe(500);
+        expect(res.body.error.code).toBe('INVALID_AUTH_CONTEXT');
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
     test('default filter is status=open; ?status=all drops it', async () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ total: 0 }] })
@@ -131,6 +138,13 @@ describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
         expect(sql).toMatch(/t\.owner_user_id = \$2/);
         expect(params[1]).toBe(ME);       // crmUser.id
         expect(params).not.toContain('kc'); // never the Keycloak sub
+    });
+
+    test('provider with missing crmUser.id gets 500 and no unscoped count', async () => {
+        const res = await request(makeApp({ permissions: ['tasks.view'], me: null })).get('/api/tasks/count');
+        expect(res.status).toBe(500);
+        expect(res.body.error.code).toBe('INVALID_AUTH_CONTEXT');
+        expect(mockQuery).not.toHaveBeenCalled();
     });
 
     test('count reuses the list predicate — same conditions/$n as GET / (TC-9 mock)', async () => {

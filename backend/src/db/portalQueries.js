@@ -168,7 +168,17 @@ async function logEvent(sessionId, contactId, eventType, documentType = null, do
  * If scope is scoped to a specific document_type/document_id: returns only that.
  */
 async function getContactDocuments(companyId, contactId, scope, documentType = null, documentId = null) {
-    if (scope !== 'full' && documentType && documentId) {
+    if (scope !== 'full') {
+        const expectedDocumentType = {
+            estimate: 'estimate',
+            invoice: 'invoice',
+            payment: 'invoice',
+        }[scope];
+
+        // Unknown scopes, incomplete tuples, and scope/type mismatches resolve
+        // to no documents. Only an explicit `full` reaches the full-list query.
+        if (!expectedDocumentType || documentType !== expectedDocumentType || !documentId) return [];
+
         // Scoped to a single document
         if (documentType === 'estimate') {
             const { rows } = await db.query(

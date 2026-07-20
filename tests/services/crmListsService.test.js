@@ -83,6 +83,13 @@ describe('crmListsService', () => {
         await expect(listsService.getList('company-1', 'my_open_deals'))
             .rejects.toMatchObject({ code: 'BAD_REQUEST', details: { field: 'owner_user_id' } });
 
+        await expect(listsService.getList(
+            'company-1',
+            'my_open_deals',
+            { owner_user_id: 'user-2' },
+            { actorId: null },
+        )).rejects.toMatchObject({ code: 'BAD_REQUEST', details: { field: 'owner_user_id' } });
+
         await expect(listsService.getList('company-1', 'my_open_deals', { owner_user_id: 'user-2' }, { actorId: 'user-1' }))
             .rejects.toMatchObject({ code: 'BAD_REQUEST', details: { field: 'owner_user_id' } });
 

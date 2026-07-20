@@ -43,6 +43,16 @@ describe('buildTaskListFilters — shared predicate (TC-2)', () => {
         expect(params).toEqual([COMPANY, ME, 'open']);
     });
 
+    test('present but missing scopeOwnerId adds an impossible predicate', () => {
+        const { conditions, params } = tasksQueries.buildTaskListFilters(COMPANY, {
+            status: 'open',
+            scopeOwnerId: null,
+        });
+        expect(conditions).toContain('FALSE');
+        expect(conditions).toContain('t.status = $2');
+        expect(params).toEqual([COMPANY, 'open']);
+    });
+
     test('parent_type / overdue add conditions WITHOUT a param; due_from/due_to cast timestamptz', () => {
         const { conditions, params } = tasksQueries.buildTaskListFilters(COMPANY, {
             status: 'open',

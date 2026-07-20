@@ -13,8 +13,10 @@
  */
 
 function getProviderScope(req) {
-    const visibility = req.authz?.scopes?.job_visibility || 'all';
-    if (visibility !== 'assigned_only') {
+    const visibility = req.authz?.scopes?.job_visibility;
+    // `all` is the only value that may widen beyond the current actor. Missing,
+    // malformed, and future/unknown values stay on the restrictive branch.
+    if (visibility === 'all') {
         return { assignedOnly: false, userId: null };
     }
     const userId = req.user?.crmUser?.id ? String(req.user.crmUser.id) : null;
