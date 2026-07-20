@@ -6980,3 +6980,47 @@ email = best-effort via the platform-sender company mailbox).
   канонические keyboard focus и dismiss mechanics.
 - **NFR-LP-01:** Frontend-only: без backend, API, schema, tenancy или integration
   изменений; существующие `usePulsePage` handlers переиспользуются напрямую.
+
+---
+
+## SCHED-DAYOFF-DISPLAY-001 — убрать частичные Outside work schedule, оставить сигнал полного выходного (OB-16) (2026-07-20)
+
+**Слова владельца:** «В agenda-списке КАЖДЫЙ день рендерятся два штрихованных блока
+Outside work schedule… убрать вообще». Кастомные **Time off** не трогать; разделять
+по типу записи, не по подписи. Если у провайдера выходной весь день — показать один
+понятный сигнал выходного на рабочие часы дня.
+
+### Зафиксированные продуктовые решения
+
+- **[OWNER]** Частичный derived `schedule_gap` до/после рабочей смены не показывается
+  в mobile agenda, desktop Timeline и desktop Team Week.
+- **[OWNER]** Company-closed день в mobile agenda = одна агрегированная строка
+  `Company closed`, не N одинаковых карточек; в desktop lane views каждая
+  technician-колонка остаётся заштрихованной.
+- **[OWNER]** Desktop Day уже не рисует availability и остаётся без изменений.
+- **[TEAM LEAD]** Полный персональный derived-выходной = `Day off`; persisted exception
+  = `Time off`; полное закрытие компании = `Company closed`.
+- **[TEAM LEAD]** Если derived Day off и explicit Time off пересекаются, показываются оба.
+- **[ARCHITECTURE]** Backend/API/slot-engine не меняются: `kind` остаётся типовым
+  discriminator, а стабильный derived `source` отличает company closure от custom
+  work schedule. Фильтр существует только как frontend display projection.
+
+### Функциональные требования
+
+- **FR-1.** Полным derived-выходным считается только `kind='schedule_gap'`, который
+  покрывает весь company-local `[00:00, next 00:00)`; покрытие видимого grid-window
+  недостаточно. 23/25-часовые DST-дни поддерживаются.
+- **FR-2.** `source='company'` у полного derived gap → `Company closed`;
+  `source='work_schedule'` → `Day off`. Английская подпись и synthetic id не участвуют
+  в классификации.
+- **FR-3.** Explicit `kind='time_off'` проходит display projection без изменения
+  объекта, времени, note, provider filtering или hatch.
+- **FR-4.** Mobile company closure агрегируется только из уже server-scoped и
+  provider-filtered payload; roster не читается. Агрегированная строка не содержит
+  technician id/name.
+- **FR-5.** Raw unavailability остаётся доступной warning/DnD, CustomTimeModal и
+  `slotEngineService`; suppression и manual-warning behavior byte-identical.
+- **FR-6.** Exact approved neutral diagonal hatch, non-interactive/pointer-events-none,
+  jobs/DnD above it. Generic Day/Week/Month/List unchanged.
+
+Полная спека и доказательства: `docs/specs/SCHED-DAYOFF-DISPLAY-001.md`.

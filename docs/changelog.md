@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-07-20 — SCHED-DAYOFF-DISPLAY-001: тише расписание, но полный выходной виден
+
+Mobile agenda, Timeline и Team Week больше не показывают ежедневные штрихованные
+`Outside work schedule` до/после смены. Полный персональный выходной остаётся как
+`Day off`; закрытый день компании агрегируется в одну mobile-строку `Company closed`
+(desktop lanes остаются per-tech). Persisted `Time off`, warnings, Custom Time и
+slot/auto-booking suppression не менялись. Commit: pending team-lead acceptance.
+
 ## 2026-07-19 — AGENT-CALL-WINDOW-001: единое окно исходящих звонков для всех роботов
 
 Lead Caller и новый отдельный marketplace-app **Outbound Parts Caller** теперь

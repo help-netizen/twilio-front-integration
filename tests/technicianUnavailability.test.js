@@ -99,6 +99,29 @@ it('SAFETY-COMPANY-CLOSED-WINS: a custom working row still derives a full closed
     });
 });
 
+it('pins stable source semantics for company closure versus technician day off', async () => {
+    scheduleQueries.listByTechnicianIds.mockResolvedValue(customRows({
+        1: { is_working: false },
+    }));
+    const technicianDayOff = await availabilityService.buildUnavailability(COMPANY, {
+        from: '2026-07-20T04:00:00.000Z',
+        to: '2026-07-21T04:00:00.000Z',
+        technicians: [TECH],
+    });
+    expect(technicianDayOff).toEqual([
+        expect.objectContaining({ kind: 'schedule_gap', source: 'work_schedule' }),
+    ]);
+
+    const companyClosed = await availabilityService.buildUnavailability(COMPANY, {
+        from: '2026-07-19T04:00:00.000Z',
+        to: '2026-07-20T04:00:00.000Z',
+        technicians: [TECH],
+    });
+    expect(companyClosed).toEqual([
+        expect.objectContaining({ kind: 'schedule_gap', source: 'company' }),
+    ]);
+});
+
 it('uses company-local DST boundaries for a full closed day', async () => {
     const blocks = await availabilityService.buildUnavailability(COMPANY, {
         from: '2026-11-01T04:00:00.000Z',

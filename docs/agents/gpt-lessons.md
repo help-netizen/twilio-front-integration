@@ -75,3 +75,9 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
   migration replays) MUST NOT run in parallel jest workers against the shared dev DB — you get
   `tuple concurrently updated` / `deadlock detected`. Any verify command combining two or more
   *.db.test.js files needs `--runInBand`.
+
+- **L-019 `codex exec resume` rejects `-C` as well as `-s`/`-o`.** Only `exec` takes the
+  working-directory flag; on `resume` it dies with `unexpected argument '-C' found` and
+  the whole turn is lost (exit 2, zero files changed — looks exactly like an L-016
+  draft-without-apply until you read the log). `cd` into the worktree and drop `-C`.
+  Hit 2026-07-20 on OB-16.

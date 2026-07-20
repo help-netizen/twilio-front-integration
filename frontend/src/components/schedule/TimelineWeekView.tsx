@@ -12,6 +12,7 @@ import { RouteConnector } from './RouteConnector';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import { overlapsUnavailability, unavailabilityLabel, unavailabilityWarningPhrase } from '../../services/scheduleApi';
 import { filterUnavailabilityByProviders } from '../../services/scheduleFilters';
+import { projectMainScheduleUnavailabilityForDay } from '../../services/scheduleDisplayUnavailability';
 import type { ScheduleItem, DispatchSettings, RouteSegment, UnavailabilityBlock } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../../utils/companyTime';
@@ -123,6 +124,9 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
 
     const todayStr = todayInTZ(tz);
     const colCount = providerGroups.length;
+    const filteredDisplayUnavailability = filterUnavailabilityByProviders(
+        unavailability ?? [], providerFilterIds,
+    );
 
     // ── DnD handlers ─────────────────────────────────────────────────────
 
@@ -271,6 +275,11 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                 const dayStartUtc = dateInTZ(cy, cm, cd, 0, 0, tz);
                 const nextUtcDay = new Date(Date.UTC(cy, cm - 1, cd + 1));
                 const dayEndUtc = dateInTZ(nextUtcDay.getUTCFullYear(), nextUtcDay.getUTCMonth() + 1, nextUtcDay.getUTCDate(), 0, 0, tz);
+                const displayUnavailability = projectMainScheduleUnavailabilityForDay(
+                    filteredDisplayUnavailability,
+                    dayStartUtc,
+                    dayEndUtc,
+                );
 
                 return (
                     <div
@@ -319,13 +328,12 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                     onDragLeave={() => setDropHighlightCol(null)}
                                     onClick={(e) => handleSlotClick(dayKey, group, e)}
                                 >
-                                    {/* Time-off strips (TECH-DAYOFF-001 S-9, INV-10) — grey,
-                                        non-interactive; a multi-day period shows this day's slice. */}
-                                    {group.id !== '__unassigned' && filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds)
-                                        .filter(b => b.technician_id === group.id
-                                            && new Date(b.starts_at) < dayEndUtc
-                                            && dayStartUtc < new Date(b.ends_at))
-                                        .map(b => {
+                                    {/* Display availability — explicit Time off plus full-day
+                                        schedule signals only; partial schedule gaps are noise. */}
+                                    {group.id !== '__unassigned' && displayUnavailability
+                                        .filter(item => item.block.technician_id === group.id)
+                                        .map(item => {
+                                            const b = item.block;
                                             const bs = new Date(b.starts_at);
                                             const be = new Date(b.ends_at);
                                             const allDay = bs <= dayStartUtc && be >= dayEndUtc;
@@ -337,7 +345,12 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                                     className="rounded-md px-2 py-1 text-[11px] font-medium truncate pointer-events-none select-none"
                                                     style={{ background: UNAVAILABILITY_BG, color: 'var(--sched-ink-3)' }}
                                                 >
-                                                    {unavailabilityLabel(b)}{allDay ? '' : ` · ${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
+                                                    {item.displayKind === 'company_closed'
+                                                        ? 'Company closed'
+                                                        : item.displayKind === 'day_off'
+                                                            ? 'Day off'
+                                                            : unavailabilityLabel(b)}
+                                                    {allDay ? '' : ` · ${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
                                                 </div>
                                             );
                                         })}

@@ -8,8 +8,9 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import { overlapsUnavailability, unavailabilityLabel, unavailabilityWarningPhrase } from '../../services/scheduleApi';
+import { overlapsUnavailability, unavailabilityWarningPhrase } from '../../services/scheduleApi';
 import { filterUnavailabilityByProviders } from '../../services/scheduleFilters';
+import { projectMobileAgendaUnavailabilityForDay } from '../../services/scheduleDisplayUnavailability';
 import type { ScheduleItem, DispatchSettings, RouteSegment, UnavailabilityBlock } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
@@ -212,32 +213,44 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         const dayStartUtc = dateInTZ(dy, dm, dd, 0, 0, tz);
         const nextUtcDay = new Date(Date.UTC(dy, dm - 1, dd + 1));
         const dayEndUtc = dateInTZ(nextUtcDay.getUTCFullYear(), nextUtcDay.getUTCMonth() + 1, nextUtcDay.getUTCDate(), 0, 0, tz);
-        const dayBlocks = filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds)
-            .filter(b => new Date(b.starts_at) < dayEndUtc && dayStartUtc < new Date(b.ends_at))
-            .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
-        const allDayBlocks = dayBlocks.filter(b => new Date(b.starts_at) <= dayStartUtc && new Date(b.ends_at) >= dayEndUtc);
-        const timedBlocks = dayBlocks.filter(b => !allDayBlocks.includes(b));
+        const agendaAvailability = projectMobileAgendaUnavailabilityForDay(
+            filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds),
+            dayStartUtc,
+            dayEndUtc,
+        );
+        const companyClosed = agendaAvailability.find(item => item.block === null);
+        const dayBlocks = agendaAvailability
+            .filter(item => item.block !== null)
+            .sort((a, b) => a.block!.starts_at.localeCompare(b.block!.starts_at));
+        const allDayBlocks = dayBlocks.filter(item => {
+            const b = item.block!;
+            return new Date(b.starts_at) <= dayStartUtc && new Date(b.ends_at) >= dayEndUtc;
+        });
+        const timedBlocks = dayBlocks.filter(item => !allDayBlocks.includes(item));
         // Chronological slot: timed off-cards render before the first item that
         // starts later than they do (items chain itself is untouched — INV-10).
-        const offBeforeIdx: UnavailabilityBlock[][] = Array.from({ length: sorted.length + 1 }, () => []);
-        for (const b of timedBlocks) {
+        const offBeforeIdx: typeof dayBlocks[] = Array.from({ length: sorted.length + 1 }, () => []);
+        for (const item of timedBlocks) {
+            const b = item.block!;
             const t = +new Date(b.starts_at);
             let idx = sorted.findIndex(i => i.start_at && +new Date(i.start_at) > t);
             if (idx === -1) idx = sorted.length;
-            offBeforeIdx[idx].push(b);
+            offBeforeIdx[idx].push(item);
         }
-        const renderOffCard = (b: UnavailabilityBlock, allDay: boolean) => {
+        const renderOffCard = (item: (typeof dayBlocks)[number], allDay: boolean) => {
+            const b = item.block!;
             const bs = new Date(b.starts_at);
             const be = new Date(b.ends_at);
             const from = bs <= dayStartUtc ? dayStartUtc : bs;
             const to = be >= dayEndUtc ? dayEndUtc : be;
+            const label = item.displayKind === 'day_off' ? 'Day off' : 'Time off';
             return (
                 <div
                     key={`unavailability-${b.id}`}
                     className="rounded-xl px-4 py-3 text-[13px] font-medium pointer-events-none select-none"
                     style={{ background: UNAVAILABILITY_BG, color: 'var(--sched-ink-3)' }}
                 >
-                    {unavailabilityLabel(b)} · {b.technician_name} · {allDay ? 'All day' : `${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
+                    {label} · {b.technician_name} · {allDay ? 'All day' : `${formatTimeInTZ(from, tz)} – ${formatTimeInTZ(to, tz)}`}
                 </div>
             );
         };
@@ -246,8 +259,17 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
             // Flat, full-width — no card chrome around the list (the job cards
             // are the content; they carry their own provider-coloured accent).
             <div className="schedule-mobile-agenda flex flex-col gap-2.5">
-                {allDayBlocks.map(b => renderOffCard(b, true))}
-                {sorted.length === 0 && dayBlocks.length === 0 ? (
+                {companyClosed && (
+                    <div
+                        key={companyClosed.key}
+                        className="rounded-xl px-4 py-3 text-[13px] font-medium pointer-events-none select-none"
+                        style={{ background: UNAVAILABILITY_BG, color: 'var(--sched-ink-3)' }}
+                    >
+                        Company closed
+                    </div>
+                )}
+                {allDayBlocks.map(item => renderOffCard(item, true))}
+                {sorted.length === 0 && agendaAvailability.length === 0 ? (
                     <div className="py-12 text-center text-sm" style={{ color: 'var(--sched-ink-3)' }}>
                         No jobs scheduled for {format(currentDate, 'EEEE, MMM d')}
                     </div>
@@ -265,7 +287,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         const legWarn = routeSegmentTone(leg) === 'warn';
                         return (
                             <React.Fragment key={`${item.entity_type}-${item.entity_id}`}>
-                                {offBeforeIdx[idx].map(b => renderOffCard(b, false))}
+                                {offBeforeIdx[idx].map(item => renderOffCard(item, false))}
                                 <div data-schedule-item>
                                     <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} layout="agenda" />
                                 </div>
@@ -279,7 +301,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         );
                     })
                 )}
-                {offBeforeIdx[sorted.length].map(b => renderOffCard(b, false))}
+                {offBeforeIdx[sorted.length].map(item => renderOffCard(item, false))}
             </div>
         );
     }

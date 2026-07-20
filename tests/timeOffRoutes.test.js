@@ -447,6 +447,8 @@ describe('GET /api/schedule/unavailability (TECH-SCHEDULE-001)', () => {
         );
         expect(res.status).toBe(200);
         expect(new Set(res.body.data.unavailability.map(item => item.technician_id))).toEqual(new Set(['1234567']));
+        expect(new Set(res.body.data.unavailability.map(item => item.technician_name))).toEqual(new Set(['John Smith']));
+        expect(JSON.stringify(res.body.data.unavailability)).not.toContain('Jane Doe');
     });
 
     it('rejects callers without schedule.view before reading availability', async () => {

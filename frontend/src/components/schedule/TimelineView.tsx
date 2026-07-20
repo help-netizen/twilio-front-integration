@@ -11,6 +11,7 @@ import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import { overlapsUnavailability, unavailabilityLabel, unavailabilityWarningPhrase } from '../../services/scheduleApi';
 import { filterUnavailabilityByProviders } from '../../services/scheduleFilters';
+import { projectMainScheduleUnavailabilityForDay } from '../../services/scheduleDisplayUnavailability';
 import type { ScheduleItem, DispatchSettings, RouteSegment, UnavailabilityBlock } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { routeSegmentLabel, routeSegmentTone } from '../../utils/routeFormat';
@@ -221,8 +222,19 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     const [refY, refM, refD] = dateKey.split('-').map(Number);
     const bodyHeight = totalHours * HOUR_HEIGHT;
 
-    // TECH-DAYOFF-001 S-9: the visible grid window as UTC instants — used to
-    // pick and clip the day-off blocks that intersect this day's grid.
+    const dayStartUtc = dateInTZ(refY, refM, refD, 0, 0, tz);
+    const nextUtcDay = new Date(Date.UTC(refY, refM - 1, refD + 1));
+    const dayEndUtc = dateInTZ(
+        nextUtcDay.getUTCFullYear(), nextUtcDay.getUTCMonth() + 1, nextUtcDay.getUTCDate(), 0, 0, tz,
+    );
+    const displayUnavailability = projectMainScheduleUnavailabilityForDay(
+        filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds),
+        dayStartUtc,
+        dayEndUtc,
+    );
+
+    // Visible grid window as UTC instants — retained for clipping explicit Time
+    // off and full-day signals to the displayed company work hours.
     const gridStartUtc = dateInTZ(refY, refM, refD, Math.floor(startHour), Math.round((startHour % 1) * 60), tz);
     const gridEndUtc = dateInTZ(refY, refM, refD, Math.floor(endHour), Math.round((endHour % 1) * 60), tz);
 
@@ -433,14 +445,20 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                 />
                             ))}
 
-                            {/* Time-off blocks (TECH-DAYOFF-001 S-9, INV-10) — a grey layer
+                            {/* Display availability (SCHED-DAYOFF-DISPLAY-001) — a grey layer
                                 UNDER the job cards; pointer-events:none so click/DnD pass
                                 straight through to the grid (the protected DnD chain). */}
-                            {group.id !== '__unassigned' && filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds)
-                                .filter(b => b.technician_id === group.id
-                                    && new Date(b.starts_at) < gridEndUtc
-                                    && gridStartUtc < new Date(b.ends_at))
-                                .map(b => {
+                            {group.id !== '__unassigned' && displayUnavailability
+                                .filter(item => item.block.technician_id === group.id
+                                    && new Date(item.block.starts_at) < gridEndUtc
+                                    && gridStartUtc < new Date(item.block.ends_at))
+                                .map(item => {
+                                    const b = item.block;
+                                    const label = item.displayKind === 'company_closed'
+                                        ? 'Company closed'
+                                        : item.displayKind === 'day_off'
+                                            ? 'Day off'
+                                            : unavailabilityLabel(b);
                                     const bs = new Date(b.starts_at);
                                     const be = new Date(b.ends_at);
                                     // Clip to the visible day window (a multi-day period
@@ -458,7 +476,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                             style={{ top: topPx, height: heightPx, background: UNAVAILABILITY_BG }}
                                         >
                                             <div className="px-2 pt-1 text-[11px] font-medium truncate" style={{ color: 'var(--sched-ink-3)' }}>
-                                                {unavailabilityLabel(b)}
+                                                {label}
                                             </div>
                                             {b.note && heightPx >= 48 && (
                                                 <div className="px-2 text-[11px] truncate" style={{ color: 'var(--sched-ink-3)' }}>
