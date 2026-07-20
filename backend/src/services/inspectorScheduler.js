@@ -13,6 +13,22 @@ function boundedCooldown(value) {
     return Math.min(MAX_COOLDOWN_MS, Math.max(60_000, parsed));
 }
 
+// node-pg parses a PG `date` column into a JS Date (at local midnight), and
+// `String(dateObject)` yields "Mon Jul 20 2026 …" which Postgres rejects as a
+// DATE (SQLSTATE 22007) the moment it flows back into `$::DATE`. Always hand the
+// runner a canonical YYYY-MM-DD string. Extract LOCAL components (they ARE the
+// intended calendar day regardless of the container timezone); pass a string
+// through untouched.
+function toCompanyLocalDate(value) {
+    if (value instanceof Date) {
+        const year = value.getFullYear();
+        const month = String(value.getMonth() + 1).padStart(2, '0');
+        const day = String(value.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+    return String(value).slice(0, 10);
+}
+
 function createInspectorScheduler(dependencies = {}) {
     const queries = dependencies.queries || inspectorQueries;
     const runner = dependencies.runner || inspectorRunner;
@@ -26,7 +42,7 @@ function createInspectorScheduler(dependencies = {}) {
                 companyId: claim.company_id,
                 runId: claim.id,
                 timezone: claim.timezone,
-                companyLocalDate: String(claim.company_local_date),
+                companyLocalDate: toCompanyLocalDate(claim.company_local_date),
                 startedAt: new Date(claim.started_at || now()),
             });
             if (result?.spend_cap) {

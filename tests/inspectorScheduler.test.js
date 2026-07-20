@@ -88,6 +88,36 @@ describe('Inspector scheduler and company-local time', () => {
         }));
     });
 
+    test('REGRESSION 22007: a node-pg Date company_local_date reaches the runner as YYYY-MM-DD, not Date.toString()', async () => {
+        // node-pg parses a PG `date` column into a JS Date at local midnight; the
+        // prod scheduler did String(dateObject) → "Mon Jul 20 2026 …" which Postgres
+        // rejected as ::DATE (SQLSTATE 22007) and failed every run. The claim now
+        // must hand the runner a canonical calendar-day string.
+        const run = deferred();
+        const queries = {
+            listDueCompanies: jest.fn()
+                .mockResolvedValueOnce([{ company_id: COMPANY, company_local_date: new Date(2026, 6, 20), timezone: 'America/New_York' }])
+                .mockResolvedValue([]),
+            claimDailyRun: jest.fn().mockResolvedValue({
+                id: 9, company_id: COMPANY,
+                company_local_date: new Date(2026, 6, 20), // ← a Date, exactly as node-pg returns it
+                timezone: 'America/New_York', started_at: '2026-07-20T16:00:00.000Z',
+            }),
+            finishRun: jest.fn(),
+        };
+        const runner = { runCompany: jest.fn().mockReturnValue(run.promise) };
+        const scheduler = createInspectorScheduler({
+            queries, runner, now: () => new Date('2026-07-20T16:00:00.000Z'),
+        });
+        await scheduler.tick(new Date('2026-07-20T16:00:00.000Z'));
+        run.resolve({ spend_cap: false });
+        await scheduler.waitForIdle();
+        const passed = runner.runCompany.mock.calls[0][0].companyLocalDate;
+        expect(typeof passed).toBe('string');
+        expect(passed).toBe('2026-07-20');
+        expect(passed).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+
     test('atomic claim loser starts no company run', async () => {
         const queries = {
             listDueCompanies: jest.fn().mockResolvedValue([
