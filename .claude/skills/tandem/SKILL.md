@@ -25,7 +25,8 @@ The user's feature request: `$ARGUMENTS`
 - ALL code and ALL tests. All builds/test runs inside its session.
 - Mechanical decisions (naming, file placement, minor API shapes) — it decides and
   RECORDS them in a DECISIONS section for your review; it does not ask.
-- Docs drafts (spec file, changelog/tasks entries).
+- Docs DRAFTS of every durable artifact (see **Durable artifacts** below): the spec
+  incl. its Verification section, the requirements/architecture/changelog blocks.
 
 **You (Claude) do ONLY:**
 - Frame the task (goal, constraints, what's UX-visible) — 1 short brief, no code reading.
@@ -36,6 +37,8 @@ The user's feature request: `$ARGUMENTS`
 - Acceptance gates (cheap, independent): git diff --stat sanity, run the named verify
   commands (read exit codes + tails, not full logs), ONE sabotage control on the
   highest-risk invariant, security checklist, FE build when frontend changed.
+- OWN the final spec wording and the artifact-completeness check (the durable-artifact
+  contract below is your deliverable, even though Codex drafts it).
 - Commit/push, memory/lessons, the final high-level report.
 
 **Token-economy rules for yourself:**
@@ -144,9 +147,12 @@ directive 2026-07-19; leaked sessions pile up and eat the Mac's RAM):**
 
 ### Phase 3 — Acceptance, docs, report (you; small)
 - Full targeted regression sweep (one jest regex over the affected domains).
-- Codex drafts changelog/tasks entries (resume); you review, commit everything
-  (feature + tests + docs), push to master per repo rules (fetch+rebase first;
-  migration-number re-check vs origin/master when a migration exists).
+- **Durable artifacts (MANDATORY — see the section below):** Codex drafts the
+  requirements/architecture/changelog blocks and the spec incl. its Verification
+  section (resume); you red-pen and OWN the final spec wording, confirm the
+  Verification section records every test's run command + the sabotage controls, then
+  commit everything (feature + tests + docs) in ONE push per repo rules (fetch+rebase
+  first; migration-number re-check vs origin/master when a migration exists).
 - Teaching: any generalizable Codex mistake → append to docs/agents/gpt-lessons.md.
 - Hygiene (final sweep — the per-check rule above should have left nothing): kill
   codex orphans, stop preview servers, close browser/computer-use sessions, stop
@@ -158,6 +164,50 @@ Structure: What shipped (1 line per capability, user language) · Key decisions 
 (and which were owner's vs yours vs Codex's) · Verification (tests/sabotage/build,
 numbers only) · Deviations & debt · NOT done / next · Commits. No file-by-file
 narration; no code snippets unless asked.
+
+## Durable artifacts — MANDATORY (the project must be re-enterable from these alone)
+
+The acceptance test for a finished feature: could someone with no memory of this chat —
+you after a compaction, the owner in a month, a fresh session — learn WHAT was built,
+WHY, and HOW it is proven, from the committed docs alone? If not, the feature is not
+done. Codex DRAFTS all of these; the SPEC's final wording is YOURS (the docs-chain is
+never fully delegated). Commit them WITH the feature in the same push — never "later".
+
+Five in-repo artifacts, **append-only** (never rewrite existing history):
+
+1. **`docs/requirements.md`** — append a block: the goal in the USER's language, then
+   your conceptual decisions VERBATIM — each fork and what was chosen, one line each.
+   This is the frozen "why".
+2. **`docs/architecture.md`** — append a block ONLY when the feature touches
+   architecture: the decision, the seams it rides, the data shape, and each rejected
+   alternative in one line. Skip for pure UI / copy / bugfix.
+3. **`docs/specs/<FEATURE-ID>.md`** — THE spec, and the load-bearing artifact. Scope +
+   owner decisions + the filled `Tenancy & Roles` table (canon) + a MANDATORY
+   **Verification** section:
+   - every test with its EXACT run command (jest worktree form / vitest / build);
+   - every sabotage control: what you broke → which test went red → restored;
+   - the live run results (suite/test counts, pass/fail, exit status).
+   Principle: **a test without a recorded run command is undocumented.** The spec — not
+   `tasks.md` — is where the T1..Tn breakdown lives.
+4. **`docs/changelog.md`** — 1–3 lines per feature WITH the commit hash(es). The
+   scannable index someone reads first.
+5. **`docs/agents/gpt-lessons.md`** — append any generalizable Codex failure mode
+   (already maintained; keep it current).
+
+Deliberately NOT separate artifacts (they bloat and drift): standalone test-case docs
+(they live in the spec's Verification), review-report files (the red-team pass + gate
+results live in the spec and the commit message), and `tasks.md` as a required update
+(breakdown → the spec; live tracking → the session). `tasks.md` may be appended
+additively but is never a source of truth.
+
+**Out-of-repo work (mini machine: dialog-bot, kb-hist, kb-ingest, kb-watchdog, and any
+new mini project):** there is no `docs/` tree, so the single durable artifact is a
+**`PROJECT.md` at the project root**, kept current — what it is · architecture in ~10
+lines · how to run · how to test · where state / logs / crons live · gotchas. It must
+let someone re-enter the project cold, and it rides the mini's backup contour.
+
+Case-collision gotcha: the repo has BOTH `docs/` and `Docs/` — always write lowercase
+`docs/…`; `git add Docs/x` silently stages nothing.
 
 ## Discussion style with Codex
 
