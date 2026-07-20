@@ -4,6 +4,38 @@
 
 ---
 
+## SCHEDULE-DESKTOP-MAP-001 (OB-18) — Desktop Day/Timeline route map
+
+**Status:** Implemented, pending acceptance
+
+**Priority:** P1
+
+**Spec:** `docs/specs/SCHEDULE-DESKTOP-MAP-001.md`
+
+**Approved mockup:** `docs/mockups/SCHEDULE-DESKTOP-MAP-001.html`
+
+- **FR-DM-1:** Day and Timeline use split grid + map at `>=1280px`; narrower
+  desktop widths use a List/Map switch inside the existing composed controls row.
+- **FR-DM-2:** Map membership mirrors the grid's current provider chips exactly,
+  including `Unassigned`.
+- **FR-DM-3:** Finite coordinates are the only pin gate; missing coordinates are
+  never guessed.
+- **FR-DM-4:** Assigned technicians receive collision-free sorted-roster colours
+  from the 16 PALETTE-V2 map colours; rosters beyond 16 also show initials.
+- **FR-DM-5:** Routes are straight visit-order lines; an unmapped visit breaks the
+  visible run; Unassigned jobs never form a route.
+- **FR-DM-6:** Joint jobs are one pin with a secondary colour ring and belong to
+  both visible technician routes.
+- **FR-DM-7:** Not-on-map renders only when non-empty and distinguishes `Address not
+  on the map yet` from `No address`; row selection highlights the grid without pan.
+- **FR-DM-8:** Rendered pins plus Not-on-map rows equal the filtered job total as a
+  tested model invariant.
+- **NFR-DM-1:** Mobile shell behavior, backend/API, company scoping, Maps key, and
+  persistence are unchanged; there is no Routes API cost.
+- **NFR-DM-2:** Memoized map geometry is independent of Timeline grid ticks.
+
+---
+
 ## AGENT-CALL-WINDOW-001 — Shared outbound robot call windows
 
 **Status:** Implemented

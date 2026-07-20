@@ -23,8 +23,9 @@ import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogD
 import { Button } from '../ui/button';
 import { serverDate } from '../../utils/serverClock';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
-import { getProviderColor } from '../../utils/providerColors';
+import { colorForTechnician } from '../../utils/scheduleProviderColors';
 import { assignLanes, type LayoutItem } from '../../utils/scheduleLayout';
+import { useScheduleProviderColorRegistry } from './ScheduleProviderColorContext';
 
 const HOUR_HEIGHT = 86;
 
@@ -43,6 +44,9 @@ interface TimelineViewProps {
     unavailability?: UnavailabilityBlock[];
     /** TECH-DAYOFF-002: active provider filter — rendered time-off lanes honor it (DnD warnings don't). */
     providerFilterIds?: string[];
+    selectedItemKey?: string | null;
+    hoveredItemKey?: string | null;
+    onHoverItem?: (item: ScheduleItem | null) => void;
 }
 
 // TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
@@ -128,7 +132,9 @@ function layoutItems(items: ScheduleItem[], tz: string, startHour: number): Posi
 
 export const TimelineView: React.FC<TimelineViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReschedule, onReassign, onCreateFromSlot, routeByPair, unavailability, providerFilterIds,
+    selectedItemKey, hoveredItemKey, onHoverItem,
 }) => {
+    const providerColorRegistry = useScheduleProviderColorRegistry();
     const tz = settings.timezone || 'America/New_York';
     const unit = 'mi'; // Distances are always miles (US-only product).
     const slotDuration = settings.slot_duration || 60;
@@ -361,7 +367,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     style={{ minWidth: `${providerGroups.length * 140}px` }}
                 >
                     {providerGroups.map(group => {
-                        const provColor = group.id !== '__unassigned' ? getProviderColor(group.id) : null;
+                        const provColor = group.id !== '__unassigned'
+                            ? colorForTechnician(providerColorRegistry, group.id)
+                            : null;
                         return (
                             <div
                                 key={group.id}
@@ -549,7 +557,19 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                             width: `calc(${widthPct}% - 4px)`,
                                         }}
                                     >
-                                        <ScheduleItemCard item={item} compact onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
+                                        <ScheduleItemCard
+                                            item={item}
+                                            compact
+                                            onClick={onSelectItem}
+                                            onCopy={onCopy}
+                                            timezone={tz}
+                                            selected={selectedItemKey === itemKey}
+                                            hot={hoveredItemKey === itemKey}
+                                            dimmed={Boolean((selectedItemKey || hoveredItemKey)
+                                                && selectedItemKey !== itemKey
+                                                && hoveredItemKey !== itemKey)}
+                                            onHoverChange={onHoverItem}
+                                        />
                                     </div>
                                     {/* Route leg to the next job — anchored to this card's bottom edge.
                                         pointer-events-none so it never blocks drag/click on the grid. */}

@@ -7,9 +7,9 @@ import React from 'react';
 import { MoreVertical, Copy, Phone } from 'lucide-react';
 import type { ScheduleItem } from '../../services/scheduleApi';
 import { formatTimeInTZ } from '../../utils/companyTime';
-import { getProviderColor } from '../../utils/providerColors';
 import { geocodingLabel } from '../../utils/routeFormat';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import { useScheduleProviderColor } from './ScheduleProviderColorContext';
 
 // Neutral style for unassigned items
 const UNASSIGNED_STYLE = {
@@ -49,11 +49,28 @@ interface ScheduleItemCardProps {
     layout?: 'classic' | 'agenda';
     /** Only meaningful with layout='agenda': adds a phone row when customer_phone is present. */
     detailed?: boolean;
+    selected?: boolean;
+    hot?: boolean;
+    dimmed?: boolean;
+    onHoverChange?: (item: ScheduleItem | null) => void;
 }
 
-export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compact = false, onClick, onCopy, timezone, layout = 'classic', detailed = false }) => {
+export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({
+    item,
+    compact = false,
+    onClick,
+    onCopy,
+    timezone,
+    layout = 'classic',
+    detailed = false,
+    selected = false,
+    hot = false,
+    dimmed = false,
+    onHoverChange,
+}) => {
     const primaryTech = item.assigned_techs?.[0];
-    const provColor = primaryTech ? getProviderColor(primaryTech.id || primaryTech.name) : null;
+    const providerColor = useScheduleProviderColor(primaryTech?.id || primaryTech?.name);
+    const provColor = primaryTech ? providerColor : null;
     const style = provColor ? {
         gradient: `linear-gradient(180deg, ${provColor.bg}, ${provColor.bg})`,
         border: provColor.border,
@@ -119,20 +136,25 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
             <div
                 role="button"
                 tabIndex={0}
+                aria-pressed={selected}
                 onClick={() => onClick?.(item)}
+                onMouseEnter={() => onHoverChange?.(item)}
+                onMouseLeave={() => onHoverChange?.(null)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(item); } }}
                 className={`
                     relative w-full h-full text-left overflow-hidden transition-shadow cursor-pointer
                     hover:shadow-xl
                     focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 outline-none
-                    ${isCanceled ? 'opacity-60' : ''}
                 `}
                 style={{
                     background: style.gradient,
                     border: `1px solid ${style.border}`,
                     borderLeft: `4px solid ${style.accent}`,
                     borderRadius: '18px',
-                    boxShadow: 'var(--sched-shadow-card)',
+                    boxShadow: selected
+                        ? '0 0 0 3px var(--blanc-accent), var(--sched-shadow-card)'
+                        : hot ? '0 0 0 2px var(--blanc-accent), var(--sched-shadow-card)' : 'var(--sched-shadow-card)',
+                    opacity: dimmed ? 0.42 : isCanceled ? 0.6 : 1,
                 }}
             >
                 <div className="p-3.5 pb-3 h-full flex flex-col gap-1" style={{ paddingLeft: '14px' }}>
@@ -205,20 +227,25 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
         <div
             role="button"
             tabIndex={0}
+            aria-pressed={selected}
             onClick={() => onClick?.(item)}
+            onMouseEnter={() => onHoverChange?.(item)}
+            onMouseLeave={() => onHoverChange?.(null)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(item); } }}
             className={`
                 relative w-full h-full text-left overflow-hidden transition-shadow cursor-pointer
                 hover:shadow-xl
                 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 outline-none
-                ${isCanceled ? 'opacity-60' : ''}
             `}
             style={{
                 background: style.gradient,
                 border: `1px solid ${style.border}`,
                 borderLeft: `4px solid ${style.accent}`,
                 borderRadius: '18px',
-                boxShadow: 'var(--sched-shadow-card)',
+                boxShadow: selected
+                    ? '0 0 0 3px var(--blanc-accent), var(--sched-shadow-card)'
+                    : hot ? '0 0 0 2px var(--blanc-accent), var(--sched-shadow-card)' : 'var(--sched-shadow-card)',
+                opacity: dimmed ? 0.42 : isCanceled ? 0.6 : 1,
             }}
         >
             {/* Kebab menu (top-right) — Copy job. Only for jobs, when wired. */}
@@ -321,4 +348,3 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
         </div>
     );
 };
-

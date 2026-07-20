@@ -4,6 +4,13 @@
 **Surface:** the **mobile** Schedule page (`useIsMobile()` true → viewMode forced to `'day'`).
 Desktop Schedule and the `CustomTimeModal` slot-picker map are **unchanged**.
 
+> **2026-07-20 shared-primitive update:** `SCHEDULE-DESKTOP-MAP-001` supersedes
+> this document only for map-model internals: mobile now consumes the shared
+> coordinate gate/grouping/renderer, joint jobs are one pin with a secondary
+> colour ring, and Unassigned uses a neutral `U` pin with no route. The mobile
+> Schedule shell, existing List/Map control, and mount behavior remain unchanged.
+> See `docs/specs/SCHEDULE-DESKTOP-MAP-001.md` for the active contract.
+
 ## Общее описание
 
 On the mobile Schedule, the day view currently shows a stacked **list** (`DayView`, mobile

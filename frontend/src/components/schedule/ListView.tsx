@@ -12,7 +12,8 @@ import type { ScheduleItem, DispatchSettings, RouteSegment } from '../../service
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ } from '../../utils/companyTime';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
-import { getProviderColor } from '../../utils/providerColors';
+import { colorForTechnician } from '../../utils/scheduleProviderColors';
+import { useScheduleProviderColorRegistry } from './ScheduleProviderColorContext';
 
 interface ListViewProps {
     currentDate: Date;
@@ -49,6 +50,7 @@ function formatDayHeading(day: Date, todayStr: string, _tz: string): string {
 export const ListView: React.FC<ListViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, routeByPair,
 }) => {
+    const providerColorRegistry = useScheduleProviderColorRegistry();
     const tz = settings.timezone || 'America/New_York';
     const unit = 'mi'; // Distances are always miles (US-only product).
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
@@ -131,7 +133,9 @@ export const ListView: React.FC<ListViewProps> = ({
                 }}
             >
                 {providerGroups.map(group => {
-                    const provColor = group.id !== '__unassigned' ? getProviderColor(group.id) : null;
+                    const provColor = group.id !== '__unassigned'
+                        ? colorForTechnician(providerColorRegistry, group.id)
+                        : null;
                     return (
                         <div
                             key={group.id}

@@ -39,6 +39,9 @@ interface DayViewProps {
     unavailability?: UnavailabilityBlock[];
     /** TECH-DAYOFF-002: active provider filter — rendered time-off cards honor it (DnD warnings don't). */
     providerFilterIds?: string[];
+    selectedItemKey?: string | null;
+    hoveredItemKey?: string | null;
+    onHoverItem?: (item: ScheduleItem | null) => void;
 }
 
 // TECH-DAYOFF-001 S-9: subtle diagonal hatching on the neutral ink ramp — a
@@ -60,7 +63,21 @@ function buildHourSlots(startTime: string, endTime: string): number[] {
 
 const HOUR_HEIGHT = 86; // px per hour — Sprint 7 design refresh
 
-export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot, routeByPair, unavailability, providerFilterIds }) => {
+export const DayView: React.FC<DayViewProps> = ({
+    currentDate,
+    items,
+    settings,
+    onSelectItem,
+    onCopy,
+    onReschedule,
+    onCreateFromSlot,
+    routeByPair,
+    unavailability,
+    providerFilterIds,
+    selectedItemKey,
+    hoveredItemKey,
+    onHoverItem,
+}) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
     const isMobile = useIsMobile();
@@ -289,7 +306,19 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                             <React.Fragment key={`${item.entity_type}-${item.entity_id}`}>
                                 {offBeforeIdx[idx].map(item => renderOffCard(item, false))}
                                 <div data-schedule-item>
-                                    <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} layout="agenda" />
+                                    <ScheduleItemCard
+                                        item={item}
+                                        onClick={onSelectItem}
+                                        onCopy={onCopy}
+                                        timezone={tz}
+                                        layout="agenda"
+                                        selected={selectedItemKey === `${item.entity_type}:${item.entity_id}`}
+                                        hot={hoveredItemKey === `${item.entity_type}:${item.entity_id}`}
+                                        dimmed={Boolean((selectedItemKey || hoveredItemKey)
+                                            && selectedItemKey !== `${item.entity_type}:${item.entity_id}`
+                                            && hoveredItemKey !== `${item.entity_type}:${item.entity_id}`)}
+                                        onHoverChange={onHoverItem}
+                                    />
                                 </div>
                                 {legText && (
                                     <div className="schedule-mobile-leg" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 20, marginTop: -2, marginBottom: -2 }}>
@@ -481,7 +510,18 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                                         width: `calc(${widthPct}% - 8px)`,
                                     }}
                                 >
-                                    <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
+                                    <ScheduleItemCard
+                                        item={item}
+                                        onClick={onSelectItem}
+                                        onCopy={onCopy}
+                                        timezone={tz}
+                                        selected={selectedItemKey === `${item.entity_type}:${item.entity_id}`}
+                                        hot={hoveredItemKey === `${item.entity_type}:${item.entity_id}`}
+                                        dimmed={Boolean((selectedItemKey || hoveredItemKey)
+                                            && selectedItemKey !== `${item.entity_type}:${item.entity_id}`
+                                            && hoveredItemKey !== `${item.entity_type}:${item.entity_id}`)}
+                                        onHoverChange={onHoverItem}
+                                    />
                                 </div>
                             );
                         });

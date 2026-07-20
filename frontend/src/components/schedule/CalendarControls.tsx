@@ -4,13 +4,14 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { CalendarOff, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, X } from 'lucide-react';
+import { CalendarOff, ChevronLeft, ChevronRight, ChevronDown, List, Map, SlidersHorizontal, X } from 'lucide-react';
 import { format, startOfWeek, endOfWeek } from 'date-fns';
 import type { ViewMode, ProviderInfo } from '../../hooks/useScheduleData';
 import type { ScheduleFilters } from '../../services/scheduleApi';
-import { getProviderColor } from '../../utils/providerColors';
+import { colorForTechnician, UNASSIGNED_TECHNICIAN_COLOR } from '../../utils/scheduleProviderColors';
 import { Badge } from '../ui/badge';
 import { useAuthz } from '../../hooks/useAuthz';
+import { useScheduleProviderColorRegistry } from './ScheduleProviderColorContext';
 
 interface CalendarControlsProps {
     viewMode: ViewMode;
@@ -25,6 +26,10 @@ interface CalendarControlsProps {
     onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
     onOpenSettings?: () => void;
     onTimeOff?: () => void;
+    showMapControl?: boolean;
+    mapOpen?: boolean;
+    mapSplit?: boolean;
+    onToggleMap?: () => void;
 }
 
 const VIEW_OPTIONS: Array<{ value: ViewMode; label: string }> = [
@@ -227,11 +232,12 @@ export const ScheduleProviderChips: React.FC<{
     onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
 }> = ({ providers, filters, onFiltersChange }) => {
     const { handleProviderToggle } = useScheduleFilterHandlers(filters, onFiltersChange);
+    const providerColorRegistry = useScheduleProviderColorRegistry();
     if (providers.length === 0) return null;
     return (
         <>
             {providers.map(provider => {
-                const c = getProviderColor(provider.id);
+                const c = colorForTechnician(providerColorRegistry, provider.id);
                 const isActive = filters.providerIds?.includes(provider.id);
                 return (
                     <button
@@ -259,10 +265,10 @@ export const ScheduleProviderChips: React.FC<{
                         onClick={() => handleProviderToggle('__unassigned__')}
                         className="inline-flex items-center min-h-[28px] px-2.5 rounded-full text-[11px] font-semibold transition-all"
                         style={{
-                            background: isActive ? '#6b7280' : 'rgba(243, 244, 246, 0.7)',
-                            border: '1px solid rgba(107, 114, 128, 0.25)',
-                            color: isActive ? '#fff' : '#6b7280',
-                            boxShadow: isActive ? '0 2px 8px rgba(107, 114, 128, 0.25)' : 'none',
+                            background: isActive ? UNASSIGNED_TECHNICIAN_COLOR.accent : UNASSIGNED_TECHNICIAN_COLOR.bg,
+                            border: `1px solid ${UNASSIGNED_TECHNICIAN_COLOR.border}`,
+                            color: isActive ? '#fff' : UNASSIGNED_TECHNICIAN_COLOR.text,
+                            boxShadow: isActive ? `0 2px 8px ${UNASSIGNED_TECHNICIAN_COLOR.border}` : 'none',
                         }}
                     >
                         Unassigned
@@ -276,6 +282,7 @@ export const ScheduleProviderChips: React.FC<{
 export const CalendarControls: React.FC<CalendarControlsProps> = ({
     viewMode, currentDate, filters, itemCounts, loading, providers = [], allTags = [],
     onViewModeChange, onNavigateDate, onFiltersChange, onOpenSettings, onTimeOff,
+    showMapControl = false, mapOpen = false, mapSplit = false, onToggleMap,
 }) => {
     const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
@@ -366,6 +373,19 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
 
                     {/* Management actions wrap together and align to the row's right edge. */}
                     <div className="schedule-controls-actions ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                        {showMapControl && onToggleMap && (
+                            <button
+                                type="button"
+                                onClick={onToggleMap}
+                                className="blanc-control-chip shrink-0"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                                aria-pressed={mapOpen}
+                                aria-label={mapOpen && !mapSplit ? 'Show list' : mapOpen ? 'Hide map' : 'Show map'}
+                            >
+                                {mapOpen && !mapSplit ? <List className="size-4" /> : <Map className="size-4" />}
+                                {mapOpen && !mapSplit ? 'Show list' : mapOpen ? 'Map shown' : 'Show map'}
+                            </button>
+                        )}
                         <div className="relative shrink-0" ref={dropdownRef}>
                             <button
                                 type="button"

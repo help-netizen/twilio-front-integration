@@ -4,7 +4,7 @@
  * toolbar split (ScheduleToolbar + CalendarControls).
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScheduleData } from '../hooks/useScheduleData';
 import { useJobDetail } from '../hooks/useJobDetail';
@@ -15,6 +15,9 @@ import { MobileScheduleBar } from '../components/schedule/MobileScheduleBar';
 import { WeekView } from '../components/schedule/WeekView';
 import { DayView } from '../components/schedule/DayView';
 import { ScheduleJobsMap } from '../components/schedule/ScheduleJobsMap';
+import { ScheduleDesktopMapPanel } from '../components/schedule/ScheduleDesktopMapPanel';
+import { scheduleJobKey } from '../components/schedule/scheduleMapModel';
+import { ScheduleProviderColorProvider } from '../components/schedule/ScheduleProviderColorContext';
 import { MonthView } from '../components/schedule/MonthView';
 import { TimelineView } from '../components/schedule/TimelineView';
 import { TimelineWeekView } from '../components/schedule/TimelineWeekView';
@@ -30,11 +33,13 @@ import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { JobDetailPanel } from '../components/jobs/JobDetailPanel';
 import { Skeleton } from '../components/ui/skeleton';
 import type { ScheduleItem } from '../services/scheduleApi';
+import { buildTechnicianColorRegistry } from '../utils/scheduleProviderColors';
 
 export function SchedulePage() {
     const schedule = useScheduleData();
     const navigate = useNavigate();
     const isMobile = useIsMobile();
+    const isBelowMapSplit = useIsMobile(1280);
     // TECH-DAYOFF-001: day-off management panel (dispatch-only, like settings).
     const [timeOffOpen, setTimeOffOpen] = useState(false);
     // Dispatch-only controls hidden for providers without schedule.dispatch (PF007)
@@ -43,6 +48,25 @@ export function SchedulePage() {
     // reset to list whenever we leave mobile width so desktop never renders it.
     const [mobileMapOpen, setMobileMapOpen] = useState(false);
     useEffect(() => { if (!isMobile) setMobileMapOpen(false); }, [isMobile]);
+
+    // SCHEDULE-DESKTOP-MAP-001: split is the default at >=1280px; narrower
+    // desktop widths use the same composed-header control as a List/Map switch.
+    const [desktopMapOpen, setDesktopMapOpen] = useState(() => (
+        typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches
+    ));
+    const desktopMapEligible = !isMobile
+        && (schedule.viewMode === 'day' || schedule.viewMode === 'timeline');
+    useEffect(() => {
+        if (desktopMapEligible && !isBelowMapSplit) setDesktopMapOpen(true);
+    }, [desktopMapEligible, isBelowMapSplit, schedule.viewMode]);
+
+    const providerColorRegistry = useMemo(() => buildTechnicianColorRegistry([
+        ...schedule.providers,
+        ...schedule.items.flatMap(item => item.assigned_techs || []),
+    ]), [schedule.providers, schedule.items]);
+
+    const [selectedScheduleItemKey, setSelectedScheduleItemKey] = useState<string | null>(null);
+    const [hoveredScheduleItemKey, setHoveredScheduleItemKey] = useState<string | null>(null);
 
     // ─── Job detail floating panel (same as Jobs page) ───────────────
     const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
@@ -54,11 +78,32 @@ export function SchedulePage() {
     /** When a schedule item is clicked, jobs open in FloatingDetailPanel; others go to SidebarStack */
     const handleSelectItem = useCallback((item: ScheduleItem) => {
         if (item.entity_type === 'job') {
+            setSelectedScheduleItemKey(scheduleJobKey(item));
             setSelectedJobId(item.entity_id);
         } else {
             schedule.selectItem(item);
         }
     }, [schedule.selectItem]);
+
+    const handleMapJobSelect = useCallback((item: ScheduleItem) => {
+        setSelectedScheduleItemKey(scheduleJobKey(item));
+    }, []);
+
+    const handleGridItemHover = useCallback((item: ScheduleItem | null) => {
+        setHoveredScheduleItemKey(item ? scheduleJobKey(item) : null);
+    }, []);
+
+    const handleMapJobHover = useCallback((jobKey: string | null) => {
+        setHoveredScheduleItemKey(jobKey);
+    }, []);
+
+    useEffect(() => {
+        if (!selectedScheduleItemKey) return;
+        const stillVisible = schedule.scheduledItems.some(item => (
+            item.entity_type === 'job' && scheduleJobKey(item) === selectedScheduleItemKey
+        ));
+        if (!stillVisible) setSelectedScheduleItemKey(null);
+    }, [schedule.scheduledItems, selectedScheduleItemKey]);
 
     const handleCloseJobDetail = useCallback(() => {
         setSelectedJobId(null);
@@ -131,29 +176,61 @@ export function SchedulePage() {
             );
         }
 
+        let calendarView: ReactNode;
         switch (schedule.viewMode) {
             case 'week':
-                return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                calendarView = <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                break;
             case 'day':
                 // Mobile-only: the map replaces the day list (full-width) when toggled on.
                 if (isMobile && mobileMapOpen) {
                     return <ScheduleJobsMap jobs={schedule.scheduledItems} companyTz={schedule.settings.timezone} selectedProviderIds={schedule.filters.providerIds} />;
                 }
-                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} />;
+                calendarView = <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} selectedItemKey={selectedScheduleItemKey} hoveredItemKey={hoveredScheduleItemKey} onHoverItem={handleGridItemHover} />;
+                break;
             case 'month':
-                return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
+                calendarView = <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
+                break;
             case 'timeline':
-                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                calendarView = <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} selectedItemKey={selectedScheduleItemKey} hoveredItemKey={hoveredScheduleItemKey} onHoverItem={handleGridItemHover} />;
+                break;
             case 'timeline-week':
-                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                calendarView = <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} unavailability={schedule.unavailability} providerFilterIds={schedule.filters.providerIds} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                break;
             case 'list':
-                return <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                calendarView = <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                break;
             default:
                 return null;
         }
+
+        if (!desktopMapEligible) return calendarView;
+
+        const mapPanel = (
+            <ScheduleDesktopMapPanel
+                jobs={schedule.scheduledItems}
+                companyTz={schedule.settings.timezone}
+                selectedProviderIds={schedule.filters.providerIds}
+                selectedJobKey={selectedScheduleItemKey}
+                hoveredJobKey={hoveredScheduleItemKey}
+                onSelectJob={handleMapJobSelect}
+                onHoverJob={handleMapJobHover}
+                split={!isBelowMapSplit}
+            />
+        );
+
+        if (isBelowMapSplit) return desktopMapOpen ? mapPanel : calendarView;
+        if (!desktopMapOpen) return calendarView;
+        return (
+            <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1.18fr)_minmax(390px,0.82fr)]">
+                <div className="min-w-0">{calendarView}</div>
+                {mapPanel}
+            </div>
+        );
     };
 
     return (
+        <ScheduleProviderColorProvider registry={providerColorRegistry}>
         <div
             className="schedule-page-root min-h-screen relative"
             style={{
@@ -218,6 +295,10 @@ export function SchedulePage() {
                             onFiltersChange={schedule.setFilters}
                             onOpenSettings={canDispatch ? () => navigate('/settings/scheduling/company-schedule') : undefined}
                             onTimeOff={canDispatch ? () => setTimeOffOpen(true) : undefined}
+                            showMapControl={desktopMapEligible}
+                            mapOpen={desktopMapOpen}
+                            mapSplit={!isBelowMapSplit}
+                            onToggleMap={() => setDesktopMapOpen(open => !open)}
                         />
                     )}
 
@@ -291,5 +372,6 @@ export function SchedulePage() {
             {/* Copy job — New Job form pre-filled from an existing job */}
             <NewJobDialog open={!!copyFrom} copyFrom={copyFrom} onClose={() => setCopyFrom(null)} />
         </div>
+        </ScheduleProviderColorProvider>
     );
 }

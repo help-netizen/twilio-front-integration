@@ -17,7 +17,8 @@ import type { ScheduleItem, DispatchSettings, RouteSegment, UnavailabilityBlock 
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../../utils/companyTime';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
-import { getProviderColor } from '../../utils/providerColors';
+import { colorForTechnician } from '../../utils/scheduleProviderColors';
+import { useScheduleProviderColorRegistry } from './ScheduleProviderColorContext';
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 
@@ -55,6 +56,7 @@ interface ProviderGroup {
 export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, onCreateFromSlot, routeByPair, unavailability, providerFilterIds,
 }) => {
+    const providerColorRegistry = useScheduleProviderColorRegistry();
     const tz = settings.timezone || 'America/New_York';
     const unit = 'mi'; // Distances are always miles (US-only product).
     const workStartHour = parseTime(settings.work_start_time);
@@ -233,7 +235,9 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                 </div>
                 {/* Provider column headers */}
                 {providerGroups.map(group => {
-                    const provColor = group.id !== '__unassigned' ? getProviderColor(group.id) : null;
+                    const provColor = group.id !== '__unassigned'
+                        ? colorForTechnician(providerColorRegistry, group.id)
+                        : null;
                     return (
                         <div
                             key={group.id}

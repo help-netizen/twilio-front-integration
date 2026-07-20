@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-07-20 — SCHEDULE-DESKTOP-MAP-001 (OB-18): маршруты техников в Day и Timeline
+
+Desktop Schedule теперь показывает утверждённую карту работ в Day и Timeline:
+split «сетка + карта» от 1280px и List/Map-переключение ниже, встроенное в уже
+скомпонованный ряд контролов. Карта зеркалит текущие chips техников, рисует прямые
+маршруты в порядке визитов и использует единый collision-free sorted-roster registry
+из 16 цветов PALETTE-V2. Joint job — одна pin с кольцом второго техника и обеими
+маршрутами; Unassigned — нейтральная `U` pin без маршрута. Работы без координат не
+угадываются и попадают в условную панель **Not on the map** с честной причиной;
+`pins + not-on-map = filtered jobs` закреплено модельным инвариантом и тестом.
+Mobile shell сохранён, а его карта переведена на те же shared model/renderer. Нет
+backend/API/migration/Routes API и нового расхода. Спека:
+`docs/specs/SCHEDULE-DESKTOP-MAP-001.md`. Проверка: production build green (3540
+modules), полный Vitest — 50 файлов / 278 тестов; шесть named sabotage controls
+дали ожидаемый red и были восстановлены в green. **НЕ задеплоено.**
+
 ## 2026-07-20 — SCHED-DAYOFF-DISPLAY-001: тише расписание, но полный выходной виден
 
 Mobile agenda, Timeline и Team Week больше не показывают ежедневные штрихованные

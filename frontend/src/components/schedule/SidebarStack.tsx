@@ -10,7 +10,8 @@ import type { SidebarLayer } from '../../hooks/useScheduleData';
 import type { ScheduleItem } from '../../services/scheduleApi';
 import { ScheduleSidebar } from './ScheduleSidebar';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
-import { getProviderColor } from '../../utils/providerColors';
+import { colorForTechnician } from '../../utils/scheduleProviderColors';
+import { useScheduleProviderColorRegistry } from './ScheduleProviderColorContext';
 
 interface SidebarStackProps {
     stack: SidebarLayer[];
@@ -43,6 +44,7 @@ const sectionRow: React.CSSProperties = {
 export const SidebarStack: React.FC<SidebarStackProps> = ({
     stack, onPopLayer, onClearStack, onPushLayer, timezone,
 }) => {
+    const providerColorRegistry = useScheduleProviderColorRegistry();
     const [hoverStack, setHoverStack] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
 
@@ -169,7 +171,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
 
         if (layer.type === 'provider') {
             const d = layer.data as Record<string, any>;
-            const provColor = getProviderColor(d.id || d.name);
+            const provColor = colorForTechnician(providerColorRegistry, d.id || d.name);
             return (
                 <div className="flex flex-col h-full overflow-hidden" style={{ background: 'var(--sched-surface)' }}>
                     {/* Header — цвет техника оставлен, тёплый хвост градиента → прозрачный */}
