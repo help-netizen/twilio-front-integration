@@ -278,3 +278,23 @@ the running container across ALL assets, not just `index-*.js`; fixed by adding
 
 Place ID warmer: 147 eligible resolved, 0 unresolved, cache 227/227 — every
 configured ZIP renders as a polygon, none fall back to a centroid marker.
+
+### Google-side setup: the step that actually gets missed
+
+Confirmed live on 2026-07-20. After the Map ID and key were correct, the map
+still rendered centroid pins. The cause was the **Postal Code feature layer not
+selected in the map style** — and the misleading part is that *the custom style
+itself was visibly applied to the map*. A style that renders is NOT evidence
+that its data-driven feature layers are enabled; those are a separate selection
+inside the style, and they must be published like any other style change.
+
+Diagnostic order that resolved it in one step: read the browser console for
+`[TerritoryCoverageMap] ZIP polygon fallback: <reason>` — the reason maps 1:1 to
+the fix.
+
+| console reason | what to fix |
+|---|---|
+| `data-driven styling is unavailable for this Map ID` | billing not linked to the project, or the Map ID is not a JavaScript **vector** ID |
+| `the Postal Code feature layer is unavailable` | the layer is not selected in the style attached to that Map ID, or the style was saved but not published |
+| `ZIP place IDs are not cached yet` | run `scripts/backfill-zip-place-ids.js --company-id=<uuid>` |
+| `VITE_GOOGLE_MAPS_MAP_ID is not configured` | the value never reached the Vite build — see the override trap above |
