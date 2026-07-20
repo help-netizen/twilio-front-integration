@@ -1,6 +1,11 @@
 'use strict';
 
-const { generateJson, JsonLlmError, boundedInteger } = require('./llm/jsonLlmClient');
+const {
+    generateJson,
+    JsonLlmError,
+    boundedInteger,
+    createPacedQueue,
+} = require('./llm/jsonLlmClient');
 const { DEFAULT_INSPECTOR_INSTRUCTION } = require('./inspectorDefaults');
 
 const MAX_INPUT_CHARS = 12000;
@@ -8,6 +13,7 @@ const MAX_COMPANY_INSTRUCTION_CHARS = 4800;
 const RECORD_FENCE_BEGIN = 'BEGIN_UNTRUSTED_RECORD_DATA';
 const RECORD_FENCE_END = 'END_UNTRUSTED_RECORD_DATA';
 const RECORD_FENCE_PATTERN = /BEGIN_UNTRUSTED_RECORD_DATA|END_UNTRUSTED_RECORD_DATA/gi;
+const inspectorLlmQueue = createPacedQueue();
 
 const IMMUTABLE_SYSTEM_PROMPT = `You are Inspector, an internal operations reviewer for a field-service company.
 
@@ -251,12 +257,24 @@ async function classifyEntity(context, instruction, options = {}) {
     const config = providerConfig(env);
     const prompts = buildPrompts(context, instruction);
     const transport = options.generateJson || generateJson;
+    const legacyMaxAttempts = boundedInteger(env.INSPECTOR_AGENT_RETRY_MAX, 2, 0, 4) + 1;
     const result = await transport({
         ...config,
         systemPrompt: prompts.systemPrompt,
         userPrompt: prompts.userPrompt,
         timeoutMs: boundedInteger(env.INSPECTOR_AGENT_TIMEOUT_MS, 60000, 1000, 120000),
-        maxRetries: boundedInteger(env.INSPECTOR_AGENT_RETRY_MAX, 2, 0, 4),
+        rateLimit: {
+            queue: options.llmQueue || inspectorLlmQueue,
+            minIntervalMs: boundedInteger(env.INSPECTOR_LLM_MIN_INTERVAL_MS, 250, 0, 60000),
+            maxAttempts: boundedInteger(
+                env.INSPECTOR_LLM_MAX_ATTEMPTS,
+                legacyMaxAttempts,
+                1,
+                5
+            ),
+            baseBackoffMs: boundedInteger(env.INSPECTOR_LLM_BASE_BACKOFF_MS, 1000, 0, 60000),
+            maxBackoffMs: boundedInteger(env.INSPECTOR_LLM_MAX_BACKOFF_MS, 30000, 0, 300000),
+        },
         temperature: 0.1,
         contextTokens: 4096,
         // 400 truncated the verdict once Gemini 2.5 thinking is disabled we only need

@@ -1,6 +1,9 @@
 'use strict';
 
-const { JsonLlmError } = require('../backend/src/services/llm/jsonLlmClient');
+const {
+    JsonLlmError,
+    createPacedQueue,
+} = require('../backend/src/services/llm/jsonLlmClient');
 const classifier = require('../backend/src/services/inspectorClassifier');
 const { DEFAULT_INSPECTOR_INSTRUCTION } = require('../backend/src/services/inspectorDefaults');
 
@@ -97,5 +100,48 @@ describe('Inspector immutable prompt and verdict parser', () => {
             INSPECTOR_AGENT_PROVIDER: 'gemini',
             GEMINI_API_KEY: 'x',
         })).toMatchObject({ provider: 'gemini', apiKey: 'x' });
+    });
+
+    test('Inspector alone opts into bounded pacing while preserving the thinking-output budget', async () => {
+        const generateJson = jest.fn().mockResolvedValue({
+            json: {
+                needs_attention: false,
+                confidence: 0.9,
+                reason: 'Future ETA remains current.',
+                task_title: '',
+                task_description: '',
+            },
+            provider: 'gemini',
+            model: 'gemini-test',
+            latency_ms: 4,
+            token_usage: {},
+        });
+        const queue = createPacedQueue();
+
+        await classifier.classifyEntity(context(), DEFAULT_INSPECTOR_INSTRUCTION, {
+            generateJson,
+            llmQueue: queue,
+            env: {
+                INSPECTOR_AGENT_PROVIDER: 'gemini',
+                INSPECTOR_AGENT_MODEL: 'gemini-test',
+                GEMINI_API_KEY: 'x',
+                INSPECTOR_LLM_MIN_INTERVAL_MS: '700',
+                INSPECTOR_LLM_MAX_ATTEMPTS: '4',
+                INSPECTOR_LLM_BASE_BACKOFF_MS: '900',
+                INSPECTOR_LLM_MAX_BACKOFF_MS: '12000',
+            },
+        });
+
+        expect(generateJson).toHaveBeenCalledWith(expect.objectContaining({
+            maxOutputTokens: 1024,
+            allowModelFallbackOn429: false,
+            rateLimit: {
+                queue,
+                minIntervalMs: 700,
+                maxAttempts: 4,
+                baseBackoffMs: 900,
+                maxBackoffMs: 12000,
+            },
+        }));
     });
 });

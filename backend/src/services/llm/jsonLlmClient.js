@@ -69,6 +69,73 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function createPacedQueue() {
+    let tail = Promise.resolve();
+    let lastStartedAt = null;
+
+    async function waitForStart(minIntervalMs, sleepImpl, nowImpl) {
+        const waitMs = lastStartedAt === null
+            ? 0
+            : Math.max(0, lastStartedAt + minIntervalMs - nowImpl());
+        if (waitMs > 0) await sleepImpl(waitMs);
+        lastStartedAt = nowImpl();
+    }
+
+    async function run(task) {
+        const previous = tail;
+        let release;
+        tail = new Promise(resolve => {
+            release = resolve;
+        });
+        await previous.catch(() => {});
+        try {
+            return await task();
+        } finally {
+            release();
+        }
+    }
+
+    return { run, waitForStart };
+}
+
+function normalizeRateLimit(rateLimit) {
+    if (!rateLimit) return null;
+    if (typeof rateLimit.queue?.run !== 'function'
+        || typeof rateLimit.queue?.waitForStart !== 'function') {
+        throw new JsonLlmError('JSON LLM rate-limit queue is not configured.', {
+            code: 'not_configured',
+        });
+    }
+    const baseBackoffMs = boundedInteger(rateLimit.baseBackoffMs, 1000, 0, 60000);
+    const maxBackoffMs = boundedInteger(
+        rateLimit.maxBackoffMs,
+        Math.max(30000, baseBackoffMs),
+        0,
+        300000
+    );
+    return {
+        queue: rateLimit.queue,
+        minIntervalMs: boundedInteger(rateLimit.minIntervalMs, 250, 0, 60000),
+        maxAttempts: boundedInteger(rateLimit.maxAttempts, 3, 1, 5),
+        baseBackoffMs,
+        maxBackoffMs: Math.max(baseBackoffMs, maxBackoffMs),
+    };
+}
+
+function exponentialBackoffMs(retryIndex, rateLimit, randomImpl) {
+    const exponential = Math.min(
+        rateLimit.maxBackoffMs,
+        rateLimit.baseBackoffMs * (2 ** retryIndex)
+    );
+    const jitterRoom = Math.min(
+        rateLimit.maxBackoffMs - exponential,
+        Math.floor(exponential * 0.25)
+    );
+    const sample = Number(randomImpl());
+    const boundedSample = Number.isFinite(sample) ? Math.max(0, Math.min(1, sample)) : 0;
+    return exponential + Math.floor(jitterRoom * boundedSample);
+}
+
 function modelList(primaryModel, fallbackModel) {
     return [...new Set([primaryModel, fallbackModel].map(value => String(value || '').trim()).filter(Boolean))];
 }
@@ -219,7 +286,10 @@ async function generateJson(options = {}) {
     }
 
     const timeoutMs = boundedInteger(options.timeoutMs, 60000, 1000, 120000);
-    const maxRetries = boundedInteger(options.maxRetries, 2, 0, 4);
+    const rateLimit = normalizeRateLimit(options.rateLimit);
+    const maxRetries = rateLimit
+        ? rateLimit.maxAttempts - 1
+        : boundedInteger(options.maxRetries, 2, 0, 4);
     const backoffMs = Array.isArray(options.backoffMs) && options.backoffMs.length > 0
         ? options.backoffMs.map(value => boundedInteger(value, 600, 0, 10000))
         : [250, 600];
@@ -240,83 +310,143 @@ async function generateJson(options = {}) {
         userPrompt: String(options.userPrompt || ''),
         systemPrompt: String(options.systemPrompt || ''),
     };
-    const startedAt = Date.now();
-    let lastError = null;
+    const sleepImpl = options.sleepImpl || sleep;
+    const nowImpl = options.nowImpl || Date.now;
+    const randomImpl = options.randomImpl || Math.random;
+    const startedAt = nowImpl();
 
-    for (const model of models) {
-        const request = buildRequest(provider, model, normalized);
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            if (attempt > 0) {
-                const baseDelay = backoffMs[attempt - 1] ?? backoffMs.at(-1) ?? 600;
-                await (options.sleepImpl || sleep)(baseDelay);
-            }
-            try {
-                const response = await requestWithTimeout(
-                    request.url,
-                    request.init,
-                    timeoutMs,
-                    fetchImpl
-                );
-                if (!response.ok) {
-                    const error = httpError(provider, model, response);
-                    lastError = error;
-                    if (error.retryable && attempt < maxRetries) continue;
-                    if (error.status === 429 && options.allowModelFallbackOn429 === false) throw error;
-                    break;
+    const execute = async () => {
+        let lastError = null;
+        let requestAttempts = 0;
+        let retryIndex = 0;
+        let retryError = null;
+
+        modelLoop:
+        for (const model of models) {
+            const request = buildRequest(provider, model, normalized);
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                if (rateLimit && requestAttempts >= rateLimit.maxAttempts) break modelLoop;
+                if (attempt > 0) {
+                    const baseDelay = rateLimit
+                        ? exponentialBackoffMs(retryIndex++, rateLimit, randomImpl)
+                        : backoffMs[attempt - 1] ?? backoffMs.at(-1) ?? 600;
+                    const delayMs = rateLimit
+                        ? Math.max(baseDelay, retryError?.retryAfterMs || 0)
+                        : baseDelay;
+                    await sleepImpl(delayMs);
                 }
-
+                if (rateLimit) {
+                    await rateLimit.queue.waitForStart(
+                        rateLimit.minIntervalMs,
+                        sleepImpl,
+                        nowImpl
+                    );
+                }
+                requestAttempts++;
                 try {
-                    const result = await request.read(response, provider, model);
-                    return {
-                        json: result.json,
-                        model,
-                        provider,
-                        latency_ms: Date.now() - startedAt,
-                        token_usage: result.usage || {},
-                    };
-                } catch (error) {
-                    lastError = error instanceof JsonLlmError
-                        ? Object.assign(error, { provider, model })
-                        : new JsonLlmError(`${provider} ${model} response failed.`, {
-                            code: 'bad_response', provider, model, cause: error,
-                        });
-                    if (lastError.code === 'bad_json' && attempt < maxRetries) continue;
-                    break;
-                }
-            } catch (error) {
-                if (error instanceof JsonLlmError) {
-                    lastError = error;
-                    if (error.status === 429 && options.allowModelFallbackOn429 === false) throw error;
-                    if (error.retryable && attempt < maxRetries) continue;
-                    break;
-                }
-                const timedOut = error?.name === 'AbortError';
-                lastError = new JsonLlmError(
-                    timedOut
-                        ? `${provider} ${model} timed out after ${timeoutMs}ms.`
-                        : `${provider} ${model} request failed.`,
-                    {
-                        code: timedOut ? 'timeout' : 'network_error',
-                        provider,
-                        model,
-                        retryable: true,
-                        cause: error,
+                    const response = await requestWithTimeout(
+                        request.url,
+                        request.init,
+                        timeoutMs,
+                        fetchImpl
+                    );
+                    if (!response.ok) {
+                        const error = httpError(provider, model, response);
+                        lastError = error;
+                        if (rateLimit
+                            && error.status === 429
+                            && options.allowModelFallbackOn429 === false) {
+                            throw error;
+                        }
+                        const canRetry = rateLimit
+                            ? requestAttempts < rateLimit.maxAttempts
+                            : attempt < maxRetries;
+                        if (error.retryable && canRetry) {
+                            retryError = error;
+                            continue;
+                        }
+                        if (error.status === 429 && options.allowModelFallbackOn429 === false) {
+                            throw error;
+                        }
+                        break;
                     }
-                );
-                if (attempt < maxRetries) continue;
-                break;
+
+                    try {
+                        const result = await request.read(response, provider, model);
+                        return {
+                            json: result.json,
+                            model,
+                            provider,
+                            latency_ms: nowImpl() - startedAt,
+                            token_usage: result.usage || {},
+                        };
+                    } catch (error) {
+                        lastError = error instanceof JsonLlmError
+                            ? Object.assign(error, { provider, model })
+                            : new JsonLlmError(`${provider} ${model} response failed.`, {
+                                code: 'bad_response', provider, model, cause: error,
+                            });
+                        const canRetry = rateLimit
+                            ? requestAttempts < rateLimit.maxAttempts
+                            : attempt < maxRetries;
+                        if (lastError.code === 'bad_json' && canRetry) {
+                            retryError = lastError;
+                            continue;
+                        }
+                        break;
+                    }
+                } catch (error) {
+                    if (error instanceof JsonLlmError) {
+                        lastError = error;
+                        if (error.status === 429 && options.allowModelFallbackOn429 === false) {
+                            throw error;
+                        }
+                        const canRetry = rateLimit
+                            ? requestAttempts < rateLimit.maxAttempts
+                            : attempt < maxRetries;
+                        if (error.retryable && canRetry) {
+                            retryError = error;
+                            continue;
+                        }
+                        break;
+                    }
+                    const timedOut = error?.name === 'AbortError';
+                    lastError = new JsonLlmError(
+                        timedOut
+                            ? `${provider} ${model} timed out after ${timeoutMs}ms.`
+                            : `${provider} ${model} request failed.`,
+                        {
+                            code: timedOut ? 'timeout' : 'network_error',
+                            provider,
+                            model,
+                            retryable: true,
+                            cause: error,
+                        }
+                    );
+                    const canRetry = rateLimit
+                        ? requestAttempts < rateLimit.maxAttempts
+                        : attempt < maxRetries;
+                    if (canRetry) {
+                        retryError = lastError;
+                        continue;
+                    }
+                    break;
+                }
             }
         }
-    }
 
-    throw lastError || new JsonLlmError('JSON LLM request failed.', {
-        code: 'provider_error', provider,
-    });
+        throw lastError || new JsonLlmError('JSON LLM request failed.', {
+            code: 'provider_error', provider,
+        });
+    };
+
+    return rateLimit ? rateLimit.queue.run(execute) : execute();
 }
 
 module.exports = {
     JsonLlmError,
     boundedInteger,
+    createPacedQueue,
     generateJson,
     modelList,
     parseJsonText,

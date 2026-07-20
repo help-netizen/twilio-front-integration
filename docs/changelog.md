@@ -2602,3 +2602,9 @@ uniqueness, запрещает cycle/depth 4/cross-tenant parent и добавл
 links пропускаются, поэтому каждая group на $95 выше Workiz и credit вычитается
 dispatcher вручную. Verification: backend 72/72, frontend 259/259 + build, все 11
 named sabotages red→restore→green. Изменения не закоммичены по owner directive.
+
+---
+
+## 2026-07-20 — INSPECTOR-LLM-QUEUE-001: пейсер + бэкофф для LLM-вызовов Инспектора (страховка)
+
+Opt-in single-flight очередь для Gemini-вызовов Инспектора: не более одного запроса в полёте, минимальный интервал между стартами (env `INSPECTOR_LLM_MIN_INTERVAL_MS`, дефолт 250мс), экспоненциальный бэкофф с джиттером на retryable-ошибках (503/504/timeout), не короче `Retry-After`, с потолком попыток (`INSPECTOR_LLM_MAX_ATTEMPTS`). 429 остаётся spend-cap-стопом (безопасно, т.к. rate-limit и spend-cap у Gemini неотличимы; пейсинг превентивно не даёт словить rate-limit 429). **Mail Secretary НЕ затронут** (не подключается к очереди — байт-в-байт). Транспортная страховка: текущий бэклог (~100) в лимиты Tier-1 не упирается, но большой прогon теперь throttled. Тесты: пейсинг-спейсинг, рост бэкоффа, `Retry-After`, потолок попыток, mail-регрессия; sabotage (пейсинг + single-flight) red→restore→green. Спека: `docs/specs/INSPECTOR-LLM-QUEUE-001.md`.

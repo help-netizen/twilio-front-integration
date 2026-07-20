@@ -40,6 +40,7 @@ describe('Mail Secretary wrapper after provider-neutral extraction', () => {
         expect(mockGenerateJson).toHaveBeenCalledWith(expect.objectContaining({
             provider: 'ollama', primaryModel: 'mail-qwen', allowModelFallbackOn429: true,
         }));
+        expect(mockGenerateJson.mock.calls[0][0]).not.toHaveProperty('rateLimit');
         expect(result).toEqual({
             verdict: {
                 needs_attention: true,

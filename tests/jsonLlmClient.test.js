@@ -2,6 +2,7 @@
 
 const {
     JsonLlmError,
+    createPacedQueue,
     generateJson,
     parseJsonText,
     parseRetryAfter,
@@ -17,6 +18,23 @@ function response({ status = 200, json = {}, retryAfter = null } = {}) {
 }
 
 describe('provider-neutral JSON LLM client', () => {
+    function pacedOptions(overrides = {}) {
+        return {
+            provider: 'gemini',
+            apiKey: 'x',
+            primaryModel: 'm',
+            userPrompt: 'x',
+            rateLimit: {
+                queue: createPacedQueue(),
+                minIntervalMs: 0,
+                maxAttempts: 4,
+                baseBackoffMs: 100,
+                maxBackoffMs: 1000,
+            },
+            ...overrides,
+        };
+    }
+
     test('Gemini sends separate system/user prompts and returns strict JSON metadata', async () => {
         const fetchImpl = jest.fn().mockResolvedValue(response({
             json: {
@@ -97,5 +115,106 @@ describe('provider-neutral JSON LLM client', () => {
             provider: 'gemini', apiKey: 'x', primaryModel: 'm', userPrompt: 'x',
             maxRetries: 0, fetchImpl,
         })).rejects.toMatchObject({ code: 'bad_json' });
+    });
+
+    test('SAB-INSP-LLM-PACING: queued calls are single-flight and request starts are spaced', async () => {
+        const queue = createPacedQueue();
+        const startTimes = [];
+        let nowMs = 0;
+        let inFlight = 0;
+        let maxInFlight = 0;
+        const fetchImpl = jest.fn(async () => {
+            startTimes.push(nowMs);
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await Promise.resolve();
+            inFlight--;
+            return response({
+                json: { candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] },
+            });
+        });
+        const options = pacedOptions({
+            fetchImpl,
+            nowImpl: () => nowMs,
+            sleepImpl: async delayMs => {
+                nowMs += delayMs;
+            },
+            rateLimit: {
+                queue,
+                minIntervalMs: 100,
+                maxAttempts: 1,
+                baseBackoffMs: 100,
+                maxBackoffMs: 1000,
+            },
+        });
+
+        await Promise.all([generateJson(options), generateJson(options)]);
+
+        expect(startTimes).toEqual([0, 100]);
+        expect(maxInFlight).toBe(1);
+    });
+
+    test('SAB-INSP-LLM-BACKOFF: retries grow exponentially and honor larger Retry-After', async () => {
+        const sleeps = [];
+        let nowMs = 0;
+        const fetchImpl = jest.fn()
+            .mockResolvedValueOnce(response({ status: 429 }))
+            .mockResolvedValueOnce(response({ status: 503, retryAfter: '0.35' }))
+            .mockResolvedValueOnce(response({ status: 504 }))
+            .mockResolvedValueOnce(response({
+                json: { candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] },
+            }));
+
+        await expect(generateJson(pacedOptions({
+            fetchImpl,
+            allowModelFallbackOn429: true,
+            nowImpl: () => nowMs,
+            randomImpl: () => 0,
+            sleepImpl: async delayMs => {
+                sleeps.push(delayMs);
+                nowMs += delayMs;
+            },
+        }))).resolves.toMatchObject({ json: { ok: true } });
+
+        expect(sleeps).toEqual([100, 350, 400]);
+        expect(fetchImpl).toHaveBeenCalledTimes(4);
+    });
+
+    test('paced retry max-attempts is a ceiling across model fallback', async () => {
+        const sleeps = [];
+        const fetchImpl = jest.fn().mockResolvedValue(response({ status: 503 }));
+
+        await expect(generateJson(pacedOptions({
+            fallbackModel: 'm2',
+            fetchImpl,
+            randomImpl: () => 0,
+            sleepImpl: async delayMs => sleeps.push(delayMs),
+            rateLimit: {
+                queue: createPacedQueue(),
+                minIntervalMs: 0,
+                maxAttempts: 3,
+                baseBackoffMs: 50,
+                maxBackoffMs: 1000,
+            },
+        }))).rejects.toMatchObject({ status: 503, retryable: true });
+
+        expect(fetchImpl).toHaveBeenCalledTimes(3);
+        expect(sleeps).toEqual([50, 100]);
+    });
+
+    test('SAB-INSP-SPEND-CAP: paced Inspector policy stops on the first 429', async () => {
+        const sleepImpl = jest.fn();
+        const fetchImpl = jest.fn().mockResolvedValue(response({ status: 429, retryAfter: '60' }));
+
+        await expect(generateJson(pacedOptions({
+            fetchImpl,
+            sleepImpl,
+            allowModelFallbackOn429: false,
+        }))).rejects.toMatchObject({
+            code: 'rate_limited', status: 429, retryAfterMs: 60000,
+        });
+
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(sleepImpl).not.toHaveBeenCalled();
     });
 });
