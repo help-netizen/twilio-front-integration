@@ -284,6 +284,16 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    /* Repair type rides the kicker line: "LEAD #1351 · Dishwasher repair" —
+       middot separator, grey, normal case (owner). */
+    .lead-fact-inline {
+      color: var(--blanc-ink-3);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .lead-fact-inline::before { content: ' · '; color: var(--blanc-ink-3); }
     .lead-fact {
       margin: 2px 0 0;
       overflow: hidden;
@@ -798,7 +808,7 @@
 
               <section class="lead-bar" aria-label="Lead">
                 <div class="lead-identity">
-                  <p class="lead-kicker">Lead <span class="lead-id">#1351</span></p>
+                  <p class="lead-kicker">Lead <span class="lead-id">#1351</span><span class="lead-fact-inline" id="leadFact">Dishwasher repair</span></p>
                   <div class="lead-name-row">
                     <h2 class="lead-name" data-lead-name>Jordan Kim</h2>
                     <!-- Status is INFORMATION, so it lives with the identity, not in
@@ -811,7 +821,6 @@
                       <div class="popover status-popover" id="statusMenu" role="menu" hidden></div>
                     </div>
                   </div>
-                  <p class="lead-fact" id="leadFact">Dishwasher repair</p>
                 </div>
 
                 <div class="bar-controls">
