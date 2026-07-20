@@ -257,6 +257,12 @@
     }
     .lead-bar > * { min-width: 0; }
     .lead-identity { min-width: 0; }
+    .lead-name-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    /* Keep the bar at the contact bar's 68px: inside the name row the pill is
+       26px so the identity block stays three tight lines. */
+    .lead-name-row .status-button { min-height: 26px; padding: 0 10px; font-size: 11px; }
+    .lead-name-row .status-button svg { width: 13px; height: 13px; }
+    .lead-name-row .lead-name { overflow: hidden; }
     .lead-kicker {
       margin: 0 0 1px;
       overflow: hidden;
@@ -345,11 +351,11 @@
       background: color-mix(in srgb, var(--status-color) 10%, var(--blanc-surface-strong));
       color: var(--status-color);
     }
-    .bar-button svg,
     .status-dot {
       width: 7px; height: 7px; border-radius: 999px;
       background: var(--status-color); flex: 0 0 auto;
     }
+    .bar-button svg,
     .status-button svg {
       width: 15px;
       height: 15px;
@@ -793,19 +799,22 @@
               <section class="lead-bar" aria-label="Lead">
                 <div class="lead-identity">
                   <p class="lead-kicker">Lead <span class="lead-id">#1351</span></p>
-                  <h2 class="lead-name" data-lead-name>Jordan Kim</h2>
+                  <div class="lead-name-row">
+                    <h2 class="lead-name" data-lead-name>Jordan Kim</h2>
+                    <!-- Status is INFORMATION, so it lives with the identity, not in
+                         the action cluster (owner). The pill stays a dropdown. -->
+                    <div class="status-wrap">
+                      <button class="status-button" id="statusButton" aria-haspopup="menu" aria-expanded="false">
+                        <span class="status-dot" aria-hidden="true"></span><span id="statusLabel">New</span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+                      </button>
+                      <div class="popover status-popover" id="statusMenu" role="menu" hidden></div>
+                    </div>
+                  </div>
                   <p class="lead-fact" id="leadFact">Dishwasher repair</p>
                 </div>
 
                 <div class="bar-controls">
-                  <div class="status-wrap">
-                    <button class="status-button" id="statusButton" aria-haspopup="menu" aria-expanded="false">
-                      <span class="status-dot" aria-hidden="true"></span><span id="statusLabel">New</span>
-                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
-                    </button>
-                    <div class="popover status-popover" id="statusMenu" role="menu" hidden></div>
-                  </div>
-
                   <div class="bar-actions" id="barActions"></div>
                 </div>
 
