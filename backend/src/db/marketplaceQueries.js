@@ -61,6 +61,10 @@ async function ensureMarketplaceSchema(client = null) {
         // for the parts finish-visit robot. Seed-only; DDL migration 189 stays in
         // the normal migration path.
         await query(readMigration('190_seed_outbound_parts_caller_marketplace_app.sql'));
+        // INSPECTOR-AGENT-001: daily stalled-record reviewer. Seed-only; DDL
+        // migration 191 stays in the normal migration path. Replay before the
+        // assistant repair so the standard description layer remains last.
+        await query(readMigration('192_seed_inspector_marketplace_app.sql'));
         // ASSISTANT-BOT-001: restore bot-facing descriptions after app seeds overwrite metadata.
         // MUST run AFTER every app seed above (it patches their metadata).
         await query(readMigration('173_seed_assistant_app_descriptions.sql'));

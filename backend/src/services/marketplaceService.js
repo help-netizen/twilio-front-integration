@@ -11,6 +11,7 @@ const rateMeQueries = require('../db/rateMeQueries');
 const { RELY_UNIT_TYPES, RELY_BRANDS } = require('./relyLeadsCatalog');
 const { parseZipList, resolveRelySettings } = require('./relyLeadFilterService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
+const inspectorSettingsService = require('./inspectorSettingsService');
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -36,7 +37,12 @@ const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';
 // listApps + isAppConnected; all other apps are untouched.
 const GOOGLE_EMAIL_APP_KEY = 'google-email';
 
-const SETTINGS_ENABLED_APP_KEYS = new Set(['rely-leads', 'rate-me', 'outbound-parts-caller']);
+const SETTINGS_ENABLED_APP_KEYS = new Set([
+    'rely-leads',
+    'rate-me',
+    'outbound-parts-caller',
+    'inspector',
+]);
 const RATE_ME_PUBLIC_HOST = String(
     process.env.RATE_ME_PUBLIC_HOST || 'rate.albusto.com'
 ).trim().toLowerCase().replace(/\.+$/, '');
@@ -590,6 +596,16 @@ const SETTINGS_HANDLERS = {
             work_day_count: validated.calling_window_work_days?.length || 0,
         }),
     },
+    inspector: {
+        validate: (body, companyId) => inspectorSettingsService.validateInput(companyId, body),
+        buildResponse: inspectorSettingsService.buildResponse,
+        save: (companyId, validated, actorId) => inspectorSettingsService.save(
+            companyId,
+            validated,
+            actorId
+        ),
+        buildEventPayload: inspectorSettingsService.buildEventPayload,
+    },
 };
 
 async function getAppSettings(companyId, appKey) {
@@ -611,9 +627,17 @@ async function updateAppSettings(
 ) {
     const { app, installation } = await resolveSettingsInstallation(companyId, appKey);
     const handler = SETTINGS_HANDLERS[appKey];
-    const validated = handler.validate(body);
+    let validated;
+    try {
+        validated = await handler.validate(body, companyId);
+    } catch (error) {
+        if (error instanceof inspectorSettingsService.InspectorSettingsError) {
+            throw new MarketplaceServiceError(error.message, error.code, error.httpStatus);
+        }
+        throw error;
+    }
     if (handler.save) {
-        const savedSettings = await handler.save(companyId, validated);
+        const savedSettings = await handler.save(companyId, validated, actorId);
         await marketplaceQueries.writeEvent({
             companyId,
             installationId: installation.id,

@@ -28,6 +28,36 @@ function todayInTZ(tz = DEFAULT_TZ) {
     return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
 }
 
+function localDateInTZ(value = new Date(), tz = DEFAULT_TZ) {
+    const date = value instanceof Date ? value : new Date(value);
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(date);
+    const get = type => parts.find(part => part.type === type)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function startOfLocalDay(value = new Date(), tz = DEFAULT_TZ) {
+    const [year, month, day] = localDateInTZ(value, tz).split('-').map(Number);
+    return dateInTZ(year, month, day, 0, 0, tz);
+}
+
+function isAtOrAfterLocalTime(value, hour, minute, tz = DEFAULT_TZ) {
+    const date = value instanceof Date ? value : new Date(value);
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+    }).formatToParts(date);
+    const localHour = Number(parts.find(part => part.type === 'hour')?.value);
+    const localMinute = Number(parts.find(part => part.type === 'minute')?.value);
+    return localHour > hour || (localHour === hour && localMinute >= minute);
+}
+
 /**
  * Tomorrow's date components [year, month (1-based), day] in the given tz.
  */
@@ -62,4 +92,13 @@ function tzOffsetMinutes(utcDate, tz) {
     return sign * (parseInt(match[2], 10) * 60 + parseInt(match[3], 10));
 }
 
-module.exports = { dateInTZ, todayInTZ, tomorrowInTZ, tomorrowAtInTZ };
+module.exports = {
+    DEFAULT_TZ,
+    dateInTZ,
+    isAtOrAfterLocalTime,
+    localDateInTZ,
+    startOfLocalDay,
+    todayInTZ,
+    tomorrowInTZ,
+    tomorrowAtInTZ,
+};

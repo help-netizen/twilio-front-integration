@@ -23,12 +23,18 @@ const COMPANY = '00000000-0000-0000-0000-000000000001';
 const ME = 'crm-me';
 const OTHER = 'crm-other';
 
-function makeApp({ permissions = ['tasks.view', 'tasks.create', 'tasks.manage'], company = COMPANY, me = ME } = {}) {
+function makeApp({
+    permissions = ['tasks.view', 'tasks.create', 'tasks.manage', 'jobs.view', 'leads.view'],
+    company = COMPANY,
+    me = ME,
+    scopes = { job_visibility: 'all' },
+    roleKey = 'tenant_admin',
+} = {}) {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
         req.user = { sub: 'kc', email: 'u@x.com', crmUser: { id: me } };
-        req.authz = { scope: 'tenant', permissions };
+        req.authz = { scope: 'tenant', permissions, scopes, membership: { role_key: roleKey } };
         req.companyFilter = { company_id: company };
         next();
     });
@@ -292,7 +298,7 @@ describe('GET /entity/:parentType/:parentId', () => {
         const res = await request(makeApp()).get('/api/tasks/entity/job/999');
         expect(res.status).toBe(404);
         expect(mockQuery).toHaveBeenCalledTimes(1);
-        expect(mockQuery.mock.calls[0][1]).toEqual(['999', COMPANY]);
+        expect(mockQuery.mock.calls[0][1]).toEqual([COMPANY, '999']);
     });
 
     test('valid → returns the parent tasks', async () => {
@@ -303,6 +309,65 @@ describe('GET /entity/:parentType/:parentId', () => {
         expect(res.body.data.tasks).toHaveLength(1);
         expect(mockQuery.mock.calls[1][0]).toMatch(/t\.job_id = \$2/);
     });
+
+    test('R-matrix: assigned-only provider is denied on an unassigned job', async () => {
+        mockQuery.mockImplementationOnce(async sql => ({
+            // The fixture exists tenant-wide, but not under assigned-only scope.
+            rows: sql.includes('assigned_provider_user_ids @>') ? [] : [{ id: 5 }],
+        }));
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, parent_type: 'job' }] });
+        const res = await request(makeApp({
+            permissions: ['tasks.view', 'jobs.view'],
+            scopes: { job_visibility: 'assigned_only' },
+            roleKey: 'provider',
+        })).get('/api/tasks/entity/job/5');
+        expect(res.status).toBe(403);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toContain('assigned_provider_user_ids @> $3::jsonb');
+        expect(params).toEqual([COMPANY, '5', JSON.stringify([ME])]);
+        mockQuery.mockReset(); // discard the sabotage-only fallback row
+    });
+
+    test('R-matrix: assigned-only provider can read tasks on an assigned job', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, parent_type: 'job' }] });
+        const res = await request(makeApp({
+            permissions: ['tasks.view', 'jobs.view'],
+            scopes: { job_visibility: 'assigned_only' },
+            roleKey: 'provider',
+        })).get('/api/tasks/entity/job/5');
+        expect(res.status).toBe(200);
+        expect(res.body.data.tasks).toHaveLength(1);
+        expect(mockQuery.mock.calls[0][0]).toContain('assigned_provider_user_ids @> $3::jsonb');
+    });
+
+    test('R-matrix: provider without leads.view is denied before any lead/task query', async () => {
+        const res = await request(makeApp({
+            permissions: ['tasks.view', 'jobs.view'],
+            scopes: { job_visibility: 'assigned_only' },
+            roleKey: 'provider',
+        })).get('/api/tasks/entity/lead/LEAD-1');
+        expect(res.status).toBe(403);
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    test.each(['tenant_admin', 'manager', 'dispatcher'])(
+        'R-matrix: %s may read both job and lead entity tasks',
+        async roleKey => {
+            for (const [parentType, parentId] of [['job', '5'], ['lead', 'LEAD-1']]) {
+                mockQuery.mockResolvedValueOnce({ rows: [{ id: 5 }] });
+                if (parentType === 'lead') {
+                    mockQuery.mockResolvedValueOnce({ rows: [{ id: 5 }] });
+                }
+                mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, parent_type: parentType }] });
+                const res = await request(makeApp({ roleKey }))
+                    .get(`/api/tasks/entity/${parentType}/${parentId}`);
+                expect(res.status).toBe(200);
+                expect(res.body.data.tasks).toHaveLength(1);
+            }
+        }
+    );
 });
 
 describe('POST / — create', () => {

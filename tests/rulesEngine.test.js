@@ -8,6 +8,7 @@ const db = require('../backend/src/db/connection');
 const eventBus = require('../backend/src/services/eventBus');
 const rulesEngine = require('../backend/src/services/rulesEngine');
 const ruleActions = require('../backend/src/services/ruleActions');
+const schedulerRegistry = require('../backend/src/services/schedulerRegistry');
 
 const COMPANY = '11111111-1111-1111-1111-111111111111';
 
@@ -114,5 +115,21 @@ describe('rulesEngine.onEvent', () => {
         await rulesEngine.onEvent(event);
         const insertCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO automation_rule_runs'));
         expect(insertCall).toBeFalsy(); // never created a run
+    });
+});
+
+describe('rulesEngine scheduler heartbeat registry', () => {
+    it('invokes the registry from the existing tick and isolates its result', async () => {
+        const registry = jest.spyOn(schedulerRegistry, 'tick').mockResolvedValue([
+            { name: 'inspector', ok: true, result: { claimed: 0 } },
+        ]);
+        db.query.mockResolvedValueOnce({ rows: [] });
+        const now = new Date('2026-07-20T16:00:00.000Z');
+        await expect(rulesEngine.tickScheduler(now)).resolves.toEqual({
+            fired: 0,
+            schedulers: [{ name: 'inspector', ok: true, result: { claimed: 0 } }],
+        });
+        expect(registry).toHaveBeenCalledWith(now);
+        registry.mockRestore();
     });
 });
