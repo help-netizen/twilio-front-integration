@@ -82,8 +82,12 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
   draft-without-apply until you read the log). `cd` into the worktree and drop `-C`.
   Hit 2026-07-20 on OB-16.
 
-- **L-019 `codex exec resume` rejects `-C` as well as `-s`/`-o`.** Only `exec` takes the
-  working-directory flag; on `resume` it dies with `unexpected argument '-C' found` and
-  the whole turn is lost (exit 2, zero files changed — indistinguishable from an L-016
-  draft-without-apply until you read the log). `cd` into the worktree and drop `-C`.
-  Hit 2026-07-20 on OB-16.
+- **L-021 (2026-07-20)** — A sabotage/security test is theater if it cannot actually fail: (a) an
+  injection test that MOCKS the provider to return a safe verdict proves nothing about the prompt;
+  (b) a "T-blast" test that only asserts SQL substrings, or that RETURNS SUCCESS when the DB is
+  unavailable (instead of a visible skip/sentinel), is falsely green; (c) a control that asserts a
+  helper was CALLED, not that the boundary holds. Every named sabotage control must be proven by
+  BREAK→red→restore against the REAL code path it guards, and a fresh attack-only red-team (a DIFFERENT
+  session, not the implementer) must re-audit — the author who wrote the theater cannot see it. Caught
+  on INSPECTOR-AGENT-001: the red-team found a spoofable prompt fence and a falsely-green DB suite that
+  the implementer's own "21 sabotage passed" had missed.

@@ -123,6 +123,19 @@ async function resolveParentId(companyId, parentType, parentId, client = null) {
     return rows[0]?.id ?? null;
 }
 
+/** Resolve and re-verify an internal numeric parent under the same tenant. */
+async function resolveNumericParentId(companyId, parentType, parentId, client = null) {
+    requireCompanyId(companyId);
+    const parent = PARENTS[parentType];
+    if (!parent || !Number.isFinite(Number(parentId))) return null;
+    const query = queryFor(client, db);
+    const { rows } = await query(
+        `SELECT id FROM ${parent.table} WHERE company_id = $1 AND id = $2 LIMIT 1`,
+        [companyId, Number(parentId)]
+    );
+    return rows[0]?.id ?? null;
+}
+
 /** Confirm a parent row exists in this company. Returns boolean. */
 async function parentExists(companyId, parentType, parentId, client = null) {
     requireCompanyId(companyId);
@@ -136,6 +149,30 @@ async function parentExists(companyId, parentType, parentId, client = null) {
     const { rows } = await query(
         `SELECT 1 FROM ${p.table} WHERE id = $1 AND company_id = $2 LIMIT 1`,
         [parentId, companyId]
+    );
+    return rows.length > 0;
+}
+
+/**
+ * Check whether a job parent is visible under the canonical Jobs record scope.
+ *
+ * This is deliberately separate from parentExists(): creation validates tenant
+ * ownership, while entity-card reads must also enforce the caller's assigned-only
+ * visibility. The predicate matches jobsService.listJobs/getJobById.
+ */
+async function jobParentVisible(companyId, parentId, providerScope, client = null) {
+    requireCompanyId(companyId);
+    const query = queryFor(client, db);
+    const params = [companyId, parentId];
+    const conditions = ['company_id = $1', 'id = $2'];
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) return false;
+        params.push(JSON.stringify([String(providerScope.userId)]));
+        conditions.push(`assigned_provider_user_ids @> $${params.length}::jsonb`);
+    }
+    const { rows } = await query(
+        `SELECT 1 FROM jobs WHERE ${conditions.join(' AND ')} LIMIT 1`,
+        params
     );
     return rows.length > 0;
 }
@@ -484,15 +521,24 @@ async function createTask(companyId, payload, client = null) {
     requireCompanyId(companyId);
     const p = PARENTS[payload.parentType];
     const query = queryFor(client, db);
-    // Leads arrive as a uuid; tasks.lead_id is the numeric leads.id FK. Resolve it.
-    const parentId = await resolveParentId(companyId, payload.parentType, payload.parentId, client);
+    // HTTP Lead callers arrive with a uuid. Internal workers can opt into an
+    // explicitly company-verified numeric id so an all-digit Lead uuid can
+    // never redirect a task to the wrong row.
+    const parentId = payload.parentIdIsNumeric
+        ? await resolveNumericParentId(companyId, payload.parentType, payload.parentId, client)
+        : await resolveParentId(companyId, payload.parentType, payload.parentId, client);
+    if (parentId === null || parentId === undefined) {
+        const error = new Error('Task parent was not found for this company');
+        error.code = 'PARENT_NOT_FOUND';
+        throw error;
+    }
     const cols = ['company_id', 'title', 'description', 'status', 'created_by', 'owner_user_id', 'author_user_id', 'due_at', p.col];
     const vals = [
         companyId,
-        payload.description,            // title (NOT NULL) holds the task text
+        payload.title || payload.description, // title (NOT NULL) holds the task text
         payload.description,            // description column mirrors it
         'open',
-        'user',
+        payload.created_by || 'user',
         payload.owner_user_id || null,
         payload.author_user_id || null,
         payload.due_at || null,
@@ -510,10 +556,25 @@ async function createTask(companyId, payload, client = null) {
         // Serialize objects/arrays to a json string; a plain string is passed as-is.
         vals.push(typeof payload.actions === 'string' ? payload.actions : JSON.stringify(payload.actions));
     }
+    for (const [payloadKey, column] of [
+        ['agent_type', 'agent_type'],
+        ['agent_input', 'agent_input'],
+        ['agent_output', 'agent_output'],
+        ['agent_status', 'agent_status'],
+    ]) {
+        if (payload[payloadKey] !== undefined) {
+            cols.push(column);
+            const value = payload[payloadKey];
+            vals.push((column === 'agent_input' || column === 'agent_output') && typeof value !== 'string'
+                ? JSON.stringify(value)
+                : value);
+        }
+    }
 
     const placeholders = vals.map((_, i) => {
         if (cols[i] === 'due_at') return `$${i + 1}::timestamptz`;
         if (cols[i] === 'actions') return `$${i + 1}::jsonb`;
+        if (cols[i] === 'agent_input' || cols[i] === 'agent_output') return `$${i + 1}::jsonb`;
         return `$${i + 1}`;
     });
     const { rows } = await query(
@@ -600,6 +661,7 @@ module.exports = {
     isValidParentType,
     resolveParentId,
     parentExists,
+    jobParentVisible,
     listEntityTasks,
     buildTaskListFilters,
     listTasks,

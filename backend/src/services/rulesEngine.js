@@ -11,6 +11,8 @@
 
 const db = require('../db/connection');
 const actions = require('./ruleActions');
+const schedulerRegistry = require('./schedulerRegistry');
+require('./inspectorScheduler').registerScheduler(schedulerRegistry);
 
 // ── Condition evaluation: {all|any: [{field, op, value}]} over a context ─────
 
@@ -146,7 +148,8 @@ async function tickScheduler(now = new Date()) {
         await runRule(ruleRows[0], null, job.context, { dedupeKey: `schedrun:${job.id}` });
         fired++;
     }
-    return { fired };
+    const schedulers = await schedulerRegistry.tick(now);
+    return { fired, schedulers };
 }
 
 module.exports = { onEvent, runRule, tickScheduler, evaluateConditions, buildContext, _OPS: OPS };

@@ -20,6 +20,7 @@ const tasksService = require('../services/tasksService');
 const jobsService = require('../services/jobsService');
 const taskActions = require('../services/taskActions/registry');
 const { requirePermission } = require('../middleware/authorization');
+const { getProviderScope } = require('../middleware/providerScope');
 
 function companyId(req) {
     return req.companyFilter?.company_id;
@@ -29,6 +30,9 @@ function actorId(req) {
 }
 function canManage(req) {
     return !!req.user?._devMode || (req.authz?.permissions || []).includes('tasks.manage');
+}
+function hasPermission(req, permission) {
+    return !!req.user?._devMode || (req.authz?.permissions || []).includes(permission);
 }
 
 function applyListVisibility(req, filters) {
@@ -136,8 +140,32 @@ router.get('/entity/:parentType/:parentId', requirePermission('tasks.view'), asy
         if (!tasksQueries.isValidParentType(parentType)) {
             return bad(res, 'INVALID_PARENT_TYPE', 'Unknown parent type');
         }
-        const exists = await tasksQueries.parentExists(companyId(req), parentType, parentId);
+        // An entity task contains host-record context. tasks.view alone must not
+        // widen Jobs/Leads visibility, especially for unassigned Inspector tasks.
+        if (parentType === 'lead' && !hasPermission(req, 'leads.view')) {
+            return res.status(403).json({
+                ok: false,
+                error: { code: 'ACCESS_DENIED', message: 'Cannot view this lead' },
+            });
+        }
+        if (parentType === 'job' && !hasPermission(req, 'jobs.view')) {
+            return res.status(403).json({
+                ok: false,
+                error: { code: 'ACCESS_DENIED', message: 'Cannot view this job' },
+            });
+        }
+        const exists = parentType === 'job'
+            ? await tasksQueries.jobParentVisible(
+                companyId(req), parentId, getProviderScope(req)
+            )
+            : await tasksQueries.parentExists(companyId(req), parentType, parentId);
         if (!exists) {
+            if (parentType === 'job' && getProviderScope(req).assignedOnly) {
+                return res.status(403).json({
+                    ok: false,
+                    error: { code: 'ACCESS_DENIED', message: 'Cannot view this job' },
+                });
+            }
             return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Parent not found' } });
         }
         const includeDone = req.query.include_done === '1' || req.query.include_done === 'true';

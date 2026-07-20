@@ -66,6 +66,22 @@ describe('tasksQueries lead uuid → numeric id resolution', () => {
         expect(insert[1]).not.toContain('0NMHI5'); // never the raw uuid
     });
 
+    test('internal numeric mode verifies the lead id with company scope without uuid ambiguity', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 42 }] })
+            .mockResolvedValueOnce({ rows: [{ id: 901 }] })
+            .mockResolvedValueOnce({ rows: [{ id: 901, lead_id: 42 }] });
+        await q.createTask(CO, {
+            parentType: 'lead',
+            parentId: 42,
+            parentIdIsNumeric: true,
+            description: 'Verify this lead',
+        });
+        expect(mockQuery.mock.calls[0][0]).toContain('WHERE company_id = $1 AND id = $2');
+        expect(mockQuery.mock.calls[0][1]).toEqual([CO, 42]);
+        expect(mockQuery.mock.calls[0][0]).not.toContain('uuid');
+    });
+
     test('listEntityTasks(lead, uuid) queries by the numeric lead_id', async () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ id: 42 }] })  // resolve

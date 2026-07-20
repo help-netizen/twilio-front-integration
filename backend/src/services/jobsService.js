@@ -17,6 +17,7 @@ const fsmService = require('./fsmService');
 const eventService = require('./eventService');
 const eventBus = require('./eventBus');
 const membershipQueries = require('../db/membershipQueries');
+const jobFinanceQueries = require('../db/jobFinanceQueries');
 const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 const {
     createCursorFingerprint,
@@ -1009,41 +1010,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
     // their money is already reflected in invoices.amount_paid/balance_due.
     const paymentsMap = {};
     if (jobIds.length > 0 && companyId) {
-        const { rows: paidRows } = await db.query(`
-            WITH invoice_rollup AS (
-                SELECT i.job_id,
-                       SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS invoice_paid,
-                       SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS invoice_due
-                FROM invoices i
-                WHERE i.job_id = ANY($1) AND i.company_id = $2
-                GROUP BY i.job_id
-            ),
-            standalone_rollup AS (
-                SELECT pt.job_id,
-                       SUM(pt.amount) AS standalone_paid,
-                       SUM(pt.amount) FILTER (
-                           WHERE pt.external_source IS DISTINCT FROM 'zenbooker'
-                       ) AS standalone_due_offset
-                FROM payment_transactions pt
-                WHERE pt.job_id = ANY($1)
-                  AND pt.company_id = $2
-                  AND pt.invoice_id IS NULL
-                  AND pt.transaction_type = 'payment'
-                  AND pt.status = 'completed'
-                GROUP BY pt.job_id
-            ),
-            jobs_with_money AS (
-                SELECT job_id FROM invoice_rollup
-                UNION
-                SELECT job_id FROM standalone_rollup
-            )
-            SELECT jwm.job_id,
-                   COALESCE(ir.invoice_paid, 0) + COALESCE(sr.standalone_paid, 0) AS total_paid,
-                   COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_due_offset, 0) AS total_due
-            FROM jobs_with_money jwm
-            LEFT JOIN invoice_rollup ir ON ir.job_id = jwm.job_id
-            LEFT JOIN standalone_rollup sr ON sr.job_id = jwm.job_id
-        `, [jobIds, companyId]);
+        const paidRows = await jobFinanceQueries.listJobPaymentRollups(companyId, jobIds);
         for (const pr of paidRows) {
             paymentsMap[pr.job_id] = { total_paid: pr.total_paid, total_due: pr.total_due };
         }

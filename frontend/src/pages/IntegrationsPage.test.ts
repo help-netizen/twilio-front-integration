@@ -23,4 +23,11 @@ describe('addressable Integrations tabs', () => {
         expect(pageSource).toContain('apps={apps}');
         expect(pageSource).toContain('renderApp={app => (');
     });
+
+    it('keeps Inspector settings addressable within the Marketplace URL', () => {
+        expect(pageSource).toContain("searchParams.get('app') === 'inspector'");
+        expect(pageSource).toContain("next.set('app', 'inspector')");
+        expect(pageSource).toContain("next.delete('app')");
+        expect(pageSource).toContain("app.app_key === 'inspector' ? 'Settings' : 'Setup'");
+    });
 });

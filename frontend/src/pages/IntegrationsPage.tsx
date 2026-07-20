@@ -17,6 +17,7 @@ import { RelyLeadsSettingsDialog } from './RelyLeadsSettingsDialog';
 import { RateMeSettingsDialog } from './RateMeSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { MarketplaceBrowser } from '../components/settings/MarketplaceBrowser';
+import { InspectorSettingsPanel } from '../components/settings/InspectorSettingsPanel';
 import { INTEGRATION_TAB_COPY, integrationTabFromSearchParams } from './integrationSettingsTabs';
 
 function formatDate(dateStr: string | null | undefined) {
@@ -166,6 +167,14 @@ export function IntegrationsPage() {
     const [disconnectTarget, setDisconnectTarget] = useState<MarketplaceApp | null>(null);
     const [relySettingsOpen, setRelySettingsOpen] = useState(false);
     const [rateMeSettingsOpen, setRateMeSettingsOpen] = useState(false);
+    const inspectorSettingsOpen = searchParams.get('app') === 'inspector';
+
+    const setInspectorSettingsOpen = (open: boolean) => {
+        const next = new URLSearchParams(searchParams);
+        if (open) next.set('app', 'inspector');
+        else next.delete('app');
+        setSearchParams(next, { replace: true });
+    };
 
     const { data: apps = [], isLoading: marketplaceLoading } = useQuery({ queryKey: ['marketplace-apps'], queryFn: fetchMarketplaceApps });
     const { data: mailbox } = useQuery({ queryKey: ['email-mailbox-settings'], queryFn: getMailboxSettings });
@@ -318,7 +327,7 @@ export function IntegrationsPage() {
                                                     )}
                                                     {app.installation?.status === 'connected' && app.metadata?.setup_path && (
                                                         <Button size="sm" onClick={() => navigate(String(app.metadata!.setup_path))}>
-                                                            Setup
+                                                            {app.app_key === 'inspector' ? 'Settings' : 'Setup'}
                                                         </Button>
                                                     )}
                                                     {app.app_key === 'rely-leads' && app.installation?.status === 'connected' && (
@@ -429,6 +438,7 @@ export function IntegrationsPage() {
             />
             <RelyLeadsSettingsDialog open={relySettingsOpen} onOpenChange={setRelySettingsOpen} />
             <RateMeSettingsDialog open={rateMeSettingsOpen} onOpenChange={setRateMeSettingsOpen} />
+            <InspectorSettingsPanel open={inspectorSettingsOpen} onOpenChange={setInspectorSettingsOpen} />
             <CreateDialog open={createOpen} onOpenChange={setCreateOpen} clientName={clientName} setClientName={setClientName} onSubmit={handleCreate} isPending={createMutation.isPending} />
             <SecretDialog open={secretModalOpen} onOpenChange={setSecretModalOpen} integration={newIntegration} />
             <RevokeDialog target={revokeTarget} onClose={() => setRevokeTarget(null)} onRevoke={() => revokeTarget && revokeMutation.mutate(revokeTarget.key_id)} isPending={revokeMutation.isPending} />

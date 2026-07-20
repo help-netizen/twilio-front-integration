@@ -124,6 +124,28 @@ export interface OutboundPartsCallerSettingsResponse {
     settings: OutboundPartsCallerSettings;
 }
 
+export interface InspectorSettings {
+    enabled: boolean;
+    ignored_job_statuses: string[];
+    ignored_lead_statuses: string[];
+    instruction: string;
+}
+
+export interface InspectorSettingsResponse {
+    app_key: 'inspector';
+    installation_id: number;
+    settings: InspectorSettings;
+    catalogs: {
+        job_statuses: string[];
+        lead_statuses: string[];
+    };
+    schedule: {
+        frequency: 'daily';
+        after_local_time: string;
+        timezone: string;
+    };
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
     const res = await authedFetch(url, {
         headers: { 'Content-Type': 'application/json' },
@@ -203,6 +225,19 @@ export async function saveOutboundPartsCallerSettings(
         'calling_window_mode' | 'custom_start_time' | 'custom_end_time' | 'calling_window_work_days'>,
 ): Promise<OutboundPartsCallerSettingsResponse> {
     return request<OutboundPartsCallerSettingsResponse>(`${API_BASE}/apps/outbound-parts-caller/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+    });
+}
+
+export async function fetchInspectorSettings(): Promise<InspectorSettingsResponse> {
+    return request<InspectorSettingsResponse>(`${API_BASE}/apps/inspector/settings`);
+}
+
+export async function saveInspectorSettings(
+    settings: InspectorSettings,
+): Promise<InspectorSettingsResponse> {
+    return request<InspectorSettingsResponse>(`${API_BASE}/apps/inspector/settings`, {
         method: 'PUT',
         body: JSON.stringify(settings),
     });
