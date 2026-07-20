@@ -254,3 +254,27 @@ On the production host:
 - Backfill tests enforce company-scoped served-ZIP defaults, explicit
   `--all-us`, and convergence reporting.
 - Migration test verifies additive/replay-safe forward and rollback SQL.
+
+## Deploy record — 2026-07-20 (prod)
+
+Enabled on production. Google side: a NEW Maps JavaScript key and the vector Map
+ID `34e7a6023025b47eeb744cda` were created together in project `83687792324`,
+because data-driven styling requires the key and the Map ID to live in the SAME
+Google Cloud project. The previous key was a hardcoded literal in the host's
+`docker-compose.yml`, belonging to an unidentified project — it was moved to
+`.env` behind `${VITE_GOOGLE_MAPS_API_KEY:-}` and replaced.
+
+**Trap that made the first rebuild a silent no-op:** the tracked
+`deploy/docker-compose.override.yml` is NOT the file Compose reads. The host has
+its own hand-maintained `/opt/albusto/docker-compose.override.yml`, and it had no
+`build.args` section at all. `VITE_GOOGLE_MAPS_MAP_ID` was present in `.env` and
+visible in `docker compose config` under `environment:` (the whole `.env` lands
+there), so the configuration looked correct — but the value never reached the
+Vite build, and the bundle shipped with only the warning string
+`"VITE_GOOGLE_MAPS_MAP_ID is not configured"`. The map would have kept rendering
+centroid pins after a "successful" deploy. Detected by grepping the VALUE inside
+the running container across ALL assets, not just `index-*.js`; fixed by adding
+`build.args` to the live override and rebuilding.
+
+Place ID warmer: 147 eligible resolved, 0 unresolved, cache 227/227 — every
+configured ZIP renders as a polygon, none fall back to a centroid marker.
