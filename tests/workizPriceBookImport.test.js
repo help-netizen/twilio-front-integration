@@ -73,6 +73,17 @@ describe('PRICEBOOK-NESTED-001 Workiz importer', () => {
         expect(() => importer.parseArgs(['--dry-run', '--apply', '--company-id=00000000-0000-4000-8000-000000000001'])).toThrow(/mutually exclusive/);
     });
 
+    test('accepts this deployment\'s SEEDED company id, not just RFC-4122 v1-v5 shapes', () => {
+        // Regression: the validator demanded the version/variant nibbles, so the real
+        // production company id was rejected outright and the import could never run
+        // against it. The suite had hidden this by using a synthetic v4-shaped id.
+        // Existence is verified against the DB, so a shape check is all this needs.
+        expect(importer.parseArgs(['--company-id=00000000-0000-0000-0000-000000000001']))
+            .toMatchObject({ companyId: '00000000-0000-0000-0000-000000000001', dryRun: true });
+        expect(() => importer.parseArgs(['--company-id=not-a-uuid'])).toThrow(/company-id/);
+        expect(() => importer.parseArgs(['--company-id=00000000-0000-0000-0000-00000000000'])).toThrow(/company-id/);
+    });
+
     test('T-blast / SAB-PB-IMPORT-BLAST: target inspection binds company on every Price Book table read', async () => {
         const calls = [];
         const client = { query: jest.fn(async (sql, params) => {

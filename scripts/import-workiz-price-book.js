@@ -549,7 +549,10 @@ function parseArgs(argv) {
     }
     if (args.apply && args.dryRun) throw new Error('--apply and --dry-run are mutually exclusive');
     if (!args.apply) args.dryRun = true;
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.companyId || '')) {
+    // Shape check only — the RFC-4122 version/variant nibbles are NOT required:
+    // this deployment's seeded company id is 00000000-0000-0000-0000-000000000001,
+    // which a strict v1-v5 pattern rejects. Existence is verified against the DB.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.companyId || '')) {
         throw new Error('--company-id=<uuid> is required');
     }
     return args;
