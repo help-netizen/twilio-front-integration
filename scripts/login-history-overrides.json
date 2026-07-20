@@ -648,5 +648,20 @@
   "92ed184": {
     "tag": "Fix",
     "text": "Routing Logs, Blocklist and Provider Settings are back in the Settings menu"
+  },
+  "d03e06a": {
+    "hide": true
+  },
+  "9777622": {
+    "tag": "Feature",
+    "text": "Price Book now has subcategories — browse appliance → type → segment to find a price"
+  },
+  "187e7ee": {
+    "tag": "Feature",
+    "text": "A daily check flags jobs and leads that have gone quiet, as tasks for the dispatcher"
+  },
+  "1797d2e": {
+    "tag": "Fix",
+    "text": "Technicians only see the jobs assigned to them when their visibility setting is missing"
   }
 }
