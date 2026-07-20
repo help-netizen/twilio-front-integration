@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pulse pinned lead bar — review mockup</title>
+  <style>
+    :root {
+      /* PALETTE-V2 tokens, copied into the standalone review artifact. */
+      --blanc-bg: #f1f1f0;
+      --blanc-bg-deep: #e8e8e6;
+      --blanc-panel-surface: #ffffff;
+      --blanc-surface-strong: #ffffff;
+      --blanc-surface-muted: #f6f6f6;
+      --blanc-field: #f0f0f0;
+      --blanc-ink-1: #191919;
+      --blanc-ink-2: #6e6e6e;
+      --blanc-ink-3: #8a8a8a;
+      --blanc-accent: #7f42e1;
+      --blanc-accent-soft: #e7dbfd;
+      --blanc-info: #2f63d8;
+      --blanc-success: #1b8b63;
+      --blanc-warning: #b45309;
+      --blanc-danger: #dc2626;
+      --blanc-line: rgba(25, 25, 25, 0.08);
+      --blanc-line-strong: rgba(25, 25, 25, 0.18);
+      --blanc-scrim: rgba(25, 25, 25, 0.42);
+      --blanc-shadow-float: rgba(25, 25, 25, 0.14);
+      --blanc-radius-md: 16px;
+      --blanc-font-body: "IBM Plex Sans", Inter, ui-sans-serif, system-ui, sans-serif;
+      --blanc-font-heading: Manrope, Inter, ui-sans-serif, system-ui, sans-serif;
+
+      /* Existing lead status palette from leadStatusStyles.ts. */
+      --status-review: #b44d3d;
+      --status-submitted: #2f63d8;
+      --status-new: #7c3aed;
+      --status-contacted: #1b8b63;
+      --status-qualified: #15803d;
+      --status-proposal-sent: #b45309;
+      --status-negotiation: #c2410c;
+      --status-lost: #dc2626;
+      --status-converted: #6b7280;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      min-height: 100%;
+      margin: 0;
+      background: var(--blanc-bg-deep);
+      color: var(--blanc-ink-1);
+      font-family: var(--blanc-font-body);
+    }
+    button, select { font: inherit; }
+    button { color: inherit; }
+    [hidden] { display: none !important; }
+
+    .review-shell { min-height: 100vh; padding: 18px; }
+    .review-toolbar {
+      width: min(1240px, 100%);
+      margin: 0 auto 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .review-title { margin: 0; font: 750 18px/1.2 var(--blanc-font-heading); }
+    .review-subtitle { margin: 4px 0 0; color: var(--blanc-ink-2); font-size: 13px; }
+    .review-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .review-control,
+    .review-select {
+      min-height: 40px;
+      border: 0;
+      border-radius: 12px;
+      padding: 0 14px;
+      background: var(--blanc-surface-strong);
+      box-shadow: inset 0 0 0 1px var(--blanc-line);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .review-control[aria-pressed="true"] {
+      background: var(--blanc-accent-soft);
+      color: var(--blanc-accent);
+      box-shadow: none;
+    }
+
+    .device {
+      position: relative;
+      width: min(1180px, calc(100vw - 36px));
+      height: min(760px, calc(100vh - 112px));
+      min-height: 620px;
+      margin: 0 auto;
+      overflow: hidden;
+      border-radius: 24px;
+      background: var(--blanc-bg);
+      box-shadow: 0 22px 70px var(--blanc-shadow-float), inset 0 0 0 1px var(--blanc-line);
+      transition: width 220ms ease, height 220ms ease, border-radius 220ms ease;
+    }
+    .device.narrow { width: min(830px, calc(100vw - 36px)); }
+    .device.mobile {
+      width: 390px;
+      max-width: calc(100vw - 24px);
+      height: min(780px, calc(100vh - 108px));
+      min-height: 620px;
+      border-radius: 30px;
+    }
+
+    .app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+    .app-header {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: auto minmax(180px, 1fr) auto;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 18px;
+    }
+    .app-title {
+      font: 750 27px/1 var(--blanc-font-heading);
+      letter-spacing: -0.04em;
+    }
+    .search {
+      min-height: 42px;
+      padding: 0 15px;
+      display: flex;
+      align-items: center;
+      border-radius: 14px;
+      background: var(--blanc-surface-strong);
+      color: var(--blanc-ink-3);
+      font-size: 13px;
+    }
+    .filters { display: flex; gap: 6px; }
+    .filter {
+      min-height: 38px;
+      padding: 0 13px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .filter.active { background: var(--blanc-surface-strong); color: var(--blanc-accent); }
+
+    .pulse-layout {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr);
+      gap: 14px;
+      padding: 0 16px 16px;
+    }
+    .sidebar, .thread-scroll { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+    .sidebar { display: flex; flex-direction: column; gap: 8px; }
+    .eyebrow {
+      color: var(--blanc-ink-2);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .sidebar-label { padding: 7px 11px 2px; }
+    .contact-tile {
+      padding: 11px 12px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--blanc-surface-strong);
+      text-align: left;
+    }
+    .contact-tile.active { background: var(--blanc-accent-soft); }
+    .tile-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .tile-name { font-size: 13px; font-weight: 700; }
+    .tile-time { color: var(--blanc-ink-3); font-size: 10px; }
+    .tile-preview {
+      margin-top: 5px;
+      overflow: hidden;
+      color: var(--blanc-ink-2);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .thread-scroll {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-anchor: none;
+      padding-bottom: 14px;
+    }
+    .sticky-stack {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      flex: 0 0 auto;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .action-required {
+      min-height: 52px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-radius: 14px;
+      background: var(--blanc-accent-soft);
+    }
+    .action-label {
+      color: var(--blanc-accent);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .action-copy {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .action-due { color: var(--blanc-danger); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .task-action {
+      min-height: 30px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--blanc-surface-strong);
+      color: var(--blanc-success);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    /*
+      Proposed lead bar. Geometry is lifted from the shipped contact bar:
+      68px minimum, 10/14/10/17 padding, 14px gaps and the same card radius.
+      The blue left rail is the compact equivalent of the current lead card's
+      blue top accent, while preserving contact-bar visual parity.
+    */
+    .lead-bar {
+      min-height: 68px;
+      padding: 10px 14px 10px 17px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 14px;
+      border-radius: var(--blanc-radius-md);
+      background: var(--blanc-panel-surface);
+      box-shadow: inset 3px 0 0 var(--blanc-info);
+      container-type: inline-size;
+      container-name: leadbar;
+      overflow: visible;
+    }
+    .lead-bar > * { min-width: 0; }
+    .lead-identity { min-width: 0; }
+    .lead-kicker {
+      margin: 0 0 1px;
+      overflow: hidden;
+      color: var(--blanc-info);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      line-height: 1.05;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .lead-name {
+      margin: 0;
+      overflow: hidden;
+      color: var(--blanc-ink-1);
+      font: 750 19px/1.08 var(--blanc-font-heading);
+      letter-spacing: -0.03em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .lead-fact {
+      margin: 2px 0 0;
+      overflow: hidden;
+      color: var(--blanc-ink-3);
+      font-size: 11px;
+      line-height: 1.1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bar-controls { display: flex; align-items: center; gap: 7px; }
+    .bar-actions { display: flex; align-items: center; gap: 7px; }
+    /* ACTION buttons — contact-bar convention: 40px, radius 13. */
+    .bar-button {
+      min-height: 40px;
+      padding: 0 13px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border: 0;
+      border-radius: 13px;
+      background: var(--blanc-surface-muted);
+      color: var(--blanc-ink-1);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    /* STATE chip — deliberately NOT a button shape: full pill + status dot +
+       status-colour tint + lower height (owner: "New ▾" read as an actions
+       menu). Shape, colour system and height all separate it from actions. */
+    .status-button {
+      min-height: 32px;
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border: 0;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .bar-button:hover,
+    .bar-button:focus-visible,
+    .status-button:focus-visible {
+      outline: 0;
+      box-shadow: inset 0 0 0 1px var(--blanc-line-strong);
+    }
+    .bar-button.primary {
+      background: var(--blanc-info);
+      color: var(--blanc-surface-strong);
+    }
+    .bar-button.primary:hover { opacity: 0.9; box-shadow: none; }
+    .bar-button.success {
+      background: var(--blanc-success);
+      color: var(--blanc-surface-strong);
+    }
+    .icon-button { width: 40px; min-width: 40px; padding: 0; }
+    .status-button {
+      --status-color: var(--status-new);
+      background: color-mix(in srgb, var(--status-color) 10%, var(--blanc-surface-strong));
+      color: var(--status-color);
+    }
+    .bar-button svg,
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 999px;
+      background: var(--status-color); flex: 0 0 auto;
+    }
+    .status-button svg {
+      width: 15px;
+      height: 15px;
+      flex: 0 0 auto;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .menu-wrap,
+    .status-wrap { position: relative; }
+    .popover {
+      position: absolute;
+      z-index: 40;
+      top: calc(100% + 7px);
+      min-width: 190px;
+      padding: 6px;
+      border-radius: 13px;
+      background: var(--blanc-surface-strong);
+      box-shadow: 0 16px 40px var(--blanc-shadow-float), inset 0 0 0 1px var(--blanc-line);
+    }
+    .status-popover { left: 0; min-width: 210px; }
+    .more-popover { right: 0; }
+    .menu-item {
+      width: 100%;
+      min-height: 36px;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .menu-item:hover { background: var(--blanc-surface-muted); }
+    .menu-item[aria-disabled="true"] { color: var(--blanc-ink-3); cursor: default; opacity: 0.48; }
+    .menu-item.warning { color: var(--blanc-warning); }
+    .menu-item.danger { color: var(--blanc-danger); }
+    .menu-item svg {
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .menu-divider { height: 1px; margin: 5px 4px; background: var(--blanc-line); }
+
+    /*
+      Desktop degradation ladder:
+      1. at 740px, Edit/Convert labels go; their controls remain as named icons;
+      2. at 540px, the job-type line goes;
+      3. identity ellipsis happens only after those chrome/content reductions.
+      Status never degrades to an anonymous dot; the live state stays readable.
+    */
+    @media (min-width: 769px) {
+      @container leadbar (max-width: 740px) {
+        .device:not(.mobile) .bar-action-label { display: none; }
+        .device:not(.mobile) .bar-actions .bar-button:not(.more-button) { width: 40px; padding: 0; }
+      }
+      @container leadbar (max-width: 540px) {
+        .device:not(.mobile) .lead-fact { display: none; }
+      }
+    }
+
+    .timeline { display: flex; flex-direction: column; gap: 10px; padding: 4px 16px 90px; }
+    .date {
+      align-self: center;
+      margin: 5px 0;
+      color: var(--blanc-ink-3);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .message {
+      max-width: min(72%, 510px);
+      padding: 11px 13px;
+      border-radius: 16px;
+      background: var(--blanc-surface-strong);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .message.out { align-self: flex-end; background: var(--blanc-accent-soft); }
+    .message-time { display: block; margin-top: 5px; color: var(--blanc-ink-3); font-size: 9px; }
+    .status-gallery {
+      display: none;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      padding: 14px;
+      border-radius: var(--blanc-radius-md);
+      background: var(--blanc-surface-strong);
+    }
+    .status-gallery.open { display: grid; }
+    .status-sample {
+      --status-color: var(--status-new);
+      min-height: 38px;
+      padding: 0 11px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--status-color) 10%, var(--blanc-surface-strong));
+      color: var(--status-color);
+      font-size: 11px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    .review-note {
+      display: none;
+      margin: 0 16px;
+      padding: 11px 13px;
+      border-radius: 13px;
+      background: var(--blanc-surface-strong);
+      color: var(--blanc-ink-2);
+      font-size: 11px;
+      line-height: 1.45;
+      box-shadow: inset 3px 0 0 var(--blanc-info);
+    }
+    .review-note.open { display: block; }
+
+    .detail-scrim {
+      position: absolute;
+      inset: 0;
+      z-index: 60;
+      pointer-events: none;
+      background: transparent;
+      transition: background 200ms ease;
+    }
+    .detail-scrim.open { pointer-events: auto; background: var(--blanc-scrim); }
+    .detail-panel {
+      position: absolute;
+      z-index: 70;
+      top: 10px;
+      right: 10px;
+      bottom: 10px;
+      width: min(650px, calc(100% - 70px));
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 22px;
+      background: var(--blanc-surface-strong);
+      box-shadow: 0 24px 70px var(--blanc-shadow-float), inset 0 3px 0 var(--blanc-info);
+      transform: translateX(calc(100% + 28px));
+      transition: transform 230ms cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .detail-panel.open { transform: translateX(0); }
+    .sheet-handle { display: none; }
+    .panel-identity { padding: 11px 0 8px; }
+    .detail-kicker {
+      margin-bottom: 5px;
+      color: var(--blanc-info);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .detail-name {
+      margin: 0;
+      font: 750 27px/1.15 var(--blanc-font-heading);
+      letter-spacing: -0.035em;
+    }
+    .close-button {
+      position: absolute;
+      z-index: 4;
+      top: 18px;
+      right: 18px;
+      width: 42px;
+      height: 42px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--blanc-surface-muted);
+      cursor: pointer;
+      font-size: 21px;
+    }
+    .detail-header-controls { display: flex; align-items: center; gap: 8px; margin-top: 13px; flex-wrap: wrap; }
+    .source-button {
+      min-height: 40px;
+      padding: 0 13px;
+      border: 1px solid var(--blanc-line);
+      border-radius: 13px;
+      background: var(--blanc-surface-muted);
+      color: var(--blanc-ink-2);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .detail-body {
+      min-height: 0;
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+    }
+    .detail-column { min-height: 0; overflow-y: auto; padding: 10px 20px 22px; }
+    .detail-column + .detail-column { border-left: 1px solid var(--blanc-line); }
+    .detail-section { margin-top: 18px; }
+    .info-tile {
+      margin-top: 8px;
+      padding: 13px 14px;
+      border-radius: 14px;
+      background: var(--blanc-surface-muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .info-tile strong { display: block; color: var(--blanc-ink-1); }
+    .info-tile span { color: var(--blanc-ink-2); }
+    .tabs { display: flex; gap: 5px; padding: 0 0 10px; }
+    .tab {
+      min-height: 34px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--blanc-ink-2);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .tab.active { background: var(--blanc-surface-muted); color: var(--blanc-ink-1); }
+    .note-surface {
+      min-height: 100px;
+      margin-top: 8px;
+      padding: 13px;
+      border-radius: 14px;
+      background: var(--blanc-surface-muted);
+      color: var(--blanc-ink-2);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .detail-footer {
+      flex: 0 0 auto;
+      padding: 12px 20px max(12px, env(safe-area-inset-bottom));
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-top: 1px solid var(--blanc-line);
+      background: var(--blanc-surface-strong);
+    }
+    .detail-footer .bar-button { min-height: 42px; border-radius: 14px; }
+    .detail-footer .icon-button { width: 42px; min-width: 42px; }
+    .detail-footer .icon-button .bar-action-label { display: none; }
+
+    .toast {
+      position: absolute;
+      z-index: 90;
+      right: 20px;
+      bottom: 20px;
+      max-width: 280px;
+      padding: 11px 14px;
+      border-radius: 13px;
+      background: var(--blanc-ink-1);
+      color: var(--blanc-surface-strong);
+      font-size: 12px;
+      font-weight: 650;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity 150ms ease, transform 150ms ease;
+    }
+    .toast.open { opacity: 1; transform: translateY(0); }
+
+    .device.mobile .app-header { grid-template-columns: auto 1fr; padding: 10px; gap: 9px; }
+    .device.mobile .app-title { font-size: 22px; }
+    .device.mobile .search { min-height: 40px; }
+    .device.mobile .filters,
+    .device.mobile .sidebar { display: none; }
+    .device.mobile .pulse-layout { display: block; padding: 0 8px 8px; }
+    .device.mobile .thread-scroll { height: 100%; gap: 8px; }
+    .device.mobile .sticky-stack { gap: 6px; }
+    .device.mobile .action-required {
+      min-height: 46px;
+      padding: 8px 10px;
+      border-radius: 13px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "label done" "copy due";
+      gap: 2px 8px;
+    }
+    .device.mobile .action-label { grid-area: label; font-size: 9px; }
+    .device.mobile .action-copy { grid-area: copy; font-size: 11px; }
+    .device.mobile .action-due { grid-area: due; }
+    .device.mobile .task-action { grid-area: done; padding: 0; width: 30px; }
+
+    /*
+      Mobile uses the contact bar's stacked shell and approved 136px footprint.
+      Identity stays on row one; all four lead controls stay visible on row two.
+      Edit is icon-only, while Status and Convert retain the labels that carry
+      workflow meaning. No Call/Text row is added.
+    */
+    .device.mobile .lead-bar {
+      min-height: 136px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "identity expand" "controls controls";
+      align-content: center;
+      row-gap: 9px;
+      column-gap: 10px;
+      padding: 10px 12px 11px;
+      border-radius: 15px;
+    }
+    .device.mobile .lead-identity { grid-area: identity; }
+    .device.mobile .lead-name { font-size: 18px; }
+    .device.mobile .bar-controls {
+      grid-area: controls;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1.3fr) 40px;
+      gap: 6px;
+    }
+    .device.mobile .bar-actions { display: contents; }
+    .device.mobile .bar-actions .edit-button { width: 40px; padding: 0; }
+    .device.mobile .edit-button .bar-action-label { display: none; }
+    .device.mobile .convert-button { width: auto; padding: 0 9px; }
+    .device.mobile .expand-button { grid-area: expand; }
+    .device.mobile .status-button { width: 100%; padding: 0 9px; }
+    .device.mobile .status-popover { left: 0; }
+    .device.mobile .more-popover { right: 0; }
+    .device.mobile .timeline { padding: 3px 8px 82px; }
+    .device.mobile .message { max-width: 84%; }
+    .device.mobile .status-gallery { grid-template-columns: 1fr 1fr; }
+    .device.mobile .review-note { margin: 0 8px; }
+    .device.mobile .detail-panel {
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 84%;
+      border-radius: 22px 22px 0 0;
+      transform: translateY(105%);
+    }
+    .device.mobile .detail-panel.open { transform: translateY(0); }
+    .device.mobile .sheet-handle {
+      width: 42px;
+      height: 4px;
+      margin: 8px auto 0;
+      display: block;
+      border-radius: 999px;
+      background: var(--blanc-line-strong);
+    }
+    .device.mobile .close-button { top: 18px; right: 16px; }
+    .device.mobile .panel-identity { padding-right: 48px; }
+    .device.mobile .detail-name { font-size: 23px; }
+    .device.mobile .detail-body { display: block; overflow-y: auto; }
+    .device.mobile .detail-column { overflow: visible; padding: 6px 16px 20px; }
+    .device.mobile .detail-column + .detail-column { border-left: 0; }
+    .device.mobile .detail-footer { padding-inline: 16px; }
+    .device.mobile .toast { left: 16px; right: 16px; bottom: 16px; max-width: none; }
+
+    @media (max-width: 620px) {
+      .review-shell { padding: 12px; }
+      .review-toolbar { align-items: flex-start; }
+      .review-controls { width: 100%; }
+      .review-select { max-width: 100%; flex: 1 1 180px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="review-shell">
+    <header class="review-toolbar">
+      <div>
+        <h1 class="review-title">Pulse pinned lead bar</h1>
+        <p class="review-subtitle" id="reviewSubtitle">Default · 68px desktop bar · action-focused controls</p>
+      </div>
+      <div class="review-controls" aria-label="Mockup controls">
+        <button class="review-control" id="desktopToggle" aria-pressed="true">Desktop</button>
+        <button class="review-control" id="mobileToggle" aria-pressed="false">Mobile</button>
+        <select class="review-select" id="scenarioSelect" aria-label="Scenario">
+          <option value="default">Default</option>
+          <option value="long-name">Long name</option>
+          <option value="no-phone">No phone</option>
+          <option value="narrow">Narrow desktop · icons</option>
+          <option value="mobile">Mobile stacked</option>
+          <option value="menu">Overflow menu open</option>
+          <option value="statuses">All status styles</option>
+          <option value="lost">Lost · Activate action</option>
+          <option value="converted">Converted · no Convert</option>
+        </select>
+        <select class="review-select" id="statusSelect" aria-label="Lead status">
+          <option>Review</option>
+          <option>Submitted</option>
+          <option selected>New</option>
+          <option>Contacted</option>
+          <option>Qualified</option>
+          <option>Proposal Sent</option>
+          <option>Negotiation</option>
+          <option>Lost</option>
+          <option>Converted</option>
+        </select>
+      </div>
+    </header>
+
+    <section class="device" id="device" aria-label="Pulse application preview">
+      <div class="app">
+        <header class="app-header">
+          <div class="app-title">Pulse</div>
+          <div class="search">type to find anything...</div>
+          <div class="filters">
+            <button class="filter active">All</button>
+            <button class="filter">Unread</button>
+            <button class="filter">Action Required</button>
+          </div>
+        </header>
+
+        <div class="pulse-layout">
+          <aside class="sidebar" aria-label="Conversations">
+            <div class="sidebar-label eyebrow">Action Required</div>
+            <button class="contact-tile active">
+              <div class="tile-line"><span class="tile-name" data-lead-name>Jordan Kim</span><span class="tile-time">4m</span></div>
+              <div class="tile-preview">SMS · The unit is still leaking</div>
+            </button>
+            <div class="sidebar-label eyebrow">Today</div>
+            <button class="contact-tile">
+              <div class="tile-line"><span class="tile-name">Maria Rodriguez</span><span class="tile-time">23m</span></div>
+              <div class="tile-preview">Outbound call · 5:12</div>
+            </button>
+            <button class="contact-tile">
+              <div class="tile-line"><span class="tile-name">Marcus Avery</span><span class="tile-time">1h</span></div>
+              <div class="tile-preview">Email · Re: installation photos</div>
+            </button>
+            <div class="sidebar-label eyebrow">Yesterday</div>
+            <button class="contact-tile">
+              <div class="tile-line"><span class="tile-name">Dennis Liu</span><span class="tile-time">1d</span></div>
+              <div class="tile-preview">Inbound call · 3:18</div>
+            </button>
+          </aside>
+
+          <section class="thread-scroll" id="threadScroll" aria-label="Lead timeline">
+            <div class="sticky-stack">
+              <div class="action-required">
+                <span class="action-label">Action Required</span>
+                <span class="action-copy">Confirm appliance model before scheduling</span>
+                <span class="action-due">Due 4:30 PM</span>
+                <button class="task-action" aria-label="Complete task" title="Complete task">✓</button>
+              </div>
+
+              <section class="lead-bar" aria-label="Lead">
+                <div class="lead-identity">
+                  <p class="lead-kicker">Lead <span class="lead-id">#1351</span></p>
+                  <h2 class="lead-name" data-lead-name>Jordan Kim</h2>
+                  <p class="lead-fact" id="leadFact">Dishwasher repair</p>
+                </div>
+
+                <div class="bar-controls">
+                  <div class="status-wrap">
+                    <button class="status-button" id="statusButton" aria-haspopup="menu" aria-expanded="false">
+                      <span class="status-dot" aria-hidden="true"></span><span id="statusLabel">New</span>
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+                    </button>
+                    <div class="popover status-popover" id="statusMenu" role="menu" hidden></div>
+                  </div>
+
+                  <div class="bar-actions" id="barActions"></div>
+                </div>
+
+                <button class="bar-button icon-button expand-button" id="expandButton" aria-expanded="false" aria-label="Open full lead card" title="Open full lead card">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+                </button>
+              </section>
+            </div>
+
+            <div class="status-gallery" id="statusGallery" aria-label="All lead status styles"></div>
+            <p class="review-note" id="reviewNote"></p>
+
+            <div class="timeline">
+              <div class="date">Earlier</div>
+              <div class="message">Hi Jordan, I’m following up on your dishwasher service request.<span class="message-time">Mon · 9:42 AM · SMS</span></div>
+              <div class="message out">Can you send the model number from the inside edge of the door?<span class="message-time">Mon · 10:03 AM · SMS</span></div>
+              <div class="message">Sure — the label says KDTE204KPS.<span class="message-time">Mon · 10:18 AM · SMS</span></div>
+              <div class="message out">Thank you. I’m checking the likely parts before we schedule.<span class="message-time">Mon · 10:22 AM · SMS</span></div>
+              <div class="date">Yesterday</div>
+              <div class="message">The leak is getting worse. Do you have anything this week?<span class="message-time">2:14 PM · SMS</span></div>
+              <div class="message out">I’m reviewing Thursday and Friday availability now.<span class="message-time">2:21 PM · SMS</span></div>
+              <div class="message">Friday morning would be best.<span class="message-time">2:23 PM · SMS</span></div>
+              <div class="message out">I’ll confirm the service window shortly.<span class="message-time">3:02 PM · SMS</span></div>
+              <div class="date">Today</div>
+              <div class="message">The unit is still leaking. Should I shut it off?<span class="message-time">10:16 AM · SMS</span></div>
+              <div class="message out">Yes, please close the supply valve until the technician arrives.<span class="message-time">10:18 AM · SMS</span></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="detail-scrim" id="detailScrim"></div>
+      <aside class="detail-panel" id="detailPanel" role="dialog" aria-modal="true" aria-label="Full lead card">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <button class="close-button" id="closeDetail" aria-label="Close full lead card">×</button>
+
+        <div class="detail-body">
+          <div class="detail-column">
+            <header class="panel-identity">
+              <div class="detail-kicker">Lead #1351</div>
+              <h2 class="detail-name" data-lead-name>Jordan Kim</h2>
+              <div class="detail-header-controls">
+                <button class="status-button" id="panelStatusButton"><span data-status-label>New</span><span aria-hidden="true">▾</span></button>
+                <button class="source-button" id="sourceButton" aria-haspopup="menu" aria-expanded="false">Google Ads&nbsp;▾</button>
+              </div>
+            </header>
+            <section class="detail-section">
+              <div class="eyebrow">Contact</div>
+              <div class="info-tile" id="contactTile"><strong>(929) 555-0148</strong><span>jordan.kim@example.com</span></div>
+            </section>
+            <section class="detail-section">
+              <div class="eyebrow">Address</div>
+              <div class="info-tile"><strong>41-17 31st Avenue</strong><span>Astoria, NY 11103</span></div>
+            </section>
+            <section class="detail-section">
+              <div class="eyebrow">Job Details</div>
+              <div class="info-tile"><strong>Dishwasher repair</strong><span>Leak appears during the drain cycle.</span></div>
+            </section>
+          </div>
+
+          <div class="detail-column">
+            <div class="tabs"><button class="tab active">Details</button><button class="tab">Finance</button></div>
+            <section class="detail-section">
+              <div class="eyebrow">Notes</div>
+              <div class="note-surface">Customer prefers Friday morning. Confirm whether the drain pump is in stock before conversion.</div>
+            </section>
+            <section class="detail-section">
+              <div class="eyebrow">Metadata</div>
+              <div class="info-tile"><strong>Created</strong><span>Jul 18, 2026 09:31</span></div>
+            </section>
+          </div>
+        </div>
+
+        <footer class="detail-footer" id="detailFooter"></footer>
+      </aside>
+
+      <div class="toast" id="toast" role="status"></div>
+    </section>
+  </main>
+
+  <script>
+    const icons = {
+      edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>',
+      convert: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+      more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>',
+      lost: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4 19 18"/><path d="M8.5 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10c.6 0 1.1-.2 1.5-.6"/><path d="M19 14V7a2 2 0 0 0-2-2h-4"/></svg>',
+      trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/></svg>',
+      activate: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>',
+      reset: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>'
+    };
+
+    const statusColors = {
+      'Review': 'var(--status-review)',
+      'Submitted': 'var(--status-submitted)',
+      'New': 'var(--status-new)',
+      'Contacted': 'var(--status-contacted)',
+      'Qualified': 'var(--status-qualified)',
+      'Proposal Sent': 'var(--status-proposal-sent)',
+      'Negotiation': 'var(--status-negotiation)',
+      'Lost': 'var(--status-lost)',
+      'Converted': 'var(--status-converted)'
+    };
+    const allStatuses = Object.keys(statusColors);
+
+    const scenarios = {
+      'default': {
+        name: 'Jordan Kim',
+        fact: 'Dishwasher repair',
+        phone: true,
+        status: 'New',
+        note: '',
+        subtitle: 'Default · 68px desktop bar · action-focused controls'
+      },
+      'long-name': {
+        name: 'Alexandria Montgomery-Smythe',
+        fact: 'Commercial refrigerator repair',
+        phone: true,
+        status: 'Qualified',
+        note: 'Long identity keeps its full allocation; labels are the first chrome to disappear when the container narrows.',
+        subtitle: 'Long name · identity survives before action labels'
+      },
+      'no-phone': {
+        name: 'Nora Bennett',
+        fact: 'Range installation',
+        phone: false,
+        status: 'Contacted',
+        note: 'No phone does not punch a hole in this bar: lead workflow actions remain stable; contact channels stay in the composer and expanded card.',
+        subtitle: 'No phone · workflow controls do not shift'
+      },
+      'narrow': {
+        name: 'Alexandria Montgomery-Smythe',
+        fact: 'Commercial refrigerator repair',
+        phone: true,
+        status: 'Proposal Sent',
+        note: 'Narrow desktop: Edit and Convert keep named icons; Status keeps its readable value; the job-type line drops next.',
+        subtitle: 'Narrow desktop · labels → icons, then secondary fact'
+      },
+      'mobile': {
+        name: 'Jordan Kim',
+        fact: 'Dishwasher repair',
+        phone: true,
+        status: 'New',
+        note: 'Mobile uses the same stacked footprint as the approved contact mockup. Status, Edit, Convert, overflow, and expand all remain reachable.',
+        subtitle: 'Mobile stacked · all workflow controls visible'
+      },
+      'menu': {
+        name: 'Jordan Kim',
+        fact: 'Dishwasher repair',
+        phone: true,
+        status: 'New',
+        note: 'Overflow preserves the current card menu exactly: Mark Lost and Delete Lead.',
+        subtitle: 'Overflow menu · current destructive actions preserved'
+      },
+      'statuses': {
+        name: 'Jordan Kim',
+        fact: 'Dishwasher repair',
+        phone: true,
+        status: 'New',
+        note: 'The chip uses the existing status mapping. Unknown DB-driven states fall back to the Converted gray treatment.',
+        subtitle: 'Status palette · all current values'
+      },
+      'lost': {
+        name: 'Jordan Kim',
+        fact: 'Dishwasher repair',
+        phone: true,
+        status: 'Lost',
+        leadLost: true,
+        note: 'Lost mirrors the current footer: Edit + Activate + overflow. Convert is correctly absent.',
+        subtitle: 'Lost state · Activate replaces Convert'
+      },
+      'converted': {
+        name: 'Jordan Kim',
+        fact: 'Dishwasher repair',
+        phone: true,
+        status: 'Converted',
+        converted: true,
+        note: 'Converted mirrors the current footer: Edit + overflow. Mark Lost and Delete Lead remain in overflow.',
+        subtitle: 'Converted state · Convert is absent'
+      }
+    };
+
+    const device = document.getElementById('device');
+    const scenarioSelect = document.getElementById('scenarioSelect');
+    const statusSelect = document.getElementById('statusSelect');
+    const statusButton = document.getElementById('statusButton');
+    const statusMenu = document.getElementById('statusMenu');
+    const expandButton = document.getElementById('expandButton');
+    const detailPanel = document.getElementById('detailPanel');
+    const detailScrim = document.getElementById('detailScrim');
+    const statusGallery = document.getElementById('statusGallery');
+    const reviewNote = document.getElementById('reviewNote');
+    const toast = document.getElementById('toast');
+    let activeScenario = scenarios.default;
+    let toastTimer;
+
+    function button(action, label, icon, classes) {
+      return '<button class="bar-button ' + classes + '" data-action="' + action + '" aria-label="' + label + '" title="' + label + '">'
+        + icon + '<span class="bar-action-label">' + label + '</span></button>';
+    }
+
+    function moreMenu() {
+      const markLost = activeScenario.leadLost
+        ? ''
+        : '<button class="menu-item warning" role="menuitem" data-action="mark-lost">' + icons.lost + 'Mark Lost</button>';
+      return '<div class="menu-wrap">'
+        + '<button class="bar-button icon-button more-button" id="moreButton" data-action="more" aria-haspopup="menu" aria-expanded="false" aria-label="More lead actions" title="More lead actions">' + icons.more + '</button>'
+        + '<div class="popover more-popover" id="moreMenu" role="menu" hidden>'
+        + markLost
+        + '<button class="menu-item danger" role="menuitem" data-action="delete">' + icons.trash + 'Delete Lead</button>'
+        + '</div></div>';
+    }
+
+    function renderActions() {
+      const actions = [];
+      actions.push(button('edit', 'Edit', icons.edit, 'edit-button'));
+      if (activeScenario.leadLost) {
+        actions.push(button('activate', 'Activate', icons.activate, 'success convert-button'));
+      } else if (!activeScenario.converted) {
+        actions.push(button('convert', 'Convert to Job', icons.convert, 'primary convert-button'));
+      }
+      actions.push(moreMenu());
+      document.getElementById('barActions').innerHTML = actions.join('');
+
+      const footer = [];
+      footer.push(button('edit', 'Edit', icons.edit, 'icon-button edit-button'));
+      if (activeScenario.leadLost) {
+        footer.push(button('activate', 'Activate', icons.activate, 'success'));
+      } else if (!activeScenario.converted) {
+        footer.push(button('convert', 'Convert to Job', icons.convert, 'primary'));
+      }
+      footer.push(button('more', 'More lead actions', icons.more, 'icon-button'));
+      document.getElementById('detailFooter').innerHTML = footer.join('');
+    }
+
+    function setStatus(status) {
+      const color = statusColors[status] || 'var(--status-converted)';
+      const statusState = status === 'Lost';
+      const convertedState = status === 'Converted';
+      activeScenario = Object.assign({}, activeScenario, {
+        status: status,
+        leadLost: statusState,
+        converted: convertedState
+      });
+      document.getElementById('statusLabel').textContent = status;
+      document.querySelectorAll('[data-status-label]').forEach(function (el) { el.textContent = status; });
+      document.querySelectorAll('.status-button').forEach(function (el) { el.style.setProperty('--status-color', color); });
+      statusSelect.value = status;
+      renderActions();
+      renderStatusMenu();
+    }
+
+    function renderStatusMenu() {
+      const reachableByExample = new Set(['Contacted', 'Qualified', 'Lost']);
+      const rows = [];
+      allStatuses.forEach(function (status) {
+        if (status === activeScenario.status) return;
+        const reachable = reachableByExample.has(status);
+        rows.push('<button class="menu-item" role="menuitem" data-status="' + status + '" aria-disabled="' + String(!reachable) + '">'
+          + '<span class="status-dot" style="width:8px;height:8px;border-radius:999px;background:' + statusColors[status] + '"></span>'
+          + status + '</button>');
+      });
+      if (activeScenario.status !== 'Review') {
+        rows.push('<div class="menu-divider"></div>');
+        rows.push('<button class="menu-item" role="menuitem" data-status="Review">' + icons.reset + 'Reset to Review</button>');
+      }
+      statusMenu.innerHTML = rows.join('');
+    }
+
+    function renderStatusGallery() {
+      statusGallery.innerHTML = allStatuses.map(function (status) {
+        return '<span class="status-sample" style="--status-color:' + statusColors[status] + '">' + status + '</span>';
+      }).join('');
+    }
+
+    function renderScenario(key) {
+      closeAllOverlays();
+      activeScenario = Object.assign({}, scenarios[key]);
+      document.querySelectorAll('[data-lead-name]').forEach(function (el) { el.textContent = activeScenario.name; });
+      document.getElementById('leadFact').textContent = activeScenario.fact;
+      document.getElementById('reviewSubtitle').textContent = activeScenario.subtitle;
+      reviewNote.textContent = activeScenario.note;
+      reviewNote.classList.toggle('open', Boolean(activeScenario.note));
+      statusGallery.classList.toggle('open', key === 'statuses');
+      document.getElementById('contactTile').innerHTML = activeScenario.phone
+        ? '<strong>(929) 555-0148</strong><span>jordan.kim@example.com</span>'
+        : '<strong>nora.bennett@example.com</strong><span>Email only</span>';
+
+      if (key === 'mobile') setViewport('mobile');
+      else if (key === 'narrow') setViewport('narrow');
+      else setViewport('desktop');
+
+      setStatus(activeScenario.status);
+      if (key === 'menu') window.setTimeout(openMoreMenu, 20);
+    }
+
+    function setViewport(mode) {
+      device.classList.toggle('mobile', mode === 'mobile');
+      device.classList.toggle('narrow', mode === 'narrow');
+      document.getElementById('desktopToggle').setAttribute('aria-pressed', String(mode !== 'mobile'));
+      document.getElementById('mobileToggle').setAttribute('aria-pressed', String(mode === 'mobile'));
+    }
+
+    function openMoreMenu() {
+      closeStatusMenu();
+      const buttonEl = document.getElementById('moreButton');
+      const menuEl = document.getElementById('moreMenu');
+      if (!buttonEl || !menuEl) return;
+      menuEl.hidden = false;
+      buttonEl.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeMoreMenu() {
+      const buttonEl = document.getElementById('moreButton');
+      const menuEl = document.getElementById('moreMenu');
+      if (menuEl) menuEl.hidden = true;
+      if (buttonEl) buttonEl.setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleStatusMenu() {
+      const opening = statusMenu.hidden;
+      closeMoreMenu();
+      statusMenu.hidden = !opening;
+      statusButton.setAttribute('aria-expanded', String(opening));
+    }
+
+    function closeStatusMenu() {
+      statusMenu.hidden = true;
+      statusButton.setAttribute('aria-expanded', 'false');
+    }
+
+    function openDetail() {
+      closeMoreMenu();
+      closeStatusMenu();
+      detailPanel.classList.add('open');
+      detailScrim.classList.add('open');
+      expandButton.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeDetail() {
+      detailPanel.classList.remove('open');
+      detailScrim.classList.remove('open');
+      expandButton.setAttribute('aria-expanded', 'false');
+    }
+
+    function closeAllOverlays() {
+      closeDetail();
+      closeStatusMenu();
+      closeMoreMenu();
+    }
+
+    function showToast(message) {
+      window.clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add('open');
+      toastTimer = window.setTimeout(function () { toast.classList.remove('open'); }, 1600);
+    }
+
+    document.getElementById('desktopToggle').addEventListener('click', function () {
+      closeAllOverlays();
+      setViewport('desktop');
+    });
+    document.getElementById('mobileToggle').addEventListener('click', function () {
+      closeAllOverlays();
+      setViewport('mobile');
+    });
+    scenarioSelect.addEventListener('change', function (event) { renderScenario(event.target.value); });
+    statusSelect.addEventListener('change', function (event) { setStatus(event.target.value); });
+    statusButton.addEventListener('click', toggleStatusMenu);
+    statusMenu.addEventListener('click', function (event) {
+      const item = event.target.closest('[data-status]');
+      if (!item || item.getAttribute('aria-disabled') === 'true') return;
+      setStatus(item.dataset.status);
+      closeStatusMenu();
+    });
+    expandButton.addEventListener('click', function () {
+      if (detailPanel.classList.contains('open')) closeDetail();
+      else openDetail();
+    });
+    document.getElementById('closeDetail').addEventListener('click', closeDetail);
+    detailScrim.addEventListener('click', closeDetail);
+    document.getElementById('barActions').addEventListener('click', function (event) {
+      const item = event.target.closest('[data-action]');
+      if (!item) return;
+      const action = item.dataset.action;
+      if (action === 'more') {
+        const menuEl = document.getElementById('moreMenu');
+        if (menuEl && menuEl.hidden) openMoreMenu();
+        else closeMoreMenu();
+      } else if (action === 'mark-lost') {
+        closeMoreMenu();
+        setStatus('Lost');
+        showToast('Lead marked as lost');
+      } else if (action === 'delete') {
+        closeMoreMenu();
+        showToast('Delete confirmation would open');
+      } else if (action === 'activate') {
+        activeScenario.leadLost = false;
+        activeScenario.converted = false;
+        setStatus('New');
+        showToast('Lead activated');
+      } else if (action === 'edit') {
+        showToast('Edit lead panel would open');
+      } else if (action === 'convert') {
+        showToast('Convert to Job dialog would open');
+      }
+    });
+    document.getElementById('detailFooter').addEventListener('click', function (event) {
+      const item = event.target.closest('[data-action]');
+      if (item) showToast(item.dataset.action === 'convert' ? 'Convert to Job dialog would open' : 'Existing lead action');
+    });
+    document.getElementById('sourceButton').addEventListener('click', function () {
+      showToast('Source remains in the expanded lead card');
+    });
+    document.getElementById('panelStatusButton').addEventListener('click', function () {
+      closeDetail();
+      toggleStatusMenu();
+      showToast('Same DB-driven Status menu');
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closeAllOverlays();
+    });
+
+    renderStatusGallery();
+    const reviewParams = new URLSearchParams(window.location.search);
+    const requestedScenario = reviewParams.get('scenario');
+    const initialScenario = requestedScenario && scenarios[requestedScenario] ? requestedScenario : 'default';
+    scenarioSelect.value = initialScenario;
+    renderScenario(initialScenario);
+    if (reviewParams.get('panel') === '1') window.setTimeout(openDetail, 20);
+    window.scrollTo(0, 0);
+  </script>
+</body>
+</html>
