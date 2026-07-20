@@ -628,5 +628,25 @@
   },
   "758b5ff": {
     "hide": true
+  },
+  "e8f22fb": {
+    "tag": "Polish",
+    "text": "The schedule no longer hatches out non-working hours; a technician who is off all day now says so"
+  },
+  "67b658c": {
+    "tag": "Feature",
+    "text": "A pinned lead bar keeps the customer in view while you scroll the conversation"
+  },
+  "45595b4": {
+    "tag": "Feature",
+    "text": "Set the hours your automated callers are allowed to dial"
+  },
+  "b5d03ef": {
+    "tag": "Fix",
+    "text": "Bookings made by the assistant no longer fail at the last step"
+  },
+  "92ed184": {
+    "tag": "Fix",
+    "text": "Routing Logs, Blocklist and Provider Settings are back in the Settings menu"
   }
 }
