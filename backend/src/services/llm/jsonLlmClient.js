@@ -163,6 +163,12 @@ function buildRequest(provider, model, options) {
                         maxOutputTokens: options.maxOutputTokens,
                         candidateCount: 1,
                         responseMimeType: 'application/json',
+                        // Gemini 2.5 "thinking" spends maxOutputTokens BEFORE emitting the
+                        // JSON, so a low budget truncates the answer (finishReason=MAX_TOKENS,
+                        // thoughtsTokenCount≈budget, missing required fields). Disable it for
+                        // deterministic structured output. See the gemini-2.5-thinking-budget
+                        // gotcha; default 0, overridable per call.
+                        thinkingConfig: { thinkingBudget: options.thinkingBudget ?? 0 },
                     },
                 }),
             },

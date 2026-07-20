@@ -38,6 +38,21 @@ describe('provider-neutral JSON LLM client', () => {
         const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
         expect(body.systemInstruction.parts[0].text).toBe('policy');
         expect(body.contents[0].parts[0].text).toBe('evidence');
+        // REGRESSION: Gemini 2.5 thinking must be disabled or it spends maxOutputTokens
+        // on thoughts and truncates the JSON (finishReason=MAX_TOKENS → bad_json).
+        expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    });
+
+    test('REGRESSION bad_json: thinkingBudget defaults to 0 and is overridable', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(response({
+            json: { candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] },
+        }));
+        await generateJson({
+            provider: 'gemini', apiKey: 'secret', primaryModel: 'gemini-test',
+            userPrompt: 'x', maxRetries: 0, thinkingBudget: 256, fetchImpl,
+        });
+        const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+        expect(body.generationConfig.thinkingConfig.thinkingBudget).toBe(256);
     });
 
     test('retries a transient response without recording provider bodies', async () => {

@@ -259,7 +259,10 @@ async function classifyEntity(context, instruction, options = {}) {
         maxRetries: boundedInteger(env.INSPECTOR_AGENT_RETRY_MAX, 2, 0, 4),
         temperature: 0.1,
         contextTokens: 4096,
-        maxOutputTokens: 400,
+        // 400 truncated the verdict once Gemini 2.5 thinking is disabled we only need
+        // room for the JSON, but the full task_description (≤1200 chars ≈ 300 tokens)
+        // plus the other fields needs headroom — 400 clipped real records to bad_json.
+        maxOutputTokens: 1024,
         allowModelFallbackOn429: false,
     });
     return {
