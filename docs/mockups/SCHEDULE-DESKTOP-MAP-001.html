@@ -184,9 +184,12 @@
     }
     .date-label { min-width: 172px; text-align: center; font-weight: 800; }
     .provider-chips { display: flex; gap: 7px; overflow-x: auto; padding-top: 10px; scrollbar-width: none; }
-    .provider-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 6px; border-radius: 999px; background: var(--blanc-bg-deep); white-space: nowrap; font-size: 12px; font-weight: 700; }
+    .provider-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 6px; border: 0; border-radius: 999px; background: var(--blanc-bg-deep); white-space: nowrap; font-size: 12px; font-weight: 700; }
+    .provider-chip.active, .provider-chip[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--blanc-line-strong); background: var(--blanc-surface-strong); }
+    .provider-chip[aria-pressed="false"] { opacity: .5; text-decoration: line-through; }
     .provider-chip .dot, .legend-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--tech); flex: 0 0 auto; }
     .provider-chip .avatar { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--tech); color: white; font-size: 9px; font-weight: 900; }
+    .provider-chip.unassigned .avatar { border: 1.5px solid var(--blanc-ink-2); background: transparent; color: var(--blanc-ink-2); }
 
     .schedule-stage { position: relative; min-height: 570px; padding: 14px; }
     .layout-split { display: grid; grid-template-columns: minmax(560px, 1.18fr) minmax(390px, .82fr); gap: 14px; min-height: 542px; }
@@ -249,6 +252,7 @@
     .job-card.is-dim { opacity: .35; }
     .job-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
     .job-card small { display: block; overflow: hidden; margin-top: 2px; color: var(--blanc-ink-2); text-overflow: ellipsis; white-space: nowrap; }
+    .job-card.unassigned-card { border-style: dashed; border-color: var(--blanc-line-strong); border-left: 4px solid var(--blanc-ink-2); background: var(--blanc-surface-muted); }
     .multi-stripe { border-left: 0; padding-left: 16px; }
     .multi-stripe::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 5px; border-radius: 10px 0 0 10px; background: linear-gradient(to bottom, var(--tech) 0 50%, var(--tech-2) 50% 100%); }
 
@@ -261,6 +265,7 @@
     .tech-row:last-child { border-bottom: 0; }
     .tech-name { display: flex; align-items: center; gap: 9px; padding: 12px; }
     .tech-name .avatar { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--tech); color: #fff; font-size: 10px; font-weight: 900; }
+    .tech-name.unassigned .avatar { border: 1.5px solid var(--blanc-ink-2); background: #fff; color: var(--blanc-ink-2); }
     .tech-name strong { display: block; font-size: 12px; }
     .tech-name small { color: var(--blanc-ink-3); }
     .tech-track { position: relative; min-height: 90px; background: linear-gradient(to right, transparent 0, transparent calc(11.111% - 1px), var(--blanc-line) calc(11.111% - 1px), var(--blanc-line) 11.111%); background-size: 11.111% 100%; }
@@ -273,6 +278,7 @@
     .map-badge { padding: 5px 8px; border-radius: 999px; background: var(--blanc-bg-deep); color: var(--blanc-ink-2); font-size: 10px; font-weight: 850; white-space: nowrap; }
     .map-badge.cost { background: #fff0dd; color: #9a5200; }
     .map-canvas { position: relative; flex: 1; min-height: 380px; overflow: hidden; background: #edf1ec; }
+    .map-card.has-not-map .map-canvas { min-height: 280px; }
     .map-canvas svg { display: block; width: 100%; height: 100%; min-height: inherit; }
     .map-grid { fill: none; stroke: rgba(93,116,95,.09); stroke-width: 1; }
     .road-major { fill: none; stroke: #fff; stroke-width: 9; stroke-linecap: round; }
@@ -287,7 +293,12 @@
     .pin-group:hover, .pin-group.is-hot, .pin-group.is-selected { transform: scale(1.14); }
     .pin-group.is-dim { opacity: .25; }
     .pin-shape { fill: var(--tech); stroke: #fff; stroke-width: 2.4; }
+    .pin-center { fill: var(--tech); }
     .pin-number { fill: #fff; font-size: 10px; font-weight: 900; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+    .pin-multi-ring { fill: none; stroke: var(--tech-2); stroke-width: 1.8; }
+    .pin-group.is-unassigned .pin-shape { fill: #fff; stroke: var(--blanc-ink-2); stroke-width: 2.2; }
+    .pin-group.is-unassigned .pin-center { fill: #fff; }
+    .pin-group.is-unassigned .pin-number { fill: var(--blanc-ink-2); }
     .map-label { fill: #89958b; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
     .map-legend {
       position: absolute;
@@ -306,12 +317,31 @@
     .legend-title { margin-bottom: 5px; color: var(--blanc-ink-3); font-size: 9px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
     .legend-row { display: flex; align-items: center; gap: 7px; min-width: 108px; padding: 3px 2px; font-size: 10px; font-weight: 750; }
     .legend-row .legend-initial { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--tech); color: #fff; font-size: 8px; font-weight: 900; }
+    .legend-row.unassigned .legend-initial { border: 1.5px solid var(--blanc-ink-2); background: #fff; color: var(--blanc-ink-2); }
     .map-notice { position: absolute; z-index: 6; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 7px; max-width: calc(100% - 24px); padding: 8px 11px; border-radius: 999px; background: rgba(255,255,255,.94); box-shadow: 0 7px 20px rgba(25,25,25,.1); color: var(--blanc-ink-2); font-size: 11px; font-weight: 750; white-space: nowrap; }
     .notice-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blanc-danger); }
     .map-popover { position: absolute; z-index: 8; right: 12px; bottom: 12px; width: min(260px, calc(100% - 24px)); padding: 12px; border: 1px solid var(--blanc-line); border-radius: 14px; background: rgba(255,255,255,.96); box-shadow: 0 12px 30px rgba(25,25,25,.14); }
     .map-popover .close { position: absolute; top: 7px; right: 8px; border: 0; background: transparent; color: var(--blanc-ink-3); }
     .map-popover strong { display: block; padding-right: 20px; }
     .map-popover p { margin: 4px 0 0; color: var(--blanc-ink-2); font-size: 11px; }
+    .map-count { flex: 0 0 auto; padding: 7px 10px; border-radius: 12px; background: var(--blanc-bg-deep); text-align: right; }
+    .map-count strong { display: block; font-size: 11px; }
+    .map-count span { display: block; margin-top: 1px; color: var(--blanc-ink-2); font-size: 9px; white-space: nowrap; }
+    .not-map-panel { flex: 0 0 auto; padding: 12px; border-top: 1px solid var(--blanc-line); background: var(--blanc-surface-strong); }
+    .not-map-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .not-map-head h3 { margin: 0; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+    .not-map-count { padding: 4px 8px; border-radius: 999px; background: var(--blanc-bg-deep); color: var(--blanc-ink-2); font-size: 10px; font-weight: 800; }
+    .not-map-list { display: grid; gap: 6px; max-height: 176px; overflow-y: auto; }
+    .not-map-row { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px; background: var(--blanc-surface-muted); text-align: left; transition: box-shadow .15s, opacity .15s; }
+    .not-map-row:hover, .not-map-row.is-hot, .not-map-row.is-selected { box-shadow: inset 0 0 0 2px var(--blanc-accent); }
+    .not-map-row.is-dim { opacity: .4; }
+    .not-map-row strong { display: block; font-size: 11px; }
+    .not-map-row > span:last-child { display: flex; flex-direction: column; align-items: flex-end; }
+    .not-map-row .time { color: var(--blanc-ink-2); font-size: 10px; white-space: nowrap; }
+    .not-map-tech { display: flex; align-items: center; gap: 6px; margin-top: 3px; color: var(--blanc-ink-2); font-size: 10px; }
+    .not-map-tech .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tech); }
+    .not-map-reason { display: block; margin-top: 3px; color: var(--blanc-ink-1); font-size: 10px; font-weight: 750; text-align: right; }
+    .not-map-help { margin: 8px 2px 0; color: var(--blanc-ink-3); font-size: 9px; }
     .empty-state { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; text-align: center; }
     .empty-state .empty-icon { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 18px; background: var(--blanc-bg-deep); color: var(--blanc-ink-3); font-size: 24px; }
     .empty-state h3 { margin-bottom: 4px; }
@@ -336,6 +366,8 @@
 
     .layout-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 13px 4px 0; color: var(--blanc-ink-2); font-size: 12px; }
     .layout-caption strong { color: var(--blanc-ink-1); }
+    .interaction-sketch { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 8px 4px 0; padding: 10px 12px; border-radius: 12px; background: var(--blanc-accent-soft); color: var(--blanc-ink-2); font-size: 11px; }
+    .interaction-sketch strong { color: var(--blanc-ink-1); }
 
     @media (max-width: 1100px) {
       .page { padding: 18px; }
@@ -366,11 +398,11 @@
       <div>
         <p class="eyebrow">SCHEDULE-DESKTOP-MAP-001 · owner review</p>
         <h1>Day and Timeline, with every technician’s route</h1>
-        <p>Switch the view, layout, and edge-case scenario. Job cards and pins are linked: hover previews; click locks the selection.</p>
+        <p>Review the approved split and straight-line direction across edge cases. The map mirrors the currently visible technician chips exactly.</p>
       </div>
       <aside class="recommended">
-        <strong>Recommendation: split view on wide desktop</strong>
-        Grid context stays visible while dispatch compares route order. Below 1280px, use the same header control as a List ⇄ Map switch.
+        <strong>Approved: split + straight visit-order lines</strong>
+        Split at 1280px and above; List ⇄ Map below. No road-geometry API or incremental route cost in v1.
       </aside>
     </header>
 
@@ -387,7 +419,7 @@
         <span class="review-label">Layout</span>
         <div class="segmented" data-control="layout">
           <button type="button" data-value="toggle" aria-pressed="false">List ⇄ Map</button>
-          <button type="button" data-value="split" aria-pressed="true">Split · recommended</button>
+          <button type="button" data-value="split" aria-pressed="true">Split · approved</button>
           <button type="button" data-value="panel" aria-pressed="false">Map panel</button>
         </div>
       </div>
@@ -395,7 +427,7 @@
         <span class="review-label">State</span>
         <div class="segmented" data-control="scenario">
           <button type="button" data-value="normal" aria-pressed="true">Normal</button>
-          <button type="button" data-value="missing" aria-pressed="false">Missing coords</button>
+          <button type="button" data-value="missing" aria-pressed="false">Missing + unassigned</button>
           <button type="button" data-value="single" aria-pressed="false">Single job</button>
           <button type="button" data-value="empty" aria-pressed="false">Empty day</button>
           <button type="button" data-value="many" aria-pressed="false">12 techs</button>
@@ -446,36 +478,40 @@
     </section>
 
     <div id="layoutCaption" class="layout-caption"></div>
+    <div class="interaction-sketch">
+      <span><strong>Card or pin:</strong> hover cross-highlights; click locks the same job selection.</span>
+      <span><strong>“Not on the map” row:</strong> click highlights its grid card; the map stays put because there is no coordinate to pan to.</span>
+    </div>
 
     <section class="comparison">
       <div class="comparison-head">
         <div>
-          <p class="eyebrow">Geometry decision</p>
-          <h2>The same visit order, rendered both ways</h2>
+          <p class="eyebrow">Approved geometry</p>
+          <h2>Straight lines ship in v1</h2>
         </div>
-        <p>Road shape is more literal, but it does not change the schedule or ETA. Select a job in either comparison map to inspect the same linked state.</p>
+        <p>The road version remains only as the reviewed comparison. It is not part of the approved implementation.</p>
       </div>
       <div class="compare-grid">
         <article class="compare-card">
           <div class="map-head">
             <div><h3>Straight visit-order lines</h3><p>Reuse coordinates already in the schedule payload</p></div>
-            <span class="map-badge">$0 route geometry</span>
+            <span class="map-badge">APPROVED · $0 geometry</span>
           </div>
           <div id="straightCompare" class="map-canvas"></div>
           <div class="compare-foot">
-            <div class="metric preferred"><strong>Recommended for v1</strong><span>Immediate, honest order cue</span></div>
+            <div class="metric preferred"><strong>Approved for v1</strong><span>Immediate, honest order cue</span></div>
             <div class="metric"><strong>0 geometry calls</strong><span>Basemap usage still applies</span></div>
           </div>
         </article>
         <article class="compare-card">
           <div class="map-head">
             <div><h3>Real road geometry</h3><p>Stored overview polyline from Google Routes</p></div>
-            <span class="map-badge cost">Billable dependency</span>
+            <span class="map-badge cost">Not in v1</span>
           </div>
           <div id="roadCompare" class="map-canvas"></div>
           <div class="compare-foot">
-            <div class="metric"><strong>0 calls on warm render</strong><span>Geometry served from cache</span></div>
-            <div class="metric"><strong>1 cold call / tech-day*</strong><span>*Typical route ≤12 stops</span></div>
+            <div class="metric"><strong>Deferred</strong><span>No Routes API dependency</span></div>
+            <div class="metric"><strong>No v1 spend</strong><span>Revisit only with new approval</span></div>
           </div>
         </article>
       </div>
@@ -484,7 +520,7 @@
     <section class="decision-strip" aria-label="Decision facts">
       <div class="fact"><strong>Current persistence</strong><span>Distance + duration only. No polyline column or response field.</span></div>
       <div class="fact"><strong>Coordinate coverage</strong><span>222 / 223 scheduled jobs had coordinates in the ±30-day production snapshot.</span></div>
-      <div class="fact"><strong>Google basic-route cap</strong><span>10,000 Compute Routes requests/month at no charge, then $5 per 1,000 in the first paid tier.</span></div>
+      <div class="fact"><strong>V1 route geometry</strong><span>Straight visit-order lines: zero route-geometry calls and no new API dependency.</span></div>
       <div class="fact"><strong>Colour safety</strong><span>Stable 16-colour roster allocation; initials and line styles backstop dense days.</span></div>
     </section>
   </main>
@@ -494,6 +530,7 @@
       '#7f42e1','#4f5ba8','#2f63d8','#147a9c','#087e8b','#1b8b63','#5f7a1f','#b26a1d',
       '#d56a1f','#d85a3f','#c74646','#a43a78','#b5415c','#7b4d9d','#466b9e','#8a5a32'
     ];
+    const UNASSIGNED_COLOR = '#6e6e6e';
 
     const techs = [
       { id: 'robert', name: 'Robert Chen', initials: 'RC', color: palette[0] },
@@ -519,40 +556,43 @@
       { id:'j106', title:'Heat pump service', customer:'Quincy Workspace', address:'1515 Hancock St, Quincy', time:'2:30 PM', start:14.5, duration:1.3, x:49, y:75, techIds:['robert'] },
       { id:'j107', title:'Ductwork estimate', customer:'Cambridge Arts', address:'40 Brattle St, Cambridge', time:'12:30 PM', start:12.5, duration:1.0, x:46, y:24, techIds:['jordan'] },
       { id:'j108', title:'Annual maintenance', customer:'Harbor Bakery', address:'7 Drydock Ave, Boston', time:'11:00 AM', start:11, duration:1.2, x:58, y:49, techIds:['maya'] },
-      { id:'j109', title:'AC diagnostic', customer:'Willow Pharmacy', address:'Address saved; coordinates pending', time:'4:00 PM', start:16, duration:1, x:null, y:null, techIds:['robert'] }
+      { id:'j109', title:'AC diagnostic', customer:'Willow Pharmacy', address:'91 Willow Ave, Roslindale', time:'4:00 PM', start:16, duration:1, x:null, y:null, techIds:['robert'] }
     ];
 
     const scenarioData = {
-      normal: { techs, jobs: normalJobs, missing: 1 },
+      normal: { techs, jobs: normalJobs },
       missing: {
         techs: techs.slice(0,3),
-        jobs: normalJobs.filter(job => !['j105','j108'].includes(job.id)).concat([
-          { id:'j110', title:'Thermostat replacement', customer:'Arbor Books', address:'Address saved; coordinates pending', time:'1:45 PM', start:13.75, duration:1, x:null, y:null, techIds:['ali'] },
-          { id:'j111', title:'Ventilation check', customer:'Pine Street Cafe', address:'Address saved; coordinates pending', time:'3:30 PM', start:15.5, duration:1, x:null, y:null, techIds:['jordan'] }
-        ]),
-        missing: 3
+        jobs: normalJobs.filter(job => job.id !== 'j108').concat([
+          { id:'j110', title:'Thermostat replacement', customer:'Arbor Books', address:'', time:'1:45 PM', start:13.75, duration:1, x:null, y:null, techIds:['ali'] },
+          { id:'j112', title:'Urgent AC call', customer:'Beacon Grocery', address:'45 Beacon St, Boston', time:'2:00 PM', start:14, duration:1, x:61, y:61, techIds:[] },
+          { id:'j113', title:'Water leak inspection', customer:'South End Cafe', address:'480 Tremont St, Boston', time:'3:15 PM', start:15.25, duration:1, x:52, y:55, techIds:[] }
+        ])
       },
       single: {
         techs: [techs[3]],
-        jobs: [{ id:'j201', title:'Annual maintenance', customer:'Harbor Bakery', address:'7 Drydock Ave, Boston', time:'11:00 AM', start:11, duration:1.2, x:58, y:49, techIds:['maya'] }],
-        missing: 0
+        jobs: [{ id:'j201', title:'Annual maintenance', customer:'Harbor Bakery', address:'7 Drydock Ave, Boston', time:'11:00 AM', start:11, duration:1.2, x:58, y:49, techIds:['maya'] }]
       },
-      empty: { techs: techs.slice(0,3), jobs: [], missing: 0 },
+      empty: { techs: techs.slice(0,3), jobs: [] },
       many: {
         techs: manyTechs,
         jobs: manyTechs.flatMap((tech, i) => [
           { id:`m${i}a`, title:'Morning service', customer:`Customer ${i + 1}A`, address:'Mapped address', time:`${8 + (i % 3)}:00 AM`, start:8 + (i % 3), duration:.8, x:15 + ((i * 13) % 72), y:18 + ((i * 17) % 64), techIds:[tech.id] },
           { id:`m${i}b`, title:'Afternoon service', customer:`Customer ${i + 1}B`, address:'Mapped address', time:'1:30 PM', start:13.5 + (i % 2), duration:.9, x:17 + ((i * 23) % 70), y:20 + ((i * 29) % 60), techIds:[tech.id] }
-        ]),
-        missing: 0
+        ])
       }
     };
 
-    const state = { view:'day', layout:'split', scenario:'normal', mapOpen:true, selected:null, hovered:null };
+    const state = { view:'day', layout:'split', scenario:'normal', mapOpen:true, unassignedActive:true, selected:null, hovered:null };
     const techById = data => Object.fromEntries(data.techs.map(tech => [tech.id, tech]));
     const esc = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
 
-    function currentData() { return scenarioData[state.scenario]; }
+    function currentData() {
+      const source = scenarioData[state.scenario];
+      return state.unassignedActive
+        ? source
+        : { ...source, jobs: source.jobs.filter(job => job.techIds.length > 0) };
+    }
 
     function updateControl(control, value) {
       document.querySelectorAll(`[data-control="${control}"] button`).forEach(button => {
@@ -563,14 +603,21 @@
     function providerChips() {
       const data = currentData();
       document.getElementById('providerChips').innerHTML = data.techs.map(tech => `
-        <span class="provider-chip" style="--tech:${tech.color}">
+        <span class="provider-chip active" style="--tech:${tech.color}">
           <span class="avatar">${esc(tech.initials)}</span>${esc(tech.name)}
-        </span>`).join('');
+        </span>`).join('') + `
+        <button id="unassignedChip" type="button" class="provider-chip unassigned" style="--tech:${UNASSIGNED_COLOR}" aria-pressed="${state.unassignedActive}">
+          <span class="avatar">U</span>Unassigned
+        </button>`;
+      document.getElementById('unassignedChip').addEventListener('click', () => {
+        state.unassignedActive = !state.unassignedActive;
+        renderAll();
+      });
     }
 
     function jobTechStyle(job, data) {
       const lookup = techById(data);
-      const first = lookup[job.techIds[0]] || data.techs[0] || { color:palette[0] };
+      const first = lookup[job.techIds[0]] || { color:UNASSIGNED_COLOR };
       const second = lookup[job.techIds[1]];
       return `--tech:${first.color};${second ? `--tech-2:${second.color};` : ''}`;
     }
@@ -581,11 +628,11 @@
       const labels = [8,9,10,11,12,13,14,15,16].map((hour, index) => `<span style="top:${index * 62 + 2}px">${hour > 12 ? hour - 12 : hour}:00 ${hour >= 12 ? 'PM' : 'AM'}</span>`).join('');
       const visible = data.jobs.slice(0, state.scenario === 'many' ? 12 : data.jobs.length);
       const cards = visible.map((job, index) => {
-        const tech = lookup[job.techIds[0]] || data.techs[0];
+        const tech = lookup[job.techIds[0]];
         const top = Math.max(5, (job.start - 8) * 62 + 7);
         const width = state.scenario === 'many' ? 'calc(50% - 8px)' : job.techIds.length > 1 ? '52%' : '43%';
         const left = state.scenario === 'many' ? `${(index % 2) * 50}%` : `${(index % 2) * 45}%`;
-        const classes = ['job-card', job.techIds.length > 1 ? 'multi-stripe' : '', focusClass(job.id)].filter(Boolean).join(' ');
+        const classes = ['job-card', job.techIds.length > 1 ? 'multi-stripe' : '', job.techIds.length === 0 ? 'unassigned-card' : '', focusClass(job.id)].filter(Boolean).join(' ');
         return `<button type="button" class="${classes}" data-job-id="${job.id}" style="${jobTechStyle(job,data)}--top:${top}px;--height:${Math.max(48,job.duration*52)}px;--left:${left};--width:${width}" aria-label="${esc(job.title)}, ${esc(job.time)}">
           <strong>${esc(job.title)}</strong><small>${esc(job.time)} · ${esc(tech?.name || 'Unassigned')}</small>
         </button>`;
@@ -596,14 +643,17 @@
     function timelineGrid(data) {
       if (!data.jobs.length) return emptyGrid();
       const hours = [8,9,10,11,12,13,14,15,16].map(hour => `<span>${hour > 12 ? hour - 12 : hour}${hour === 12 ? ' PM' : ''}</span>`).join('');
-      const rows = data.techs.map(tech => {
-        const jobs = data.jobs.filter(job => job.techIds.includes(tech.id));
+      const groups = [...data.techs];
+      if (data.jobs.some(job => job.techIds.length === 0)) groups.push({ id:'__unassigned__', name:'Unassigned', initials:'U', color:UNASSIGNED_COLOR });
+      const rows = groups.map(tech => {
+        const isUnassigned = tech.id === '__unassigned__';
+        const jobs = data.jobs.filter(job => isUnassigned ? job.techIds.length === 0 : job.techIds.includes(tech.id));
         const cards = jobs.map(job => {
           const left = Math.max(0, Math.min(92, ((job.start - 8) / 9) * 100));
           const width = Math.max(10, Math.min(25, (job.duration / 9) * 100));
-          return `<button type="button" class="job-card timeline-job ${focusClass(job.id)}" data-job-id="${job.id}" style="--tech:${tech.color};--left:${left}%;--width:${width}%" aria-label="${esc(job.title)}, ${esc(job.time)}"><strong>${esc(job.title)}</strong><small>${esc(job.time)}</small></button>`;
+          return `<button type="button" class="job-card timeline-job ${isUnassigned ? 'unassigned-card' : ''} ${focusClass(job.id)}" data-job-id="${job.id}" style="--tech:${tech.color};--left:${left}%;--width:${width}%" aria-label="${esc(job.title)}, ${esc(job.time)}"><strong>${esc(job.title)}</strong><small>${esc(job.time)}</small></button>`;
         }).join('');
-        return `<div class="tech-row"><div class="tech-name" style="--tech:${tech.color}"><span class="avatar">${esc(tech.initials)}</span><span><strong>${esc(tech.name)}</strong><small>${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}</small></span></div><div class="tech-track">${cards || '<span class="muted" style="position:absolute;left:14px;top:35px;font-size:11px">Available</span>'}</div></div>`;
+        return `<div class="tech-row"><div class="tech-name ${isUnassigned ? 'unassigned' : ''}" style="--tech:${tech.color}"><span class="avatar">${esc(tech.initials)}</span><span><strong>${esc(tech.name)}</strong><small>${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}</small></span></div><div class="tech-track">${cards || '<span class="muted" style="position:absolute;left:14px;top:35px;font-size:11px">Available</span>'}</div></div>`;
       }).join('');
       return `<div class="timeline-scroll"><div class="timeline-grid"><div class="timeline-ruler"><span>Technician</span>${hours}</div>${rows}</div></div>`;
     }
@@ -647,43 +697,92 @@
       return path;
     }
 
-    function pinMarkup(job, tech, order, offsetIndex = 0) {
-      const offset = (offsetIndex - .5) * 2.3;
-      const classes = `pin-group ${focusClass(job.id)}`;
-      return `<g transform="translate(${job.x + offset} ${job.y})"><g class="${classes}" data-job-id="${job.id}" role="button" tabindex="0" aria-label="${esc(job.title)}, stop ${order}" style="--tech:${tech.color}">
+    function pinMarkup(job, assignedTechs, order) {
+      const unassigned = assignedTechs.length === 0;
+      const primary = assignedTechs[0] || { color:UNASSIGNED_COLOR };
+      const secondary = assignedTechs[1];
+      const classes = `pin-group ${unassigned ? 'is-unassigned' : ''} ${focusClass(job.id)}`;
+      const pinLabel = unassigned ? 'U' : order;
+      const aria = unassigned ? `${job.title}, unassigned` : `${job.title}, stop ${order}`;
+      return `<g transform="translate(${job.x} ${job.y})"><g class="${classes}" data-job-id="${job.id}" role="button" tabindex="0" aria-label="${esc(aria)}" style="--tech:${primary.color};${secondary ? `--tech-2:${secondary.color}` : ''}">
         <path class="pin-shape" d="M0-6.6c-4.1 0-7 2.8-7 6.7 0 5.3 7 11.5 7 11.5S7 5.4 7 .1C7-3.8 4.1-6.6 0-6.6Z"/>
-        <circle cx="0" cy=".1" r="4.2" fill="var(--tech)"/><text class="pin-number" x="0" y=".4">${order}</text>
+        <circle class="pin-center" cx="0" cy=".1" r="4.2"/>${secondary ? '<circle class="pin-multi-ring" cx="0" cy=".1" r="5.2"/>' : ''}<text class="pin-number" x="0" y=".4">${pinLabel}</text>
       </g></g>`;
     }
 
-    function mapInner(data, geometry = 'straight', options = {}) {
+    function mapInner(data, geometry = 'straight') {
       const lookup = techById(data);
       const mapped = data.jobs.filter(job => job.x != null && job.y != null);
       const routes = [];
       const pins = [];
+      const primaryOrderByJob = new Map();
       data.techs.forEach(tech => {
-        const jobs = mapped.filter(job => job.techIds.includes(tech.id)).sort((a,b) => a.start - b.start);
-        if (jobs.length > 1) {
+        const orderedJobs = data.jobs.filter(job => job.techIds.includes(tech.id)).sort((a,b) => a.start - b.start);
+        orderedJobs.forEach((job, index) => {
+          if (!primaryOrderByJob.has(job.id)) primaryOrderByJob.set(job.id, index + 1);
+        });
+
+        // A coordinate-less visit breaks the visible route. Never draw a false
+        // shortcut across a stop that is present in the filtered schedule.
+        const runs = [];
+        let run = [];
+        orderedJobs.forEach(job => {
+          if (job.x != null && job.y != null) run.push(job);
+          else if (run.length) { runs.push(run); run = []; }
+        });
+        if (run.length) runs.push(run);
+
+        for (const jobs of runs.filter(items => items.length > 1)) {
           const isDim = (state.hovered || state.selected) && !jobs.some(job => job.id === state.hovered || job.id === state.selected);
           const d = routePath(jobs, geometry);
           routes.push(`<path class="route-under ${isDim ? 'is-dim' : ''}" d="${d}"/><path class="route ${isDim ? 'is-dim' : ''}" d="${d}" style="--tech:${tech.color}"/>`);
         }
-        jobs.forEach((job, index) => pins.push(pinMarkup(job, tech, index + 1, job.techIds.indexOf(tech.id))));
       });
 
-      const legend = data.techs.map(tech => `<div class="legend-row" style="--tech:${tech.color}"><span class="legend-initial">${esc(tech.initials)}</span><span>${esc(tech.name)}</span></div>`).join('');
+      // Exactly one pin per mapped job, including joint jobs. Joint routes still
+      // pass through the same pin; the secondary ring carries the second colour.
+      mapped.forEach(job => {
+        const assignedTechs = job.techIds.map(id => lookup[id]).filter(Boolean);
+        pins.push(pinMarkup(job, assignedTechs, primaryOrderByJob.get(job.id) || ''));
+      });
+
+      const hasMappedUnassigned = mapped.some(job => job.techIds.length === 0);
+      const legend = data.techs.map(tech => `<div class="legend-row" style="--tech:${tech.color}"><span class="legend-initial">${esc(tech.initials)}</span><span>${esc(tech.name)}</span></div>`).join('')
+        + (hasMappedUnassigned ? `<div class="legend-row unassigned" style="--tech:${UNASSIGNED_COLOR}"><span class="legend-initial">U</span><span>Unassigned · no route</span></div>` : '');
       const selected = data.jobs.find(job => job.id === state.selected);
       const single = data.techs.find(tech => mapped.filter(job => job.techIds.includes(tech.id)).length === 1);
-      const notice = data.missing ? `<div class="map-notice"><span class="notice-dot"></span>${data.missing} ${data.missing === 1 ? 'job is' : 'jobs are'} not shown — no coordinates</div>` : single && data.jobs.length === 1 ? `<div class="map-notice"><span class="legend-dot" style="--tech:${single.color}"></span>1 stop — no route line needed</div>` : '';
+      const notice = single && data.jobs.length === 1 ? `<div class="map-notice"><span class="legend-dot" style="--tech:${single.color}"></span>1 stop — no route line needed</div>` : '';
       const popover = selected && selected.x != null ? `<aside class="map-popover"><button class="close" type="button" data-clear-selection aria-label="Close">×</button><strong>${esc(selected.title)}</strong><p>${esc(selected.time)} · ${esc(selected.customer)}</p><p>${esc(selected.address)}</p></aside>` : '';
-      const empty = !data.jobs.length ? `<div class="empty-state"><div><div class="empty-icon">⌖</div><h3>No routes today</h3><p>Jobs added for this date will appear here automatically.</p></div></div>` : '';
+      const empty = mapped.length === 0 ? `<div class="empty-state"><div><div class="empty-icon">⌖</div><h3>${data.jobs.length ? 'No pins for these filters' : 'No routes today'}</h3><p>${data.jobs.length ? 'The jobs are listed below because none has a usable map coordinate.' : 'Jobs added for this date will appear here automatically.'}</p></div></div>` : '';
       const density = data.techs.length > 10 ? `<div class="map-notice"><span class="notice-dot" style="background:var(--blanc-accent)"></span>12 unique colours · initials remain visible at dense overlaps</div>` : notice;
       return `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Illustrative Boston-area schedule map">${baseMapSvg()}<g>${routes.join('')}</g><g>${pins.join('')}</g></svg>
         <div class="map-legend"><div class="legend-title">Technicians · same roster colours</div>${legend}</div>${density}${popover}${empty}`;
     }
 
+    function notOnMapList(data) {
+      const lookup = techById(data);
+      const jobs = data.jobs.filter(job => job.x == null || job.y == null);
+      if (!jobs.length) return '';
+      const rows = jobs.map(job => {
+        const assigned = job.techIds.map(id => lookup[id]).filter(Boolean);
+        const techNames = assigned.length ? assigned.map(tech => tech.name).join(' + ') : 'Unassigned';
+        const techDot = assigned.length ? `<span class="dot" style="--tech:${assigned[0].color}"></span>` : '';
+        const reason = job.address && job.address.trim() ? 'Address not on the map yet' : 'No address';
+        return `<button type="button" class="not-map-row ${focusClass(job.id)}" data-job-id="${job.id}" aria-label="${esc(job.title)}, ${esc(reason)}">
+          <span><strong>${esc(job.title)}</strong><span class="not-map-tech">${techDot}${esc(techNames)}</span></span>
+          <span><span class="time">${esc(job.time)}</span><span class="not-map-reason">${esc(reason)}</span></span>
+        </button>`;
+      }).join('');
+      return `<section class="not-map-panel"><div class="not-map-head"><h3>Not on the map</h3><span class="not-map-count">${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}</span></div><div class="not-map-list">${rows}</div><p class="not-map-help">Click a row to select and highlight its grid job. The map does not pan without coordinates.</p></section>`;
+    }
+
     function mapCard(data, geometry = 'straight') {
-      return `<div class="map-card"><div class="map-head"><div><h3>All technician routes</h3><p>${geometry === 'straight' ? 'Visit order · straight connection' : 'Visit order · road geometry'}</p></div><span class="map-badge">${data.jobs.filter(job => job.x != null).length} mapped</span></div><div class="map-canvas">${mapInner(data,geometry)}</div></div>`;
+      const pinCount = data.jobs.filter(job => job.x != null && job.y != null).length;
+      const notOnMapCount = data.jobs.length - pinCount;
+      const arithmetic = notOnMapCount
+        ? `+ ${notOnMapCount} not on map = ${data.jobs.length} filtered jobs`
+        : `= ${data.jobs.length} filtered ${data.jobs.length === 1 ? 'job' : 'jobs'}`;
+      return `<div class="map-card ${notOnMapCount ? 'has-not-map' : ''}"><div class="map-head"><div><h3>Filtered technician routes</h3><p>${geometry === 'straight' ? 'Visible toolbar chips · straight visit order' : 'Visible toolbar chips · road geometry'}</p></div><div class="map-count"><strong>${pinCount} ${pinCount === 1 ? 'pin' : 'pins'}</strong><span>${arithmetic}</span></div></div><div class="map-canvas">${mapInner(data,geometry)}</div>${notOnMapList(data)}</div>`;
     }
 
     function renderStage() {
@@ -706,7 +805,7 @@
     function updateCaption() {
       const captions = {
         toggle: '<span><strong>Option A · List ⇄ Map:</strong> lowest density; loses simultaneous grid/map context.</span><span>Best fallback below 1280px</span>',
-        split: '<span><strong>Option B · Split:</strong> route and schedule stay visible together; linked selection is immediately useful.</span><span>Recommended ≥1280px</span>',
+        split: '<span><strong>Approved · Split:</strong> route and schedule stay visible together; linked selection is immediately useful.</span><span>Ships at ≥1280px</span>',
         panel: '<span><strong>Option C · Map panel:</strong> preserves most grid width, but covers late-day columns while open.</span><span>Useful for short inspections</span>'
       };
       document.getElementById('layoutCaption').innerHTML = captions[state.layout];
@@ -765,6 +864,7 @@
         const control = button.closest('[data-control]').dataset.control;
         state[control] = button.dataset.value;
         if (control === 'layout') state.mapOpen = button.dataset.value !== 'toggle';
+        if (control === 'scenario') state.unassignedActive = true;
         updateControl(control, button.dataset.value);
         renderAll();
       });
