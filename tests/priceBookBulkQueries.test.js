@@ -35,6 +35,16 @@ beforeEach(() => {
     fakeClient.query.mockReset();
     fakeClient.release.mockReset();
     db.getClient.mockReset().mockResolvedValue(fakeClient);
+    db.query.mockReset();
+});
+
+test('CSV/import SKU lookup is company-scoped and code-normalized', async () => {
+    db.query.mockResolvedValue({ rows: [] });
+    await queries.findByCodeScoped('company-a', ' 1000 ');
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/company_id = \$1/);
+    expect(sql).toMatch(/lower\(btrim\(code\)\) = lower\(btrim\(\$2\)\)/);
+    expect(params).toEqual(['company-a', ' 1000 ']);
 });
 
 describe('queries.bulkSaveItems (transaction layer)', () => {

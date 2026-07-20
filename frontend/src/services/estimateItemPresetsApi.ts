@@ -7,6 +7,9 @@ export interface EstimateItemPreset {
     default_quantity: number;
     default_unit_price: number;
     default_taxable: boolean;
+    category_id: number | null;
+    code: string | null;
+    unit: string | null;
     usage_count: number;
     last_used_at: string | null;
     archived_at: string | null;

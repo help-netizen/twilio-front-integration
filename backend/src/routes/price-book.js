@@ -38,6 +38,10 @@ router.get('/categories', VIEW, async (req, res) => {
     try { res.json({ categories: await priceBook.listCategories(companyId(req), { includeArchived: bool(req.query.includeArchived) }) }); }
     catch (e) { sendErr(res, e); }
 });
+router.get('/categories/tree', VIEW, async (req, res) => {
+    try { res.json({ categories: await priceBook.listCategoryTree(companyId(req)) }); }
+    catch (e) { sendErr(res, e); }
+});
 router.post('/categories', MANAGE, async (req, res) => {
     try { res.status(201).json(await priceBook.createCategory(companyId(req), req.body || {}, { createdBy: actorId(req) })); }
     catch (e) { sendErr(res, e); }
@@ -55,7 +59,12 @@ router.delete('/categories/:id', MANAGE, async (req, res) => {
 router.get('/groups', VIEW, async (req, res) => {
     try {
         const search = typeof req.query.search === 'string' ? req.query.search : '';
-        res.json({ groups: await priceBook.listGroups(companyId(req), { includeArchived: bool(req.query.includeArchived), search }) });
+        res.json({ groups: await priceBook.listGroups(companyId(req), {
+            includeArchived: bool(req.query.includeArchived),
+            search,
+            category_id: req.query.category_id != null && req.query.category_id !== '' ? Number(req.query.category_id) : null,
+            uncategorized: bool(req.query.uncategorized),
+        }) });
     } catch (e) { sendErr(res, e); }
 });
 router.get('/groups/:id', VIEW, async (req, res) => {
@@ -86,6 +95,7 @@ router.get('/items', VIEW, async (req, res) => {
         const items = await presets.listForManage(companyId(req), {
             search: typeof req.query.search === 'string' ? req.query.search : '',
             category_id: req.query.category_id != null && req.query.category_id !== '' ? Number(req.query.category_id) : null,
+            uncategorized: bool(req.query.uncategorized),
             includeArchived: bool(req.query.includeArchived),
             limit: req.query.limit ? Number(req.query.limit) : 50,
             offset: req.query.offset ? Number(req.query.offset) : 0,

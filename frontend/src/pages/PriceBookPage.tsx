@@ -18,20 +18,28 @@ import { FloatingSelect } from '../components/ui/floating-select';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
 import { toast } from 'sonner';
-import { Plus, Pencil, Archive, Trash2, Loader2, Upload, Download, FileDown, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Plus, Pencil, Archive, Trash2, Loader2, Upload, Download, FileDown, CheckCircle2, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import * as api from '../services/priceBookApi';
-import type { PriceBookCategory, PriceBookItem, PriceBookGroup, GroupItemInput, ImportSummary, BulkItemsPayload } from '../services/priceBookApi';
+import type { PriceBookCategory, PriceBookCategoryNode, PriceBookItem, PriceBookGroup, GroupItemInput, ImportSummary, BulkItemsPayload } from '../services/priceBookApi';
+import { categoryOptions, categoryPathLabel, descendantIds, flattenCategoryTree } from '../components/estimates/priceBookBrowseModel';
 
 const money = (n: number | null | undefined) => `$${(Number(n) || 0).toFixed(2)}`;
 
 export default function PriceBookPage() {
     const [categories, setCategories] = useState<PriceBookCategory[]>([]);
+    const [categoryTree, setCategoryTree] = useState<PriceBookCategoryNode[]>([]);
     const [version, setVersion] = useState(0);          // bump to force tab re-fetch (after import)
     const [ioOpen, setIoOpen] = useState(false);
     const [tab, setTab] = useState('items');
     // Items tab reports its dirty state up here so tab-switching can guard it.
     const itemsDirtyRef = useRef(false);
-    const loadCategories = useCallback(async () => { try { setCategories(await api.listCategories()); } catch { /* */ } }, []);
+    const loadCategories = useCallback(async () => {
+        try {
+            const tree = await api.listCategoryTree();
+            setCategoryTree(tree);
+            setCategories(flattenCategoryTree(tree));
+        } catch { /* */ }
+    }, []);
     useEffect(() => { loadCategories(); }, [loadCategories, version]);
     const refreshAll = () => { setVersion(v => v + 1); loadCategories(); };
 
@@ -58,8 +66,8 @@ export default function PriceBookPage() {
                     <TabsTrigger value="groups">Item groups</TabsTrigger>
                     <TabsTrigger value="categories">Item categories</TabsTrigger>
                 </TabsList>
-                <TabsContent value="items"><ItemsTab categories={categories} version={version} dirtyRef={itemsDirtyRef} /></TabsContent>
-                <TabsContent value="groups"><GroupsTab categories={categories} version={version} /></TabsContent>
+                <TabsContent value="items"><ItemsTab categories={categories} categoryTree={categoryTree} version={version} dirtyRef={itemsDirtyRef} /></TabsContent>
+                <TabsContent value="groups"><GroupsTab categories={categories} categoryTree={categoryTree} version={version} /></TabsContent>
                 <TabsContent value="categories"><CategoriesTab onChanged={loadCategories} version={version} /></TabsContent>
             </Tabs>
             <ImportExportPanel open={ioOpen} onClose={() => setIoOpen(false)} onImported={refreshAll} />
@@ -206,7 +214,7 @@ function DescriptionCell({ className, style, value, disabled, onChange }: {
 // Validation-error cell key: `${scope}:${index}:${field}`.
 type CellErrors = Record<string, string>;
 
-function ItemsTab({ categories, version, dirtyRef }: { categories: PriceBookCategory[]; version: number; dirtyRef: React.MutableRefObject<boolean> }) {
+function ItemsTab({ categories, categoryTree, version, dirtyRef }: { categories: PriceBookCategory[]; categoryTree: PriceBookCategoryNode[]; version: number; dirtyRef: React.MutableRefObject<boolean> }) {
     const [rows, setRows] = useState<RowDraft[]>([]);
     const [loaded, setLoaded] = useState<RowDraft[]>([]);   // snapshot for Discard
     const [search, setSearch] = useState('');
@@ -400,7 +408,7 @@ function ItemsTab({ categories, version, dirtyRef }: { categories: PriceBookCate
                                                     <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                                                     <SelectContent>
                                                         <SelectItem value="none">Uncategorized</SelectItem>
-                                                        {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                                                        {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{categoryPathLabel(categoryTree, c.id)}</SelectItem>)}
                                                     </SelectContent>
                                                 </Select>
                                             </td>
@@ -444,7 +452,7 @@ function parseValidation(msg: string): ValidationBody | null {
 }
 
 // ─────────────────────────── Groups ───────────────────────────
-function GroupsTab({ categories, version }: { categories: PriceBookCategory[]; version: number }) {
+function GroupsTab({ categories, categoryTree, version }: { categories: PriceBookCategory[]; categoryTree: PriceBookCategoryNode[]; version: number }) {
     const [groups, setGroups] = useState<PriceBookGroup[]>([]);
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<PriceBookGroup | 'new' | null>(null);
@@ -461,18 +469,18 @@ function GroupsTab({ categories, version }: { categories: PriceBookCategory[]; v
                 <Table head={['Name', 'Items', 'Total', 'Category', '']}>
                     {groups.map(g => (
                         <tr key={g.id} className="border-t" style={{ borderColor: 'var(--blanc-line)' }}>
-                            <Td>{g.name}</Td><Td muted>{g.item_count ?? 0}</Td><Td>{money(g.total)}</Td><Td muted>{g.category_name || '—'}</Td>
+                            <Td>{g.name}</Td><Td muted>{g.item_count ?? 0}</Td><Td>{money(g.total)}</Td><Td muted>{g.category_id == null ? null : categoryPathLabel(categoryTree, g.category_id)}</Td>
                             <Td><RowActions onEdit={async () => setEditing(await api.getGroup(g.id))} onArchive={async () => { await api.archiveGroup(g.id); toast.success('Archived'); load(); }} /></Td>
                         </tr>
                     ))}
                 </Table>
             )}
-            <GroupPanel open={!!editing} group={editing === 'new' ? null : editing} categories={categories} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
+            <GroupPanel open={!!editing} group={editing === 'new' ? null : editing} categories={categories} categoryTree={categoryTree} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
         </div>
     );
 }
 
-function GroupPanel({ open, group, categories, onClose, onSaved }: { open: boolean; group: PriceBookGroup | null; categories: PriceBookCategory[]; onClose: () => void; onSaved: () => void }) {
+function GroupPanel({ open, group, categories, categoryTree, onClose, onSaved }: { open: boolean; group: PriceBookGroup | null; categories: PriceBookCategory[]; categoryTree: PriceBookCategoryNode[]; onClose: () => void; onSaved: () => void }) {
     const [name, setName] = useState('');
     const [categoryId, setCategoryId] = useState('');
     const [rows, setRows] = useState<{ item_id: number; name: string; quantity: string }[]>([]);
@@ -521,7 +529,7 @@ function GroupPanel({ open, group, categories, onClose, onSaved }: { open: boole
                             <FloatingField id="pb-group-name" label="Name" value={name} onChange={e => setName(e.target.value)} />
                             <FloatingSelect id="pb-group-cat" label="Category" value={categoryId || 'none'} onValueChange={v => setCategoryId(v === 'none' ? '' : v)}>
                                 <SelectItem value="none">Uncategorized</SelectItem>
-                                {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                                {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{categoryPathLabel(categoryTree, c.id)}</SelectItem>)}
                             </FloatingSelect>
                         </div>
                         <div className="space-y-2">
@@ -557,45 +565,93 @@ function GroupPanel({ open, group, categories, onClose, onSaved }: { open: boole
 
 // ─────────────────────────── Categories ───────────────────────────
 function CategoriesTab({ onChanged, version }: { onChanged: () => void; version: number }) {
-    const [cats, setCats] = useState<PriceBookCategory[]>([]);
+    const [tree, setTree] = useState<PriceBookCategoryNode[]>([]);
+    const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
     const [loading, setLoading] = useState(true);
-    const [editing, setEditing] = useState<PriceBookCategory | 'new' | null>(null);
-    const load = useCallback(async () => { setLoading(true); try { setCats(await api.listCategories()); } catch { toast.error('Failed to load categories'); } finally { setLoading(false); } }, []);
+    const [editing, setEditing] = useState<{ cat: PriceBookCategory | null; parentId: number | null } | null>(null);
+    const load = useCallback(async () => { setLoading(true); try { setTree(await api.listCategoryTree()); } catch { toast.error('Failed to load categories'); } finally { setLoading(false); } }, []);
     useEffect(() => { load(); }, [load, version]);
     const after = () => { setEditing(null); load(); onChanged(); };
+    const flat = flattenCategoryTree(tree);
+    const byId = new Map(flat.map(category => [category.id, category]));
+    const cats = flat.filter(category => {
+        let parentId = category.parent_id;
+        while (parentId != null) {
+            if (collapsed.has(parentId)) return false;
+            parentId = byId.get(parentId)?.parent_id ?? null;
+        }
+        return true;
+    });
+    const toggle = (id: number) => setCollapsed(previous => {
+        const next = new Set(previous);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    });
+    const archive = async (cat: PriceBookCategory) => {
+        try {
+            await api.archiveCategory(cat.id);
+            toast.success('Archived');
+            after();
+        } catch (error) {
+            if ((error as Error & { status?: number }).status === 409) toast.error('Move or archive this category’s subcategories, items, and groups first');
+            else toast.error('Archive failed');
+        }
+    };
     return (
         <div className="mt-4">
             <div className="flex items-center mb-3">
                 <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>Categories only organize items &amp; groups — they aren't added to documents.</p>
                 <div className="flex-1" />
-                <Button onClick={() => setEditing('new')}><Plus size={16} /> Add category</Button>
+                <Button onClick={() => setEditing({ cat: null, parentId: null })}><Plus size={16} /> Add category</Button>
             </div>
             {loading ? <Spinner /> : cats.length === 0 ? <Empty label="No categories yet" /> : (
                 <Table head={['Name', 'Description', '']}>
                     {cats.map(c => (
                         <tr key={c.id} className="border-t" style={{ borderColor: 'var(--blanc-line)' }}>
-                            <Td>{c.name}</Td><Td muted>{c.description || '—'}</Td>
-                            <Td><RowActions onEdit={() => setEditing(c)} onArchive={async () => { await api.archiveCategory(c.id); toast.success('Archived'); after(); }} /></Td>
+                            <td className="px-3 py-2" style={{ paddingLeft: `${12 + (c.depth - 1) * 24}px` }}>
+                                <div className="flex items-center gap-2">
+                                    {c.children.length > 0 && (
+                                        <button type="button" onClick={() => toggle(c.id)} aria-label={collapsed.has(c.id) ? `Expand ${c.name}` : `Collapse ${c.name}`} style={{ color: 'var(--blanc-ink-3)' }}>
+                                            {collapsed.has(c.id) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                                        </button>
+                                    )}
+                                    <span>{c.name}</span>
+                                    {c.depth < 3 && (
+                                        <button type="button" onClick={() => setEditing({ cat: null, parentId: c.id })} className="text-xs" style={{ color: 'var(--blanc-job)' }}>Add subcategory</button>
+                                    )}
+                                </div>
+                            </td>
+                            <Td muted>{c.description || null}</Td>
+                            <Td><RowActions onEdit={() => setEditing({ cat: c, parentId: c.parent_id })} onArchive={() => archive(c)} /></Td>
                         </tr>
                     ))}
                 </Table>
             )}
-            <CategoryPanel open={!!editing} cat={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={after} />
+            <CategoryPanel open={!!editing} cat={editing?.cat || null} initialParentId={editing?.parentId ?? null} tree={tree} onClose={() => setEditing(null)} onSaved={after} />
         </div>
     );
 }
 
-function CategoryPanel({ open, cat, onClose, onSaved }: { open: boolean; cat: PriceBookCategory | null; onClose: () => void; onSaved: () => void }) {
+function CategoryPanel({ open, cat, initialParentId, tree, onClose, onSaved }: { open: boolean; cat: PriceBookCategory | null; initialParentId: number | null; tree: PriceBookCategoryNode[]; onClose: () => void; onSaved: () => void }) {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
+    const [parentId, setParentId] = useState('none');
     const [busy, setBusy] = useState(false);
-    useEffect(() => { if (open) { setName(cat?.name || ''); setDescription(cat?.description || ''); } }, [open, cat]);
+    useEffect(() => {
+        if (open) {
+            setName(cat?.name || '');
+            setDescription(cat?.description || '');
+            setParentId(initialParentId == null ? 'none' : String(initialParentId));
+        }
+    }, [open, cat, initialParentId]);
     const canSave = name.trim().length > 0;
+    const excluded = cat ? descendantIds(tree, cat.id) : new Set<number>();
+    const parentOptions = categoryOptions(tree, excluded).filter(option => option.depth < 3);
     const save = async () => {
         if (!canSave) return;
         setBusy(true);
         try {
-            const body = { name: name.trim(), description: description.trim() || null };
+            const body = { name: name.trim(), description: description.trim() || null, parent_id: parentId === 'none' ? null : Number(parentId) };
             if (cat) await api.updateCategory(cat.id, body); else await api.createCategory(body);
             toast.success(cat ? 'Category updated' : 'Category created'); onSaved();
         } catch { toast.error('Save failed'); } finally { setBusy(false); }
@@ -610,6 +666,10 @@ function CategoryPanel({ open, cat, onClose, onSaved }: { open: boolean; cat: Pr
                 <DialogBody className="md:px-8 md:py-7">
                     <div className="mx-auto w-full max-w-[740px] space-y-3.5">
                         <FloatingField id="pb-cat-name" label="Name" value={name} onChange={e => setName(e.target.value)} />
+                        <FloatingSelect id="pb-cat-parent" label="Parent category" value={parentId} onValueChange={setParentId}>
+                            <SelectItem value="none">Level 1 (root)</SelectItem>
+                            {parentOptions.map(option => <SelectItem key={option.id} value={String(option.id)}>{option.label}</SelectItem>)}
+                        </FloatingSelect>
                         <FloatingField id="pb-cat-desc" label="Description" textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} />
                     </div>
                 </DialogBody>

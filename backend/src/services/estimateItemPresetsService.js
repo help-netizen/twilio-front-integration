@@ -12,6 +12,7 @@
 'use strict';
 
 const queries = require('../db/estimateItemPresetsQueries');
+const priceBookQueries = require('../db/priceBookQueries');
 
 class EstimateItemPresetError extends Error {
     constructor(code, httpStatus, message, details = null) {
@@ -63,6 +64,27 @@ function validatePayload(payload, { partial = false } = {}) {
     }
 }
 
+function normalizeCategoryId(value) {
+    if (value === null || value === '') return null;
+    const id = Number(value);
+    if (!Number.isInteger(id) || id <= 0) {
+        throw new EstimateItemPresetError('validation_failed', 422, 'category_id must be a positive integer or null');
+    }
+    return id;
+}
+
+async function validateCategory(companyId, payload) {
+    if (payload.category_id === undefined) return payload;
+    const category_id = normalizeCategoryId(payload.category_id);
+    if (category_id != null) {
+        const category = await priceBookQueries.getCategory(companyId, category_id);
+        if (!category || category.archived_at) {
+            throw new EstimateItemPresetError('category_not_found', 404, `Category ${category_id} not found`);
+        }
+    }
+    return { ...payload, category_id };
+}
+
 async function search(companyId, params = {}) {
     const rows = await queries.searchForCompany(companyId, params);
     return rows.map(mapRow);
@@ -82,11 +104,12 @@ async function get(companyId, id) {
 
 async function create(companyId, payload, { createdBy = null } = {}) {
     validatePayload(payload);
+    const fields = await validateCategory(companyId, payload);
     // Dedupe by name (case-insensitive). If an active preset already exists, return it
     // instead of erroring — keeps the "type then create" flow idempotent.
-    const existing = await queries.findByNameScoped(companyId, payload.name);
+    const existing = await queries.findByNameScoped(companyId, fields.name);
     if (existing) return mapRow(existing);
-    const inserted = await queries.insertPreset(companyId, { ...payload, createdBy });
+    const inserted = await queries.insertPreset(companyId, { ...fields, createdBy });
     return mapRow(inserted);
 }
 
@@ -94,7 +117,8 @@ async function update(companyId, id, payload) {
     validatePayload(payload, { partial: true });
     const existing = await queries.getByIdScoped(companyId, id);
     if (!existing) throw new EstimateItemPresetError('preset_not_found', 404, `Preset ${id} not found`);
-    const updated = await queries.updatePresetScoped(companyId, id, payload);
+    const fields = await validateCategory(companyId, payload);
+    const updated = await queries.updatePresetScoped(companyId, id, fields);
     return mapRow(updated);
 }
 

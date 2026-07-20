@@ -10,7 +10,7 @@ jest.mock('../backend/src/db/priceBookQueries', () => ({
     findCategoryByName: jest.fn(), findGroupByName: jest.fn(), upsertGroupItem: jest.fn(), exportRows: jest.fn(),
 }));
 jest.mock('../backend/src/db/estimateItemPresetsQueries', () => ({
-    findByNameScoped: jest.fn(), updatePresetScoped: jest.fn(), insertPreset: jest.fn(),
+    findByNameScoped: jest.fn(), findByCodeScoped: jest.fn(), updatePresetScoped: jest.fn(), insertPreset: jest.fn(),
 }));
 
 const q = require('../backend/src/db/priceBookQueries');
@@ -80,7 +80,7 @@ describe('CSV import', () => {
         q.findGroupByName.mockResolvedValue(null);
         q.insertGroup.mockResolvedValue({ id: 9 });
         q.upsertGroupItem.mockResolvedValue(undefined);
-        presetQ.findByNameScoped
+        presetQ.findByCodeScoped
             .mockResolvedValueOnce(null)                 // "Labor" → new
             .mockResolvedValueOnce({ id: 42 });          // "Part" → existing
         presetQ.insertPreset.mockResolvedValue({ id: 41 });
