@@ -81,3 +81,9 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
   the whole turn is lost (exit 2, zero files changed — looks exactly like an L-016
   draft-without-apply until you read the log). `cd` into the worktree and drop `-C`.
   Hit 2026-07-20 on OB-16.
+
+- **L-019 `codex exec resume` rejects `-C` as well as `-s`/`-o`.** Only `exec` takes the
+  working-directory flag; on `resume` it dies with `unexpected argument '-C' found` and
+  the whole turn is lost (exit 2, zero files changed — indistinguishable from an L-016
+  draft-without-apply until you read the log). `cd` into the worktree and drop `-C`.
+  Hit 2026-07-20 on OB-16.
