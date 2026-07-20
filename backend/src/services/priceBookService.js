@@ -10,11 +10,12 @@ const q = require('../db/priceBookQueries');
 const presetQ = require('../db/estimateItemPresetsQueries');
 
 class PriceBookError extends Error {
-    constructor(code, httpStatus, message) {
+    constructor(code, httpStatus, message, details = null) {
         super(message);
         this.name = 'PriceBookError';
         this.code = code;
         this.httpStatus = httpStatus;
+        this.details = details;
     }
 }
 
@@ -28,22 +29,93 @@ function requireName(payload, { partial = false } = {}) {
 
 const num = (v) => (v == null ? null : Number(v));
 
+function normalizeParentId(value) {
+    if (value === null || value === '') return null;
+    const id = Number(value);
+    if (!Number.isInteger(id) || id <= 0) {
+        throw new PriceBookError('validation_failed', 422, 'parent_id must be a positive integer or null');
+    }
+    return id;
+}
+
+function categoryWriteError(err) {
+    if (err instanceof PriceBookError) return err;
+    if (err?.code === '23505') {
+        return new PriceBookError('category_name_conflict', 409, 'An active category with this name already exists at that level');
+    }
+    if (err?.code === '23514') {
+        return new PriceBookError('category_tree_invalid', 422, err.message);
+    }
+    return err;
+}
+
+async function requireActiveCategory(companyId, id) {
+    const category = await q.getCategory(companyId, id);
+    if (!category || category.archived_at) {
+        throw new PriceBookError('category_not_found', 404, `Category ${id} not found`);
+    }
+    return category;
+}
+
 // ── Categories ───────────────────────────────────────────────────────────────
 async function listCategories(companyId, opts) { return q.listCategories(companyId, opts); }
+async function listCategoryTree(companyId) {
+    const categories = await q.listCategories(companyId, { includeArchived: false });
+    const byId = new Map(categories.map(category => [Number(category.id), { ...category, depth: 1, children: [] }]));
+    const roots = [];
+    for (const category of byId.values()) {
+        const parent = category.parent_id == null ? null : byId.get(Number(category.parent_id));
+        if (parent) parent.children.push(category);
+        else roots.push(category);
+    }
+    const sortNodes = (nodes, depth) => {
+        nodes.sort((a, b) => Number(a.sort_order) - Number(b.sort_order) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+        for (const node of nodes) {
+            node.depth = depth;
+            sortNodes(node.children, depth + 1);
+        }
+    };
+    sortNodes(roots, 1);
+    return roots;
+}
 async function createCategory(companyId, payload, { createdBy = null } = {}) {
     requireName(payload);
-    return q.insertCategory(companyId, { ...payload, createdBy });
+    const parent_id = payload.parent_id === undefined ? null : normalizeParentId(payload.parent_id);
+    if (parent_id != null) await requireActiveCategory(companyId, parent_id);
+    try {
+        return await q.insertCategory(companyId, { ...payload, parent_id, createdBy });
+    } catch (err) {
+        throw categoryWriteError(err);
+    }
 }
 async function updateCategory(companyId, id, payload) {
     requireName(payload, { partial: true });
-    const row = await q.updateCategory(companyId, id, payload);
-    if (!row) throw new PriceBookError('not_found', 404, `Category ${id} not found`);
-    return row;
+    const existing = await q.getCategory(companyId, id);
+    if (!existing) throw new PriceBookError('not_found', 404, `Category ${id} not found`);
+    const next = { ...payload };
+    if (payload.parent_id !== undefined) {
+        next.parent_id = normalizeParentId(payload.parent_id);
+        if (next.parent_id != null) await requireActiveCategory(companyId, next.parent_id);
+    }
+    try {
+        const row = await q.updateCategory(companyId, id, next);
+        if (!row) throw new PriceBookError('not_found', 404, `Category ${id} not found`);
+        return row;
+    } catch (err) {
+        throw categoryWriteError(err);
+    }
 }
 async function archiveCategory(companyId, id) {
-    const row = await q.archiveCategory(companyId, id);
-    if (!row) throw new PriceBookError('not_found', 404, `Category ${id} not found or already archived`);
-    return row;
+    const result = await q.archiveCategory(companyId, id);
+    if (!result?.category) throw new PriceBookError('not_found', 404, `Category ${id} not found or already archived`);
+    if (result.dependencies) {
+        throw new PriceBookError(
+            'category_not_empty', 409,
+            'Move or archive this category’s active subcategories, items, and groups first',
+            result.dependencies,
+        );
+    }
+    return result.category;
 }
 
 // ── Groups ───────────────────────────────────────────────────────────────────
@@ -62,7 +134,14 @@ async function getGroup(companyId, id) {
 
 async function createGroup(companyId, payload, { createdBy = null } = {}) {
     requireName(payload);
-    const group = await q.insertGroup(companyId, { ...payload, createdBy });
+    const next = { ...payload };
+    if (payload.category_id != null && payload.category_id !== '') {
+        next.category_id = normalizeParentId(payload.category_id);
+        await requireActiveCategory(companyId, next.category_id);
+    } else if (payload.category_id !== undefined) {
+        next.category_id = null;
+    }
+    const group = await q.insertGroup(companyId, { ...next, createdBy });
     if (Array.isArray(payload.items)) await q.setGroupItems(companyId, group.id, normalizeItems(payload.items));
     return getGroup(companyId, group.id);
 }
@@ -70,8 +149,15 @@ async function updateGroup(companyId, id, payload) {
     requireName(payload, { partial: true });
     const existing = await q.getGroup(companyId, id);
     if (!existing) throw new PriceBookError('not_found', 404, `Group ${id} not found`);
+    const next = { ...payload };
+    if (payload.category_id != null && payload.category_id !== '') {
+        next.category_id = normalizeParentId(payload.category_id);
+        await requireActiveCategory(companyId, next.category_id);
+    } else if (payload.category_id !== undefined) {
+        next.category_id = null;
+    }
     if (payload.name !== undefined || payload.description !== undefined || payload.category_id !== undefined || payload.sort_order !== undefined) {
-        await q.updateGroup(companyId, id, payload);
+        await q.updateGroup(companyId, id, next);
     }
     // items provided ⇒ replace membership; absent ⇒ leave as-is.
     if (Array.isArray(payload.items)) await q.setGroupItems(companyId, id, normalizeItems(payload.items));
@@ -205,8 +291,11 @@ async function importCsv(companyId, text, { createdBy = null } = {}) {
                 default_taxable: iTax >= 0 ? truthy(at(row, iTax)) : false,
                 category_id: categoryId,
             };
-            // Upsert item by name (import is source of truth → update if it already exists).
-            const existing = await presetQ.findByNameScoped(companyId, name);
+            // SKU/code is authoritative when present; name remains the legacy
+            // fallback for old CSVs without a Code column.
+            const existing = fields.code
+                ? await presetQ.findByCodeScoped(companyId, fields.code)
+                : await presetQ.findByNameScoped(companyId, name);
             let itemId;
             if (existing) { const u = await presetQ.updatePresetScoped(companyId, existing.id, fields); itemId = u.id; summary.items_updated++; }
             else { const ins = await presetQ.insertPreset(companyId, { ...fields, createdBy }); itemId = ins.id; summary.items_created++; }
@@ -226,7 +315,7 @@ async function importCsv(companyId, text, { createdBy = null } = {}) {
 
 module.exports = {
     PriceBookError,
-    listCategories, createCategory, updateCategory, archiveCategory,
+    listCategories, listCategoryTree, createCategory, updateCategory, archiveCategory,
     listGroups, getGroup, createGroup, updateGroup, archiveGroup,
     getGroupExpansion,
     templateCsv, exportCsv, importCsv,

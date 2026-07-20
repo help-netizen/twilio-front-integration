@@ -2574,3 +2574,15 @@ Source не переносился. Contact и Lead теперь делят shel
 Новый внутренний marketplace-агент. После включения (tenant_admin) раз в день после 12:00 по таймзоне компании просматривает работы (дата визита в прошлом) и лиды (нет активности со вчера) в нефинальных статусах, судит одним Gemini-вызовом на сущность (заметки + статус + даты + финсрез estimated/invoiced/due/paid) и ставит диспетчеру unassigned-задачу на требующие внимания — с уважением к заметке-паузе (ETA) и дедупом через открытую/снузнутую задачу. Только ставит задачи: не звонит, не меняет статус, не собирает оплату. Настройки: игнор-статусы работ/лидов (из FSM компании) + свободная инструкция-промпт. Шедулер — через существующий heartbeat, `src/server.js` не тронут; свой tenant-safe data-layer (companyId обязателен везде); миграции 191/192. Тандем: 21+ sabotage-контроль, T-blast на реальном Postgres, attack-only red-team (межтенантных утечек нет). Попутно закрыта pre-existing ролевая дыра: `GET /api/tasks/entity/...` теперь требует доступ к самой работе/лиду (assigned-only провайдеры, `leads.view`). ⚠️ Пред-деплой: прогнать `V-GEMINI-EVAL` с ключом. Спека: `docs/specs/INSPECTOR-AGENT-001.md`.
 
 ---
+
+## 2026-07-20 — PRICEBOOK-NESTED-001: 3-level categories + безопасный Workiz import
+
+Price Book получил company-scoped дерево level 1→2→3, новый nested API при
+сохранённом flat contract, collapsible Settings tree и sequential picker с
+breadcrumb/`Uncategorized`. Migration 193 корректно разделяет root/sibling
+uniqueness, запрещает cycle/depth 4/cross-tenant parent и добавляет storage-only
+`item_type`; шесть legacy presets не меняются. XLSX CLI dry-run планирует 393 items,
+121 groups, 275 links и 45 categories: owner-approved `0003` (`-95`) и ровно 121 его
+links пропускаются, поэтому каждая group на $95 выше Workiz и credit вычитается
+dispatcher вручную. Verification: backend 72/72, frontend 259/259 + build, все 11
+named sabotages red→restore→green. Изменения не закоммичены по owner directive.

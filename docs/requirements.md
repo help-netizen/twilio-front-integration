@@ -7039,3 +7039,52 @@ Outside work schedule… убрать вообще». Кастомные **Time 
 - Провайдер v1 — Gemini (качество финансовой сверки); локальный Qwen — после прохождения размеченного eval.
 
 Спека: `docs/specs/INSPECTOR-AGENT-001.md`.
+
+## PRICEBOOK-NESTED-001 — дерево категорий Price Book + импорт Workiz (2026-07-20)
+
+### Решения владельца
+
+- **[OWNER, verbatim]** «добавить поддержку подкатегорий в pricebook. Это
+  подкатегории, первая самая крупная. вторая входит в него. а третья - во вторую».
+- **[OWNER] D1:** «Импорт без этой строки» — не импортировать
+  `0003 - Service call fee paid` (`-95`) и удалить его 121 source-связь. Не менять
+  `>= 0`, не подменять цену. Все 121 группы становятся на $95 дороже задуманной
+  Workiz-суммы; dispatcher вычитает кредит вручную.
+- **[OWNER] D2:** «Сохранить» — хранить `Service` / `Product` в nullable
+  `estimate_item_presets.item_type`; продукт пока это поле не читает.
+- **[OWNER] D3:** архив непустой категории возвращает `409 category_not_empty`.
+- **[OWNER] D4:** последовательный drill-down в существующем picker, breadcrumb,
+  без нового overlay; `Uncategorized` сохраняет доступ к шести legacy presets.
+
+### Функциональные требования
+
+- **FR-PBN-01.** `price_book_categories` — company-scoped дерево глубиной 1–3.
+  PostgreSQL запрещает cross-tenant parent, self/cycle, четвёртый уровень и
+  reparent subtree ниже третьего уровня, включая конкурентные reparent-запросы.
+- **FR-PBN-02.** Активные root names уникальны по `(company_id, lower(name))` с
+  отдельным partial index для `parent_id IS NULL`; children уникальны среди siblings
+  по `(company_id,parent_id,lower(name))`. Одинаковый `Standard` под разными parents
+  разрешён.
+- **FR-PBN-03.** Старый flat `GET /api/price-book/categories` остаётся flat;
+  новый `GET /api/price-book/categories/tree` возвращает `children` + `depth`.
+  Read = `price_book.view`, mutation = `price_book.manage`.
+- **FR-PBN-04.** Picker проходит level 1→2→3 в существующем dropdown, показывает
+  breadcrumb/SKU/full path, сохраняет global search/create/recent/groups и даёт
+  отдельную ветку `Uncategorized`. Settings показывает collapsible indented tree,
+  Add subcategory только на levels 1–2 и full paths в item/group selects.
+- **FR-PBN-05.** Migration 193 добавляет nullable `parent_id` и nullable storage-only
+  `item_type`, не обновляя существующие rows. Cost-column не добавляется: source Cost
+  пуст у всех 394 items.
+- **FR-PBN-06.** Workiz CLI по умолчанию dry-run; требует
+  `--company-id=<uuid>`, печатает полный план по categories/items/groups/links и
+  пишет только с `--apply` в одной advisory-locked transaction.
+- **FR-PBN-07.** Preflight фиксирует source 394 items / 121 groups / 396 links,
+  result 393 items / 121 groups / 275 links / 45 categories (9/6/30), ровно 121
+  dropped `0003` refs и 0 empty groups. Любое расхождение или nonempty unsupported
+  cost/part amount останавливает импорт.
+- **FR-PBN-08.** Imported item identity = scoped SKU/code, group identity = scoped
+  full group name, category identity = scoped parent path. Повторный apply даёт zero
+  changes; unmatched legacy rows, включая шесть production presets, byte-identical.
+
+Полная спека, Tenancy & Roles matrix и live verification ledger:
+`docs/specs/PRICEBOOK-NESTED-001.md`.

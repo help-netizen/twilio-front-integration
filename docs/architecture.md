@@ -8209,3 +8209,26 @@ Judgment: one Gemini call per eligible entity via a NEW provider-neutral `jsonLl
 Tasks: unassigned, `kind='agent'`, `agent_type='inspector'`, direct `job_id`/`lead_id` parent, linked to an existing contact timeline only when one exists (surfaces in Pulse AR); never fabricates a timeline. Dedup = an open inspector task (snooze = `due_at` shift stays open) suppresses a new one. Runtime-authorization recheck (connected+active+enabled) before candidate reads.
 
 Rejected alternatives: hard and/or/not condition builder (owner dropped it → LLM); `thread_id` as entity link (it is a Pulse timeline → use `job_id`/`lead_id`); local Qwen as v1 judge (finance cross-check too hard → Gemini until Qwen passes the labeled eval); a structured snooze-until field on entities (task snooze + notes suffice). Also closed a PRE-EXISTING generic role leak Inspector surfaced: `GET /api/tasks/entity/...` now enforces host-entity visibility (assigned-only providers, `leads.view`). Spec: `docs/specs/INSPECTOR-AGENT-001.md`.
+
+## PRICEBOOK-NESTED-001 — architecture (2026-07-20)
+
+Migration 193 превращает `price_book_categories` в adjacency-list tree через
+nullable `(company_id,parent_id)` composite self-FK. Отдельные root/sibling partial
+unique indexes корректно обрабатывают PostgreSQL `NULL DISTINCT`; trigger с
+company advisory lock, ancestor walk и descendant-height check запрещает cycle и
+depth > 3. Item active identity переносится с name на scoped nonblank `code`; nullable
+`item_type` хранит Workiz Service/Product, не входя пока ни в DTO/UI behavior.
+
+Backend сохраняет flat category endpoint и добавляет active-only nested projection;
+category writes/archives и item/group category assignment остаются company-scoped.
+Frontend pure browse model строит paths/descendants; один shared estimate/invoice
+picker переключается между global search и sequential branch browsing, включая
+`Uncategorized`. Price Book Settings использует тот же tree для collapsible rows и
+full-path selects; document snapshot/consumption не меняется.
+
+Operator CLI `scripts/import-workiz-price-book.js` читает фиксированные XLSX через
+argument-safe `unzip` + `fast-xml-parser`, сначала полностью валидирует обе книги,
+затем планирует/применяет scoped path/SKU/group/link upserts в одной transaction.
+Dry-run выполняет только SELECT + rollback; apply проверяет byte-identical unmatched
+legacy presets и второй run с zero drift. Полный контракт и verification ledger:
+`docs/specs/PRICEBOOK-NESTED-001.md`.

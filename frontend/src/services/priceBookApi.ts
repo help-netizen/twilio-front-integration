@@ -19,7 +19,8 @@ const json = (method: string, body?: unknown) => ({
 });
 
 // ── Types ────────────────────────────────────────────────────────────────────
-export interface PriceBookCategory { id: number; name: string; description: string | null; sort_order: number; archived_at: string | null; }
+export interface PriceBookCategory { id: number; parent_id: number | null; name: string; description: string | null; sort_order: number; archived_at: string | null; }
+export interface PriceBookCategoryNode extends PriceBookCategory { depth: number; children: PriceBookCategoryNode[]; }
 export interface PriceBookItem {
     id: number; name: string; description: string | null;
     default_quantity: number | null; default_unit_price: number | null; default_taxable: boolean;
@@ -42,15 +43,20 @@ export async function listCategories(includeArchived = false): Promise<PriceBook
     const res = await authedFetch(`${BASE}/categories?includeArchived=${includeArchived}`);
     return (await ok<{ categories: PriceBookCategory[] }>(res)).categories;
 }
-export const createCategory = (b: { name: string; description?: string | null }) => authedFetch(`${BASE}/categories`, json('POST', b)).then(ok<PriceBookCategory>);
-export const updateCategory = (id: number, b: Partial<{ name: string; description: string | null; sort_order: number }>) => authedFetch(`${BASE}/categories/${id}`, json('PATCH', b)).then(ok<PriceBookCategory>);
+export async function listCategoryTree(): Promise<PriceBookCategoryNode[]> {
+    const res = await authedFetch(`${BASE}/categories/tree`);
+    return (await ok<{ categories: PriceBookCategoryNode[] }>(res)).categories;
+}
+export const createCategory = (b: { name: string; description?: string | null; parent_id?: number | null }) => authedFetch(`${BASE}/categories`, json('POST', b)).then(ok<PriceBookCategory>);
+export const updateCategory = (id: number, b: Partial<{ name: string; description: string | null; parent_id: number | null; sort_order: number }>) => authedFetch(`${BASE}/categories/${id}`, json('PATCH', b)).then(ok<PriceBookCategory>);
 export const archiveCategory = (id: number) => authedFetch(`${BASE}/categories/${id}`, json('DELETE')).then(ok<PriceBookCategory>);
 
 // ── Items ────────────────────────────────────────────────────────────────────
-export async function listItems(opts: { search?: string; category_id?: number | null; includeArchived?: boolean; limit?: number } = {}): Promise<PriceBookItem[]> {
+export async function listItems(opts: { search?: string; category_id?: number | null; uncategorized?: boolean; includeArchived?: boolean; limit?: number } = {}): Promise<PriceBookItem[]> {
     const p = new URLSearchParams();
     if (opts.search) p.set('search', opts.search);
     if (opts.category_id != null) p.set('category_id', String(opts.category_id));
+    if (opts.uncategorized) p.set('uncategorized', 'true');
     if (opts.includeArchived) p.set('includeArchived', 'true');
     if (opts.limit != null) p.set('limit', String(opts.limit));
     const res = await authedFetch(`${BASE}/items?${p.toString()}`);
@@ -69,9 +75,11 @@ export interface BulkItemsResult { items: PriceBookItem[]; summary: { created: n
 export const bulkSaveItems = (b: BulkItemsPayload) => authedFetch(`${BASE}/items/bulk`, json('PUT', b)).then(ok<BulkItemsResult>);
 
 // ── Groups ───────────────────────────────────────────────────────────────────
-export async function listGroups(opts: { search?: string; includeArchived?: boolean } = {}): Promise<PriceBookGroup[]> {
+export async function listGroups(opts: { search?: string; category_id?: number | null; uncategorized?: boolean; includeArchived?: boolean } = {}): Promise<PriceBookGroup[]> {
     const p = new URLSearchParams();
     if (opts.search) p.set('search', opts.search);
+    if (opts.category_id != null) p.set('category_id', String(opts.category_id));
+    if (opts.uncategorized) p.set('uncategorized', 'true');
     if (opts.includeArchived) p.set('includeArchived', 'true');
     const res = await authedFetch(`${BASE}/groups?${p.toString()}`);
     return (await ok<{ groups: PriceBookGroup[] }>(res)).groups;
