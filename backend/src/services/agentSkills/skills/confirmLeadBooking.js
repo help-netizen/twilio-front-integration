@@ -153,7 +153,22 @@ async function run(companyId, _verifiedContext, input) {
         if (addressUpdate) Object.assign(hold, addressUpdate);
         else if (resolvedCoords) { hold.Latitude = resolvedCoords.lat; hold.Longitude = resolvedCoords.lng; }
         await leadsService.updateLead(leadUuid, hold, cid);
-    } catch {
+    } catch (err) {
+        // Keep the caller-safe refusal, but retain enough PII-free context for one
+        // grep to diagnose the next occurrence. Never log serviceAddress, ZIP,
+        // coordinates, names, or phone numbers.
+        const safeArgs = {
+            companyId: cid,
+            leadUuid,
+            chosenSlot: { date: slot.date, start: slot.start, end: slot.end },
+            slotKeyMatched: derivedKey === src.slotKey,
+            hasServiceAddress: Boolean(provided),
+            hasCoordinates: Boolean(resolvedCoords),
+        };
+        console.error(
+            `[agentSkills] confirmLeadBooking failed: ${err && err.stack ? err.stack : String(err)}`,
+            safeArgs
+        );
         return resultShapes.refusal(
             'I had trouble locking that time in — let me have a teammate confirm it with you.'
         );

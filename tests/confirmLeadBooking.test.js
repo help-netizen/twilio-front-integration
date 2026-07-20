@@ -201,6 +201,36 @@ describe('TC-OLC-045: malformed slot / write faults — no false success', () =>
         expect(out.speak).toBe('I had trouble locking that time in — let me have a teammate confirm it with you.');
         expect(out.success).not.toBe(true);
     });
+
+    it('logs the underlying stack with stable prefix and PII-free booking args', async () => {
+        const failure = Object.assign(new Error('Transition not allowed'), {
+            name: 'LeadsServiceError',
+            code: 'FSM_TRANSITION_DENIED',
+        });
+        leadsService.updateLead.mockRejectedValue(failure);
+        const out = await skill.run(CO, {}, buildInput({
+            chosenSlot: { ...SLOT },
+            serviceAddress: {
+                street: '12 Secret Street', city: 'Boston', state: 'MA', zip: '02118',
+            },
+        }, injectedVars()));
+
+        expect(out.speak).toBe('I had trouble locking that time in — let me have a teammate confirm it with you.');
+        const call = console.error.mock.calls.find(([message]) =>
+            String(message).startsWith('[agentSkills] confirmLeadBooking failed:'));
+        expect(call).toBeTruthy();
+        expect(call[0]).toContain('LeadsServiceError: Transition not allowed');
+        expect(call[1]).toEqual({
+            companyId: CO,
+            leadUuid: 'LD-1',
+            chosenSlot: SLOT,
+            slotKeyMatched: true,
+            hasServiceAddress: true,
+            hasCoordinates: true,
+        });
+        expect(JSON.stringify(call)).not.toContain('12 Secret Street');
+        expect(JSON.stringify(call)).not.toContain('02118');
+    });
 });
 
 describe('TC-OLC-046: idempotent double-confirm + non-fatal flip/audit', () => {
