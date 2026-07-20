@@ -14,10 +14,13 @@ import { CloudBanner } from '../components/ui/CloudBanner';
 import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox';
 import {
+    AgentCallWindowFields,
+    type AgentCallWindowMode,
+} from '../components/settings/AgentCallWindowFields';
+import {
     getOutboundLeadCallerOverview,
     saveOutboundLeadCallerSettings,
     type OutboundLeadCallerOverview,
-    type CallingWindowMode,
 } from '../services/outboundLeadCallerApi';
 import { fetchMarketplaceApps, installMarketplaceApp, type MarketplaceApp } from '../services/marketplaceApi';
 import { JOB_SOURCES } from '../components/leads/editLeadHelpers';
@@ -56,9 +59,11 @@ export default function OutboundLeadCallerSettingsPage() {
     // Draft: normalized keys of enabled sources + display label per key.
     const [selected, setSelected] = useState<Set<string>>(new Set());
     // OLC-WINDOW-001 draft: when Sara is allowed to dial.
-    const [windowMode, setWindowMode] = useState<CallingWindowMode>('office_hours');
+    const [windowMode, setWindowMode] = useState<AgentCallWindowMode>('company');
     const [customStart, setCustomStart] = useState('09:00');
-    const [customEnd, setCustomEnd] = useState('20:00');
+    const [customEnd, setCustomEnd] = useState('17:00');
+    const [workDays, setWorkDays] = useState<number[]>([1, 2, 3, 4, 5]);
+    const [legacyAlways, setLegacyAlways] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -66,9 +71,14 @@ export default function OutboundLeadCallerSettingsPage() {
             const data = await getOutboundLeadCallerOverview();
             setOverview(data);
             setSelected(new Set((data.settings.enabled_sources || []).map(norm)));
-            setWindowMode(data.settings.calling_window_mode || 'office_hours');
-            if (data.settings.custom_start_time) setCustomStart(data.settings.custom_start_time);
-            if (data.settings.custom_end_time) setCustomEnd(data.settings.custom_end_time);
+            const always = data.settings.calling_window_mode === 'always';
+            setLegacyAlways(always);
+            setWindowMode(data.settings.calling_window_mode === 'custom' || always ? 'custom' : 'company');
+            setCustomStart(data.settings.custom_start_time || (always ? '00:00' : '09:00'));
+            setCustomEnd(data.settings.custom_end_time || (always ? '23:59' : '17:00'));
+            setWorkDays(data.settings.calling_window_work_days || (always
+                ? [0, 1, 2, 3, 4, 5, 6]
+                : [1, 2, 3, 4, 5]));
         } catch (e: any) {
             toast.error(e?.message || 'Failed to load settings');
         } finally {
@@ -109,8 +119,10 @@ export default function OutboundLeadCallerSettingsPage() {
     };
 
     const handleSave = async () => {
-        if (windowMode === 'custom' && !(customStart < customEnd)) {
-            toast.error('Custom start time must be earlier than end time (use 24/7 for round-the-clock)');
+        if (!legacyAlways && windowMode === 'custom' && (!(customStart < customEnd) || workDays.length === 0)) {
+            toast.error(workDays.length === 0
+                ? 'Choose at least one calling day'
+                : 'Custom start time must be earlier than end time');
             return;
         }
         setSaving(true);
@@ -118,14 +130,19 @@ export default function OutboundLeadCallerSettingsPage() {
             const labels = options.filter(o => selected.has(o.key)).map(o => o.label);
             const settings = await saveOutboundLeadCallerSettings({
                 enabled_sources: labels,
-                calling_window_mode: windowMode,
-                custom_start_time: windowMode === 'custom' ? customStart : null,
-                custom_end_time: windowMode === 'custom' ? customEnd : null,
+                calling_window_mode: legacyAlways ? 'always' : (windowMode === 'custom' ? 'custom' : null),
+                custom_start_time: !legacyAlways && windowMode === 'custom' ? customStart : null,
+                custom_end_time: !legacyAlways && windowMode === 'custom' ? customEnd : null,
+                calling_window_work_days: !legacyAlways && windowMode === 'custom' ? workDays : null,
             });
             setSelected(new Set((settings.enabled_sources || []).map(norm)));
-            setWindowMode(settings.calling_window_mode || 'office_hours');
+            setLegacyAlways(settings.calling_window_mode === 'always');
+            setWindowMode(settings.calling_window_mode === 'custom' || settings.calling_window_mode === 'always'
+                ? 'custom'
+                : 'company');
             if (settings.custom_start_time) setCustomStart(settings.custom_start_time);
             if (settings.custom_end_time) setCustomEnd(settings.custom_end_time);
+            if (settings.calling_window_work_days) setWorkDays(settings.calling_window_work_days);
             toast.success('Settings saved');
         } catch (e: any) {
             toast.error(e?.message || 'Failed to save settings');
@@ -238,59 +255,22 @@ export default function OutboundLeadCallerSettingsPage() {
                         title="Calling hours"
                         description="When Sara is allowed to place calls. Leads that arrive outside the window wait until it next opens."
                     >
-                        <div className="space-y-2.5">
-                            {([
-                                { mode: 'office_hours', label: 'Follow office hours', hint: 'Call only during your Dispatch business hours. Out-of-hours leads wait for the next business morning.' },
-                                { mode: 'always', label: 'Around the clock', hint: 'Call new leads any time, 24/7.' },
-                                { mode: 'custom', label: 'Custom hours', hint: 'Call only between the times you set, every day.' },
-                            ] as { mode: CallingWindowMode; label: string; hint: string }[]).map(opt => (
-                                <div key={opt.mode}>
-                                    <label className="flex items-start gap-2.5 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="olc-window-mode"
-                                            className="mt-1"
-                                            style={{ accentColor: 'var(--blanc-accent)' }}
-                                            checked={windowMode === opt.mode}
-                                            onChange={() => setWindowMode(opt.mode)}
-                                        />
-                                        <span>
-                                            <span className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{opt.label}</span>
-                                            <span className="block text-xs mt-0.5" style={{ color: 'var(--blanc-ink-3)' }}>{opt.hint}</span>
-                                        </span>
-                                    </label>
-                                    {opt.mode === 'custom' && windowMode === 'custom' && (
-                                        <div className="mt-2.5 ml-7 flex flex-wrap items-end gap-3">
-                                            <label className="flex flex-col gap-1">
-                                                <span className="blanc-eyebrow">From</span>
-                                                <input
-                                                    type="time"
-                                                    value={customStart}
-                                                    onChange={e => setCustomStart(e.target.value)}
-                                                    className="rounded-[10px] px-3 py-2 text-sm"
-                                                    style={{ background: 'var(--blanc-field)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
-                                                />
-                                            </label>
-                                            <label className="flex flex-col gap-1">
-                                                <span className="blanc-eyebrow">To</span>
-                                                <input
-                                                    type="time"
-                                                    value={customEnd}
-                                                    onChange={e => setCustomEnd(e.target.value)}
-                                                    className="rounded-[10px] px-3 py-2 text-sm"
-                                                    style={{ background: 'var(--blanc-field)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
-                                                />
-                                            </label>
-                                            {!(customStart < customEnd) && (
-                                                <span className="text-xs" style={{ color: 'var(--blanc-danger, #b4453a)' }}>
-                                                    Start must be earlier than end.
-                                                </span>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
+                        <AgentCallWindowFields
+                            name="lead-caller-window"
+                            mode={windowMode}
+                            onModeChange={mode => { setLegacyAlways(false); setWindowMode(mode); }}
+                            customStart={customStart}
+                            onCustomStartChange={value => { setLegacyAlways(false); setCustomStart(value); }}
+                            customEnd={customEnd}
+                            onCustomEndChange={value => { setLegacyAlways(false); setCustomEnd(value); }}
+                            workDays={workDays}
+                            onWorkDaysChange={days => { setLegacyAlways(false); setWorkDays(days); }}
+                        />
+                        {legacyAlways && (
+                            <p className="ml-7 mt-3 text-xs text-[var(--blanc-ink-3)]">
+                                The existing around-the-clock schedule remains active until you change these fields.
+                            </p>
+                        )}
                     </SettingsSection>
 
                     <SettingsSection title="How it works">

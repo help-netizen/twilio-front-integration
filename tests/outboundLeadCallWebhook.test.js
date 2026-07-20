@@ -29,6 +29,10 @@ jest.mock('../backend/src/services/outboundCallWorker', () => ({
     retryBlockReason: jest.fn(),
     getTimezoneOffsetMs: jest.fn(() => -4 * 3600 * 1000),
 }));
+jest.mock('../backend/src/services/agentCallWindowService', () => {
+    const actual = jest.requireActual('../backend/src/services/agentCallWindowService');
+    return { ...actual, nextAllowedAt: jest.fn(async (_companyId, _agentKey, now) => now) };
+});
 const mockFinalize = jest.fn();
 const mockApplyStatusUpdate = jest.fn();
 jest.mock('../backend/src/services/vapiCallTimelineService', () => ({

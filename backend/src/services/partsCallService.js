@@ -26,6 +26,7 @@ const eventService = require('./eventService');
 const recommendSlots = require('./agentSkills/skills/recommendSlots');
 const slotEngineService = require('./slotEngineService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
+const agentCallWindowService = require('./agentCallWindowService');
 const outboundCallCancellationService = require('./outboundCallCancellationService');
 
 // v1 dial seam is gated to Boston Masters (spec §Scope / C.1). All code stays
@@ -519,7 +520,7 @@ async function buildRobotCallSlot({ startIso, endIso, techName, techId } = {}, c
  *      fallback:true / empty / throw → NO call, NO attempt; write a dispatcher
  *      reason to the task, mark the robot_call action failed, leave the job
  *      `Part arrived`. Returns { ok:false, reason:'no_slots'|'engine_error' }.
- *   5. Else INSERT one `pending` attempt (immediate scheduled_at) carrying the
+ *   5. Else INSERT one `pending` attempt (guarded scheduled_at) carrying the
  *      chosen slot in slot_json. The partial-unique (job_id) WHERE status IN
  *      ('pending','dialing') guard makes a double-press (S14) a graceful no-op:
  *      the unique_violation is caught → return the existing active row
@@ -664,15 +665,23 @@ async function startRobotCall(jobId, companyId, taskId, client = null, dispatche
             lng: Number.isFinite(jobLng) ? jobLng : null,
         };
 
-        // 5) Enqueue the first attempt (immediate). The partial-unique index makes a
+        // 5) Enqueue the first attempt through the shared window guard. Deferral
+        //    changes scheduled_at only; attempt_no remains 1 until a dial occurs.
+        const scheduledAt = await agentCallWindowService.nextAllowedAt(
+            companyId,
+            agentCallWindowService.AGENT_KEYS.PARTS,
+            new Date()
+        );
+
+        // The partial-unique index makes a
         //    concurrent double-press (S14) a graceful no-op — we return the in-flight row.
         try {
             const { rows } = await query(
                 `INSERT INTO outbound_call_attempts
                     (company_id, job_id, task_id, contact_id, phone, attempt_no, status, scheduled_at, slot_json)
-                 VALUES ($1, $2, $3, $4, $5, 1, 'pending', now(), $6::jsonb)
+                 VALUES ($1, $2, $3, $4, $5, 1, 'pending', $6, $7::jsonb)
                  RETURNING id`,
-                [companyId, jobId, taskId, job.contact_id ?? null, phone, JSON.stringify(slot)]
+                [companyId, jobId, taskId, job.contact_id ?? null, phone, scheduledAt, JSON.stringify(slot)]
             );
             // CANCEL-001 dev-4 / S12: a successful enqueue makes the robot_call
             // action live again — reset any stale 'canceled'/'failed' stamp

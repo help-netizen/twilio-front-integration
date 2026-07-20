@@ -47,6 +47,10 @@ jest.mock('../backend/src/services/marketplaceService', () => ({
 jest.mock('../backend/src/services/scheduleService', () => ({
     getDispatchSettings: jest.fn(),
 }));
+jest.mock('../backend/src/services/agentCallWindowService', () => {
+    const actual = jest.requireActual('../backend/src/services/agentCallWindowService');
+    return { ...actual, nextAllowedAt: jest.fn(async (_companyId, _agentKey, now) => now) };
+});
 jest.mock('../backend/src/services/agentSkills/skills/recommendSlots', () => ({
     run: jest.fn(),
 }));
@@ -69,6 +73,7 @@ const vapiCallTimeline = require('../backend/src/services/vapiCallTimelineServic
 const partsCallService = require('../backend/src/services/partsCallService');
 const marketplaceService = require('../backend/src/services/marketplaceService');
 const scheduleService = require('../backend/src/services/scheduleService');
+const agentCallWindowService = require('../backend/src/services/agentCallWindowService');
 const recommendSlots = require('../backend/src/services/agentSkills/skills/recommendSlots');
 const eventService = require('../backend/src/services/eventService');
 const companyProfileService = require('../backend/src/services/companyProfileService');
@@ -170,6 +175,7 @@ beforeEach(() => {
     isSourceEnabledReal = leadSettings.isSourceEnabled;
     marketplaceService.isAppConnected.mockResolvedValue(true);
     scheduleService.getDispatchSettings.mockResolvedValue({ ...NY_DS });
+    agentCallWindowService.nextAllowedAt.mockImplementation(async (_companyId, _agentKey, now) => now);
     recommendSlots.run.mockResolvedValue({ available: true, fallback: false, slots: [{ ...TOP_SLOT }] });
     companyProfileService.getProfile.mockResolvedValue({ name: 'ABC Homes' });
     outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_lead_1' });
@@ -263,23 +269,32 @@ describe('TC-OLC-021: FR-15 re-check at claim', () => {
 });
 
 describe('TC-OLC-022: business-window carry at claim', () => {
-    it('outside hours → pending carry to nextWindowStart; no dial, no slots', async () => {
+    it('SAB-CW-LEAD-DEFER: future guard result carries same attempt; no dial or slot work', async () => {
         jest.setSystemTime(new Date('2026-07-15T23:30:00Z')); // Wed 19:30 EDT
+        agentCallWindowService.nextAllowedAt.mockResolvedValue(
+            new Date('2026-07-16T12:00:00.000Z')
+        );
         await svc.processLeadAttempt(mkLeadAttempt());
         const carry = updates(/SET status = 'pending', scheduled_at = \$2/);
         expect(carry).toHaveLength(1);
         expect(carry[0][1][0]).toBe(700);
         expect(carry[0][1][1].toISOString()).toBe('2026-07-16T12:00:00.000Z'); // Thu 08:00 EDT
+        expect(carry[0][0]).toMatch(/company_id = \$3/);
+        expect(carry[0][1][2]).toBe(CO);
+        expect(carry[0][0]).not.toMatch(/attempt_no\s*=/i);
         expect(outboundCallService.placeCall).not.toHaveBeenCalled();
         expect(recommendSlots.run).not.toHaveBeenCalled();
         expect(groupRouting.isBusinessHours).not.toHaveBeenCalled(); // D2: dispatch settings, not groupRouting
     });
 
-    it('OUTBOUND_CALL_IGNORE_BUSINESS_HOURS=yes → dials immediately even off-hours', async () => {
+    it('legacy ignore-hours env cannot bypass the shared guard', async () => {
         process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS = 'yes';
         jest.setSystemTime(new Date('2026-07-15T23:30:00Z'));
+        agentCallWindowService.nextAllowedAt.mockResolvedValue(
+            new Date('2026-07-16T12:00:00.000Z')
+        );
         await svc.processLeadAttempt(mkLeadAttempt());
-        expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
+        expect(outboundCallService.placeCall).not.toHaveBeenCalled();
     });
 });
 

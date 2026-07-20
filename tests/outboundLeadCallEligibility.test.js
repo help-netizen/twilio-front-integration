@@ -15,11 +15,16 @@ jest.mock('../backend/src/services/marketplaceService', () => ({
 jest.mock('../backend/src/services/scheduleService', () => ({
     getDispatchSettings: jest.fn(),
 }));
+jest.mock('../backend/src/services/agentCallWindowService', () => {
+    const actual = jest.requireActual('../backend/src/services/agentCallWindowService');
+    return { ...actual, nextAllowedAt: jest.fn(async (_companyId, _agentKey, now) => now) };
+});
 
 const db = require('../backend/src/db/connection');
 const eventBus = require('../backend/src/services/eventBus');
 const marketplaceService = require('../backend/src/services/marketplaceService');
 const scheduleService = require('../backend/src/services/scheduleService');
+const agentCallWindowService = require('../backend/src/services/agentCallWindowService');
 const leadsService = require('../backend/src/services/leadsService');
 const settingsService = require('../backend/src/services/outboundLeadCallSettingsService');
 const svc = require('../backend/src/services/outboundLeadCallService');
@@ -52,6 +57,7 @@ beforeEach(() => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     marketplaceService.isAppConnected.mockResolvedValue(true);
     scheduleService.getDispatchSettings.mockResolvedValue({ ...NY_DS });
+    agentCallWindowService.nextAllowedAt.mockImplementation(async (_companyId, _agentKey, now) => now);
     getLeadByIdSpy = jest.spyOn(leadsService, 'getLeadById').mockResolvedValue({ ...LEAD });
     resolveSpy = jest.spyOn(settingsService, 'resolve').mockResolvedValue({
         enabled_sources: ['ProReferral'],
@@ -194,6 +200,11 @@ describe('TC-OLC-016: gate 6 lifetime-once + concurrent duplicate', () => {
         });
         await svc.onLeadCreated({ leadId: 1, companyId: 'co-1' });
         expect(insertCalls()).toHaveLength(0);
+        const [sql, params] = db.query.mock.calls.find(([query]) =>
+            /SELECT 1 FROM outbound_call_attempts/.test(query)
+        );
+        expect(sql).toMatch(/lead_uuid = \$1 AND company_id = \$2/);
+        expect(params).toEqual([LEAD.UUID, 'co-1']);
         expect(console.log).toHaveBeenCalledWith(expect.stringContaining('reason=chain_exists'));
     });
 
@@ -233,13 +244,16 @@ describe('TC-OLC-017: eligible → exact INSERT with clamped due_at', () => {
         expect(before).toBeGreaterThan(0);
     });
 
-    it('(b) SC-03 Saturday 22:40, Mon-Sat hours → dueAt Monday 08:00 company-tz', async () => {
-        scheduleService.getDispatchSettings.mockResolvedValue({ ...NY_DS, work_days: [1, 2, 3, 4, 5, 6] });
+    it('SAB-CW-LEAD-INIT: off-time first attempt is enqueued for next start as attempt 1', async () => {
+        agentCallWindowService.nextAllowedAt.mockResolvedValue(
+            new Date('2026-07-20T12:00:00.000Z')
+        );
         jest.useFakeTimers({ now: new Date('2026-07-19T02:40:00Z'), doNotFake: ['nextTick'] }); // Sat 22:40 EDT
         await svc.onLeadCreated({ leadId: 1, companyId: 'co-1' });
         jest.useRealTimers();
-        const [, params] = insertCalls()[0];
+        const [sql, params] = insertCalls()[0];
         expect(params[4].toISOString()).toBe('2026-07-20T12:00:00.000Z'); // Mon 08:00 EDT
+        expect(sql).toMatch(/VALUES \(\$1, \$2, 'lead_call', \$3, \$4, 1, 'pending', \$5\)/);
     });
 });
 
@@ -259,8 +273,10 @@ describe('TC-OLC-018: gauntlet fail-safety', () => {
         expect(console.log).toHaveBeenCalledWith(expect.stringContaining('reason=lead_not_found'));
     });
 
-    it('(b) getDispatchSettings throws → INSERT still happens with the default window', async () => {
-        scheduleService.getDispatchSettings.mockRejectedValue(new Error('ds down'));
+    it('(b) guard safe-fail result still enqueues (resolver failure is covered in the guard suite)', async () => {
+        agentCallWindowService.nextAllowedAt.mockResolvedValue(
+            new Date('2026-07-15T16:00:00.000Z')
+        );
         jest.useFakeTimers({ now: new Date('2026-07-15T16:00:00Z'), doNotFake: ['nextTick'] });
         await svc.onLeadCreated({ leadId: 1, companyId: 'co-1' });
         jest.useRealTimers();

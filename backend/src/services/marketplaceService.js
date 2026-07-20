@@ -10,6 +10,7 @@ const territoryRadiusQueries = require('../db/territoryRadiusQueries');
 const rateMeQueries = require('../db/rateMeQueries');
 const { RELY_UNIT_TYPES, RELY_BRANDS } = require('./relyLeadsCatalog');
 const { parseZipList, resolveRelySettings } = require('./relyLeadFilterService');
+const outboundCallSettingsService = require('./outboundCallSettingsService');
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -35,7 +36,7 @@ const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';
 // listApps + isAppConnected; all other apps are untouched.
 const GOOGLE_EMAIL_APP_KEY = 'google-email';
 
-const SETTINGS_ENABLED_APP_KEYS = new Set(['rely-leads', 'rate-me']);
+const SETTINGS_ENABLED_APP_KEYS = new Set(['rely-leads', 'rate-me', 'outbound-parts-caller']);
 const RATE_ME_PUBLIC_HOST = String(
     process.env.RATE_ME_PUBLIC_HOST || 'rate.albusto.com'
 ).trim().toLowerCase().replace(/\.+$/, '');
@@ -445,6 +446,36 @@ function validateRateMeSettingsInput(body) {
     return { google_review_url, booking_url };
 }
 
+function validateAgentCallingWindowInput(body) {
+    const mode = body?.calling_window_mode == null ? null : body.calling_window_mode;
+    if (mode !== null && mode !== 'custom') {
+        throw new MarketplaceServiceError(
+            'Calling window must use the company schedule or a custom schedule.',
+            'INVALID_CALLING_WINDOW_MODE',
+            400
+        );
+    }
+    if (mode === 'custom' && !outboundCallSettingsService.isUsableCustomWindow(
+        body?.custom_start_time,
+        body?.custom_end_time,
+        body?.calling_window_work_days
+    )) {
+        throw new MarketplaceServiceError(
+            'Custom calling window requires at least one day and a valid start time before its end time.',
+            'INVALID_CALLING_WINDOW',
+            400
+        );
+    }
+    return {
+        calling_window_mode: mode,
+        custom_start_time: mode === 'custom' ? body.custom_start_time : null,
+        custom_end_time: mode === 'custom' ? body.custom_end_time : null,
+        calling_window_work_days: mode === 'custom'
+            ? [...new Set(body.calling_window_work_days)].sort((a, b) => a - b)
+            : null,
+    };
+}
+
 async function resolveSettingsInstallation(companyId, appKey) {
     if (!SETTINGS_ENABLED_APP_KEYS.has(appKey)) {
         throw new MarketplaceServiceError(
@@ -507,6 +538,20 @@ async function buildRateMeSettingsResponse(companyId, appKey, installation, meta
     };
 }
 
+async function buildOutboundPartsSettingsResponse(
+    companyId,
+    appKey,
+    installation,
+    _metadata,
+    savedSettings = null
+) {
+    return {
+        app_key: appKey,
+        installation_id: installation.id,
+        settings: savedSettings || await outboundCallSettingsService.get(companyId),
+    };
+}
+
 function relyEventPayload(validated) {
     return {
         app_key: 'rely-leads',
@@ -532,6 +577,19 @@ const SETTINGS_HANDLERS = {
             has_booking_url: Boolean(validated.booking_url),
         }),
     },
+    'outbound-parts-caller': {
+        validate: validateAgentCallingWindowInput,
+        buildResponse: buildOutboundPartsSettingsResponse,
+        save: (companyId, validated) => outboundCallSettingsService.saveCallingWindow(
+            companyId,
+            validated
+        ),
+        buildEventPayload: (validated) => ({
+            app_key: 'outbound-parts-caller',
+            calling_window_mode: validated.calling_window_mode || 'company',
+            work_day_count: validated.calling_window_work_days?.length || 0,
+        }),
+    },
 };
 
 async function getAppSettings(companyId, appKey) {
@@ -554,6 +612,25 @@ async function updateAppSettings(
     const { app, installation } = await resolveSettingsInstallation(companyId, appKey);
     const handler = SETTINGS_HANDLERS[appKey];
     const validated = handler.validate(body);
+    if (handler.save) {
+        const savedSettings = await handler.save(companyId, validated);
+        await marketplaceQueries.writeEvent({
+            companyId,
+            installationId: installation.id,
+            appId: app.id,
+            actorId: actorId || null,
+            eventType: 'settings_updated',
+            requestId,
+            payload: handler.buildEventPayload(validated),
+        });
+        return handler.buildResponse(
+            companyId,
+            appKey,
+            installation,
+            installation.metadata,
+            savedSettings
+        );
+    }
     const storedSettings = {
         ...validated,
         updated_at: new Date().toISOString(),
@@ -1033,6 +1110,7 @@ module.exports = {
     retryProvisioning,
     validateRelySettingsInput,
     validateRateMeSettingsInput,
+    validateAgentCallingWindowInput,
     getAppSettings,
     updateAppSettings,
     resolveRelySettings,

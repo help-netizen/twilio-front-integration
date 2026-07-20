@@ -72,8 +72,7 @@ router.get('/settings', async (req, res) => {
     }
 });
 
-// ── PUT /settings — { enabled_sources: string[], calling_window_mode?,
-//    custom_start_time?, custom_end_time? }, validated then upserted ──────────
+// ── PUT /settings — sources + nullable inherit/custom calling window ────────
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 router.put('/settings', async (req, res) => {
     try {
@@ -96,17 +95,19 @@ router.put('/settings', async (req, res) => {
             }
         }
 
-        // OLC-WINDOW-001: calling-window mode + (for 'custom') a HH:MM..HH:MM window.
-        let mode = body.calling_window_mode;
-        if (mode === undefined || mode === null) mode = 'office_hours';
-        if (!outboundLeadCallSettingsService.CALLING_WINDOW_MODES.includes(mode)) {
+        // AGENT-CALL-WINDOW-001: null means inherit; custom carries a complete
+        // day set + same-day HH:MM range. 'always' remains API-compatible for
+        // existing saved lead settings but is not exposed by the new UI.
+        const mode = body.calling_window_mode == null ? null : body.calling_window_mode;
+        if (mode !== null && !outboundLeadCallSettingsService.CALLING_WINDOW_MODES.includes(mode)) {
             return res.status(400).json({
                 ok: false,
-                error: { code: 'VALIDATION', message: "calling_window_mode must be 'office_hours', 'always', or 'custom'" },
+                error: { code: 'VALIDATION', message: "calling_window_mode must be null, 'always', or 'custom'" },
             });
         }
         let customStart = null;
         let customEnd = null;
+        let workDays = null;
         if (mode === 'custom') {
             customStart = body.custom_start_time;
             customEnd = body.custom_end_time;
@@ -119,9 +120,18 @@ router.put('/settings', async (req, res) => {
             if (!(customStart < customEnd)) {
                 return res.status(400).json({
                     ok: false,
-                    error: { code: 'VALIDATION', message: 'custom start time must be earlier than end time (use the 24/7 mode for round-the-clock)' },
+                    error: { code: 'VALIDATION', message: 'custom start time must be earlier than end time' },
                 });
             }
+            if (!Array.isArray(body.calling_window_work_days)
+                || body.calling_window_work_days.length === 0
+                || body.calling_window_work_days.some(day => !Number.isInteger(day) || day < 0 || day > 6)) {
+                return res.status(400).json({
+                    ok: false,
+                    error: { code: 'VALIDATION', message: 'calling_window_work_days must contain at least one weekday number from 0 to 6' },
+                });
+            }
+            workDays = [...new Set(body.calling_window_work_days)].sort((a, b) => a - b);
         }
 
         // Normalized dedup: keep the FIRST display label per canonical key.
@@ -139,6 +149,7 @@ router.put('/settings', async (req, res) => {
             calling_window_mode: mode,
             custom_start_time: customStart,
             custom_end_time: customEnd,
+            calling_window_work_days: workDays,
         });
         res.json({ ok: true, data: { settings } });
     } catch (err) {

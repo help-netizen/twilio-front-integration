@@ -106,6 +106,24 @@ export interface RateMeSettingsResponse {
     public_host: string;
 }
 
+export interface OutboundPartsCallerSettings {
+    max_attempts: number;
+    backoff_schedule: string[];
+    next_morning_hour: number;
+    enabled: boolean;
+    calling_window_mode: 'custom' | null;
+    custom_start_time: string | null;
+    custom_end_time: string | null;
+    calling_window_work_days: number[] | null;
+    updated_at?: string | null;
+}
+
+export interface OutboundPartsCallerSettingsResponse {
+    app_key: 'outbound-parts-caller';
+    installation_id: number;
+    settings: OutboundPartsCallerSettings;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
     const res = await authedFetch(url, {
         headers: { 'Content-Type': 'application/json' },
@@ -171,6 +189,20 @@ export async function fetchRateMeSettings(): Promise<RateMeSettingsResponse> {
 
 export async function saveRateMeSettings(settings: RateMeSettingsResponse['settings']): Promise<RateMeSettingsResponse> {
     return request<RateMeSettingsResponse>(`${API_BASE}/apps/rate-me/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+    });
+}
+
+export async function fetchOutboundPartsCallerSettings(): Promise<OutboundPartsCallerSettingsResponse> {
+    return request<OutboundPartsCallerSettingsResponse>(`${API_BASE}/apps/outbound-parts-caller/settings`);
+}
+
+export async function saveOutboundPartsCallerSettings(
+    settings: Pick<OutboundPartsCallerSettings,
+        'calling_window_mode' | 'custom_start_time' | 'custom_end_time' | 'calling_window_work_days'>,
+): Promise<OutboundPartsCallerSettingsResponse> {
+    return request<OutboundPartsCallerSettingsResponse>(`${API_BASE}/apps/outbound-parts-caller/settings`, {
         method: 'PUT',
         body: JSON.stringify(settings),
     });

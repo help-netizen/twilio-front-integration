@@ -256,13 +256,12 @@ describe('TC-OLC-011: parseLeadContext (appliance context the agent confirms)', 
     });
 });
 
-describe('TC-OLC-012: effectiveWindow — office / 24-7 / custom (OLC-WINDOW-001)', () => {
+describe('TC-OLC-012: effectiveWindow — inherit / legacy 24-7 / custom', () => {
     // America/New_York = EDT (UTC-4) in July 2026. Build instants in UTC so the
     // suite is process-TZ independent. 2026-07-12 is a SUNDAY (office excludes it).
-    it('(a) office_hours (or default/unknown) → the dispatch settings verbatim', () => {
-        expect(svc.effectiveWindow({ calling_window_mode: 'office_hours' }, NY)).toBe(NY);
-        expect(svc.effectiveWindow({}, NY)).toBe(NY);
-        expect(svc.effectiveWindow(undefined, NY)).toBe(NY);
+    it('(a) null/default → sanitized company dispatch settings', () => {
+        expect(svc.effectiveWindow({}, NY)).toEqual(NY);
+        expect(svc.effectiveWindow(undefined, NY)).toEqual(NY);
     });
 
     it('(b) always → {always:true}; in-window at ANY instant; clamp is identity', () => {
@@ -275,20 +274,25 @@ describe('TC-OLC-012: effectiveWindow — office / 24-7 / custom (OLC-WINDOW-001
             .toBe(new Date(sun3am.getTime() + 2 * 3600 * 1000).getTime()); // +2h, never clamped away
     });
 
-    it('(c) custom → all-days HH:MM window in the dispatch tz; honors the window, ignores office days', () => {
+    it('(c) custom → its own days and HH:MM window in the company timezone', () => {
         const eff = svc.effectiveWindow(
-            { calling_window_mode: 'custom', custom_start_time: '10:00', custom_end_time: '22:00' }, NY);
+            {
+                calling_window_mode: 'custom', custom_start_time: '10:00', custom_end_time: '22:00',
+                calling_window_work_days: [0, 6],
+            }, NY);
         expect(eff).toMatchObject({
             timezone: 'America/New_York', work_start_time: '10:00', work_end_time: '22:00',
-            work_days: [0, 1, 2, 3, 4, 5, 6],
+            work_days: [0, 6],
         });
         expect(svc.isWithinWorkWindow(new Date('2026-07-12T18:00:00Z'), eff)).toBe(true);  // Sun 14:00 EDT — inside
         expect(svc.isWithinWorkWindow(new Date('2026-07-12T13:00:00Z'), eff)).toBe(false); // Sun 09:00 EDT — before start
         expect(svc.isWithinWorkWindow(new Date('2026-07-13T02:30:00Z'), eff)).toBe(false); // Sun 22:30 EDT — after end
     });
 
-    it('(d) custom with a missing bound → falls through to office (defensive)', () => {
-        expect(svc.effectiveWindow({ calling_window_mode: 'custom', custom_start_time: '10:00' }, NY)).toBe(NY);
-        expect(svc.effectiveWindow({ calling_window_mode: 'custom' }, NY)).toBe(NY);
+    it('(d) malformed/legacy modes fail for the resolver to apply conservative fallback', () => {
+        expect(() => svc.effectiveWindow({ calling_window_mode: 'custom', custom_start_time: '10:00' }, NY))
+            .toThrow(/incomplete/);
+        expect(() => svc.effectiveWindow({ calling_window_mode: 'office_hours' }, NY))
+            .toThrow(/incomplete/);
     });
 });

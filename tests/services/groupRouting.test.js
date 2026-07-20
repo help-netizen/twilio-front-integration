@@ -13,7 +13,12 @@ jest.mock('../../backend/src/services/callAvailability', () => ({
     verifyAndFixStaleCalls: (...args) => mockVerifyAndFixStaleCalls(...args),
 }));
 
-const { availableAgentsForGroup, isBusinessHours } = require('../../backend/src/services/groupRouting');
+const {
+    availableAgentsForGroup,
+    isBusinessHours,
+    isBusinessHoursForRows,
+    normalizeDayOfWeek,
+} = require('../../backend/src/services/groupRouting');
 const { buildSoftphoneIdentity } = require('../../backend/src/services/softphoneIdentity');
 
 describe('F017 groupRouting.availableAgentsForGroup', () => {
@@ -63,5 +68,30 @@ describe('F017 groupRouting.availableAgentsForGroup', () => {
         );
 
         expect(open).toBe(true);
+    });
+
+    it('SAB-CW-INBOUND-NO-FLIP: UI-written short row still wins over a stale full-name duplicate', () => {
+        const rows = [
+            { day_of_week: 'Sat', is_open: true, open_time: '07:00', close_time: '17:00' },
+            { day_of_week: 'Saturday', is_open: false, open_time: null, close_time: null },
+        ];
+        const saturdayMorning = new Date('2026-07-18T14:00:00.000Z');
+
+        expect(isBusinessHoursForRows(
+            rows,
+            { timezone: 'America/New_York' },
+            saturdayMorning
+        )).toBe(true);
+    });
+
+    it('reader accepts full-name rows defensively and normalizes all write aliases', () => {
+        expect(isBusinessHoursForRows(
+            [{ day_of_week: 'Monday', is_open: true, open_time: '09:00', close_time: '17:00' }],
+            { timezone: 'America/New_York' },
+            new Date('2026-07-20T14:00:00.000Z')
+        )).toBe(true);
+        expect(normalizeDayOfWeek('Thursday')).toBe('Thu');
+        expect(normalizeDayOfWeek('thu')).toBe('Thu');
+        expect(normalizeDayOfWeek('noday')).toBeNull();
     });
 });

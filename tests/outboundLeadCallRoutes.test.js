@@ -124,6 +124,7 @@ describe('TC-OLC-055: PUT /settings — calling-window mode (OLC-WINDOW-001)', (
                 return { rows: [{
                     enabled_sources: JSON.parse(params[1]), calling_window_mode: params[2],
                     custom_start_time: params[3], custom_end_time: params[4],
+                    calling_window_work_days: params[5] ? JSON.parse(params[5]) : null,
                     max_attempts: 3, backoff_schedule: ['immediate', '+30m', '+2h'],
                 }] };
             }
@@ -135,26 +136,31 @@ describe('TC-OLC-055: PUT /settings — calling-window mode (OLC-WINDOW-001)', (
         const res = await put({ enabled_sources: ['Pro Referral'], calling_window_mode: 'always' });
         expect(res.status).toBe(200);
         expect(res.body.data.settings.calling_window_mode).toBe('always');
-        expect(insParams().slice(2)).toEqual(['always', null, null]);
+        expect(insParams().slice(2)).toEqual(['always', null, null, null]);
     });
 
     it('custom mode with valid HH:MM → 200; persists the window', async () => {
-        const res = await put({ enabled_sources: ['Pro Referral'], calling_window_mode: 'custom', custom_start_time: '09:00', custom_end_time: '20:00' });
+        const res = await put({
+            enabled_sources: ['Pro Referral'], calling_window_mode: 'custom',
+            custom_start_time: '09:00', custom_end_time: '20:00',
+            calling_window_work_days: [1, 2, 3, 4, 5],
+        });
         expect(res.status).toBe(200);
-        expect(insParams().slice(2)).toEqual(['custom', '09:00', '20:00']);
+        expect(insParams().slice(2)).toEqual(['custom', '09:00', '20:00', JSON.stringify([1, 2, 3, 4, 5])]);
     });
 
-    it('no mode → defaults to office_hours (back-compat with the sources-only client)', async () => {
+    it('no mode → inherits the company schedule (back-compat with the sources-only client)', async () => {
         const res = await put({ enabled_sources: ['Pro Referral'] });
         expect(res.status).toBe(200);
-        expect(insParams().slice(2)).toEqual(['office_hours', null, null]);
+        expect(insParams().slice(2)).toEqual([null, null, null, null]);
     });
 
     it.each([
         ['unknown mode', { enabled_sources: ['X'], calling_window_mode: 'whenever' }],
-        ['custom bad HH:MM', { enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '9am', custom_end_time: '20:00' }],
-        ['custom start >= end', { enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '20:00', custom_end_time: '09:00' }],
+        ['custom bad HH:MM', { enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '9am', custom_end_time: '20:00', calling_window_work_days: [1] }],
+        ['custom start >= end', { enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '20:00', custom_end_time: '09:00', calling_window_work_days: [1] }],
         ['custom missing times', { enabled_sources: ['X'], calling_window_mode: 'custom' }],
+        ['custom missing days', { enabled_sources: ['X'], calling_window_mode: 'custom', custom_start_time: '09:00', custom_end_time: '20:00' }],
     ])('%s → 400 VALIDATION, no write', async (_l, body) => {
         const res = await put(body);
         expect(res.status).toBe(400);

@@ -55,6 +55,10 @@ jest.mock('../backend/src/services/agentSkills/skills/recommendSlots', () => {
 jest.mock('../backend/src/services/outboundCallSettingsService', () => ({
     resolve: jest.fn(async () => ({ enabled: true, max_attempts: 3 })),
 }));
+jest.mock('../backend/src/services/agentCallWindowService', () => ({
+    AGENT_KEYS: { PARTS: 'outbound-parts-caller', LEADS: 'outbound-lead-caller' },
+    nextAllowedAt: jest.fn(async (_companyId, _agentKey, now) => now),
+}));
 // SLOTPICK-001: buildRobotCallSlot derives company-local date/time via resolveTimezone.
 jest.mock('../backend/src/services/slotEngineService', () => ({
     resolveTimezone: jest.fn(async () => 'America/New_York'),
@@ -68,6 +72,7 @@ const eventService = require('../backend/src/services/eventService');
 const outboundCallCancellationService = require('../backend/src/services/outboundCallCancellationService');
 const recommendSlots = require('../backend/src/services/agentSkills/skills/recommendSlots');
 const settings = require('../backend/src/services/outboundCallSettingsService');
+const agentCallWindowService = require('../backend/src/services/agentCallWindowService');
 const slotEngineService = require('../backend/src/services/slotEngineService');
 const partsCallService = require('../backend/src/services/partsCallService');
 
@@ -94,6 +99,7 @@ const enriched = (slot, over = {}) => ({ ...slot, techId: null, lat: 42.1, lng: 
 beforeEach(() => {
     jest.clearAllMocks();
     settings.resolve.mockResolvedValue({ enabled: true, max_attempts: 3 });
+    agentCallWindowService.nextAllowedAt.mockImplementation(async (_companyId, _agentKey, now) => now);
 });
 
 // ---------------------------------------------------------------------------
@@ -160,14 +166,34 @@ describe('TC-OPC-U04: startRobotCall — slots present → store top-1 slot + in
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
         expect(insertCall).toBeTruthy();
         expect(insertCall[0]).toMatch(/'pending'/i);
-        expect(insertCall[0]).toMatch(/now\(\)/i);
+        expect(insertCall[0]).toMatch(/\$6/);
         // slot_json carries the serialized top-1 slot; params carry company/job/task/phone.
         const params = insertCall[1];
         expect(params[0]).toBe(CO);
         expect(params[1]).toBe(50);
         expect(params[2]).toBe(70);
         expect(params[4]).toBe('+16175551212');
-        expect(JSON.parse(params[5])).toEqual(enriched(TOP_SLOT));
+        expect(params[5]).toBeInstanceOf(Date);
+        expect(JSON.parse(params[6])).toEqual(enriched(TOP_SLOT));
+    });
+
+    test('SAB-CW-PARTS-INIT: first attempt uses a future guard result without consuming an attempt', async () => {
+        const deferredUntil = new Date('2026-07-20T13:00:00.000Z');
+        agentCallWindowService.nextAllowedAt.mockResolvedValue(deferredUntil);
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        recommendSlots.run.mockResolvedValue({ available: true, slots: [TOP_SLOT] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 903 }] });
+
+        await partsCallService.startRobotCall(50, CO, 70);
+
+        const insertCall = mockQuery.mock.calls.find((call) => /INSERT INTO outbound_call_attempts/i.test(call[0]));
+        expect(agentCallWindowService.nextAllowedAt).toHaveBeenCalledWith(
+            CO,
+            'outbound-parts-caller',
+            expect.any(Date)
+        );
+        expect(insertCall[0]).toMatch(/VALUES \(\$1, \$2, \$3, \$4, \$5, 1, 'pending', \$6, \$7::jsonb\)/);
+        expect(insertCall[1][5]).toBe(deferredUntil);
     });
 });
 
@@ -424,7 +450,7 @@ describe('SLOTPICK-001: startRobotCall — dispatcher slot passthrough vs auto-c
         expect(params[0]).toBe(CO); // company_id scoped
         expect(params[1]).toBe(50);
         expect(params[2]).toBe(70);
-        expect(JSON.parse(params[5])).toEqual(enriched(EXPECTED_SLOT())); // the built canonical slot, not the raw ISO
+        expect(JSON.parse(params[6])).toEqual(enriched(EXPECTED_SLOT())); // the built canonical slot, not the raw ISO
     });
 
     test('TC-SP-08: invalid dispatcher slot → reason:invalid_slot; NO recommendSlots, NO INSERT, task NOT stamped', async () => {
@@ -448,7 +474,7 @@ describe('SLOTPICK-001: startRobotCall — dispatcher slot passthrough vs auto-c
         expect(recommendSlots.run).toHaveBeenCalledTimes(1);
         expect(out).toEqual({ ok: true, attemptId: 902, slot: enriched(TOP_SLOT) });
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
-        expect(JSON.parse(insertCall[1][5])).toEqual(enriched(TOP_SLOT));
+        expect(JSON.parse(insertCall[1][6])).toEqual(enriched(TOP_SLOT));
     });
 });
 
@@ -564,7 +590,7 @@ describe('TECHSLOT-001: techId + job coords into slot_json (TC-TS-17)', () => {
 
         expect(out.ok).toBe(true);
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
-        expect(JSON.parse(insertCall[1][5])).toEqual({
+        expect(JSON.parse(insertCall[1][6])).toEqual({
             key: '2026-07-09|09:00|11:00',
             date: '2026-07-09',
             start: '09:00',
@@ -596,7 +622,7 @@ describe('TECHSLOT-001: techId + job coords into slot_json (TC-TS-17)', () => {
 
         expect(out.ok).toBe(true);
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
-        expect(JSON.parse(insertCall[1][5])).toMatchObject({ techId: 'A', lat: 42.1, lng: -71.1 });
+        expect(JSON.parse(insertCall[1][6])).toMatchObject({ techId: 'A', lat: 42.1, lng: -71.1 });
     });
 
     test('auto-compute path enriched too: sole-tech default + coords; missing job coords → null (non-fatal)', async () => {
@@ -613,7 +639,7 @@ describe('TECHSLOT-001: techId + job coords into slot_json (TC-TS-17)', () => {
 
         expect(out.ok).toBe(true);
         const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO outbound_call_attempts/i.test(c[0]));
-        expect(JSON.parse(insertCall[1][5])).toEqual({ ...TOP_SLOT, techId: 'A', lat: null, lng: null });
+        expect(JSON.parse(insertCall[1][6])).toEqual({ ...TOP_SLOT, techId: 'A', lat: null, lng: null });
     });
 });
 

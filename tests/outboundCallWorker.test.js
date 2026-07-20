@@ -27,9 +27,10 @@ jest.mock('../backend/src/services/outboundCallService', () => ({
 jest.mock('../backend/src/services/outboundCallSettingsService', () => ({
     resolve: jest.fn(),
 }));
-jest.mock('../backend/src/services/groupRouting', () => ({
-    isBusinessHours: jest.fn(),
-}));
+jest.mock('../backend/src/services/agentCallWindowService', () => {
+    const actual = jest.requireActual('../backend/src/services/agentCallWindowService');
+    return { ...actual, nextAllowedAt: jest.fn(async (_companyId, _agentKey, now) => now) };
+});
 // OUTBOUND-CALL-TIMELINE-001 (CT-04): the placement→timeline mirror seam. Mocked
 // so no real DB/SSE runs; the worker only calls recordPlacement.
 jest.mock('../backend/src/services/vapiCallTimelineService', () => ({
@@ -46,7 +47,7 @@ jest.mock('../backend/src/services/partsCallService', () => ({
 const jobsService = require('../backend/src/services/jobsService');
 const outboundCallService = require('../backend/src/services/outboundCallService');
 const settings = require('../backend/src/services/outboundCallSettingsService');
-const groupRouting = require('../backend/src/services/groupRouting');
+const agentCallWindowService = require('../backend/src/services/agentCallWindowService');
 const vapiCallTimeline = require('../backend/src/services/vapiCallTimelineService');
 const partsCallService = require('../backend/src/services/partsCallService');
 const worker = require('../backend/src/services/outboundCallWorker');
@@ -84,7 +85,7 @@ const DIALABLE_JOB = {
 beforeEach(() => {
     jest.clearAllMocks();
     settings.resolve.mockResolvedValue({ ...DEFAULT_SETTINGS });
-    groupRouting.isBusinessHours.mockResolvedValue(true);
+    agentCallWindowService.nextAllowedAt.mockImplementation(async (_companyId, _agentKey, now) => now);
     // Default: no local invoice → balance omitted (prior behavior). Overridden
     // per-test where the balance-injection path is exercised.
     jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: null, total: null, amountPaid: null });
@@ -211,8 +212,10 @@ describe('TC-OPC-U09: tick — claims only due pending rows with FOR UPDATE SKIP
 // ---------------------------------------------------------------------------
 
 describe('TC-OPC-U10: processAttempt — outside business hours → reschedule, do NOT dial', () => {
-    test('isBusinessHours=false → scheduled_at pushed, status pending, placeCall NOT called', async () => {
-        groupRouting.isBusinessHours.mockResolvedValue(false);
+    test('SAB-CW-PARTS-DEFER: guard future result → same attempt pending, no dial', async () => {
+        agentCallWindowService.nextAllowedAt.mockImplementation(async (_companyId, _agentKey, now) => (
+            new Date(now.getTime() + 60 * 60 * 1000)
+        ));
         jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
         // resolveBusinessHoursGroup query + the push UPDATE
         mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
@@ -222,6 +225,10 @@ describe('TC-OPC-U10: processAttempt — outside business hours → reschedule, 
         expect(outboundCallService.placeCall).not.toHaveBeenCalled();
         const pushCall = mockQuery.mock.calls.find((c) => /SET status = 'pending', scheduled_at = \$2/i.test(c[0]));
         expect(pushCall).toBeTruthy();
+        expect(pushCall[1][0]).toBe(900);
+        expect(pushCall[0]).toMatch(/company_id = \$3/i);
+        expect(pushCall[1][2]).toBe(CO);
+        expect(pushCall[0]).not.toMatch(/attempt_no\s*=/i);
     });
 });
 

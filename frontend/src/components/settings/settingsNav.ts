@@ -144,6 +144,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
             { id: 'ai-phone-agent', label: 'AI phone agent', to: '/settings/integrations/vapi-ai', permissions: ['tenant.integrations.manage'] },
             { id: 'email-assistant', label: 'Email assistant', to: '/settings/integrations/mail-secretary', permissions: ['tenant.integrations.manage'] },
             { id: 'outbound-lead-caller', label: 'Outbound lead caller', to: '/settings/integrations/outbound-lead-caller', permissions: ['tenant.integrations.manage'] },
+            { id: 'outbound-parts-caller', label: 'Outbound parts caller', to: '/settings/integrations/outbound-parts-caller', permissions: ['tenant.integrations.manage'] },
             { id: 'message-templates', label: 'Message templates', to: '/settings/quick-messages', permissions: ['tenant.company.manage'] },
         ],
     },

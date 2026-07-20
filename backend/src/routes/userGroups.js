@@ -13,7 +13,7 @@ const router = express.Router();
 const db = require('../db/connection');
 const crypto = require('crypto');
 const agentPresence = require('../services/agentPresence');
-const { groupsForUser } = require('../services/groupRouting');
+const { groupsForUser, normalizeDayOfWeek } = require('../services/groupRouting');
 const { requirePermission } = require('../middleware/authorization');
 
 /** Generate the default skeleton v2 call flow graph JSON for a group */
@@ -53,6 +53,23 @@ function getCompanyId(req) {
 
 function getCurrentUserId(req) {
     return req.user?.crmUser?.id || req.user?.sub || null;
+}
+
+function canonicalDayOrThrow(value) {
+    const day = normalizeDayOfWeek(value);
+    if (day) return day;
+    const err = new Error('Invalid day of week');
+    err.statusCode = 400;
+    throw err;
+}
+
+function normalizeHoursForResponse(rows) {
+    const byDay = new Map();
+    for (const row of rows) {
+        const day = normalizeDayOfWeek(row.day);
+        if (day && !byDay.has(day)) byDay.set(day, { ...row, day });
+    }
+    return [...byDay.values()];
 }
 
 function hasRenderableGraph(graph) {
@@ -171,7 +188,7 @@ async function buildGroupPayload(group, companyId) {
         numbers: numbersRes.rows,
         schedule: {
             timezone: group.timezone || companyRes.rows[0]?.timezone || 'America/New_York',
-            hours: hoursRes.rows.length > 0 ? hoursRes.rows : [],
+            hours: normalizeHoursForResponse(hoursRes.rows),
         },
         flow: flow ? {
             id: flow.id,
@@ -377,7 +394,7 @@ router.post('/', requirePermission('tenant.telephony.manage'), async (req, res) 
             const isOpen = h.open !== 'Closed';
             await client.query(
                 `INSERT INTO user_group_hours (group_id, day_of_week, is_open, open_time, close_time) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (group_id, day_of_week) DO UPDATE SET is_open = $3, open_time = $4, close_time = $5`,
-                [groupId, h.day, isOpen, isOpen ? h.open : null, isOpen ? h.close : null]
+                [groupId, canonicalDayOrThrow(h.day), isOpen, isOpen ? h.open : null, isOpen ? h.close : null]
             );
         }
 
@@ -397,7 +414,7 @@ router.post('/', requirePermission('tenant.telephony.manage'), async (req, res) 
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('[UserGroups] POST error:', err.message);
-        res.status(err.statusCode || 500).json({ ok: false, error: err.statusCode === 409 ? err.message : 'Failed to create group' });
+        res.status(err.statusCode || 500).json({ ok: false, error: err.statusCode ? err.message : 'Failed to create group' });
     } finally {
         client.release();
     }
@@ -503,7 +520,7 @@ router.put('/:id', requirePermission('tenant.telephony.manage'), async (req, res
                 const isOpen = h.open !== 'Closed';
                 await client.query(
                     `INSERT INTO user_group_hours (group_id, day_of_week, is_open, open_time, close_time) VALUES ($1, $2, $3, $4, $5)`,
-                    [id, h.day, isOpen, isOpen ? h.open : null, isOpen ? h.close : null]
+                    [id, canonicalDayOrThrow(h.day), isOpen, isOpen ? h.open : null, isOpen ? h.close : null]
                 );
             }
         }
@@ -516,7 +533,7 @@ router.put('/:id', requirePermission('tenant.telephony.manage'), async (req, res
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('[UserGroups] PUT error:', err.message);
-        res.status(err.statusCode || 500).json({ ok: false, error: err.statusCode === 409 ? err.message : 'Failed to update group' });
+        res.status(err.statusCode || 500).json({ ok: false, error: err.statusCode ? err.message : 'Failed to update group' });
     } finally {
         client.release();
     }

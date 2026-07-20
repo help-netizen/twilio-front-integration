@@ -23,21 +23,11 @@ const db = require('../db/connection');
 const leadsService = require('./leadsService');
 const marketplaceService = require('./marketplaceService');
 const outboundLeadCallSettingsService = require('./outboundLeadCallSettingsService');
-const scheduleService = require('./scheduleService');
+const agentCallWindowService = require('./agentCallWindowService');
 const outboundCallCancellationService = require('./outboundCallCancellationService');
 
 const APP_KEY = 'outbound-lead-caller';
 const CONTACT_CANCEL_CAUSES = outboundCallCancellationService.CAUSES;
-
-// scheduleService's DEFAULT_DISPATCH_SETTINGS is module-private — mirror the
-// window-relevant keys (sanitizeDispatchSettings would coerce to the same
-// values from an empty object anyway; this keeps the intent explicit).
-const FALLBACK_DISPATCH_SETTINGS = {
-    timezone: 'America/New_York',
-    work_start_time: '08:00',
-    work_end_time: '18:00',
-    work_days: [1, 2, 3, 4, 5],
-};
 
 // ── §5.1 Pure helpers (exported for jest — no DB, injectable now) ───────────
 
@@ -55,159 +45,22 @@ function normalizeDialablePhone(raw) {
     return null;
 }
 
-const TIME_RE = /^\d{1,2}:\d{2}$/;
-
-function parseMinutes(hhmm) {
-    const [h, m] = String(hhmm).split(':').map(Number);
-    return h * 60 + m;
-}
-
-/**
- * Sanitized copy of dispatch settings (never throws, never loops):
- * work_days → non-empty int 0-6 array else [1..5]; start/end must match
- * HH:MM with start < end (windows never cross midnight in v1) else
- * 08:00/18:00; timezone falsy → America/New_York.
- */
-function sanitizeDispatchSettings(ds) {
-    const src = ds && typeof ds === 'object' ? ds : {};
-    let workDays = Array.isArray(src.work_days)
-        ? src.work_days.filter(d => Number.isInteger(d) && d >= 0 && d <= 6)
-        : [];
-    if (workDays.length === 0) workDays = [1, 2, 3, 4, 5];
-
-    let start = src.work_start_time;
-    let end = src.work_end_time;
-    const validShape = TIME_RE.test(String(start)) && TIME_RE.test(String(end));
-    const validRange = validShape
-        && parseMinutes(start) < parseMinutes(end)
-        && parseMinutes(end) <= 24 * 60 && parseMinutes(start) >= 0
-        && Number(String(start).split(':')[1]) < 60 && Number(String(end).split(':')[1]) < 60;
-    if (!validRange) { start = '08:00'; end = '18:00'; }
-
-    return {
-        timezone: src.timezone || 'America/New_York',
-        work_start_time: start,
-        work_end_time: end,
-        work_days: workDays,
-    };
-}
-
-const WEEKDAY_TO_NUM = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-
-/** Company-local wall clock probe of a UTC instant: { dow, minutes }. */
-function localWallClock(date, timezone) {
-    const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
-        weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
-    }).formatToParts(date);
-    const get = (t) => (parts.find(p => p.type === t) || {}).value;
-    const dow = WEEKDAY_TO_NUM[get('weekday')] ?? 1;
-    // hour12:false may render 24 for midnight in some ICU versions — normalize.
-    const hour = Number(get('hour')) % 24;
-    const minute = Number(get('minute'));
-    return { dow, minutes: hour * 60 + minute };
-}
-
-/**
- * True iff `now` is inside the company work window: local weekday enabled AND
- * start ≤ local < end (a dial must START strictly before work_end_time;
- * exactly at end = outside). D2/FR-4.
- */
-function isWithinWorkWindow(now, ds) {
-    // OLC-WINDOW-001: 'always' (24/7) mode is in-window at every instant.
-    if (ds && ds.always === true) return true;
-    const s = sanitizeDispatchSettings(ds);
-    const { dow, minutes } = localWallClock(now, s.timezone);
-    if (!s.work_days.includes(dow)) return false;
-    return minutes >= parseMinutes(s.work_start_time) && minutes < parseMinutes(s.work_end_time);
-}
-
-/** Company-local calendar date (y/m/d) of a UTC instant. */
-function localCalendarDate(date, timezone) {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(date); // YYYY-MM-DD
-    const [y, m, d] = parts.split('-').map(Number);
-    return { y, m, d };
-}
-
-/**
- * Earliest work-window START strictly AFTER `from` — including "today at
- * work_start" when `from` is a workday before opening. DST-safe: the tz offset
- * is probed per target day via the shared worker helper. Pathological config
- * (no candidate in 14 days) → warn + from+24h hard fallback. SC-03/FR-4.
- */
-function nextWindowStart(from, ds) {
-    // OLC-WINDOW-001: 24/7 has no "next" boundary — now is always open. (Defensive;
-    // callers only reach here when isWithinWorkWindow is false, never for 'always'.)
-    if (ds && ds.always === true) return new Date(from.getTime());
-    const s = sanitizeDispatchSettings(ds);
-    // Lazy require: the worker requires this module back in its tick branch —
-    // a top-level cross-require would cycle (architecture pins this direction).
-    const { getTimezoneOffsetMs } = require('./outboundCallWorker');
-    const [startHour, startMinute] = s.work_start_time.split(':').map(Number);
-    const base = localCalendarDate(from, s.timezone);
-    // UTC-midday date math avoids calendar-day drift near midnight/DST.
-    const baseUtcNoon = Date.UTC(base.y, base.m - 1, base.d, 12, 0, 0);
-
-    for (let dayOffset = 0; dayOffset <= 13; dayOffset++) {
-        const probe = new Date(baseUtcNoon + dayOffset * 24 * 60 * 60 * 1000);
-        const y = probe.getUTCFullYear();
-        const m = probe.getUTCMonth() + 1;
-        const d = probe.getUTCDate();
-        // Weekday of that company-local calendar date (probe at local noon).
-        const offsetAtNoon = getTimezoneOffsetMs(s.timezone, y, m, d, 12);
-        const localNoonUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0) - offsetAtNoon);
-        const { dow } = localWallClock(localNoonUtc, s.timezone);
-        if (!s.work_days.includes(dow)) continue;
-
-        const offsetMs = getTimezoneOffsetMs(s.timezone, y, m, d, startHour);
-        const candidate = new Date(
-            Date.UTC(y, m - 1, d, startHour, startMinute, 0) - offsetMs
-        );
-        if (candidate.getTime() > from.getTime()) return candidate;
-    }
-    console.warn('[outboundLeadCall] nextWindowStart: no window inside 14 days — pathological dispatch config; falling back to +24h');
-    return new Date(from.getTime() + 24 * 60 * 60 * 1000);
-}
-
-/** Identity inside the window; else the next window start. */
-function clampIntoWorkWindow(date, ds) {
-    return isWithinWorkWindow(date, ds) ? date : nextWindowStart(date, ds);
-}
-
-/**
- * OLC-WINDOW-001 — the EFFECTIVE calling window for a company, from its OLC
- * settings mode overlaid on the dispatch business hours:
- *   - 'always' → { always: true } (24/7; the window helpers short-circuit),
- *   - 'custom' → a synthetic dispatch-settings object: the custom HH:MM..HH:MM
- *     window on EVERY day, in the company timezone (borrowed from dispatch),
- *   - 'office_hours' (default / anything else) → the dispatch settings verbatim.
- * Pure — the caller resolves both `settings` and `ds` and passes them in.
- */
-function effectiveWindow(settings, ds) {
-    const mode = settings && settings.calling_window_mode;
-    if (mode === 'always') return { always: true };
-    if (mode === 'custom' && settings.custom_start_time && settings.custom_end_time) {
-        const tz = (ds && ds.timezone) || FALLBACK_DISPATCH_SETTINGS.timezone;
-        return {
-            timezone: tz,
-            work_start_time: settings.custom_start_time,
-            work_end_time: settings.custom_end_time,
-            work_days: [0, 1, 2, 3, 4, 5, 6],
-        };
-    }
-    return ds;
-}
+// Backward-compatible pure-helper names now delegate to the shared guard. Tests
+// and older internal callers keep their API without retaining a second resolver.
+const sanitizeDispatchSettings = agentCallWindowService.sanitizeDispatchSettings;
+const isWithinWorkWindow = agentCallWindowService.isWithinWindow;
+const nextWindowStart = agentCallWindowService.nextWindowStart;
+const clampIntoWorkWindow = agentCallWindowService.clampIntoWindow;
+const effectiveWindow = agentCallWindowService.effectiveWindow;
 
 /**
  * Ladder math (FR-5/D1), mirroring the parts convention: backoff_schedule
  * [justFailedNo] is the NEXT attempt's token, 0-based (after attempt 1 →
- * index 1). 'immediate' → now; '+Nm'/'+Nh' → now+N; unknown/absent → now
- * (conservative — the claim-time window check still protects). Result is
- * ALWAYS clamped into the work window.
+ * index 1). 'immediate' → now; '+Nm'/'+Nh' → now+N; unknown/absent → now.
+ * The raw helper feeds the async shared guard; the compatibility helper below
+ * still clamps against an explicitly supplied resolved window.
  */
-function computeLeadNextDueAt(justFailedNo, settings, ds, now = new Date()) {
+function computeLeadBackoffAt(justFailedNo, settings, now = new Date()) {
     const schedule = Array.isArray(settings?.backoff_schedule) ? settings.backoff_schedule : [];
     const token = schedule[justFailedNo];
     let target = now;
@@ -219,7 +72,11 @@ function computeLeadNextDueAt(justFailedNo, settings, ds, now = new Date()) {
             target = new Date(now.getTime() + n * unitMs);
         }
     }
-    return clampIntoWorkWindow(target, ds);
+    return target;
+}
+
+function computeLeadNextDueAt(justFailedNo, settings, ds, now = new Date()) {
+    return clampIntoWorkWindow(computeLeadBackoffAt(justFailedNo, settings, now), ds);
 }
 
 /**
@@ -325,20 +182,20 @@ async function onLeadCreated({ leadId, companyId }) {
         // 6. Lifetime-once (FR-14c): ANY prior chain — even a finished one —
         // means this lead was already worked; re-enable never re-dials.
         const { rows: existing } = await db.query(
-            `SELECT 1 FROM outbound_call_attempts WHERE lead_uuid = $1 LIMIT 1`,
-            [lead.UUID]
+            `SELECT 1 FROM outbound_call_attempts
+             WHERE lead_uuid = $1 AND company_id = $2
+             LIMIT 1`,
+            [lead.UUID, companyId]
         );
         if (existing.length > 0) return skip(leadId, companyId, 'chain_exists');
 
-        // 7. Enqueue — due now, clamped into the effective calling window
-        //    (OLC-WINDOW-001: office hours / 24-7 / custom, per settings).
-        let ds;
-        try {
-            ds = await scheduleService.getDispatchSettings(companyId);
-        } catch {
-            ds = { ...FALLBACK_DISPATCH_SETTINGS };
-        }
-        const dueAt = clampIntoWorkWindow(new Date(), effectiveWindow(settings, ds));
+        // 7. Enqueue through the shared guard. A future due time is a deferral,
+        // not a consumed attempt; attempt_no remains 1 until an actual dial.
+        const dueAt = await agentCallWindowService.nextAllowedAt(
+            companyId,
+            agentCallWindowService.AGENT_KEYS.LEADS,
+            new Date()
+        );
         await db.query(
             `INSERT INTO outbound_call_attempts
                  (company_id, lead_uuid, scenario, contact_id, phone, attempt_no, status, scheduled_at)
@@ -368,8 +225,6 @@ async function terminateLead(attemptId, status, reason) {
     );
     console.log(`[outboundLeadCall] terminated attempt=${attemptId} status=${status} reason=${reason}`);
 }
-
-const IGNORE_HOURS_RE = /^(1|true|yes|on)$/i;
 
 /**
  * §5.3 — claim-time processing for a scenario='lead_call' row (worker Touch-1
@@ -408,24 +263,19 @@ async function processLeadAttempt(attempt) {
         return terminateLead(attempt.id, 'canceled', 'source_disabled');
     }
 
-    // 4. Calling window (FR-4/D2 + OLC-WINDOW-001) — carry, never drop. The
-    // effective window is office hours / 24-7 / custom per settings. Test toggle
-    // honored (same regex as the parts worker).
-    let ds;
-    try {
-        ds = await scheduleService.getDispatchSettings(companyId);
-    } catch {
-        ds = { ...FALLBACK_DISPATCH_SETTINGS };
-    }
-    const eff = effectiveWindow(settings, ds);
-    const ignoreHours = IGNORE_HOURS_RE.test(process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS || '');
-    if (!ignoreHours && !isWithinWorkWindow(now, eff)) {
-        const carryTo = nextWindowStart(now, eff);
+    // 4. Every claimed dial is re-checked through the shared guard. This covers
+    // first attempts and every worker retry without trusting scheduled_at alone.
+    const carryTo = await agentCallWindowService.nextAllowedAt(
+        companyId,
+        agentCallWindowService.AGENT_KEYS.LEADS,
+        now
+    );
+    if (carryTo.getTime() > now.getTime()) {
         await db.query(
             `UPDATE outbound_call_attempts
              SET status = 'pending', scheduled_at = $2, updated_at = now()
-             WHERE id = $1`,
-            [attempt.id, carryTo]
+             WHERE id = $1 AND company_id = $3`,
+            [attempt.id, carryTo, companyId]
         );
         console.log(`[outboundLeadCall] carried attempt=${attempt.id} to=${carryTo.toISOString()}`);
         return;
@@ -577,14 +427,14 @@ async function scheduleLeadRetryOrExhaust(attempt, reason, klass = 'failed') {
     const maxAttempts = settings.max_attempts || 3;
 
     if (attempt.attempt_no < maxAttempts) {
-        // 3. Next rung — fresh slot at claim (slot_json deliberately not copied).
-        let ds;
-        try {
-            ds = await scheduleService.getDispatchSettings(companyId);
-        } catch {
-            ds = { ...FALLBACK_DISPATCH_SETTINGS };
-        }
-        const nextAt = computeLeadNextDueAt(attempt.attempt_no, settings, effectiveWindow(settings, ds), new Date());
+        // 3. Next rung — preserve lead-specific backoff, then clamp the target
+        // through the shared guard. slot_json is deliberately not copied.
+        const rawNextAt = computeLeadBackoffAt(attempt.attempt_no, settings, new Date());
+        const nextAt = await agentCallWindowService.nextAllowedAt(
+            companyId,
+            agentCallWindowService.AGENT_KEYS.LEADS,
+            rawNextAt
+        );
         await db.query(
             `INSERT INTO outbound_call_attempts
                  (company_id, lead_uuid, scenario, contact_id, phone, attempt_no, status, scheduled_at)
@@ -814,6 +664,7 @@ module.exports = {
     nextWindowStart,
     clampIntoWorkWindow,
     computeLeadNextDueAt,
+    computeLeadBackoffAt,
     effectiveWindow,
     parseLeadContext,
     // §5.2

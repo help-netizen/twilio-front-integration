@@ -39,6 +39,7 @@ import VapiSettingsPage from './pages/VapiSettingsPage';
 import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
 import MailSecretarySettingsPage from './pages/MailSecretarySettingsPage';
 import OutboundLeadCallerSettingsPage from './pages/OutboundLeadCallerSettingsPage';
+import OutboundPartsCallerSettingsPage from './pages/OutboundPartsCallerSettingsPage';
 import PublicInvoicePayPage from './pages/PublicInvoicePayPage';
 import PublicPayThanksPage from './pages/PublicPayThanksPage';
 import PublicEstimateViewPage from './pages/PublicEstimateViewPage';
@@ -192,6 +193,7 @@ function App() {
                 <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/mail-secretary" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><MailSecretarySettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/outbound-lead-caller" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><OutboundLeadCallerSettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/integrations/outbound-parts-caller" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><OutboundPartsCallerSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/google-email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><GoogleEmailSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/telephony-twilio" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><TelephonyTwilioSettingsPage /></ProtectedRoute>} />

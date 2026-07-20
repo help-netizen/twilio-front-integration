@@ -5,7 +5,7 @@
 
 import { authedFetch } from './apiClient';
 
-export type CallingWindowMode = 'office_hours' | 'always' | 'custom';
+export type CallingWindowMode = 'always' | 'custom' | null;
 
 export interface OutboundLeadCallerSettings {
     enabled_sources: string[];
@@ -14,6 +14,7 @@ export interface OutboundLeadCallerSettings {
     calling_window_mode: CallingWindowMode;
     custom_start_time: string | null;
     custom_end_time: string | null;
+    calling_window_work_days: number[] | null;
     updated_at?: string | null;
 }
 
@@ -22,6 +23,7 @@ export interface OutboundLeadCallerSettingsInput {
     calling_window_mode: CallingWindowMode;
     custom_start_time?: string | null;
     custom_end_time?: string | null;
+    calling_window_work_days?: number[] | null;
 }
 
 export interface OutboundLeadCallerOverview {

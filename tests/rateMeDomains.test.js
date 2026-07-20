@@ -844,7 +844,7 @@ describe('RATE-ME-CRM-001 settings dispatch and authed surface', () => {
 
     test('TC-S3-01 · settings whitelist and ordered 404 scaffold trio are preserved', async () => {
         expect(marketplaceSettingsService.SETTINGS_ENABLED_APP_KEYS)
-            .toEqual(new Set(['rely-leads', 'rate-me']));
+            .toEqual(new Set(['rely-leads', 'rate-me', 'outbound-parts-caller']));
 
         await expectSettingsError(
             marketplaceSettingsService.getAppSettings(COMPANY_X, 'garbage-key'),

@@ -46,6 +46,11 @@ jest.mock('../backend/src/services/outboundCallWorker', () => ({
     resolveBusinessHoursGroup: (...a) => mockResolveGroup(...a),
     retryBlockReason: (...a) => mockRetryBlockReason(...a),
 }));
+const mockNextAllowedAt = jest.fn();
+jest.mock('../backend/src/services/agentCallWindowService', () => ({
+    AGENT_KEYS: { PARTS: 'outbound-parts-caller', LEADS: 'outbound-lead-caller' },
+    nextAllowedAt: (...args) => mockNextAllowedAt(...args),
+}));
 
 // OUTBOUND-CALL-TIMELINE-001 (CT-05) — the timeline seam (CT-01). Mocked so we
 // assert the ROUTE'S wiring (called once, {attempt, message}, non-fatal), not the
@@ -103,6 +108,7 @@ beforeEach(() => {
     mockResolveSettings.mockReset();
     mockComputeNext.mockReset();
     mockResolveGroup.mockReset();
+    mockNextAllowedAt.mockReset();
     mockRetryBlockReason.mockReset();
     mockFinalize.mockReset();
     mockApplyStatusUpdate.mockReset();
@@ -111,6 +117,7 @@ beforeEach(() => {
     mockResolveSettings.mockResolvedValue({ max_attempts: 3 });
     mockResolveGroup.mockResolvedValue('default-group');
     mockComputeNext.mockReturnValue(new Date('2026-07-08T14:00:00.000Z'));
+    mockNextAllowedAt.mockImplementation(async (_companyId, _agentKey, now) => now);
     // CC-04 guard default: not blocked → retries behave exactly as before.
     mockRetryBlockReason.mockResolvedValue(null);
     // booked-detect default: job is NOT rescheduled.
@@ -312,6 +319,11 @@ describe('retry-or-exhaust (U18, S5 slice)', () => {
         // Reuses the worker's backoff math + business-hours group resolution.
         expect(mockResolveGroup).toHaveBeenCalledWith(COMPANY);
         expect(mockComputeNext).toHaveBeenCalledWith(1, expect.any(Object), 'default-group', expect.any(Date));
+        expect(mockNextAllowedAt).toHaveBeenCalledWith(
+            COMPANY,
+            'outbound-parts-caller',
+            new Date('2026-07-08T14:00:00.000Z')
+        );
         const insert = mockQuery.mock.calls.find(c => /INSERT INTO outbound_call_attempts/i.test(String(c[0])));
         expect(insert[1]).toContain(2); // attempt_no + 1
     });

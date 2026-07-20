@@ -25,7 +25,7 @@ const db = require('../db/connection');
 const jobsService = require('./jobsService');
 const outboundCallService = require('./outboundCallService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
-const groupRouting = require('./groupRouting');
+const agentCallWindowService = require('./agentCallWindowService');
 // OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04): the CC-01 cancel helpers. Used by the
 // honest Guard-1 (task stamp) and the shared no-resurrection retry guard
 // (isChainCanceled). partsCallService never requires this module — no cycle.
@@ -48,37 +48,33 @@ let intervalHandle = null;
 // =============================================================================
 
 /**
- * Resolve the group object `groupRouting.isBusinessHours(group, now)` expects
- * ({ id, timezone }) for a company. We use the company's first user_group for the
- * `user_group_hours` lookup and the company's own timezone for local-time
- * formatting. If the company has no group, `isBusinessHours` treats "no hours"
- * as open (returns true) — the safe default is to allow the dial. Safe-fail:
- * never throws; on any DB error returns a permissive group (open).
+ * Resolve only the company timezone used by the parts-specific
+ * `next_business_morning` retry token. Outbound eligibility no longer reads
+ * user_group_hours; those rows are inbound-routing-only.
  */
-async function resolveBusinessHoursGroup(companyId) {
+async function resolveCompanyTimezone(companyId) {
     try {
         const { rows } = await db.query(
-            `SELECT ug.id AS group_id,
-                    COALESCE(c.timezone, 'America/New_York') AS timezone
+            `SELECT COALESCE(c.timezone, 'America/New_York') AS timezone
              FROM companies c
-             LEFT JOIN user_groups ug ON ug.company_id = c.id::text
              WHERE c.id = $1
-             ORDER BY ug.created_at ASC
              LIMIT 1`,
             [companyId]
         );
         const row = rows[0];
-        // group_id may be null (company has no groups) — isBusinessHours then
-        // finds no hours rows and returns true (open). timezone always present.
         return {
-            id: row ? row.group_id : null,
+            id: null,
             timezone: (row && row.timezone) || 'America/New_York',
         };
-    } catch (err) {
-        console.warn('[outboundCallWorker] resolveBusinessHoursGroup failed, treating as open:', err.message);
+    } catch {
+        console.warn('[outboundCallWorker] resolveCompanyTimezone failed; using default timezone');
         return { id: null, timezone: 'America/New_York' };
     }
 }
+
+// Compatibility for the webhook/tests that used the former group-hours helper.
+const resolveBusinessHoursGroup = resolveCompanyTimezone;
+const getTimezoneOffsetMs = agentCallWindowService.getTimezoneOffsetMs;
 
 /**
  * Compute the next business-morning timestamp (next_morning_hour company-local,
@@ -113,27 +109,6 @@ function nextBusinessMorning(from, timezone, morningHour) {
 }
 
 /**
- * Offset (ms) of `timezone` from UTC at the given local wall-clock moment, i.e.
- * localWallTime - UTC. Derived by formatting a probe UTC instant in the tz and
- * diffing — handles DST without any external library.
- */
-function getTimezoneOffsetMs(timezone, year, month, day, hour) {
-    const probe = new Date(Date.UTC(year, month - 1, day, hour, 0, 0));
-    const parts = Object.fromEntries(
-        new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-        }).formatToParts(probe).map(p => [p.type, p.value])
-    );
-    const asUTC = Date.UTC(
-        Number(parts.year), Number(parts.month) - 1, Number(parts.day),
-        // Intl may emit '24' for midnight — normalize to 0.
-        Number(parts.hour) % 24, Number(parts.minute), Number(parts.second)
-    );
-    return asUTC - probe.getTime();
-}
-
-/**
  * Compute the scheduled_at for the NEXT attempt given the just-failed attempt.
  * backoff_schedule[0] = attempt 1 (immediate), [1] = attempt 2 (+2h), [2] =
  * attempt 3 (next business morning). `justFailedNo` is the attempt_no that just
@@ -152,8 +127,8 @@ function computeNextScheduledAt(justFailedNo, settings, group, now = new Date())
         case 'next_business_morning':
             return nextBusinessMorning(now, group.timezone, settings.next_morning_hour);
         default:
-            // Unknown token → conservative immediate (worker's biz-hours clamp
-            // at dial time still prevents an off-hours call).
+            // Unknown token → conservative immediate; every caller/claim then
+            // passes this instant through agentCallWindowService.
             return new Date(now.getTime());
     }
 }
@@ -289,35 +264,22 @@ async function processAttempt(attempt) {
 
     // --- Retry-config for backoff / max_attempts (safe-fail → DEFAULTS). ---
     const settings = await outboundCallSettingsService.resolve(companyId);
-    const group = await resolveBusinessHoursGroup(companyId);
+    const timezoneContext = await resolveCompanyTimezone(companyId);
 
-    // --- Business-hours clamp: don't dial outside the company's open hours. ---
-    // Push the row back to 'pending' at the next open time; do NOT dial now.
+    // --- Shared outbound call-window guard: carry, never drop. ---
+    // Push this SAME row back to pending; a deferral does not consume attempt_no.
     const now = new Date();
-    // TEMPORARY TEST TOGGLE (OUTBOUND-PARTS-CALL) — when OUTBOUND_CALL_IGNORE_BUSINESS_HOURS
-    // is truthy, skip the business-hours clamp so a queued call dials immediately regardless
-    // of the hour. Owner-enabled for live testing; to restore normal clamping just unset the
-    // env and restart the app (no code revert needed). Absent/unset → normal behavior.
-    const ignoreBusinessHours = /^(1|true|yes|on)$/i.test(
-        process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS || ''
+    const allowedAt = await agentCallWindowService.nextAllowedAt(
+        companyId,
+        agentCallWindowService.AGENT_KEYS.PARTS,
+        now
     );
-    let open = true;
-    if (!ignoreBusinessHours) {
-        try {
-            open = await groupRouting.isBusinessHours(group, now);
-        } catch (err) {
-            // If we can't determine hours, err on the side of dialing (open).
-            console.warn('[outboundCallWorker] isBusinessHours failed, proceeding as open:', err.message);
-            open = true;
-        }
-    }
-    if (!open) {
-        const nextOpen = nextBusinessMorning(now, group.timezone, settings.next_morning_hour);
+    if (allowedAt.getTime() > now.getTime()) {
         await db.query(
             `UPDATE outbound_call_attempts
              SET status = 'pending', scheduled_at = $2, updated_at = now()
-             WHERE id = $1`,
-            [attempt.id, nextOpen]
+             WHERE id = $1 AND company_id = $3`,
+            [attempt.id, allowedAt, companyId]
         );
         return;
     }
@@ -388,7 +350,7 @@ async function processAttempt(attempt) {
 
     // --- Failed to PLACE the call → treat as a failed attempt, feed retry. ---
     const failReason = (result && result.error) || 'place_call_failed';
-    await scheduleRetryOrExhaust(attempt, job, settings, group, failReason, now);
+    await scheduleRetryOrExhaust(attempt, job, settings, timezoneContext, failReason, now);
 }
 
 /**
@@ -397,7 +359,7 @@ async function processAttempt(attempt) {
  * note in both cases. The job stays 'Part arrived' and the task stays open with
  * the dispatcher regardless (no status flip here).
  */
-async function scheduleRetryOrExhaust(attempt, job, settings, group, failReason, now) {
+async function scheduleRetryOrExhaust(attempt, job, settings, timezoneContext, failReason, now) {
     const maxAttempts = settings.max_attempts || 3;
 
     // Mark the current attempt as failed (reason recorded for audit).
@@ -421,7 +383,17 @@ async function scheduleRetryOrExhaust(attempt, job, settings, group, failReason,
     }
 
     if (attempt.attempt_no < maxAttempts) {
-        const nextScheduledAt = computeNextScheduledAt(attempt.attempt_no, settings, group, now);
+        const rawNextScheduledAt = computeNextScheduledAt(
+            attempt.attempt_no,
+            settings,
+            timezoneContext,
+            now
+        );
+        const nextScheduledAt = await agentCallWindowService.nextAllowedAt(
+            attempt.company_id,
+            agentCallWindowService.AGENT_KEYS.PARTS,
+            rawNextScheduledAt
+        );
         // Enqueue the next attempt. The partial-unique (job_id) WHERE
         // status IN ('pending','dialing') guard is satisfied because we just
         // flipped THIS row to 'failed' above (no active row remains).
@@ -543,7 +515,6 @@ module.exports = {
     // CANCEL-001 (CC-04): shared with routes/vapiCallStatus.js — both retry-
     // insertion sites run ONE guard (spec S10).
     retryBlockReason,
-    // OUTBOUND-LEAD-CALL-001 Touch-2: DST-safe tz offset probe, shared with the
-    // lead scenario's window math (outboundLeadCallService lazy-requires it).
+    // Compatibility export; implementation lives in the shared call-window guard.
     getTimezoneOffsetMs,
 };

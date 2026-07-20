@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-07-19 — AGENT-CALL-WINDOW-001: единое окно исходящих звонков для всех роботов
+
+Lead Caller и новый отдельный marketplace-app **Outbound Parts Caller** теперь
+используют один `agentCallWindowService`: у каждого бота собственная nullable
+настройка (по умолчанию **Same as company settings**), а первый звонок, worker
+retry и webhook retry всегда проходят один timezone/DST-aware guard. Вне окна
+попытка переносится на ближайшее открытие без звонка и без расхода `attempt_no`;
+лестницы retry каждого робота не менялись. Ошибка резолвера fail-conservative:
+08:00–18:00 Mon–Fri, America/New_York; лог deferral однострочный и без PII.
+Parts полностью отвязан от Telephony group hours — они остаются только для
+inbound routing.
+
+Миграция **189** добавляет nullable days/hours override в обе таблицы настроек и
+без изменения live inbound-поведения удаляет только stale `Monday`…`Sunday` из
+`user_group_hours`: активный UI, writer и matcher уже используют `Mon`…`Sun`,
+поэтому короткие строки и их часы сохраняются дословно; CHECK блокирует повторное
+расхождение, reader терпим к обеим формам на rolling deploy. Миграция **190**
+сеет `outbound-parts-caller` с user-facing и `metadata.assistant` описаниями,
+category `ai` и собственной setup-страницей. Обе страницы переиспользуют
+канонический inherit/custom блок с floating-label временем и днями недели.
+После деплоя владелец отдельно проверит фактические inbound-часы в Telephony UI
+(сейчас short rows означают открытые выходные 07–17 и Thu до 21:00) и при
+необходимости изменит их там. Спека:
+`docs/specs/AGENT-CALL-WINDOW-001.md`. Проверка: backend feature gate — 13
+сьютов/314 тестов; real-PG migration gate (double-apply, inbound no-flip,
+CHECK, double-rollback) — 1/1; marketplace regressions — 7/88; frontend — 41
+файл/233 теста; production build — green; backend syntax и `git diff --check`
+— green. **НЕ задеплоено.**
+
+---
+
 ## 2026-07-19 — AGENT-BOOKING-FAIL-001: робот снова фиксирует выбранный слот на лиде
 
 Повторяющийся graceful-failure был не следствием security/tenancy waves и не воскресным фильтром слотов: атомарный hold одновременно ставил лид в `Review`, но DB-driven lead FSM не имел ни одного входящего перехода в `Review`, поэтому `FSM_TRANSITION_DENIED` отменял весь UPDATE. Миграция **188** добавляет скрытый системный переход из каждого незакрытого состояния (без кнопки для людей), catch пишет stack под стабильным `[agentSkills] confirmLeadBooking failed:` без PII, а real-PG тест воспроизводит отказ до миграции и успешный Monday 10:00–12:00 hold после неё. **Commit: TBD (architect).**

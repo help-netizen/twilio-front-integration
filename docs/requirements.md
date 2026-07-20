@@ -4,6 +4,40 @@
 
 ---
 
+## AGENT-CALL-WINDOW-001 — Shared outbound robot call windows
+
+**Status:** Implemented
+
+**Priority:** P0
+**Spec:** `docs/specs/AGENT-CALL-WINDOW-001.md`
+
+- **FR-CW-1:** Every outbound robot call initialization, including first enqueue,
+  claim, worker retry, and webhook retry, consults one shared company-scoped
+  schedule guard.
+- **FR-CW-2:** Each marketplace robot stores an independent nullable override;
+  null inherits Company schedule and custom requires days plus a same-day HH:MM
+  range in the company timezone.
+- **FR-CW-3:** Off-time attempts move to the nearest allowed start. A deferral
+  never dials, drops the call, inserts a retry rung, or consumes `attempt_no`.
+- **FR-CW-4:** Resolver faults never throw into dialing and use the conservative
+  08:00–18:00 Monday–Friday `America/New_York` fallback.
+- **FR-CW-5:** Parts group hours are inbound-routing-only. Lead and parts retry
+  ladders otherwise retain their existing cadence and exhaustion semantics.
+- **FR-CW-6:** `user_group_hours.day_of_week` is canonical `Mon`…`Sun`; active
+  writers normalize to it, readers accept aliases, and migration 189 removes
+  only stale full-name duplicates without changing short-row values.
+- **FR-CW-7:** `outbound-parts-caller` is a dedicated published marketplace app
+  with user and assistant descriptions and its own schedule page in the
+  Communication and AI settings catalog.
+- **NFR-CW-1:** Every settings read/write is company-scoped; worker company IDs
+  come from trusted rows/events, never webhook or UI body claims.
+- **NFR-CW-2:** Deferral logging is one line and PII-free:
+  `[callWindow] deferred agent=<key> until=<ts>`.
+- **NFR-CW-3:** Settings UI reuses the canonical Same as company settings / Custom
+  schedule pattern with floating-label fields; no new top-level Settings section.
+
+---
+
 ## LQV2: Lead Qualifier v2 — AI Inbound Phone Assistant
 
 **Status:** Requirements

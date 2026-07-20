@@ -9,6 +9,21 @@ const { getPresenceSnapshot } = require('./agentPresence');
 const { getBusyClientIdentities, verifyAndFixStaleCalls } = require('./callAvailability');
 const { buildSoftphoneIdentity } = require('./softphoneIdentity');
 
+const CANONICAL_WEEKDAYS = Object.freeze(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+const WEEKDAY_ALIASES = Object.freeze({
+    sun: 'Sun', sunday: 'Sun',
+    mon: 'Mon', monday: 'Mon',
+    tue: 'Tue', tuesday: 'Tue',
+    wed: 'Wed', wednesday: 'Wed',
+    thu: 'Thu', thursday: 'Thu',
+    fri: 'Fri', friday: 'Fri',
+    sat: 'Sat', saturday: 'Sat',
+});
+
+function normalizeDayOfWeek(value) {
+    return WEEKDAY_ALIASES[String(value || '').trim().toLowerCase()] || null;
+}
+
 function safeParseJSON(value) {
     try { return JSON.parse(value || '{}'); } catch { return {}; }
 }
@@ -132,14 +147,14 @@ async function getGroupHours(groupId) {
     const result = await db.query(
         `SELECT day_of_week, is_open, open_time, close_time
          FROM user_group_hours
-         WHERE group_id = $1`,
-        [groupId]
+         WHERE group_id = $1
+         ORDER BY CASE WHEN day_of_week = ANY($2::text[]) THEN 0 ELSE 1 END, id`,
+        [groupId, CANONICAL_WEEKDAYS]
     );
     return result.rows;
 }
 
-async function isBusinessHours(group, now = new Date()) {
-    const hours = await getGroupHours(group.id);
+function isBusinessHoursForRows(hours, group, now = new Date()) {
     if (hours.length === 0) return true;
 
     const formatter = new Intl.DateTimeFormat('en-US', {
@@ -150,11 +165,17 @@ async function isBusinessHours(group, now = new Date()) {
         hour12: false,
     });
     const parts = Object.fromEntries(formatter.formatToParts(now).map(p => [p.type, p.value]));
-    const day = parts.weekday;
+    const day = normalizeDayOfWeek(parts.weekday);
     const localTime = `${parts.hour}:${parts.minute}`;
-    const row = hours.find(h => h.day_of_week === day);
+    // getGroupHours orders short rows first. Normalizing here keeps the reader
+    // rolling-deploy tolerant without changing which duplicate row wins.
+    const row = hours.find(h => normalizeDayOfWeek(h.day_of_week) === day);
     if (!row || !row.is_open || !row.open_time || !row.close_time) return false;
     return localTime >= row.open_time && localTime < row.close_time;
+}
+
+async function isBusinessHours(group, now = new Date()) {
+    return isBusinessHoursForRows(await getGroupHours(group.id), group, now);
 }
 
 async function availableAgentsForGroup(groupId, companyId, traceId = 'group-routing') {
@@ -253,6 +274,8 @@ module.exports = {
     availableAgentsForGroup,
     ensureFlowForGroup,
     isBusinessHours,
+    isBusinessHoursForRows,
+    normalizeDayOfWeek,
     groupsForUser,
     safeParseJSON,
 };

@@ -73,6 +73,7 @@ const {
     resolveBusinessHoursGroup,
     retryBlockReason,
 } = require('../services/outboundCallWorker');
+const agentCallWindowService = require('../services/agentCallWindowService');
 // OUTBOUND-CALL-TIMELINE-001 (CT-05): the NON-FATAL timeline seam (CT-01). Puts
 // the robot call into the Pulse `calls` timeline — mid-call live transitions
 // (applyStatusUpdate) and the finalized row with duration/summary/transcript/
@@ -357,11 +358,22 @@ router.post('/', webhookSecretAuth, async (req, res) => {
         }
 
         if (attempt.attempt_no < maxAttempts) {
-            // Reuse the worker's backoff math (no duplication): immediate / +2h /
-            // next-business-morning. The worker's business-hours clamp still applies
-            // at dial time, so we don't need to clamp here.
-            const group = await resolveBusinessHoursGroup(companyId);
-            const nextScheduledAt = computeNextScheduledAt(attempt.attempt_no, settings, group, now);
+            // Preserve the parts robot's retry ladder, then pass the candidate
+            // through the shared outbound-agent guard before persisting it. A
+            // call-window deferral does not increment attempt_no; this INSERT is
+            // still the retry consumed by the completed attempt above.
+            const timezoneContext = await resolveBusinessHoursGroup(companyId);
+            const retryAt = computeNextScheduledAt(
+                attempt.attempt_no,
+                settings,
+                timezoneContext,
+                now
+            );
+            const nextScheduledAt = await agentCallWindowService.nextAllowedAt(
+                companyId,
+                agentCallWindowService.AGENT_KEYS.PARTS,
+                retryAt
+            );
 
             await db.query(
                 `INSERT INTO outbound_call_attempts
