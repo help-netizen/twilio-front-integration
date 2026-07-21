@@ -31,7 +31,7 @@ interface ScheduleMapCanvasProps {
 /**
  * Shared Google Maps renderer used by both mobile Day and desktop Day/Timeline.
  * Marker/route placement depends only on the memoized model; selection and
- * hover mutate opacity/z-index in a separate effect and never rebuild geometry.
+ * hover mutate marker scale/z-index in a separate effect and never rebuild geometry.
  */
 export const ScheduleMapCanvas = memo(function ScheduleMapCanvas({
     model,
@@ -200,13 +200,17 @@ export const ScheduleMapCanvas = memo(function ScheduleMapCanvas({
         const activeKey = hoveredJobKey || selectedJobKey || null;
         for (const [jobKey, marker] of markerByKeyRef.current) {
             const active = jobKey === activeKey;
-            marker.setOpacity(activeKey && !active ? 0.38 : 1);
+            const icon = marker.getIcon();
+            if (icon && typeof icon !== 'string' && 'url' in icon) {
+                const pinWidth = active ? 40 : 34;
+                const pinHeight = active ? 56 : 48;
+                marker.setIcon({
+                    ...icon,
+                    scaledSize: new google.maps.Size(pinWidth, pinHeight),
+                    anchor: new google.maps.Point(pinWidth / 2, pinHeight - 4),
+                });
+            }
             marker.setZIndex(active ? 1000 : 100);
-        }
-        for (const { line, jobKeys, baseOpacity } of polylinesRef.current) {
-            line.setOptions({
-                strokeOpacity: activeKey && !jobKeys.has(activeKey) ? 0.18 : baseOpacity,
-            });
         }
     }, [selectedJobKey, hoveredJobKey, model]);
 

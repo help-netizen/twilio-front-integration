@@ -101,7 +101,7 @@ async function getScheduleItems(opts) {
             jobConds.push(`(j.assigned_techs IS NULL OR j.assigned_techs = '[]'::jsonb)`);
         }
         if (search) {
-            idx++; jobConds.push(`(COALESCE(j.service_name,'') || ' ' || COALESCE(j.customer_name,'')) ILIKE $${idx}`);
+            idx++; jobConds.push(`(COALESCE(j.service_name,'') || ' ' || COALESCE(c.full_name, j.customer_name, '')) ILIKE $${idx}`);
             params.push(`%${search}%`);
         }
 
@@ -110,7 +110,7 @@ async function getScheduleItems(opts) {
                 'job' AS entity_type,
                 j.id AS entity_id,
                 COALESCE(j.service_name, 'Job #' || j.job_number) AS title,
-                j.customer_name AS subtitle,
+                COALESCE(c.full_name, j.customer_name) AS subtitle,
                 j.blanc_status AS status,
                 j.start_date AS start_at,
                 j.end_date AS end_at,
@@ -119,7 +119,8 @@ async function getScheduleItems(opts) {
                 j.lat, j.lng,
                 j.normalized_address,
                 j.geocoding_status,
-                j.customer_name, j.customer_phone, j.customer_email,
+                COALESCE(c.full_name, j.customer_name) AS customer_name,
+                j.customer_phone, j.customer_email,
                 j.assigned_techs,
                 j.job_type,
                 j.job_source,
@@ -127,6 +128,9 @@ async function getScheduleItems(opts) {
                 j.company_id,
                 j.created_at
             FROM jobs j
+            LEFT JOIN contacts c
+              ON c.id = j.contact_id
+             AND c.company_id = j.company_id
             WHERE ${jobConds.join(' AND ')}
         `);
     }

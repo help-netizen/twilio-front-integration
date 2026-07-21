@@ -2,8 +2,8 @@ const JPEG_MIME_TYPE = 'image/jpeg';
 const DEFAULT_SKIP_BELOW_BYTES = 750 * 1024;
 
 export const DEFAULT_IMAGE_COMPRESSION_OPTIONS = {
-    maxLongEdge: 2560,
-    quality: 0.8,
+    maxLongEdge: 1600,
+    quality: 0.7,
     skipBelowBytes: DEFAULT_SKIP_BELOW_BYTES,
 } as const;
 

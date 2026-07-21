@@ -4,6 +4,9 @@ import desktopMapSource from '../components/schedule/ScheduleDesktopMapPanel.tsx
 import mobileMapSource from '../components/schedule/ScheduleJobsMap.tsx?raw';
 import mapCanvasSource from '../components/schedule/ScheduleMapCanvas.tsx?raw';
 import mapModelSource from '../components/schedule/scheduleMapModel.ts?raw';
+import scheduleCardSource from '../components/schedule/ScheduleItemCard.tsx?raw';
+import dayViewSource from '../components/schedule/DayView.tsx?raw';
+import timelineViewSource from '../components/schedule/TimelineView.tsx?raw';
 import schedulePageSource from './SchedulePage.tsx?raw';
 
 describe('Schedule desktop map composition contract', () => {
@@ -37,5 +40,19 @@ describe('Schedule desktop map composition contract', () => {
         expect(desktopMapSource).toContain('export const ScheduleDesktopMapPanel = memo');
         expect(mapCanvasSource).toContain('[status, model, companyTz]');
         expect(mapCanvasSource).toContain('[selectedJobKey, hoveredJobKey, model]');
+    });
+
+    it('keeps linked selection frames without dimming neighboring schedule cards', () => {
+        expect(scheduleCardSource).not.toContain('dimmed');
+        expect(scheduleCardSource).toContain("opacity: isCanceled ? 0.6 : 1");
+        expect(scheduleCardSource).toContain("'0 0 0 3px var(--blanc-accent), var(--sched-shadow-card)'");
+        expect(dayViewSource).not.toContain('dimmed=');
+        expect(timelineViewSource).not.toContain('dimmed=');
+        expect(desktopMapSource).not.toContain('dimmed');
+        expect(mapCanvasSource).not.toContain('marker.setOpacity');
+        expect(mapCanvasSource).toContain('const pinWidth = active ? 40 : 34');
+        expect(mapCanvasSource).toContain('marker.setZIndex(active ? 1000 : 100)');
+        expect(dayViewSource).toContain('selected={selectedItemKey ===');
+        expect(timelineViewSource).toContain('selected={selectedItemKey === itemKey}');
     });
 });

@@ -314,9 +314,6 @@ export const DayView: React.FC<DayViewProps> = ({
                                         layout="agenda"
                                         selected={selectedItemKey === `${item.entity_type}:${item.entity_id}`}
                                         hot={hoveredItemKey === `${item.entity_type}:${item.entity_id}`}
-                                        dimmed={Boolean((selectedItemKey || hoveredItemKey)
-                                            && selectedItemKey !== `${item.entity_type}:${item.entity_id}`
-                                            && hoveredItemKey !== `${item.entity_type}:${item.entity_id}`)}
                                         onHoverChange={onHoverItem}
                                     />
                                 </div>
@@ -517,9 +514,6 @@ export const DayView: React.FC<DayViewProps> = ({
                                         timezone={tz}
                                         selected={selectedItemKey === `${item.entity_type}:${item.entity_id}`}
                                         hot={hoveredItemKey === `${item.entity_type}:${item.entity_id}`}
-                                        dimmed={Boolean((selectedItemKey || hoveredItemKey)
-                                            && selectedItemKey !== `${item.entity_type}:${item.entity_id}`
-                                            && hoveredItemKey !== `${item.entity_type}:${item.entity_id}`)}
                                         onHoverChange={onHoverItem}
                                     />
                                 </div>

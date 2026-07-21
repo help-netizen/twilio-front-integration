@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-07-21 — SCHEDULE-CONTACT-NAME-001 (OB-20): актуальное имя контакта в расписании
+
+Schedule job tiles и поиск теперь читают имя из связанного живого контакта через
+company-scoped `LEFT JOIN`, а для ZB-orphan jobs без валидного `contact_id`
+сохраняют fallback на `jobs.customer_name`. Denormalized write path, rename hooks,
+миграции и остальные job surfaces не менялись. Тест фиксирует live-name win,
+orphan fallback и `T-own`/`T-foreign`/`T-blast`. Спека:
+`docs/specs/SCHEDULE-CONTACT-NAME-001.md`. **НЕ задеплоено.**
+
 ## 2026-07-20 — SCHEDULE-DESKTOP-MAP-001 (OB-18): маршруты техников в Day и Timeline
 
 Desktop Schedule теперь показывает утверждённую карту работ в Day и Timeline:

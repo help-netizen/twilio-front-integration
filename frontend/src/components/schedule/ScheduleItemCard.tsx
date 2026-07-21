@@ -51,7 +51,6 @@ interface ScheduleItemCardProps {
     detailed?: boolean;
     selected?: boolean;
     hot?: boolean;
-    dimmed?: boolean;
     onHoverChange?: (item: ScheduleItem | null) => void;
 }
 
@@ -65,7 +64,6 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({
     detailed = false,
     selected = false,
     hot = false,
-    dimmed = false,
     onHoverChange,
 }) => {
     const primaryTech = item.assigned_techs?.[0];
@@ -154,7 +152,7 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({
                     boxShadow: selected
                         ? '0 0 0 3px var(--blanc-accent), var(--sched-shadow-card)'
                         : hot ? '0 0 0 2px var(--blanc-accent), var(--sched-shadow-card)' : 'var(--sched-shadow-card)',
-                    opacity: dimmed ? 0.42 : isCanceled ? 0.6 : 1,
+                    opacity: isCanceled ? 0.6 : 1,
                 }}
             >
                 <div className="p-3.5 pb-3 h-full flex flex-col gap-1" style={{ paddingLeft: '14px' }}>
@@ -245,7 +243,7 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({
                 boxShadow: selected
                     ? '0 0 0 3px var(--blanc-accent), var(--sched-shadow-card)'
                     : hot ? '0 0 0 2px var(--blanc-accent), var(--sched-shadow-card)' : 'var(--sched-shadow-card)',
-                opacity: dimmed ? 0.42 : isCanceled ? 0.6 : 1,
+                opacity: isCanceled ? 0.6 : 1,
             }}
         >
             {/* Kebab menu (top-right) — Copy job. Only for jobs, when wired. */}

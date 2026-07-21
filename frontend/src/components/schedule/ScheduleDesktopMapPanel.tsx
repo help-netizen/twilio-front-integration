@@ -102,7 +102,6 @@ export const ScheduleDesktopMapPanel = memo(function ScheduleDesktopMapPanel({
                         {model.notOnMap.map(entry => {
                             const selected = selectedJobKey === entry.jobKey;
                             const hot = hoveredJobKey === entry.jobKey;
-                            const dimmed = Boolean((selectedJobKey || hoveredJobKey) && !selected && !hot);
                             const time = entry.job.start_at
                                 ? formatTimeInTZ(new Date(entry.job.start_at), companyTz)
                                 : '';
@@ -113,11 +112,10 @@ export const ScheduleDesktopMapPanel = memo(function ScheduleDesktopMapPanel({
                                     onClick={() => onSelectJob(entry.job)}
                                     onMouseEnter={() => onHoverJob(entry.jobKey)}
                                     onMouseLeave={() => onHoverJob(null)}
-                                    className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-opacity"
+                                    className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left"
                                     style={{
                                         background: selected || hot ? 'var(--blanc-accent-soft)' : 'var(--blanc-bg-deep)',
                                         boxShadow: selected ? 'inset 0 0 0 2px var(--blanc-accent)' : undefined,
-                                        opacity: dimmed ? 0.46 : 1,
                                     }}
                                 >
                                     <span className="min-w-0">

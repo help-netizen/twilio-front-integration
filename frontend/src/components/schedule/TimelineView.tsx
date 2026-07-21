@@ -565,9 +565,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                             timezone={tz}
                                             selected={selectedItemKey === itemKey}
                                             hot={hoveredItemKey === itemKey}
-                                            dimmed={Boolean((selectedItemKey || hoveredItemKey)
-                                                && selectedItemKey !== itemKey
-                                                && hoveredItemKey !== itemKey)}
                                             onHoverChange={onHoverItem}
                                         />
                                     </div>

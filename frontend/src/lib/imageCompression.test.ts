@@ -76,7 +76,7 @@ afterEach(() => {
 });
 
 describe('compressImageForUpload', () => {
-    it('downscales the long edge to 2560px and encodes at JPEG quality 0.8', async () => {
+    it('downscales the long edge to 1600px and encodes at JPEG quality 0.7', async () => {
         const { bitmap, close, createImageBitmapMock } = stubNativeDecode(4000, 3000);
         const { drawImage, toBlob } = stubCanvasOutput();
 
@@ -84,11 +84,11 @@ describe('compressImageForUpload', () => {
         const result = await compressImageForUpload(input);
 
         expect(result.compressed).toBe(true);
-        expect(result.output).toEqual({ width: 2560, height: 1920, bytes: 1024 });
+        expect(result.output).toEqual({ width: 1600, height: 1200, bytes: 1024 });
         expect(result.file.name).toBe('photo.jpg');
         expect(result.file.type).toBe('image/jpeg');
-        expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 2560, 1920);
-        expect(toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.8);
+        expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 1600, 1200);
+        expect(toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.7);
         expect(createImageBitmapMock).toHaveBeenCalledWith(input, expect.objectContaining({ imageOrientation: 'from-image' }));
         expect(close).toHaveBeenCalledOnce();
     });
@@ -150,8 +150,8 @@ describe('compressImageForUpload', () => {
 
         expect(heicMocks.isHeic).toHaveBeenCalledWith(input);
         expect(heicMocks.heicTo).toHaveBeenCalledWith({ blob: input, type: 'bitmap' });
-        expect(drawImage).toHaveBeenCalledWith(wasmBitmap, 0, 0, 2560, 1920);
-        expect(result.output).toEqual({ width: 2560, height: 1920, bytes: 1024 });
+        expect(drawImage).toHaveBeenCalledWith(wasmBitmap, 0, 0, 1600, 1200);
+        expect(result.output).toEqual({ width: 1600, height: 1200, bytes: 1024 });
         expect(result.file.name).toBe('photo.jpg');
         expect(result.file.type).toBe('image/jpeg');
         expect(revokeObjectURL).toHaveBeenCalledWith('blob:heic');
