@@ -10,6 +10,7 @@
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const contactsService = require('./contactsService');
+const { deduplicateNotesByIdentity, noteIdentity } = require('./noteDeduplication');
 
 const FEATURE_ENABLED = process.env.FEATURE_ZENBOOKER_SYNC === 'true';
 
@@ -90,22 +91,22 @@ function mergeStructuredNotes(existingNotes, incomingNotes) {
     // genuinely new. This preserves all Albusto-side fields on matched notes —
     // edited text (edited_at), created_by, deleted_at, id — so an edit or
     // soft-delete never reverts on re-sync (NOTES-001).
-    const merged = Array.isArray(existingNotes) ? [...existingNotes] : [];
+    const merged = deduplicateNotesByIdentity(existingNotes);
     const seenIds = new Set();
     const seenText = new Set();
 
     for (const note of merged) {
-        const id = note?.zb_note_id || note?.id;
-        if (id) seenIds.add(String(id));
+        const id = noteIdentity(note);
+        if (id) seenIds.add(id);
         if (note?.text) seenText.add(String(note.text).trim());
     }
 
-    for (const note of incomingNotes) {
-        const id = note.zb_note_id || note.id;
+    for (const note of deduplicateNotesByIdentity(incomingNotes)) {
+        const id = noteIdentity(note);
         const textKey = note.text ? String(note.text).trim() : '';
-        if ((id && seenIds.has(String(id))) || (textKey && seenText.has(textKey))) continue;
+        if ((id && seenIds.has(id)) || (textKey && seenText.has(textKey))) continue;
         merged.push(note);
-        if (id) seenIds.add(String(id));
+        if (id) seenIds.add(id);
         if (textKey) seenText.add(textKey);
     }
 
@@ -137,7 +138,7 @@ async function syncContactNotesFromZenbooker(contactId, notes) {
     );
     const existingNotes = rows[0]?.structured_notes || [];
     const mergedNotes = mergeStructuredNotes(existingNotes, incomingNotes);
-    if (mergedNotes.length === existingNotes.length) return;
+    if (JSON.stringify(mergedNotes) === JSON.stringify(existingNotes)) return;
 
     const legacyText = legacyTextFromZbNotes(notes);
     await db.query(
@@ -620,5 +621,6 @@ module.exports = {
     syncContactToZenbooker,
     syncAddressToZenbooker,
     handleWebhookPayload,
+    mergeStructuredNotes,
     FEATURE_ENABLED,
 };

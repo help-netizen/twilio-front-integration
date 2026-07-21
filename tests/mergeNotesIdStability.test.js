@@ -23,6 +23,29 @@ const freshLocal = (over = {}) => ({
 });
 
 describe('mergeNotes — note-id stability (NOTES-ID-STABLE-001)', () => {
+    test('existing duplicate id collapses to its richest locally-edited survivor', () => {
+        const duplicateId = '1784577133566x501798706937856000';
+        const bare = { id: duplicateId, text: 'original ZB text' };
+        const rich = freshLocal({
+            id: duplicateId,
+            zb_note_id: duplicateId,
+            text: 'EDITED locally',
+            attachments: [{ id: 12, fileName: 'photo.jpg' }],
+            edited_at: '2026-07-21T12:00:00Z',
+        });
+
+        const out = mergeNotes([bare, rich], [{ id: duplicateId, text: 'original ZB text' }]);
+
+        expect(out).toHaveLength(1);
+        expect(out[0]).toMatchObject({
+            id: duplicateId,
+            zb_note_id: duplicateId,
+            text: 'EDITED locally',
+            edited_at: '2026-07-21T12:00:00Z',
+        });
+        expect(out[0].attachments).toEqual(rich.attachments);
+    });
+
     test('echo with a DIFFERENT id, same text → local id preserved (the bug)', () => {
         const local = [freshLocal()];                       // id=uuid-A, no zb_note_id
         const zb = [{ id: 9001, text: 'call the customer' }]; // ZB echoes with its own id

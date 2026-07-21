@@ -12,6 +12,7 @@ import { NoteAttachmentDisplay } from './NoteAttachmentDisplay';
 import { authedFetch } from '../../services/apiClient';
 import { useAuthz } from '../../hooks/useAuthz';
 import { TaskStack } from '../tasks/TaskStack';
+import { prepareNotesForDisplay } from './notesDisplay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ interface NoteAttachment {
 interface Note {
     id?: string;
     text: string | null;
-    created: string;
+    created?: string | null;
     author?: string;
     migrated?: boolean;
     source?: string | null;
@@ -91,14 +92,14 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const containerRef = useRef<HTMLDivElement>(null);
 
     // Edit state
-    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editingKey, setEditingKey] = useState<string | null>(null);
     const [editText, setEditText] = useState('');
     const [editAttach, setEditAttach] = useState<AttachmentState>({ ids: [], blocked: false });
     const [editAttachKey, setEditAttachKey] = useState(0);
     const [removeIds, setRemoveIds] = useState<Set<string>>(new Set());
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
-    const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+    const [menuOpenKey, setMenuOpenKey] = useState<string | null>(null);
 
     const basePath = apiPath(entityType, entityId);
 
@@ -176,9 +177,9 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     // ─── Edit / Delete ───────────────────────────────────────────────────────
 
-    const startEdit = (note: Note) => {
-        setMenuOpenId(null);
-        setEditingId(note.id ?? null);
+    const startEdit = (note: Note, renderKey: string) => {
+        setMenuOpenKey(null);
+        setEditingKey(renderKey);
         setEditText(note.text ?? '');
         setEditAttach({ ids: [], blocked: false });
         setEditAttachKey(k => k + 1);
@@ -187,7 +188,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     };
 
     const cancelEdit = () => {
-        setEditingId(null);
+        setEditingKey(null);
         setEditText('');
         setEditAttach({ ids: [], blocked: false });
         setRemoveIds(new Set());
@@ -231,7 +232,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     const deleteNote = useCallback(async (note: Note) => {
         if (!note.id) return;
-        setMenuOpenId(null);
+        setMenuOpenKey(null);
         if (!window.confirm('Delete this note? This cannot be undone.')) return;
         try {
             const res = await authedFetch(`${basePath}/${note.id}`, { method: 'DELETE' });
@@ -248,17 +249,16 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     // Close kebab menu on outside click
     useEffect(() => {
-        if (!menuOpenId) return;
-        const close = () => setMenuOpenId(null);
+        if (!menuOpenKey) return;
+        const close = () => setMenuOpenKey(null);
         document.addEventListener('mousedown', close);
         return () => document.removeEventListener('mousedown', close);
-    }, [menuOpenId]);
+    }, [menuOpenKey]);
 
     const canSubmit = (!!text.trim() || composeAttach.ids.length > 0) && !submitting && !composeAttach.blocked;
     const canSaveEdit = (!!editText.trim() || editAttach.ids.length > 0) && !editSubmitting && !editAttach.blocked;
 
-    // Newest first
-    const sortedNotes = [...notes].reverse();
+    const displayedNotes = prepareNotesForDisplay(notes);
 
     return (
         <div ref={containerRef} className="space-y-3">
@@ -353,11 +353,11 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
             />
 
             {/* Notes list — newest first */}
-            {sortedNotes.map((note, i) => {
-                const editing = editingId != null && note.id === editingId;
+            {displayedNotes.map(({ note, renderKey }) => {
+                const editing = editingKey === renderKey;
                 const showKebab = !editing && !!note.id && canEdit(note);
                 return (
-                    <div key={note.id || i} className="relative p-3 rounded-xl space-y-2" style={{ background: NOTE_BG }}>
+                    <div key={renderKey} className="relative p-3 rounded-xl space-y-2" style={{ background: NOTE_BG }}>
                         {editing ? (
                             <div className="space-y-2">
                                 <textarea
@@ -450,7 +450,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                             onMouseDown={e => { e.preventDefault(); e.stopPropagation(); }}
                                             onClick={e => {
                                                 e.stopPropagation();
-                                                setMenuOpenId(menuOpenId === note.id ? null : note.id!);
+                                                setMenuOpenKey(menuOpenKey === renderKey ? null : renderKey);
                                             }}
                                             className="p-1 rounded-md transition-opacity hover:opacity-70"
                                             style={{ color: 'var(--blanc-ink-3)' }}
@@ -458,7 +458,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                         >
                                             <MoreVertical className="size-4" />
                                         </button>
-                                        {menuOpenId === note.id && (
+                                        {menuOpenKey === renderKey && (
                                             <div
                                                 className="absolute right-0 mt-1 z-50 min-w-[120px] rounded-xl overflow-hidden"
                                                 style={{
@@ -469,7 +469,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                             >
                                                 <button
                                                     type="button"
-                                                    onClick={() => startEdit(note)}
+                                                    onClick={() => startEdit(note, renderKey)}
                                                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-[rgba(25,25,25,0.06)]"
                                                     style={{ color: 'var(--blanc-ink-1)' }}
                                                 >

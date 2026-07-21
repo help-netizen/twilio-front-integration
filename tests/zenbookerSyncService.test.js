@@ -63,4 +63,35 @@ describe('zenbookerSyncService customer notes', () => {
             source: 'zenbooker',
         });
     });
+
+    it('deduplicates an existing id, keeps the richest local survivor, and does not revert it from ZB', () => {
+        const duplicateId = '1784577133566x501798706937856000';
+        const bare = {
+            id: duplicateId,
+            zb_note_id: duplicateId,
+            text: 'Original Zenbooker text',
+            source: 'zenbooker',
+        };
+        const locallyEdited = {
+            ...bare,
+            text: 'Locally edited text',
+            created: '2026-07-20T20:00:00.000Z',
+            attachments: [{ id: 9, fileName: 'invoice.pdf' }],
+            created_by: 'crm-user-1',
+            edited_at: '2026-07-21T10:00:00.000Z',
+            edited_by: 'crm-user-1',
+            deleted_at: '2026-07-21T11:00:00.000Z',
+            deleted_by: 'crm-user-1',
+        };
+
+        const merged = zenbookerSyncService.mergeStructuredNotes(
+            [bare, locallyEdited],
+            [{ ...bare, created: '2026-07-20T20:00:00.000Z' }],
+        );
+
+        expect(merged).toHaveLength(1);
+        expect(merged[0]).toEqual(locallyEdited);
+        expect(merged[0].text).toBe('Locally edited text');
+        expect(merged[0].deleted_at).toBe('2026-07-21T11:00:00.000Z');
+    });
 });

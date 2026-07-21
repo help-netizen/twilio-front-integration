@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-21 — NOTES-DEDUP-001 (OB-22): duplicate Zenbooker notes and stable sorting
+
+Historical duplicate note elements are now collapsed by `zb_note_id || id` in both
+the Job and Contact Zenbooker merge paths, keeping the richer Albusto-edited or
+soft-deleted survivor so NOTES-001 changes cannot revert. Idempotent migration
+**194** applies the same repair to `jobs.notes`, `leads.structured_notes`, and
+`contacts.structured_notes`, and restores missing `created` timestamps from Bubble
+ids or entity creation time. Notes UI now uses composite id+array-index identities
+for React/menu/edit state and sorts valid timestamps newest-first; missing/invalid
+times are deterministically oldest in insertion order. Real-PostgreSQL double-apply,
+backend, full frontend, build, and seven break→red→restore sabotage controls are
+recorded in `docs/specs/NOTES-DEDUP-001.md`. **NOT DEPLOYED.**
+
 ## 2026-07-21 — SCHEDULE-CONTACT-NAME-001 (OB-20): актуальное имя контакта в расписании
 
 Schedule job tiles и поиск теперь читают имя из связанного живого контакта через

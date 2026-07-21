@@ -16,6 +16,7 @@ const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventService = require('./eventService');
 const eventBus = require('./eventBus');
+const { deduplicateNotesByIdentity } = require('./noteDeduplication');
 const membershipQueries = require('../db/membershipQueries');
 const jobFinanceQueries = require('../db/jobFinanceQueries');
 const { isZenbookerSyncEnabled } = require('../config/featureFlags');
@@ -1256,10 +1257,12 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
  * of dropped (a sync firing before the echo must not lose or re-id a fresh note).
  */
 function mergeNotes(localNotes, zbNotes) {
+    const deduplicatedLocalNotes = deduplicateNotesByIdentity(localNotes);
+    const deduplicatedZbNotes = deduplicateNotesByIdentity(zbNotes);
     const byZbId = new Map();          // zb id → local note
     const unmatchedLocalByText = [];   // [{ note, used }]
     const matched = new Set();         // local notes folded into a ZB note (by ref)
-    for (const ln of (localNotes || [])) {
+    for (const ln of deduplicatedLocalNotes) {
         const lid = ln.zb_note_id || ln.id;
         if (lid) byZbId.set(String(lid), ln);
         // Any not-yet-correlated local note (no zb_note_id) with text is a text-match
@@ -1285,7 +1288,7 @@ function mergeNotes(localNotes, zbNotes) {
         ...(ln.edited_at ? { edited_at: ln.edited_at, edited_by: ln.edited_by || null, text: ln.text } : {}),
     });
 
-    const merged = (zbNotes || []).map(zn => {
+    const merged = deduplicatedZbNotes.map(zn => {
         const znId = zn.id ? String(zn.id) : null;
         if (znId && byZbId.has(znId)) {
             const ln = byZbId.get(znId);
@@ -1317,7 +1320,7 @@ function mergeNotes(localNotes, zbNotes) {
     // Carry forward Albusto-authored notes ZB hasn't echoed yet: created in-app
     // (local id + created_by), not soft-deleted, and never correlated to a ZB id
     // (a correlated note ZB no longer returns is a genuine ZB-side delete → drop).
-    const unechoed = (localNotes || []).filter(ln =>
+    const unechoed = deduplicatedLocalNotes.filter(ln =>
         ln && ln.id && ln.created_by && !ln.deleted_at && !ln.zb_note_id && !matched.has(ln)
     );
     return [...merged, ...unechoed];
