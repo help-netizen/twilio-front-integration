@@ -50,7 +50,10 @@ describe('Schedule desktop map composition contract', () => {
         expect(timelineViewSource).not.toContain('dimmed=');
         expect(desktopMapSource).not.toContain('dimmed');
         expect(mapCanvasSource).not.toContain('marker.setOpacity');
-        expect(mapCanvasSource).toContain('const pinWidth = active ? 40 : 34');
+        // Owner: the selected/hovered pin must NOT resize — no active-dependent
+        // scaledSize. Selection is conveyed by z-order only (and the linked card).
+        expect(mapCanvasSource).not.toContain('active ? 40');
+        expect(mapCanvasSource).not.toMatch(/pinWidth\s*=\s*active/);
         expect(mapCanvasSource).toContain('marker.setZIndex(active ? 1000 : 100)');
         expect(dayViewSource).toContain('selected={selectedItemKey ===');
         expect(timelineViewSource).toContain('selected={selectedItemKey === itemKey}');

@@ -197,19 +197,12 @@ export const ScheduleMapCanvas = memo(function ScheduleMapCanvas({
     }, [status, model, companyTz]);
 
     useEffect(() => {
+        // Owner: do NOT resize the selected/hovered pin. Keep every pin the same
+        // size; the active one only rises in z-order so it isn't hidden under
+        // neighbouring pins. Selection is conveyed by the linked card frame.
         const activeKey = hoveredJobKey || selectedJobKey || null;
         for (const [jobKey, marker] of markerByKeyRef.current) {
             const active = jobKey === activeKey;
-            const icon = marker.getIcon();
-            if (icon && typeof icon !== 'string' && 'url' in icon) {
-                const pinWidth = active ? 40 : 34;
-                const pinHeight = active ? 56 : 48;
-                marker.setIcon({
-                    ...icon,
-                    scaledSize: new google.maps.Size(pinWidth, pinHeight),
-                    anchor: new google.maps.Point(pinWidth / 2, pinHeight - 4),
-                });
-            }
             marker.setZIndex(active ? 1000 : 100);
         }
     }, [selectedJobKey, hoveredJobKey, model]);

@@ -61,8 +61,12 @@ async function getScheduleItems(opts) {
     // SCHED-ROUTE-001 C-3: when a company timezone is supplied, group the day
     // boundaries in that tz (NOT UTC) so route-day == visible-day. Sargable form
     // — only the date boundaries are converted, the indexed column is untouched.
+    // Only bind the timezone parameter when a date boundary will actually reference
+    // it (dayLower/dayUpper are only emitted under startDate/endDate). An unbounded
+    // call WITH a timezone previously pushed $2 that no SQL text referenced, which
+    // Postgres rejects ("bind message supplies 2 parameters, but requires 1").
     let tzIdx = null;
-    if (timezone) { idx++; params.push(timezone); tzIdx = idx; }
+    if (timezone && (startDate || endDate)) { idx++; params.push(timezone); tzIdx = idx; }
     const dayLower = (col, dateIdx) => tzIdx
         ? `${col} >= ($${dateIdx}::date::timestamp AT TIME ZONE $${tzIdx})`
         : `${col} >= $${dateIdx}::date`;
