@@ -676,5 +676,25 @@
   "4100596": {
     "text": "See every technician's route for the day on a map, right in Schedule",
     "tag": "Feature"
+  },
+  "6a4a6e4": {
+    "tag": "Feature",
+    "text": "The phone assistant can now discuss your estimate and invoice — price, breakdown, and what's still due"
+  },
+  "62b7ced": {
+    "tag": "Fix",
+    "text": "Job notes no longer show duplicates, and sort in a stable order"
+  },
+  "0fb32ed": {
+    "tag": "Fix",
+    "text": "Schedule loads reliably across time zones; the selected map pin stays put"
+  },
+  "c9a2f2b": {
+    "tag": "Fix",
+    "text": "Schedule and notes polish: no dimmed jobs on select, fresher customer names, lighter note photos"
+  },
+  "07e35cd": {
+    "tag": "Fix",
+    "text": "\"Load more\" now sits at the end of the list instead of floating over it"
   }
 }
