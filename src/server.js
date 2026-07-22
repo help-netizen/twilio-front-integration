@@ -347,6 +347,10 @@ app.use('/api/onboarding', authenticate, onboardingRouter);
 // ALB-102: platform companies (platform super admin only)
 const platformCompaniesRouter = require('../backend/src/routes/platformCompanies');
 app.use('/api/platform/companies', authenticate, requirePlatformRole('super_admin'), platformCompaniesRouter);
+const platformUsersRouter = require('../backend/src/routes/platformUsers');
+const platformStatsRouter = require('../backend/src/routes/platformStats');
+app.use('/api/platform/users', authenticate, requirePlatformRole('super_admin'), platformUsersRouter);
+app.use('/api/platform/stats', authenticate, requirePlatformRole('super_admin'), platformStatsRouter);
 
 // User management API (§5, §6)
 app.use('/api/users', authenticate, requirePermission('tenant.users.manage'), requireCompanyAccess, usersRouter);

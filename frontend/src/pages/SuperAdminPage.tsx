@@ -13,6 +13,8 @@ import { fmt, fmtDate, PolicyCard } from './SuperAdminHelpers';
 import type { SessionInfo, AuthPolicy } from './SuperAdminHelpers';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { CompaniesManager } from '../components/super-admin/CompaniesManager';
+import { PlatformUsersTab } from '../components/super-admin/PlatformUsersTab';
+import { PlatformStatsTab } from '../components/super-admin/PlatformStatsTab';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 const KC_URL = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8080';
@@ -51,15 +53,25 @@ export default function SuperAdminPage() {
             title="Super admin"
             description="Manage the Albusto platform, tenant companies, and global security policies."
         >
-            <Tabs defaultValue="companies" className="w-full">
+            <Tabs defaultValue="users" className="w-full">
                 <TabsList>
+                    <TabsTrigger value="users">Users</TabsTrigger>
                     <TabsTrigger value="companies">Companies</TabsTrigger>
+                    <TabsTrigger value="statistics">Statistics</TabsTrigger>
                     <TabsTrigger value="sessions">Sessions</TabsTrigger>
                     <TabsTrigger value="policy">Auth policy</TabsTrigger>
                 </TabsList>
 
+                <TabsContent value="users" className="space-y-6 pt-4">
+                    <PlatformUsersTab />
+                </TabsContent>
+
                 <TabsContent value="companies" className="space-y-6 pt-4">
                     <CompaniesManager />
+                </TabsContent>
+
+                <TabsContent value="statistics" className="space-y-6 pt-4">
+                    <PlatformStatsTab />
                 </TabsContent>
 
                 <TabsContent value="sessions" className="space-y-6 pt-4">

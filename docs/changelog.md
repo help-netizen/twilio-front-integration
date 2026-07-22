@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-07-21 — SUPERADMIN-DASH: платформенный дашборд супер-админа (Users + Statistics)
+
+Расширена страница супер-админа (`/settings/admin`) двумя вкладками поверх существующих
+Companies/Sessions/Auth policy:
+
+- **Users** — все пользователи всех компаний в одной таблице (компания · имя · email ·
+  роль · присутствие · сброс пароля). Присутствие: зелёная точка **Online** = активность
+  за последние 5 минут (из `crm_users.last_login_at`, обновляется на каждом запросе),
+  иначе «был N назад». Серверная сортировка online-first, поиск и пагинация.
+- **Statistics** — карточки Companies и Users (всего · +сегодня · за 7 · за 30 дней) и
+  30-дневный график роста. Границы дня — UTC. Звонки вне скоупа.
+- **Сброс пароля** — окно с двумя действиями (владелец выбрал оба): показать одноразовый
+  временный пароль ИЛИ отправить письмо-ссылку через Keycloak. Аудит каждого сброса
+  (`actor_id = crmUser.id`); временный пароль не логируется.
+
+Backend: `GET /api/platform/users`, `GET /api/platform/stats`,
+`POST /api/platform/users/:userId/reset-password` — все под
+`requirePlatformRole('super_admin')` (единственное легитимное кросс-тенант чтение),
+монтирование в `src/server.js` рядом с `/api/platform/companies`. Без миграций
+(`last_login_at`/`platform_role` уже есть). Разделение: backend/тесты — Codex, финальный
+дизайн/вёрстка — Claude (стоячая директива владельца). Тесты: 2 сьюта / 12 тестов, FE
+build зелёный, 4+1 диверсии. Спека: `docs/specs/SUPERADMIN-DASH.md`. НЕ задеплоено.
+
 ## 2026-07-21 — NOTES-DEDUP-001 (OB-22): duplicate Zenbooker notes and stable sorting
 
 Historical duplicate note elements are now collapsed by `zb_note_id || id` in both

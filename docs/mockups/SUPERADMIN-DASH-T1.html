@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Albusto — Super admin dashboard proposal</title>
+  <style>
+    :root {
+      --blanc-bg: #f1f1f0;
+      --blanc-bg-deep: #e8e8e6;
+      --blanc-surface-strong: #fff;
+      --blanc-surface-muted: #f6f6f6;
+      --blanc-field: #f0f0f0;
+      --blanc-ink-1: #191919;
+      --blanc-ink-2: #6e6e6e;
+      --blanc-ink-3: #8a8a8a;
+      --blanc-accent: #7f42e1;
+      --blanc-success: #1b8b63;
+      --blanc-line: rgba(25,25,25,.08);
+      --blanc-line-strong: rgba(25,25,25,.20);
+      --blanc-font-body: "IBM Plex Sans", Inter, ui-sans-serif, system-ui, sans-serif;
+      --blanc-font-heading: Manrope, Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--blanc-bg-deep); color: var(--blanc-ink-1); font: 14px/1.45 var(--blanc-font-body); }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    [hidden] { display: none !important; }
+    .review { width: min(1120px, calc(100% - 32px)); margin: 18px auto 12px; color: var(--blanc-ink-2); font-size: 13px; }
+    .review strong { color: var(--blanc-ink-1); }
+    .app { width: min(1120px, calc(100% - 32px)); min-height: 720px; margin: 0 auto 24px; padding: 32px; border: 1px solid var(--blanc-line); border-radius: 22px; background: var(--blanc-bg); }
+    h1, h2, p { margin-top: 0; }
+    h1 { margin-bottom: 5px; font: 700 28px/1.15 var(--blanc-font-heading); letter-spacing: -.025em; }
+    h2 { margin-bottom: 5px; font: 700 21px/1.2 var(--blanc-font-heading); }
+    .muted { color: var(--blanc-ink-2); }
+    .small { font-size: 12px; }
+    .eyebrow { color: var(--blanc-ink-3); font-size: 11px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
+    .tabs { display: flex; gap: 3px; width: max-content; max-width: 100%; overflow-x: auto; margin-top: 28px; padding: 3px; border-radius: 12px; background: var(--blanc-bg-deep); }
+    .tab { min-height: 36px; padding: 7px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--blanc-ink-2); white-space: nowrap; font-size: 13px; font-weight: 650; }
+    .tab[aria-selected="true"] { background: var(--blanc-surface-strong); color: var(--blanc-ink-1); }
+    .panel { padding-top: 24px; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+    .field { min-height: 40px; padding: 8px 12px; border: 1px solid transparent; border-radius: 10px; outline: none; background: var(--blanc-field); }
+    input.field { width: min(330px, 100%); }
+    .field:focus { border-color: var(--blanc-line-strong); }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border: 0; border-radius: 10px; background: transparent; font-weight: 650; }
+    .button:hover { background: var(--blanc-surface-muted); }
+    .button.primary { background: var(--blanc-accent); color: var(--blanc-surface-strong); }
+    .button.reset { color: var(--blanc-accent); }
+    .definition { margin: 0 0 15px; color: var(--blanc-ink-3); font-size: 12px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; min-width: 820px; border-collapse: separate; border-spacing: 0 7px; }
+    th { padding: 0 14px 3px; color: var(--blanc-ink-3); text-align: left; font-size: 10px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+    th:last-child, td:last-child { text-align: right; }
+    td { padding: 12px 14px; background: var(--blanc-surface-strong); vertical-align: middle; }
+    td:first-child { border-radius: 12px 0 0 12px; }
+    td:last-child { border-radius: 0 12px 12px 0; }
+    .name { font-weight: 650; }
+    .sub, .email { color: var(--blanc-ink-2); font-size: 12px; }
+    .role { display: inline-flex; padding: 4px 8px; border: 1px solid var(--blanc-line); border-radius: 999px; color: var(--blanc-ink-2); background: rgba(25,25,25,.03); font-size: 12px; font-weight: 650; }
+    .presence { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blanc-ink-3); }
+    .online { color: var(--blanc-success); font-weight: 650; }
+    .online .dot { background: var(--blanc-success); }
+    .offline { color: var(--blanc-ink-3); }
+    .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 9px; color: var(--blanc-ink-3); font-size: 12px; }
+    .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .kpi { padding: 18px; border-radius: 16px; background: var(--blanc-surface-strong); }
+    .kpi-main { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 8px 0 15px; }
+    .kpi-value { font: 700 34px/1 var(--blanc-font-heading); }
+    .today { color: var(--blanc-success); font-weight: 700; }
+    .periods { display: flex; gap: 18px; color: var(--blanc-ink-2); font-size: 12px; }
+    .periods strong { display: block; margin-top: 2px; color: var(--blanc-ink-1); font-size: 14px; }
+    .growth { margin-top: 20px; }
+    .growth-head { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+    .legend { display: flex; gap: 14px; color: var(--blanc-ink-2); font-size: 12px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { width: 9px; height: 9px; border-radius: 2px; background: var(--blanc-accent); }
+    .legend span:last-child i { background: var(--blanc-success); }
+    .chart { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; height: 190px; padding-top: 12px; }
+    .day { display: grid; grid-template-rows: 1fr auto; gap: 8px; }
+    .bars { display: flex; align-items: end; justify-content: center; gap: 5px; border-bottom: 1px solid var(--blanc-line); }
+    .bar { width: min(18px, 36%); min-height: 3px; border-radius: 5px 5px 0 0; background: var(--blanc-accent); }
+    .bar.users { background: var(--blanc-success); }
+    .day-label { color: var(--blanc-ink-3); text-align: center; font-size: 11px; }
+    .placeholder { padding: 42px 0; color: var(--blanc-ink-2); }
+    .placeholder strong { display: block; margin-bottom: 5px; color: var(--blanc-ink-1); }
+    dialog { width: min(440px, calc(100% - 28px)); padding: 22px; border: 0; border-radius: 16px; background: var(--blanc-surface-strong); box-shadow: 0 22px 70px rgba(25,25,25,.18); }
+    dialog::backdrop { background: rgba(25,25,25,.42); }
+    .dialog-actions { display: flex; justify-content: end; gap: 8px; margin-top: 22px; }
+    @media (max-width: 720px) {
+      .review { display: none; }
+      .app { width: 100%; min-height: 100vh; margin: 0; padding: 22px 16px; border: 0; border-radius: 0; }
+      .toolbar { align-items: stretch; flex-direction: column; }
+      .filters { display: grid; }
+      input.field { width: 100%; }
+      .kpis { grid-template-columns: 1fr; }
+      .chart { gap: 5px; height: 160px; }
+    }
+  </style>
+</head>
+<body>
+  <p class="review"><strong>Review artifact — not production UI.</strong> Recommended v1 shown: “Online” means authenticated activity in the last 5 minutes; last seen is persisted activity, not softphone availability.</p>
+  <main class="app">
+    <header><h1>Super admin</h1><p class="muted">Manage the Albusto platform, tenant companies, and global security policies.</p></header>
+    <nav class="tabs" role="tablist" aria-label="Super admin sections">
+      <button class="tab" role="tab" aria-selected="true" data-tab="users">Users</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="companies">Companies</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="statistics">Statistics</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="sessions">Sessions</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="policy">Auth policy</button>
+    </nav>
+    <section class="panel" role="tabpanel" data-panel="users">
+      <div class="toolbar"><div class="filters"><input class="field" placeholder="Search name, email, or company" aria-label="Search users"><select class="field" aria-label="Filter by company"><option>All companies</option><option>Boston Masters</option><option>North Shore Electric</option><option>Harbor HVAC</option></select></div></div>
+      <p class="definition">Online = authenticated activity within 5 minutes. Sorted online first, then by most recent activity.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Company</th><th>Name</th><th>Email</th><th>Role</th><th>Presence</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><div class="name">North Shore Electric</div><div class="sub">north-shore-electric</div></td><td class="name">Maya Chen</td><td class="email">maya@northshore.example</td><td><span class="role">Dispatcher</span></td><td><span class="presence online"><i class="dot"></i>Online</span></td><td><button class="button reset" data-reset="Maya Chen" data-email="maya@northshore.example">Reset password</button></td></tr>
+          <tr><td><div class="name">Boston Masters</div><div class="sub">boston-masters</div></td><td class="name">Alex Rivera</td><td class="email">alex@bostonmasters.example</td><td><span class="role">Admin</span></td><td><span class="presence online"><i class="dot"></i>Online</span></td><td><button class="button reset" data-reset="Alex Rivera" data-email="alex@bostonmasters.example">Reset password</button></td></tr>
+          <tr><td><div class="name">Harbor HVAC</div><div class="sub">harbor-hvac</div></td><td class="name">Sam Wilson</td><td class="email">sam@harbor.example</td><td><span class="role">Field Provider</span></td><td><span class="presence offline"><i class="dot"></i>Last seen 2h ago</span></td><td><button class="button reset" data-reset="Sam Wilson" data-email="sam@harbor.example">Reset password</button></td></tr>
+          <tr><td><div class="name">Boston Masters</div><div class="sub">boston-masters</div></td><td class="name">Jordan Lee</td><td class="email">jordan@bostonmasters.example</td><td><span class="role">Manager</span></td><td><span class="presence offline"><i class="dot"></i>Last seen yesterday</span></td><td><button class="button reset" data-reset="Jordan Lee" data-email="jordan@bostonmasters.example">Reset password</button></td></tr>
+        </tbody>
+      </table></div>
+      <div class="pager"><span>Showing 1–25 of 138 memberships</span><span><button class="button">Previous</button><button class="button">Next</button></span></div>
+    </section>
+    <section class="panel" role="tabpanel" data-panel="companies" hidden>
+      <div class="toolbar"><input class="field" placeholder="Search companies" aria-label="Search companies"><button class="button primary">New company</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Company</th><th>Status</th><th>Users</th><th>Created</th><th>Action</th></tr></thead><tbody>
+        <tr><td><div class="name">Harbor HVAC</div><div class="sub">harbor-hvac</div></td><td><span class="role">Active</span></td><td>8</td><td>Jul 22, 2026</td><td><button class="button">•••</button></td></tr>
+        <tr><td><div class="name">North Shore Electric</div><div class="sub">north-shore-electric</div></td><td><span class="role">Active</span></td><td>14</td><td>Jul 18, 2026</td><td><button class="button">•••</button></td></tr>
+        <tr><td><div class="name">Boston Masters</div><div class="sub">boston-masters</div></td><td><span class="role">Active</span></td><td>32</td><td>Jun 4, 2026</td><td><button class="button">•••</button></td></tr>
+      </tbody></table></div>
+    </section>
+    <section class="panel" role="tabpanel" data-panel="statistics" hidden>
+      <div class="kpis">
+        <article class="kpi"><div class="eyebrow">Companies</div><div class="kpi-main"><span class="kpi-value">42</span><span class="today">+2 today</span></div><div class="periods"><span>Last 7 days<strong>+6</strong></span><span>Last 30 days<strong>+17</strong></span></div></article>
+        <article class="kpi"><div class="eyebrow">User accounts</div><div class="kpi-main"><span class="kpi-value">138</span><span class="today">+7 today</span></div><div class="periods"><span>Last 7 days<strong>+21</strong></span><span>Last 30 days<strong>+58</strong></span></div></article>
+      </div>
+      <section class="growth"><div class="growth-head"><div><div class="eyebrow">New signups · last 7 days</div><p class="muted small">UTC day boundaries</p></div><div class="legend"><span><i></i>Companies</span><span><i></i>Users</span></div></div>
+        <div class="chart" aria-label="New companies and users in the last seven days">
+          <div class="day"><div class="bars"><i class="bar" style="height:22%"></i><i class="bar users" style="height:35%"></i></div><span class="day-label">Wed</span></div>
+          <div class="day"><div class="bars"><i class="bar" style="height:4%"></i><i class="bar users" style="height:48%"></i></div><span class="day-label">Thu</span></div>
+          <div class="day"><div class="bars"><i class="bar" style="height:36%"></i><i class="bar users" style="height:62%"></i></div><span class="day-label">Fri</span></div>
+          <div class="day"><div class="bars"><i class="bar" style="height:20%"></i><i class="bar users" style="height:28%"></i></div><span class="day-label">Sat</span></div>
+          <div class="day"><div class="bars"><i class="bar" style="height:4%"></i><i class="bar users" style="height:20%"></i></div><span class="day-label">Sun</span></div>
+          <div class="day"><div class="bars"><i class="bar" style="height:42%"></i><i class="bar users" style="height:74%"></i></div><span class="day-label">Mon</span></div>
+          <div class="day"><div class="bars"><i class="bar" style="height:42%"></i><i class="bar users" style="height:92%"></i></div><span class="day-label">Today</span></div>
+        </div>
+      </section>
+    </section>
+    <section class="panel placeholder" role="tabpanel" data-panel="sessions" hidden><strong>Existing Sessions tab remains unchanged.</strong>Active Keycloak sessions, refresh, and revoke actions stay available as today.</section>
+    <section class="panel placeholder" role="tabpanel" data-panel="policy" hidden><strong>Existing Auth policy tab remains unchanged.</strong>Quick links and realm policy stay available as today.</section>
+  </main>
+  <dialog id="reset-dialog"><h2>Send password reset email?</h2><p class="muted" id="reset-copy"></p><p class="small muted">Keycloak will send the secure update-password link. No temporary password is generated or displayed here.</p><div class="dialog-actions"><button class="button" id="cancel-reset">Cancel</button><button class="button primary" id="confirm-reset">Send reset email</button></div></dialog>
+  <script>
+    const tabs = [...document.querySelectorAll('[data-tab]')];
+    const panels = [...document.querySelectorAll('[data-panel]')];
+    tabs.forEach((tab) => tab.addEventListener('click', () => {
+      tabs.forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+      panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== tab.dataset.tab; });
+    }));
+    const dialog = document.querySelector('#reset-dialog');
+    const copy = document.querySelector('#reset-copy');
+    document.querySelectorAll('[data-reset]').forEach((button) => button.addEventListener('click', () => {
+      copy.textContent = `Send a password reset link to ${button.dataset.reset} (${button.dataset.email})?`;
+      dialog.showModal();
+    }));
+    document.querySelector('#cancel-reset').addEventListener('click', () => dialog.close());
+    document.querySelector('#confirm-reset').addEventListener('click', () => dialog.close());
+  </script>
+</body>
+</html>

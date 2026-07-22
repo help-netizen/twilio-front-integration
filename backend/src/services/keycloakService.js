@@ -188,6 +188,29 @@ async function resetUserPassword(keycloakUserId, newPassword, temporary = true) 
 }
 
 /**
+ * Ask Keycloak to email its UPDATE_PASSWORD execute-action link.
+ * No password is generated, returned, or logged in this flow.
+ */
+async function sendUpdatePasswordEmail(keycloakUserId) {
+    const token = await getAdminToken();
+    const res = await fetch(
+        `${KC_BASE}/admin/realms/${REALM}/users/${encodeURIComponent(keycloakUserId)}/execute-actions-email`,
+        {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(['UPDATE_PASSWORD'])
+        }
+    );
+    if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Failed to send password update email: ${res.status} ${body}`);
+    }
+}
+
+/**
  * Generate a random temporary password (12 chars, no ambiguous characters).
  */
 function generateTempPassword() {
@@ -203,6 +226,7 @@ module.exports = {
     ensureUserExistsAndExecuteAction,
     assignGlobalRole,
     resetUserPassword,
+    sendUpdatePasswordEmail,
     generateTempPassword,
     getAdminToken
 };
