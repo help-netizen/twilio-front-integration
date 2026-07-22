@@ -27,6 +27,8 @@
 
 'use strict';
 
+const { getFinanceDefinitionBySkill } = require('./financeToolDefinitions');
+
 /**
  * Build a lazily-resolved `run` for a skill module. The require happens only
  * when the skill is actually invoked, so the registry loads even while the
@@ -56,12 +58,23 @@ const SKILLS = [
     { name: 'getJobStatus', kind: 'read', requiredLevel: 'L1', run: lazyRun('getJobStatus') },
     { name: 'getAppointments', kind: 'read', requiredLevel: 'L1', run: lazyRun('getAppointments') },
     // AGENT-SKILLS-002: relaxed L2→L1 — an identified caller (phone OR name+zip) is
-    // served without a separate name+ZIP re-confirmation ("phone-identify is enough;
-    // no sensitive info here"). Company isolation + per-contactId ownership pre-check
-    // + cancel retention + no-card-by-voice are UNCHANGED (enforced in the skills).
+    // served without a separate name+ZIP re-confirmation. For finance, this is an
+    // explicit owner-accepted residual risk (AGENT-FINANCE-CONTEXT-001); company
+    // isolation + finance-only shared-phone subject resolution + per-contact/job/
+    // lead ownership + cancel retention + no-card-by-voice remain enforced.
     { name: 'getJobHistory', kind: 'read', requiredLevel: 'L1', run: lazyRun('getJobHistory') },
-    { name: 'getEstimateSummary', kind: 'read', requiredLevel: 'L1', run: lazyRun('getEstimateSummary') },
-    { name: 'getInvoiceSummary', kind: 'read', requiredLevel: 'L1', run: lazyRun('getInvoiceSummary') },
+    {
+        name: 'getEstimateSummary',
+        kind: 'read',
+        requiredLevel: getFinanceDefinitionBySkill('getEstimateSummary').requiredLevel,
+        run: lazyRun('getEstimateSummary'),
+    },
+    {
+        name: 'getInvoiceSummary',
+        kind: 'read',
+        requiredLevel: getFinanceDefinitionBySkill('getInvoiceSummary').requiredLevel,
+        run: lazyRun('getInvoiceSummary'),
+    },
     { name: 'rescheduleAppointment', kind: 'write', requiredLevel: 'L1', run: lazyRun('rescheduleAppointment') },
     { name: 'cancelAppointment', kind: 'write', requiredLevel: 'L1', run: lazyRun('cancelAppointment') },
     // AGENT-SKILLS-002: book a chosen slot as a schedule-blocking HOLD onto the

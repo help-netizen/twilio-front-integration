@@ -204,27 +204,26 @@ describe('TC-OPC-U08: outboundCallService.placeCall — VAPI request contract', 
 });
 
 // ---------------------------------------------------------------------------
-// balanceDue injection (OUTBOUND-PARTS-CALL balance) — passed through to
-// variableValues verbatim ONLY when defined; never sent as an empty/undefined
-// key so the assistant prompt can distinguish "unknown" from "nothing due".
+// AGENT-FINANCE-CONTEXT-001 — amounts are never injected into assistant context.
+// Even a stale caller that supplies balanceDue cannot put it in variableValues.
 // ---------------------------------------------------------------------------
-describe('placeCall — balanceDue → variableValues', () => {
-    test('balanceDue passed → included in variableValues as the exact string', async () => {
+describe('placeCall — finance is on-demand only', () => {
+    test('legacy balanceDue argument is ignored and absent from variableValues', async () => {
         mockPost.mockResolvedValue({ data: { id: 'vapi_call_b' } });
 
         await outboundCallService.placeCall({ ...CALL_ARGS, balanceDue: '$200.00' });
 
         const [, bodyArg] = mockPost.mock.calls[0];
-        expect(bodyArg.assistantOverrides.variableValues.balanceDue).toBe('$200.00');
+        expect(Object.keys(bodyArg.assistantOverrides.variableValues)).not.toContain('balanceDue');
     });
 
-    test('balanceDue passed as "paid in full, nothing due" → passed through verbatim', async () => {
+    test('legacy paid-in-full phrase is also ignored', async () => {
         mockPost.mockResolvedValue({ data: { id: 'vapi_call_b2' } });
 
         await outboundCallService.placeCall({ ...CALL_ARGS, balanceDue: 'paid in full, nothing due' });
 
         const [, bodyArg] = mockPost.mock.calls[0];
-        expect(bodyArg.assistantOverrides.variableValues.balanceDue).toBe('paid in full, nothing due');
+        expect(Object.keys(bodyArg.assistantOverrides.variableValues)).not.toContain('balanceDue');
     });
 
     test('balanceDue omitted → the key is ABSENT from variableValues (not undefined)', async () => {

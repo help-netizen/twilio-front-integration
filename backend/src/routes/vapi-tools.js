@@ -31,6 +31,8 @@
 const express = require('express');
 const router = express.Router();
 const agentSkills = require('../services/agentSkills');
+const resultShapes = require('../services/agentSkills/resultShapes');
+const vapiCallContextService = require('../services/vapiCallContextService');
 
 // Company is hardwired for the VAPI (voice) transport — never taken from the
 // client payload. The authed MCP transport (contract B) supplies its own scope.
@@ -87,7 +89,7 @@ function vapiSecretAuth(req, res, next) {
  * @param {object} [call] The VAPI call metadata (message.call).
  * @returns {object} The skill input (identity block + skill-specific fields).
  */
-function buildSkillInput(name, args, call) {
+function buildSkillInput(name, args, call, trustedValues = null) {
     // Server-injected, model-untrusted identity for outbound calls (empty for
     // inbound Sara). Overrides same-named model args → identity can't be spoofed.
     const variableValues =
@@ -97,13 +99,18 @@ function buildSkillInput(name, args, call) {
     if (LEGACY_TOOLS.has(name) || !callerNumber) {
         // Legacy L0 tools stay byte-identical (no silent phone); but outbound
         // variableValues (absent for inbound) still take precedence when present.
-        return variableValues ? { ...args, ...variableValues } : args;
+        return trustedValues
+            ? { ...args, ...(variableValues || {}), ...trustedValues }
+            : (variableValues ? { ...args, ...variableValues } : args);
     }
     // Silent caller-ID is a FALLBACK (args win); variableValues are AUTHORITATIVE
     // (server-injected) so they are spread LAST to override any model-sent field.
-    return variableValues
-        ? { phone: callerNumber, ...args, ...variableValues }
-        : { phone: callerNumber, ...args };
+    return {
+        phone: callerNumber,
+        ...args,
+        ...(variableValues || {}),
+        ...(trustedValues || {}),
+    };
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -117,6 +124,17 @@ router.post('/', vapiSecretAuth, async (req, res) => {
 
         const toolCallList = message.toolCallList || [];
         const results = [];
+        const callContext = await vapiCallContextService.resolve(message.call);
+
+        if (callContext.ambiguous) {
+            const refusal = resultShapes.safeFallback();
+            return res.json({
+                results: toolCallList.map((toolCall) => ({
+                    toolCallId: toolCall.id,
+                    result: JSON.stringify(refusal),
+                })),
+            });
+        }
 
         for (const toolCall of toolCallList) {
             const name = toolCall.function?.name;
@@ -134,10 +152,15 @@ router.post('/', vapiSecretAuth, async (req, res) => {
             // business logic here. `runSkill` gates + runs the skill and degrades
             // gracefully (unknown tool / any throw → SAFE_FALLBACK); it never
             // throws and never leaks internals, so no per-tool catch is needed.
-            const input = buildSkillInput(name, args, message.call);
+            const input = buildSkillInput(
+                name,
+                args,
+                message.call,
+                callContext.matched ? callContext.values : null,
+            );
             const result = await agentSkills.runSkill(
                 name,
-                DEFAULT_COMPANY_ID,
+                callContext.matched ? callContext.companyId : DEFAULT_COMPANY_ID,
                 { source: 'vapi', call: message.call },
                 input,
             );

@@ -32,6 +32,10 @@
 // A write tool additionally requires the skill-layer L1 gate — strictly stronger
 // than the framework write-gate alone (spec §8.2).
 const SERVICE_WRITE_PERMISSION = 'service.crm.write';
+const {
+    FINANCE_TOOL_DEFINITIONS,
+    buildMcpInputSchema,
+} = require('./agentSkills/financeToolDefinitions');
 
 const TOOL_PERMISSION_MAP = Object.freeze({
     'svc.identify_caller': ['contacts.view'],
@@ -39,8 +43,10 @@ const TOOL_PERMISSION_MAP = Object.freeze({
     'svc.get_job_status': ['jobs.view'],
     'svc.get_appointments': ['jobs.view'],
     'svc.get_job_history': ['jobs.view'],
-    'svc.get_estimate_summary': ['estimates.view'],
-    'svc.get_invoice_summary': ['invoices.view'],
+    ...Object.fromEntries(FINANCE_TOOL_DEFINITIONS.map((definition) => [
+        definition.mcpName,
+        [...definition.requiredPermissions],
+    ])),
     'svc.reschedule_appointment': ['jobs.edit'],
     'svc.cancel_appointment': ['jobs.close'],
     'svc.book_on_lead': ['leads.edit', 'leads.create'],
@@ -122,31 +128,13 @@ const READ_TOOLS = [
             job_id: stringSchema(),
         }, ['contact_id', 'job_id']),
     },
-    {
-        name: 'svc.get_estimate_summary',
-        skill: 'getEstimateSummary',
-        requiredLevel: 'L1',
-        description:
-            'Spoken summary of an estimate (number, status, total, item count) plus a text-a-link offer — never line items. Requires an identified caller (L1).',
-        inputSchema: objectSchema({
-            ...identityBlockProperties(),
-            contact_id: stringSchema(),
-            job_id: stringSchema(),
-            estimate_id: stringSchema(),
-        }, ['contact_id']),
-    },
-    {
-        name: 'svc.get_invoice_summary',
-        skill: 'getInvoiceSummary',
-        requiredLevel: 'L1',
-        description:
-            'State an invoice balance and status; payment is handed to a secure link or a human — never collected by voice. Requires an identified caller (L1).',
-        inputSchema: objectSchema({
-            ...identityBlockProperties(),
-            contact_id: stringSchema(),
-            invoice_id: stringSchema(),
-        }, ['contact_id']),
-    },
+    ...FINANCE_TOOL_DEFINITIONS.map((definition) => ({
+        name: definition.mcpName,
+        skill: definition.skillName,
+        requiredLevel: definition.requiredLevel,
+        description: definition.description,
+        inputSchema: buildMcpInputSchema(definition),
+    })),
 ];
 
 // --- WRITE tools (3) --------------------------------------------------------

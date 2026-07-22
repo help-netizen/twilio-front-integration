@@ -61,7 +61,8 @@ function getVerificationGate() {
  */
 function identityBlockFrom(input, options = {}) {
     const src = input && typeof input === 'object' ? input : {};
-    const { phone, name, zip, street, contactId } = src;
+    const { phone, name, zip, street } = src;
+    const contactId = src.contactId != null ? src.contactId : src.contact_id;
     const identityBlock = { phone, name, zip, street };
     if (options.includeContactId !== false) identityBlock.contactId = contactId;
     return identityBlock;
@@ -96,7 +97,8 @@ function isVerificationRequired(err) {
  *   4. raw = await skill.run(companyId, verifiedContext, input).
  *   5. Everything is wrapped in a guard: any throw → SAFE_FALLBACK; a soft
  *      `verification_required` on a sensitive skill → the soft needsVerification
- *      shape. NEVER re-throw, NEVER leak err.message / stack / SQL / PII.
+ *      shape, except finance reads fail closed without asking for another identity
+ *      factor. NEVER re-throw, NEVER leak err.message / stack / SQL / PII.
  *
  * @param {string} name The skill name (VAPI tool name or the mapped MCP name).
  * @param {string} companyId Tenant scope (DEFAULT_COMPANY_ID or req company).
@@ -120,7 +122,20 @@ async function runSkill(name, companyId, rawContext, input) {
         });
 
         // (2) Re-derive the verification level from the DB every call.
-        const verifiedContext = await gate.deriveLevel(companyId, identityBlock);
+        let verifiedContext = await gate.deriveLevel(companyId, identityBlock);
+
+        // AGENT-FINANCE-CONTEXT-001: a contactless lead cannot reach L1 through
+        // the contact resolver. Finance may still use phone-only L1 when an exact,
+        // company-scoped lead subject is supplied and its stored phone matches.
+        // This is finance-only and does not change booking identity behavior.
+        const financeDefinitions = require('./financeToolDefinitions');
+        if (financeDefinitions.isFinanceSkill(name) && verifiedContext.level === 'L0') {
+            verifiedContext = await require('./financeDisclosure').deriveLeadPhoneContext(
+                companyId,
+                verifiedContext,
+                input && typeof input === 'object' ? input : {},
+            );
+        }
 
         // (3) Enforce the skill's required level. Throws `verification_required`
         //     when derived < required (an equal/higher level does not throw).
@@ -131,9 +146,14 @@ async function runSkill(name, companyId, rawContext, input) {
         return raw;
     } catch (err) {
         // (5) Graceful degradation. A gate-level verification failure on a
-        //     sensitive/write skill → soft prompt; anything else → SAFE_FALLBACK.
+        //     sensitive/write skill → soft prompt; finance is deliberately L1
+        //     phone-only and fails closed without asking for name/ZIP or OTP.
+        //     Anything else → SAFE_FALLBACK.
         //     Never re-throw, never surface err.message.
         if (isVerificationRequired(err)) {
+            if (require('./financeToolDefinitions').isFinanceSkill(name)) {
+                return require('./financeDisclosure').phoneMatchRequired();
+            }
             return resultShapes.needsVerification();
         }
         // Internal-only log (safe): name + a short reason, never returned to caller.

@@ -5,9 +5,9 @@ const axios = require('axios');
 //
 // Places a single outbound VAPI call for the "part arrived → book the finish
 // visit" flow. The call opens with a concrete, pre-computed slot in
-// `assistantOverrides.variableValues` and performs NO API lookup during the
-// open (D3): the worker (outboundCallWorker) has already resolved the slot and
-// passes it in here.
+// `assistantOverrides.variableValues`; the worker has already resolved that
+// scheduling context. Finance is intentionally NOT preloaded here: estimate or
+// invoice amounts are fetched on demand through the authorized in-call skills.
 //
 // SAFE-FAIL: placeCall NEVER throws. It returns { ok:false, error } on any
 // failure (bad config, non-2xx, timeout, network) so the worker can record a
@@ -59,12 +59,6 @@ function getClient() {
  * @param {number}  [args.slot.lat]     TECHSLOT-001: job latitude — the in-call
  * @param {number}  [args.slot.lng]     recs location. Injected ONLY when BOTH
  *                                       coords are present (never a half pair).
- * @param {string}  [args.balanceDue]   Pre-formatted outstanding-balance phrase
- *                                       ("$X.XX" / "paid in full, nothing due")
- *                                       for "how much do I owe?". Resolved by the
- *                                       worker; omitted when unknown (no local
- *                                       invoice). Passed through to variableValues
- *                                       ONLY when defined — never as an empty key.
  * OUTBOUND-LEAD-CALL-001 (all optional; absent on parts calls — conditional
  * spreads keep the parts wire body byte-identical):
  * @param {string}  [args.scenario]           'lead_call' → prompt var scenario:'lead_booking'.
@@ -77,7 +71,7 @@ function getClient() {
  * @returns {Promise<{ok:true, vapiCallId:string} | {ok:false, error:string}>}
  */
 async function placeCall({
-    companyId, jobId, contactId, customerName, customerNumber, slot, balanceDue,
+    companyId, jobId, contactId, customerName, customerNumber, slot,
     scenario, leadUuid, zip, problemDescription, source, firstMessage,
     applianceType, applianceBrand, applianceProblem,
 } = {}) {
@@ -142,10 +136,6 @@ async function placeCall({
                 slotStart: s.start,
                 slotEnd: s.end,
                 slotKey: s.key,
-                // Outstanding-balance phrase for "how much do I owe?". Included
-                // ONLY when the worker resolved one (a string) — never an empty
-                // or undefined key. Absence → the assistant prompt handles it.
-                ...(balanceDue !== undefined ? { balanceDue } : {}),
                 // TECHSLOT-001 (§2 hop 3 / §5): server-injected in-call scheduling
                 // constraint + location. Present ONLY when the slot_json carries
                 // them (dispatcher lane pick / single-tech default + job coords

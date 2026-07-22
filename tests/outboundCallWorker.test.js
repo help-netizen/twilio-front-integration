@@ -517,12 +517,11 @@ describe('TC-CC-14: scheduleRetryOrExhaust — no-resurrection guard', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Balance injection (OUTBOUND-PARTS-CALL) — processAttempt resolves the job's
-// outstanding balance (company-scoped, non-fatal) and passes a speak-safe STRING
-// into placeCall so the voice agent can answer "how much do I owe?".
+// AGENT-FINANCE-CONTEXT-001 — the worker never preloads finance. The assistant
+// fetches it on demand through the L1 skill after the call starts.
 // ---------------------------------------------------------------------------
-describe('processAttempt — outstanding-balance injection into placeCall', () => {
-    test('balance > 0 → placeCall gets balanceDue formatted "$X.XX", company-scoped lookup', async () => {
+describe('processAttempt — finance is on-demand only', () => {
+    test('an available positive balance is neither queried nor injected', async () => {
         jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
         jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: 200, total: 300, amountPaid: 100 });
         mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
@@ -530,14 +529,11 @@ describe('processAttempt — outstanding-balance injection into placeCall', () =
 
         await worker.processAttempt(mkAttempt());
 
-        // Resolved with the attempt's company + job (company scoping).
-        expect(jobsService.getJobBalanceDue).toHaveBeenCalledWith(50, CO);
-        expect(outboundCallService.placeCall).toHaveBeenCalledWith(
-            expect.objectContaining({ balanceDue: '$200.00' }),
-        );
+        expect(jobsService.getJobBalanceDue).not.toHaveBeenCalled();
+        expect(outboundCallService.placeCall.mock.calls[0][0]).not.toHaveProperty('balanceDue');
     });
 
-    test('balance === 0 → "paid in full, nothing due"', async () => {
+    test('a paid-in-full balance is neither queried nor injected', async () => {
         jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
         jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: 0, total: 0, amountPaid: 0 });
         mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
@@ -545,12 +541,11 @@ describe('processAttempt — outstanding-balance injection into placeCall', () =
 
         await worker.processAttempt(mkAttempt());
 
-        expect(outboundCallService.placeCall).toHaveBeenCalledWith(
-            expect.objectContaining({ balanceDue: 'paid in full, nothing due' }),
-        );
+        expect(jobsService.getJobBalanceDue).not.toHaveBeenCalled();
+        expect(outboundCallService.placeCall.mock.calls[0][0]).not.toHaveProperty('balanceDue');
     });
 
-    test('balanceDue null (no local invoice) → placeCall called with balanceDue undefined (omitted)', async () => {
+    test('a null balance is not queried and the call still places', async () => {
         jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
         jobsService.getJobBalanceDue.mockResolvedValue({ balanceDue: null, total: null, amountPaid: null });
         mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
@@ -559,22 +554,20 @@ describe('processAttempt — outstanding-balance injection into placeCall', () =
         await worker.processAttempt(mkAttempt());
 
         expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
-        expect(outboundCallService.placeCall.mock.calls[0][0].balanceDue).toBeUndefined();
+        expect(jobsService.getJobBalanceDue).not.toHaveBeenCalled();
+        expect(outboundCallService.placeCall.mock.calls[0][0]).not.toHaveProperty('balanceDue');
     });
 
-    test('getJobBalanceDue THROWS → non-fatal, call still placed (balanceDue omitted)', async () => {
+    test('a stale throwing balance mock is never invoked and the call still places', async () => {
         jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
         jobsService.getJobBalanceDue.mockRejectedValue(new Error('db boom'));
         mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
         outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-
         await worker.processAttempt(mkAttempt());
 
-        // The dial happened despite the balance lookup throwing.
         expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
-        expect(outboundCallService.placeCall.mock.calls[0][0].balanceDue).toBeUndefined();
-        warnSpy.mockRestore();
+        expect(jobsService.getJobBalanceDue).not.toHaveBeenCalled();
+        expect(outboundCallService.placeCall.mock.calls[0][0]).not.toHaveProperty('balanceDue');
     });
 });
 

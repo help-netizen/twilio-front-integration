@@ -1,13 +1,13 @@
 /**
- * agentSkillsSensitiveReads.test.js — AGENT-SKILLS-001 T9 (L2 sensitive reads)
+ * agentSkillsSensitiveReads.test.js — protected reads through the shared skill gate
  *
- * Mocked-unit proof of the L2 sensitive reads (getJobHistory / getEstimateSummary /
- * getInvoiceSummary) through the real `runSkill` choke-point with the gate granting
- * L2. Covers:
+ * Mocked-unit proof of L2 job history and the owner-approved L1 finance reads
+ * through the real `runSkill` choke-point with the gate granting L2 (which also
+ * satisfies L1). Covers:
  *   - ASK-SKILL-HIST-01: summarized timeline, internal/technician-private notes
  *     REDACTED (verbatim text absent), getEntityHistory called with companyId.
- *   - ASK-SKILL-EST-01 / ASK-ISO-05 / E12: summary + total + itemCount, NEVER line
- *     items; foreign/cross-contact estimate → not-found-safe, no amount leak.
+ *   - ASK-SKILL-EST-01 / ASK-ISO-05 / E12: customer-safe line items + totals;
+ *     foreign/cross-contact estimate → not-found-safe, no amount leak.
  *   - ASK-SKILL-INV-01 / ASK-ISO-06 / E12: balance + status; foreign invoice →
  *     not-found-safe, no amounts leaked; no-card invariant (no PAN/CVV field/path).
  *   - ASK-SEC-01/02/04: no card by voice; no full street address; existence-only
@@ -97,23 +97,28 @@ describe('getJobHistory (L2) — ASK-SKILL-HIST-01 (redaction)', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// getEstimateSummary (L2) — summary only, ownership, not-found-safe
+// getEstimateSummary (L1) — customer-safe breakdown, ownership, not-found-safe
 // ════════════════════════════════════════════════════════════════════════════
 
-describe('getEstimateSummary (L2) — ASK-SKILL-EST-01 / ASK-ISO-05', () => {
-    test('EST-01: summary + total + itemCount (a COUNT, not a list), offer to text a link; NO per-item pricing', async () => {
+describe('getEstimateSummary (L1) — ASK-SKILL-EST-01 / ASK-ISO-05', () => {
+    test('EST-01: sent estimate returns customer-facing items + totals and offers the written document', async () => {
         estimatesService.getEstimate.mockResolvedValue({
-            id: 'e1', contact_id: CONTACT, estimate_number: 'EST-1001', status: 'sent', total: '450.00',
-            items: [{ description: 'Compressor', unit_price: '300.00' }, { description: 'Labor', unit_price: '150.00' }],
+            id: 'e1', contact_id: CONTACT, estimate_number: 'EST-1001', status: 'sent',
+            subtotal: '450.00', discount_amount: '0', tax_amount: '0', total: '450.00',
+            items: [
+                { name: 'Compressor', description: 'internal diagnosis', quantity: '1', amount: '300.00', metadata: { sku: 'SECRET' } },
+                { name: 'Installation labor', quantity: '1', amount: '150.00' },
+            ],
         });
         const out = await runSkill('getEstimateSummary', CO, {}, { contactId: CONTACT, estimateId: 'e1' });
         expect(out).toMatchObject({ ok: true, estimateNumber: 'EST-1001', status: 'sent', total: 450, itemCount: 2 });
-        expect(typeof out.itemCount).toBe('number');
-        // NO per-item pricing / descriptions read aloud
-        expect(out.speak).not.toMatch(/compressor|labor|300|150/i);
-        expect(out.summaryText).not.toMatch(/compressor|labor|300|150/i);
-        // offers to text a secure link (SEND-DOC-001 channel)
-        expect(out.speak).toMatch(/text you a secure link/i);
+        expect(out.lineItems).toEqual([
+            { name: 'Compressor', quantity: 1, amount: 300 },
+            { name: 'Installation labor', quantity: 1, amount: 150 },
+        ]);
+        expect(out.speak).toMatch(/compressor|installation labor/i);
+        expect(JSON.stringify(out)).not.toMatch(/internal diagnosis|SECRET/);
+        expect(out.speak).toMatch(/written document/i);
     });
 
     test('ASK-ISO-05: foreign estimate id (company-scoped getEstimate throws NOT_FOUND) → not-found-safe, no amount', async () => {
@@ -140,10 +145,10 @@ describe('getEstimateSummary (L2) — ASK-SKILL-EST-01 / ASK-ISO-05', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// getInvoiceSummary (L2) — balance + status, no card, ownership, not-found-safe
+// getInvoiceSummary (L1) — balance + status, no card, ownership, not-found-safe
 // ════════════════════════════════════════════════════════════════════════════
 
-describe('getInvoiceSummary (L2) — ASK-SKILL-INV-01 / ASK-ISO-06 (no-card invariant)', () => {
+describe('getInvoiceSummary (L1) — ASK-SKILL-INV-01 / ASK-ISO-06 (no-card invariant)', () => {
     test('INV-01: balance + status; payment handoff to link/human; NEVER a card by voice', async () => {
         invoicesService.getInvoice.mockResolvedValue({
             id: 'i1', contact_id: CONTACT, invoice_number: 'INV-500', status: 'sent',

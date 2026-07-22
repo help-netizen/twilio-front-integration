@@ -276,10 +276,13 @@ describe('runSkill enforces the gate — assert throws → needsVerification, no
 
     test('ASK-GATE-04b: an L0 (unidentified) caller is STILL refused getEstimateSummary — L1 remains the floor', async () => {
         // The relaxation lowered the bar to L1, not to L0. An unresolved caller still
-        // gets the soft needsVerification shape; estimatesService is never reached.
+        // gets an amount-free refusal without a name/ZIP challenge; the owner chose
+        // phone-only disclosure and estimatesService is never reached.
         identityResolver.resolve.mockResolvedValue(NO_MATCH);
         const out = await runSkill('getEstimateSummary', CO, { source: 'test' }, { phone: '+15550000000', estimateId: 'e-1' });
-        expect(out).toMatchObject({ ok: false, needsVerification: true });
+        expect(out).toMatchObject({ ok: false, phoneMatchRequired: true });
+        expect(out.needsVerification).toBeUndefined();
+        expect(out.speak).not.toMatch(/name|zip|code|verify/i);
         expect(estimatesService.getEstimate).not.toHaveBeenCalled();
         expect(estimatesService.listEstimates).not.toHaveBeenCalled();
     });
@@ -325,10 +328,16 @@ describe('runSkill enforces the gate — assert throws → needsVerification, no
         const resch = await runSkill('rescheduleAppointment', CO, {}, { ...id, jobId: 7, newPreferredSlot: { date: '2026-07-10', start: '10:00', end: '12:00' } });
         const canc = await runSkill('cancelAppointment', CO, {}, { ...id, jobId: 7, reason: 'price', retentionAttempted: true });
 
-        for (const out of [hist, est, inv, resch, canc]) {
+        for (const out of [hist, resch, canc]) {
             expect(out).toMatchObject({ ok: false, needsVerification: true });
             expect(out.speak).toMatch(/verify a couple details/i);
             // no amount / address / note text leaked in the refusal
+            expect(JSON.stringify(out)).not.toMatch(/\$\d|balance|walpole|02101/i);
+        }
+        for (const out of [est, inv]) {
+            expect(out).toMatchObject({ ok: false, phoneMatchRequired: true });
+            expect(out.needsVerification).toBeUndefined();
+            expect(out.speak).not.toMatch(/name|zip|code|verify/i);
             expect(JSON.stringify(out)).not.toMatch(/\$\d|balance|walpole|02101/i);
         }
         expect(eventService.getEntityHistory).not.toHaveBeenCalled();
