@@ -289,3 +289,29 @@ Additional controls:
 - Removed parts-call `balanceDue` prompt injection and made all finance retrieval on demand.
 - Added trusted outbound VAPI call-context lookup, cross-company collision refusal, safe finance summaries, deterministic document ranking, and the five-item speech cap.
 - Proved all four mandatory sabotages red and restored them green. Local implementation and tenancy suites pass; live VAPI synchronization remains pending the credentials listed in Results.
+
+## Production deploy + live VAPI patch — 2026-07-20
+
+Deployed master `59793dd` (feature `6a4a6e4` + the accumulated OB-17..22 / inspector
+tail). Migration **194** (notes dedup) applied — idempotent JSONB cleanup. Backup 89M,
+rollback image `35f9d13f3539`. Backend artifact verified in the running container
+(`financeDisclosure.js` present, draft-silence live); `/api/vapi-tools` answers POST 401
+(signed webhook), the route exists.
+
+**The three live VAPI assistants were patched** with `scripts/sync-vapi-finance-tools.js`,
+run inside the app container (voice-agent/ is not baked into the image — `docker cp`'d in,
+removed after). Method was GET-first, per the "Sara live-config drifts" lesson:
+
+1. Backed up all three live assistant configs to `/tmp/vapi-live-*.json` on the box.
+2. Diffed each live prompt against the repo desired prompt BEFORE mutating. The only
+   "live-only" lines were the OLD prohibition the feature intentionally reverses
+   ("Do NOT quote a repair price…") — no unrelated hand-edits were being clobbered.
+   Verified the separate "no payment collection by voice" rule SURVIVES in the reworded
+   prompts (payment/collect mentions: parts 2, lead 5) — enabling price quotes did not
+   accidentally enable voice payment.
+3. `--live-apply`: PATCH sara / parts / lead, each verified by a follow-up GET.
+4. Final `--live-check`: all three `tools=match prompt=match`; getEstimateSummary and
+   getInvoiceSummary confirmed present on every assistant (Sara 15 tools, parts 4, lead 5).
+
+logout-all (3 sessions), KC force-recreated (theme changed), smoke green (api/app/well-known
+200, unsigned vapi-tools 401), 0 errors in 8 minutes.
