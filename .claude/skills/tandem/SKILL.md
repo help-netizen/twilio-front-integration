@@ -1,6 +1,6 @@
 ---
 name: tandem
-description: "Token-lean two-member team orchestration for Blanc/Albusto development: Claude is the team lead / architect (framing, conceptual forks, review, acceptance — minimal tokens), ChatGPT/Codex is the senior engineer with broad authority (deep discovery, UX proposals, spec drafts, ALL code, tests, verification). UX-first: screens and flows are agreed before backend work. Use when the user wants a feature built in orchestration mode with GPT doing the heavy lifting (запросы вида «в режиме тандема», «оркестрация с ChatGPT», «делегируй Codex»)."
+description: "Token-lean two-member team orchestration for Blanc/Albusto development: Claude is the team lead / architect AND the designer (framing, conceptual forks, the UX/visual design, the final frontend markup, review, acceptance), ChatGPT/Codex is the senior engineer (deep discovery, backend logic, ALL backend code, tests, verification, spec drafts). Claude owns how it looks and how it interacts; Codex owns what runs under the hood. UX-first: Claude designs the screens before backend work. Use when the user wants a feature built in orchestration mode with GPT doing the engineering heavy lifting (запросы вида «в режиме тандема», «оркестрация с ChatGPT», «делегируй Codex»)."
 user-invocable: true
 argument-hint: "<feature request or bug description>"
 ---
@@ -18,18 +18,31 @@ The user's feature request: `$ARGUMENTS`
 
 ## Division of labor (hard rules)
 
-**Codex does (default for everything):**
+**Codex does (default for the engineering):**
 - ALL codebase discovery/research (reading files, greps, tracing flows, schema checks).
-- UX proposals: screens, states, copy, mockups/harnesses (per CLAUDE.md UI canon).
+- Current-state UX MAP (which components/patterns/endpoints already exist, file:line) so
+  Claude can design against reality — but NOT the final visual design, look, or markup.
 - Spec DRAFTS, task breakdowns, effort estimates, risk lists.
-- ALL code and ALL tests. All builds/test runs inside its session.
+- ALL backend code + ALL tests, and frontend DATA plumbing (types, API clients, hooks) —
+  the logic layer. NOT the presentational components/markup (Claude's). All builds/test
+  runs inside its session.
 - Mechanical decisions (naming, file placement, minor API shapes) — it decides and
   RECORDS them in a DECISIONS section for your review; it does not ask.
 - Docs DRAFTS of every durable artifact (see **Durable artifacts** below): the spec
   incl. its Verification section, the requirements/architecture/changelog blocks.
+- In its briefs, Codex is told explicitly: "do NOT design or write the final UI —
+  Claude owns the visual design and markup." (Owner directive 2026-07-21: the owner
+  finds Codex's pages too technical and its UX weak; design quality is Claude's.)
 
-**You (Claude) do ONLY:**
+**You (Claude) do:**
 - Frame the task (goal, constraints, what's UX-visible) — 1 short brief, no code reading.
+- **OWN the UX and the visual design** — the whole "how it looks and how it interacts"
+  layer. Design the screens, states, copy, and flow yourself (per CLAUDE.md + FORM-CANON
+  + PALETTE-V2); build the owner-facing mockup yourself; then write/finish the
+  presentational frontend components and markup yourself. This is the one part of the
+  build that does NOT go to Codex — the owner explicitly wants Claude's design taste on
+  the final UI. Codex supplies the current-state map and the data hooks; you supply the
+  look, the interaction, and the components. Keep [[tandem-claude-owns-design]] in mind.
 - Run the discussion: challenge Codex's proposal against the GOAL, not against the code.
 - Decide **conceptual forks**: product behavior, UX direction, data-model boundaries,
   security posture, scope cuts. Ask the OWNER (AskUserQuestion) only what is genuinely
@@ -80,19 +93,21 @@ owner constraints, what is UX-visible, known landmines (from memory/lessons), ex
 OUT-of-scope. If the request already contains blocking ambiguity that is the OWNER's
 call — ask now, once, consolidated (AskUserQuestion).
 
-### Phase 1 — UX-first discussion (Codex turns 1–2, you decide forks)
-**Turn 1 (exec, background):** send the frame. Ask Codex to (a) explore the code
-itself and return a current-state map (files/flows, file:line), (b) propose the UX
-FIRST — screens, states, empty/error cases, copy, following CLAUDE.md design canon +
-`docs/specs/FORM-CANON.md` (right-side panels, floating fields, PALETTE-V2 violet,
-no "Blanc" in UI) — as an HTML mockup in the scratchpad or a Vite harness with real
-components when cheap, (c) sketch the implementation (endpoints, data, reuse-not-
-duplicate), (d) list DECISIONS NEEDED / RISKS / QUESTIONS.
+### Phase 1 — UX-first: Codex maps, YOU design (you decide forks)
+**Turn 1 (exec, background):** send the frame. Ask Codex to (a) explore the code itself
+and return a current-state map (files/flows, existing components/patterns, file:line),
+(b) sketch the backend/data implementation (endpoints, data shape, reuse-not-duplicate),
+(c) surface the conceptual forks it sees, (d) list DECISIONS NEEDED / RISKS / QUESTIONS.
+Do NOT ask Codex for the visual mockup — the design is yours.
 
-**Your move:** skim; open the mockup/harness yourself only if the surface is new or
-owner-facing. Decide the conceptual forks; forward owner-level forks to the owner
-(with the mockup/screenshot when UX). For a new user-facing surface, show the owner
-the screens BEFORE building — UX-first means the screen is the spec.
+**Your move — design the UX yourself.** From Codex's current-state map, YOU work out the
+screens, states, empty/error cases, and copy (per CLAUDE.md canon + `docs/specs/FORM-CANON.md`
+— right-side panels, floating fields, PALETTE-V2 violet, no "Blanc" in UI) and build the
+owner-facing **mockup yourself** (a self-contained HTML file in your scratchpad — note
+Codex's sandbox can't write there anyway). Decide the conceptual forks; forward
+owner-level forks to the owner WITH your mockup/screenshot. For a new user-facing
+surface, show the owner your screens BEFORE building — UX-first means the screen is the
+spec, and the screen is yours.
 
 **Turn 2 (resume):** send decisions + corrections. Codex returns the refined plan —
 task list T1..Tn with per-task acceptance criteria, verify commands, test plan, and
@@ -103,9 +118,19 @@ case-collision gotcha), including a filled `Tenancy & Roles` table from
 code. You red-pen the spec diff, fix only what's wrong, approve.
 Skip Turn 2 for S-size tasks — fold the plan into Turn 1.
 
-### Phase 2 — Implement (Codex, full authority; you gate per task)
-Same session implements task-by-task (or one pass for S/M). Codex applies patches,
-writes tests, runs its own verify (build + jest), reports per the contract.
+### Phase 2 — Implement (Codex backend, YOU frontend; you gate per task)
+Split the build along the ownership line and run the two halves in PARALLEL — they
+rarely touch the same files:
+- **Codex (its session):** backend routes/services/db, data hooks/types, and ALL tests,
+  task-by-task; applies patches, runs its own verify (build + jest), reports per the
+  contract. Tell it plainly in the brief: "frontend/UI is Claude's — do not create or
+  edit .tsx/presentational files or the mockup."
+- **You (in parallel):** write the presentational frontend yourself — the components,
+  markup, styling, and interaction from your Phase-1 design, wired to the data contract
+  you gave Codex. Match the surrounding components' idiom; run `npm run build` yourself.
+This parallelism is a feature: while Codex writes the backend + tests, you build the UI,
+so the feature converges in one pass. Watch for the false-"completed" notification
+(L-017) — poll `ps`/log growth before concluding Codex is done.
 
 **Mandatory tenancy/RBAC red-team turn:** after implementation, send a separate
 adversarial turn whose only job is to break tenant and role boundaries. The
