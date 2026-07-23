@@ -1,7 +1,7 @@
 # CHATGPT-CRM-MCP-001 — OAuth CRM connector
 
-Status: approved specification; owner decisions D1/D2 incorporated; S1 implementation authorized
-Date: 2026-07-22
+Status: approved specification; S1 implemented; S1.1 call-history read pending architect gate
+Date: 2026-07-23
 Scope: backend-only ChatGPT MCP connector with company-scoped reads, internal CRM writes, and customer sends; payments deferred
 
 ## 1. Outcome and non-goals
@@ -255,14 +255,87 @@ Every permission cell below also requires the exact system key `mcp.tool.<tool n
 | `svc.get_contact` | read | `contacts.view` / read | R | `GET /api/contacts/:id`; `contactsService.getById` | Harden required company; child emails/addresses repeat company ownership. |
 | `svc.get_contact_history` | read | `contacts.view` / read | R | `GET /api/contacts/:id/history` plus typed notes | Base entity and every event/note/attachment query scoped to company. |
 | `svc.list_schedule` | read | `schedule.view` / read | R | `GET /api/schedule`; schedule service/query layer | Company required; bounded company-local date range. |
+| `svc.list_calls` | read | `pulse.view` / read | R | Pulse timeline call query; dedicated `chatgptMcpQueries.listCalls` projection | Explicit `calls.company_id` predicate; company-scoped contact join; root calls without a contact remain visible to their owning company. |
 | `svc.get_schedule_item` | read | `schedule.view` / read | R | `GET /api/schedule/items/:entityType/:entityId` | Allowlisted entity types; entity and schedule joins repeat company. |
 | `svc.list_tasks` | read | `tasks.view` / read | R | `GET /api/tasks`; `tasksQueries.listTasksPage` | Company required in base query/count and every parent join. |
 | `svc.list_entity_tasks` | read | `tasks.view` plus host `jobs.view` or `leads.view` / read | R | `GET /api/tasks/entity/:parentType/:parentId` | Reuse host-visibility guard; foreign host is not found. |
-| `svc.list_task_assignees` | read | `tasks.create`, `tasks.manage` / read | R | `GET /api/tasks/assignees`; `userService.listUsers` | Active users from bound company only. |
+| `svc.list_task_assignees` | read | `tasks.view` / read | R | `GET /api/tasks/assignees`; `userService.listUsers` | Active users from bound company only. |
 | `svc.list_estimates` | read | `estimates.view` / read | R | `GET /api/estimates`; `estimatesService.listEstimates` | Company required in list/count and linked contact/job/lead joins; revisions are not double-counted. |
 | `svc.get_estimate` | read | `estimates.view` / read | R | `GET /api/estimates/:id`; `estimatesService.getEstimate` | Estimate, items, contact, lead, job, and revision-derived data all repeat company ownership. |
 | `svc.list_invoices` | read | `invoices.view` / read | R | `GET /api/invoices`; `invoicesService.listInvoices` | Company required in list/count and linked contact/job/estimate joins. |
 | `svc.get_invoice` | read | `invoices.view` / read | R | `GET /api/invoices/:id`; `invoicesService.getInvoice` | Invoice, items, contact, job, estimate, and payment rollup remain company-scoped. |
+
+#### 7.1.1 S1.1 — Pulse call journal
+
+`svc.list_calls` is the nineteenth S1 read tool. Its exact permission pair is
+`pulse.view` plus `mcp.tool.svc.list_calls`; it uses `albusto.mcp.read` and
+confirmation class R. Grant bundle version 2 adds those permissions for every
+active connector binding. Marketplace metadata adds `calls:read`, a Calls
+access-summary row, and a Calls recommendation.
+
+The strict input object has no required fields and rejects unknown fields:
+
+- `limit`: integer 1–50, default 20;
+- `direction`: `inbound` or `outbound`;
+- `contact_id`: positive integer;
+- `date_from` and `date_to`: company-local `YYYY-MM-DD` dates.
+
+With no dates, the window is the current company-local day plus the preceding
+13 days. Results sort by `started_at DESC`, then `id DESC`. The response uses
+the neighboring list-tool envelope `{ rows, total }`. Each row is projected to
+only `id`, `direction`, `status`, `started_at`, `answered_at`, `ended_at`,
+`duration_sec`, `from_number`, `to_number`, `contact_id`, `contact_name`, and
+`answered_by`. The `answered_by='ai'` value is preserved for the existing
+agent-call badge meaning. The service never returns `call_sid`,
+`parent_call_sid`, price fields, raw provider payloads, recordings, or recording
+URLs.
+
+The old v3 schema description is no longer authoritative: migration 012 added
+`calls.company_id`. S1.1 reuses Pulse's current root-call ownership seam:
+
+```sql
+FROM calls
+WHERE timeline_id = $1
+  AND company_id = $2
+  AND parent_call_sid IS NULL
+```
+
+The dedicated MCP query generalizes that timeline-specific read to the bound
+company while retaining the same decisive predicates:
+
+```sql
+FROM calls c
+JOIN companies tenant
+  ON tenant.id = $1
+ AND tenant.status = 'active'
+LEFT JOIN contacts co
+  ON co.id = c.contact_id
+ AND co.company_id = c.company_id
+WHERE c.company_id = tenant.id
+  AND c.parent_call_sid IS NULL
+```
+
+Direct `calls.company_id` ownership—not a contact natural key—is authoritative.
+
+#### 7.1.2 Marketplace connect panel
+
+`ChatgptMcpConnectPanel` (frontend/src/components/settings/ChatgptMcpConnectPanel.tsx)
+is the FORM-CANON right-side panel behind the app card. Installing the app
+auto-opens it, and a connected card shows a `Setup` button
+(`/settings/integrations?tab=marketplace&app=chatgpt-crm-mcp`). It walks the
+admin through the ChatGPT side, in the order the live rollout proved necessary:
+Developer mode on a computer (required, no mobile), a new connector at
+`chatgpt.com/plugins` with the MCP server URL, OAuth with the pre-registered
+client (`chatgpt-crm-mcp`, empty secret, token auth `none`, Registration URL
+left empty — DCR is rejected by design), signing in with the same admin
+account that installed the app (the binding subject must match), and
+@-mentioning the connector in a chat to attach it. Access chips render from
+`access_summary`, so migration 198's Calls row appears without UI changes.
+A no-backend Vite harness (`frontend/chatgpt-connect-harness.html`) renders the
+real component for visual review.
+That is why a call with `contact_id IS NULL` remains visible to its own company
+and cannot enter another company's result. The optional contact join repeats
+tenant ownership and supplies only `contact_name`.
 
 ### 7.2 S2 — internal writes and files
 
@@ -409,7 +482,7 @@ All commands run from the worktree root. They use the main checkout's Jest binar
 ### S1 command — OAuth, identity, registry, reads, tenancy
 
 ```bash
-node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --config ./package.json --testPathIgnorePatterns "/node_modules/" --runTestsByPath tests/chatgptMcpOAuth.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpTenancy.db.test.js tests/agentSkillsMcp.test.js tests/tenantSafetyLint.test.js
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpOAuth.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/agentSkillsMcp.test.js tests/tenantSafetyLint.test.js
 ```
 
 ### S2 command — internal writes, FSM, authorship, files, route regressions
@@ -461,7 +534,7 @@ Tasks:
 1. Recheck migration maximum; add paired forward/rollback migrations for Marketplace app metadata, AI user kind, bindings, grants, and invocation audit; provision/revoke AI user transactionally.
 2. Document the `chatgpt-crm-mcp` public client and three client scopes for the `crm-prod` realm. Keycloak realm/client configuration is an operator action and is not built into S1.
 3. Implement resource metadata, connector-specific JWT validation, unique subject-to-binding mapping, active-chain recheck, scope gate, and 401 challenges.
-4. Extend the existing registry/protocol/transport with exact per-tool keys and all S1 read tools, including estimate and invoice list/detail.
+4. Extend the existing registry/protocol/transport with exact per-tool keys and all S1 read tools, including estimate and invoice list/detail. S1.1 adds the tenant-scoped Pulse call-history list as bundle version 2.
 5. Harden the fixed-bearer dev path so it requires explicit company and AI user and uses DB grants.
 6. Apply D1 by adding only the two required public mounts and two requires to protected `src/server.js`.
 7. Add S1 contract, OAuth, DB tenancy, protocol, sabotage, and real-client tests.
@@ -470,7 +543,7 @@ Acceptance criteria:
 
 - a real connector completes OAuth Code + PKCE and lists only granted read tools;
 - one token resolves to exactly one active company/AI identity; ambiguous/revoked/suspended cases do zero work;
-- every read—including estimate/invoice list/detail—passes T-own/T-foreign/T-blast/R-matrix and logs the AI/user/binding context without leaking record data;
+- every read—including estimate/invoice list/detail and S1.1 call history—passes T-own/T-foreign/T-blast/R-matrix and logs the AI/user/binding context without leaking record data;
 - the fixed bearer path has no defaults and cannot run in production;
 - `SAB-MCP-UNMAPPED`, `SAB-MCP-FOREIGN`, and `SAB-MCP-OAUTH-TENANT` each prove break-red-restore-green;
 - S1 verification and real-client fixed-bearer read pass.

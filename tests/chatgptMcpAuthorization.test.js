@@ -31,8 +31,8 @@ function requestContext(granted = permissions.S1_GRANTS) {
 beforeEach(() => jest.clearAllMocks());
 
 describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
-    test('all 18 S1 reads require business permission plus their exact AI-only key', () => {
-        expect(permissions.READ_TOOL_NAMES).toHaveLength(18);
+    test('all 19 S1 reads require business permission plus their exact AI-only key', () => {
+        expect(permissions.READ_TOOL_NAMES).toHaveLength(19);
         for (const name of permissions.READ_TOOL_NAMES) {
             const tool = registry.getTool(name);
             expect(tool).toBeDefined();
@@ -60,6 +60,33 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
             'company-a',
             { limit: 25 }
         );
+    });
+
+    test('svc.list_calls is a strict pulse.view read with no tenant selector in its schema', () => {
+        const tool = registry.getTool('svc.list_calls');
+        expect(permissions.BUNDLE_VERSION).toBe(2);
+        expect(permissions.READ_TOOL_PERMISSIONS['svc.list_calls']).toEqual(['pulse.view']);
+        expect(tool).toMatchObject({
+            kind: 'read',
+            requiredPermissions: expect.arrayContaining([
+                'pulse.view',
+                'mcp.tool.svc.list_calls',
+            ]),
+            inputSchema: {
+                type: 'object',
+                additionalProperties: false,
+                required: [],
+            },
+        });
+        expect(tool.inputSchema.properties).toEqual({
+            limit: { type: 'integer', minimum: 1, maximum: 50 },
+            direction: { type: 'string', enum: ['inbound', 'outbound'] },
+            contact_id: { type: 'integer', minimum: 1 },
+            date_from: { type: 'string', format: 'date' },
+            date_to: { type: 'string', format: 'date' },
+        });
+        expect(tool.inputSchema.properties).not.toHaveProperty('company_id');
+        expect(tool.inputSchema.properties).not.toHaveProperty('companyId');
     });
 
     test('missing exact grant hides discovery and denies direct invocation before dispatch', async () => {

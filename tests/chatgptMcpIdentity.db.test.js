@@ -13,6 +13,11 @@ const SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '195_chatgpt_crm_mcp.sql'),
 const ROLLBACK = fs.readFileSync(path.join(MIGRATIONS, 'rollback_195_chatgpt_crm_mcp.sql'), 'utf8');
 const SEED = fs.readFileSync(path.join(MIGRATIONS, '196_seed_chatgpt_crm_mcp_marketplace_app.sql'), 'utf8');
 const SEED_ROLLBACK = fs.readFileSync(path.join(MIGRATIONS, 'rollback_196_seed_chatgpt_crm_mcp_marketplace_app.sql'), 'utf8');
+const CALLS_GRANT = fs.readFileSync(path.join(MIGRATIONS, '198_chatgpt_mcp_list_calls_grant.sql'), 'utf8');
+const CALLS_GRANT_ROLLBACK = fs.readFileSync(
+    path.join(MIGRATIONS, 'rollback_198_chatgpt_mcp_list_calls_grant.sql'),
+    'utf8'
+);
 const MARKETPLACE_SOURCE = fs.readFileSync(path.join(__dirname, '../backend/src/services/marketplaceService.js'), 'utf8');
 
 jest.setTimeout(60000);
@@ -70,6 +75,11 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
             expect(SEED).toContain(`"${key}"`);
         }
         expect(SEED_ROLLBACK).toContain("app_key = 'chatgpt-crm-mcp'");
+        expect(CALLS_GRANT).toContain("'pulse.view'");
+        expect(CALLS_GRANT).toContain("'mcp.tool.svc.list_calls'");
+        expect(CALLS_GRANT).toContain("'[\"calls:read\"]'::jsonb");
+        expect(CALLS_GRANT).toContain('bundle_version = EXCLUDED.bundle_version');
+        expect(CALLS_GRANT_ROLLBACK).toContain("'mcp.tool.svc.list_calls'");
         expect(MARKETPLACE_SOURCE).toContain('chatgptMcpIdentityService.provisionInstallation');
         expect(MARKETPLACE_SOURCE).toContain('chatgptMcpIdentityService.revokeInstallation');
         expect(MARKETPLACE_SOURCE).toContain('requireChatgptTenantAdmin');
@@ -168,6 +178,77 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
             const provisionB = await identityService.provisionInstallation({
                 companyId: companyB, installationId: installB.id, actorId: humanB.id,
             }, client);
+
+            await client.query(
+                `DELETE FROM mcp_agent_permission_grants
+                 WHERE company_id IN ($1, $2)
+                   AND permission_key IN ('pulse.view', 'mcp.tool.svc.list_calls')`,
+                [companyA, companyB]
+            );
+            await client.query(
+                `UPDATE mcp_agent_permission_grants
+                 SET bundle_version=1
+                 WHERE company_id IN ($1, $2)`,
+                [companyA, companyB]
+            );
+            await client.query(
+                `UPDATE chatgpt_mcp_bindings
+                 SET grant_version=1
+                 WHERE company_id IN ($1, $2)`,
+                [companyA, companyB]
+            );
+            await client.query(CALLS_GRANT);
+            await client.query(CALLS_GRANT);
+
+            const migratedGrants = await client.query(
+                `SELECT company_id, permission_key, bundle_version, COUNT(*)::int AS count
+                 FROM mcp_agent_permission_grants
+                 WHERE company_id IN ($1, $2)
+                   AND permission_key IN ('pulse.view', 'mcp.tool.svc.list_calls')
+                 GROUP BY company_id, permission_key, bundle_version
+                 ORDER BY company_id, permission_key`,
+                [companyA, companyB]
+            );
+            expect(migratedGrants.rows).toHaveLength(4);
+            expect(migratedGrants.rows).toEqual(expect.arrayContaining([
+                { company_id: companyA, permission_key: 'pulse.view', bundle_version: 2, count: 1 },
+                {
+                    company_id: companyA,
+                    permission_key: 'mcp.tool.svc.list_calls',
+                    bundle_version: 2,
+                    count: 1,
+                },
+                { company_id: companyB, permission_key: 'pulse.view', bundle_version: 2, count: 1 },
+                {
+                    company_id: companyB,
+                    permission_key: 'mcp.tool.svc.list_calls',
+                    bundle_version: 2,
+                    count: 1,
+                },
+            ]));
+            const migratedBindings = await client.query(
+                `SELECT company_id, grant_version
+                 FROM chatgpt_mcp_bindings
+                 WHERE company_id IN ($1, $2)
+                 ORDER BY company_id`,
+                [companyA, companyB]
+            );
+            expect(migratedBindings.rows).toEqual([
+                { company_id: companyA, grant_version: 2 },
+                { company_id: companyB, grant_version: 2 },
+            ].sort((left, right) => left.company_id.localeCompare(right.company_id)));
+            const migratedApp = await client.query(
+                `SELECT requested_scopes, metadata
+                 FROM marketplace_apps
+                 WHERE app_key='chatgpt-crm-mcp'`
+            );
+            expect(migratedApp.rows[0].requested_scopes).toContain('calls:read');
+            expect(migratedApp.rows[0].metadata.access_summary).toEqual(expect.arrayContaining([
+                'Read recent Calls from Pulse without recordings or provider identifiers',
+            ]));
+            expect(migratedApp.rows[0].metadata.assistant.recommend_when).toEqual(expect.arrayContaining([
+                'User wants ChatGPT to review recent inbound or outbound calls and whether AI answered',
+            ]));
 
             const resolved = await identityService.resolveOAuthContext({
                 issuer: process.env.KEYCLOAK_REALM_URL,

@@ -1,7 +1,7 @@
 'use strict';
 
 const APP_KEY = 'chatgpt-crm-mcp';
-const BUNDLE_VERSION = 1;
+const BUNDLE_VERSION = 2;
 const READ_SCOPE = 'albusto.mcp.read';
 
 const READ_TOOL_PERMISSIONS = Object.freeze({
@@ -15,6 +15,7 @@ const READ_TOOL_PERMISSIONS = Object.freeze({
     'svc.get_contact': ['contacts.view'],
     'svc.get_contact_history': ['contacts.view'],
     'svc.list_schedule': ['schedule.view'],
+    'svc.list_calls': ['pulse.view'],
     'svc.get_schedule_item': ['schedule.view'],
     'svc.list_tasks': ['tasks.view'],
     'svc.list_entity_tasks': ['tasks.view', 'jobs.view', 'leads.view'],

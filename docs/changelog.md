@@ -2698,3 +2698,29 @@ frontend handoff: distinguish authz loading/success/failure, only onboard a
 successfully loaded `platform_role='none'` null-company context, and prevent
 stale init responses from overwriting post-onboarding refresh. Spec:
 `docs/specs/ONBOARD-LOOP-FIX.md`.
+
+---
+
+## 2026-07-23 — CHATGPT-CRM-MCP-001 S1.1: чтение журнала звонков Pulse
+
+К read-only MCP-коннектору добавлен девятнадцатый инструмент
+`svc.list_calls`: последние 14 company-local дней, фильтры направления,
+контакта и дат, лимит до 50. Permission-пара — `pulse.view` +
+`mcp.tool.svc.list_calls`; grant bundle поднят до v2 и идемпотентно
+бэкфиллится для активных binding-ов миграцией 198 вместе с Marketplace scope
+`calls:read`. Тенантность повторяет реальный Pulse seam:
+`calls.company_id = <bound company>` и только root calls; contact join
+дополнительно повторяет `company_id`, поэтому звонки без `contact_id` не
+теряются у владельца и не попадают соседу. Ответ намеренно не содержит Twilio
+SID, цены, raw payload или записи/URL — только безопасная карточка звонка,
+включая `answered_by='ai'`. Покрыты strict schema, фильтры, проекция,
+19-tool auth-регрессия, миграционный бэкфилл и real-PostgreSQL T-blast для
+linked/contactless звонков двух компаний. Спека:
+`docs/specs/CHATGPT-CRM-MCP-001.md` §7.1.1.
+
+Тем же днём добавлена Marketplace-панель подключения (§7.1.2):
+`ChatgptMcpConnectPanel` авто-открывается после Connect и доступна кнопкой
+Setup; шаги повторяют живой rollout — Developer mode, `chatgpt.com/plugins`,
+OAuth-значения пред-регистрированного клиента (Registration URL пустой),
+вход тем же админ-аккаунтом, @-упоминание коннектора в чате. Проверена
+реал-компонентным Vite-харнесом `chatgpt-connect-harness.html`.

@@ -14,6 +14,25 @@ function bounded(value, fallback = 50, max = 100) {
     return parsed;
 }
 
+function optionalIsoDate(value, name) {
+    if (value === undefined || value === null || value === '') return null;
+    const stringValue = String(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(stringValue)) {
+        throw Object.assign(new Error(`${name} must be a valid YYYY-MM-DD date`), {
+            code: 'INVALID_QUERY',
+            httpStatus: 400,
+        });
+    }
+    const parsed = new Date(`${stringValue}T00:00:00.000Z`);
+    if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== stringValue) {
+        throw Object.assign(new Error(`${name} must be a valid YYYY-MM-DD date`), {
+            code: 'INVALID_QUERY',
+            httpStatus: 400,
+        });
+    }
+    return stringValue;
+}
+
 async function getJob(companyId, jobId) {
     requireCompanyId(companyId);
     const { rows } = await db.query(
@@ -320,6 +339,82 @@ async function listAssignees(companyId, limit = 100) {
     return { users: rows };
 }
 
+async function listCalls(companyId, filters = {}) {
+    requireCompanyId(companyId);
+    const limit = bounded(filters.limit, 20, 50);
+    const direction = filters.direction || null;
+    if (direction && !['inbound', 'outbound'].includes(direction)) {
+        throw Object.assign(new Error('direction must be inbound or outbound'), {
+            code: 'INVALID_QUERY',
+            httpStatus: 400,
+        });
+    }
+    const contactId = filters.contact_id ?? null;
+    if (contactId !== null && (!Number.isInteger(contactId) || contactId < 1)) {
+        throw Object.assign(new Error('contact_id must be a positive integer'), {
+            code: 'INVALID_QUERY',
+            httpStatus: 400,
+        });
+    }
+    const dateFrom = optionalIsoDate(filters.date_from, 'date_from');
+    const dateTo = optionalIsoDate(filters.date_to, 'date_to');
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+        throw Object.assign(new Error('date_from must not be after date_to'), {
+            code: 'INVALID_QUERY',
+            httpStatus: 400,
+        });
+    }
+
+    const { rows } = await db.query(
+        `SELECT c.id,
+                c.direction,
+                c.status,
+                c.started_at,
+                c.answered_at,
+                c.ended_at,
+                c.duration_sec,
+                c.from_number,
+                c.to_number,
+                c.contact_id,
+                co.full_name AS contact_name,
+                c.answered_by,
+                COUNT(*) OVER()::int AS _total
+         FROM calls c
+         JOIN companies tenant
+           ON tenant.id = $1
+          AND tenant.status = 'active'
+         LEFT JOIN contacts co
+           ON co.id = c.contact_id
+          AND co.company_id = c.company_id
+         WHERE c.company_id = tenant.id
+           AND c.parent_call_sid IS NULL
+           AND ($2::text IS NULL OR c.direction = $2)
+           AND ($3::bigint IS NULL OR c.contact_id = $3)
+           AND COALESCE(c.started_at, c.created_at) >= (
+                COALESCE(
+                    $4::date,
+                    (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(tenant.timezone, 'America/New_York'))::date - 13
+                ) AT TIME ZONE COALESCE(tenant.timezone, 'America/New_York')
+           )
+           AND COALESCE(c.started_at, c.created_at) < (
+                (
+                    COALESCE(
+                        $5::date,
+                        (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(tenant.timezone, 'America/New_York'))::date
+                    ) + 1
+                ) AT TIME ZONE COALESCE(tenant.timezone, 'America/New_York')
+           )
+         ORDER BY c.started_at DESC NULLS LAST, c.id DESC
+         LIMIT $6`,
+        [companyId, direction, contactId, dateFrom, dateTo, limit]
+    );
+    const total = rows[0]?._total || 0;
+    return {
+        rows: rows.map(({ _total, ...row }) => row),
+        total,
+    };
+}
+
 module.exports = {
     bounded,
     getJob,
@@ -331,4 +426,5 @@ module.exports = {
     listInvoices,
     getInvoice,
     listAssignees,
+    listCalls,
 };

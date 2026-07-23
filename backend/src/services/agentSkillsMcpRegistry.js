@@ -245,6 +245,10 @@ const DISPATCHER_READ_TOOLS = [
         unassigned_only: booleanSchema(), search: stringSchema(),
         limit: integerSchema(1, 100), offset: integerSchema(0),
     })),
+    dispatcherRead('svc.list_calls', 'listCalls', 'List recent company calls from Pulse without provider identifiers, pricing, or recordings.', strictObjectSchema({
+        limit: integerSchema(1, 50), direction: enumSchema(['inbound', 'outbound']),
+        contact_id: integerSchema(1), date_from: dateSchema(), date_to: dateSchema(),
+    })),
     dispatcherRead('svc.get_schedule_item', 'getScheduleItem', 'Get one company-owned Schedule item.', strictObjectSchema({
         entity_type: enumSchema(['job', 'lead', 'task']), entity_id: integerSchema(1),
     }, ['entity_type', 'entity_id'])),

@@ -164,6 +164,65 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
                  ON CONFLICT (contact_id,email_normalized) DO NOTHING`,
                 [contactA, contactB, sharedEmail]
             );
+            const timelines = await client.query(
+                `INSERT INTO timelines (company_id, contact_id, phone_e164)
+                 VALUES ($1,$3,$5), ($2,$4,$6), ($1,NULL,$7), ($2,NULL,$8)
+                 RETURNING id, company_id, contact_id`,
+                [
+                    companyA,
+                    companyB,
+                    contactA,
+                    contactB,
+                    `+1555100${String(contactA).padStart(4, '0')}`,
+                    `+1555200${String(contactB).padStart(4, '0')}`,
+                    `+1555300${String(contactA).padStart(4, '0')}`,
+                    `+1555400${String(contactB).padStart(4, '0')}`,
+                ]
+            );
+            const timelineFor = (companyId, linked) => timelines.rows.find(
+                (row) => row.company_id === companyId && (row.contact_id !== null) === linked
+            ).id;
+            const calls = await client.query(
+                `INSERT INTO calls (
+                    call_sid, contact_id, timeline_id, company_id, direction,
+                    from_number, to_number, status, is_final, started_at,
+                    answered_at, ended_at, duration_sec, answered_by
+                 )
+                 VALUES
+                    ($1,$5,$7,$3,'inbound',$9,$10,'completed',true,NOW()-INTERVAL '1 day',
+                     NOW()-INTERVAL '1 day'+INTERVAL '2 seconds',NOW()-INTERVAL '1 day'+INTERVAL '5 minutes',298,'ai'),
+                    ($2,NULL,$8,$3,'outbound',$10,$9,'completed',true,NOW()-INTERVAL '2 days',
+                     NOW()-INTERVAL '2 days'+INTERVAL '3 seconds',NOW()-INTERVAL '2 days'+INTERVAL '4 minutes',237,NULL),
+                    ($4,$6,$11,$12,'inbound',$9,$10,'completed',true,NOW()-INTERVAL '1 day',
+                     NOW()-INTERVAL '1 day'+INTERVAL '1 second',NOW()-INTERVAL '1 day'+INTERVAL '6 minutes',359,'ai'),
+                    ($13,NULL,$14,$12,'outbound',$10,$9,'completed',true,NOW()-INTERVAL '2 days',
+                     NOW()-INTERVAL '2 days'+INTERVAL '4 seconds',NOW()-INTERVAL '2 days'+INTERVAL '3 minutes',176,NULL)
+                 RETURNING id, company_id, contact_id`,
+                [
+                    `CA-A-LINKED-${Date.now()}`,
+                    `CA-A-ORPHAN-${Date.now()}`,
+                    companyA,
+                    `CA-B-LINKED-${Date.now()}`,
+                    contactA,
+                    contactB,
+                    timelineFor(companyA, true),
+                    timelineFor(companyA, false),
+                    sharedPhone,
+                    '+15559990000',
+                    timelineFor(companyB, true),
+                    companyB,
+                    `CA-B-ORPHAN-${Date.now()}`,
+                    timelineFor(companyB, false),
+                ]
+            );
+            const callIdsA = calls.rows
+                .filter((row) => row.company_id === companyA)
+                .map((row) => String(row.id))
+                .sort();
+            const callIdsB = calls.rows
+                .filter((row) => row.company_id === companyB)
+                .map((row) => String(row.id))
+                .sort();
             const jobs = await client.query(
                 `INSERT INTO jobs (company_id,contact_id,job_number,customer_name,customer_phone,customer_email,service_name,blanc_status,start_date,end_date)
                  VALUES ($1,$3,$5,$6,$7,$8,$5,'Submitted',NOW()+INTERVAL '1 day',NOW()+INTERVAL '1 day 2 hours'),
@@ -234,6 +293,23 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
             expect((await mcpQueries.listInvoices(companyA, { search: sharedText })).rows.every((row) => row.company_id === companyA)).toBe(true);
             expect((await tasksQueries.listTasksPage(companyA, { status: 'open', limit: 20, offset: 0 })).tasks.every((row) => row.company_id === companyA)).toBe(true);
             expect((await scheduleService.getScheduleItems(companyA, { limit: 50, offset: 0 })).items.every((row) => row.company_id === companyA)).toBe(true);
+            const callPage = await mcpQueries.listCalls(companyA, { limit: 50 });
+            expect(callPage.total).toBe(2);
+            expect(callPage.rows.map((row) => String(row.id)).sort()).toEqual(callIdsA);
+            expect(callPage.rows.map((row) => String(row.id))).not.toEqual(
+                expect.arrayContaining(callIdsB)
+            );
+            expect(callPage.rows).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    contact_id: String(contactA),
+                    contact_name: `${sharedText} A`,
+                    answered_by: 'ai',
+                }),
+                expect.objectContaining({
+                    contact_id: null,
+                    contact_name: null,
+                }),
+            ]));
 
             await expect(mcpQueries.getJob(companyA, jobB)).resolves.toBeNull();
             await expect(mcpQueries.getLead(companyA, leadB.uuid)).resolves.toBeNull();

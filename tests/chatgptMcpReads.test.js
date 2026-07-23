@@ -26,6 +26,29 @@ jest.mock('../backend/src/db/chatgptMcpQueries', () => ({
     getContact: jest.fn(async () => ({ id: 21, public_token: 'hidden' })),
     getContactHistory: jest.fn(async () => ({ contact: { id: 21 }, events: [] })),
     listAssignees: jest.fn(async () => ({ users: [] })),
+    listCalls: jest.fn(async () => ({
+        rows: [{
+            id: 51,
+            direction: 'inbound',
+            status: 'completed',
+            started_at: '2026-07-22T14:00:00.000Z',
+            answered_at: '2026-07-22T14:00:03.000Z',
+            ended_at: '2026-07-22T14:05:00.000Z',
+            duration_sec: 297,
+            from_number: '+16175550101',
+            to_number: '+16175550202',
+            contact_id: 21,
+            contact_name: 'Caller A',
+            answered_by: 'ai',
+            call_sid: 'CA-secret',
+            parent_call_sid: 'CA-parent-secret',
+            price: '1.25',
+            price_unit: 'USD',
+            raw_last_payload: { secret: true },
+            recording_url: 'https://media.example.test/private',
+        }],
+        total: 1,
+    })),
     listEstimates: jest.fn(async () => ({ rows: [{ id: 31 }], total: 1 })),
     getEstimate: jest.fn(async () => ({ id: 31, public_token: 'hidden', items: [] })),
     listInvoices: jest.fn(async () => ({ rows: [{ id: 41 }], total: 1 })),
@@ -58,6 +81,7 @@ const CASES = [
     ['listTasks', {}, tasksQueries.listTasksPage],
     ['listEntityTasks', { parent_type: 'job', parent_id: '11' }, tasksQueries.parentExists],
     ['listTaskAssignees', {}, queries.listAssignees],
+    ['listCalls', {}, queries.listCalls],
     ['listEstimates', {}, queries.listEstimates],
     ['getEstimate', { estimate_id: 31 }, queries.getEstimate],
     ['listInvoices', {}, queries.listInvoices],
@@ -103,6 +127,46 @@ describe('CHATGPT-CRM-MCP S1 read handlers', () => {
             .resolves.toEqual(expect.objectContaining({ metadata: { safe: 'visible' } }));
         await expect(readService.execute('getEstimate', COMPANY, { estimate_id: 31 }))
             .resolves.not.toHaveProperty('public_token');
+    });
+
+    test('listCalls forwards filters and returns only the approved call projection', async () => {
+        const args = {
+            limit: 17,
+            direction: 'inbound',
+            contact_id: 21,
+            date_from: '2026-07-10',
+            date_to: '2026-07-22',
+        };
+        const result = await readService.execute('listCalls', COMPANY, args);
+
+        expect(queries.listCalls).toHaveBeenCalledWith(COMPANY, args);
+        expect(result).toEqual({
+            rows: [{
+                id: 51,
+                direction: 'inbound',
+                status: 'completed',
+                started_at: '2026-07-22T14:00:00.000Z',
+                answered_at: '2026-07-22T14:00:03.000Z',
+                ended_at: '2026-07-22T14:05:00.000Z',
+                duration_sec: 297,
+                from_number: '+16175550101',
+                to_number: '+16175550202',
+                contact_id: 21,
+                contact_name: 'Caller A',
+                answered_by: 'ai',
+            }],
+            total: 1,
+        });
+        for (const forbidden of [
+            'call_sid',
+            'parent_call_sid',
+            'price',
+            'price_unit',
+            'raw_last_payload',
+            'recording_url',
+        ]) {
+            expect(result.rows[0]).not.toHaveProperty(forbidden);
+        }
     });
 
     test('no company context fails before every service/query call', async () => {

@@ -27,6 +27,20 @@ function notFound(entity) {
 
 const SENSITIVE_KEYS = /(secret|password|access.?token|refresh.?token|public.?token|api.?key)/i;
 const RAW_KEYS = new Set(['zb_raw', 'zenbooker_data']);
+const CALL_FIELDS = Object.freeze([
+    'id',
+    'direction',
+    'status',
+    'started_at',
+    'answered_at',
+    'ended_at',
+    'duration_sec',
+    'from_number',
+    'to_number',
+    'contact_id',
+    'contact_name',
+    'answered_by',
+]);
 
 function safeResult(value) {
     if (Array.isArray(value)) return value.map(safeResult);
@@ -37,6 +51,10 @@ function safeResult(value) {
         clean[key] = safeResult(child);
     }
     return clean;
+}
+
+function projectCall(row) {
+    return Object.fromEntries(CALL_FIELDS.map((key) => [key, row?.[key] ?? null]));
 }
 
 async function transitions(companyId, machineKey, currentState) {
@@ -161,6 +179,14 @@ async function execute(handler, companyId, args = {}) {
         case 'listTaskAssignees':
             result = await queries.listAssignees(companyId, args.limit);
             break;
+        case 'listCalls': {
+            const page = await queries.listCalls(companyId, args);
+            result = {
+                rows: (page.rows || []).map(projectCall),
+                total: page.total || 0,
+            };
+            break;
+        }
         case 'listEstimates':
             result = await queries.listEstimates(companyId, args);
             break;
