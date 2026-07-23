@@ -188,7 +188,12 @@ describe('estimate to invoice conversion totals contract', () => {
         );
         await estimatesQueries.updateEstimateStatus(estimate.id, companyId, 'approved');
 
-        const converted = await estimatesService.convertToInvoice(companyId, null, estimate.id);
+        const converted = await estimatesService.convertToInvoice(
+            companyId,
+            null,
+            estimate.id,
+            client
+        );
 
         expect({
             subtotal: Number(recalculatedEstimate.subtotal),

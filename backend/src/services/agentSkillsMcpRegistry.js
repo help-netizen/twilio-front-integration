@@ -414,6 +414,14 @@ const DISPATCHER_WRITE_TOOLS = [
         items_update: arraySchema(itemUpdateSchema(FINANCIAL_ITEM_PROPERTIES), 50),
         item_ids_remove: arraySchema(integerSchema(1), 50),
     }, ['invoice_id'])),
+    dispatcherWrite(
+        'svc.convert_estimate_to_invoice',
+        'convertEstimateToInvoice',
+        'Convert one approved company Estimate to its canonical draft Invoice, returning an existing linked Invoice on replay.',
+        strictObjectSchema({
+            estimate_id: integerSchema(1),
+        }, ['estimate_id'])
+    ),
 ];
 
 const TOOLS = Object.freeze([

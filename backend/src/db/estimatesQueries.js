@@ -174,6 +174,26 @@ async function getEstimateById(companyId, id, client = null) {
     return rows[0] || null;
 }
 
+/**
+ * Serialize canonical Estimate-to-Invoice conversion on the tenant-owned
+ * Estimate row. The caller must hold a transaction on `client`.
+ */
+async function lockEstimateForConversion(companyId, id, client) {
+    if (!client?.query) {
+        throw Object.assign(new Error('Conversion transaction is required'), {
+            code: 'TRANSACTION_REQUIRED',
+        });
+    }
+    const { rows } = await client.query(
+        `SELECT id
+         FROM estimates
+         WHERE id = $1 AND company_id = $2
+         FOR UPDATE`,
+        [id, companyId]
+    );
+    return rows[0] || null;
+}
+
 async function getJobContext(companyId, jobId, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
@@ -662,6 +682,7 @@ async function setPublicToken(estimateId, companyId, token) {
 module.exports = {
     listEstimates,
     getEstimateById,
+    lockEstimateForConversion,
     getJobContext,
     getLeadContext,
     getContactContext,

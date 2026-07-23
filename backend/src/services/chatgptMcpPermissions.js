@@ -57,6 +57,7 @@ const WRITE_TOOL_PERMISSIONS = Object.freeze({
     'svc.update_estimate': ['estimates.create'],
     'svc.create_invoice': ['invoices.create'],
     'svc.update_invoice': ['invoices.create'],
+    'svc.convert_estimate_to_invoice': ['invoices.create'],
 });
 const WRITE_TOOL_NAMES = Object.freeze(Object.keys(WRITE_TOOL_PERMISSIONS));
 const BUSINESS_WRITE_PERMISSIONS = Object.freeze([

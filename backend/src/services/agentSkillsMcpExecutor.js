@@ -46,9 +46,13 @@ const S2B_TOOL_NAMES = new Set([
     'svc.create_invoice',
     'svc.update_invoice',
 ]);
+const S2C_B_TOOL_NAMES = new Set([
+    'svc.convert_estimate_to_invoice',
+]);
 
 function auditStage(tool) {
     if (tool.kind !== 'write') return 'S1';
+    if (S2C_B_TOOL_NAMES.has(tool.name)) return 'S2c-b';
     return S2B_TOOL_NAMES.has(tool.name) ? 'S2b' : 'S2a';
 }
 

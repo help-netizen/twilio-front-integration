@@ -3,6 +3,10 @@
 const db = require('./connection');
 const { requireCompanyId } = require('./crmUtils');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 function bounded(value, fallback = 50, max = 100) {
     const parsed = Number(value ?? fallback);
     if (!Number.isInteger(parsed) || parsed < 1 || parsed > max) {
@@ -281,9 +285,10 @@ async function listInvoices(companyId, filters = {}) {
     return { rows: rows.map(({ _total, ...row }) => row), total };
 }
 
-async function getInvoice(companyId, invoiceId) {
+async function getInvoice(companyId, invoiceId, client = null) {
     requireCompanyId(companyId);
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT i.*,
                 c.full_name AS contact_name, c.email AS contact_email, c.phone_e164 AS contact_phone,
                 j.job_number, l.serial_id AS lead_serial_id, e.estimate_number,

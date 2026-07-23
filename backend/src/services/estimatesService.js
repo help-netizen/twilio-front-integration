@@ -4,6 +4,7 @@
  */
 
 const crypto = require('crypto');
+const db = require('../db/connection');
 const estimatesQueries = require('../db/estimatesQueries');
 const estimateItemPresetsQueries = require('../db/estimateItemPresetsQueries');
 const { renderEstimatePdf } = require('./estimatePdfService');
@@ -715,11 +716,24 @@ async function linkJob(companyId, userId, id, jobId) {
     return updated;
 }
 
-async function convertToInvoice(companyId, userId, id) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
-    if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
-    assertNotArchived(estimate);
+async function convertToInvoiceInTransaction(companyId, userId, id, client) {
+    const locked = await estimatesQueries.lockEstimateForConversion(companyId, id, client);
+    if (!locked) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
+    if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
+
+    const invoicesService = require('./invoicesService');
+    if (estimate.invoice_id) {
+        const existing = await invoicesService.getInvoice(
+            companyId,
+            estimate.invoice_id,
+            client
+        );
+        return { ...existing, already_converted: true };
+    }
+
+    assertNotArchived(estimate);
     if (estimate.status !== 'approved') {
         throw new EstimatesServiceError(
             'INVALID_STATUS',
@@ -728,47 +742,62 @@ async function convertToInvoice(companyId, userId, id) {
         );
     }
 
-    if (estimate.invoice_id) {
-        throw new EstimatesServiceError('ALREADY_CONVERTED', 'Invoice already exists for this estimate', 409);
-    }
-
     const invoicesQueries = require('../db/invoicesQueries');
 
     // Auto-populate due_date from the invoice template's default_due_days (Net X policy).
+    // The enrichment is OPTIONAL, but it may execute queries on the caller's
+    // transaction client (directly in the future, or via test harnesses that
+    // route db.query through the tx client). A plain try/catch is a lie inside
+    // a transaction — the first error poisons the tx and every later statement
+    // fails with "current transaction is aborted". A SAVEPOINT makes the
+    // fall-back genuinely safe.
     let dueDate = null;
+    await client.query('SAVEPOINT conversion_due_date');
     try {
         const documentTemplatesService = require('./documentTemplatesService');
-        const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice');
+        const descriptor = await documentTemplatesService.resolveTemplate(
+            companyId,
+            'invoice',
+            client
+        );
         const days = Number(descriptor?.invoice_settings?.default_due_days);
         const effectiveDays = Number.isFinite(days) && days >= 0 ? days : 14;
         const d = new Date();
         d.setDate(d.getDate() + effectiveDays);
         dueDate = d.toISOString().slice(0, 10);
-    } catch { /* fall back to NULL */ }
+        await client.query('RELEASE SAVEPOINT conversion_due_date');
+    } catch {
+        await client.query('ROLLBACK TO SAVEPOINT conversion_due_date'); // fall back to NULL
+    }
 
     // Build an estimate-style invoice number — `INVOICE L-{leadSerialId}-{seq}`.
     let invoiceNumber = null;
+    await client.query('SAVEPOINT conversion_invoice_number');
     try {
         let leadSerialId = null;
         let jobIdForNum = estimate.job_id || null;
         if (estimate.job_id) {
-            const job = await estimatesQueries.getJobContext(companyId, estimate.job_id);
+            const job = await estimatesQueries.getJobContext(companyId, estimate.job_id, client);
             leadSerialId = job?.lead_serial_id || job?.lead_id || estimate.lead_id || null;
             jobIdForNum = job?.id || jobIdForNum;
         } else if (estimate.lead_id) {
-            const lead = await estimatesQueries.getLeadContext(companyId, estimate.lead_id);
+            const lead = await estimatesQueries.getLeadContext(companyId, estimate.lead_id, client);
             leadSerialId = lead?.serial_id || lead?.id || null;
         }
         const sequence = await invoicesQueries.nextInvoiceSequence(companyId, {
             jobId: estimate.job_id,
             leadId: estimate.lead_id,
-        });
+        }, client);
         invoiceNumber = invoicesQueries.buildInvoiceNumber({
             leadSerialId,
             jobId: jobIdForNum,
             sequence,
         });
-    } catch { /* leave null → createInvoice falls back to the legacy date scheme */ }
+        await client.query('RELEASE SAVEPOINT conversion_invoice_number');
+    } catch {
+        // leave null → createInvoice falls back to the legacy date scheme
+        await client.query('ROLLBACK TO SAVEPOINT conversion_invoice_number');
+    }
 
     const invoice = await invoicesQueries.createInvoice(companyId, {
         contact_id: estimate.contact_id,
@@ -784,9 +813,9 @@ async function convertToInvoice(companyId, userId, id) {
         currency: estimate.currency,
         due_date: dueDate,
         created_by: userId,
-    });
+    }, client);
 
-    const items = await estimatesQueries.getEstimateItems(companyId, id);
+    const items = await estimatesQueries.getEstimateItems(companyId, id, client);
     for (const item of items) {
         await invoicesQueries.addInvoiceItem(companyId, invoice.id, {
             name: item.name,
@@ -797,17 +826,18 @@ async function convertToInvoice(companyId, userId, id) {
             amount: item.amount,
             taxable: item.taxable,
             sort_order: item.sort_order,
-        });
+        }, client);
     }
 
-    await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id);
+    await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id, client);
     await invoicesQueries.createEvent(
         companyId,
         invoice.id,
         'created_from_estimate',
         'user',
         userId,
-        { estimate_id: estimate.id }
+        { estimate_id: estimate.id },
+        client
     );
     await estimatesQueries.createEvent(
         companyId,
@@ -815,15 +845,40 @@ async function convertToInvoice(companyId, userId, id) {
         'converted_to_invoice',
         'user',
         userId,
-        { invoice_id: invoice.id }
+        { invoice_id: invoice.id },
+        client
     );
 
-    const invoicesService = require('./invoicesService');
-    return invoicesService.getInvoice(companyId, invoice.id);
+    const created = await invoicesService.getInvoice(companyId, invoice.id, client);
+    return { ...created, already_converted: false };
 }
 
-async function copyToInvoice(companyId, userId, id) {
-    return convertToInvoice(companyId, userId, id);
+async function convertToInvoice(companyId, userId, id, client = null) {
+    if (client?.query) {
+        return convertToInvoiceInTransaction(companyId, userId, id, client);
+    }
+
+    const ownedClient = await db.pool.connect();
+    try {
+        await ownedClient.query('BEGIN');
+        const result = await convertToInvoiceInTransaction(
+            companyId,
+            userId,
+            id,
+            ownedClient
+        );
+        await ownedClient.query('COMMIT');
+        return result;
+    } catch (err) {
+        await ownedClient.query('ROLLBACK');
+        throw err;
+    } finally {
+        ownedClient.release();
+    }
+}
+
+async function copyToInvoice(companyId, userId, id, client = null) {
+    return convertToInvoice(companyId, userId, id, client);
 }
 
 async function getRevisions(companyId, id) {

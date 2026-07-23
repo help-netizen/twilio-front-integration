@@ -1,6 +1,6 @@
 # CHATGPT-CRM-MCP-001 — OAuth CRM connector
 
-Status: approved specification; S1/S1.1/S2a/S2b implemented; MCP hardening pending architect gate
+Status: approved specification; S1/S1.1/S2a/S2b/MCP hardening/S2c-b implemented; S2c-b pending architect gate
 Date: 2026-07-23
 Scope: backend-only ChatGPT MCP connector with company-scoped reads, internal CRM writes, and customer sends; payments deferred
 
@@ -546,11 +546,64 @@ S2b extends `S2_WRITE_GRANTS`; it does not change the consent endpoints and
 ships no migration/backfill. A binding whose writes were enabled against the
 seven-tool S2a bundle still exposes 26 tools. Its tenant administrator must
 invoke the existing enable endpoint again; the idempotent enable operation
-reconciles the current grant set and discovery becomes 19 reads + 11 writes =
-30 tools. Disable removes the complete current write set and returns discovery
+reconciles the current grant set. With S2c-b included, current discovery is
+19 reads + 12 writes = 31 tools. Disable removes the complete current write set
+and returns discovery
 to 19 reads.
 
-### 7.4 S2c / later internal writes and files (deferred)
+### 7.4 S2c-b — Estimate-to-Invoice conversion
+
+S2c-b adds exactly one consent-gated `kind=write`, confirmation-class-W tool:
+`svc.convert_estimate_to_invoice`. Its strict input is only
+`{ estimate_id: integer >= 1 }`; no status, item, total, link, or override
+field exists. It requires `albusto.mcp.write`, `invoices.create`, and
+`mcp.tool.svc.convert_estimate_to_invoice`. `invoices.create` is the exact
+business permission on the UI conversion route
+`POST /api/estimates/:id/convert`; that route does not require
+`estimates.create` or `estimates.view`, so the MCP mapping does not invent
+either extra gate.
+
+The handler runs only `estimatesService.convertToInvoice` after S2a's
+same-transaction live-binding recheck. The canonical service now owns a
+transaction when called by the UI and accepts the executor transaction client
+when called by MCP. Before reading or copying it serializes conversion with:
+
+```sql
+SELECT id
+FROM estimates
+WHERE id = $1 AND company_id = $2
+FOR UPDATE;
+```
+
+The fresh company-scoped Estimate read then copies only its company-owned items
+through `invoicesQueries.createInvoice/addInvoiceItem`, performs the canonical
+server total recalc, and records both events with that same client. A first
+conversion requires `status='approved'`; any other unconverted status returns
+`INVALID_STATUS` (MCP `invalid_request` with `details.crm_code`), and creates
+nothing. Conversion does not send either document, alter payment state, or
+accept a status.
+
+If a linked Invoice already exists, the locked service returns that same
+company-owned Invoice with `already_converted: true`; it never raises an
+already-converted error or creates a duplicate. The first result carries
+`already_converted: false`. MCP also claims the existing
+`mcp_tool_idempotency` key (binding + tool + normalized arguments), so identical
+and concurrent connector replays return the stored Invoice as
+`already_converted: true`. The row lock independently protects concurrent
+canonical UI/service calls.
+
+The response reuses the exact `svc.get_invoice` company-scoped query and
+`safeResult` projection, then appends `already_converted`. It includes the
+canonical Invoice, items, and payment rollup but strips capability tokens such
+as `public_token`.
+
+S2c-b extends the runtime `S2_WRITE_GRANTS` set only. There is no migration or
+grant backfill and the write bundle version remains 3. A binding enabled before
+this tool was registered exposes 30 tools until its tenant administrator repeats
+the idempotent writes-enable operation; it then exposes the full inventory of
+31. Disable still removes all current writes.
+
+#### Remaining S2c / later internal writes and files (deferred)
 
 | Tool | Kind | Required permission(s) / OAuth scope | Confirm | Wrapped route/service | Tenant-scoping note |
 |---|---|---|---|---|---|
@@ -572,7 +625,6 @@ to 19 reads.
 | `svc.update_task` | write | `tasks.manage` / write | W | `PATCH /api/tasks/:id`; task query layer | Task and parent remain in bound company; no client author override. |
 | `svc.complete_task` | write | `tasks.manage` / write | W | `POST /api/tasks/:id/actions/complete` | Company-scoped status transition; idempotent completion. |
 | `svc.delete_task` | write | `tasks.manage` / write | D | `DELETE /api/tasks/:id` | Company-scoped delete; foreign row byte-unchanged. |
-| `svc.convert_estimate_to_invoice` | write | `estimates.view`, `invoices.create` / write | D | `POST /api/estimates/:id/convert`; `estimatesService.convertToInvoice` | Canonical approved-estimate conversion only; estimate, items, created invoice, reciprocal links, and events are company-scoped and idempotent. |
 | `svc.begin_note_attachment_upload` | write | corresponding entity edit permission / write | W | new two-step facade over `noteAttachmentsService.stageAttachments` | Entity ownership first; no source URL; storage key contains company; AI UUID uploader; bounded size/type/checksum. |
 | `svc.commit_note_attachments` | write | corresponding entity edit permission / write | W | hardened `noteAttachmentsService.associateStagedAttachments` | Upload IDs, object metadata/checksum, entity, note, and company must all match; commit once. |
 
@@ -629,9 +681,10 @@ passes an explicit company; its job read and both note updates always repeat
 
 S2b closes the two Estimate/Invoice CRUD rows above. Canonical services now
 participate in S2a's transaction client; direct parent/item/revision/event
-helpers require `companyId`, and joins repeat parent ownership. It deliberately
-does not close conversion, contact mutation, assignment, task, file, send, or
-payment rows; those tools remain unregistered.
+helpers require `companyId`, and joins repeat parent ownership. S2c-b closes
+the conversion row: the company-owned Estimate is locked in the live-recheck
+transaction and every copied item/write/event uses that client. Contact
+mutation, assignment, task, file, send, and payment rows remain unregistered.
 
 Shared HTTP routes remain green after hardening. No MCP wrapper may call a forbidden optional-company helper.
 
@@ -643,8 +696,8 @@ Shared HTTP routes remain green after hardening. No MCP wrapper may call a forbi
 | Marketplace install/reconnect/disconnect | `req.companyFilter.company_id` from active human membership | app key / installation UUID + company | `tenant.integrations.manage` plus explicit v1 tenant-admin check | tenant_admin ✓; manager ✗; dispatcher ✗; provider ✗; custom ✗; platform-only ✗ | Provisions/revokes an identity with external-send and money capabilities. |
 | `POST/GET /mcp/chatgpt` authentication | validated token → unique active binding → company | issuer + subject + client ID; never client company | valid audience/client/resource/scope and active binding chain | bound AI agent ✓; human roles cannot call as actors ✗ | Wrong/ambiguous binding could grant a whole tenant; fail closed. |
 | S1 read tools | binding company | tenant entity ID or company-paired natural key | exact tool key + read business permission + read scope | exact AI grant ✓; tenant_admin/manager/dispatcher/provider/custom direct MCP actor ✗ | Aggregates, shared phone/email/external IDs, and child joins can leak B. |
-| S2a/S2b registered internal writes | binding company, rechecked in the mutation transaction | entity/item ID plus company; create argument hash for replay | exact tool key + listed business permission + write scope | exact consented AI grant ✓; all human roles as direct MCP actor ✗ | ID-only parent/item mutation or a stale binding can alter B. |
-| S2c/later internal writes and files (deferred) | no current surface | n/a | no exact tool grant or descriptor | all actors ✗ | Any deferred task/contact/file/conversion tool becoming discoverable is a release-blocking scope expansion. |
+| S2a/S2b/S2c-b registered internal writes | binding company, rechecked in the mutation transaction | entity/item ID plus company; create/conversion argument hash for replay | exact tool key + listed business permission + write scope | exact consented AI grant ✓; all human roles as direct MCP actor ✗ | ID-only parent/item/conversion mutation or a stale binding can alter B. |
+| Remaining S2c/later internal writes and files (deferred) | no current surface | n/a | no exact tool grant or descriptor | all actors ✗ | Any deferred task/contact/file tool becoming discoverable is a release-blocking scope expansion. |
 | S3 sends | binding company and company-owned recipient/sender resolution | contact/conversation ID + company; idempotency key | exact tool key + `messages.send` + send scope | exact AI grant ✓; all human roles as direct MCP actor ✗ | Arbitrary recipient/proxy or retry can message the wrong customer. |
 | S4 payments (deferred) | no v1 surface | n/a | no scope, grant, or registered tool | all actors ✗ | Any discovered/invocable payment tool is a release-blocking v1 failure. |
 | `mcp_tool_invocations` / idempotency writes | trusted execution context | request/tool/idempotency key + company + AI user | internal only | connector executor ✓; all direct callers ✗ | Missing company or weak uniqueness could replay across tenants. |
@@ -698,6 +751,7 @@ Each control is executed against the real code path after taking a `cp` backup. 
 | `SAB-MCP-ACTOR` | Every S2a note author is the AI CRM UUID, never human `sub`. | Pass the decoded Keycloak subject or human authorizer to the note target. | `chatgptMcpWrites.db.test.js` — Job, Lead, and Contact note `created_by` fields equal the bound AI UUID. |
 | `SAB-MCP-ESTIMATE-ITEMS` | An Estimate update cannot update/remove another company's item or parent. | Remove the company-owned Estimate join/predicate from `updateEstimateItem` or the parent update. | `chatgptMcpWrites.db.test.js` — S2b T-own/T-foreign/T-blast; foreign item/parent becomes writable or company B's byte snapshot changes. |
 | `SAB-MCP-INVOICE-ITEMS` | An Invoice update cannot update/remove another company's item or parent. | Remove the company-owned Invoice join/predicate from `updateInvoiceItem` or the parent update. | `chatgptMcpWrites.db.test.js` — S2b T-own/T-foreign/T-blast; foreign item/parent becomes writable or company B's byte snapshot changes. |
+| `SAB-MCP-CONVERT-BLAST` | Estimate conversion locks and copies only the binding company's Estimate/items and produces at most one Invoice. | Remove `company_id` from `lockEstimateForConversion`, bypass the canonical row lock, or bypass the conversion idempotency claim. | `chatgptMcpWrites.db.test.js` — S2c-b T-own/T-foreign/T-blast, sequential replay, and parallel MCP/direct-service replay; B changes or the Invoice count becomes two. |
 
 ## 13. Stage verification plan
 
@@ -746,7 +800,25 @@ DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM
 The S2b DB suite verifies all four tools through the real executor/protocol:
 owned success, foreign parent/link/item denial, byte-identical tenant B,
 idempotent create replay, canonical tax/discount total recomputation, and
-legacy 26-tool consent upgraded to 30 only after a repeated enable.
+legacy 26-tool consent upgraded to the current inventory only after a repeated
+enable.
+
+### S2c-b command — Estimate-to-Invoice conversion
+
+```bash
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpAuthorization.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpFinancialWrites.test.js tests/estimatesConvert.test.js tests/estinvBatchTotals.db.test.js
+```
+
+The real-DB gate uses the same full migration-built PostgreSQL database:
+
+```bash
+DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpWrites.db.test.js tests/estinvBatchTotals.db.test.js
+```
+
+It verifies old-consent discovery 30 → repeat-enable 31, strict input and W
+annotations, T-own/T-foreign/T-blast, byte-identical tenant B, approved-only
+status behavior, canonical item/total copy, sequential idempotency replay, and
+parallel MCP plus direct canonical-service replay with exactly one Invoice.
 
 ### S3 command — customer sends
 
@@ -779,7 +851,7 @@ migration-built PostgreSQL schema:
 DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpTenancy.db.test.js
 ```
 
-The tool-count contract stays exactly 19 reads + 11 writes = 30.
+The tool-count contract is exactly 19 reads + 12 writes = 31.
 
 Backend-only means there is no frontend build/test gate for this project. The protected-file gate for D1 is an exact-diff inspection:
 
@@ -865,16 +937,41 @@ Implemented scope:
    an older enabled binding gets the four new exact/business grants after its
    tenant administrator repeats the idempotent enable action.
 
-Acceptance: discovery is 26 for an old v3 grant set and 30 after repeat enable;
+Acceptance: discovery is 26 for an old S2a v3 grant set and 31 after repeat
+enable against the current bundle;
 both create calls replay to one document; all four tools pass real-DB
 T-own/T-foreign/T-blast; foreign linked entities, parents, and item IDs are
 not-found with tenant B byte-identical; canonical totals match the editor's
 tax/discount rule; no send/payment/file/status operation is reachable; S1/S2a
 and shared Estimate/Invoice regressions remain green.
 
-### S2c — remaining internal writes and file attachment (deferred)
+### S2c-b — Estimate-to-Invoice conversion
 
-Contact/task/assignment/conversion/note-edit tools and two-step file upload
+Implemented scope:
+
+1. Register the single strict `{ estimate_id }` class-W write with the exact UI
+   `invoices.create` permission, exact synthetic grant, and write scope.
+2. Reuse the executor transaction/live-binding check and the canonical
+   `estimatesService.convertToInvoice` path; lock the owned Estimate before any
+   copy and thread the same client through item copy, total recalc, events, and
+   result read.
+3. Require approved status for a first conversion, return the existing Invoice
+   with `already_converted:true` on replay, and use both MCP idempotency and the
+   service row lock to prevent sequential/concurrent duplicates.
+4. Reuse the `svc.get_invoice` projection. Do not expose send, payment, files,
+   status overrides, capability tokens, or item/total overrides.
+5. Extend only the runtime consent set. Existing enabled bindings receive the
+   exact grant only after repeat enable; no migration/backfill exists.
+
+Acceptance: current discovery is 30 before repeat enable and 31 after; foreign
+Estimate IDs are not-found with tenant B byte-identical; only approved
+Estimates create a draft Invoice; items/totals match canonical recalc; repeated
+and parallel MCP/service calls return one Invoice with the correct
+`already_converted` flag; Estimate/Invoice and full MCP regressions stay green.
+
+### Remaining S2c — internal writes and file attachment (deferred)
+
+Contact/task/assignment/note-edit tools and two-step file upload
 remain the Section 7.4 inventory only. Before registration they still require
 their applicable Section 8 repairs, dynamic host permissions, AI authorship,
 external-effect idempotency, file content/checksum policy, per-tool real-DB

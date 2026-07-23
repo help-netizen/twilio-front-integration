@@ -7,6 +7,7 @@ const mockEstimates = {
     updateItem: jest.fn(),
     removeItem: jest.fn(),
     getEstimate: jest.fn(),
+    convertToInvoice: jest.fn(),
 };
 const mockInvoices = {
     createInvoice: jest.fn(),
@@ -16,9 +17,13 @@ const mockInvoices = {
     removeItem: jest.fn(),
     getInvoice: jest.fn(),
 };
+const mockMcpQueries = {
+    getInvoice: jest.fn(),
+};
 
 jest.mock('../backend/src/services/estimatesService', () => mockEstimates);
 jest.mock('../backend/src/services/invoicesService', () => mockInvoices);
+jest.mock('../backend/src/db/chatgptMcpQueries', () => mockMcpQueries);
 
 const permissions = require('../backend/src/services/chatgptMcpPermissions');
 const registry = require('../backend/src/services/agentSkillsMcpRegistry');
@@ -58,12 +63,25 @@ beforeEach(() => {
     mockEstimates.updateItem.mockResolvedValue({ id: 111 });
     mockEstimates.removeItem.mockResolvedValue({ deleted: true });
     mockEstimates.getEstimate.mockResolvedValue({ id: 11, total: '201.40', items: [] });
+    mockEstimates.convertToInvoice.mockResolvedValue({
+        id: 22,
+        total: '201.40',
+        items: [],
+        already_converted: false,
+    });
     mockInvoices.createInvoice.mockResolvedValue({ id: 22, total: '201.40' });
     mockInvoices.updateInvoice.mockResolvedValue({ id: 22 });
     mockInvoices.addItems.mockResolvedValue({ added: 1 });
     mockInvoices.updateItem.mockResolvedValue({ id: 222 });
     mockInvoices.removeItem.mockResolvedValue({ deleted: true });
     mockInvoices.getInvoice.mockResolvedValue({ id: 22, total: '201.40', items: [] });
+    mockMcpQueries.getInvoice.mockResolvedValue({
+        id: 22,
+        total: '201.40',
+        public_token: 'never-return',
+        items: [],
+        payments: [],
+    });
 });
 
 describe('CHATGPT-CRM-MCP S2b financial write schemas', () => {
@@ -260,5 +278,119 @@ describe('CHATGPT-CRM-MCP S2b canonical service dispatch', () => {
             { quantity: 3 },
             tx
         );
+    });
+});
+
+describe('CHATGPT-CRM-MCP S2c-b Estimate conversion', () => {
+    const NAME = 'svc.convert_estimate_to_invoice';
+
+    test('registers one strict non-destructive W tool with the UI route permission', () => {
+        const tool = registry.getTool(NAME);
+        expect(permissions.WRITE_TOOL_PERMISSIONS[NAME]).toEqual(['invoices.create']);
+        expect(tool).toMatchObject({
+            kind: 'write',
+            requiresConfirmation: true,
+            confirmationClass: 'W',
+            destructiveHint: false,
+            requiredOAuthScopes: [permissions.WRITE_SCOPE],
+            requiredPermissions: expect.arrayContaining([
+                'invoices.create',
+                `mcp.tool.${NAME}`,
+            ]),
+            inputSchema: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['estimate_id'],
+                properties: {
+                    estimate_id: { type: 'integer', minimum: 1 },
+                },
+            },
+        });
+    });
+
+    test.each([
+        {},
+        { estimate_id: 0 },
+        { estimate_id: -1 },
+        { estimate_id: 1.5 },
+        { estimate_id: 1, status: 'approved' },
+        { estimate_id: 1, invoice_id: 22 },
+        { estimate_id: 1, override: true },
+    ])('strict schema rejects invalid or override arguments %#', (args) => {
+        expect(() => validateArguments(registry.getTool(NAME), args))
+            .toThrow(expect.objectContaining({ mcpCode: 'invalid_request' }));
+    });
+
+    test('dispatches only through canonical conversion and reuses get_invoice projection', async () => {
+        const tx = client();
+        const result = await writeService.execute(
+            'convertEstimateToInvoice',
+            NAME,
+            CONTEXT,
+            { estimate_id: 11 },
+            tx
+        );
+
+        expect(mockEstimates.convertToInvoice).toHaveBeenCalledWith(
+            CONTEXT.companyId,
+            CONTEXT.actorId,
+            11,
+            tx
+        );
+        expect(mockMcpQueries.getInvoice).toHaveBeenCalledWith(
+            CONTEXT.companyId,
+            22,
+            tx
+        );
+        expect(result).toEqual({
+            id: 22,
+            total: '201.40',
+            items: [],
+            payments: [],
+            already_converted: false,
+        });
+        expect(result).not.toHaveProperty('public_token');
+    });
+
+    test('idempotency replay returns the stored Invoice as already converted', async () => {
+        const tx = {
+            query: jest.fn(async (sql) => {
+                if (/INSERT INTO mcp_tool_idempotency/i.test(sql)) {
+                    return { rows: [], rowCount: 0 };
+                }
+                if (/SELECT id, argument_hash, state, safe_result/i.test(sql)) {
+                    return {
+                        rows: [{
+                            id: 77,
+                            argument_hash: writeService.argumentHash({ estimate_id: 11 }),
+                            state: 'succeeded',
+                            safe_result: {
+                                id: 22,
+                                items: [],
+                                payments: [],
+                                already_converted: false,
+                            },
+                        }],
+                        rowCount: 1,
+                    };
+                }
+                return { rows: [], rowCount: 1 };
+            }),
+        };
+
+        await expect(writeService.execute(
+            'convertEstimateToInvoice',
+            NAME,
+            CONTEXT,
+            { estimate_id: 11 },
+            tx
+        )).resolves.toEqual({
+            id: 22,
+            items: [],
+            payments: [],
+            already_converted: true,
+        });
+        expect(mockEstimates.convertToInvoice).not.toHaveBeenCalled();
+        expect(mockMcpQueries.getInvoice).not.toHaveBeenCalled();
     });
 });

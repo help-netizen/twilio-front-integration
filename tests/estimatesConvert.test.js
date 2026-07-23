@@ -8,13 +8,26 @@ const EST_ID = 42;
 
 // ─── Mock DB query modules ────────────────────────────────────────────────────
 
+const mockTxQuery = jest.fn();
+const mockRelease = jest.fn();
+const mockClient = { query: mockTxQuery, release: mockRelease };
+
+jest.mock('../backend/src/db/connection', () => ({
+    pool: { connect: jest.fn(async () => mockClient) },
+    query: jest.fn(),
+}));
+
+const mockLockEstimateForConversion = jest.fn();
 const mockGetEstimateById = jest.fn();
 const mockGetEstimateItems = jest.fn();
 const mockCreateEvent_est = jest.fn();
 
 jest.mock('../backend/src/db/estimatesQueries', () => ({
+    lockEstimateForConversion: (...args) => mockLockEstimateForConversion(...args),
     getEstimateById: (...args) => mockGetEstimateById(...args),
     getEstimateItems: (...args) => mockGetEstimateItems(...args),
+    getJobContext: jest.fn(),
+    getLeadContext: jest.fn(),
     createEvent: (...args) => mockCreateEvent_est(...args),
     listEstimates: jest.fn(),
     createEstimate: jest.fn(),
@@ -26,8 +39,11 @@ const mockCreateInvoice = jest.fn();
 const mockAddInvoiceItem = jest.fn();
 const mockRecalculateTotals = jest.fn();
 const mockCreateEvent_inv = jest.fn();
+const mockNextInvoiceSequence = jest.fn();
 
 jest.mock('../backend/src/db/invoicesQueries', () => ({
+    nextInvoiceSequence: (...args) => mockNextInvoiceSequence(...args),
+    buildInvoiceNumber: jest.fn(() => 'INVOICE 1'),
     createInvoice: (...args) => mockCreateInvoice(...args),
     addInvoiceItem: (...args) => mockAddInvoiceItem(...args),
     recalculateInvoiceTotals: (...args) => mockRecalculateTotals(...args),
@@ -37,6 +53,11 @@ jest.mock('../backend/src/db/invoicesQueries', () => ({
 const mockGetInvoice = jest.fn();
 jest.mock('../backend/src/services/invoicesService', () => ({
     getInvoice: (...args) => mockGetInvoice(...args),
+}));
+jest.mock('../backend/src/services/documentTemplatesService', () => ({
+    resolveTemplate: jest.fn(async () => ({
+        invoice_settings: { default_due_days: 14 },
+    })),
 }));
 
 // ─── Load service after mocks ─────────────────────────────────────────────────
@@ -83,6 +104,9 @@ function makeItem(n = 1) {
 describe('estimatesService.convertToInvoice', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockTxQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+        mockLockEstimateForConversion.mockResolvedValue({ id: EST_ID });
+        mockNextInvoiceSequence.mockResolvedValue(1);
         mockCreateInvoice.mockResolvedValue({ id: 99 });
         mockAddInvoiceItem.mockResolvedValue({});
         mockRecalculateTotals.mockResolvedValue({});
@@ -101,10 +125,20 @@ describe('estimatesService.convertToInvoice', () => {
             contact_id: 7,
             estimate_id: EST_ID,
             title: 'ESTIMATE 519-1',
-        }));
+        }), mockClient);
         expect(mockAddInvoiceItem).toHaveBeenCalledTimes(2);
-        expect(mockRecalculateTotals).toHaveBeenCalledWith(COMPANY_ID, 99);
-        expect(result).toMatchObject({ id: 99 });
+        expect(mockRecalculateTotals).toHaveBeenCalledWith(COMPANY_ID, 99, mockClient);
+        expect(result).toMatchObject({ id: 99, already_converted: false });
+        // The optional enrichment blocks (template due-date, invoice number) are
+        // savepoint-protected so their failure can never poison the transaction.
+        expect(mockTxQuery.mock.calls.map(([sql]) => sql)).toEqual([
+            'BEGIN',
+            'SAVEPOINT conversion_due_date',
+            'RELEASE SAVEPOINT conversion_due_date',
+            'SAVEPOINT conversion_invoice_number',
+            'RELEASE SAVEPOINT conversion_invoice_number',
+            'COMMIT',
+        ]);
     });
 
     it('TC-S4T1-02: logs events on both estimate and invoice', async () => {
@@ -113,12 +147,12 @@ describe('estimatesService.convertToInvoice', () => {
 
         await convertToInvoice(COMPANY_ID, USER_ID, EST_ID);
 
-        expect(mockCreateEvent_inv).toHaveBeenCalledWith(COMPANY_ID, 99, 'created_from_estimate', 'user', USER_ID, { estimate_id: EST_ID });
-        expect(mockCreateEvent_est).toHaveBeenCalledWith(COMPANY_ID, EST_ID, 'converted_to_invoice', 'user', USER_ID, { invoice_id: 99 });
+        expect(mockCreateEvent_inv).toHaveBeenCalledWith(COMPANY_ID, 99, 'created_from_estimate', 'user', USER_ID, { estimate_id: EST_ID }, mockClient);
+        expect(mockCreateEvent_est).toHaveBeenCalledWith(COMPANY_ID, EST_ID, 'converted_to_invoice', 'user', USER_ID, { invoice_id: 99 }, mockClient);
     });
 
     it('TC-S4T1-03: returns 404 when estimate not found', async () => {
-        mockGetEstimateById.mockResolvedValue(null);
+        mockLockEstimateForConversion.mockResolvedValue(null);
 
         await expect(convertToInvoice(COMPANY_ID, USER_ID, EST_ID))
             .rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
@@ -131,21 +165,32 @@ describe('estimatesService.convertToInvoice', () => {
             .rejects.toMatchObject({ code: 'INVALID_STATUS', httpStatus: 400 });
     });
 
-    it('TC-S4T1-05: returns 409 when estimate already has an invoice', async () => {
+    it('TC-S4T1-05: returns the existing invoice idempotently when already converted', async () => {
         mockGetEstimateById.mockResolvedValue(makeEstimate({ invoice_id: 55 }));
+        mockGetInvoice.mockResolvedValue({ id: 55, status: 'draft' });
 
         await expect(convertToInvoice(COMPANY_ID, USER_ID, EST_ID))
-            .rejects.toMatchObject({ code: 'ALREADY_CONVERTED', httpStatus: 409 });
+            .resolves.toMatchObject({
+                id: 55,
+                status: 'draft',
+                already_converted: true,
+            });
+        expect(mockGetInvoice).toHaveBeenCalledWith(COMPANY_ID, 55, mockClient);
+        expect(mockCreateInvoice).not.toHaveBeenCalled();
     });
 
     it('TC-S4T1-06: company isolation — only fetches estimate by companyId', async () => {
-        mockGetEstimateById.mockResolvedValue(null); // different company → not found
+        mockLockEstimateForConversion.mockResolvedValue(null); // different company → not found
         mockGetEstimateItems.mockResolvedValue([]);
 
         await expect(convertToInvoice('other-company', USER_ID, EST_ID))
             .rejects.toMatchObject({ code: 'NOT_FOUND' });
 
-        expect(mockGetEstimateById).toHaveBeenCalledWith('other-company', EST_ID);
+        expect(mockLockEstimateForConversion).toHaveBeenCalledWith(
+            'other-company',
+            EST_ID,
+            mockClient
+        );
         expect(mockCreateInvoice).not.toHaveBeenCalled();
     });
 
@@ -155,6 +200,6 @@ describe('estimatesService.convertToInvoice', () => {
 
         await expect(convertToInvoice(COMPANY_ID, USER_ID, EST_ID)).resolves.toBeDefined();
         expect(mockAddInvoiceItem).not.toHaveBeenCalled();
-        expect(mockRecalculateTotals).toHaveBeenCalledWith(COMPANY_ID, 99);
+        expect(mockRecalculateTotals).toHaveBeenCalledWith(COMPANY_ID, 99, mockClient);
     });
 });

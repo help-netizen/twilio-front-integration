@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-07-23 — CHATGPT-CRM-MCP-001 S2c-b: конверсия сметы в инвойс
+
+Добавлен consent-gated write-инструмент
+`svc.convert_estimate_to_invoice`: строгий вход только `estimate_id`,
+W-confirmation, `albusto.mcp.write`, реальный UI-гейт `invoices.create` и exact
+AI grant. Инструмент использует только канонный
+`estimatesService.convertToInvoice`; company-owned Estimate блокируется
+`FOR UPDATE` в той же live-recheck транзакции, items/events/totals проходят
+существующие сервисы, а ответ переиспользует безопасную проекцию
+`svc.get_invoice`.
+
+Первая конверсия разрешена только из `approved` и возвращает
+`already_converted:false`; повторная и параллельная возвращают тот же Invoice с
+`already_converted:true`, не создавая дубль (MCP idempotency + сервисная
+row-lock семантика). Send/payment/files/status/override-поля не добавлены.
+Инвентарь — 31 (19 read + 12 write); ранее включённому v3 binding нужен
+повторный **Enable writes**, миграции/автобэкфилла нет. Добавлены strict-schema,
+consent, T-own/T-foreign/T-blast, byte-identical B, status, totals и concurrent
+replay тесты. **НЕ задеплоено.**
+
 ## 2026-07-23 — CHATGPT-CRM-MCP-001: MCP hardening
 
 `/mcp/chatgpt` получил runaway-предохранитель на существующем

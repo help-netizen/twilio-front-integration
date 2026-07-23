@@ -5,6 +5,9 @@ const fsmService = require('./fsmService');
 const contactPropagationService = require('./contactPropagationService');
 const estimatesService = require('./estimatesService');
 const invoicesService = require('./invoicesService');
+const chatgptMcpQueries = require('../db/chatgptMcpQueries');
+const { safeResult } = require('./chatgptMcpReadService');
+const { CrmServiceError } = require('./crmErrors');
 const { toE164 } = require('../utils/phoneUtils');
 
 class ChatgptMcpWriteError extends Error {
@@ -767,6 +770,40 @@ async function updateInvoice(context, args, client) {
     return invoicesService.getInvoice(context.companyId, args.invoice_id, client);
 }
 
+async function convertEstimateToInvoice(context, args, client) {
+    let converted;
+    try {
+        converted = await estimatesService.convertToInvoice(
+            context.companyId,
+            context.actorId,
+            args.estimate_id,
+            client
+        );
+    } catch (err) {
+        if (err?.name === 'EstimatesServiceError') {
+            throw new CrmServiceError(
+                err.code || 'ESTIMATE_CONVERSION_FAILED',
+                err.message,
+                err.httpStatus || 400
+            );
+        }
+        throw err;
+    }
+
+    // Reuse the exact company-scoped svc.get_invoice query and sanitizer so
+    // conversion never exposes a broader Invoice shape than the read tool.
+    const invoice = await chatgptMcpQueries.getInvoice(
+        context.companyId,
+        converted.id,
+        client
+    );
+    if (!invoice) notFound('Invoice');
+    return {
+        ...safeResult(invoice),
+        already_converted: converted.already_converted === true,
+    };
+}
+
 const HANDLERS = Object.freeze({
     createLead,
     updateLead,
@@ -779,12 +816,14 @@ const HANDLERS = Object.freeze({
     updateEstimate,
     createInvoice,
     updateInvoice,
+    convertEstimateToInvoice,
 });
-const CREATE_HANDLERS = new Set([
+const IDEMPOTENT_HANDLERS = new Set([
     'createLead',
     'createJob',
     'createEstimate',
     'createInvoice',
+    'convertEstimateToInvoice',
 ]);
 
 async function execute(handler, toolName, context, args, client) {
@@ -793,10 +832,14 @@ async function execute(handler, toolName, context, args, client) {
     if (!operation) {
         throw new ChatgptMcpWriteError('UNSUPPORTED_TOOL', 'Unsupported write handler.', 404);
     }
-    if (!CREATE_HANDLERS.has(handler)) return operation(context, args, client);
+    if (!IDEMPOTENT_HANDLERS.has(handler)) return operation(context, args, client);
 
     const claim = await claimCreate(context, toolName, args, client);
-    if (claim.replay !== null) return claim.replay;
+    if (claim.replay !== null) {
+        return handler === 'convertEstimateToInvoice'
+            ? { ...claim.replay, already_converted: true }
+            : claim.replay;
+    }
     const result = await operation(context, args, client);
     await completeCreate(claim, result, client);
     return result;

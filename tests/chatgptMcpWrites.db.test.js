@@ -413,8 +413,8 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(30);
-        expect(response.result.tools.filter((tool) => tool.annotations.kind === 'write')).toHaveLength(11);
+        expect(response.result.tools).toHaveLength(31);
+        expect(response.result.tools.filter((tool) => tool.annotations.kind === 'write')).toHaveLength(12);
 
         await expect(setConsent(false)).resolves.toMatchObject({ enabled: false, grant_version: 2 });
         await expect(setConsent(false)).resolves.toMatchObject({ enabled: false, grant_version: 2 });
@@ -642,7 +642,7 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL per-tool tenancy contract', () => 
 });
 
 describe('CHATGPT-CRM-MCP S2b real-PostgreSQL financial write contract', () => {
-    databaseTest('legacy v3 consent exposes 26 tools; repeat enable grants all 30', async () => {
+    databaseTest('legacy v3 consent exposes 26 tools; repeat enable grants all 31', async () => {
         const s2bNames = [
             'svc.create_estimate',
             'svc.update_estimate',
@@ -690,7 +690,7 @@ describe('CHATGPT-CRM-MCP S2b real-PostgreSQL financial write contract', () => {
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(30);
+        expect(response.result.tools).toHaveLength(31);
         expect(response.result.tools.map((tool) => tool.name))
             .toEqual(expect.arrayContaining(s2bNames));
     });
@@ -865,6 +865,264 @@ describe('CHATGPT-CRM-MCP S2b real-PostgreSQL financial write contract', () => {
             [createdInvoice.id, state.companyA]
         );
         expect(invoiceCount.rows[0].count).toBe(1);
+    });
+});
+
+describe('CHATGPT-CRM-MCP S2c-b Estimate-to-Invoice conversion contract', () => {
+    const TOOL_NAME = 'svc.convert_estimate_to_invoice';
+
+    async function createEstimate(companyId, actorId, jobId, suffix, approved = true) {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            const estimate = await estimatesService.createEstimate(
+                companyId,
+                actorId,
+                {
+                    job_id: jobId,
+                    summary: `${suffix} canonical conversion`,
+                    tax_rate: 6,
+                    discount_type: 'fixed',
+                    discount_value: 90,
+                    items: [
+                        {
+                            name: `${suffix} taxable part`,
+                            quantity: 1,
+                            unit_price: 95,
+                            taxable: true,
+                        },
+                        {
+                            name: `${suffix} non-taxable labor`,
+                            quantity: 1,
+                            unit_price: 100,
+                            taxable: false,
+                        },
+                    ],
+                },
+                client
+            );
+            if (approved) {
+                await client.query(
+                    `UPDATE estimates
+                     SET status='approved', updated_at=NOW()
+                     WHERE id=$1 AND company_id=$2`,
+                    [estimate.id, companyId]
+                );
+            }
+            await client.query('COMMIT');
+            return estimatesService.getEstimate(companyId, estimate.id);
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+    }
+
+    databaseTest('existing v3 consent needs repeat enable before the 31st tool is visible', async () => {
+        await setConsent(true);
+        await db.query(
+            `DELETE FROM mcp_agent_permission_grants
+             WHERE company_id=$1
+               AND agent_user_id=$2
+               AND permission_key=$3`,
+            [
+                state.companyA,
+                state.identityA.aiUser.id,
+                `mcp.tool.${TOOL_NAME}`,
+            ]
+        );
+
+        let resolved = await resolveA();
+        let response = await protocol.handleJsonRpc(protocolRequest(resolved), {
+            jsonrpc: '2.0',
+            id: 51,
+            method: 'tools/list',
+            params: {},
+        });
+        expect(response.result.tools).toHaveLength(30);
+        expect(response.result.tools.map((tool) => tool.name)).not.toContain(TOOL_NAME);
+        await expect(invoke(resolved, TOOL_NAME, { estimate_id: 1 }))
+            .rejects.toMatchObject({ mcpCode: 'access_denied' });
+
+        await expect(setConsent(true)).resolves.toMatchObject({
+            enabled: true,
+            grant_version: 3,
+        });
+        resolved = await resolveA();
+        response = await protocol.handleJsonRpc(protocolRequest(resolved), {
+            jsonrpc: '2.0',
+            id: 52,
+            method: 'tools/list',
+            params: {},
+        });
+        expect(response.result.tools).toHaveLength(31);
+        expect(response.result.tools.map((tool) => tool.name)).toContain(TOOL_NAME);
+    });
+
+    databaseTest('T-own / T-foreign / T-blast, canonical totals, replay, and status rules hold', async () => {
+        await setConsent(true);
+        const estimateA = await createEstimate(
+            state.companyA,
+            state.identityA.aiUser.id,
+            state.jobA,
+            'A'
+        );
+        const estimateB = await createEstimate(
+            state.companyB,
+            state.identityB.aiUser.id,
+            state.jobB,
+            'B'
+        );
+        const resolved = await resolveA();
+
+        let beforeB = await snapshotCompany(state.companyB);
+        const converted = await invoke(resolved, TOOL_NAME, {
+            estimate_id: Number(estimateA.id),
+        });
+        expect(converted).toMatchObject({
+            already_converted: false,
+            status: 'draft',
+        });
+        expect(Number(converted.estimate_id)).toBe(Number(estimateA.id));
+        expect(converted).not.toHaveProperty('public_token');
+        expect(converted.items.map((item) => ({
+            name: item.name,
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            amount: Number(item.amount),
+            taxable: item.taxable,
+        }))).toEqual(estimateA.items.map((item) => ({
+            name: item.name,
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            amount: Number(item.amount),
+            taxable: item.taxable,
+        })));
+        expect({
+            subtotal: Number(converted.subtotal),
+            discount: Number(converted.discount_amount),
+            tax: Number(converted.tax_amount),
+            total: Number(converted.total),
+            balance: Number(converted.balance_due),
+        }).toEqual({
+            subtotal: Number(estimateA.subtotal),
+            discount: Number(estimateA.discount_amount),
+            tax: Number(estimateA.tax_amount),
+            total: Number(estimateA.total),
+            balance: Number(estimateA.total),
+        });
+        expect(await snapshotCompany(state.companyB)).toBe(beforeB);
+
+        beforeB = await snapshotCompany(state.companyB);
+        await expect(invoke(resolved, TOOL_NAME, {
+            estimate_id: Number(estimateB.id),
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(await snapshotCompany(state.companyB)).toBe(beforeB);
+
+        const replay = await invoke(resolved, TOOL_NAME, {
+            estimate_id: Number(estimateA.id),
+        });
+        expect(replay).toMatchObject({
+            id: converted.id,
+            already_converted: true,
+        });
+        const counts = await db.query(
+            `SELECT
+                (SELECT COUNT(*)::int
+                 FROM invoices
+                 WHERE company_id=$1 AND estimate_id=$2) AS invoices,
+                (SELECT COUNT(*)::int
+                 FROM mcp_tool_idempotency
+                 WHERE company_id=$1
+                   AND agent_user_id=$3
+                   AND tool_name=$4
+                   AND state='succeeded') AS claims`,
+            [
+                state.companyA,
+                estimateA.id,
+                state.identityA.aiUser.id,
+                TOOL_NAME,
+            ]
+        );
+        expect(counts.rows[0]).toEqual({ invoices: 1, claims: 1 });
+
+        const draft = await createEstimate(
+            state.companyA,
+            state.identityA.aiUser.id,
+            state.jobA,
+            'Draft',
+            false
+        );
+        await expect(invoke(resolved, TOOL_NAME, {
+            estimate_id: Number(draft.id),
+        })).rejects.toMatchObject({
+            code: 'INVALID_STATUS',
+            httpStatus: 400,
+        });
+        const draftInvoices = await db.query(
+            `SELECT COUNT(*)::int AS count
+             FROM invoices
+             WHERE company_id=$1 AND estimate_id=$2`,
+            [state.companyA, draft.id]
+        );
+        expect(draftInvoices.rows[0].count).toBe(0);
+    });
+
+    databaseTest('parallel MCP replay and direct canonical-service replay each create one Invoice', async () => {
+        await setConsent(true);
+        const resolved = await resolveA();
+        const mcpEstimate = await createEstimate(
+            state.companyA,
+            state.identityA.aiUser.id,
+            state.jobA,
+            'Parallel MCP'
+        );
+        const mcpResults = await Promise.all([
+            invoke(resolved, TOOL_NAME, { estimate_id: Number(mcpEstimate.id) }),
+            invoke(resolved, TOOL_NAME, { estimate_id: Number(mcpEstimate.id) }),
+        ]);
+        expect(new Set(mcpResults.map((row) => Number(row.id))).size).toBe(1);
+        expect(mcpResults.map((row) => row.already_converted).sort())
+            .toEqual([false, true]);
+
+        const serviceEstimate = await createEstimate(
+            state.companyA,
+            state.identityA.aiUser.id,
+            state.jobA,
+            'Parallel service'
+        );
+        const serviceResults = await Promise.all([
+            estimatesService.convertToInvoice(
+                state.companyA,
+                state.identityA.aiUser.id,
+                serviceEstimate.id
+            ),
+            estimatesService.convertToInvoice(
+                state.companyA,
+                state.identityA.aiUser.id,
+                serviceEstimate.id
+            ),
+        ]);
+        expect(new Set(serviceResults.map((row) => Number(row.id))).size).toBe(1);
+        expect(serviceResults.map((row) => row.already_converted).sort())
+            .toEqual([false, true]);
+
+        const counts = await db.query(
+            `SELECT estimate_id, COUNT(*)::int AS count
+             FROM invoices
+             WHERE company_id=$1 AND estimate_id=ANY($2::bigint[])
+             GROUP BY estimate_id
+             ORDER BY estimate_id`,
+            [
+                state.companyA,
+                [Number(mcpEstimate.id), Number(serviceEstimate.id)],
+            ]
+        );
+        expect(counts.rows).toEqual([
+            { estimate_id: String(mcpEstimate.id), count: 1 },
+            { estimate_id: String(serviceEstimate.id), count: 1 },
+        ]);
     });
 });
 
