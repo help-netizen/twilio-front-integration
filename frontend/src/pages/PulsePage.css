@@ -650,6 +650,20 @@
         flex: 1;
     }
 
+    /* OB-32: CONTENT mode scrolls inside .pulse-right-column, so the page-level
+       scroller must not move at all. Without this, `.app-main`'s bottom-nav
+       clearance padding (60px nav + 40px autonomous banner + safe-area) makes
+       its scrollHeight exceed the viewport by that padding, and a second swipe
+       past the composer drags the whole panel up into an empty strip whose
+       color is just the dark tail of the `.app-main` background gradient
+       (`--blanc-bg-deep`). Desktop already suppresses this scroll via JS in
+       PulsePage; this is the mobile equivalent. The padding itself must stay —
+       it is what keeps the composer clear of the fixed nav and banner. LIST
+       mode keeps page scrolling (canonical mobile list shell). */
+    .app-main:has(.pulse-layout[data-mobile-panel="content"]) {
+        overflow: hidden;
+    }
+
     .pulse-ar-plaque {
         padding: 8px 10px;
     }

@@ -16,5 +16,15 @@
 body {
   margin: 0;
   min-width: 320px;
+  /* OB-32: 100vh is the LARGEST viewport on iOS Safari — taller than the
+     visible area while the toolbars are shown — so the document itself could
+     scroll by the toolbar delta, and inner scrollers (Pulse timeline) chained
+     into that document scroll past their content into empty canvas. dvh tracks
+     the real viewport; the vh line stays as a fallback for old engines. */
   min-height: 100vh;
+  min-height: 100dvh;
+  /* The app shell (.app-layout, 100dvh, overflow hidden) is the only frame —
+     the document must never scroll or bounce on its own, and reaching the end
+     of an inner scroller must not chain into it. */
+  overscroll-behavior-y: none;
 }
