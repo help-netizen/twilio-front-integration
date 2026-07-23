@@ -510,21 +510,37 @@ async function recalculateInvoiceTotals(invoiceId) {
         `UPDATE invoices inv SET
             subtotal = COALESCE(sub.item_total, 0),
             tax_amount = ROUND(
-                COALESCE(sub.item_total, 0) * COALESCE(inv.tax_rate, 0) / 100
+                GREATEST(
+                    COALESCE(sub.taxable_subtotal, 0) - COALESCE(inv.discount_amount, 0),
+                    0
+                ) * COALESCE(inv.tax_rate, 0) / 100
             , 2),
             total = ROUND(
                 COALESCE(sub.item_total, 0)
                 - COALESCE(inv.discount_amount, 0)
-                + COALESCE(sub.item_total, 0) * COALESCE(inv.tax_rate, 0) / 100
+                + ROUND(
+                    GREATEST(
+                        COALESCE(sub.taxable_subtotal, 0) - COALESCE(inv.discount_amount, 0),
+                        0
+                    ) * COALESCE(inv.tax_rate, 0) / 100
+                , 2)
             , 2),
             balance_due = ROUND(
                 COALESCE(sub.item_total, 0)
                 - COALESCE(inv.discount_amount, 0)
-                + COALESCE(sub.item_total, 0) * COALESCE(inv.tax_rate, 0) / 100
+                + ROUND(
+                    GREATEST(
+                        COALESCE(sub.taxable_subtotal, 0) - COALESCE(inv.discount_amount, 0),
+                        0
+                    ) * COALESCE(inv.tax_rate, 0) / 100
+                , 2)
             , 2) - COALESCE(inv.amount_paid, 0),
             updated_at = NOW()
         FROM (
-            SELECT invoice_id, SUM(amount) AS item_total
+            SELECT
+                invoice_id,
+                SUM(amount) AS item_total,
+                SUM(CASE WHEN taxable THEN amount ELSE 0 END) AS taxable_subtotal
             FROM invoice_items
             WHERE invoice_id = $1
             GROUP BY invoice_id

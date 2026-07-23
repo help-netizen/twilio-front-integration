@@ -12,6 +12,7 @@
 
 const paymentsQueries = require('../db/paymentsQueries');
 const invoicesQueries = require('../db/invoicesQueries');
+const auditService = require('./auditService');
 
 // =============================================================================
 // Error class
@@ -32,7 +33,16 @@ class PaymentsServiceError extends Error {
 
 const VALID_TRANSACTION_TYPES = ['payment', 'adjustment'];
 const VALID_PAYMENT_METHODS = ['credit_card', 'ach', 'check', 'cash', 'other', 'zenbooker_sync'];
-const MANUAL_PAYMENT_METHODS = ['cash', 'check', 'other'];
+const MANUAL_PAYMENT_METHODS = ['credit_card', 'ach', 'check', 'cash', 'other'];
+
+function normalizeManualPaymentMethod(paymentMethod) {
+    return paymentMethod === 'card' ? 'credit_card' : paymentMethod;
+}
+
+function isManualOrigin(transaction) {
+    const source = String(transaction?.external_source || '').trim().toLowerCase();
+    return source === '' || source === 'manual';
+}
 
 // =============================================================================
 // Transaction CRUD
@@ -95,12 +105,12 @@ async function createTransaction(companyId, userId, data) {
 }
 
 /**
- * Record a manual/offline payment (cash, check, other).
+ * Record a manual/offline payment.
  */
 async function recordManualPayment(companyId, userId, data) {
-    const { payment_method } = data;
+    const paymentMethod = normalizeManualPaymentMethod(data.payment_method);
 
-    if (!MANUAL_PAYMENT_METHODS.includes(payment_method)) {
+    if (!MANUAL_PAYMENT_METHODS.includes(paymentMethod)) {
         throw new PaymentsServiceError('VALIDATION', `Manual payment_method must be one of: ${MANUAL_PAYMENT_METHODS.join(', ')}`, 400);
     }
 
@@ -110,7 +120,9 @@ async function recordManualPayment(companyId, userId, data) {
 
     return createTransaction(companyId, userId, {
         ...data,
+        payment_method: paymentMethod,
         transaction_type: 'payment',
+        external_source: 'manual',
         memo,
     });
 }
@@ -160,25 +172,137 @@ async function refundTransaction(companyId, userId, id, { amount, reason } = {})
 async function voidTransaction(companyId, userId, id) {
     const original = await getTransaction(companyId, id);
 
-    if (['voided', 'refunded'].includes(original.status)) {
+    if (!isManualOrigin(original)) {
+        throw new PaymentsServiceError(
+            'EXTERNAL_PAYMENT_NOT_VOIDABLE',
+            'Stripe- and Zenbooker-sourced payments cannot be voided as manual payments.',
+            409
+        );
+    }
+
+    if (original.invoice_id) {
+        const result = await voidInvoicePayment(companyId, userId, original.invoice_id, id);
+        return result.payment;
+    }
+
+    if (original.status === 'voided' || original.voided_at) {
+        return original;
+    }
+    if (original.status === 'refunded') {
         throw new PaymentsServiceError('INVALID_STATUS', `Cannot void transaction with status '${original.status}'`, 400);
     }
 
-    const voided = await paymentsQueries.voidTransaction(id, companyId);
+    const voided = await paymentsQueries.voidTransaction(id, companyId, userId);
     if (!voided) {
         throw new PaymentsServiceError('VOID_FAILED', 'Could not void transaction', 500);
     }
 
-    // If linked to an invoice and was completed, reverse the amount_paid
-    if (original.invoice_id && original.status === 'completed') {
-        try {
-            await invoicesQueries.recordPayment(original.invoice_id, companyId, -parseFloat(original.amount));
-        } catch (err) {
-            console.warn(`[PaymentsService] Could not reverse invoice ${original.invoice_id} amount_paid:`, err.message);
-        }
+    return voided;
+}
+
+/**
+ * Void a manual/offline payment linked to one invoice. Both resource IDs are
+ * resolved inside the active company before the atomic ledger/invoice write.
+ * Repeating the request returns 200 data with idempotent=true and writes no
+ * second audit event.
+ */
+async function voidInvoicePayment(companyId, userId, invoiceId, paymentId) {
+    if (!userId) {
+        throw new PaymentsServiceError(
+            'CRM_ACTOR_REQUIRED',
+            'A CRM user is required to void an invoice payment.',
+            401
+        );
     }
 
-    return voided;
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+    if (!invoice) {
+        throw new PaymentsServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
+    }
+
+    const payment = await paymentsQueries.getTransactionForInvoice(
+        companyId,
+        invoiceId,
+        paymentId
+    );
+    if (!payment) {
+        throw new PaymentsServiceError('NOT_FOUND', `Payment ${paymentId} not found`, 404);
+    }
+
+    // Source is authoritative. A row that looks like cash/check but came from
+    // Zenbooker (or Stripe) is external and must not cross the manual void path.
+    if (!isManualOrigin(payment)) {
+        throw new PaymentsServiceError(
+            'EXTERNAL_PAYMENT_NOT_VOIDABLE',
+            'Stripe- and Zenbooker-sourced payments cannot be voided as manual payments.',
+            409
+        );
+    }
+
+    if (payment.status === 'voided' || payment.voided_at) {
+        return { payment, invoice, idempotent: true };
+    }
+    if (payment.transaction_type !== 'payment' || payment.status !== 'completed') {
+        throw new PaymentsServiceError(
+            'INVALID_STATUS',
+            `Cannot void a '${payment.status}' ${payment.transaction_type}.`,
+            409
+        );
+    }
+
+    const mutation = await paymentsQueries.voidInvoicePayment(
+        companyId,
+        invoiceId,
+        paymentId,
+        userId
+    );
+    if (!mutation) {
+        throw new PaymentsServiceError('NOT_FOUND', `Payment ${paymentId} not found`, 404);
+    }
+    if (mutation.did_void && !mutation.invoice_updated) {
+        throw new PaymentsServiceError(
+            'VOID_FAILED',
+            'Payment was not applied to the tenant-scoped invoice.',
+            500
+        );
+    }
+
+    const currentPayment = await paymentsQueries.getTransactionForInvoice(
+        companyId,
+        invoiceId,
+        paymentId
+    );
+    const currentInvoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+    if (!currentPayment || !currentInvoice) {
+        throw new PaymentsServiceError('NOT_FOUND', `Payment ${paymentId} not found`, 404);
+    }
+
+    if (!mutation.did_void) {
+        return {
+            payment: currentPayment,
+            invoice: currentInvoice,
+            idempotent: true,
+        };
+    }
+
+    await auditService.log({
+        actor_id: userId,
+        action: 'invoice.payment_voided',
+        target_type: 'invoice',
+        target_id: String(invoiceId),
+        company_id: companyId,
+        details: {
+            payment_id: String(paymentId),
+            amount: payment.amount,
+            payment_method: payment.payment_method,
+        },
+    });
+
+    return {
+        payment: currentPayment,
+        invoice: currentInvoice,
+        idempotent: false,
+    };
 }
 
 // =============================================================================
@@ -235,7 +359,7 @@ async function getTransactionsForInvoice(companyId, invoiceId) {
     if (!invoice) {
         throw new PaymentsServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
-    return paymentsQueries.getTransactionsForInvoice(invoiceId);
+    return paymentsQueries.getTransactionsForInvoice(companyId, invoiceId);
 }
 
 // =============================================================================
@@ -261,6 +385,7 @@ module.exports = {
     recordManualPayment,
     refundTransaction,
     voidTransaction,
+    voidInvoicePayment,
     getReceipt,
     sendReceipt,
     getTransactionsForInvoice,

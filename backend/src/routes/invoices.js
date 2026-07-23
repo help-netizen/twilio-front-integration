@@ -23,6 +23,11 @@ function getUserId(req) {
         : null;
 }
 
+// FK/audit-bound writes must never fall back to the Keycloak subject.
+function getCrmUserId(req) {
+    return req.user?.crmUser?.id || null;
+}
+
 // Stripe actor for stripe_payment_sessions.created_by (UUID FK → crm_users).
 // getUserId's sub fallback passes the UUID regex — the Keycloak sub IS a UUID —
 // and would violate that FK; FK-bound Stripe writes take crmUser.id or null.
@@ -190,7 +195,7 @@ router.post('/:id/void', requirePermission('invoices.create'), async (req, res) 
 router.post('/:id/record-payment', requirePermission('payments.collect_offline'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
-        const userId = getUserId(req);
+        const userId = getCrmUserId(req);
         const { id } = req.params;
         const { amount, payment_method, reference } = req.body;
 
@@ -202,6 +207,35 @@ router.post('/:id/record-payment', requirePermission('payments.collect_offline')
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }
 });
+
+// POST /api/invoices/:invoiceId/payments/:paymentId/void — Keep a manual
+// payment in the ledger while reversing its contribution to invoice totals.
+router.post(
+    '/:invoiceId/payments/:paymentId/void',
+    requirePermission('payments.collect_offline'),
+    async (req, res) => {
+        try {
+            const companyId = getCompanyId(req);
+            const actorId = getCrmUserId(req);
+            const { invoiceId, paymentId } = req.params;
+
+            const result = await invoicesService.voidPayment(
+                companyId,
+                actorId,
+                invoiceId,
+                paymentId
+            );
+            res.json({ ok: true, data: result });
+        } catch (err) {
+            console.error('[Invoices] POST /:invoiceId/payments/:paymentId/void error:', err.message);
+            const status = err.httpStatus || 500;
+            res.status(status).json({
+                ok: false,
+                error: { code: err.code || 'INTERNAL', message: err.message },
+            });
+        }
+    }
+);
 
 // POST /api/invoices/:id/sync-items — Sync line items from estimate
 router.post('/:id/sync-items', requirePermission('invoices.create'), async (req, res) => {

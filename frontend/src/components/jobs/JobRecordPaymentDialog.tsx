@@ -6,6 +6,7 @@ import {
     DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle,
 } from '../ui/dialog';
 import { FloatingField } from '../ui/floating-field';
+import { maskMoneyDigits } from '../ui/MoneyInput';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import * as paymentsApi from '../../services/paymentsCanonicalApi';
@@ -89,10 +90,13 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
                         <div className="space-y-3.5">
                             <FloatingField
                                 label="Amount"
-                                type="number"
-                                inputMode="decimal"
+                                type="text"
+                                inputMode="numeric"
                                 value={amount}
-                                onChange={event => setAmount(event.target.value)}
+                                onChange={event => {
+                                    const masked = maskMoneyDigits(event.target.value);
+                                    if (masked !== null) setAmount(masked);
+                                }}
                             />
                             <FloatingSelect
                                 label="Payment method"

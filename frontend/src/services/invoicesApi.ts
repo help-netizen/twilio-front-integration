@@ -262,3 +262,10 @@ export async function fetchInvoiceRevisions(id: number): Promise<InvoiceRevision
 export async function fetchInvoicePayments(id: number): Promise<any[]> {
     return invoicesRequest<any[]>(`${INVOICES_BASE}/${id}/payments`);
 }
+
+/** OB-31: void a manually recorded payment — it stays in history (grayed, listed
+ *  last) but no longer counts toward amount_paid/balance. Manual-origin only;
+ *  Stripe/Zenbooker-sourced rows are refused by the backend. */
+export async function voidInvoicePayment(invoiceId: number, paymentId: number | string): Promise<void> {
+    await invoicesRequest(`${INVOICES_BASE}/${invoiceId}/payments/${paymentId}/void`, { method: 'POST' });
+}

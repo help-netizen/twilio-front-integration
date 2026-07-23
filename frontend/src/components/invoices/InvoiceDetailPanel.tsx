@@ -9,12 +9,14 @@ import {
     Loader2,
     MoreHorizontal,
     Pencil,
+    Plus,
     Send,
     Trash2,
 } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { MoneyInput } from '../ui/MoneyInput';
 import { Label } from '../ui/label';
 import {
     DropdownMenu,
@@ -49,7 +51,9 @@ import {
     fetchInvoicePayments,
     updateInvoice,
     updateInvoiceItem,
+    voidInvoicePayment,
 } from '../../services/invoicesApi';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { useAuthz } from '../../hooks/useAuthz';
 import { TaskStack } from '../tasks/TaskStack';
 import { openAuthedPdf } from '../../lib/openAuthedPdf';
@@ -178,6 +182,9 @@ export function InvoiceDetailPanel({
 
     // Payments list
     const [payments, setPayments] = useState<any[]>([]);
+    // OB-31: payment pending the void confirmation (manual/offline rows only).
+    const [voidTx, setVoidTx] = useState<any | null>(null);
+    const [voidingTx, setVoidingTx] = useState(false);
     useEffect(() => {
         if (!invoice?.id) return;
         fetchInvoicePayments(invoice.id).then(setPayments).catch(() => {});
@@ -452,14 +459,11 @@ export function InvoiceDetailPanel({
     /** Reusable payment-recording form body. */
     const paymentFormBody = (
         <div className="space-y-2">
-            <Input
-                type="number"
-                min="0.01"
-                step="0.01"
-                placeholder="Amount"
+            <MoneyInput
+                placeholder="0.00"
                 value={paymentAmount}
-                onChange={e => setPaymentAmount(e.target.value)}
-                className="h-8 tabular-nums"
+                onValueChange={setPaymentAmount}
+                className="flex h-8 w-full min-w-0 rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 py-1 text-right text-base tabular-nums outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)] md:text-sm"
                 autoFocus
             />
             <Select value={paymentMethod} onValueChange={setPaymentMethod}>
@@ -545,28 +549,40 @@ export function InvoiceDetailPanel({
                 <main className="min-h-0 space-y-6 overflow-y-auto p-5">
                     {/* Tasks — TASKS-001 */}
                     <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
-                    {/* Summary (stored in `notes` field; labeled "Summary" to match estimates) */}
-                    <section className="rounded-2xl border border-[var(--blanc-line)]">
-                        <div className="flex items-center justify-between px-4 py-3">
-                            <button
-                                type="button"
-                                onClick={() => setNotesOpen(o => !o)}
-                                className="flex flex-1 items-center gap-2 text-left text-sm font-medium text-[var(--blanc-ink-1)]"
-                            >
-                                <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${notesOpen ? 'rotate-180' : ''}`} />
-                                Summary
-                                {!invoice.notes && <span className="text-xs font-normal text-[var(--blanc-ink-3)]">— add notes</span>}
-                            </button>
+                    {/* Summary (stored in `notes`; labeled "Summary" to match estimates).
+                        OB-28 mirror: dashed invite when empty, collapsible card when filled. */}
+                    {invoice.notes ? (
+                        <section className="rounded-2xl border border-[var(--blanc-line)]">
+                            <div className="flex items-center justify-between px-4 py-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setNotesOpen(o => !o)}
+                                    className="flex flex-1 items-center gap-2 text-left text-sm font-medium text-[var(--blanc-ink-1)]"
+                                >
+                                    <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${notesOpen ? 'rotate-180' : ''}`} />
+                                    Summary
+                                </button>
+                                {!readOnly && (
+                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={() => setNotesDialogOpen(true)} title="Edit summary">
+                                        <Pencil className="size-4" />
+                                    </Button>
+                                )}
+                            </div>
+                            {notesOpen && (
+                                <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</div>
+                            )}
+                        </section>
+                    ) : (
+                        <div className="rounded-2xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
+                            <p className="text-sm font-medium text-[var(--blanc-ink-1)]">Summary</p>
+                            <p className="mt-1 text-sm text-[var(--blanc-ink-3)]">Add scope, findings, or any context worth highlighting to the customer.</p>
                             {!readOnly && (
-                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={() => setNotesDialogOpen(true)} title="Edit summary">
-                                    <Pencil className="size-4" />
+                                <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setNotesDialogOpen(true)}>
+                                    <Plus className="mr-1 size-4" /> Add summary
                                 </Button>
                             )}
                         </div>
-                        {notesOpen && invoice.notes && (
-                            <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</div>
-                        )}
-                    </section>
+                    )}
 
                     {/* Items */}
                     <section>
@@ -634,18 +650,16 @@ export function InvoiceDetailPanel({
                                 <span className="font-mono text-[var(--blanc-ink-1)]">{money(invoice.subtotal)}</span>
                             </div>
                             {hasDiscount ? (
-                                <div className="flex items-center gap-2 text-sm">
+                                /* OB-24: wrap so the amount drops to its own line on narrow widths. */
+                                <div className="flex flex-wrap items-center gap-2 text-sm">
                                     <span className="text-[var(--blanc-ink-2)]">Discount</span>
                                     <span className="text-[var(--blanc-ink-3)]">$</span>
-                                    <Input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
+                                    <MoneyInput
                                         value={discountAmount}
-                                        onChange={e => setDiscountAmount(e.target.value)}
+                                        onValueChange={setDiscountAmount}
                                         onBlur={() => persist({ discount_amount: discountAmount || '0' } as any)}
                                         disabled={readOnly}
-                                        className={`${TOTALS_INPUT} w-24 text-right tabular-nums`}
+                                        className="h-8 w-24 rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 text-right text-sm tabular-nums outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
                                     />
                                     <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" disabled={readOnly} onClick={() => { setHasDiscount(false); setDiscountAmount('0'); persist({ discount_amount: '0' } as any); }} title="Remove discount">
                                         <Trash2 className="size-4" />
@@ -659,21 +673,23 @@ export function InvoiceDetailPanel({
                             )}
                             <div className="grid grid-cols-[1fr_auto] items-center gap-3">
                                 <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
-                                <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.05"
-                                    value={taxRate}
-                                    onChange={e => setTaxRate(e.target.value)}
-                                    onBlur={() => {
-                                        const n = Number(taxRate);
-                                        const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
-                                        setTaxRate(formatted);
-                                        persist({ tax_rate: formatted } as any);
-                                    }}
-                                    disabled={readOnly}
-                                    className={`${TOTALS_INPUT} w-24 text-right tabular-nums`}
-                                />
+                                <div className="relative w-24">
+                                    <Input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={taxRate}
+                                        onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
+                                        onBlur={() => {
+                                            const n = Number(taxRate);
+                                            const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
+                                            setTaxRate(formatted);
+                                            persist({ tax_rate: formatted } as any);
+                                        }}
+                                        disabled={readOnly}
+                                        className={`${TOTALS_INPUT} w-full pr-7 text-right tabular-nums`}
+                                    />
+                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                                </div>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-[var(--blanc-ink-2)]">Tax</span>
@@ -735,23 +751,81 @@ export function InvoiceDetailPanel({
                         </section>
                     )}
 
-                    {/* Payments list */}
+                    {/* Payments list. OB-31: voided rows stay listed — grayed and LAST;
+                        manual (non-Stripe/ZB) rows can be voided with confirmation. */}
                     {payments.length > 0 && (
                         <section className="space-y-2 text-sm">
                             <p className="blanc-eyebrow">Payments</p>
                             <div className="space-y-1">
-                                {payments.map((tx: any) => (
-                                    <div key={tx.id} className="flex justify-between text-xs">
-                                        <span className="text-[var(--blanc-ink-2)]">
-                                            {fmtDate(tx.transaction_date || tx.created_at)}
-                                            {(tx.payment_method || tx.metadata?.payment_method) && ` · ${paymentMethodLabel(tx.payment_method || tx.metadata?.payment_method)}`}
-                                        </span>
-                                        <span className="font-mono text-emerald-700">{money(tx.amount ?? tx.metadata?.amount)}</span>
-                                    </div>
-                                ))}
+                                {[...payments].sort((a, b) => (a.voided_at ? 1 : 0) - (b.voided_at ? 1 : 0)).map((tx: any) => {
+                                    const voided = !!tx.voided_at;
+                                    const manual = !tx.external_source || tx.external_source === '' || tx.external_source === 'manual';
+                                    return (
+                                        <div key={tx.id} className="flex items-center justify-between gap-2 text-xs">
+                                            <span className={voided ? 'text-[var(--blanc-ink-3)]' : 'text-[var(--blanc-ink-2)]'}>
+                                                {fmtDate(tx.transaction_date || tx.created_at)}
+                                                {(tx.payment_method || tx.metadata?.payment_method) && ` · ${paymentMethodLabel(tx.payment_method || tx.metadata?.payment_method)}`}
+                                                {voided && ' · Voided'}
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <span className={`font-mono ${voided ? 'text-[var(--blanc-ink-3)] line-through' : 'text-emerald-700'}`}>
+                                                    {money(tx.amount ?? tx.metadata?.amount)}
+                                                </span>
+                                                {!voided && manual && canCollectPayment && !readOnly && (
+                                                    <Button
+                                                        type="button" variant="ghost" size="sm"
+                                                        className="size-6 p-0 text-[var(--blanc-ink-3)] hover:text-red-600"
+                                                        onClick={() => setVoidTx(tx)}
+                                                        title="Void payment"
+                                                    >
+                                                        <Ban className="size-3.5" />
+                                                    </Button>
+                                                )}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </section>
                     )}
+
+                    {/* OB-31: void-payment confirmation (short action → center modal). */}
+                    <Dialog open={!!voidTx} onOpenChange={o => { if (!o) setVoidTx(null); }}>
+                        <DialogContent>
+                            <DialogHeader>
+                                <DialogTitle>Void this payment?</DialogTitle>
+                            </DialogHeader>
+                            <p className="text-sm text-[var(--blanc-ink-2)]">
+                                {money(voidTx?.amount ?? voidTx?.metadata?.amount)}
+                                {(voidTx?.payment_method || voidTx?.metadata?.payment_method) && ` · ${paymentMethodLabel(voidTx?.payment_method || voidTx?.metadata?.payment_method)}`}
+                                {' '}— the payment stays in history but no longer counts toward the invoice total.
+                            </p>
+                            <DialogFooter>
+                                <Button variant="outline" onClick={() => setVoidTx(null)} disabled={voidingTx}>Cancel</Button>
+                                <Button
+                                    variant="destructive"
+                                    disabled={voidingTx}
+                                    onClick={async () => {
+                                        if (!voidTx) return;
+                                        setVoidingTx(true);
+                                        try {
+                                            await voidInvoicePayment(invoice.id, voidTx.id);
+                                            const [fresh, ps] = await Promise.all([fetchInvoice(invoice.id), fetchInvoicePayments(invoice.id)]);
+                                            setInvoice(fresh); setPayments(ps); onChanged?.(fresh);
+                                            toast.success('Payment voided');
+                                            setVoidTx(null);
+                                        } catch (err) {
+                                            toast.error(err instanceof Error ? err.message : 'Could not void the payment');
+                                        } finally {
+                                            setVoidingTx(false);
+                                        }
+                                    }}
+                                >
+                                    {voidingTx ? 'Voiding…' : 'Void payment'}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
 
                     {events.length > 0 && (
                         <section className="space-y-2 text-sm">
@@ -776,7 +850,7 @@ export function InvoiceDetailPanel({
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="grid grid-cols-2 gap-2 md:flex">
                         <Button variant="outline" size="sm" onClick={() => {
-                            openAuthedPdf(`/api/invoices/${invoice.id}/pdf`)
+                            openAuthedPdf(`/api/invoices/${invoice.id}/pdf`, `${invoice.invoice_number || `Invoice-${invoice.id}`}.pdf`)
                                 .catch(() => toast.error('Could not open the PDF'));
                         }}>
                             <Eye className="mr-1 size-3.5" />Preview PDF

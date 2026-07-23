@@ -87,7 +87,7 @@ async function listTransactions(companyId, filters = {}) {
     }
     if (externalSource === 'manual') {
         // "manual/offline" = locally recorded, not synced from an external processor.
-        conditions.push(`(t.external_source IS NULL OR t.external_source = '')`);
+        conditions.push(`(t.external_source IS NULL OR t.external_source IN ('', 'manual'))`);
     } else if (externalSource) {
         idx++;
         conditions.push(`t.external_source = $${idx}`);
@@ -241,13 +241,16 @@ async function updateTransactionStatus(id, companyId, status, extraSets = {}) {
 /**
  * Void a transaction (only if not already voided/refunded).
  */
-async function voidTransaction(id, companyId) {
+async function voidTransaction(id, companyId, voidedBy) {
     const { rows } = await db.query(
         `UPDATE payment_transactions
-         SET status = 'voided', updated_at = NOW()
+         SET status = 'voided',
+             voided_at = NOW(),
+             voided_by = $3,
+             updated_at = NOW()
          WHERE id = $1 AND company_id = $2 AND status NOT IN ('voided', 'refunded')
          RETURNING *`,
-        [id, companyId]
+        [id, companyId, voidedBy]
     );
     return rows[0] || null;
 }
@@ -350,12 +353,108 @@ async function createReceipt(transactionId, data) {
 // =============================================================================
 
 /**
- * Get all transactions linked to an invoice.
+ * Get one transaction linked to an invoice, with both IDs scoped to company.
  */
-async function getTransactionsForInvoice(invoiceId) {
+async function getTransactionForInvoice(companyId, invoiceId, paymentId) {
     const { rows } = await db.query(
-        `SELECT * FROM payment_transactions WHERE invoice_id = $1 ORDER BY created_at DESC`,
-        [invoiceId]
+        `SELECT *
+         FROM payment_transactions
+         WHERE company_id = $1
+           AND invoice_id = $2
+           AND id = $3`,
+        [companyId, invoiceId, paymentId]
+    );
+    return rows[0] || null;
+}
+
+/**
+ * Atomically void a completed invoice payment and reverse only that payment's
+ * contribution to the materialized invoice totals.
+ */
+async function voidInvoicePayment(companyId, invoiceId, paymentId, voidedBy) {
+    const { rows } = await db.query(
+        `WITH candidate AS MATERIALIZED (
+            SELECT pt.*
+            FROM payment_transactions pt
+            WHERE pt.company_id = $1
+              AND pt.invoice_id = $2
+              AND pt.id = $3
+            FOR UPDATE
+        ),
+        voided_payment AS (
+            UPDATE payment_transactions pt
+            SET status = 'voided',
+                voided_at = NOW(),
+                voided_by = $4,
+                updated_at = NOW()
+            FROM candidate c
+            WHERE pt.id = c.id
+              AND pt.company_id = $1
+              AND pt.invoice_id = $2
+              AND pt.transaction_type = 'payment'
+              AND pt.status = 'completed'
+              AND pt.voided_at IS NULL
+            RETURNING pt.*
+        ),
+        updated_invoice AS (
+            UPDATE invoices i
+            SET amount_paid = GREATEST(
+                    COALESCE(i.amount_paid, 0) - ABS(v.amount),
+                    0
+                ),
+                balance_due = COALESCE(i.total, 0) - GREATEST(
+                    COALESCE(i.amount_paid, 0) - ABS(v.amount),
+                    0
+                ),
+                status = CASE
+                    WHEN i.status IN ('void', 'refunded') THEN i.status
+                    WHEN COALESCE(i.total, 0) - GREATEST(
+                        COALESCE(i.amount_paid, 0) - ABS(v.amount),
+                        0
+                    ) <= 0 THEN 'paid'
+                    WHEN GREATEST(
+                        COALESCE(i.amount_paid, 0) - ABS(v.amount),
+                        0
+                    ) > 0 THEN 'partial'
+                    ELSE 'sent'
+                END,
+                paid_at = CASE
+                    WHEN COALESCE(i.total, 0) - GREATEST(
+                        COALESCE(i.amount_paid, 0) - ABS(v.amount),
+                        0
+                    ) <= 0 THEN COALESCE(i.paid_at, NOW())
+                    ELSE NULL
+                END,
+                updated_at = NOW()
+            FROM voided_payment v
+            WHERE i.id = $2
+              AND i.company_id = $1
+            RETURNING i.*
+        )
+        SELECT
+            EXISTS (SELECT 1 FROM voided_payment) AS did_void,
+            EXISTS (SELECT 1 FROM updated_invoice) AS invoice_updated
+        FROM candidate`,
+        [companyId, invoiceId, paymentId, voidedBy]
+    );
+    return rows[0] || null;
+}
+
+/**
+ * Get all transactions linked to an invoice, scoped to company. Voided rows
+ * remain visible but sort after active payments.
+ */
+async function getTransactionsForInvoice(companyId, invoiceId) {
+    const { rows } = await db.query(
+        `SELECT pt.*,
+                COALESCE(pt.processed_at, pt.created_at) AS transaction_date
+         FROM payment_transactions pt
+         WHERE pt.company_id = $1
+           AND pt.invoice_id = $2
+         ORDER BY (pt.voided_at IS NOT NULL) ASC,
+                  COALESCE(pt.processed_at, pt.created_at) DESC,
+                  pt.id DESC`,
+        [companyId, invoiceId]
     );
     return rows;
 }
@@ -370,7 +469,7 @@ async function getTransactionsForInvoice(invoiceId) {
 async function getTransactionSummary(companyId, filters = {}) {
     const { startDate, endDate } = filters;
 
-    const conditions = ['company_id = $1'];
+    const conditions = ['company_id = $1', 'voided_at IS NULL'];
     const params = [companyId];
     let idx = 1;
 
@@ -419,6 +518,8 @@ module.exports = {
     findByExternalSourceId,
     updateTransactionStatus,
     voidTransaction,
+    getTransactionForInvoice,
+    voidInvoicePayment,
     createRefundTransaction,
     getReceipt,
     createReceipt,

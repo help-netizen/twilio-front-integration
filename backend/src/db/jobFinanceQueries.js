@@ -35,6 +35,7 @@ async function listJobPaymentRollups(companyId, jobIds, client = null) {
               AND pt.invoice_id IS NULL
               AND pt.transaction_type = 'payment'
               AND pt.status = 'completed'
+              AND pt.voided_at IS NULL
             GROUP BY pt.company_id, pt.job_id
         ),
         jobs_with_money AS (

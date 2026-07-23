@@ -8,6 +8,7 @@
 const crypto = require('crypto');
 const invoicesQueries = require('../db/invoicesQueries');
 const estimatesQueries = require('../db/estimatesQueries');
+const paymentsService = require('./paymentsService');
 const { toE164 } = require('../utils/phoneUtils');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 
@@ -517,7 +518,17 @@ async function recordPayment(companyId, userId, id, { amount, payment_method, re
         throw new InvoicesServiceError('VALIDATION', 'amount must be greater than 0', 400);
     }
 
-    const updated = await invoicesQueries.recordPayment(id, companyId, amount);
+    const transaction = await paymentsService.recordManualPayment(companyId, userId, {
+        invoice_id: id,
+        contact_id: invoice.contact_id,
+        job_id: invoice.job_id,
+        amount,
+        currency: invoice.currency,
+        payment_method,
+        reference_number: reference,
+    });
+
+    const updated = await invoicesQueries.getInvoiceById(companyId, id);
     if (!updated) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
@@ -534,9 +545,18 @@ async function recordPayment(companyId, userId, id, { amount, payment_method, re
         amount,
         payment_method: payment_method || null,
         reference: reference || null,
+        payment_id: String(transaction.id),
+        source: 'manual',
     });
 
     return getInvoice(companyId, id);
+}
+
+/**
+ * Void a manual/offline payment while preserving its canonical ledger row.
+ */
+async function voidPayment(companyId, userId, invoiceId, paymentId) {
+    return paymentsService.voidInvoicePayment(companyId, userId, invoiceId, paymentId);
 }
 
 /**
@@ -618,7 +638,7 @@ async function generatePdf(companyId, id) {
 }
 
 /**
- * Get payments for an invoice (from invoice_events with payment_recorded type).
+ * Get canonical ledger payments for an invoice.
  */
 async function getPayments(companyId, id) {
     const invoice = await invoicesQueries.getInvoiceById(companyId, id);
@@ -626,15 +646,7 @@ async function getPayments(companyId, id) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
-    // Query payment events as payment records
-    const db = require('../db/connection');
-    const { rows } = await db.query(
-        `SELECT * FROM invoice_events
-         WHERE invoice_id = $1 AND event_type = 'payment_recorded'
-         ORDER BY created_at DESC`,
-        [id]
-    );
-    return rows;
+    return paymentsService.getTransactionsForInvoice(companyId, id);
 }
 
 // =============================================================================
@@ -654,6 +666,7 @@ module.exports = {
     sendInvoice,
     voidInvoice,
     recordPayment,
+    voidPayment,
     syncItemsFromEstimate,
     getRevisions,
     getEvents,

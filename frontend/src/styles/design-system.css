@@ -1148,3 +1148,12 @@ table tbody tr:hover {
         font-size: 16px !important;
     }
 }
+
+/* ─── MONEY-INPUT canon (2026-07-23, owner) ─────────────────────────────────
+   Native number-spinner arrows are banned app-wide: nobody uses them and
+   scroll/arrow keys silently change amounts. Money fields use the cents-first
+   MoneyInput mask (ui/MoneyInput.tsx); remaining numeric fields keep manual
+   entry only. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type='number'] { -moz-appearance: textfield; appearance: textfield; }

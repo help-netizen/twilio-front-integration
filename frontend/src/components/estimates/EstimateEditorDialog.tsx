@@ -14,6 +14,8 @@ import { Label } from '../ui/label';
 import { FloatingField } from '../ui/floating-field';
 import { Checkbox } from '../ui/checkbox';
 import { Badge } from '../ui/badge';
+import { MoneyInput } from '../ui/MoneyInput';
+import { AutoGrowTextarea } from '../ui/AutoGrowTextarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 import { DEFAULT_TERMS_AND_WARRANTY, EstimatePreviewDialog } from './EstimatePreviewDialog';
 import { useDocumentTemplate, findSection } from '../../hooks/useDocumentTemplate';
@@ -46,7 +48,10 @@ interface Props {
 }
 
 const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-const emptyItem = (): LineItem => ({ key: newKey(), name: '', description: '', quantity: '1', unit_price: '0', taxable: false });
+// OB-24: new items default to taxable — the invisible false default made "Tax $0.00"
+// look broken. Price-book picks keep their catalog default_taxable (labor is often
+// legitimately non-taxable); the row checkbox stays the override.
+const emptyItem = (): LineItem => ({ key: newKey(), name: '', description: '', quantity: '1', unit_price: '0', taxable: true });
 
 function money(value: number | string | null | undefined): string {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -282,7 +287,8 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                     </DialogPanelHeader>
 
                     <DialogBody className="md:px-8 md:py-7">
-                        <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_320px]">
+                        {/* OB-26: single column (form canon width); the side column is gone. */}
+                        <div className="mx-auto w-full max-w-[740px]">
                             <main className="space-y-6">
                                 {estimate && estimate.status !== 'draft' && !estimate.archived_at && (
                                     <div className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -333,7 +339,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                     onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, name: e.target.value } : i))}
                                                     className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3.5 text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                                 />
-                                                <textarea
+                                                <AutoGrowTextarea
                                                     placeholder="Description (optional)"
                                                     value={item.description}
                                                     onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, description: e.target.value } : i))}
@@ -344,23 +350,19 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                     <div className="flex flex-col gap-0.5">
                                                         <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>Qty</span>
                                                         <input
-                                                            type="number"
-                                                            min="0"
-                                                            step="0.01"
+                                                            type="text"
+                                                            inputMode="decimal"
                                                             value={item.quantity}
-                                                            onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value } : i))}
+                                                            onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value.replace(/[^0-9.]/g, '') } : i))}
                                                             className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                                         />
                                                     </div>
                                                     <div className="flex flex-col gap-0.5">
                                                         <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>Unit price</span>
-                                                        <input
-                                                            type="number"
-                                                            min="0"
-                                                            step="0.01"
+                                                        <MoneyInput
                                                             value={item.unit_price}
-                                                            onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: e.target.value } : i))}
-                                                            className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                            onValueChange={next => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: next } : i))}
+                                                            className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                                         />
                                                     </div>
                                                     <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
@@ -393,7 +395,9 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                     </div>
                                     {discountType ? (
                                         <div className="space-y-1">
-                                            <div className="flex items-center gap-2 text-sm">
+                                            {/* OB-24: wrap on narrow widths so the amount can drop to its own
+                                                right-aligned line instead of overflowing the panel edge. */}
+                                            <div className="flex flex-wrap items-center gap-2 text-sm">
                                                 <span style={{ color: 'var(--blanc-ink-3)' }}>Discount</span>
                                                 <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 shrink-0" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
                                                     <button
@@ -419,15 +423,22 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                         %
                                                     </button>
                                                 </div>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    value={discountValue}
-                                                    onChange={event => setDiscountValue(event.target.value)}
-                                                    maxLength={6}
-                                                    className="w-24 h-8 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
-                                                />
+                                                {discountType === 'fixed' ? (
+                                                    <MoneyInput
+                                                        value={discountValue}
+                                                        onValueChange={setDiscountValue}
+                                                        className="w-24 h-8 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                    />
+                                                ) : (
+                                                    <input
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        value={discountValue}
+                                                        onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))}
+                                                        maxLength={6}
+                                                        className="w-24 h-8 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                    />
+                                                )}
                                                 <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }}>
                                                     <Trash2 className="size-4" />
                                                 </Button>
@@ -442,18 +453,20 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                     )}
                                     <div className="grid grid-cols-[1fr_auto] items-center gap-3">
                                         <Label className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Tax rate</Label>
-                                        <input
-                                            className="w-24 h-9 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
-                                            type="number"
-                                            min="0"
-                                            step="0.05"
-                                            value={taxRate}
-                                            onChange={event => setTaxRate(event.target.value)}
-                                            onBlur={() => {
-                                                const n = Number(taxRate);
-                                                if (Number.isFinite(n)) setTaxRate(n.toFixed(2));
-                                            }}
-                                        />
+                                        <div className="relative w-24">
+                                            <input
+                                                className="h-9 w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent pl-3 pr-7 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                type="text"
+                                                inputMode="decimal"
+                                                value={taxRate}
+                                                onChange={event => setTaxRate(event.target.value.replace(/[^0-9.]/g, ''))}
+                                                onBlur={() => {
+                                                    const n = Number(taxRate);
+                                                    if (Number.isFinite(n)) setTaxRate(n.toFixed(2));
+                                                }}
+                                            />
+                                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>%</span>
+                                        </div>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span style={{ color: 'var(--blanc-ink-3)' }}>Tax</span>
@@ -464,6 +477,18 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                         <span className="font-mono">{money(total)}</span>
                                     </div>
                                 </section>
+
+                                {/* OB-26: document settings — flat rows in the flow, no card. */}
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span style={{ color: 'var(--blanc-ink-3)' }}>Require signature</span>
+                                        <Checkbox checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
+                                    </div>
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span style={{ color: 'var(--blanc-ink-3)' }}>Deposit required</span>
+                                        <span className="font-medium" style={{ color: 'var(--blanc-ink-1)' }}>No</span>
+                                    </div>
+                                </div>
 
                                 <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
                                     <div className="rounded-xl border border-[var(--blanc-line)]" style={{ background: 'rgba(25,25,25,0.03)' }}>
@@ -477,20 +502,6 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                     </div>
                                 </Collapsible>
                             </main>
-
-                            <aside className="space-y-5">
-                                <section className="grid gap-3 rounded-xl border border-[var(--blanc-line)] p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                                    <p className="blanc-eyebrow">Document settings</p>
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Require signature</span>
-                                        <Checkbox checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
-                                    </div>
-                                    <div className="flex items-center justify-between text-sm">
-                                        <span style={{ color: 'var(--blanc-ink-3)' }}>Deposit required</span>
-                                        <span className="font-medium" style={{ color: 'var(--blanc-ink-1)' }}>No</span>
-                                    </div>
-                                </section>
-                            </aside>
                         </div>
                     </DialogBody>
 

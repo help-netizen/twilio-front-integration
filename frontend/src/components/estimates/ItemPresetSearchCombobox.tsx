@@ -111,11 +111,18 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
 
     useEffect(() => {
         if (!open) return;
+        // OB-23: CAPTURE phase — the check must run BEFORE React's synchronous
+        // re-render. A category click replaces the list rows, so by the time the
+        // event bubbled to document the clicked button was already detached and
+        // contains() said "outside" → the dropdown closed on an inside click.
+        // isConnected guards any remaining detach race.
         const handler = (event: MouseEvent) => {
-            if (boxRef.current && !boxRef.current.contains(event.target as Node)) setOpen(false);
+            const target = event.target as Node;
+            if (!target.isConnected) return;
+            if (boxRef.current && !boxRef.current.contains(target)) setOpen(false);
         };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
+        document.addEventListener('mousedown', handler, true);
+        return () => document.removeEventListener('mousedown', handler, true);
     }, [open]);
 
     const flatTree = useMemo(() => flattenCategoryTree(tree), [tree]);
@@ -172,6 +179,10 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                     placeholder="Search or browse the price book…"
                     title="Search all saved items, or browse categories and subcategories"
                     onFocus={() => setOpen(true)}
+                    /* OB-23: rows preventDefault the mousedown, so the input never
+                       blurs — clicking the still-focused input fires no focus event.
+                       Reopen on plain click too. */
+                    onClick={() => { if (!open) setOpen(true); }}
                     onChange={event => { setQuery(event.target.value); if (!open) setOpen(true); }}
                     onKeyDown={(event) => {
                         if (event.key === 'ArrowDown' && totalRows > 0) {

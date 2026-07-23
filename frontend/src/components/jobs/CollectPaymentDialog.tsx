@@ -7,6 +7,7 @@ import {
     DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle,
 } from '../ui/dialog';
 import { FloatingField } from '../ui/floating-field';
+import { maskMoneyDigits } from '../ui/MoneyInput';
 import { jobStripeApi, type ManualCardSessionResult } from '../../services/stripePaymentsApi';
 import ManualCardDialog from '../invoices/ManualCardDialog';
 
@@ -172,10 +173,13 @@ export function CollectPaymentDialog({
                             <div className="space-y-3.5">
                                 <FloatingField
                                     label="Amount (USD)"
-                                    type="number"
-                                    inputMode="decimal"
+                                    type="text"
+                                    inputMode="numeric"
                                     value={amount}
-                                    onChange={e => setAmount(e.target.value)}
+                                    onChange={e => {
+                                        const masked = maskMoneyDigits(e.target.value);
+                                        if (masked !== null) setAmount(masked);
+                                    }}
                                     onBlur={roundOnBlur}
                                     className="tabular-nums"
                                 />

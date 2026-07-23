@@ -12,9 +12,10 @@ import {
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
 import { FloatingField } from '../ui/floating-field';
 import { Checkbox } from '../ui/checkbox';
+import { MoneyInput } from '../ui/MoneyInput';
+import { AutoGrowTextarea } from '../ui/AutoGrowTextarea';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
@@ -40,7 +41,9 @@ interface LineItem {
 }
 
 const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-const emptyItem = (): LineItem => ({ key: newKey(), name: '', description: '', quantity: '1', unit_price: '0', taxable: false });
+// OB-24: new items default to taxable (invisible false default read as "tax broken").
+// Price-book picks keep their catalog default; the row checkbox is the override.
+const emptyItem = (): LineItem => ({ key: newKey(), name: '', description: '', quantity: '1', unit_price: '0', taxable: true });
 
 function money(value: number | string | null | undefined): string {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -317,29 +320,25 @@ export function InvoiceEditorDialog({
                                                 onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, name: e.target.value } : i))}
                                                 className={`${CELL_INPUT} h-[42px] font-medium text-[15px]`}
                                             />
-                                            <Textarea
+                                            <AutoGrowTextarea
                                                 placeholder="Description (optional)"
                                                 value={item.description}
                                                 onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, description: e.target.value } : i))}
                                                 rows={2}
-                                                className="rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent text-sm font-normal text-[var(--blanc-ink-1)] focus-visible:border-[var(--blanc-ink-2)]"
+                                                className="w-full resize-none rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3.5 py-2.5 text-sm font-normal leading-relaxed text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                             />
                                             <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3">
                                                 <Input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
+                                                    type="text"
+                                                    inputMode="decimal"
                                                     value={item.quantity}
-                                                    onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value } : i))}
+                                                    onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value.replace(/[^0-9.]/g, '') } : i))}
                                                     className={CELL_INPUT}
                                                 />
-                                                <Input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
+                                                <MoneyInput
                                                     value={item.unit_price}
-                                                    onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: e.target.value } : i))}
-                                                    className={CELL_INPUT}
+                                                    onValueChange={next => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: next } : i))}
+                                                    className={`${CELL_INPUT} w-full px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
                                                 />
                                                 <label className="flex items-center gap-2 text-xs text-[var(--blanc-ink-2)] cursor-pointer">
                                                     <Checkbox
@@ -371,16 +370,15 @@ export function InvoiceEditorDialog({
                                     <span className="font-mono text-[var(--blanc-ink-1)]">{money(subtotal)}</span>
                                 </div>
                                 {discountActive ? (
-                                    <div className="flex items-center gap-2 text-sm">
+                                    /* OB-24: wrap on narrow widths — the amount drops to its own
+                                       right-aligned line instead of overflowing the panel edge. */
+                                    <div className="flex flex-wrap items-center gap-2 text-sm">
                                         <span className="text-[var(--blanc-ink-2)]">Discount</span>
                                         <span className="text-[var(--blanc-ink-3)]">$</span>
-                                        <Input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
+                                        <MoneyInput
                                             value={discountAmount}
-                                            onChange={e => setDiscountAmount(e.target.value)}
-                                            className={`${CELL_INPUT} w-24 text-right tabular-nums`}
+                                            onValueChange={setDiscountAmount}
+                                            className={`${CELL_INPUT} w-24 px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
                                         />
                                         <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountActive(false); setDiscountAmount('0'); }} title="Remove discount">
                                             <Trash2 className="size-4" />
@@ -395,15 +393,17 @@ export function InvoiceEditorDialog({
                                 {discountError && <p className="text-xs text-red-600">{discountError}</p>}
                                 <div className="grid grid-cols-[1fr_auto] items-center gap-3 text-sm">
                                     <Label className="text-[var(--blanc-ink-2)]">Tax rate</Label>
-                                    <Input
-                                        type="number"
-                                        min="0"
-                                        step="0.05"
-                                        value={taxRate}
-                                        onChange={e => setTaxRate(e.target.value)}
-                                        onBlur={() => { const n = Number(taxRate); if (Number.isFinite(n)) setTaxRate(n.toFixed(2)); }}
-                                        className={`${CELL_INPUT} w-24 text-right tabular-nums`}
-                                    />
+                                    <div className="relative w-24">
+                                        <Input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={taxRate}
+                                            onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
+                                            onBlur={() => { const n = Number(taxRate); if (Number.isFinite(n)) setTaxRate(n.toFixed(2)); }}
+                                            className={`${CELL_INPUT} w-full pr-7 text-right tabular-nums`}
+                                        />
+                                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                                    </div>
                                 </div>
                                 <div className="flex justify-between text-sm">
                                     <span className="text-[var(--blanc-ink-2)]">Tax</span>

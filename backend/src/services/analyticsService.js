@@ -374,7 +374,8 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
         )
         FROM payment_transactions pt
         WHERE pt.job_id = j.id
-          AND pt.company_id = j.company_id ${scope}
+          AND pt.company_id = j.company_id
+          AND pt.voided_at IS NULL ${scope}
       ), 0)`;
     const paidExpr = `
       CASE

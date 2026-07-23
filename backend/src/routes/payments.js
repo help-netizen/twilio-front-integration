@@ -199,7 +199,7 @@ router.post('/:id/stripe-refund', requirePermission('payments.refund'), async (r
 router.post('/:id/void', requirePermission('payments.refund'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.crmUser?.id || null;
         const { id } = req.params;
 
         const result = await paymentsService.voidTransaction(companyId, userId, id);

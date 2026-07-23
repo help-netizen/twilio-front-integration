@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
+import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { MoneyInput } from '../ui/MoneyInput';
 import { Label } from '../ui/label';
 import { Checkbox } from '../ui/checkbox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
@@ -75,7 +76,23 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     const canSend = hasPermission('estimates.send');
     // Local copy so we can apply optimistic updates while saving.
     const [estimate, setEstimate] = useState<Estimate>(initialEstimate);
-    useEffect(() => { setEstimate(initialEstimate); }, [initialEstimate]);
+    const [hydrating, setHydrating] = useState(!initialEstimate.items);
+    // OB-27 — port of INVOICE-ITEMS-HYDRATE-001: callers frequently pass a LIST
+    // row without line items. Without this fetch a healthy estimate rendered
+    // "This estimate has no items" and requireItems() blocked Send/Approve even
+    // though the items were persisted all along. Hydrate the full record on open.
+    useEffect(() => {
+        setEstimate(initialEstimate);
+        if (initialEstimate.items) { setHydrating(false); return; }
+        let cancelled = false;
+        setHydrating(true);
+        import('../../services/estimatesApi')
+            .then(({ fetchEstimate }) => fetchEstimate(initialEstimate.id))
+            .then(fresh => { if (!cancelled) setEstimate(fresh); })
+            .catch(() => { /* keep the row we have — item mutations still refetch */ })
+            .finally(() => { if (!cancelled) setHydrating(false); });
+        return () => { cancelled = true; };
+    }, [initialEstimate]);
 
     const [converting, setConverting] = useState(false);
     const [summaryOpen, setSummaryOpen] = useState(false);
@@ -326,28 +343,40 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 <main className="min-h-0 space-y-6 overflow-y-auto p-5">
                     {/* Tasks — TASKS-001 */}
                     <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
-                    {/* Summary */}
-                    <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
-                        <div className="flex items-center justify-between px-4 py-3">
-                            <button
-                                type="button"
-                                onClick={() => setSummaryOpen(o => !o)}
-                                className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
-                            >
-                                <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
-                                Summary
-                                {!estimate.summary && <span className="text-xs font-normal text-[var(--blanc-ink-2)]">— add notes</span>}
-                            </button>
+                    {/* Summary — OB-28: same presentation as the create/edit form (owner):
+                        dashed invite block when empty, collapsible card when filled. */}
+                    {estimate.summary ? (
+                        <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
+                            <div className="flex items-center justify-between px-4 py-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setSummaryOpen(o => !o)}
+                                    className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
+                                >
+                                    <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+                                    Summary
+                                </button>
+                                {!readOnly && (
+                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={() => setSummaryDialogOpen(true)} title="Edit summary">
+                                        <Pencil className="size-4" />
+                                    </Button>
+                                )}
+                            </div>
+                            {summaryOpen && (
+                                <div className="border-t border-[var(--blanc-line)] px-4 py-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</div>
+                            )}
+                        </section>
+                    ) : (
+                        <div className="rounded-md border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
+                            <p className="text-sm font-medium">Summary</p>
+                            <p className="mt-1 text-sm text-[var(--blanc-ink-3)]">Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
                             {!readOnly && (
-                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={() => setSummaryDialogOpen(true)} title="Edit summary">
-                                    <Pencil className="size-4" />
+                                <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setSummaryDialogOpen(true)}>
+                                    <Plus className="mr-1 size-4" /> Add summary
                                 </Button>
                             )}
                         </div>
-                        {summaryOpen && estimate.summary && (
-                            <div className="border-t border-[var(--blanc-line)] px-4 py-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</div>
-                        )}
-                    </section>
+                    )}
 
                     {/* Items */}
                     <section>
@@ -387,6 +416,10 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                     </div>
                                 ))}
                             </div>
+                        ) : hydrating ? (
+                            <div className="flex items-center gap-2 rounded-md border border-[var(--blanc-line)] px-4 py-3 text-sm text-[var(--blanc-ink-2)]">
+                                <Loader2 className="size-4 animate-spin" /> Loading items…
+                            </div>
                         ) : (
                             <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                                 This estimate has no items. Add at least one priced item before sending or approving.
@@ -412,7 +445,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <span className="font-mono">{money(estimate.subtotal)}</span>
                             </div>
                             {discountType ? (
-                                <div className="flex items-center gap-2 text-sm">
+                                /* OB-24: wrap so the amount drops to its own line on narrow widths. */
+                                <div className="flex flex-wrap items-center gap-2 text-sm">
                                     <span className="text-[var(--blanc-ink-2)]">Discount</span>
                                     <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 bg-[var(--blanc-panel-surface,#fffdf9)] shrink-0">
                                         <button
@@ -428,16 +462,25 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                             className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
                                         >%</button>
                                     </div>
-                                    <Input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        value={discountValue}
-                                        onChange={e => setDiscountValue(e.target.value)}
-                                        onBlur={() => persist({ discount_value: discountValue || '0' } as any)}
-                                        disabled={readOnly}
-                                        className="w-24 h-8 text-right tabular-nums"
-                                    />
+                                    {discountType === 'fixed' ? (
+                                        <MoneyInput
+                                            value={discountValue}
+                                            onValueChange={setDiscountValue}
+                                            onBlur={() => persist({ discount_value: discountValue || '0' } as any)}
+                                            disabled={readOnly}
+                                            className="h-8 w-24 rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 text-right text-sm tabular-nums outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
+                                        />
+                                    ) : (
+                                        <Input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={discountValue}
+                                            onChange={e => setDiscountValue(e.target.value.replace(/[^0-9.]/g, ''))}
+                                            onBlur={() => persist({ discount_value: discountValue || '0' } as any)}
+                                            disabled={readOnly}
+                                            className="w-24 h-8 text-right tabular-nums"
+                                        />
+                                    )}
                                     <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" disabled={readOnly} onClick={() => { setDiscountType(null); setDiscountValue('0'); persist({ discount_type: null, discount_value: '0' } as any); }} title="Remove discount">
                                         <Trash2 className="size-4" />
                                     </Button>
@@ -450,21 +493,23 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             )}
                             <div className="grid grid-cols-[1fr_auto] items-center gap-3">
                                 <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
-                                <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.05"
-                                    value={taxRate}
-                                    onChange={e => setTaxRate(e.target.value)}
-                                    onBlur={() => {
-                                        const n = Number(taxRate);
-                                        const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
-                                        setTaxRate(formatted);
-                                        persist({ tax_rate: formatted } as any);
-                                    }}
-                                    disabled={readOnly}
-                                    className="w-24 h-8 text-right tabular-nums"
-                                />
+                                <div className="relative w-24">
+                                    <Input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={taxRate}
+                                        onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
+                                        onBlur={() => {
+                                            const n = Number(taxRate);
+                                            const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
+                                            setTaxRate(formatted);
+                                            persist({ tax_rate: formatted } as any);
+                                        }}
+                                        disabled={readOnly}
+                                        className="h-8 w-full pr-7 text-right tabular-nums"
+                                    />
+                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                                </div>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-[var(--blanc-ink-2)]">Tax</span>
@@ -541,7 +586,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="grid grid-cols-2 gap-2 md:flex">
                         <Button variant="outline" size="sm" onClick={() => {
-                            openAuthedPdf(`/api/estimates/${estimate.id}/pdf`)
+                            openAuthedPdf(`/api/estimates/${estimate.id}/pdf`, `${estimate.estimate_number || `Estimate-${estimate.id}`}.pdf`)
                                 .catch(() => toast.error('Could not open the PDF'));
                         }}>
                             <Eye className="mr-1 size-3.5" />Preview PDF
