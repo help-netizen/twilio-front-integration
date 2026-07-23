@@ -14,15 +14,20 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 /** ALB-101: authenticated users without a company go to onboarding. */
 function OnboardingGate() {
-  const { authenticated, company, loading } = useAuth();
+  const { authenticated, company, loading, platformRole, authzReady } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
     const publicPath = location.pathname.startsWith('/signup') || location.pathname.startsWith('/onboarding');
-    if (!loading && authenticated && !company && !publicPath) {
+    // ONBOARD-LOOP-FIX: only a genuine tenant user with a LOADED, empty context is
+    // sent to onboarding. Never loop (a) a platform admin — company is null by
+    // design for super_admin — or (b) before authz has actually resolved: a load
+    // race would otherwise bounce a fully-onboarded user back to phone verification
+    // forever ("You don't have access here" ⇄ SMS prompt flicker).
+    if (!loading && authenticated && authzReady && platformRole === 'none' && !company && !publicPath) {
       navigate('/onboarding', { replace: true });
     }
-  }, [authenticated, company, loading, location.pathname, navigate]);
+  }, [authenticated, company, loading, authzReady, platformRole, location.pathname, navigate]);
   return null;
 }
 import { AppLayout } from './components/layout/AppLayout';

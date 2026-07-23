@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import Keycloak from 'keycloak-js';
 import { classifyRefreshFailure, REFRESH_RETRY_BACKOFF_MS } from './refreshPolicy';
 import { loginRedirectAllowed, clearLoginRedirects } from './loginLoopBreaker';
@@ -25,6 +25,10 @@ interface AuthContextType {
     membership?: { id: string; role_key: string; role_name: string; is_primary: boolean; status: string } | null;
     permissions?: string[];
     scopes?: Record<string, any>;
+    /** True once /api/auth/me has resolved successfully at least once. Lets gates
+     *  distinguish "this user genuinely has no company" from "authz not loaded yet",
+     *  so a load race/failure can't loop them into onboarding (ONBOARD-LOOP-FIX). */
+    authzReady: boolean;
 
     hasRole: (...roles: string[]) => boolean;
     logout: () => void;
@@ -44,6 +48,7 @@ const AuthContext = createContext<AuthContextType>({
     accessDeniedMessage: null,
     clearAccessDenied: () => { },
     refreshAuthz: async () => { },
+    authzReady: false,
 });
 
 // ─── Feature flag ─────────────────────────────────────────────────────────────
@@ -233,6 +238,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [membership, setMembership] = useState<any>(FEATURE_AUTH ? null : DEV_MEMBERSHIP);
     const [permissions, setPermissions] = useState<string[]>(FEATURE_AUTH ? [] : DEV_PERMISSIONS);
     const [scopes, setScopes] = useState<Record<string, any>>(FEATURE_AUTH ? {} : DEV_SCOPES);
+    // ONBOARD-LOOP-FIX: gates must not act on the initial empty context. Dev mode is
+    // ready immediately; with auth, it flips true after the first successful /me.
+    const [authzReady, setAuthzReady] = useState<boolean>(!FEATURE_AUTH);
+    // ONBOARD-LOOP-FIX (root B): monotonic generation so a slow STALE /api/auth/me
+    // (the pre-onboarding load, company=null) can never overwrite a newer
+    // refreshAuthz() result (post-onboarding, company set) that resolved first.
+    const authzGenRef = useRef(0);
 
     // Listen for 401/403 events dispatched by API interceptors
     useEffect(() => {
@@ -259,12 +271,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
     }, []);
 
-    // Fetch authz context from backend
-    const fetchAuthzContext = async (jwtToken: string) => {
+    // Fetch authz context from backend. Returns true on a successful load so the
+    // caller can retry a transient failure instead of releasing gates on an empty
+    // context (ONBOARD-LOOP-FIX).
+    const fetchAuthzContext = async (jwtToken: string): Promise<boolean> => {
+        const gen = ++authzGenRef.current;
         try {
             const res = await fetch('/api/auth/me', {
                 headers: { 'Authorization': `Bearer ${jwtToken}` }
             });
+            // ONBOARD-LOOP-FIX (root B): a newer call superseded us while this
+            // request was in flight — drop this stale result so it can't clobber
+            // a fresher (post-onboarding) company/membership.
+            if (gen !== authzGenRef.current) return false;
             if (res.ok) {
                 const data = await res.json();
                 setPlatformRole(data.user?.platform_role || 'none');
@@ -280,11 +299,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setMembership(data.membership);
                 setPermissions(data.permissions || []);
                 setScopes(data.scopes || {});
+                setAuthzReady(true);
+                return true;
             } else {
                 console.warn('[Auth] Failed to load auth context', res.status);
+                return false;
             }
         } catch (err) {
             console.error('[Auth] Error fetching auth context', err);
+            return false;
         }
     };
 
@@ -308,6 +331,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setMembership(DEV_MEMBERSHIP);
             setPermissions(DEV_PERMISSIONS);
             setScopes(DEV_SCOPES);
+            setAuthzReady(true);
             return;
         }
 
@@ -335,9 +359,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     setToken(kc.token || null);
                     setAuthenticated(true);
                     
-                    // PF007: Load full authorization context
+                    // PF007: Load full authorization context. ONBOARD-LOOP-FIX: a
+                    // transient first-load failure must NOT leave company=null and
+                    // trip the onboarding gate — retry once before releasing gates.
                     if (kc.token) {
-                        await fetchAuthzContext(kc.token);
+                        const ok = await fetchAuthzContext(kc.token);
+                        if (!ok) {
+                            await sleep(800);
+                            await fetchAuthzContext(kc.token);
+                        }
                     }
 
                     // PWA-FIX-001 (PWA-05): both silent-refresh seams flow through ONE
@@ -482,8 +512,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return (
         <AuthContext.Provider value={{
-            authenticated, user, token, loading, 
-            platformRole, company, membership, permissions, scopes,
+            authenticated, user, token, loading,
+            platformRole, company, membership, permissions, scopes, authzReady,
             hasRole, logout, accessDeniedMessage, clearAccessDenied, refreshAuthz
         }}>
             {children}
