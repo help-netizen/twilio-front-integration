@@ -17,8 +17,7 @@ import { Badge } from '../ui/badge';
 import { MoneyInput } from '../ui/MoneyInput';
 import { AutoGrowTextarea } from '../ui/AutoGrowTextarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
-import { DEFAULT_TERMS_AND_WARRANTY, EstimatePreviewDialog } from './EstimatePreviewDialog';
-import { useDocumentTemplate, findSection } from '../../hooks/useDocumentTemplate';
+import { EstimatePreviewDialog } from './EstimatePreviewDialog';
 import { ItemPresetSearchCombobox } from './ItemPresetSearchCombobox';
 import {
     createEstimateItemPreset,
@@ -63,8 +62,6 @@ function amount(item: LineItem): number {
 
 export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobId, defaultLeadId, defaultEstimateNumber, defaultContext, onSave }: Props) {
     const isEdit = !!estimate;
-    const templateDescriptor = useDocumentTemplate('estimate', open);
-    const termsBody = findSection(templateDescriptor, 'terms')?.body_md ?? DEFAULT_TERMS_AND_WARRANTY;
     const [summary, setSummary] = useState('');
     const [summaryOpen, setSummaryOpen] = useState(false);
     const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
@@ -77,7 +74,6 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
     const [discountType, setDiscountType] = useState<EstimateDiscountType>(null);
     const [discountValue, setDiscountValue] = useState('0');
     const [signatureRequired, setSignatureRequired] = useState(false);
-    const [termsOpen, setTermsOpen] = useState(false);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [saving, setSaving] = useState(false);
 
@@ -89,7 +85,6 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
         setDiscountType(estimate?.discount_type || (Number(estimate?.discount_amount || 0) > 0 ? 'fixed' : null));
         setDiscountValue(estimate?.discount_value || estimate?.discount_amount || '0');
         setSignatureRequired(estimate?.signature_required || false);
-        setTermsOpen(false);
         setItems((estimate?.items || []).map(item => ({
             key: newKey(),
             name: item.name,
@@ -494,18 +489,6 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                         <span className="font-medium" style={{ color: 'var(--blanc-ink-1)' }}>No</span>
                                     </div>
                                 </div>
-
-                                <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
-                                    <div className="rounded-xl border border-[var(--blanc-line)]" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                                        <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
-                                            <ChevronDown className={`size-4 transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
-                                            Terms & Warranty
-                                        </CollapsibleTrigger>
-                                        <CollapsibleContent>
-                                            <div className="px-4 py-4 text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-2)' }}>{termsBody}</div>
-                                        </CollapsibleContent>
-                                    </div>
-                                </Collapsible>
                             </main>
                         </div>
                     </DialogBody>

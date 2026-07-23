@@ -19,8 +19,6 @@ import { AutoGrowTextarea } from '../ui/AutoGrowTextarea';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
-import { DEFAULT_TERMS_AND_WARRANTY } from '../estimates/EstimatePreviewDialog';
-import { useDocumentTemplate, findSection } from '../../hooks/useDocumentTemplate';
 import { ItemPresetSearchCombobox } from '../estimates/ItemPresetSearchCombobox';
 import {
     createEstimateItemPreset,
@@ -85,8 +83,6 @@ export function InvoiceEditorDialog({
     onSave,
 }: Props) {
     const isEdit = !!invoice;
-    const templateDescriptor = useDocumentTemplate('invoice', open);
-    const termsBody = findSection(templateDescriptor, 'terms')?.body_md ?? DEFAULT_TERMS_AND_WARRANTY;
 
     // Summary (stored as `notes` on the invoice — same as the detail panel)
     const [summary, setSummary] = useState('');
@@ -103,7 +99,6 @@ export function InvoiceEditorDialog({
     // `default_due_days` on the backend, so it is not editable here at create time.
     const [paymentTerms, setPaymentTerms] = useState<string>('');
 
-    const [termsOpen, setTermsOpen] = useState(false);
     const [saving, setSaving] = useState(false);
 
     // Item dialog (for "Create new" path from combobox)
@@ -122,7 +117,6 @@ export function InvoiceEditorDialog({
         setDiscountActive(initialDiscount > 0);
         setDiscountAmount(initialDiscount > 0 ? String(initialDiscount) : '0');
         setPaymentTerms(invoice?.payment_terms || '');
-        setTermsOpen(false);
         setItems((invoice?.items || []).map(item => ({
             key: newKey(),
             name: item.name,
@@ -431,19 +425,6 @@ export function InvoiceEditorDialog({
                                     Due date is set automatically from the invoice template default. You can adjust it on the invoice after creation.
                                 </p>
                             </section>
-
-                            {/* Terms & Warranty */}
-                            <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
-                                <div className="rounded-2xl border border-[var(--blanc-line)]">
-                                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-[var(--blanc-ink-1)]">
-                                        <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
-                                        Terms & Warranty
-                                    </CollapsibleTrigger>
-                                    <CollapsibleContent>
-                                        <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{termsBody}</div>
-                                    </CollapsibleContent>
-                                </div>
-                            </Collapsible>
                         </div>
                     </DialogBody>
 
