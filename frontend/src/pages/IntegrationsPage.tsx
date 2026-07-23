@@ -18,6 +18,7 @@ import { RateMeSettingsDialog } from './RateMeSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { MarketplaceBrowser } from '../components/settings/MarketplaceBrowser';
 import { InspectorSettingsPanel } from '../components/settings/InspectorSettingsPanel';
+import { ChatgptMcpConnectPanel } from '../components/settings/ChatgptMcpConnectPanel';
 import { INTEGRATION_TAB_COPY, integrationTabFromSearchParams } from './integrationSettingsTabs';
 
 function formatDate(dateStr: string | null | undefined) {
@@ -176,6 +177,15 @@ export function IntegrationsPage() {
         setSearchParams(next, { replace: true });
     };
 
+    const chatgptMcpPanelOpen = searchParams.get('app') === 'chatgpt-crm-mcp';
+
+    const setChatgptMcpPanelOpen = (open: boolean) => {
+        const next = new URLSearchParams(searchParams);
+        if (open) next.set('app', 'chatgpt-crm-mcp');
+        else next.delete('app');
+        setSearchParams(next, { replace: true });
+    };
+
     const { data: apps = [], isLoading: marketplaceLoading } = useQuery({ queryKey: ['marketplace-apps'], queryFn: fetchMarketplaceApps });
     const { data: mailbox } = useQuery({ queryKey: ['email-mailbox-settings'], queryFn: getMailboxSettings });
     const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: fetchIntegrations });
@@ -185,7 +195,14 @@ export function IntegrationsPage() {
     const invalidateMarketplace = () => queryClient.invalidateQueries({ queryKey: ['marketplace-apps'] });
     const installMutation = useMutation({
         mutationFn: installMarketplaceApp,
-        onSuccess: () => { invalidateMarketplace(); setConnectTarget(null); toast.success('App connected'); },
+        onSuccess: (_data, appKey) => {
+            invalidateMarketplace();
+            setConnectTarget(null);
+            toast.success('App connected');
+            // The ChatGPT connector still needs the user to finish setup inside
+            // ChatGPT itself — open the walkthrough panel right away.
+            if (appKey === 'chatgpt-crm-mcp') setChatgptMcpPanelOpen(true);
+        },
         onError: (err: Error) => toast.error(err.message || 'Failed to connect app'),
     });
     const disconnectMutation = useMutation({
@@ -340,6 +357,11 @@ export function IntegrationsPage() {
                                                             Settings
                                                         </Button>
                                                     )}
+                                                    {app.app_key === 'chatgpt-crm-mcp' && app.installation?.status === 'connected' && (
+                                                        <Button variant="outline" size="sm" onClick={() => setChatgptMcpPanelOpen(true)}>
+                                                            Setup
+                                                        </Button>
+                                                    )}
                                                     {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? (
                                                         <Button variant="outline" size="sm" onClick={() => setDisconnectTarget(app)}>
                                                             Disconnect
@@ -439,6 +461,16 @@ export function IntegrationsPage() {
             <RelyLeadsSettingsDialog open={relySettingsOpen} onOpenChange={setRelySettingsOpen} />
             <RateMeSettingsDialog open={rateMeSettingsOpen} onOpenChange={setRateMeSettingsOpen} />
             <InspectorSettingsPanel open={inspectorSettingsOpen} onOpenChange={setInspectorSettingsOpen} />
+            <ChatgptMcpConnectPanel
+                open={chatgptMcpPanelOpen}
+                onOpenChange={setChatgptMcpPanelOpen}
+                app={apps.find(candidate => candidate.app_key === 'chatgpt-crm-mcp') ?? null}
+                onDisconnect={() => {
+                    setChatgptMcpPanelOpen(false);
+                    const target = apps.find(candidate => candidate.app_key === 'chatgpt-crm-mcp');
+                    if (target?.installation) setDisconnectTarget(target);
+                }}
+            />
             <CreateDialog open={createOpen} onOpenChange={setCreateOpen} clientName={clientName} setClientName={setClientName} onSubmit={handleCreate} isPending={createMutation.isPending} />
             <SecretDialog open={secretModalOpen} onOpenChange={setSecretModalOpen} integration={newIntegration} />
             <RevokeDialog target={revokeTarget} onClose={() => setRevokeTarget(null)} onRevoke={() => revokeTarget && revokeMutation.mutate(revokeTarget.key_id)} isPending={revokeMutation.isPending} />
