@@ -7,12 +7,36 @@
  */
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import '../styles/tailwind.css';
 import '../styles/design-system.css';
 import { Button } from '../components/ui/button';
 import { ChatgptMcpConnectPanel } from '../components/settings/ChatgptMcpConnectPanel';
 import type { MarketplaceApp } from '../services/marketplaceApi';
+
+/* ── Fetch stub: in-memory write-consent state, no backend ── */
+let writesEnabled = false;
+const realFetch = window.fetch.bind(window);
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    if (url.includes('/api/marketplace/apps/chatgpt-crm-mcp/settings')) {
+        return new Response(
+            JSON.stringify({ success: true, settings: { writes_enabled: writesEnabled, grant_version: writesEnabled ? 3 : 2 } }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+    if (url.includes('/api/marketplace/apps/chatgpt-crm-mcp/writes/')) {
+        writesEnabled = url.endsWith('/enable');
+        return new Response(
+            JSON.stringify({ success: true, enabled: writesEnabled, grant_version: writesEnabled ? 3 : 2 }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+    return realFetch(input, init);
+};
+
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 function fixtureApp(connected: boolean): MarketplaceApp {
     return {
@@ -74,4 +98,8 @@ function Harness() {
     );
 }
 
-createRoot(document.getElementById('root')!).render(<Harness />);
+createRoot(document.getElementById('root')!).render(
+    <QueryClientProvider client={queryClient}>
+        <Harness />
+    </QueryClientProvider>
+);

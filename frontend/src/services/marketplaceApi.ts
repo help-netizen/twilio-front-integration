@@ -264,3 +264,23 @@ export async function removeRateMeDomain(): Promise<void> {
         method: 'DELETE',
     });
 }
+
+export interface ChatgptMcpWriteSettings {
+    writes_enabled: boolean;
+    grant_version: number;
+}
+
+export interface ChatgptMcpWriteSettingsResponse {
+    settings: ChatgptMcpWriteSettings;
+}
+
+export async function fetchChatgptMcpWriteSettings(): Promise<ChatgptMcpWriteSettingsResponse> {
+    return request<ChatgptMcpWriteSettingsResponse>(`${API_BASE}/apps/chatgpt-crm-mcp/settings`);
+}
+
+export async function setChatgptMcpWrites(enabled: boolean): Promise<ChatgptMcpWriteSettings> {
+    return request<ChatgptMcpWriteSettings>(
+        `${API_BASE}/apps/chatgpt-crm-mcp/writes/${enabled ? 'enable' : 'disable'}`,
+        { method: 'POST', body: JSON.stringify({}) }
+    );
+}

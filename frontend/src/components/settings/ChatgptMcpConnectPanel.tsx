@@ -1,4 +1,6 @@
-import { Copy } from 'lucide-react';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Copy, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import {
@@ -6,11 +8,20 @@ import {
     DialogBody,
     DialogContent,
     DialogDescription,
+    DialogFooter,
+    DialogHeader,
     DialogPanelFooter,
     DialogPanelHeader,
     DialogTitle,
 } from '../ui/dialog';
-import type { MarketplaceApp } from '../../services/marketplaceApi';
+import { Switch } from '../ui/switch';
+import {
+    fetchChatgptMcpWriteSettings,
+    setChatgptMcpWrites,
+    type MarketplaceApp,
+} from '../../services/marketplaceApi';
+
+const WRITE_SCOPE_VALUE = 'albusto.mcp.read albusto.mcp.write';
 
 const MCP_SERVER_URL = 'https://api.albusto.com/mcp/chatgpt';
 const OAUTH_AUTH_URL = 'https://auth.albusto.com/realms/crm-prod/protocol/openid-connect/auth';
@@ -82,6 +93,27 @@ export function ChatgptMcpConnectPanel({ open, onOpenChange, app, onDisconnect }
     const accessItems = app
         ? (app.access_summary.length ? app.access_summary : app.requested_scopes)
         : [];
+    const queryClient = useQueryClient();
+    const [confirmWritesOpen, setConfirmWritesOpen] = useState(false);
+
+    const writeSettingsQuery = useQuery({
+        queryKey: ['chatgpt-mcp-write-settings'],
+        queryFn: fetchChatgptMcpWriteSettings,
+        enabled: open && connected,
+        refetchOnMount: 'always',
+        retry: false,
+    });
+    const writesEnabled = writeSettingsQuery.data?.settings.writes_enabled === true;
+
+    const writesMutation = useMutation({
+        mutationFn: setChatgptMcpWrites,
+        onSuccess: (_data, enabled) => {
+            queryClient.invalidateQueries({ queryKey: ['chatgpt-mcp-write-settings'] });
+            setConfirmWritesOpen(false);
+            toast.success(enabled ? 'Write access enabled' : 'Write access disabled');
+        },
+        onError: (err: Error) => toast.error(err.message || 'Failed to update write access'),
+    });
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -176,11 +208,55 @@ export function ChatgptMcpConnectPanel({ open, onOpenChange, app, onDisconnect }
                                 </div>
                             )}
                             <div className="rounded-xl bg-[var(--blanc-surface-muted)] px-4 py-3 text-sm text-[var(--blanc-ink-2)]">
-                                Read-only for now — creating and editing records ships in a later stage. Only a company
-                                admin can connect or disconnect this app, and disconnecting cuts off access immediately,
-                                even for tokens that have not expired yet.
+                                Only a company admin can connect or disconnect this app, and disconnecting cuts off
+                                access immediately, even for tokens that have not expired yet.
                             </div>
                         </section>
+
+                        {connected && (
+                            <section className="space-y-3.5">
+                                <div className="blanc-eyebrow">Writes</div>
+                                <div className="flex items-start justify-between gap-5 rounded-xl bg-[var(--blanc-field)] px-4 py-4">
+                                    <div className="min-w-0">
+                                        <div className="text-sm font-semibold text-[var(--blanc-ink-1)]">
+                                            Allow ChatGPT to make changes
+                                        </div>
+                                        <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">
+                                            Create and edit leads, jobs, and notes as the AI dispatcher. Every change is
+                                            confirmed in ChatGPT before it runs and logged here. Turning this off cuts
+                                            write access instantly.
+                                        </p>
+                                    </div>
+                                    {writeSettingsQuery.isLoading ? (
+                                        <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-[var(--blanc-ink-3)]" />
+                                    ) : (
+                                        <Switch
+                                            checked={writesEnabled}
+                                            disabled={writeSettingsQuery.isError || writesMutation.isPending}
+                                            aria-label="Allow ChatGPT to make changes"
+                                            onCheckedChange={value => {
+                                                if (value) setConfirmWritesOpen(true);
+                                                else writesMutation.mutate(false);
+                                            }}
+                                        />
+                                    )}
+                                </div>
+                                {writeSettingsQuery.isError && (
+                                    <p className="text-xs text-[var(--blanc-ink-3)]">
+                                        Write-access status is unavailable right now.
+                                    </p>
+                                )}
+                                {writesEnabled && (
+                                    <div className="space-y-2">
+                                        <p className="text-sm text-[var(--blanc-ink-2)]">
+                                            To activate writes, update the connector&apos;s <strong>Scope</strong> in
+                                            ChatGPT and re-connect:
+                                        </p>
+                                        <CopyRow label="Scope" value={WRITE_SCOPE_VALUE} />
+                                    </div>
+                                )}
+                            </section>
+                        )}
                     </div>
                 </DialogBody>
 
@@ -200,6 +276,30 @@ export function ChatgptMcpConnectPanel({ open, onOpenChange, app, onDisconnect }
                     </Button>
                 </DialogPanelFooter>
             </DialogContent>
+
+            <Dialog open={confirmWritesOpen} onOpenChange={setConfirmWritesOpen}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Allow ChatGPT to make changes?</DialogTitle>
+                        <DialogDescription>
+                            The AI dispatcher will be able to create and edit leads, jobs, and notes in your company.
+                            ChatGPT asks you to confirm each change before it runs, and every action is logged. You can
+                            turn this off at any time — access stops immediately.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setConfirmWritesOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={() => writesMutation.mutate(true)}
+                            disabled={writesMutation.isPending}
+                        >
+                            {writesMutation.isPending ? 'Enabling…' : 'Enable writes'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </Dialog>
     );
 }
