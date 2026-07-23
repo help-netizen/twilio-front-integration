@@ -18,6 +18,11 @@ const CALLS_GRANT_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_198_chatgpt_mcp_list_calls_grant.sql'),
     'utf8'
 );
+const DOCS_LINK = fs.readFileSync(path.join(MIGRATIONS, '199_chatgpt_mcp_docs_link.sql'), 'utf8');
+const DOCS_LINK_ROLLBACK = fs.readFileSync(
+    path.join(MIGRATIONS, 'rollback_199_chatgpt_mcp_docs_link.sql'),
+    'utf8'
+);
 const MARKETPLACE_SOURCE = fs.readFileSync(path.join(__dirname, '../backend/src/services/marketplaceService.js'), 'utf8');
 
 jest.setTimeout(60000);
@@ -80,6 +85,13 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
         expect(CALLS_GRANT).toContain("'[\"calls:read\"]'::jsonb");
         expect(CALLS_GRANT).toContain('bundle_version = EXCLUDED.bundle_version');
         expect(CALLS_GRANT_ROLLBACK).toContain("'mcp.tool.svc.list_calls'");
+        expect(DOCS_LINK).toContain(
+            "docs_url = '/settings/integrations?tab=marketplace&app=chatgpt-crm-mcp'"
+        );
+        expect(DOCS_LINK).toContain("metadata->'assistant'");
+        expect(DOCS_LINK_ROLLBACK).toContain(
+            "docs_url = '/docs/integrations/chatgpt-crm-mcp'"
+        );
         expect(MARKETPLACE_SOURCE).toContain('chatgptMcpIdentityService.provisionInstallation');
         expect(MARKETPLACE_SOURCE).toContain('chatgptMcpIdentityService.revokeInstallation');
         expect(MARKETPLACE_SOURCE).toContain('requireChatgptTenantAdmin');
@@ -199,6 +211,8 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
             );
             await client.query(CALLS_GRANT);
             await client.query(CALLS_GRANT);
+            await client.query(DOCS_LINK);
+            await client.query(DOCS_LINK);
 
             const migratedGrants = await client.query(
                 `SELECT company_id, permission_key, bundle_version, COUNT(*)::int AS count
@@ -238,9 +252,12 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
                 { company_id: companyB, grant_version: 2 },
             ].sort((left, right) => left.company_id.localeCompare(right.company_id)));
             const migratedApp = await client.query(
-                `SELECT requested_scopes, metadata
+                `SELECT requested_scopes, metadata, docs_url
                  FROM marketplace_apps
                  WHERE app_key='chatgpt-crm-mcp'`
+            );
+            expect(migratedApp.rows[0].docs_url).toBe(
+                '/settings/integrations?tab=marketplace&app=chatgpt-crm-mcp'
             );
             expect(migratedApp.rows[0].requested_scopes).toContain('calls:read');
             expect(migratedApp.rows[0].metadata.access_summary).toEqual(expect.arrayContaining([

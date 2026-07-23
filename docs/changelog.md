@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-07-23 — CHATGPT-CRM-MCP-001: MCP hardening
+
+`/mcp/chatgpt` получил runaway-предохранитель на существующем
+`express-rate-limit`: после OAuth ключом служит `binding_id`, auth-отказы до
+binding считаются по IP, default — 300 запросов / 60 секунд с
+`CHATGPT_MCP_RATE_LIMIT` / `CHATGPT_MCP_RATE_WINDOW_MS`; 429 возвращает
+JSON-RPC `RATE_LIMITED` и `Retry-After`. `/.well-known` не лимитируется.
+Миграция 199 меняет битый Marketplace `docs_url` на живой deep-link панели, а
+RFC 9728 metadata теперь указывает на тот же live route на `app.albusto.com`.
+Добавлены честная RS256-матрица (реальный verify, подменён только JWKS fetch) и
+real-DB вызов всех 19 read-tools через JSON-RPC с T-own/T-foreign/T-blast.
+Инвентарь остаётся 30 (19 read + 11 write); files/base64 не добавлялись,
+estimate→invoice conversion не добавлялась. **НЕ задеплоено.**
+
 ## 2026-07-23 — CHATGPT-CRM-MCP-001 S2b: CRUD смет и инвойсов
 
 ChatGPT MCP получил четыре consent-gated write-инструмента:

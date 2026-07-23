@@ -7,13 +7,12 @@ const scheduleService = require('./scheduleService');
 const fsmService = require('./fsmService');
 const tasksQueries = require('../db/tasksQueries');
 const queries = require('../db/chatgptMcpQueries');
+const { CrmServiceError } = require('./crmErrors');
 
-class ChatgptMcpReadError extends Error {
+class ChatgptMcpReadError extends CrmServiceError {
     constructor(code, message, httpStatus = 400) {
-        super(message);
+        super(code, message, httpStatus);
         this.name = 'ChatgptMcpReadError';
-        this.code = code;
-        this.httpStatus = httpStatus;
     }
 }
 
@@ -144,11 +143,16 @@ async function execute(handler, companyId, args = {}) {
             });
             break;
         case 'getScheduleItem':
-            result = await scheduleService.getScheduleItemDetail(
-                companyId,
-                args.entity_type,
-                args.entity_id
-            );
+            try {
+                result = await scheduleService.getScheduleItemDetail(
+                    companyId,
+                    args.entity_type,
+                    args.entity_id
+                );
+            } catch (err) {
+                if (err?.code === 'NOT_FOUND') notFound('Schedule item');
+                throw err;
+            }
             break;
         case 'listTasks':
             result = await tasksQueries.listTasksPage(companyId, {

@@ -3,10 +3,12 @@
 const express = require('express');
 const protocol = require('../services/agentSkillsMcpProtocolService');
 const { authenticateChatgptMcp } = require('../middleware/chatgptMcpAuth');
+const { authenticatedLimiter } = require('../middleware/chatgptMcpRateLimit');
 
 const router = express.Router();
 
 router.use(authenticateChatgptMcp);
+router.use(authenticatedLimiter);
 
 router.post('/', async (req, res) => {
     const response = await protocol.handleJsonRpc(req, req.body);

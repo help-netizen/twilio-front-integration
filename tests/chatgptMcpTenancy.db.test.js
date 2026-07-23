@@ -12,6 +12,8 @@ const contactsService = require('../backend/src/services/contactsService');
 const scheduleService = require('../backend/src/services/scheduleService');
 const tasksQueries = require('../backend/src/db/tasksQueries');
 const identityService = require('../backend/src/services/chatgptMcpIdentityService');
+const protocol = require('../backend/src/services/agentSkillsMcpProtocolService');
+const permissions = require('../backend/src/services/chatgptMcpPermissions');
 
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '195_chatgpt_crm_mcp.sql'), 'utf8');
@@ -139,8 +141,16 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
                  VALUES ($1,$3,'connected',$4,NOW()), ($2,$3,'connected',$5,NOW()) RETURNING id, company_id`,
                 [companyA, companyB, app.rows[0].id, humanA.id, humanB.id]
             );
-            await identityService.provisionInstallation({ companyId: companyA, installationId: installs.rows.find((x) => x.company_id === companyA).id, actorId: humanA.id }, client);
-            await identityService.provisionInstallation({ companyId: companyB, installationId: installs.rows.find((x) => x.company_id === companyB).id, actorId: humanB.id }, client);
+            const provisionA = await identityService.provisionInstallation({
+                companyId: companyA,
+                installationId: installs.rows.find((x) => x.company_id === companyA).id,
+                actorId: humanA.id,
+            }, client);
+            await identityService.provisionInstallation({
+                companyId: companyB,
+                installationId: installs.rows.find((x) => x.company_id === companyB).id,
+                actorId: humanB.id,
+            }, client);
 
             const contacts = await client.query(
                 `INSERT INTO contacts (company_id, full_name, phone_e164, email)
@@ -324,6 +334,150 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
             const ownInvoice = await mcpQueries.getInvoice(companyA, invoiceA);
             expect(ownInvoice.items.map((item) => item.name)).toEqual([`${sharedText} invoice item A`]);
             expect(ownInvoice.payments.map((payment) => Number(payment.amount))).toEqual([10]);
+
+            const granted = await client.query(
+                `SELECT permission_key
+                 FROM mcp_agent_permission_grants
+                 WHERE company_id=$1 AND agent_user_id=$2
+                 ORDER BY permission_key`,
+                [companyA, provisionA.aiUser.id]
+            );
+            const protocolReq = {
+                requestId: `mcp-protocol-${randomUUID()}`,
+                companyFilter: { company_id: companyA },
+                user: {
+                    kind: 'agent',
+                    email: provisionA.aiUser.email,
+                    oauthAuthorizerId: humanA.id,
+                    crmUser: {
+                        id: provisionA.aiUser.id,
+                        email: provisionA.aiUser.email,
+                        full_name: provisionA.aiUser.full_name,
+                        company_id: companyA,
+                        kind: 'agent',
+                        status: 'active',
+                    },
+                },
+                authz: {
+                    company: {
+                        id: companyA,
+                        name: 'Tenant A',
+                        status: 'active',
+                        timezone: 'America/New_York',
+                    },
+                    membership: null,
+                    permissions: granted.rows.map((row) => row.permission_key),
+                    oauthScopes: [permissions.READ_SCOPE],
+                },
+                chatgptMcpBinding: {
+                    id: provisionA.binding.id,
+                    installationId: provisionA.binding.installation_id,
+                    authorizerId: humanA.id,
+                },
+            };
+            let protocolId = 1000;
+            const callTool = async (name, args) => {
+                protocolId += 1;
+                return protocol.handleJsonRpc(protocolReq, {
+                    jsonrpc: '2.0',
+                    id: protocolId,
+                    method: 'tools/call',
+                    params: { name, arguments: args },
+                });
+            };
+            const ownCases = [
+                ['svc.list_jobs', { search: sharedText, limit: 20 }, (data) => {
+                    expect(data.results.map((row) => String(row.id))).toEqual([String(jobA)]);
+                }],
+                ['svc.get_job', { job_id: Number(jobA) }, (data) => {
+                    expect(String(data.id)).toBe(String(jobA));
+                }],
+                ['svc.get_job_transitions', { job_id: Number(jobA) }, (data) => {
+                    expect(data).toHaveProperty('actions');
+                }],
+                ['svc.list_leads', { search: sharedEmail, only_open: false, limit: 20 }, (data) => {
+                    expect(data.results.map((row) => row.UUID)).toEqual([leadA.uuid]);
+                }],
+                ['svc.get_lead', { lead_uuid: leadA.uuid }, (data) => {
+                    expect(data.uuid).toBe(leadA.uuid);
+                }],
+                ['svc.get_lead_transitions', { lead_uuid: leadA.uuid }, (data) => {
+                    expect(data).toHaveProperty('actions');
+                }],
+                ['svc.search_contacts', { search: sharedEmail, limit: 20 }, (data) => {
+                    expect(data.results.map((row) => String(row.id))).toEqual([String(contactA)]);
+                }],
+                ['svc.get_contact', { contact_id: Number(contactA) }, (data) => {
+                    expect(String(data.id)).toBe(String(contactA));
+                }],
+                ['svc.get_contact_history', { contact_id: Number(contactA), limit: 20 }, (data) => {
+                    expect(String(data.contact.id)).toBe(String(contactA));
+                }],
+                ['svc.list_schedule', { search: sharedText, limit: 20 }, (data) => {
+                    expect(data.items.map((row) => String(row.entity_id))).toContain(String(jobA));
+                    expect(data.items.map((row) => String(row.entity_id))).not.toContain(String(jobB));
+                }],
+                ['svc.list_calls', { limit: 20 }, (data) => {
+                    expect(data.rows.map((row) => String(row.id)).sort()).toEqual(callIdsA);
+                }],
+                ['svc.get_schedule_item', { entity_type: 'job', entity_id: Number(jobA) }, (data) => {
+                    expect(String(data.id || data.entity_id)).toBe(String(jobA));
+                }],
+                ['svc.list_tasks', { status: 'open', search: sharedText, limit: 20 }, (data) => {
+                    expect(data.tasks).toHaveLength(1);
+                    expect(data.tasks[0].parent_type).toBe('job');
+                    expect(String(data.tasks[0].parent_id)).toBe(String(jobA));
+                }],
+                ['svc.list_entity_tasks', { parent_type: 'job', parent_id: String(jobA) }, (data) => {
+                    expect(data.tasks).toHaveLength(1);
+                    expect(data.tasks[0].parent_type).toBe('job');
+                    expect(String(data.tasks[0].parent_id)).toBe(String(jobA));
+                }],
+                ['svc.list_task_assignees', { limit: 100 }, (data) => {
+                    expect(data.users.map((row) => row.id)).toContain(humanA.id);
+                    expect(data.users.map((row) => row.id)).not.toContain(humanB.id);
+                }],
+                ['svc.list_estimates', { search: sharedText, limit: 20 }, (data) => {
+                    expect(data.rows.map((row) => String(row.id))).toEqual([String(estimateA)]);
+                }],
+                ['svc.get_estimate', { estimate_id: Number(estimateA) }, (data) => {
+                    expect(String(data.id)).toBe(String(estimateA));
+                }],
+                ['svc.list_invoices', { search: sharedText, limit: 20 }, (data) => {
+                    expect(data.rows.map((row) => String(row.id))).toEqual([String(invoiceA)]);
+                }],
+                ['svc.get_invoice', { invoice_id: Number(invoiceA) }, (data) => {
+                    expect(String(data.id)).toBe(String(invoiceA));
+                }],
+            ];
+            expect(ownCases.map(([name]) => name).sort()).toEqual(
+                [...permissions.READ_TOOL_NAMES].sort()
+            );
+            for (const [name, args, assertOwn] of ownCases) {
+                const response = await callTool(name, args);
+                expect(response.error).toBeUndefined();
+                assertOwn(response.result.structuredContent);
+            }
+
+            const foreignCases = [
+                ['svc.get_job', { job_id: Number(jobB) }],
+                ['svc.get_job_transitions', { job_id: Number(jobB) }],
+                ['svc.get_lead', { lead_uuid: leadB.uuid }],
+                ['svc.get_lead_transitions', { lead_uuid: leadB.uuid }],
+                ['svc.get_contact', { contact_id: Number(contactB) }],
+                ['svc.get_contact_history', { contact_id: Number(contactB), limit: 20 }],
+                ['svc.get_schedule_item', { entity_type: 'job', entity_id: Number(jobB) }],
+                ['svc.list_entity_tasks', { parent_type: 'job', parent_id: String(jobB) }],
+                ['svc.get_estimate', { estimate_id: Number(estimateB) }],
+                ['svc.get_invoice', { invoice_id: Number(invoiceB) }],
+            ];
+            for (const [name, args] of foreignCases) {
+                const response = await callTool(name, args);
+                expect(response.error).toEqual(expect.objectContaining({
+                    code: -32004,
+                    data: expect.objectContaining({ code: 'not_found' }),
+                }));
+            }
             expect(await snapshotCompany(client, companyB)).toBe(beforeB);
         } finally {
             if (dbSpy) dbSpy.mockRestore();

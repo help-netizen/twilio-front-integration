@@ -97,6 +97,9 @@ describe('CHATGPT-CRM-MCP OAuth protected resource', () => {
                 'albusto.mcp.read', 'albusto.mcp.write', 'albusto.mcp.send',
             ]);
             expect(res.body.scopes_supported).not.toContain('albusto.mcp.payments');
+            expect(res.body.resource_documentation).toBe(
+                'https://app.albusto.com/settings/integrations?tab=marketplace&app=chatgpt-crm-mcp'
+            );
         }
     );
 
@@ -123,18 +126,19 @@ describe('CHATGPT-CRM-MCP OAuth protected resource', () => {
     });
 
     test.each([
-        ['audience', { aud: ['other-resource'] }],
-        ['authorized party', { azp: 'other-client' }],
-        ['resource', { resource: 'https://api.albusto.com/mcp/other' }],
-        ['scope', { scope: 'openid profile' }],
-        ['subject', { sub: null }],
-    ])('forged %s fails before the binding query', async (_label, override) => {
+        ['audience', { aud: ['other-resource'] }, 401, 'MCP_TOKEN_AUDIENCE'],
+        ['authorized party', { azp: 'other-client' }, 401, 'MCP_TOKEN_CLIENT'],
+        ['resource', { resource: 'https://api.albusto.com/mcp/other' }, 401, 'MCP_TOKEN_RESOURCE'],
+        ['scope', { scope: 'openid profile' }, 403, 'MCP_TOKEN_SCOPE'],
+        ['subject', { sub: null }, 401, 'MCP_TOKEN_SUBJECT'],
+    ])('forged %s fails before the binding query', async (_label, override, status, code) => {
         jwt.verify.mockImplementation((_token, _getKey, _options, callback) => callback(null, claims(override)));
         const res = await request(app())
             .post('/mcp/chatgpt')
             .set('Authorization', 'Bearer forged')
             .send({ jsonrpc: '2.0', id: 3, method: 'tools/list' });
-        expect(res.status).toBe(401);
+        expect(res.status).toBe(status);
+        expect(res.body.error.data.code).toBe(code);
         expect(identityService.resolveOAuthContext).not.toHaveBeenCalled();
     });
 

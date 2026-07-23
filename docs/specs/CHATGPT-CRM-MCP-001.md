@@ -1,6 +1,6 @@
 # CHATGPT-CRM-MCP-001 — OAuth CRM connector
 
-Status: approved specification; S1 implemented; S1.1 call-history read pending architect gate
+Status: approved specification; S1/S1.1/S2a/S2b implemented; MCP hardening pending architect gate
 Date: 2026-07-23
 Scope: backend-only ChatGPT MCP connector with company-scoped reads, internal CRM writes, and customer sends; payments deferred
 
@@ -236,6 +236,55 @@ The annotations communicate risk to ChatGPT but do not prove approval to Albusto
 - remain disabled when `NODE_ENV=production` even if an enable flag is set.
 
 The fixed token authenticates the transport only; it does not bypass the per-tool permission gate.
+
+### 6.3 MCP hardening gate
+
+The OAuth transport has two independent in-memory limits built on the
+repository's existing `express-rate-limit` seam:
+
+- after successful OAuth/binding resolution, the key is the trusted
+  `chatgpt_mcp_bindings.id`;
+- before a binding exists, authentication failures are keyed by the normalized
+  request IP, using the same forwarded-IP normalization as `public-rate`;
+- protected-resource metadata under `/.well-known` is outside both limiters.
+
+The default budget is 300 requests per 60,000 ms for each binding (or each
+pre-auth IP). Operators may set positive integers in
+`CHATGPT_MCP_RATE_LIMIT` and `CHATGPT_MCP_RATE_WINDOW_MS`; missing, zero,
+negative, or non-integer values fall back to the defaults. Exceeding the budget
+returns HTTP 429, `Retry-After`, and:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32000,
+    "data": { "code": "RATE_LIMITED" }
+  }
+}
+```
+
+The RFC 9728 document advertises the live product route
+`https://app.albusto.com/settings/integrations?tab=marketplace&app=chatgpt-crm-mcp`
+as `resource_documentation`. Migration 199 updates the Marketplace
+`docs_url` to the equivalent relative deep-link and preserves/repairs the
+mandatory `metadata.assistant` object. The Marketplace API transports
+`docs_url`, but the current frontend card/panel does not render the generic
+field; the deep-link itself is handled by `IntegrationsPage`.
+
+JWT acceptance is gated by a real RS256 contract test. It generates a keypair,
+replaces only the JWKS retrieval seam with the public key, and leaves
+`jsonwebtoken.verify` real. Separate cases cover valid claims, bad signature,
+foreign issuer, missing audience, foreign authorized party, missing resource,
+missing read scope, and expiry, with stable denial codes. The DB protocol gate
+then invokes every one of the 19 S1 reads through
+`agentSkillsMcpProtocolService.handleJsonRpc` against two live tenants:
+owned calls return only tenant A, foreign IDs are not-found/empty, and tenant B
+remains absent from all list results.
+
+Files remain deferred. MCP File Uploads WG SEP-2356 is still defining the
+transport mechanism; this connector will not encode file bytes as base64 in
+tool prose or ordinary JSON arguments.
 
 ## 7. Full tool inventory
 
@@ -712,8 +761,25 @@ There is no S4 implementation command in v1. S1/S2 authorization tests assert th
 ### Full MCP regression
 
 ```bash
-env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/agentSkillsMcp.test.js tests/chatgptMcpOAuth.test.js tests/keycloakAuthMcpIsolation.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpFinancialWrites.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpConsentRoutes.test.js tests/tenantSafetyLint.test.js
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/agentSkillsMcp.test.js tests/chatgptMcpOAuth.test.js tests/chatgptMcpRateLimit.test.js tests/chatgptMcpJwtHonest.test.js tests/keycloakAuthMcpIsolation.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpFinancialWrites.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpConsentRoutes.test.js tests/tenantSafetyLint.test.js
 ```
+
+### MCP hardening commands
+
+Transport limiter, RFC 9728 metadata, and honest signed-JWT matrix:
+
+```bash
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpOAuth.test.js tests/chatgptMcpRateLimit.test.js tests/chatgptMcpJwtHonest.test.js
+```
+
+Migration 199 plus the 19-tool JSON-RPC tenant contract run on the full
+migration-built PostgreSQL schema:
+
+```bash
+DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpTenancy.db.test.js
+```
+
+The tool-count contract stays exactly 19 reads + 11 writes = 30.
 
 Backend-only means there is no frontend build/test gate for this project. The protected-file gate for D1 is an exact-diff inspection:
 
@@ -814,10 +880,10 @@ their applicable Section 8 repairs, dynamic host permissions, AI authorship,
 external-effect idempotency, file content/checksum policy, per-tool real-DB
 blasts, and route regressions.
 
-The S1 red-team carry-forward also remains open for this later hardening stage:
-real-PostgreSQL T-own/T-foreign/T-blast through the protocol for every read tool
-and a real signed-token test in addition to mocked `jwt.verify`. S2b does not
-silently expand into those unrelated read/file/contact surfaces.
+The S1 red-team carry-forward is closed by Section 6.3: all 19 reads now run
+through the real JSON-RPC protocol against PostgreSQL, and the authorization
+middleware has a real signed-RS256 test in addition to the seam-mocked unit
+suite. That hardening does not expand the deferred file/contact surfaces.
 
 ### S3 — customer SMS and email sends
 

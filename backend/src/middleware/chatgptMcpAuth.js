@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const identityService = require('../services/chatgptMcpIdentityService');
 const { READ_SCOPE } = require('../services/chatgptMcpPermissions');
+const { unauthenticatedLimiter } = require('./chatgptMcpRateLimit');
 
 let cachedJwks = null;
 let cachedJwksUri = null;
@@ -120,24 +121,43 @@ function verifyToken(token) {
     });
 }
 
-function sendAuthError(res, status, code, message, requestId) {
-    res.set('WWW-Authenticate', challenge());
-    return res.status(status).json({
-        jsonrpc: '2.0',
-        id: null,
-        error: {
-            code: status === 401 ? -32000 : -32001,
-            message,
-            data: { code, request_id: requestId || null },
-        },
+function sendAuthError(req, res, status, code, message, requestId) {
+    return unauthenticatedLimiter(req, res, () => {
+        res.set('WWW-Authenticate', challenge());
+        return res.status(status).json({
+            jsonrpc: '2.0',
+            id: req.body?.id ?? null,
+            error: {
+                code: status === 401 ? -32000 : -32001,
+                message,
+                data: { code, request_id: requestId || null },
+            },
+        });
     });
+}
+
+function tokenFailure(err) {
+    if (String(err?.code || '').startsWith('MCP_TOKEN_')) {
+        return {
+            status: err.code === 'MCP_TOKEN_SCOPE' ? 403 : 401,
+            code: err.code,
+        };
+    }
+    if (err?.name === 'TokenExpiredError') {
+        return { status: 401, code: 'MCP_TOKEN_EXPIRED' };
+    }
+    const message = String(err?.message || '');
+    if (/issuer/i.test(message)) return { status: 401, code: 'MCP_TOKEN_ISSUER' };
+    if (/audience/i.test(message)) return { status: 401, code: 'MCP_TOKEN_AUDIENCE' };
+    if (/signature/i.test(message)) return { status: 401, code: 'MCP_TOKEN_SIGNATURE' };
+    return { status: 401, code: 'AUTH_INVALID' };
 }
 
 async function authenticateChatgptMcp(req, res, next) {
     req.requestId = req.requestId || req.traceId || `chatgpt-mcp-${crypto.randomUUID()}`;
     const token = bearerToken(req);
     if (!token) {
-        return sendAuthError(res, 401, 'AUTH_REQUIRED', 'Bearer token required', req.requestId);
+        return sendAuthError(req, res, 401, 'AUTH_REQUIRED', 'Bearer token required', req.requestId);
     }
     try {
         const decoded = await verifyToken(token);
@@ -181,9 +201,11 @@ async function authenticateChatgptMcp(req, res, next) {
         return next();
     } catch (err) {
         const bindingFailure = err instanceof identityService.ChatgptMcpIdentityError;
-        const status = bindingFailure ? err.httpStatus || 403 : 401;
-        const code = bindingFailure ? err.code : 'AUTH_INVALID';
+        const tokenError = bindingFailure ? null : tokenFailure(err);
+        const status = bindingFailure ? err.httpStatus || 403 : tokenError.status;
+        const code = bindingFailure ? err.code : tokenError.code;
         return sendAuthError(
+            req,
             res,
             status,
             code,
@@ -200,6 +222,7 @@ module.exports = {
     metadataUri,
     resourceUri,
     tokenScopes,
+    tokenFailure,
     validateConnectorClaims,
     verifyToken,
 };
