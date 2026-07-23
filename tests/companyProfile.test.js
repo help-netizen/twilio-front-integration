@@ -256,7 +256,7 @@ describe('resolveTemplate — company brand overlay', () => {
         expect(factory.ESTIMATE_FACTORY.brand.ach.account_number).toBe('466020155621');
     });
 
-    it('does NOT overlay the profile when a tenant template exists (template wins — DBA on docs preserved)', async () => {
+    it('keeps non-empty template brand fields when a tenant template exists (template wins — DBA on docs preserved)', async () => {
         // Real prod case: company name is "Boston Masters" (SMS) but the stored
         // invoice template brand is the DBA "ABC Homes". The profile must NOT
         // clobber the customized template brand ("templates can override").
@@ -269,6 +269,29 @@ describe('resolveTemplate — company brand overlay', () => {
         expect(descriptor.brand.name).toBe('ABC Homes');           // template DBA preserved
         expect(descriptor.brand.name).not.toBe('Boston Masters');  // profile did NOT override
         expect(descriptor.brand.ach.account_number).toBe('466020155621'); // template ach kept
+    });
+
+    it('OB-34: fills EMPTY stored-template brand fields from the profile (logo saved after the template)', async () => {
+        // The stored template predates the tenant's logo upload: its brand has no
+        // logo_url. The profile underlay must supply the logo (and any other
+        // empty field) WITHOUT touching the template's deliberate non-empty
+        // values — otherwise "No logo" is pinned forever on documents.
+        const factory = require('../backend/src/services/documentTemplates/factory');
+        const stored = JSON.parse(JSON.stringify(factory.getFactory('invoice')));
+        stored.brand.name = 'ABC Homes';
+        delete stored.brand.logo_url;
+        stored.brand.phone = '';
+        docTplQueries.getDefaultByType.mockResolvedValue({ content: stored });
+        mockCompanyRow({
+            id: COMPANY_A,
+            name: 'Boston Masters',
+            contact_phone: '+15082904442',
+            logo_storage_key: 'company-logos/co-a/logo.png',
+        });
+        const descriptor = await documentTemplatesService.resolveTemplate(COMPANY_A, 'invoice');
+        expect(descriptor.brand.logo_url).toBe('https://signed.example/logo.png'); // profile fills the gap
+        expect(descriptor.brand.phone).toBe('+15082904442');                       // empty template phone filled
+        expect(descriptor.brand.name).toBe('ABC Homes');                           // non-empty template still wins
     });
 
     it('safe-fails to the un-overlaid factory descriptor when the profile fetch throws', async () => {

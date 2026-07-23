@@ -1,0 +1,48 @@
+/* OB-34: the descriptor grid is authored for a full-width document (6 columns,
+   glue-groups like logo|header|document_meta on one row). Inside a narrow
+   container — the mobile preview bottom-sheet — those columns collide and the
+   big document number clips off-canvas. Container queries (not viewport media)
+   because the same component renders wide in the template-settings editor and
+   narrow in the sheet. Under the threshold everything stacks into one column
+   and left-aligns; inline text-align/grid-column styles are authored by the
+   component, so the overrides need !important / the var indirection. */
+
+.tlp-root {
+    container-type: inline-size;
+}
+
+.tlp-cell,
+.tlp-glue {
+    grid-column: span var(--tlp-span) / span var(--tlp-span);
+}
+
+@container (max-width: 620px) {
+    .tlp-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .tlp-cell,
+    .tlp-glue {
+        grid-column: auto;
+    }
+
+    .tlp-glue {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .tlp-glue-item {
+        width: 100%;
+        text-align: left !important;
+    }
+
+    .tlp-cell {
+        text-align: left !important;
+    }
+
+    /* Header section's own inner row (brand block + inline meta when the
+       document_meta section is absent) wraps instead of colliding. */
+    .tlp-header {
+        flex-wrap: wrap;
+    }
+}

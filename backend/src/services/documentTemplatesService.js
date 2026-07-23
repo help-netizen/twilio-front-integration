@@ -61,6 +61,27 @@ async function overlayCompanyBrand(companyId, descriptor) {
     }
 }
 
+/**
+ * OB-34 companion to overlayCompanyBrand with the roles swapped: the profile
+ * brand sits UNDER the descriptor's brand. Non-empty template fields keep
+ * winning (deliberate per-document customization, e.g. a docs-only DBA name),
+ * while empty template fields inherit the Company Profile value (logo uploaded
+ * after the template was first saved, a later-filled phone, etc.). Safe-fails
+ * to the un-overlaid descriptor; never throws.
+ */
+async function overlayCompanyBrandUnder(companyId, descriptor) {
+    try {
+        if (!descriptor || typeof descriptor !== 'object') return descriptor;
+        const profileBrand = await companyProfileService.buildBrand(companyId);
+        if (!profileBrand || Object.keys(profileBrand).length === 0) return descriptor;
+        return { ...descriptor, brand: deepMergeBrand(profileBrand, descriptor.brand) };
+    } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[document-templates] company brand underlay failed; using base descriptor', err);
+        return descriptor;
+    }
+}
+
 class DocumentTemplateServiceError extends Error {
     constructor(code, httpStatus, message, details = null) {
         super(message);
@@ -184,11 +205,14 @@ async function resolveTemplate(companyId, documentType, client = null) {
         console.warn('[document-templates] resolveTemplate failed; falling back to factory', err);
     }
     if (descriptor) {
-        // A tenant-customized template exists → it WINS ("templates can override
-        // the Company Profile"). Return untouched so we never clobber a deliberately
-        // customized invoice/estimate brand (e.g. a DBA on documents that differs
-        // from the company's SMS/display name — Boston Masters docs say "ABC Homes").
-        return descriptor;
+        // A tenant-customized template exists → its NON-EMPTY brand fields WIN
+        // ("templates can override the Company Profile" — e.g. a DBA on documents
+        // that differs from the company's SMS/display name: Boston Masters docs
+        // say "ABC Homes"). OB-34: fields the template leaves EMPTY are filled
+        // from the Company Profile — a template saved before the tenant uploaded
+        // a logo must not pin "no logo" forever. Same deepMergeBrand, roles
+        // swapped: profile is the base, template overlays where non-empty.
+        return overlayCompanyBrandUnder(companyId, descriptor);
     }
     // No stored template: start from the factory and overlay the tenant's Company
     // Profile brand (COMPANY-PROFILE-001) so documents use the tenant's real brand

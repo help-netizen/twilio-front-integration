@@ -6,6 +6,7 @@ import type {
     SectionWidth,
     LayoutPreset,
 } from '../../types/documentTemplates';
+import './TemplateLivePreview.css';
 
 const WIDTH_SPAN: Record<SectionWidth, number> = { full: 6, two_thirds: 4, half: 3, third: 2 };
 
@@ -244,7 +245,7 @@ function renderSection(key: SectionKey, descriptor: TemplateDescriptorV1, data: 
         const hasLogo = descriptor.sections.some(s => s.key === 'logo' && s.visible);
         const hasMeta = descriptor.sections.some(s => s.key === 'document_meta' && s.visible);
         return (
-            <div className={`${tokens.sectionPadding} flex items-start gap-3 h-full`}>
+            <div className={`${tokens.sectionPadding} tlp-header flex items-start gap-3 h-full`}>
                 {!hasLogo && brand.logo_url && (
                     <img
                         src={brand.logo_url}
@@ -414,7 +415,7 @@ export function TemplateLivePreview({ descriptor, estimate }: Props) {
 
     return (
         <div
-            className="rounded-xl border shadow-sm text-sm overflow-hidden"
+            className="tlp-root rounded-xl border shadow-sm text-sm overflow-hidden"
             style={{
                 background: theme.surface || '#fbfcfe',
                 color: theme.ink || '#172033',
@@ -424,7 +425,7 @@ export function TemplateLivePreview({ descriptor, estimate }: Props) {
                 zoom: scale,
             }}
         >
-            <div className="grid grid-cols-6">
+            <div className="tlp-grid grid grid-cols-6">
                 {buildGlueGroups(descriptor.sections.filter(s => visible(descriptor, s.key))).map((group, gIdx) => {
                     const span = spanOfGroup(group);
                     if (group.length === 1) {
@@ -433,7 +434,8 @@ export function TemplateLivePreview({ descriptor, estimate }: Props) {
                         return (
                             <div
                                 key={`${s.key}:${gIdx}`}
-                                style={{ gridColumn: `span ${span} / span ${span}`, textAlign: align }}
+                                className="tlp-cell"
+                                style={{ '--tlp-span': span, textAlign: align } as React.CSSProperties}
                             >
                                 {renderSection(s.key, descriptor, data)}
                             </div>
@@ -442,13 +444,13 @@ export function TemplateLivePreview({ descriptor, estimate }: Props) {
                     return (
                         <div
                             key={`glue:${gIdx}`}
-                            style={{ gridColumn: `span ${span} / span ${span}` }}
-                            className="flex items-start"
+                            style={{ '--tlp-span': span } as React.CSSProperties}
+                            className="tlp-glue flex items-start"
                         >
                             {group.map((s, i) => {
                                 const align = s.text_align ?? (s.key === 'document_meta' ? 'right' : 'left');
                                 return (
-                                    <div key={`${s.key}:${i}`} style={{ textAlign: align }} className="shrink-0">
+                                    <div key={`${s.key}:${i}`} style={{ textAlign: align }} className="tlp-glue-item shrink-0">
                                         {renderSection(s.key, descriptor, data)}
                                     </div>
                                 );
