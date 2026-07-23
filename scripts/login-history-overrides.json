@@ -1,4 +1,27 @@
 {
+  "49339d4": {
+    "tag": "Feature",
+    "text": "ChatGPT connector — ask about your jobs, leads, calls and finances; with your approval it can also create and edit records"
+  },
+  "68a607d": {
+    "hide": true
+  },
+  "5ab9e1e": {
+    "hide": true
+  },
+  "406414c": {
+    "hide": true
+  },
+  "d84175d": {
+    "hide": true
+  },
+  "cb20945": {
+    "hide": true
+  },
+  "b61b20f": {
+    "tag": "Polish",
+    "text": "Estimate & invoice panels — cleaner first screen and layout"
+  },
   "3d87676": {
     "tag": "Feature",
     "text": "Estimates & invoices — smoother item entry, correct tax after discounts, voidable manual payments"
