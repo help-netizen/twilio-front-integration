@@ -65,6 +65,9 @@ async function ensureMarketplaceSchema(client = null) {
         // migration 191 stays in the normal migration path. Replay before the
         // assistant repair so the standard description layer remains last.
         await query(readMigration('192_seed_inspector_marketplace_app.sql'));
+        // CHATGPT-CRM-MCP-001: OAuth-bound CRM connector. Seed-only; DDL
+        // migration 195 remains in the normal migration path.
+        await query(readMigration('196_seed_chatgpt_crm_mcp_marketplace_app.sql'));
         // ASSISTANT-BOT-001: restore bot-facing descriptions after app seeds overwrite metadata.
         // MUST run AFTER every app seed above (it patches their metadata).
         await query(readMigration('173_seed_assistant_app_descriptions.sql'));

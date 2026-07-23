@@ -136,6 +136,8 @@ const SQL_ALLOWLIST = new Map([
 // the compensating control; routes lacking one stay in the audited gap baseline.
 const PUBLIC_ROUTE_FILES = new Map([
     ['backend/src/routes/agentSkillsMcpPublic.js', 'Disabled by default; timing-safe bearer token and env-bound company context.'],
+    ['backend/src/routes/chatgptMcp.js', 'OAuth Bearer JWT is validated for issuer/signature/audience/client/resource/scope and mapped through one active tenant binding.'],
+    ['backend/src/routes/chatgptMcpResourceMetadata.js', 'Public RFC 9728 metadata contains no tenant, installation, or user data.'],
     ['backend/src/routes/auth.js', 'Authenticated role-neutral self-context endpoint; returns only the caller context.'],
     ['backend/src/routes/authDevice.js', 'Authenticated role-neutral 2FA/trusted-device flow for the current caller.'],
     ['backend/src/routes/billingWebhook.js', 'Stripe HMAC signature is verified before webhook processing.'],

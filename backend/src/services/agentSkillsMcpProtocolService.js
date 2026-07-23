@@ -73,12 +73,18 @@ async function dispatch(req, method, params) {
             };
         case 'ping':
             return {};
-        case 'tools/list':
+        case 'tools/list': {
+            const dispatcherSurface = req.user?.kind === 'agent' || Boolean(req.chatgptMcpBinding);
             return {
                 tools: mcpToolAuthorization
-                    .filterTools(registry.listTools({ kind: params.kind }), req.authz?.permissions)
+                    .filterTools(registry.listTools({
+                        kind: params.kind,
+                        includeDispatcher: dispatcherSurface,
+                        dispatcherOnly: dispatcherSurface,
+                    }), req.authz?.permissions, req.authz?.oauthScopes)
                     .map(toProtocolTool),
             };
+        }
         case 'tools/call': {
             const toolName = params.name || params.tool;
             if (!toolName) {

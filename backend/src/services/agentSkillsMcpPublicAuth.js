@@ -1,40 +1,7 @@
 'use strict';
 
-/**
- * agentSkillsMcpPublicAuth — token-gated public / stdio context for the
- * service-CRM (`svc.*`) MCP surface. AGENT-SKILLS-001, AR-3 / spec §8 /
- * architecture §4. MIRRORS `crmMcpPublicAuth.js`, but:
- *   - env names are `SVC_MCP_*` (never the sales `SALES_MCP_*`);
- *   - **company context is env-bound** (`SVC_MCP_PUBLIC_COMPANY_ID`, default
- *     `…0001` = DEFAULT_COMPANY_ID) — never taken from the client payload;
- *   - the machine identity has an explicit read permission set matching the
- *     published tools;
- *   - **writes are DISABLED unless explicitly enabled** (`SVC_MCP_PUBLIC_WRITE_ENABLED`
- *     === 'true'); enabling adds both `service.crm.write` and the business
- *     permissions declared by the published write tools.
- *
- * The public transport is FULLY DISABLED unless `SVC_MCP_PUBLIC_ENABLED === 'true'`.
- * The sales public-auth (`crmMcpPublicAuth.js`) is UNTOUCHED — additive only.
- */
-
 const crypto = require('crypto');
-
-// Single-tenant default for the voice/public surface (== ZENBOOKER_DEFAULT_COMPANY_ID).
-const DEFAULT_PUBLIC_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-const SERVICE_WRITE_PERMISSION = 'service.crm.write';
-const SERVICE_READ_PERMISSIONS = Object.freeze([
-    'contacts.view',
-    'jobs.view',
-    'estimates.view',
-    'invoices.view',
-]);
-const SERVICE_WRITE_PERMISSIONS = Object.freeze([
-    SERVICE_WRITE_PERMISSION,
-    'jobs.edit',
-    'jobs.close',
-    'leads.edit',
-    'leads.create',
-]);
+const identityService = require('./chatgptMcpIdentityService');
 
 function timingSafeEqual(a, b) {
     const left = Buffer.from(String(a || ''));
@@ -49,80 +16,79 @@ function bearerToken(req) {
     return match ? match[1] : null;
 }
 
-/**
- * Authenticate + build the env-bound public context for a `svc.*` request.
- * Fail-closed: disabled → MCP_PUBLIC_DISABLED; bad/missing token →
- * MCP_PUBLIC_UNAUTHORIZED (routed to HTTP 401 by the route; other codes → 403).
- * @param {Object} req Express-like request.
- * @returns {Object} Context to apply onto the request.
- */
-function requirePublicRequest(req) {
-    if (process.env.SVC_MCP_PUBLIC_ENABLED !== 'true') {
-        const err = new Error('Public Service MCP transport is disabled');
-        err.code = 'MCP_PUBLIC_DISABLED';
-        throw err;
+function publicError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+}
+
+async function requirePublicRequest(req) {
+    if (process.env.NODE_ENV === 'production' || process.env.SVC_MCP_PUBLIC_ENABLED !== 'true') {
+        throw publicError('MCP_PUBLIC_DISABLED', 'Public Service MCP transport is disabled');
     }
     const configuredToken = process.env.SVC_MCP_PUBLIC_TOKEN;
     if (!configuredToken || !timingSafeEqual(bearerToken(req), configuredToken)) {
-        const err = new Error('Invalid Service MCP public token');
-        err.code = 'MCP_PUBLIC_UNAUTHORIZED';
-        throw err;
+        throw publicError('MCP_PUBLIC_UNAUTHORIZED', 'Invalid Service MCP public token');
     }
-    return buildContext({
-        companyId: process.env.SVC_MCP_PUBLIC_COMPANY_ID || DEFAULT_PUBLIC_COMPANY_ID,
-        userEmail: process.env.SVC_MCP_PUBLIC_USER_EMAIL || 'svc-mcp@local',
-        timezone: process.env.SVC_MCP_PUBLIC_TIMEZONE || 'America/New_York',
-        // Writes OFF by default — must be explicitly enabled.
-        writeEnabled: process.env.SVC_MCP_PUBLIC_WRITE_ENABLED === 'true',
+    const companyId = process.env.SVC_MCP_PUBLIC_COMPANY_ID;
+    const agentUserId = process.env.SVC_MCP_PUBLIC_AGENT_USER_ID;
+    if (!companyId || !agentUserId) {
+        throw publicError('MCP_CONTEXT_NOT_CONFIGURED', 'Explicit Service MCP company and AI user are required');
+    }
+    const binding = await identityService.resolveFixedBearerContext({ companyId, agentUserId });
+    return buildContext(binding, {
         ip: req.ip,
         requestId: req.requestId || req.traceId || null,
     });
 }
 
-/**
- * Build the env-bound stdio context (optional transport). Same defaults, its own
- * env namespace, writes off unless `SVC_MCP_STDIO_WRITE_ENABLED === 'true'`.
- * @returns {Object} Context to hand to the protocol service.
- */
-function requireStdioContext() {
-    return buildContext({
-        companyId: process.env.SVC_MCP_STDIO_COMPANY_ID || DEFAULT_PUBLIC_COMPANY_ID,
-        userEmail: process.env.SVC_MCP_STDIO_USER_EMAIL || 'svc-mcp-stdio@local',
-        timezone: process.env.SVC_MCP_STDIO_TIMEZONE || 'America/New_York',
-        writeEnabled: process.env.SVC_MCP_STDIO_WRITE_ENABLED === 'true',
-        ip: null,
-        requestId: null,
-    });
+async function requireStdioContext() {
+    if (process.env.NODE_ENV === 'production') {
+        throw publicError('MCP_PUBLIC_DISABLED', 'Service MCP stdio is disabled in production');
+    }
+    const companyId = process.env.SVC_MCP_STDIO_COMPANY_ID;
+    const agentUserId = process.env.SVC_MCP_STDIO_AGENT_USER_ID;
+    if (!companyId || !agentUserId) {
+        throw publicError('MCP_CONTEXT_NOT_CONFIGURED', 'Explicit Service MCP stdio company and AI user are required');
+    }
+    const binding = await identityService.resolveFixedBearerContext({ companyId, agentUserId });
+    return buildContext(binding, { ip: null, requestId: null });
 }
 
-/**
- * Assemble the request-shaped context. `companyFilter.company_id` is the
- * env-bound tenant; `authz.permissions` carries explicit machine read scope plus
- * write scope only when enabled. No `crmUser` id is required here (the skill layer scopes by
- * companyId; audit authorship is stamped as 'AI Phone' inside the write skills).
- * @param {{companyId:string,userEmail:string,timezone:string,writeEnabled:boolean,ip:?string,requestId:?string}} opts
- * @returns {Object} Context object.
- */
-function buildContext({ companyId, userEmail, timezone, writeEnabled, ip, requestId }) {
-    if (!companyId) {
-        const err = new Error('Service MCP transport context is not configured');
-        err.code = 'MCP_CONTEXT_NOT_CONFIGURED';
-        throw err;
-    }
+function buildContext(binding, { ip, requestId }) {
     return {
         requestId,
         traceId: requestId,
         ip,
-        companyFilter: { company_id: companyId },
+        companyFilter: { company_id: binding.company_id },
         user: {
-            email: userEmail,
+            email: binding.ai_email,
+            name: binding.ai_full_name,
+            kind: 'agent',
+            oauthAuthorizerId: binding.authorized_by_user_id,
+            crmUser: {
+                id: binding.ai_user_id,
+                email: binding.ai_email,
+                full_name: binding.ai_full_name,
+                company_id: binding.company_id,
+                kind: 'agent',
+                status: 'active',
+            },
         },
         authz: {
-            permissions: [
-                ...SERVICE_READ_PERMISSIONS,
-                ...(writeEnabled ? SERVICE_WRITE_PERMISSIONS : []),
-            ],
-            company: { id: companyId, status: 'active', timezone: timezone || 'America/New_York' },
+            permissions: binding.permissions || [],
+            oauthScopes: ['albusto.mcp.read'],
+            company: {
+                id: binding.company_id,
+                name: binding.company_name,
+                status: 'active',
+                timezone: binding.company_timezone,
+            },
+        },
+        chatgptMcpBinding: {
+            id: binding.binding_id,
+            installationId: binding.installation_id,
+            authorizerId: binding.authorized_by_user_id,
         },
     };
 }
@@ -131,6 +97,7 @@ function applyContext(req, context) {
     req.companyFilter = context.companyFilter;
     req.user = context.user;
     req.authz = context.authz;
+    req.chatgptMcpBinding = context.chatgptMcpBinding;
     req.requestId = req.requestId || context.requestId;
     return req;
 }
@@ -139,4 +106,5 @@ module.exports = {
     requirePublicRequest,
     requireStdioContext,
     applyContext,
+    buildContext,
 };

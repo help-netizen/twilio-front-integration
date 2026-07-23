@@ -35,6 +35,8 @@ const mcpResponse = require('./crmMcpResponse');
 const mcpToolAuthorization = require('./mcpToolAuthorization');
 const { validateArguments } = require('./crmMcpSchemaValidator');
 const agentSkills = require('./agentSkills');
+const chatgptMcpReadService = require('./chatgptMcpReadService');
+const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
 
 const WRITE_PERMISSION = registry.SERVICE_WRITE_PERMISSION;
 
@@ -67,6 +69,9 @@ function buildContext(req) {
         source: 'Service CRM MCP',
         createdBy: req.user ? 'user' : 'system',
         permissions: req.authz?.permissions || [],
+        oauthScopes: req.authz?.oauthScopes || [],
+        bindingId: req.chatgptMcpBinding?.id || null,
+        authorizerId: req.chatgptMcpBinding?.authorizerId || req.user?.oauthAuthorizerId || null,
     };
 }
 
@@ -130,13 +135,56 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
             tool: toolName || null,
         });
     }
+    const isBoundAgent = req.user?.kind === 'agent' && Boolean(req.chatgptMcpBinding?.id);
+    if (tool.handler && !isBoundAgent) {
+        throw mcpResponse.mcpError('access_denied', 'Dispatcher tool requires a bound AI identity', {
+            tool: toolName,
+            reason: 'AI_IDENTITY_REQUIRED',
+        });
+    }
+    if (isBoundAgent && !tool.handler) {
+        throw mcpResponse.mcpError('access_denied', 'Tool is not available to this AI identity', {
+            tool: toolName,
+            reason: 'AI_TOOL_NOT_GRANTED',
+        });
+    }
     const context = buildContext(req);
     requireCompanyContext(context);
-    mcpToolAuthorization.requireToolAccess(tool, context.permissions);
-    const sanitizedArguments = mcpToolAuthorization.sanitizeArguments(toolArguments);
-    validateArguments(tool, sanitizedArguments);
-    requireWriteAccess(context, tool, confirmation);
-    return dispatch(tool, contextWithConfirmation(context, confirmation), sanitizedArguments);
+    const executionContext = contextWithConfirmation(context, confirmation);
+    try {
+        mcpToolAuthorization.requireToolAccess(tool, context.permissions, context.oauthScopes);
+        const sanitizedArguments = mcpToolAuthorization.sanitizeArguments(toolArguments);
+        validateArguments(tool, sanitizedArguments);
+        requireWriteAccess(context, tool, confirmation);
+        const result = await dispatch(tool, executionContext, sanitizedArguments);
+        if (tool.handler && executionContext.bindingId) {
+            await chatgptMcpIdentityService.recordInvocation(executionContext, {
+                toolName,
+                requestId: executionContext.requestId,
+                status: 'succeeded',
+                safeMetadata: { kind: 'read' },
+            });
+        }
+        return result;
+    } catch (err) {
+        if (tool.handler && executionContext.bindingId) {
+            try {
+                await chatgptMcpIdentityService.recordInvocation(executionContext, {
+                    toolName,
+                    requestId: executionContext.requestId,
+                    status: err?.mcpCode === 'access_denied'
+                        || err?.code === 'NOT_FOUND'
+                        || [403, 404].includes(err?.httpStatus)
+                        ? 'denied'
+                        : 'failed',
+                    safeMetadata: { error_code: err?.code || 'INTERNAL' },
+                });
+            } catch (auditErr) {
+                console.error('[ChatGPT MCP] failed to record denied/failed invocation:', auditErr.message);
+            }
+        }
+        throw err;
+    }
 }
 
 /**
@@ -151,6 +199,9 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
  * @returns {Promise<Object>} The skill result (already safe-shaped by `runSkill`).
  */
 async function dispatch(tool, context, args) {
+    if (tool.handler) {
+        return chatgptMcpReadService.execute(tool.handler, context.companyId, args);
+    }
     return agentSkills.runSkill(tool.skill, context.companyId, context, args);
 }
 

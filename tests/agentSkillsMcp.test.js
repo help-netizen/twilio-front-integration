@@ -33,7 +33,30 @@ const request = require('supertest');
 // Mock the skill-layer façade so we observe dispatch (tenant + args) and can inject
 // throws for sanitization, without exercising the real skills here.
 jest.mock('../backend/src/services/agentSkills', () => ({ runSkill: jest.fn(async () => ({ ok: true, speak: 'ok' })) }));
+jest.mock('../backend/src/services/chatgptMcpReadService', () => ({ execute: jest.fn(async () => ({ ok: true, id: 7 })) }));
+jest.mock('../backend/src/services/chatgptMcpIdentityService', () => ({
+    resolveFixedBearerContext: jest.fn(async ({ companyId, agentUserId }) => ({
+        binding_id: 'binding-1',
+        installation_id: 1,
+        company_id: companyId,
+        authorized_by_user_id: 'authorizer-1',
+        ai_user_id: agentUserId,
+        ai_email: 'svc-mcp@local',
+        ai_full_name: 'Service MCP Agent',
+        company_name: 'Test Company',
+        company_timezone: 'America/New_York',
+        permissions: [
+            'contacts.view', 'jobs.view', 'estimates.view', 'invoices.view',
+            'mcp.tool.svc.get_job',
+            ...(process.env.SVC_MCP_PUBLIC_WRITE_ENABLED === 'true'
+                ? ['service.crm.write', 'jobs.edit', 'jobs.close', 'leads.edit', 'leads.create']
+                : []),
+        ],
+    })),
+    recordInvocation: jest.fn(async () => {}),
+}));
 const agentSkills = require('../backend/src/services/agentSkills');
+const chatgptMcpReadService = require('../backend/src/services/chatgptMcpReadService');
 
 const registry = require('../backend/src/services/agentSkillsMcpRegistry');
 const mcpResponse = require('../backend/src/services/crmMcpResponse');
@@ -79,10 +102,11 @@ function setPublicEnv({ enabled = true, write = false } = {}) {
     process.env.SVC_MCP_PUBLIC_ENABLED = enabled ? 'true' : 'false';
     process.env.SVC_MCP_PUBLIC_TOKEN = 'svc-token';
     process.env.SVC_MCP_PUBLIC_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+    process.env.SVC_MCP_PUBLIC_AGENT_USER_ID = '00000000-0000-0000-0000-000000000099';
     process.env.SVC_MCP_PUBLIC_WRITE_ENABLED = write ? 'true' : 'false';
 }
 function clearPublicEnv() {
-    for (const k of ['SVC_MCP_PUBLIC_ENABLED', 'SVC_MCP_PUBLIC_TOKEN', 'SVC_MCP_PUBLIC_COMPANY_ID', 'SVC_MCP_PUBLIC_WRITE_ENABLED']) delete process.env[k];
+    for (const k of ['SVC_MCP_PUBLIC_ENABLED', 'SVC_MCP_PUBLIC_TOKEN', 'SVC_MCP_PUBLIC_COMPANY_ID', 'SVC_MCP_PUBLIC_AGENT_USER_ID', 'SVC_MCP_PUBLIC_WRITE_ENABLED']) delete process.env[k];
 }
 
 beforeEach(() => jest.clearAllMocks());
@@ -414,14 +438,15 @@ describe('svc.* public transport — token/env gates (ASK-MCP-09/10/11/12)', () 
         expect(res.body.error.data.code).toBe('MCP_PUBLIC_DISABLED');
     });
 
-    test('ASK-MCP-11: public read is env-bound company; client company_id ignored', async () => {
-        agentSkills.runSkill.mockResolvedValue({ ok: true, speak: 'x' });
+    test('ASK-MCP-11: fixed-bearer S1 read is DB-bound company; client company_id ignored', async () => {
         const res = await request(makePublicApp())
             .post('/mcp/agent-skills')
             .set('Authorization', 'Bearer svc-token')
-            .send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'svc.get_customer_overview', arguments: { contact_id: '501', company_id: 'company-999' } } });
+            .send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'svc.get_job', arguments: { job_id: 7, company_id: 'company-999' } } });
         expect(res.status).toBe(200);
-        expect(agentSkills.runSkill.mock.calls[0][1]).toBe('00000000-0000-0000-0000-000000000001');
+        expect(chatgptMcpReadService.execute).toHaveBeenCalledWith(
+            'getJob', '00000000-0000-0000-0000-000000000001', { job_id: 7 }
+        );
     });
 
     test('ASK-MCP-12: public WRITE disabled by default → access_denied, skill NEVER runs', async () => {
@@ -433,15 +458,14 @@ describe('svc.* public transport — token/env gates (ASK-MCP-09/10/11/12)', () 
         expect(agentSkills.runSkill).not.toHaveBeenCalled();
     });
 
-    test('ASK-MCP-12 (mirror): public WRITE enabled + confirmation → dispatches to skill layer', async () => {
+    test('ASK-MCP-12 (S1): legacy write flag cannot expose an S2 or legacy write', async () => {
         setPublicEnv({ write: true });
-        agentSkills.runSkill.mockResolvedValue({ ok: true, success: true, speak: 'done' });
         const res = await request(makePublicApp())
             .post('/mcp/agent-skills')
             .set('Authorization', 'Bearer svc-token')
             .send({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'svc.reschedule_appointment', arguments: { contact_id: '501', job_id: '7', new_preferred_slot: { date: '2026-07-10', start: '10:00', end: '12:00' } }, confirmation: { confirmed: true, confirmation_id: 'c-1' } } });
-        expect(res.body.result.structuredContent).toMatchObject({ ok: true, success: true });
-        expect(agentSkills.runSkill).toHaveBeenCalledWith('rescheduleAppointment', '00000000-0000-0000-0000-000000000001', expect.any(Object), expect.any(Object));
+        expect(res.body.error.data.code).toBe('access_denied');
+        expect(agentSkills.runSkill).not.toHaveBeenCalled();
     });
 
     test('public initialize → distinct serverInfo albusto-service-crm-mcp', async () => {

@@ -98,6 +98,20 @@ function authenticate(req, res, next) {
     jwt.verify(token, getKey, { algorithms: ['RS256'], issuer: KEYCLOAK_REALM_URL }, async (err, decoded) => {
         if (err) return res.status(401).json({ code: 'AUTH_INVALID', message: 'Invalid or expired token', trace_id: req.traceId });
 
+        // Connector access tokens are deliberately bound to /mcp/chatgpt. Their
+        // human subject authorizes the AI identity but must never be resolved as
+        // that human on the ordinary CRM API surface.
+        const connectorClientId = String(process.env.CHATGPT_MCP_CLIENT_ID || '').trim();
+        const isConnectorToken = [decoded.azp, decoded.client_id]
+            .some((tokenClientId) => tokenClientId === connectorClientId);
+        if (connectorClientId && isConnectorToken) {
+            return res.status(401).json({
+                code: 'AUTH_INVALID',
+                message: 'Invalid or expired token',
+                trace_id: req.traceId,
+            });
+        }
+
         const roles = extractRoles(decoded);
         const is_super_admin = roles.includes('super_admin');
 

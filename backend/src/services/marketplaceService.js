@@ -12,6 +12,7 @@ const { RELY_UNIT_TYPES, RELY_BRANDS } = require('./relyLeadsCatalog');
 const { parseZipList, resolveRelySettings } = require('./relyLeadFilterService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
 const inspectorSettingsService = require('./inspectorSettingsService');
+const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -30,6 +31,18 @@ const SMART_SLOT_ENGINE_APP_KEY = 'smart-slot-engine';
 // resolves through the GENERIC marketplace_installations status='connected' path;
 // NO isAppConnected special-case (only google-email/telephony-twilio are special).
 const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';
+const CHATGPT_CRM_MCP_APP_KEY = 'chatgpt-crm-mcp';
+
+async function requireChatgptTenantAdmin(companyId, actorId, client) {
+    try {
+        return await chatgptMcpIdentityService.requireTenantAdmin(companyId, actorId, client);
+    } catch (err) {
+        if (err instanceof chatgptMcpIdentityService.ChatgptMcpIdentityError) {
+            throw new MarketplaceServiceError(err.message, err.code, err.httpStatus);
+        }
+        throw err;
+    }
+}
 
 // SEND-DOC-001 §4.3: the Google Email marketplace app (seeded with
 // provisioning_mode='none' and NO install row) derives its connected state from
@@ -728,6 +741,9 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
         if (!app) {
             throw new MarketplaceServiceError('Marketplace app not found.', 'APP_NOT_FOUND', 404);
         }
+        if (app.app_key === CHATGPT_CRM_MCP_APP_KEY) {
+            await requireChatgptTenantAdmin(companyId, actorId, client);
+        }
 
         const active = await marketplaceQueries.findActiveInstallation(companyId, app.id, client);
         if (active) {
@@ -881,6 +897,13 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
                 companyId,
                 installationId: installation.id,
             }, doneClient);
+            if (app.app_key === CHATGPT_CRM_MCP_APP_KEY) {
+                await chatgptMcpIdentityService.provisionInstallation({
+                    companyId,
+                    installationId: installation.id,
+                    actorId,
+                }, doneClient);
+            }
             await marketplaceQueries.writeEvent({
                 companyId,
                 installationId: installation.id,
@@ -923,6 +946,9 @@ async function disconnectInstallation(companyId, actorId, installationId, { requ
         if (!installation) {
             throw new MarketplaceServiceError('Installation not found.', 'INSTALLATION_NOT_FOUND', 404);
         }
+        if (installation.app_key === CHATGPT_CRM_MCP_APP_KEY) {
+            await requireChatgptTenantAdmin(companyId, actorId, client);
+        }
         if (!['connected', 'provisioning_failed'].includes(installation.status)) {
             throw new MarketplaceServiceError('Installation is not active.', 'INSTALLATION_NOT_ACTIVE', 409);
         }
@@ -946,6 +972,13 @@ async function disconnectInstallation(companyId, actorId, installationId, { requ
                 actorId,
                 requestId,
                 reason: 'disconnect',
+            }, client);
+        }
+        if (installation.app_key === CHATGPT_CRM_MCP_APP_KEY) {
+            await chatgptMcpIdentityService.revokeInstallation({
+                companyId,
+                installationId,
+                actorId,
             }, client);
         }
         const updated = await marketplaceQueries.markDisconnected({
@@ -1125,6 +1158,7 @@ module.exports = {
     MarketplaceServiceError,
     SMART_SLOT_ENGINE_APP_KEY,
     AI_REPAIR_ADVISOR_APP_KEY,
+    CHATGPT_CRM_MCP_APP_KEY,
     SETTINGS_ENABLED_APP_KEYS,
     isAppConnected,
     listApps,

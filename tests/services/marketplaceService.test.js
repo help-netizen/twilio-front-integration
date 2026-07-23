@@ -23,6 +23,7 @@ jest.mock('../../backend/src/db/marketplaceQueries', () => ({
     markInstallationConnected: jest.fn(),
     markProvisioningFailed: jest.fn(),
     markDisconnected: jest.fn(),
+    countOtherActiveInstallationsOnCredential: jest.fn(),
     writeEvent: jest.fn(),
 }));
 
@@ -39,16 +40,37 @@ jest.mock('../../backend/src/services/marketplaceProvisioningService', () => ({
     pushCredentials: jest.fn(),
 }));
 
+jest.mock('../../backend/src/services/chatgptMcpIdentityService', () => {
+    class ChatgptMcpIdentityError extends Error {
+        constructor(code, message, httpStatus = 403) {
+            super(message);
+            this.code = code;
+            this.httpStatus = httpStatus;
+        }
+    }
+    return {
+        ChatgptMcpIdentityError,
+        requireTenantAdmin: jest.fn(),
+        provisionInstallation: jest.fn(),
+        revokeInstallation: jest.fn(),
+    };
+});
+
 const queries = require('../../backend/src/db/marketplaceQueries');
 const emailQueries = require('../../backend/src/db/emailQueries');
 const integrationsService = require('../../backend/src/services/integrationsService');
 const provisioningService = require('../../backend/src/services/marketplaceProvisioningService');
+const chatgptMcpIdentityService = require('../../backend/src/services/chatgptMcpIdentityService');
 const marketplaceService = require('../../backend/src/services/marketplaceService');
 
 describe('marketplaceService', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockClient.query.mockResolvedValue({ rows: [] });
+        chatgptMcpIdentityService.requireTenantAdmin.mockResolvedValue({ id: 'user-1' });
+        chatgptMcpIdentityService.provisionInstallation.mockResolvedValue({});
+        chatgptMcpIdentityService.revokeInstallation.mockResolvedValue(1);
+        queries.countOtherActiveInstallationsOnCredential.mockResolvedValue(0);
         emailQueries.getMailboxByCompany.mockResolvedValue({
             id: 'mailbox-1',
             provider: 'gmail',
@@ -144,6 +166,77 @@ describe('marketplaceService', () => {
         expect(queries.updateInstallationCredential).not.toHaveBeenCalled();
         expect(result.status).toBe('connected');
         expect(result.key_id).toBeUndefined();
+    });
+
+    test('ChatGPT connector install is tenant-admin-only and provisions the bound AI identity', async () => {
+        const app = {
+            id: 195,
+            app_key: 'chatgpt-crm-mcp',
+            name: 'ChatGPT CRM Connector',
+            provider_name: 'Albusto',
+            category: 'ai',
+            requested_scopes: ['albusto.mcp.read'],
+            provisioning_mode: 'none',
+        };
+        queries.getPublishedAppByKey.mockResolvedValue(app);
+        queries.findActiveInstallation.mockResolvedValue(null);
+        queries.createInstallation.mockResolvedValue({ id: 1950, status: 'provisioning_failed' });
+        queries.markInstallationConnected.mockResolvedValue({ id: 1950, status: 'connected' });
+
+        const result = await marketplaceService.installApp(
+            'company-1', 'user-1', 'chatgpt-crm-mcp', { requestId: 'req-mcp' }
+        );
+
+        expect(chatgptMcpIdentityService.requireTenantAdmin)
+            .toHaveBeenCalledWith('company-1', 'user-1', mockClient);
+        expect(chatgptMcpIdentityService.provisionInstallation).toHaveBeenCalledWith({
+            companyId: 'company-1', installationId: 1950, actorId: 'user-1',
+        }, mockClient);
+        expect(integrationsService.createIntegration).not.toHaveBeenCalled();
+        expect(result.status).toBe('connected');
+    });
+
+    test('ChatGPT connector install maps a non-admin identity denial and creates nothing', async () => {
+        queries.getPublishedAppByKey.mockResolvedValue({
+            id: 195, app_key: 'chatgpt-crm-mcp', requested_scopes: [], provisioning_mode: 'none',
+        });
+        chatgptMcpIdentityService.requireTenantAdmin.mockRejectedValue(
+            new chatgptMcpIdentityService.ChatgptMcpIdentityError(
+                'TENANT_ADMIN_REQUIRED', 'Tenant administrator required', 403
+            )
+        );
+
+        await expect(marketplaceService.installApp('company-1', 'provider-1', 'chatgpt-crm-mcp'))
+            .rejects.toMatchObject({ code: 'TENANT_ADMIN_REQUIRED', httpStatus: 403 });
+        expect(queries.createInstallation).not.toHaveBeenCalled();
+        expect(chatgptMcpIdentityService.provisionInstallation).not.toHaveBeenCalled();
+    });
+
+    test('ChatGPT connector disconnect rechecks tenant-admin and revokes the binding before disconnect', async () => {
+        queries.getInstallationById.mockResolvedValue({
+            id: 1950,
+            app_id: 195,
+            app_key: 'chatgpt-crm-mcp',
+            status: 'connected',
+            api_integration_id: null,
+        });
+        queries.markDisconnected.mockResolvedValue({
+            id: 1950, status: 'disconnected', disconnected_at: '2026-07-22T00:00:00Z',
+        });
+
+        const result = await marketplaceService.disconnectInstallation(
+            'company-1', 'user-1', 1950, { requestId: 'req-disconnect' }
+        );
+
+        expect(chatgptMcpIdentityService.requireTenantAdmin)
+            .toHaveBeenCalledWith('company-1', 'user-1', mockClient);
+        expect(chatgptMcpIdentityService.revokeInstallation).toHaveBeenCalledWith({
+            companyId: 'company-1', installationId: 1950, actorId: 'user-1',
+        }, mockClient);
+        expect(queries.markDisconnected).toHaveBeenCalledWith(expect.objectContaining({
+            companyId: 'company-1', installationId: 1950, status: 'disconnected',
+        }), mockClient);
+        expect(result.status).toBe('disconnected');
     });
 
     test('installApp rejects apps that require Gmail when mailbox is not connected', async () => {

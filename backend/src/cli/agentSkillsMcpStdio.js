@@ -18,7 +18,7 @@ const publicAuth = require('../services/agentSkillsMcpPublicAuth');
 async function main() {
     let context;
     try {
-        context = publicAuth.requireStdioContext();
+        context = await publicAuth.requireStdioContext();
     } catch (err) {
         process.stderr.write(`[svc-mcp-stdio] ${err.message}\n`);
         process.exit(1);

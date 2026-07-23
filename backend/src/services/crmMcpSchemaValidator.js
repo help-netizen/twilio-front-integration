@@ -24,7 +24,13 @@ function validateArguments(tool, args = {}) {
 
     for (const [key, value] of Object.entries(args)) {
         const propertySchema = schema.properties?.[key];
-        if (!propertySchema || Object.keys(propertySchema).length === 0) continue;
+        if (!propertySchema) {
+            if (schema.additionalProperties === false) {
+                throw mcpError('invalid_request', `${key} is not allowed`, { field: key });
+            }
+            continue;
+        }
+        if (Object.keys(propertySchema).length === 0) continue;
         if (value === null && propertySchema.nullable === true) continue;
         if (value === null) continue;
         validateValue(key, value, propertySchema);
@@ -77,6 +83,15 @@ function validateValue(key, value, schema) {
     }
     if (schema.type === 'boolean' && typeof value !== 'boolean') {
         throw mcpError('invalid_request', `${key} must be a boolean`, { field: key });
+    }
+    if (schema.type === 'array') {
+        if (!Array.isArray(value)) {
+            throw mcpError('invalid_request', `${key} must be an array`, { field: key });
+        }
+        if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+            throw mcpError('invalid_request', `${key} must contain at most ${schema.maxItems} items`, { field: key });
+        }
+        value.forEach((item, index) => validateValue(`${key}[${index}]`, item, schema.items || {}));
     }
 }
 

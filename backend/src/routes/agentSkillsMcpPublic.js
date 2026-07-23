@@ -37,9 +37,9 @@ function sendPublicError(res, err, id = null) {
     });
 }
 
-function publicContextMiddleware(req, res, next) {
+async function publicContextMiddleware(req, res, next) {
     try {
-        publicAuth.applyContext(req, publicAuth.requirePublicRequest(req));
+        publicAuth.applyContext(req, await publicAuth.requirePublicRequest(req));
         next();
     } catch (err) {
         sendPublicError(res, err, req.body?.id ?? null);

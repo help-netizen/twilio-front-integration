@@ -19,17 +19,42 @@ function canInvoke(tool, permissions = []) {
     return required.every((permission) => granted.has(permission));
 }
 
-function filterTools(tools, permissions = []) {
-    return (tools || []).filter((tool) => canInvoke(tool, permissions));
+function requiredOAuthScopes(tool) {
+    if (!tool) return [];
+    const declared = Array.isArray(tool.requiredOAuthScopes)
+        ? tool.requiredOAuthScopes
+        : [tool.requiredOAuthScope];
+    return [...new Set(declared.filter((scope) => (
+        typeof scope === 'string' && scope.trim().length > 0
+    )))];
 }
 
-function requireToolAccess(tool, permissions = []) {
-    if (canInvoke(tool, permissions)) return;
+function hasRequiredOAuthScopes(tool, oauthScopes = []) {
+    const required = requiredOAuthScopes(tool);
+    if (required.length === 0) return true;
+    const granted = new Set(Array.isArray(oauthScopes) ? oauthScopes : []);
+    return required.every((scope) => granted.has(scope));
+}
+
+function filterTools(tools, permissions = [], oauthScopes = []) {
+    return (tools || []).filter((tool) => (
+        canInvoke(tool, permissions) && hasRequiredOAuthScopes(tool, oauthScopes)
+    ));
+}
+
+function requireToolAccess(tool, permissions = [], oauthScopes = []) {
+    const permissionAllowed = canInvoke(tool, permissions);
+    const scopeAllowed = hasRequiredOAuthScopes(tool, oauthScopes);
+    if (permissionAllowed && scopeAllowed) return;
     const required = requiredPermissions(tool);
+    const scopes = requiredOAuthScopes(tool);
     throw mcpResponse.mcpError('access_denied', 'Insufficient permission for MCP tool', {
         tool: tool?.name || null,
         required_permissions: required,
-        reason: required.length > 0 ? 'TOOL_PERMISSION_REQUIRED' : 'TOOL_PERMISSION_UNMAPPED',
+        required_oauth_scopes: scopes,
+        reason: required.length === 0
+            ? 'TOOL_PERMISSION_UNMAPPED'
+            : (permissionAllowed ? 'OAUTH_SCOPE_REQUIRED' : 'TOOL_PERMISSION_REQUIRED'),
     });
 }
 
@@ -44,7 +69,9 @@ function sanitizeArguments(args) {
 module.exports = {
     canInvoke,
     filterTools,
+    hasRequiredOAuthScopes,
     requireToolAccess,
+    requiredOAuthScopes,
     requiredPermissions,
     sanitizeArguments,
 };

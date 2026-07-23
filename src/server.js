@@ -35,6 +35,8 @@ const crmMcpPublicRouter = require('../backend/src/routes/crmMcpPublic');
 // generic crmMcp validator/response, points at the provider-neutral skill layer.
 const agentSkillsMcpRouter = require('../backend/src/routes/agentSkillsMcp');
 const agentSkillsMcpPublicRouter = require('../backend/src/routes/agentSkillsMcpPublic');
+const chatgptMcpResourceMetadataRouter = require('../backend/src/routes/chatgptMcpResourceMetadata');
+const chatgptMcpOAuthRouter = require('../backend/src/routes/chatgptMcp');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -265,6 +267,8 @@ app.use('/mcp/crm', crmMcpPublicRouter);
 // /api/crm/mcp) + token-gated public (own env-bound gate, writes off by default).
 app.use('/api/agent-skills/mcp', authenticate, requireCompanyAccess, agentSkillsMcpRouter);
 app.use('/mcp/agent-skills', agentSkillsMcpPublicRouter);
+app.use('/.well-known/oauth-protected-resource', chatgptMcpResourceMetadataRouter);
+app.use('/mcp/chatgpt', chatgptMcpOAuthRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);

@@ -36,6 +36,12 @@ const {
     FINANCE_TOOL_DEFINITIONS,
     buildMcpInputSchema,
 } = require('./agentSkills/financeToolDefinitions');
+const {
+    READ_TOOL_PERMISSIONS: CHATGPT_READ_TOOL_PERMISSIONS,
+    READ_TOOL_NAMES: CHATGPT_S1_TOOL_NAMES,
+    READ_SCOPE: CHATGPT_READ_SCOPE,
+    S1_GRANTS: CHATGPT_S1_GRANTS,
+} = require('./chatgptMcpPermissions');
 
 const TOOL_PERMISSION_MAP = Object.freeze({
     'svc.identify_caller': ['contacts.view'],
@@ -50,6 +56,10 @@ const TOOL_PERMISSION_MAP = Object.freeze({
     'svc.reschedule_appointment': ['jobs.edit'],
     'svc.cancel_appointment': ['jobs.close'],
     'svc.book_on_lead': ['leads.edit', 'leads.create'],
+    ...Object.fromEntries(Object.entries(CHATGPT_READ_TOOL_PERMISSIONS).map(([name, permissions]) => [
+        name,
+        [...permissions, `mcp.tool.${name}`],
+    ])),
 });
 
 /**
@@ -205,10 +215,60 @@ const WRITE_TOOLS = [
     },
 ];
 
+// CHATGPT-CRM-MCP-001 S1 — dispatcher reads. These are intentionally separate
+// from the caller-verification skills above: the OAuth binding is the actor and
+// company authority, and each descriptor also requires its exact AI-only grant.
+const DISPATCHER_READ_TOOLS = [
+    dispatcherRead('svc.list_jobs', 'listJobs', 'List company Jobs with bounded filters.', strictObjectSchema({
+        status: stringSchema(), search: stringSchema(), start_date: dateSchema(), end_date: dateSchema(),
+        only_open: booleanSchema(), limit: integerSchema(1, 100), offset: integerSchema(0),
+    })),
+    dispatcherRead('svc.get_job', 'getJob', 'Get one company-owned Job.', strictObjectSchema({ job_id: integerSchema(1) }, ['job_id'])),
+    dispatcherRead('svc.get_job_transitions', 'getJobTransitions', 'List actions from the company-published Job workflow.', strictObjectSchema({ job_id: integerSchema(1) }, ['job_id'])),
+    dispatcherRead('svc.list_leads', 'listLeads', 'List company Leads with bounded filters.', strictObjectSchema({
+        status: stringSchema(), source: stringSchema(), search: stringSchema(), only_open: booleanSchema(),
+        limit: integerSchema(1, 100), offset: integerSchema(0),
+    })),
+    dispatcherRead('svc.get_lead', 'getLead', 'Get one company-owned Lead.', strictObjectSchema({ lead_uuid: stringSchema() }, ['lead_uuid'])),
+    dispatcherRead('svc.get_lead_transitions', 'getLeadTransitions', 'List actions from the company-published Lead workflow.', strictObjectSchema({ lead_uuid: stringSchema() }, ['lead_uuid'])),
+    dispatcherRead('svc.search_contacts', 'searchContacts', 'Search company Contacts by name, phone, or email.', strictObjectSchema({
+        search: stringSchema(), limit: integerSchema(1, 100), offset: integerSchema(0),
+    })),
+    dispatcherRead('svc.get_contact', 'getContact', 'Get one company-owned Contact with owned emails and addresses.', strictObjectSchema({ contact_id: integerSchema(1) }, ['contact_id'])),
+    dispatcherRead('svc.get_contact_history', 'getContactHistory', 'Get bounded company-owned Contact history.', strictObjectSchema({
+        contact_id: integerSchema(1), limit: integerSchema(1, 100),
+    }, ['contact_id'])),
+    dispatcherRead('svc.list_schedule', 'listSchedule', 'List company Schedule items in a bounded range.', strictObjectSchema({
+        start_date: dateSchema(), end_date: dateSchema(),
+        entity_types: arraySchema(enumSchema(['job', 'lead', 'task']), 3),
+        statuses: arraySchema(stringSchema(), 20), assignee_id: stringSchema(),
+        unassigned_only: booleanSchema(), search: stringSchema(),
+        limit: integerSchema(1, 100), offset: integerSchema(0),
+    })),
+    dispatcherRead('svc.get_schedule_item', 'getScheduleItem', 'Get one company-owned Schedule item.', strictObjectSchema({
+        entity_type: enumSchema(['job', 'lead', 'task']), entity_id: integerSchema(1),
+    }, ['entity_type', 'entity_id'])),
+    dispatcherRead('svc.list_tasks', 'listTasks', 'List company Tasks with bounded filters.', strictObjectSchema({
+        status: stringSchema(), parent_type: enumSchema(['job', 'lead', 'estimate', 'invoice', 'contact', 'timeline']),
+        overdue: booleanSchema(), due_from: dateSchema(), due_to: dateSchema(), search: stringSchema(),
+        limit: integerSchema(1, 100), offset: integerSchema(0),
+    })),
+    dispatcherRead('svc.list_entity_tasks', 'listEntityTasks', 'List Tasks on a company-owned Job or Lead.', strictObjectSchema({
+        parent_type: enumSchema(['job', 'lead']), parent_id: stringSchema(), include_done: booleanSchema(),
+    }, ['parent_type', 'parent_id'])),
+    dispatcherRead('svc.list_task_assignees', 'listTaskAssignees', 'List active company users eligible for task assignment.', strictObjectSchema({ limit: integerSchema(1, 500) })),
+    dispatcherRead('svc.list_estimates', 'listEstimates', 'List actionable company Estimates without revision double-counting.', financeListSchema(true)),
+    dispatcherRead('svc.get_estimate', 'getEstimate', 'Get one company-owned Estimate and its line items.', strictObjectSchema({ estimate_id: integerSchema(1) }, ['estimate_id'])),
+    dispatcherRead('svc.list_invoices', 'listInvoices', 'List company Invoices with balance fields.', financeListSchema(false)),
+    dispatcherRead('svc.get_invoice', 'getInvoice', 'Get one company-owned Invoice, line items, and payment rollup.', strictObjectSchema({ invoice_id: integerSchema(1) }, ['invoice_id'])),
+];
+
 const TOOLS = Object.freeze([
     ...READ_TOOLS.map((tool) => normalizeTool(tool, 'read')),
     ...WRITE_TOOLS.map((tool) => normalizeTool(tool, 'write')),
+    ...DISPATCHER_READ_TOOLS.map((tool) => normalizeTool(tool, 'read')),
 ]);
+const LEGACY_TOOL_NAMES = new Set([...READ_TOOLS, ...WRITE_TOOLS].map((tool) => tool.name));
 
 // --- schema helpers (mirror crmMcpToolRegistry.js) --------------------------
 
@@ -228,6 +288,14 @@ function enumSchema(values) {
     return { type: 'string', enum: values };
 }
 
+function dateSchema() {
+    return { type: 'string', format: 'date' };
+}
+
+function arraySchema(items, maxItems) {
+    return { type: 'array', items, maxItems };
+}
+
 function objectSchema(properties, required = []) {
     return {
         type: 'object',
@@ -235,6 +303,31 @@ function objectSchema(properties, required = []) {
         properties,
         required,
     };
+}
+
+function strictObjectSchema(properties, required = []) {
+    return { type: 'object', additionalProperties: false, properties, required };
+}
+
+function dispatcherRead(name, handler, description, inputSchema) {
+    return {
+        name,
+        handler,
+        requiredLevel: null,
+        requiredOAuthScopes: [CHATGPT_READ_SCOPE],
+        description,
+        inputSchema,
+    };
+}
+
+function financeListSchema(estimates) {
+    return strictObjectSchema({
+        status: stringSchema(), contact_id: integerSchema(1), lead_id: integerSchema(1),
+        job_id: integerSchema(1), ...(estimates
+            ? { include_archived: booleanSchema() }
+            : { estimate_id: integerSchema(1) }),
+        search: stringSchema(), limit: integerSchema(1, 100), offset: integerSchema(0),
+    });
 }
 
 /**
@@ -285,6 +378,8 @@ function normalizeTool(tool, kind) {
 function listTools(filters = {}) {
     const kind = filters?.kind || null;
     return TOOLS
+        .filter((tool) => filters?.dispatcherOnly !== true || CHATGPT_S1_TOOL_NAMES.includes(tool.name))
+        .filter((tool) => filters?.includeDispatcher === true || LEGACY_TOOL_NAMES.has(tool.name))
         .filter((tool) => !kind || tool.kind === kind)
         .map((tool) => ({ ...tool, inputSchema: { ...tool.inputSchema } }));
 }
@@ -312,6 +407,8 @@ function skillFor(name) {
 module.exports = {
     SERVICE_WRITE_PERMISSION,
     TOOL_PERMISSION_MAP,
+    CHATGPT_S1_TOOL_NAMES,
+    CHATGPT_S1_GRANTS,
     listTools,
     getTool,
     skillFor,
