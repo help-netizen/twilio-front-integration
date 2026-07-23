@@ -1,4 +1,12 @@
 {
+  "3d87676": {
+    "tag": "Feature",
+    "text": "Estimates & invoices — smoother item entry, correct tax after discounts, voidable manual payments"
+  },
+  "21f77e9": {
+    "tag": "Fix",
+    "text": "Fixed a sign-in loop some workspaces hit right after setup"
+  },
   "bdc207a": {
     "hide": true
   },
