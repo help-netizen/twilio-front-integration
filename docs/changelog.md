@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-07-23 — OB-10: SSE delivery + tenant isolation contract
+
+Добавлен `tests/realtimeSse.test.js`: реальная доставка SSE, byte-zero
+T-blast-изоляция двух компаний, fail-closed drop без company, все шесть
+publish-хелперов, tenant guard `/events/calls`, статический аудит 22 прямых
+`broadcast`-продьюсеров и сквозной VAPI call-status producer smoke. Unscoped
+продьюсеров не найдено; production-код менять не потребовалось. OB-10 закрыт
+тестовым контрактом. **НЕ задеплоено.**
+
 ## 2026-07-23 — CHATGPT-CRM-MCP-001 S2c-b: конверсия сметы в инвойс
 
 Добавлен consent-gated write-инструмент
