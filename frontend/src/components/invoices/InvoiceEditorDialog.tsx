@@ -300,17 +300,6 @@ export function InvoiceEditorDialog({
                                     <p className="text-xs text-[var(--blanc-ink-3)]">Title and unit price are required. Qty defaults to 1.</p>
                                 </div>
 
-                                {/* Column headers for the line-item grid (kept as a grid, not floating per cell) */}
-                                {items.length > 0 && (
-                                    <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3 px-0.5">
-                                        <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Qty</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Unit price</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Taxable</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-right text-[var(--blanc-ink-3)]">Amount</span>
-                                        <span className="w-8" />
-                                    </div>
-                                )}
-
                                 <div className="flex flex-col gap-4">
                                     {items.map(item => (
                                         <div key={item.key} className="space-y-2">
@@ -327,30 +316,40 @@ export function InvoiceEditorDialog({
                                                 rows={2}
                                                 className="w-full resize-none rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3.5 py-2.5 text-sm font-normal leading-relaxed text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                             />
-                                            <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3">
-                                                <Input
-                                                    type="text"
-                                                    inputMode="decimal"
-                                                    value={item.quantity}
-                                                    onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value.replace(/[^0-9.]/g, '') } : i))}
-                                                    className={CELL_INPUT}
-                                                />
-                                                <MoneyInput
-                                                    value={item.unit_price}
-                                                    onValueChange={next => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: next } : i))}
-                                                    className={`${CELL_INPUT} w-full px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
-                                                />
-                                                <label className="flex items-center gap-2 text-xs text-[var(--blanc-ink-2)] cursor-pointer">
+                                            {/* Per-cell labels + wrap (unified with the estimate editor):
+                                                the fixed grid overflowed a 375px viewport. */}
+                                            <div className="flex flex-wrap items-center gap-3">
+                                                <div className="flex w-[76px] flex-col gap-0.5">
+                                                    <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Qty</span>
+                                                    <Input
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        value={item.quantity}
+                                                        onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value.replace(/[^0-9.]/g, '') } : i))}
+                                                        className={CELL_INPUT}
+                                                    />
+                                                </div>
+                                                <div className="flex w-[110px] flex-col gap-0.5">
+                                                    <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Unit price</span>
+                                                    <MoneyInput
+                                                        value={item.unit_price}
+                                                        onValueChange={next => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: next } : i))}
+                                                        className={`${CELL_INPUT} w-full px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
+                                                    />
+                                                </div>
+                                                <label className="flex items-center gap-2 pt-4 text-xs text-[var(--blanc-ink-2)] cursor-pointer">
                                                     <Checkbox
                                                         checked={item.taxable}
                                                         onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
                                                     />
                                                     Taxable
                                                 </label>
-                                                <p className="font-mono text-sm font-semibold text-right whitespace-nowrap text-[var(--blanc-ink-1)]">{money(amount(item))}</p>
-                                                <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
-                                                    <Trash2 className="size-4" />
-                                                </Button>
+                                                <div className="ml-auto flex items-center gap-1 pt-4">
+                                                    <p className="font-mono text-sm font-semibold text-right whitespace-nowrap text-[var(--blanc-ink-1)]">{money(amount(item))}</p>
+                                                    <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
+                                                        <Trash2 className="size-4" />
+                                                    </Button>
+                                                </div>
                                             </div>
                                         </div>
                                     ))}

@@ -3,7 +3,6 @@ import {
     Ban,
     Check,
     ChevronDown,
-    Clock,
     CreditCard,
     Eye,
     Loader2,
@@ -545,8 +544,11 @@ export function InvoiceDetailPanel({
                 </div>
             </div>
 
-            <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_310px]">
-                <main className="min-h-0 space-y-6 overflow-y-auto p-5">
+            {/* ONE scroll surface at every width (design review 2026-07-23) — see
+                EstimateDetailPanel: the per-column scroll pair broke mobile. */}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                <div className="grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
+                <main className="space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
                     {/* Tasks — TASKS-001 */}
                     <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
                     {/* Summary (stored in `notes`; labeled "Summary" to match estimates).
@@ -587,38 +589,37 @@ export function InvoiceDetailPanel({
                     {/* Items */}
                     <section>
                         <div className="mb-3 flex items-end justify-between gap-3">
-                            <div>
-                                <p className="blanc-eyebrow">Items</p>
-                                <p className="text-xs text-[var(--blanc-ink-3)]">Line items billed on the invoice.</p>
-                            </div>
+                            <p className="blanc-eyebrow">Items</p>
                         </div>
                         {hasItems ? (
                             <div className="space-y-2">
                                 {invoice.items!.map(item => (
+                                    /* Tile: name↔amount header, full-width description, meta row
+                                       with actions — mirrors the estimate tile. */
                                     <div
                                         key={item.id}
-                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-xl border border-[var(--blanc-line)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:border-[var(--blanc-ink-3)]'}`}
+                                        className={`rounded-xl border border-[var(--blanc-line)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:border-[var(--blanc-ink-3)]'}`}
                                         onClick={() => { if (!readOnly) openEditItem(item); }}
                                     >
-                                        <div className="min-w-0">
-                                            <p className="font-medium text-[var(--blanc-ink-1)]">{item.name}</p>
-                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
-                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--blanc-ink-3)]">
-                                                <span>{Number(item.quantity)} x {money(item.unit_price)}</span>
-                                                {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
-                                            </div>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <p className="min-w-0 font-medium text-[var(--blanc-ink-1)]">{item.name}</p>
+                                            <p className="shrink-0 font-mono font-semibold whitespace-nowrap text-[var(--blanc-ink-1)]">{money((item as any).amount ?? Number(item.quantity) * Number(item.unit_price))}</p>
                                         </div>
-                                        <p className="font-mono font-semibold whitespace-nowrap text-[var(--blanc-ink-1)]">{money((item as any).amount ?? Number(item.quantity) * Number(item.unit_price))}</p>
-                                        {!readOnly && (
-                                            <>
-                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
-                                                    <Pencil className="size-4" />
-                                                </Button>
-                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(e) => { e.stopPropagation(); handleRemoveItem(item.id); }} title="Remove item">
-                                                    <Trash2 className="size-4" />
-                                                </Button>
-                                            </>
-                                        )}
+                                        {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
+                                        <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blanc-ink-3)]">
+                                            <span>{Number(item.quantity)} × {money(item.unit_price)}</span>
+                                            {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
+                                            {!readOnly && (
+                                                <span className="ml-auto flex items-center gap-1">
+                                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
+                                                        <Pencil className="size-4" />
+                                                    </Button>
+                                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(e) => { e.stopPropagation(); handleRemoveItem(item.id); }} title="Remove item">
+                                                        <Trash2 className="size-4" />
+                                                    </Button>
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -644,6 +645,7 @@ export function InvoiceDetailPanel({
 
                     {/* Totals */}
                     <section className="rounded-2xl p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
+                        <p className="mb-3 blanc-eyebrow">Totals</p>
                         <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
                                 <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
@@ -722,9 +724,9 @@ export function InvoiceDetailPanel({
                     </section>
                 </main>
 
-                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] p-5 md:border-l md:border-t-0" style={{ background: 'rgba(25,25,25,0.04)' }}>
+                <aside className="space-y-6 px-5 pb-6 md:sticky md:top-0 md:self-start md:py-6 md:pl-0 md:pr-6">
                     {/* Document settings */}
-                    <section className="space-y-2 text-sm">
+                    <section className="space-y-3 text-sm">
                         <p className="blanc-eyebrow">Document settings</p>
                         <div className="grid grid-cols-[auto_1fr] items-center gap-2">
                             <Label className="text-[var(--blanc-ink-2)]">Due date</Label>
@@ -739,16 +741,12 @@ export function InvoiceDetailPanel({
                         </div>
                     </section>
 
-                    {/* Fully-paid banner */}
+                    {/* Fully-paid state — flat row, no box (containers invisible). */}
                     {!readOnly && balanceDueNum <= 0 && (
-                        <section className="space-y-2 text-sm">
-                            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-                                <div className="flex items-center gap-2 font-medium">
-                                    <Check className="size-3.5" />
-                                    Invoice is fully paid
-                                </div>
-                            </div>
-                        </section>
+                        <div className="flex items-center gap-2 text-sm font-medium text-emerald-700">
+                            <Check className="size-4 shrink-0" />
+                            Invoice is fully paid
+                        </div>
                     )}
 
                     {/* Payments list. OB-31: voided rows stay listed — grayed and LAST;
@@ -828,22 +826,20 @@ export function InvoiceDetailPanel({
                     </Dialog>
 
                     {events.length > 0 && (
-                        <section className="space-y-2 text-sm">
+                        <section className="space-y-3 text-sm">
                             <p className="blanc-eyebrow">History</p>
-                            <div className="space-y-2">
+                            <div className="space-y-2.5">
                                 {events.map(evt => (
-                                    <div key={evt.id} className="flex items-start gap-2 text-xs">
-                                        <Clock className="mt-0.5 size-3 shrink-0 text-[var(--blanc-ink-3)]" />
-                                        <div>
-                                            <span className="font-medium capitalize text-[var(--blanc-ink-1)]">{evt.event_type.replace(/_/g, ' ')}</span>
-                                            <p className="text-[var(--blanc-ink-2)]">{fmtDateTime(evt.created_at)}</p>
-                                        </div>
+                                    <div key={evt.id} className="text-xs">
+                                        <span className="font-medium capitalize text-[var(--blanc-ink-1)]">{evt.event_type.replace(/_/g, ' ')}</span>
+                                        <p className="text-[var(--blanc-ink-3)]">{fmtDateTime(evt.created_at)}</p>
                                     </div>
                                 ))}
                             </div>
                         </section>
                     )}
                 </aside>
+                </div>
             </div>
 
             <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-bg,#F1F1F0)] px-5 py-3">

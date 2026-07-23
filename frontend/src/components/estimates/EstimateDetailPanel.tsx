@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
+import { Archive, Check, ChevronDown, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -95,7 +95,9 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     }, [initialEstimate]);
 
     const [converting, setConverting] = useState(false);
-    const [summaryOpen, setSummaryOpen] = useState(false);
+    // Open by default when there IS a summary — the common path is "open to read".
+    const [summaryOpen, setSummaryOpen] = useState(!!initialEstimate.summary);
+    useEffect(() => { setSummaryOpen(!!initialEstimate.summary); }, [initialEstimate.id, initialEstimate.summary]);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [sendOpen, setSendOpen] = useState(false);
     const [declineOpen, setDeclineOpen] = useState(false);
@@ -339,8 +341,14 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 </div>
             </div>
 
-            <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_310px]">
-                <main className="min-h-0 space-y-6 overflow-y-auto p-5">
+            {/* ONE scroll surface at every width (design review 2026-07-23): the old
+                per-column overflow-y-auto pair split the mobile viewport into two
+                half-height scroll boxes — the meta column ate half the screen and
+                scrolling only worked in whichever half you tapped first. Desktop keeps
+                two columns inside the shared scroll; the meta column is sticky. */}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                <div className="grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
+                <main className="space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
                     {/* Tasks — TASKS-001 */}
                     <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
                     {/* Summary — OB-28: same presentation as the create/edit form (owner):
@@ -382,37 +390,38 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     <section>
                         <div className="mb-3 flex items-end justify-between gap-3">
                             <div>
-                                <p className="text-sm font-semibold">Items</p>
-                                <p className="text-xs text-[var(--blanc-ink-2)]">Line items shown in the estimate.</p>
+                                <p className="blanc-eyebrow">Items</p>
                             </div>
                         </div>
                         {hasItems ? (
                             <div className="space-y-2">
                                 {estimate.items!.map(item => (
+                                    /* Tile: name↔amount header, full-width description, meta row
+                                       with actions — no dead right gutter on narrow widths. */
                                     <div
                                         key={item.id}
-                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-white'}`}
+                                        className={`rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-white'}`}
                                         onClick={() => { if (!readOnly) openEditItem(item); }}
                                     >
-                                        <div className="min-w-0">
-                                            <p className="font-medium">{item.name}</p>
-                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
-                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--blanc-ink-2)]">
-                                                <span>{Number(item.quantity)} x {money(item.unit_price)}</span>
-                                                {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
-                                            </div>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <p className="min-w-0 font-medium">{item.name}</p>
+                                            <p className="shrink-0 font-mono font-semibold whitespace-nowrap">{money(item.amount)}</p>
                                         </div>
-                                        <p className="font-mono font-semibold whitespace-nowrap">{money(item.amount)}</p>
-                                        {!readOnly && (
-                                            <>
-                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
-                                                    <Pencil className="size-4" />
-                                                </Button>
-                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(e) => { e.stopPropagation(); handleRemoveItem(item.id); }} title="Remove item">
-                                                    <Trash2 className="size-4" />
-                                                </Button>
-                                            </>
-                                        )}
+                                        {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
+                                        <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blanc-ink-2)]">
+                                            <span>{Number(item.quantity)} × {money(item.unit_price)}</span>
+                                            {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
+                                            {!readOnly && (
+                                                <span className="ml-auto flex items-center gap-1">
+                                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
+                                                        <Pencil className="size-4" />
+                                                    </Button>
+                                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(e) => { e.stopPropagation(); handleRemoveItem(item.id); }} title="Remove item">
+                                                        <Trash2 className="size-4" />
+                                                    </Button>
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -438,7 +447,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
 
                     {/* Totals (editable Tax rate / Discount) */}
                     <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4">
-                        <p className="mb-3 text-sm font-semibold">Totals</p>
+                        <p className="mb-3 blanc-eyebrow">Totals</p>
                         <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
                                 <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
@@ -523,9 +532,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     </section>
                 </main>
 
-                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] bg-[rgba(25,25,25,0.04)] p-5 md:border-l md:border-t-0">
-                    <section className="space-y-2 text-sm">
-                        <p className="text-sm font-semibold">Document settings</p>
+                {/* Meta column: invisible container (no tint, no border) — flows under
+                    the document on mobile, sticks beside it on desktop. */}
+                <aside className="space-y-6 px-5 pb-6 md:sticky md:top-0 md:self-start md:py-6 md:pl-0 md:pr-6">
+                    <section className="space-y-3 text-sm">
+                        <p className="blanc-eyebrow">Document settings</p>
                         <label className="flex items-center justify-between cursor-pointer">
                             <span className="text-[var(--blanc-ink-2)]">Require signature</span>
                             <Checkbox
@@ -534,52 +545,50 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 onCheckedChange={(checked) => persist({ signature_required: !!checked } as any)}
                             />
                         </label>
-                        <div className="flex justify-between">
+                        <div className="flex items-center justify-between">
                             <span className="text-[var(--blanc-ink-2)]">Deposit required</span>
-                            <span>No</span>
+                            <span className="font-medium">No</span>
                         </div>
                     </section>
 
                     {estimate.signature_required && (
-                        <section className="space-y-2 text-sm">
-                            <p className="text-sm font-semibold">Signature</p>
+                        <section className="space-y-3 text-sm">
+                            <p className="blanc-eyebrow">Signature</p>
                             {estimate.signature_consented_at ? (
-                                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs">
-                                    <div className="flex items-center gap-2 font-medium text-emerald-900">
-                                        <Check className="size-3.5" />
-                                        Signed by {estimate.signature_name || 'customer'}
+                                <div className="flex items-start gap-2">
+                                    <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
+                                    <div>
+                                        <p className="font-medium">Signed by {estimate.signature_name || 'customer'}</p>
+                                        <p className="text-xs text-[var(--blanc-ink-3)]">{fmtDateTime(estimate.signature_consented_at)}</p>
                                     </div>
-                                    <p className="mt-1 text-emerald-800/80">{fmtDateTime(estimate.signature_consented_at)}</p>
                                 </div>
                             ) : (
-                                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                                    <div className="flex items-center gap-2 font-medium">
-                                        <Clock className="size-3.5" />
-                                        Awaiting signature
+                                <div className="flex items-start gap-2">
+                                    <span className="mt-1.5 size-2 shrink-0 rounded-full bg-amber-500" />
+                                    <div>
+                                        <p className="font-medium">Awaiting signature</p>
+                                        <p className="text-xs text-[var(--blanc-ink-3)]">The customer signs when viewing the estimate.</p>
                                     </div>
-                                    <p className="mt-1 text-amber-800/80">Not signed yet.</p>
                                 </div>
                             )}
                         </section>
                     )}
 
                     {events.length > 0 && (
-                        <section className="space-y-2 text-sm">
-                            <p className="text-sm font-semibold">History</p>
-                            <div className="space-y-2">
+                        <section className="space-y-3 text-sm">
+                            <p className="blanc-eyebrow">History</p>
+                            <div className="space-y-2.5">
                                 {events.map(evt => (
-                                    <div key={evt.id} className="flex items-start gap-2 text-xs">
-                                        <Clock className="mt-0.5 size-3 shrink-0 text-[var(--blanc-ink-3)]" />
-                                        <div>
-                                            <span className="font-medium capitalize">{evt.event_type.replace(/_/g, ' ')}</span>
-                                            <p className="text-[var(--blanc-ink-2)]">{fmtDateTime(evt.created_at)}</p>
-                                        </div>
+                                    <div key={evt.id} className="text-xs">
+                                        <span className="font-medium capitalize">{evt.event_type.replace(/_/g, ' ')}</span>
+                                        <p className="text-[var(--blanc-ink-3)]">{fmtDateTime(evt.created_at)}</p>
                                     </div>
                                 ))}
                             </div>
                         </section>
                     )}
                 </aside>
+                </div>
             </div>
 
             <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-3">

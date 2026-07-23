@@ -346,8 +346,11 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                     rows={2}
                                                     className="w-full resize-none rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3.5 py-2.5 text-sm leading-relaxed text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                                 />
-                                                <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3">
-                                                    <div className="flex flex-col gap-0.5">
+                                                {/* Wraps on narrow widths — the old fixed grid overflowed a 375px
+                                                    viewport; the amount+delete cluster drops to its own right-aligned
+                                                    line when tight. */}
+                                                <div className="flex flex-wrap items-center gap-3">
+                                                    <div className="flex w-[76px] flex-col gap-0.5">
                                                         <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>Qty</span>
                                                         <input
                                                             type="text"
@@ -357,7 +360,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                             className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                                         />
                                                     </div>
-                                                    <div className="flex flex-col gap-0.5">
+                                                    <div className="flex w-[110px] flex-col gap-0.5">
                                                         <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>Unit price</span>
                                                         <MoneyInput
                                                             value={item.unit_price}
@@ -365,17 +368,19 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                             className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                                         />
                                                     </div>
-                                                    <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
+                                                    <label className="flex items-center gap-2 pt-4 text-xs cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
                                                         <Checkbox
                                                             checked={item.taxable}
                                                             onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
                                                         />
                                                         Taxable
                                                     </label>
-                                                    <p className="font-mono text-sm font-semibold text-right whitespace-nowrap" style={{ color: 'var(--blanc-ink-1)' }}>{money(amount(item))}</p>
-                                                    <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
-                                                        <Trash2 className="size-4" />
-                                                    </Button>
+                                                    <div className="ml-auto flex items-center gap-1 pt-4">
+                                                        <p className="font-mono text-sm font-semibold text-right whitespace-nowrap" style={{ color: 'var(--blanc-ink-1)' }}>{money(amount(item))}</p>
+                                                        <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
+                                                            <Trash2 className="size-4" />
+                                                        </Button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         ))}
