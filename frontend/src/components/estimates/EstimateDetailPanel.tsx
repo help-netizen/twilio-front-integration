@@ -349,8 +349,6 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                 <div className="grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
                 <main className="space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
-                    {/* Tasks — TASKS-001 */}
-                    <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
                     {/* Summary — OB-28: same presentation as the create/edit form (owner):
                         dashed invite block when empty, collapsible card when filled. */}
                     {estimate.summary ? (
@@ -535,6 +533,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 {/* Meta column: invisible container (no tint, no border) — flows under
                     the document on mobile, sticks beside it on desktop. */}
                 <aside className="space-y-6 px-5 pb-6 md:sticky md:top-0 md:self-start md:py-6 md:pl-0 md:pr-6">
+                    {/* Tasks are meta, not document content — they live beside the
+                        document (desktop) / after it (mobile), so the first screen
+                        belongs to the estimate itself (green-path review). */}
+                    <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
+
                     <section className="space-y-3 text-sm">
                         <p className="blanc-eyebrow">Document settings</p>
                         <label className="flex items-center justify-between cursor-pointer">

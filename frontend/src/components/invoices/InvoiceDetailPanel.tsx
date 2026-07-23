@@ -549,8 +549,6 @@ export function InvoiceDetailPanel({
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                 <div className="grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
                 <main className="space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
-                    {/* Tasks — TASKS-001 */}
-                    <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
                     {/* Summary (stored in `notes`; labeled "Summary" to match estimates).
                         OB-28 mirror: dashed invite when empty, collapsible card when filled. */}
                     {invoice.notes ? (
@@ -725,6 +723,9 @@ export function InvoiceDetailPanel({
                 </main>
 
                 <aside className="space-y-6 px-5 pb-6 md:sticky md:top-0 md:self-start md:py-6 md:pl-0 md:pr-6">
+                    {/* Tasks are meta — beside the document (desktop) / after it (mobile). */}
+                    <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
+
                     {/* Document settings */}
                     <section className="space-y-3 text-sm">
                         <p className="blanc-eyebrow">Document settings</p>
