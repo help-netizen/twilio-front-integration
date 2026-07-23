@@ -225,7 +225,15 @@ async function run(companyId, verifiedContext, input) {
     //     the write already landed in Albusto + ZB.
     const noteText = `Appointment rescheduled to ${newWindow} via AI Phone.`;
     try {
-        await jobsService.addNote(jobId, noteText, [], 'AI Phone', 'AI Phone');
+        await jobsService.addNote(
+            jobId,
+            noteText,
+            [],
+            'AI Phone',
+            'AI Phone',
+            null,
+            companyId
+        );
     } catch (e) {
         // eslint-disable-next-line no-console
         console.error(`[agentSkills] rescheduleAppointment addNote failed (non-fatal): ${e && e.message}`);

@@ -133,9 +133,9 @@ function classifyEndedReason(reason) {
 
 // ─── Notes ───────────────────────────────────────────────────────────────────
 
-async function addAttemptNote(jobId, text) {
+async function addAttemptNote(jobId, text, companyId) {
     try {
-        await jobsService.addNote(jobId, text, [], 'AI Phone', 'AI Phone');
+        await jobsService.addNote(jobId, text, [], 'AI Phone', 'AI Phone', null, companyId);
     } catch (err) {
         console.warn('[vapiCallStatus] addNote failed (non-fatal):', err.message);
     }
@@ -313,7 +313,8 @@ router.post('/', webhookSecretAuth, async (req, res) => {
             );
             await addAttemptNote(
                 jobId,
-                'AI: reached the customer but they declined the offered times — please follow up to set a visit.'
+                'AI: reached the customer but they declined the offered times — please follow up to set a visit.',
+                companyId
             );
             try {
                 eventService.logEvent(companyId, 'job', jobId, 'outbound_call_declined',
@@ -389,7 +390,8 @@ router.post('/', webhookSecretAuth, async (req, res) => {
             const reasonWord = klass === 'voicemail' ? 'reached voicemail' : 'could not reach the customer';
             await addAttemptNote(
                 jobId,
-                `AI: ${reasonWord} — next attempt at ${nextScheduledAt.toISOString()}.`
+                `AI: ${reasonWord} — next attempt at ${nextScheduledAt.toISOString()}.`,
+                companyId
             );
             try {
                 eventService.logEvent(companyId, 'job', jobId, 'outbound_call_retry',
@@ -410,7 +412,8 @@ router.post('/', webhookSecretAuth, async (req, res) => {
             );
             await addAttemptNote(
                 jobId,
-                'AI: automated attempts exhausted — please follow up with the customer to schedule the visit.'
+                'AI: automated attempts exhausted — please follow up with the customer to schedule the visit.',
+                companyId
             );
             try {
                 eventService.logEvent(companyId, 'job', jobId, 'outbound_call_exhausted',

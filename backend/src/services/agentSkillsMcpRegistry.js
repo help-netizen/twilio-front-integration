@@ -19,18 +19,16 @@
  *     executor hands to `agentSkills.runSkill(...)` (the MCP names are snake_case
  *     per MCP convention; the skill layer keys off camelCase).
  *
- * ZERO business logic lives here — the executor funnels every call into
- * `runSkill`, and the skill layer owns verification (L0/L1/L2), tenant scoping,
- * and the `smart-slot-engine` marketplace gate (only on the reschedule
- * slot-offer path, spec §8.3). Per spec §8.3 there is NO transport-level gate on
- * identify + reads.
+ * ZERO business logic lives here. Legacy skills flow through `runSkill`; the
+ * ChatGPT dispatcher descriptors name dedicated read/write service handlers.
+ * Both surfaces remain metadata-only projections with fail-closed permissions.
  *
  * The sales registry (`crmMcpToolRegistry.js`) is UNTOUCHED — this is additive.
  */
 
-// Service-CRM write permission key (distinct from the sales `sales.crm.write`).
-// A write tool additionally requires the skill-layer L1 gate — strictly stronger
-// than the framework write-gate alone (spec §8.2).
+// Legacy service-CRM write permission key (distinct from the sales
+// `sales.crm.write`). ChatGPT dispatcher writes use their entity + exact grants
+// and OAuth write scope instead.
 const SERVICE_WRITE_PERMISSION = 'service.crm.write';
 const {
     FINANCE_TOOL_DEFINITIONS,
@@ -41,6 +39,10 @@ const {
     READ_TOOL_NAMES: CHATGPT_S1_TOOL_NAMES,
     READ_SCOPE: CHATGPT_READ_SCOPE,
     S1_GRANTS: CHATGPT_S1_GRANTS,
+    WRITE_TOOL_PERMISSIONS: CHATGPT_WRITE_TOOL_PERMISSIONS,
+    WRITE_TOOL_NAMES: CHATGPT_S2_WRITE_TOOL_NAMES,
+    WRITE_SCOPE: CHATGPT_WRITE_SCOPE,
+    S2_WRITE_GRANTS: CHATGPT_S2_WRITE_GRANTS,
 } = require('./chatgptMcpPermissions');
 
 const TOOL_PERMISSION_MAP = Object.freeze({
@@ -57,6 +59,10 @@ const TOOL_PERMISSION_MAP = Object.freeze({
     'svc.cancel_appointment': ['jobs.close'],
     'svc.book_on_lead': ['leads.edit', 'leads.create'],
     ...Object.fromEntries(Object.entries(CHATGPT_READ_TOOL_PERMISSIONS).map(([name, permissions]) => [
+        name,
+        [...permissions, `mcp.tool.${name}`],
+    ])),
+    ...Object.fromEntries(Object.entries(CHATGPT_WRITE_TOOL_PERMISSIONS).map(([name, permissions]) => [
         name,
         [...permissions, `mcp.tool.${name}`],
     ])),
@@ -267,12 +273,84 @@ const DISPATCHER_READ_TOOLS = [
     dispatcherRead('svc.get_invoice', 'getInvoice', 'Get one company-owned Invoice, line items, and payment rollup.', strictObjectSchema({ invoice_id: integerSchema(1) }, ['invoice_id'])),
 ];
 
+// CHATGPT-CRM-MCP-001 S2a — dispatcher writes. Each call is executed by the
+// shared transactional executor only after a fresh live-binding recheck.
+const LEAD_EDIT_PROPERTIES = Object.freeze({
+    first_name: stringSchema(),
+    last_name: stringSchema(),
+    company_name: stringSchema(),
+    phone: stringSchema(),
+    email: stringSchema(),
+    source: stringSchema(),
+    description: stringSchema(),
+    comments: stringSchema(),
+    address: stringSchema(),
+    unit: stringSchema(),
+    city: stringSchema(),
+    state: stringSchema(),
+    postal_code: stringSchema(),
+    job_type: stringSchema(),
+    contact_id: integerSchema(1),
+});
+
+const JOB_EDIT_PROPERTIES = Object.freeze({
+    contact_id: integerSchema(1),
+    customer_name: stringSchema(),
+    customer_phone: stringSchema(),
+    customer_email: stringSchema(),
+    service_name: stringSchema(),
+    description: stringSchema(),
+    start_date: stringSchema(),
+    end_date: stringSchema(),
+    address: stringSchema(),
+    city: stringSchema(),
+    territory: stringSchema(),
+    job_source: stringSchema(),
+});
+
+const DISPATCHER_WRITE_TOOLS = [
+    dispatcherWrite('svc.create_lead', 'createLead', 'Create a company Lead and canonically link or create its Contact.', strictObjectSchema({
+        ...LEAD_EDIT_PROPERTIES,
+        note: stringSchema(),
+    }, ['first_name', 'last_name'])),
+    dispatcherWrite('svc.update_lead', 'updateLead', 'Edit dispatcher-visible fields on one company-owned Lead; status is not accepted.', strictObjectSchema({
+        lead_uuid: stringSchema(),
+        ...LEAD_EDIT_PROPERTIES,
+    }, ['lead_uuid'])),
+    dispatcherWrite('svc.transition_lead', 'transitionLead', 'Apply an available dispatcher action from the company-published Lead workflow.', strictObjectSchema({
+        lead_uuid: stringSchema(),
+        action: stringSchema(),
+    }, ['lead_uuid', 'action'])),
+    dispatcherWrite('svc.create_job', 'createJob', 'Create a company Job and canonically link or create its Contact.', strictObjectSchema({
+        ...JOB_EDIT_PROPERTIES,
+        note: stringSchema(),
+    }, ['customer_name'])),
+    dispatcherWrite('svc.update_job', 'updateJob', 'Edit dispatcher-visible fields on one company-owned Job; status is not accepted.', strictObjectSchema({
+        job_id: integerSchema(1),
+        ...JOB_EDIT_PROPERTIES,
+    }, ['job_id'])),
+    dispatcherWrite('svc.transition_job', 'transitionJob', 'Apply an available dispatcher action from the company-published Job workflow.', strictObjectSchema({
+        job_id: integerSchema(1),
+        action: stringSchema(),
+    }, ['job_id', 'action'])),
+    dispatcherWrite('svc.add_note', 'addNote', 'Add a text-only internal note to a company-owned Job, Lead, or Contact.', strictObjectSchema({
+        parent_type: enumSchema(['job', 'lead', 'contact']),
+        parent_id: stringSchema(),
+        text: stringSchema(),
+    }, ['parent_type', 'parent_id', 'text'])),
+];
+
 const TOOLS = Object.freeze([
     ...READ_TOOLS.map((tool) => normalizeTool(tool, 'read')),
     ...WRITE_TOOLS.map((tool) => normalizeTool(tool, 'write')),
     ...DISPATCHER_READ_TOOLS.map((tool) => normalizeTool(tool, 'read')),
+    ...DISPATCHER_WRITE_TOOLS.map((tool) => normalizeTool(tool, 'write')),
 ]);
 const LEGACY_TOOL_NAMES = new Set([...READ_TOOLS, ...WRITE_TOOLS].map((tool) => tool.name));
+const CHATGPT_TOOL_NAMES = Object.freeze([
+    ...CHATGPT_S1_TOOL_NAMES,
+    ...CHATGPT_S2_WRITE_TOOL_NAMES,
+]);
 
 // --- schema helpers (mirror crmMcpToolRegistry.js) --------------------------
 
@@ -324,6 +402,19 @@ function dispatcherRead(name, handler, description, inputSchema) {
     };
 }
 
+function dispatcherWrite(name, handler, description, inputSchema) {
+    return {
+        name,
+        handler,
+        requiredLevel: null,
+        requiredOAuthScopes: [CHATGPT_WRITE_SCOPE],
+        confirmationClass: 'W',
+        destructiveHint: false,
+        description,
+        inputSchema,
+    };
+}
+
 function financeListSchema(estimates) {
     return strictObjectSchema({
         status: stringSchema(), contact_id: integerSchema(1), lead_id: integerSchema(1),
@@ -369,7 +460,9 @@ function normalizeTool(tool, kind) {
         requiresConfirmation: kind === 'write',
         requiredPermission: requiredPermissions[0] || null,
         requiredPermissions: Object.freeze([...requiredPermissions]),
-        frameworkWritePermission: kind === 'write' ? SERVICE_WRITE_PERMISSION : null,
+        frameworkWritePermission: kind === 'write' && !tool.handler
+            ? SERVICE_WRITE_PERMISSION
+            : null,
     });
 }
 
@@ -382,7 +475,7 @@ function normalizeTool(tool, kind) {
 function listTools(filters = {}) {
     const kind = filters?.kind || null;
     return TOOLS
-        .filter((tool) => filters?.dispatcherOnly !== true || CHATGPT_S1_TOOL_NAMES.includes(tool.name))
+        .filter((tool) => filters?.dispatcherOnly !== true || CHATGPT_TOOL_NAMES.includes(tool.name))
         .filter((tool) => filters?.includeDispatcher === true || LEGACY_TOOL_NAMES.has(tool.name))
         .filter((tool) => !kind || tool.kind === kind)
         .map((tool) => ({ ...tool, inputSchema: { ...tool.inputSchema } }));
@@ -413,6 +506,9 @@ module.exports = {
     TOOL_PERMISSION_MAP,
     CHATGPT_S1_TOOL_NAMES,
     CHATGPT_S1_GRANTS,
+    CHATGPT_S2_WRITE_TOOL_NAMES,
+    CHATGPT_S2_WRITE_GRANTS,
+    CHATGPT_TOOL_NAMES,
     listTools,
     getTool,
     skillFor,

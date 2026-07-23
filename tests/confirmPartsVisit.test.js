@@ -174,7 +174,9 @@ describe('TC-OPC-U14: confirmPartsVisit — success order + failure postures', (
         // Correct arg contracts.
         expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(CO, 'job', 50, expect.any(String), expect.any(String));
         expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(50, 'Rescheduled', CO);
-        expect(jobsService.addNote).toHaveBeenCalledWith(50, expect.stringMatching(/via AI Phone/i), [], 'AI Phone', 'AI Phone');
+        expect(jobsService.addNote).toHaveBeenCalledWith(
+            50, expect.stringMatching(/via AI Phone/i), [], 'AI Phone', 'AI Phone', null, CO
+        );
         expect(eventService.logEvent).toHaveBeenCalledWith(CO, 'job', 50, 'job_rescheduled', expect.objectContaining({ actor: 'AI Phone' }), 'system');
         expect(tasksQueries.updateTask).toHaveBeenCalledWith(CO, 70, { status: 'done' });
 
@@ -280,7 +282,9 @@ describe('CC-07: confirmPartsVisit — booked-before-flip terminalizes own attem
         // reschedule note — never the FR-3 "robot call canceled" copy.
         expect(mockDbQuery.mock.calls.every(([q]) => !/canceled/i.test(q))).toBe(true);
         expect(jobsService.addNote).toHaveBeenCalledTimes(1);
-        expect(jobsService.addNote).toHaveBeenCalledWith(50, expect.stringMatching(/^Appointment rescheduled/), [], 'AI Phone', 'AI Phone');
+        expect(jobsService.addNote).toHaveBeenCalledWith(
+            50, expect.stringMatching(/^Appointment rescheduled/), [], 'AI Phone', 'AI Phone', null, CO
+        );
         expect(jobsService.addNote).not.toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/canceled/i), expect.anything(), expect.anything(), expect.anything());
 
         expect(out).toMatchObject({ ok: true, success: true, statusFlipped: true, booked: true });
@@ -294,7 +298,9 @@ describe('CC-07: confirmPartsVisit — booked-before-flip terminalizes own attem
 
         expect(out).toMatchObject({ ok: true, success: true, conflict: false, statusFlipped: true, booked: true });
         expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(50, 'Rescheduled', CO);
-        expect(jobsService.addNote).toHaveBeenCalledWith(50, expect.stringMatching(/via AI Phone/i), [], 'AI Phone', 'AI Phone');
+        expect(jobsService.addNote).toHaveBeenCalledWith(
+            50, expect.stringMatching(/via AI Phone/i), [], 'AI Phone', 'AI Phone', null, CO
+        );
         expect(tasksQueries.updateTask).toHaveBeenCalledWith(CO, 70, { status: 'done' });
     });
 

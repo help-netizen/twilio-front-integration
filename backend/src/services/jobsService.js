@@ -140,14 +140,16 @@ function rowToJob(row) {
 }
 
 /** Fetch tags for a single job */
-async function getTagsForJob(jobId) {
+async function getTagsForJob(jobId, companyId) {
+    if (!companyId) throw new Error('getTagsForJob requires companyId');
     const { rows } = await db.query(`
         SELECT t.id, t.name, t.color, t.is_active
         FROM job_tag_assignments jta
+        JOIN jobs j ON j.id = jta.job_id AND j.company_id = $2
         JOIN job_tags t ON t.id = jta.tag_id
-        WHERE jta.job_id = $1
+        WHERE jta.job_id = $1 AND j.company_id = $2
         ORDER BY t.sort_order, t.id
-    `, [jobId]);
+    `, [jobId, companyId]);
     return rows;
 }
 
@@ -677,7 +679,9 @@ async function getJobById(id, companyId = null, providerScope = null) {
     );
     if (rows.length === 0) return null;
     const job = rowToJob(rows[0]);
-    job.tags = await getTagsForJob(id);
+    // Never take the historical ID-only tag path. Legacy unscoped callers get
+    // no tag child rows; tenant-aware callers resolve tags through the owned Job.
+    job.tags = companyId ? await getTagsForJob(id, companyId) : [];
     return job;
 }
 
@@ -1131,32 +1135,27 @@ function fireRobotCallLeaveHook(jobId, companyId, newStatus) {
 }
 
 async function updateBlancStatus(jobId, newStatus, companyId) {
-    const job = await getJobById(jobId);
+    if (!companyId) {
+        const err = new Error('updateBlancStatus requires companyId');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
+    const job = await getJobById(jobId, companyId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
     // Try FSM resolution first
-    if (companyId) {
-        const result = await fsmService.resolveTransition(companyId, 'job', job.blanc_status, newStatus);
-        if (result.valid === true) {
-            // FSM approved the transition — proceed with DB update below
-        } else if (result.valid === false) {
-            throw new Error(result.error || `Transition ${job.blanc_status} → ${newStatus} is not allowed`);
-        }
-        // If result.fallback === true, fall through to hardcoded check
-        if (!result.fallback) {
-            // FSM gave a definitive answer, skip hardcoded validation
-        } else {
-            // Fallback: original hardcoded validation
-            if (!BLANC_STATUSES.includes(newStatus)) {
-                throw new Error(`Invalid blanc_status: ${newStatus}`);
-            }
-            const allowed = ALLOWED_TRANSITIONS[job.blanc_status] || [];
-            if (!allowed.includes(newStatus)) {
-                throw new Error(`Transition ${job.blanc_status} → ${newStatus} is not allowed`);
-            }
-        }
+    const result = await fsmService.resolveTransition(companyId, 'job', job.blanc_status, newStatus);
+    if (result.valid === true) {
+        // FSM approved the transition — proceed with DB update below
+    } else if (result.valid === false) {
+        throw new Error(result.error || `Transition ${job.blanc_status} → ${newStatus} is not allowed`);
+    }
+    // If result.fallback === true, fall through to hardcoded check
+    if (!result.fallback) {
+        // FSM gave a definitive answer, skip hardcoded validation
     } else {
-        // No companyId — use hardcoded validation
+        // Fallback: original hardcoded validation
         if (!BLANC_STATUSES.includes(newStatus)) {
             throw new Error(`Invalid blanc_status: ${newStatus}`);
         }
@@ -1175,8 +1174,8 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
          SET blanc_status = $1,
              zb_canceled = CASE WHEN $2 THEN true ELSE zb_canceled END,
              updated_at = NOW()
-         WHERE id = $3`,
-        [newStatus, newStatus === 'Canceled', jobId]
+         WHERE id = $3 AND company_id = $4`,
+        [newStatus, newStatus === 'Canceled', jobId, companyId]
     );
 
     // Outbound sync to Zenbooker — full mapping with no-op guards (§6).
@@ -1524,7 +1523,13 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 // Notes
 // =============================================================================
 
-async function addNote(jobId, text, attachments = [], author = null, createdBy = null, noteId = null, companyId = null) {
+async function addNote(jobId, text, attachments = [], author = null, createdBy = null, noteId = null, companyId) {
+    if (!companyId) {
+        const err = new Error('addNote requires companyId');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
     const job = await getJobById(jobId, companyId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
@@ -1540,12 +1545,8 @@ async function addNote(jobId, text, attachments = [], author = null, createdBy =
     }
 
     let notes = [...(job.notes || []), note];
-    const updateSql = companyId
-        ? 'UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND company_id = $3'
-        : 'UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2';
-    const updateParams = companyId
-        ? [JSON.stringify(notes), jobId, companyId]
-        : [JSON.stringify(notes), jobId];
+    const updateSql = 'UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND company_id = $3';
+    const updateParams = [JSON.stringify(notes), jobId, companyId];
     await db.query(updateSql, updateParams);
 
     // Also push text to Zenbooker if linked (attachments are local-only).
@@ -1561,9 +1562,7 @@ async function addNote(jobId, text, attachments = [], author = null, createdBy =
             if (zbId) {
                 note.zb_note_id = String(zbId);
                 notes = [...(job.notes || []), note];
-                await db.query(updateSql, companyId
-                    ? [JSON.stringify(notes), jobId, companyId]
-                    : [JSON.stringify(notes), jobId]);
+                await db.query(updateSql, [JSON.stringify(notes), jobId, companyId]);
             }
         } catch (err) {
             console.error(`[JobsService] Note sync error:`, err.response?.data || err.message);
@@ -1693,8 +1692,9 @@ async function markComplete(jobId) {
  * Update tags assigned to a job.
  * Only active tags can be newly assigned; existing inactive tags are preserved if re-sent.
  */
-async function updateJobTags(jobId, tagIds) {
-    const job = await getJobById(jobId);
+async function updateJobTags(jobId, tagIds, companyId) {
+    if (!companyId) throw new Error('updateJobTags requires companyId');
+    const job = await getJobById(jobId, companyId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
     const client = await db.pool.connect();
@@ -1703,7 +1703,11 @@ async function updateJobTags(jobId, tagIds) {
 
         // Get currently assigned tag IDs
         const { rows: currentRows } = await client.query(
-            'SELECT tag_id FROM job_tag_assignments WHERE job_id = $1', [jobId]
+            `SELECT jta.tag_id
+             FROM job_tag_assignments jta
+             JOIN jobs j ON j.id = jta.job_id AND j.company_id = $2
+             WHERE jta.job_id = $1 AND j.company_id = $2`,
+            [jobId, companyId]
         );
         const currentTagIds = new Set(currentRows.map(r => r.tag_id));
 
@@ -1725,14 +1729,22 @@ async function updateJobTags(jobId, tagIds) {
         }
 
         // Remove all existing assignments
-        await client.query('DELETE FROM job_tag_assignments WHERE job_id = $1', [jobId]);
+        await client.query(
+            `DELETE FROM job_tag_assignments jta
+             USING jobs j
+             WHERE jta.job_id = j.id AND jta.job_id = $1 AND j.company_id = $2`,
+            [jobId, companyId]
+        );
 
         // Insert new assignments
         if (tagIds && tagIds.length > 0) {
             for (const tagId of tagIds) {
                 await client.query(
-                    'INSERT INTO job_tag_assignments (job_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-                    [jobId, tagId]
+                    `INSERT INTO job_tag_assignments (job_id, tag_id)
+                     SELECT j.id, $2 FROM jobs j
+                     WHERE j.id = $1 AND j.company_id = $3
+                     ON CONFLICT DO NOTHING`,
+                    [jobId, tagId, companyId]
                 );
             }
         }
@@ -1745,7 +1757,7 @@ async function updateJobTags(jobId, tagIds) {
         client.release();
     }
 
-    const tags = await getTagsForJob(jobId);
+    const tags = await getTagsForJob(jobId, companyId);
     return { ...job, tags };
 }
 

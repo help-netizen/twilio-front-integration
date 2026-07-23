@@ -276,7 +276,7 @@ router.patch('/:id/tags', requirePermission('jobs.edit'), async (req, res) => {
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { tag_ids } = req.body;
         if (!Array.isArray(tag_ids)) return res.status(400).json({ ok: false, error: 'tag_ids array required' });
-        const result = await jobsService.updateJobTags(parseInt(req.params.id, 10), tag_ids);
+        const result = await jobsService.updateJobTags(parseInt(req.params.id, 10), tag_ids, companyId);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Update tags error:', err.message);
@@ -462,7 +462,7 @@ router.get('/:id/notes', requirePermission('jobs.view'), async (req, res) => {
 router.post('/:id/notes', requirePermission('jobs.edit', 'jobs.done_pending_approval'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
-        const userId = req.user?.crmUser?.id || req.user?.sub || null;
+        const userId = req.user?.crmUser?.id || null;
         const jobId = parseInt(req.params.id, 10);
         const existing = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
@@ -488,7 +488,7 @@ router.post('/:id/notes', requirePermission('jobs.edit', 'jobs.done_pending_appr
         }
 
         const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
-        const result = await jobsService.addNote(jobId, text, attachments, author, userId, noteId);
+        const result = await jobsService.addNote(jobId, text, attachments, author, userId, noteId, companyId);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Add note error:', err.message);

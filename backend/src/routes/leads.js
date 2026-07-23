@@ -919,7 +919,7 @@ router.get('/:uuid/notes', requirePermission('leads.view'), async (req, res) => 
 router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || null;
+        const userId = req.user?.crmUser?.id || null;
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
         if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
 

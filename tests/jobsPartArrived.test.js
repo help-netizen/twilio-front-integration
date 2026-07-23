@@ -207,12 +207,13 @@ describe('CANCEL-001 leave-hooks (TC-CC-07 updateBlancStatus)', () => {
         expect(mockOnPartArrived).not.toHaveBeenCalled();
     });
 
-    test('no-company legacy path → companyId falls back to the job row tenant', async () => {
+    test('no-company worker path fails closed before reading or writing a job', async () => {
         seedJob({ fromStatus: 'Part arrived' });
-        await jobsService.updateBlancStatus(50, 'Rescheduled'); // no companyId arg
-        expect(mockCancelScheduledRobotCalls).toHaveBeenCalledWith(
-            { jobId: 50 }, COMPANY, { kind: 'status_change', newStatus: 'Rescheduled' }
-        );
+        mockQuery.mockClear();
+        await expect(jobsService.updateBlancStatus(50, 'Rescheduled'))
+            .rejects.toMatchObject({ code: 'TENANT_CONTEXT_REQUIRED', httpStatus: 403 });
+        expect(mockQuery).not.toHaveBeenCalled();
+        expect(mockCancelScheduledRobotCalls).not.toHaveBeenCalled();
     });
 
     test('ENTER transition (Waiting for parts → Part arrived) → cancel NOT called, enter-hook fires (regression)', async () => {

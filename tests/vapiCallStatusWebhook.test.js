@@ -406,7 +406,15 @@ describe('no-resurrection retry guard (CC-04, TC-CC-11…13)', () => {
         expect(insert).toBeTruthy();
         expect(insert[1]).toContain(2); // attempt_no + 1
         expect(insert[1]).toContain(JSON.stringify({ date: '2026-07-11', label: 'Fri 10-12' })); // slot_json copied
-        expect(mockAddNote).toHaveBeenCalledWith(50, expect.stringMatching(/next attempt/i), [], 'AI Phone', 'AI Phone');
+        expect(mockAddNote).toHaveBeenCalledWith(
+            50,
+            expect.stringMatching(/next attempt/i),
+            [],
+            'AI Phone',
+            'AI Phone',
+            null,
+            COMPANY
+        );
         expect(eventService.logEvent).toHaveBeenCalledWith(
             COMPANY, 'job', 50, 'outbound_call_retry', expect.any(Object), 'system'
         );

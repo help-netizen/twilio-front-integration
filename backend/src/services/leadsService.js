@@ -490,7 +490,10 @@ async function getLeadById(id, companyId = null) {
 // =============================================================================
 // Create Lead
 // =============================================================================
-async function createLead(fields, companyId = null, { systemMetadata = null } = {}) {
+async function createLead(fields, companyId, { systemMetadata = null } = {}) {
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
+    }
     const uuid = await generateUniqueUUID();
     const columns = mapFieldsToColumns(fields);
 
@@ -514,9 +517,8 @@ async function createLead(fields, companyId = null, { systemMetadata = null } = 
     if (columns.first_name) columns.first_name = toTitleCase(columns.first_name);
     if (columns.last_name) columns.last_name = toTitleCase(columns.last_name);
 
-    // Always set company_id (fallback to default)
-    const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-    columns.company_id = companyId || DEFAULT_COMPANY_ID;
+    // Every write has an explicit tenant; workers do not have req/companyFilter.
+    columns.company_id = companyId;
 
     // Handle custom metadata fields (flat api_name keys + Metadata object)
     const meta = await extractCustomMetadata(fields);
@@ -569,6 +571,9 @@ async function createLead(fields, companyId = null, { systemMetadata = null } = 
 // Update Lead
 // =============================================================================
 async function updateLead(uuid, fields, companyId = null) {
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
+    }
     const columns = mapFieldsToColumns(fields);
 
     // Handle custom metadata fields (flat api_name keys + Metadata object)
@@ -577,7 +582,7 @@ async function updateLead(uuid, fields, companyId = null) {
     if (meta) {
         // Merge with existing metadata
         const { rows: existing } = await db.query(
-            'SELECT metadata FROM leads WHERE uuid = $1', [uuid]
+            'SELECT metadata FROM leads WHERE uuid = $1 AND company_id = $2', [uuid, companyId]
         );
         const existingMeta = existing.length > 0 ? (existing[0].metadata || {}) : {};
         columns.metadata = JSON.stringify({ ...existingMeta, ...meta });
@@ -590,7 +595,7 @@ async function updateLead(uuid, fields, companyId = null) {
     // FSM status transition validation (additive — no published FSM = no restriction)
     if (columns.status && companyId) {
         const { rows: currentRows } = await db.query(
-            'SELECT status FROM leads WHERE uuid = $1', [uuid]
+            'SELECT status FROM leads WHERE uuid = $1 AND company_id = $2', [uuid, companyId]
         );
         const currentStatus = currentRows.length > 0 ? currentRows[0].status : null;
         if (currentStatus && columns.status !== currentStatus) {
@@ -619,12 +624,9 @@ async function updateLead(uuid, fields, companyId = null) {
     idx++;
     values.push(uuid);
     const conditions = [`uuid = $${idx}`];
-
-    if (companyId) {
-        idx++;
-        conditions.push(`company_id = $${idx}`);
-        values.push(companyId);
-    }
+    idx++;
+    conditions.push(`company_id = $${idx}`);
+    values.push(companyId);
 
     const sql = `
         UPDATE leads SET ${setClauses.join(', ')}
@@ -1223,7 +1225,15 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
 
         // Add comments as note if present
         if (localJobCreated && commentText) {
-            await jobsService.addNote(localJobId, `[Lead Comment] ${commentText}`);
+            await jobsService.addNote(
+                localJobId,
+                `[Lead Comment] ${commentText}`,
+                [],
+                null,
+                null,
+                null,
+                companyId
+            );
             console.log(`[ConvertLead] Added comments as note to job ${localJobId}`);
         }
     } catch (noteErr) {

@@ -116,9 +116,10 @@ function toProtocolTool(tool) {
         inputSchema: tool.inputSchema,
         annotations: {
             kind: tool.kind,
-            destructiveHint: tool.kind === 'write',
+            destructiveHint: tool.destructiveHint ?? tool.kind === 'write',
             readOnlyHint: tool.kind === 'read',
             requiresConfirmation: tool.requiresConfirmation,
+            confirmationClass: tool.confirmationClass || (tool.kind === 'write' ? 'W' : 'R'),
             requiredPermission: tool.requiredPermission,
             requiredPermissions: tool.requiredPermissions,
             frameworkWritePermission: tool.frameworkWritePermission,

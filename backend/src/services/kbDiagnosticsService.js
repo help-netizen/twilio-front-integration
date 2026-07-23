@@ -221,7 +221,15 @@ async function runForJob({ jobId, companyId } = {}) {
         if (!text) return;
 
         // 7. Append the single advisor note (author + created_by='system').
-        await jobsService.addNote(jobId, text, [], 'AI Repair Advisor', 'system');
+        await jobsService.addNote(
+            jobId,
+            text,
+            [],
+            'AI Repair Advisor',
+            'system',
+            null,
+            companyId
+        );
     } catch (err) {
         // Best-effort: never re-thrown — a failure must not affect the job-create path.
         console.warn('[kb-diagnostics] runForJob failed:', err && err.message);

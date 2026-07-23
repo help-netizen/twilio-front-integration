@@ -347,7 +347,8 @@ describe('kbDiagnosticsService.runForJob (REPAIR-ADVISOR-001, Group E)', () => {
         await runForJob({ jobId: 'J1', companyId: COMPANY_A });
 
         expect(jobsService.addNote).toHaveBeenCalledTimes(1);
-        const [jobIdArg, textArg, attArg, authorArg, createdByArg] = jobsService.addNote.mock.calls[0];
+        const [jobIdArg, textArg, attArg, authorArg, createdByArg, noteIdArg, companyIdArg]
+            = jobsService.addNote.mock.calls[0];
         expect(jobIdArg).toBe('J1');
         expect(typeof textArg).toBe('string');
         expect(textArg.length).toBeGreaterThan(0);
@@ -355,6 +356,8 @@ describe('kbDiagnosticsService.runForJob (REPAIR-ADVISOR-001, Group E)', () => {
         expect(attArg).toEqual([]);
         expect(authorArg).toBe('AI Repair Advisor');
         expect(createdByArg).toBe('system');
+        expect(noteIdArg).toBeNull();
+        expect(companyIdArg).toBe(COMPANY_A);
     });
 
     // TC-RA-053 — connected + ask→null → no note (P0)

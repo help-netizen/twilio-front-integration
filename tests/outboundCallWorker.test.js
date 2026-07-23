@@ -293,7 +293,7 @@ describe('TC-OPC-U11: processAttempt — job/status guards + retry-or-exhaust', 
         // A per-attempt job note written.
         expect(jobsService.addNote).toHaveBeenCalledTimes(1);
         expect(jobsService.addNote).toHaveBeenCalledWith(
-            50, expect.stringMatching(/next attempt/i), [], 'AI Phone', 'AI Phone',
+            50, expect.stringMatching(/next attempt/i), [], 'AI Phone', 'AI Phone', null, CO,
         );
     });
 
@@ -309,7 +309,7 @@ describe('TC-OPC-U11: processAttempt — job/status guards + retry-or-exhaust', 
         expect(insertCall).toBeFalsy();
         // Exhausted note written.
         expect(jobsService.addNote).toHaveBeenCalledWith(
-            50, expect.stringMatching(/exhausted/i), [], 'AI Phone', 'AI Phone',
+            50, expect.stringMatching(/exhausted/i), [], 'AI Phone', 'AI Phone', null, CO,
         );
     });
 
@@ -356,7 +356,7 @@ describe('TC-CC-15: honest Guard-1 — canceled + FR-3 note + task stamp', () =>
         expect(jobsService.addNote).toHaveBeenCalledWith(
             50,
             "AI: robot call canceled — job left 'Part arrived' (status changed to 'Rescheduled').",
-            [], 'AI Phone', 'AI Phone',
+            [], 'AI Phone', 'AI Phone', null, CO,
         );
         // Task stamped canceled with the FR-3 short reason (company-scoped).
         expect(partsCallService.markRobotCallCanceled).toHaveBeenCalledTimes(1);
@@ -379,7 +379,7 @@ describe('TC-CC-15: honest Guard-1 — canceled + FR-3 note + task stamp', () =>
         expect(jobsService.addNote).toHaveBeenCalledWith(
             50,
             "AI: robot call canceled — job left 'Part arrived' (status changed to 'Canceled (Zenbooker)').",
-            [], 'AI Phone', 'AI Phone',
+            [], 'AI Phone', 'AI Phone', null, CO,
         );
         expect(partsCallService.markRobotCallCanceled).toHaveBeenCalledWith(
             CO, 70, "Canceled — job status changed to 'Canceled (Zenbooker)'.",
@@ -483,7 +483,7 @@ describe('TC-CC-14: scheduleRetryOrExhaust — no-resurrection guard', () => {
         expect(insertCall).toBeTruthy();
         expect(insertCall[1]).toContain(2); // attempt_no + 1
         expect(jobsService.addNote).toHaveBeenCalledWith(
-            50, expect.stringMatching(/next attempt/i), [], 'AI Phone', 'AI Phone',
+            50, expect.stringMatching(/next attempt/i), [], 'AI Phone', 'AI Phone', null, CO,
         );
     });
 

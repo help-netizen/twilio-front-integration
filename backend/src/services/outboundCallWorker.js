@@ -143,13 +143,13 @@ function computeNextScheduledAt(justFailedNo, settings, group, now = new Date())
  * author='AI Phone', createdBy='AI Phone', per rescheduleAppointment). Guarded —
  * a note hiccup must not fail the retry scheduling.
  */
-async function addFailedAttemptNote(jobId, customerName, nextScheduledAt, exhausted) {
+async function addFailedAttemptNote(jobId, customerName, nextScheduledAt, exhausted, companyId) {
     try {
         const who = customerName || 'the customer';
         const text = exhausted
             ? `AI: tried to reach ${who} but could not place the call — automated attempts exhausted, please follow up.`
             : `AI: tried to reach ${who} but could not place the call — next attempt at ${nextScheduledAt.toISOString()}.`;
-        await jobsService.addNote(jobId, text, [], 'AI Phone', 'AI Phone');
+        await jobsService.addNote(jobId, text, [], 'AI Phone', 'AI Phone', null, companyId);
     } catch (err) {
         console.warn('[outboundCallWorker] addFailedAttemptNote failed (non-fatal):', err.message);
     }
@@ -244,7 +244,7 @@ async function processAttempt(attempt) {
             await jobsService.addNote(
                 jobId,
                 `AI: robot call canceled — job left 'Part arrived' (status changed to '${newStatus}').`,
-                [], 'AI Phone', 'AI Phone'
+                [], 'AI Phone', 'AI Phone', null, companyId
             );
         } catch (err) {
             console.warn('[outboundCallWorker] Guard-1 cancel note failed (non-fatal):', err.message);
@@ -386,10 +386,22 @@ async function scheduleRetryOrExhaust(attempt, job, settings, timezoneContext, f
                 attempt.slot_json ? JSON.stringify(attempt.slot_json) : null,
             ]
         );
-        await addFailedAttemptNote(attempt.job_id, job.customer_name, nextScheduledAt, false);
+        await addFailedAttemptNote(
+            attempt.job_id,
+            job.customer_name,
+            nextScheduledAt,
+            false,
+            attempt.company_id
+        );
     } else {
         // Exhausted: no more attempts. Task stays with the dispatcher.
-        await addFailedAttemptNote(attempt.job_id, job.customer_name, now, true);
+        await addFailedAttemptNote(
+            attempt.job_id,
+            job.customer_name,
+            now,
+            true,
+            attempt.company_id
+        );
     }
 }
 

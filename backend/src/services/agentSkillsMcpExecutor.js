@@ -15,13 +15,12 @@
  *   - **Tenant from context only.** `buildContext(req)` takes `companyId` from
  *     `req.companyFilter?.company_id` (authed route) or the env-bound public
  *     context — NEVER from the client payload/`arguments`.
- *   - **Two composing gates (spec §8.2).** The framework write-gate here
- *     (`requireWriteAccess`: `service.crm.write` permission + `confirmation.confirmed`
- *     + `confirmation_id`) is the OUTER gate. The skill layer's L0/L1/L2
- *     verification (re-derived from the DB every call inside `runSkill`) is the
- *     INNER gate. A `svc.*` write must satisfy BOTH — strictly stronger.
- *   - **Zero business logic.** Every tool call funnels into `runSkill`; there is
- *     no SQL, no service composition, no verification decision here.
+ *   - **Composing write gates.** Legacy skills keep `service.crm.write` plus
+ *     their L0/L1/L2 verification. ChatGPT dispatcher writes require their
+ *     entity + exact grants, OAuth write scope, explicit confirmation, and a
+ *     same-transaction live-binding/grant recheck.
+ *   - **Thin dispatch.** Legacy tools funnel into `runSkill`; ChatGPT dispatcher
+ *     descriptors funnel into dedicated company-required read/write services.
  *   - **Sanitized errors.** `runSkill` itself never throws internals (it returns
  *     a safe-fallback / soft-refusal shape); framework/validation errors flow
  *     through `crmMcpResponse` sanitization on the transport.
@@ -30,6 +29,7 @@
  */
 
 const crypto = require('crypto');
+const db = require('../db/connection');
 const registry = require('./agentSkillsMcpRegistry');
 const mcpResponse = require('./crmMcpResponse');
 const mcpToolAuthorization = require('./mcpToolAuthorization');
@@ -37,6 +37,7 @@ const { validateArguments } = require('./crmMcpSchemaValidator');
 const agentSkills = require('./agentSkills');
 const chatgptMcpReadService = require('./chatgptMcpReadService');
 const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
+const chatgptMcpWriteService = require('./chatgptMcpWriteService');
 
 const WRITE_PERMISSION = registry.SERVICE_WRITE_PERMISSION;
 
@@ -95,17 +96,19 @@ function requireCompanyContext(context) {
 }
 
 /**
- * OUTER framework write-gate (spec §8.2). For write tools: require the
- * service-CRM write permission AND an explicit confirmation
- * (`confirmed` + `confirmation_id`). Reads pass through untouched. This does NOT
- * replace the skill layer's L2 gate — both must pass for a write.
+ * Confirmation gate shared by all writes. Legacy skills additionally require
+ * service.crm.write; bound dispatcher writes instead use the exact deny-by-
+ * default grants checked before and inside their transaction.
  * @param {Object} context Built context (carries `permissions`).
  * @param {Object} tool The resolved tool descriptor.
  * @param {Object|null} confirmation The client-supplied confirmation envelope.
  */
 function requireWriteAccess(context, tool, confirmation) {
     if (tool.kind !== 'write') return;
-    if (!context.permissions.includes(WRITE_PERMISSION)) {
+    // Legacy caller-verification skills keep their framework permission. The
+    // bound dispatcher surface instead uses its deny-by-default entity + exact
+    // grants and the S2 consent bundle.
+    if (!tool.handler && !context.permissions.includes(WRITE_PERMISSION)) {
         throw mcpResponse.mcpError('access_denied', 'Insufficient service CRM write permission', {
             required_permission: WRITE_PERMISSION,
         });
@@ -158,12 +161,24 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
         requireWriteAccess(context, tool, confirmation);
         const result = await dispatch(tool, executionContext, sanitizedArguments);
         if (tool.handler && executionContext.bindingId) {
-            await chatgptMcpIdentityService.recordInvocation(executionContext, {
-                toolName,
-                requestId: executionContext.requestId,
-                status: 'succeeded',
-                safeMetadata: { kind: 'read' },
-            });
+            try {
+                await chatgptMcpIdentityService.recordInvocation(executionContext, {
+                    toolName,
+                    requestId: executionContext.requestId,
+                    status: 'succeeded',
+                    confirmationClass: tool.confirmationClass || (tool.kind === 'write' ? 'W' : 'R'),
+                    argumentHash: tool.kind === 'write'
+                        ? chatgptMcpWriteService.argumentHash(sanitizedArguments)
+                        : null,
+                    safeMetadata: { kind: tool.kind },
+                    stage: tool.kind === 'write' ? 'S2a' : 'S1',
+                });
+            } catch (auditErr) {
+                // The domain transaction already committed. Never turn a
+                // successful write into a retryable client failure solely
+                // because the append-only audit sink is unavailable.
+                console.error('[ChatGPT MCP] failed to record successful invocation:', auditErr.message);
+            }
         }
         return result;
     } catch (err) {
@@ -178,6 +193,13 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
                         ? 'denied'
                         : 'failed',
                     safeMetadata: { error_code: err?.code || 'INTERNAL' },
+                    confirmationClass: tool.confirmationClass || (tool.kind === 'write' ? 'W' : 'R'),
+                    argumentHash: tool.kind === 'write'
+                        ? chatgptMcpWriteService.argumentHash(
+                            mcpToolAuthorization.sanitizeArguments(toolArguments)
+                        )
+                        : null,
+                    stage: tool.kind === 'write' ? 'S2a' : 'S1',
                 });
             } catch (auditErr) {
                 console.error('[ChatGPT MCP] failed to record denied/failed invocation:', auditErr.message);
@@ -188,11 +210,8 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
 }
 
 /**
- * Hand off to the SAME skill layer as the VAPI adapter. There is exactly one
- * behavior here: `runSkill(skillFor(toolName), companyId, mcpContext, args)`.
- * The skill layer re-derives verification from the identity block inside `args`
- * (which mirrors §4 snake_case fields), so the INNER L0/L1/L2 gate runs
- * identically to the voice transport. No per-tool branching, no CRM logic.
+ * Dispatch legacy skills through the VAPI-neutral skill layer and bound
+ * ChatGPT descriptors through their dedicated data services.
  * @param {Object} tool The resolved tool descriptor (carries `skill`).
  * @param {Object} context Built context (used as `rawContext` — logging only).
  * @param {Object} args Sanitized client arguments passed through as skill `input`.
@@ -200,13 +219,49 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
  */
 async function dispatch(tool, context, args) {
     if (tool.handler) {
+        if (tool.kind === 'write') {
+            return dispatchDispatcherWrite(tool, context, args);
+        }
         return chatgptMcpReadService.execute(tool.handler, context.companyId, args);
     }
     return agentSkills.runSkill(tool.skill, context.companyId, context, args);
+}
+
+async function dispatchDispatcherWrite(tool, context, args, { beforeLiveRecheck = null } = {}) {
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        if (beforeLiveRecheck) await beforeLiveRecheck(client);
+        const live = await chatgptMcpIdentityService.requireLiveBinding({
+            bindingId: context.bindingId,
+            companyId: context.companyId,
+            agentUserId: context.actorId,
+            authorizerId: context.authorizerId,
+        }, client);
+        // Permission consent is re-derived under the same binding lock. OAuth
+        // scopes remain signature-verified token claims and cannot be upgraded
+        // by this transaction.
+        mcpToolAuthorization.requireToolAccess(tool, live.permissions, context.oauthScopes);
+        const result = await chatgptMcpWriteService.execute(
+            tool.handler,
+            tool.name,
+            context,
+            args,
+            client
+        );
+        await client.query('COMMIT');
+        return result;
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 module.exports = {
     WRITE_PERMISSION,
     buildContext,
     execute,
+    _dispatchDispatcherWrite: dispatchDispatcherWrite,
 };

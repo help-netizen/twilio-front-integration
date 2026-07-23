@@ -1,0 +1,614 @@
+'use strict';
+
+const { randomUUID } = require('crypto');
+const { spawnSync } = require('child_process');
+const db = require('../backend/src/db/connection');
+const identityService = require('../backend/src/services/chatgptMcpIdentityService');
+const marketplaceService = require('../backend/src/services/marketplaceService');
+const permissions = require('../backend/src/services/chatgptMcpPermissions');
+const registry = require('../backend/src/services/agentSkillsMcpRegistry');
+const protocol = require('../backend/src/services/agentSkillsMcpProtocolService');
+const executor = require('../backend/src/services/agentSkillsMcpExecutor');
+
+jest.setTimeout(90000);
+
+function probeDatabase() {
+    const probeEnv = { ...process.env };
+    delete probeEnv.NODE_USE_SYSTEM_CA;
+    const pgModule = require.resolve('pg');
+    const script = `
+        const { Client } = require(${JSON.stringify(pgModule)});
+        const client = new Client({
+            connectionString: process.env.DATABASE_URL || 'postgresql://localhost/twilio_calls',
+            connectionTimeoutMillis: 2000,
+        });
+        (async () => {
+            try { await client.connect(); await client.query('SELECT 1'); await client.end(); process.exit(0); }
+            catch (error) { process.stderr.write(String(error.message || error)); try { await client.end(); } catch {} process.exit(2); }
+        })();`;
+    const result = spawnSync(process.execPath, ['--use-bundled-ca', '-e', script], {
+        env: probeEnv,
+        encoding: 'utf8',
+        timeout: 6000,
+    });
+    return {
+        ready: result.status === 0,
+        reason: String(result.stderr || result.error?.message || `probe exit ${result.status}`).trim(),
+    };
+}
+
+const DATABASE = probeDatabase();
+const databaseTest = DATABASE.ready ? test : test.skip;
+if (!DATABASE.ready) {
+    test('ChatGPT MCP S2a write DB release blocker: PostgreSQL must be available', () => {
+        throw new Error(`ChatGPT MCP S2a write DB tests are pending: ${DATABASE.reason}`);
+    });
+}
+
+const state = {};
+const oldIssuer = process.env.KEYCLOAK_REALM_URL;
+const oldClientId = process.env.CHATGPT_MCP_CLIENT_ID;
+
+function workflow(machineKey) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:blanc="https://albusto.com/fsm"
+       initial="submitted"
+       blanc:machine="${machineKey}">
+  <state id="submitted" blanc:label="Submitted" blanc:statusName="Submitted">
+    <transition event="advance" target="review"
+                blanc:action="true" blanc:label="Advance"
+                blanc:roles="dispatcher" />
+  </state>
+  <final id="review" blanc:label="Review" blanc:statusName="Review" />
+</scxml>`;
+}
+
+async function seedWorkflow(client, companyId, machineKey) {
+    const machine = await client.query(
+        `INSERT INTO fsm_machines (company_id, machine_key, title)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [companyId, machineKey, `${machineKey} test workflow`]
+    );
+    const version = await client.query(
+        `INSERT INTO fsm_versions
+            (machine_id, company_id, version_number, status, scxml_source, published_by, published_at)
+         VALUES ($1, $2, 1, 'published', $3, 's2a-test', NOW())
+         RETURNING id`,
+        [machine.rows[0].id, companyId, workflow(machineKey)]
+    );
+    await client.query(
+        `UPDATE fsm_machines
+         SET active_version_id = $1
+         WHERE id = $2 AND company_id = $3`,
+        [version.rows[0].id, machine.rows[0].id, companyId]
+    );
+}
+
+async function setup() {
+    process.env.KEYCLOAK_REALM_URL = 'https://auth.albusto.test/realms/crm-prod';
+    process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+    state.companyA = randomUUID();
+    state.companyB = randomUUID();
+    state.sharedPhone = `+1555${String(Date.now()).slice(-7)}`;
+    state.sharedEmail = `s2a-shared-${Date.now()}@example.test`;
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(
+            `INSERT INTO companies (id, name, slug, status, timezone)
+             VALUES ($1, 'S2a Tenant A', $2, 'active', 'America/New_York'),
+                    ($3, 'S2a Tenant B', $4, 'active', 'America/Chicago')`,
+            [
+                state.companyA,
+                `s2a-a-${state.companyA}`,
+                state.companyB,
+                `s2a-b-${state.companyB}`,
+            ]
+        );
+        const humans = await client.query(
+            `INSERT INTO crm_users
+                (keycloak_sub, email, full_name, role, status, company_id,
+                 platform_role, onboarding_status, kind)
+             VALUES
+                ($1,$2,'S2a Admin A','company_member','active',$3,'none','active','user'),
+                ($4,$5,'S2a Admin B','company_member','active',$6,'none','active','user')
+             RETURNING id, keycloak_sub, company_id`,
+            [
+                `s2a-human-a-${state.companyA}`,
+                `s2a-a-${state.companyA}@example.test`,
+                state.companyA,
+                `s2a-human-b-${state.companyB}`,
+                `s2a-b-${state.companyB}@example.test`,
+                state.companyB,
+            ]
+        );
+        state.humanA = humans.rows.find((row) => row.company_id === state.companyA);
+        state.humanB = humans.rows.find((row) => row.company_id === state.companyB);
+        await client.query(
+            `INSERT INTO company_memberships (user_id, company_id, role, role_key, status)
+             VALUES
+                ($1,$2,'company_admin','tenant_admin','active'),
+                ($3,$4,'company_admin','tenant_admin','active')`,
+            [state.humanA.id, state.companyA, state.humanB.id, state.companyB]
+        );
+        // A prod-shaped DB carries the LAST_ADMIN_REQUIRED guard, so the consent
+        // test cannot demote company A's only tenant_admin. Seed a second admin
+        // purely to satisfy that trigger; the gate is still asserted on humanA.
+        const spareAdmin = await client.query(
+            `INSERT INTO crm_users
+                (keycloak_sub, email, full_name, role, status, company_id,
+                 platform_role, onboarding_status, kind)
+             VALUES ($1,$2,'S2a Admin A2','company_member','active',$3,'none','active','user')
+             RETURNING id`,
+            [
+                `s2a-human-a2-${state.companyA}`,
+                `s2a-a2-${state.companyA}@example.test`,
+                state.companyA,
+            ]
+        );
+        await client.query(
+            `INSERT INTO company_memberships (user_id, company_id, role, role_key, status)
+             VALUES ($1,$2,'company_admin','tenant_admin','active')`,
+            [spareAdmin.rows[0].id, state.companyA]
+        );
+        const app = await client.query(
+            `SELECT id FROM marketplace_apps
+             WHERE app_key = 'chatgpt-crm-mcp' AND status = 'published'`
+        );
+        const installations = await client.query(
+            `INSERT INTO marketplace_installations
+                (company_id, app_id, status, installed_by, installed_at)
+             VALUES ($1,$3,'connected',$4,NOW()), ($2,$3,'connected',$5,NOW())
+             RETURNING id, company_id`,
+            [state.companyA, state.companyB, app.rows[0].id, state.humanA.id, state.humanB.id]
+        );
+        state.installA = installations.rows.find((row) => row.company_id === state.companyA);
+        state.installB = installations.rows.find((row) => row.company_id === state.companyB);
+        state.identityA = await identityService.provisionInstallation({
+            companyId: state.companyA,
+            installationId: state.installA.id,
+            actorId: state.humanA.id,
+        }, client);
+        state.identityB = await identityService.provisionInstallation({
+            companyId: state.companyB,
+            installationId: state.installB.id,
+            actorId: state.humanB.id,
+        }, client);
+
+        // contacts.email carries a GLOBAL unique index (uq_contacts_email), so the
+        // column itself cannot repeat across tenants. The shared-email natural-key
+        // collision is preserved through contact_emails below, whose uniqueness is
+        // per-contact only — same lesson as the S1 tenancy suite.
+        const contacts = await client.query(
+            `INSERT INTO contacts
+                (company_id, full_name, first_name, last_name, phone_e164, email)
+             VALUES
+                ($1,'Shared Person','Shared','Person',$3,$4),
+                ($2,'Shared Person','Shared','Person',$3,$5)
+             RETURNING id, company_id`,
+            [
+                state.companyA,
+                state.companyB,
+                state.sharedPhone,
+                `s2a-contact-a-${state.companyA}@example.test`,
+                `s2a-contact-b-${state.companyB}@example.test`,
+            ]
+        );
+        state.contactA = Number(contacts.rows.find((row) => row.company_id === state.companyA).id);
+        state.contactB = Number(contacts.rows.find((row) => row.company_id === state.companyB).id);
+        await client.query(
+            `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
+             SELECT c.id, $3, LOWER($3), true
+             FROM contacts c
+             WHERE (c.id=$1 AND c.company_id=$4) OR (c.id=$2 AND c.company_id=$5)`,
+            [state.contactA, state.contactB, state.sharedEmail, state.companyA, state.companyB]
+        );
+        const leads = await client.query(
+            `INSERT INTO leads
+                (company_id, uuid, status, first_name, last_name, phone, email,
+                 contact_id, comments, structured_notes)
+             VALUES
+                ($1,$3,'Submitted','Shared','Person',$5,$6,$7,'A-before','[]'::jsonb),
+                ($2,$4,'Submitted','Shared','Person',$5,$6,$8,'B-before','[]'::jsonb)
+             RETURNING id, uuid, company_id`,
+            [
+                state.companyA,
+                state.companyB,
+                `A${String(Date.now()).slice(-8)}`,
+                `B${String(Date.now()).slice(-8)}`,
+                state.sharedPhone,
+                state.sharedEmail,
+                state.contactA,
+                state.contactB,
+            ]
+        );
+        state.leadA = leads.rows.find((row) => row.company_id === state.companyA);
+        state.leadB = leads.rows.find((row) => row.company_id === state.companyB);
+        const jobs = await client.query(
+            `INSERT INTO jobs
+                (company_id, contact_id, blanc_status, zb_status, customer_name,
+                 customer_phone, customer_email, service_name, description, notes, zb_raw)
+             VALUES
+                ($1,$3,'Submitted','scheduled','Shared Person',$5,$6,'A service','A-before','[]'::jsonb,'{}'::jsonb),
+                ($2,$4,'Submitted','scheduled','Shared Person',$5,$6,'B service','B-before','[]'::jsonb,'{}'::jsonb)
+             RETURNING id, company_id`,
+            [
+                state.companyA,
+                state.companyB,
+                state.contactA,
+                state.contactB,
+                state.sharedPhone,
+                state.sharedEmail,
+            ]
+        );
+        state.jobA = Number(jobs.rows.find((row) => row.company_id === state.companyA).id);
+        state.jobB = Number(jobs.rows.find((row) => row.company_id === state.companyB).id);
+        await seedWorkflow(client, state.companyA, 'lead');
+        await seedWorkflow(client, state.companyA, 'job');
+        await seedWorkflow(client, state.companyB, 'lead');
+        await seedWorkflow(client, state.companyB, 'job');
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
+async function snapshotCompany(companyId) {
+    const { rows } = await db.query(
+        `SELECT
+            (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id), '[]')
+             FROM contacts x WHERE x.company_id=$1) AS contacts,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id), '[]')
+             FROM leads x WHERE x.company_id=$1) AS leads,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id), '[]')
+             FROM jobs x WHERE x.company_id=$1) AS jobs,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(ce) ORDER BY ce.id), '[]')
+             FROM contact_emails ce
+             JOIN contacts c ON c.id=ce.contact_id AND c.company_id=$1
+             WHERE c.company_id=$1) AS contact_emails`,
+        [companyId]
+    );
+    return JSON.stringify(rows[0]);
+}
+
+function writeContext(resolved) {
+    return {
+        companyId: resolved.company_id,
+        actorId: resolved.ai_user_id,
+        authorizerId: resolved.authorized_by_user_id,
+        bindingId: resolved.binding_id,
+        oauthScopes: [permissions.READ_SCOPE, permissions.WRITE_SCOPE],
+        permissions: resolved.permissions,
+        requestId: `s2a-${randomUUID()}`,
+    };
+}
+
+function protocolRequest(resolved) {
+    return {
+        companyFilter: { company_id: resolved.company_id },
+        user: {
+            kind: 'agent',
+            oauthAuthorizerId: resolved.authorized_by_user_id,
+            crmUser: { id: resolved.ai_user_id },
+        },
+        authz: {
+            permissions: resolved.permissions,
+            oauthScopes: [permissions.READ_SCOPE, permissions.WRITE_SCOPE],
+            company: { timezone: 'America/New_York' },
+        },
+        chatgptMcpBinding: {
+            id: resolved.binding_id,
+            authorizerId: resolved.authorized_by_user_id,
+        },
+        requestId: `s2a-protocol-${randomUUID()}`,
+    };
+}
+
+async function setConsent(enabled) {
+    return marketplaceService.setChatgptMcpWrites(
+        state.companyA,
+        state.humanA.id,
+        enabled,
+        { requestId: `consent-${randomUUID()}` }
+    );
+}
+
+async function resolveA() {
+    return identityService.resolveOAuthContext({
+        issuer: process.env.KEYCLOAK_REALM_URL,
+        subject: state.humanA.keycloak_sub,
+        clientId: process.env.CHATGPT_MCP_CLIENT_ID,
+    });
+}
+
+async function invokeDirect(context, name, args, options) {
+    return executor._dispatchDispatcherWrite(registry.getTool(name), context, args, options);
+}
+
+async function invoke(resolved, name, args) {
+    return executor.execute(
+        protocolRequest(resolved),
+        name,
+        args,
+        { confirmed: true, confirmation_id: `confirmed-${randomUUID()}` }
+    );
+}
+
+beforeAll(async () => {
+    if (DATABASE.ready) await setup();
+});
+
+describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => {
+    databaseTest('consent is tenant_admin-only, idempotent, and filters 19 → 26 → 19 tools', async () => {
+        let resolved = await resolveA();
+        let response = await protocol.handleJsonRpc(protocolRequest(resolved), {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/list',
+            params: {},
+        });
+        expect(response.result.tools).toHaveLength(19);
+
+        await db.query(
+            `UPDATE company_memberships
+             SET role='company_member', role_key='manager'
+             WHERE user_id=$1 AND company_id=$2`,
+            [state.humanA.id, state.companyA]
+        );
+        await expect(setConsent(true)).rejects.toMatchObject({
+            code: 'TENANT_ADMIN_REQUIRED',
+            httpStatus: 403,
+        });
+        await db.query(
+            `UPDATE company_memberships
+             SET role='company_admin', role_key='tenant_admin'
+             WHERE user_id=$1 AND company_id=$2`,
+            [state.humanA.id, state.companyA]
+        );
+
+        await expect(setConsent(true)).resolves.toMatchObject({ enabled: true, grant_version: 3 });
+        await expect(setConsent(true)).resolves.toMatchObject({ enabled: true, grant_version: 3 });
+        resolved = await resolveA();
+        response = await protocol.handleJsonRpc(protocolRequest(resolved), {
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'tools/list',
+            params: {},
+        });
+        expect(response.result.tools).toHaveLength(26);
+        expect(response.result.tools.filter((tool) => tool.annotations.kind === 'write')).toHaveLength(7);
+
+        await expect(setConsent(false)).resolves.toMatchObject({ enabled: false, grant_version: 2 });
+        await expect(setConsent(false)).resolves.toMatchObject({ enabled: false, grant_version: 2 });
+        resolved = await resolveA();
+        response = await protocol.handleJsonRpc(protocolRequest(resolved), {
+            jsonrpc: '2.0',
+            id: 3,
+            method: 'tools/list',
+            params: {},
+        });
+        expect(response.result.tools).toHaveLength(19);
+        await setConsent(true);
+    });
+
+    databaseTest('SAB-MCP-DISCONNECT-RACE: stale auth followed by disconnect leaves zero rows', async () => {
+        const context = writeContext(await resolveA());
+        const marker = `race-${randomUUID()}`;
+        await expect(invokeDirect(context, 'svc.create_lead', {
+            first_name: 'Race',
+            last_name: 'Rejected',
+            phone: '+16175550199',
+            comments: marker,
+        }, {
+            beforeLiveRecheck: async () => {
+                await db.query(
+                    `UPDATE marketplace_installations
+                     SET status='disconnected'
+                     WHERE id=$1 AND company_id=$2`,
+                    [state.installA.id, state.companyA]
+                );
+            },
+        })).rejects.toMatchObject({ code: 'MCP_BINDING_INVALID', httpStatus: 403 });
+        const persisted = await db.query(
+            `SELECT COUNT(*)::int AS count
+             FROM leads
+             WHERE company_id=$1 AND comments=$2`,
+            [state.companyA, marker]
+        );
+        expect(persisted.rows[0].count).toBe(0);
+        await db.query(
+            `UPDATE marketplace_installations
+             SET status='connected'
+             WHERE id=$1 AND company_id=$2`,
+            [state.installA.id, state.companyA]
+        );
+
+        const active = await invokeDirect(writeContext(await resolveA()), 'svc.create_lead', {
+            first_name: 'Race',
+            last_name: 'Allowed',
+            phone: '+16175550198',
+            comments: `${marker}-active`,
+        });
+        expect(active.lead_uuid).toBeTruthy();
+    });
+});
+
+describe('CHATGPT-CRM-MCP S2a real-PostgreSQL per-tool tenancy contract', () => {
+    databaseTest('T-own / T-foreign / T-blast, idempotency, FSM action-only, and CRM actor hold for all 7 writes', async () => {
+        const resolved = await resolveA();
+        const cases = [
+            {
+                name: 'svc.create_lead',
+                own: {
+                    first_name: 'Shared',
+                    last_name: 'Person',
+                    phone: state.sharedPhone,
+                    email: state.sharedEmail,
+                    comments: 'created by A',
+                },
+                foreign: {
+                    contact_id: state.contactB,
+                    first_name: 'Foreign',
+                    last_name: 'Contact',
+                },
+            },
+            {
+                name: 'svc.update_lead',
+                own: { lead_uuid: state.leadA.uuid, comments: 'A-updated' },
+                foreign: { lead_uuid: state.leadB.uuid, comments: 'must-not-write' },
+            },
+            {
+                name: 'svc.transition_lead',
+                own: { lead_uuid: state.leadA.uuid, action: 'advance' },
+                foreign: { lead_uuid: state.leadB.uuid, action: 'advance' },
+            },
+            {
+                name: 'svc.create_job',
+                own: {
+                    customer_name: 'Shared Person',
+                    customer_phone: state.sharedPhone,
+                    customer_email: state.sharedEmail,
+                    service_name: 'A-created',
+                },
+                foreign: {
+                    contact_id: state.contactB,
+                    customer_name: 'Foreign Contact',
+                },
+            },
+            {
+                name: 'svc.update_job',
+                own: { job_id: state.jobA, description: 'A-updated' },
+                foreign: { job_id: state.jobB, description: 'must-not-write' },
+            },
+            {
+                name: 'svc.transition_job',
+                own: { job_id: state.jobA, action: 'advance' },
+                foreign: { job_id: state.jobB, action: 'advance' },
+            },
+            {
+                name: 'svc.add_note',
+                own: { parent_type: 'job', parent_id: String(state.jobA), text: 'A note' },
+                foreign: { parent_type: 'job', parent_id: String(state.jobB), text: 'must-not-write' },
+            },
+        ];
+
+        const results = new Map();
+        for (const entry of cases) {
+            const beforeB = await snapshotCompany(state.companyB);
+            results.set(entry.name, await invoke(resolved, entry.name, entry.own));
+            await expect(invoke(resolved, entry.name, entry.foreign))
+                .rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+            expect(await snapshotCompany(state.companyB)).toBe(beforeB);
+        }
+
+        const replay = await invoke(resolved, 'svc.create_lead', cases[0].own);
+        expect(replay).toEqual(results.get('svc.create_lead'));
+        const leadCount = await db.query(
+            `SELECT COUNT(*)::int AS count
+             FROM leads
+             WHERE id=$1 AND company_id=$2`,
+            [results.get('svc.create_lead').lead_id, state.companyA]
+        );
+        expect(leadCount.rows[0].count).toBe(1);
+
+        const jobReplay = await invoke(resolved, 'svc.create_job', cases[3].own);
+        expect(jobReplay).toEqual(results.get('svc.create_job'));
+        const jobCount = await db.query(
+            `SELECT COUNT(*)::int AS count
+             FROM jobs
+             WHERE id=$1 AND company_id=$2`,
+            [results.get('svc.create_job').job_id, state.companyA]
+        );
+        expect(jobCount.rows[0].count).toBe(1);
+
+        const emptyContact = await db.query(
+            `INSERT INTO contacts (company_id, full_name, first_name, last_name)
+             VALUES ($1, 'Empty Contact', 'Empty', 'Contact')
+             RETURNING id`,
+            [state.companyA]
+        );
+        const enrichedPhone = '+16175550177';
+        const enrichedEmail = `enriched-${randomUUID()}@example.test`;
+        await invoke(resolved, 'svc.create_lead', {
+            contact_id: Number(emptyContact.rows[0].id),
+            first_name: 'Empty',
+            last_name: 'Contact',
+            phone: enrichedPhone,
+            email: enrichedEmail,
+        });
+        await expect(db.query(
+            `SELECT phone_e164, email
+             FROM contacts
+             WHERE id=$1 AND company_id=$2`,
+            [emptyContact.rows[0].id, state.companyA]
+        )).resolves.toMatchObject({
+            rows: [{ phone_e164: enrichedPhone, email: enrichedEmail }],
+        });
+
+        const noStealContact = await db.query(
+            `INSERT INTO contacts (company_id, full_name, first_name, last_name)
+             VALUES ($1, 'No Steal', 'No', 'Steal')
+             RETURNING id`,
+            [state.companyA]
+        );
+        await invoke(resolved, 'svc.create_lead', {
+            contact_id: Number(noStealContact.rows[0].id),
+            first_name: 'No',
+            last_name: 'Steal',
+            phone: state.sharedPhone,
+            email: state.sharedEmail,
+        });
+        const noSteal = await db.query(
+            `SELECT phone_e164, email
+             FROM contacts
+             WHERE id=$1 AND company_id=$2`,
+            [noStealContact.rows[0].id, state.companyA]
+        );
+        expect(noSteal.rows).toEqual([{ phone_e164: null, email: null }]);
+
+        await expect(invoke(resolved, 'svc.transition_lead', {
+            lead_uuid: state.leadA.uuid,
+            action: 'ignore_fsm_and_close',
+        })).rejects.toMatchObject({ code: 'FSM_TRANSITION_DENIED', httpStatus: 403 });
+
+        await invoke(resolved, 'svc.add_note', {
+            parent_type: 'lead',
+            parent_id: state.leadA.uuid,
+            text: 'Lead note by AI',
+        });
+        await invoke(resolved, 'svc.add_note', {
+            parent_type: 'contact',
+            parent_id: String(state.contactA),
+            text: 'Contact note by AI',
+        });
+        const actors = await db.query(
+            `SELECT
+                (SELECT structured_notes->-1->>'created_by'
+                 FROM leads WHERE uuid=$1 AND company_id=$4) AS lead_actor,
+                (SELECT structured_notes->-1->>'created_by'
+                 FROM contacts WHERE id=$2 AND company_id=$4) AS contact_actor,
+                (SELECT notes->-1->>'created_by'
+                 FROM jobs WHERE id=$3 AND company_id=$4) AS job_actor`,
+            [state.leadA.uuid, state.contactA, state.jobA, state.companyA]
+        );
+        expect(actors.rows[0]).toEqual({
+            lead_actor: state.identityA.aiUser.id,
+            contact_actor: state.identityA.aiUser.id,
+            job_actor: state.identityA.aiUser.id,
+        });
+    });
+});
+
+afterAll(async () => {
+    if (oldIssuer === undefined) delete process.env.KEYCLOAK_REALM_URL;
+    else process.env.KEYCLOAK_REALM_URL = oldIssuer;
+    if (oldClientId === undefined) delete process.env.CHATGPT_MCP_CLIENT_ID;
+    else process.env.CHATGPT_MCP_CLIENT_ID = oldClientId;
+    try { await db.pool.end(); } catch { /* ignore */ }
+});

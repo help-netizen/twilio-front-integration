@@ -130,7 +130,15 @@ async function run(companyId, verifiedContext, input) {
     // AR-5: reason note ("AI Phone") — MUST include the captured reason every time.
     const noteText = `Appointment canceled via AI Phone. Reason: ${gate.reason}. Retention attempt made. No cancellation fee (free before the visit).`;
     try {
-        await jobsService.addNote(jobId, noteText, [], 'AI Phone', 'AI Phone');
+        await jobsService.addNote(
+            jobId,
+            noteText,
+            [],
+            'AI Phone',
+            'AI Phone',
+            null,
+            companyId
+        );
     } catch (e) {
         // eslint-disable-next-line no-console
         console.error(`[agentSkills] cancelAppointment addNote failed (non-fatal): ${e && e.message}`);

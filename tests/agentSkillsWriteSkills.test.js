@@ -64,7 +64,9 @@ describe('rescheduleAppointment (L2 write) — G4 / AR-4 / AR-5', () => {
         jobsService.getJobById.mockResolvedValue(L2JOB);
         const out = await runSkill('rescheduleAppointment', CO, { source: 'test' }, { jobId: 7, newPreferredSlot: SLOT });
         expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(CO, 'job', 7, expect.any(String), expect.any(String));
-        expect(jobsService.addNote).toHaveBeenCalledWith(7, expect.stringMatching(/rescheduled/i), [], 'AI Phone', 'AI Phone');
+        expect(jobsService.addNote).toHaveBeenCalledWith(
+            7, expect.stringMatching(/rescheduled/i), [], 'AI Phone', 'AI Phone', null, CO
+        );
         expect(eventService.logEvent).toHaveBeenCalledWith(CO, 'job', 7, 'job_rescheduled', expect.objectContaining({ actor: 'AI Phone' }), 'system');
         expect(out).toMatchObject({ ok: true, success: true, conflict: false });
         expect(out.newWindow).toMatch(/between 10am and 12pm/);
@@ -161,7 +163,9 @@ describe('cancelAppointment (L2 write, retention-gated) — G5 / AR-5', () => {
         jobsService.getJobById.mockResolvedValue(L2JOB);
         const out = await runSkill('cancelAppointment', CO, {}, { jobId: 7, reason: 'found-someone', retentionAttempted: true });
         expect(jobsService.cancelJob).toHaveBeenCalledWith(7);
-        expect(jobsService.addNote).toHaveBeenCalledWith(7, expect.stringContaining('found-someone'), [], 'AI Phone', 'AI Phone');
+        expect(jobsService.addNote).toHaveBeenCalledWith(
+            7, expect.stringContaining('found-someone'), [], 'AI Phone', 'AI Phone', null, CO
+        );
         expect(eventService.logEvent).toHaveBeenCalledWith(CO, 'job', 7, 'job_canceled', expect.objectContaining({ reason: 'found-someone', retentionAttempted: true, actor: 'AI Phone' }), 'system');
         expect(out).toMatchObject({ ok: true, success: true, status: 'That appointment is canceled.' });
     });

@@ -337,24 +337,91 @@ That is why a call with `contact_id IS NULL` remains visible to its own company
 and cannot enter another company's result. The optional contact join repeats
 tenant ownership and supplies only `contact_name`.
 
-### 7.2 S2 — internal writes and files
+### 7.2 S2a — transactional write foundation and first seven tools
+
+S2a exposes only the first consent-gated internal-write batch. It does not
+expose files, estimates/invoices, tasks, assignment, conversion, or sends.
+All seven tools are `kind=write`, `confirmationClass=W`,
+`requiresConfirmation=true`, and require `albusto.mcp.write`. ChatGPT presents
+the confirmation; after authorization the server executes immediately.
+
+The executor owns the transaction:
+
+```text
+BEGIN
+SELECT b.id, current_grants
+FROM chatgpt_mcp_bindings b
+JOIN marketplace_installations mi
+  ON mi.id=b.installation_id AND mi.company_id=b.company_id
+JOIN companies c
+  ON c.id=b.company_id
+JOIN crm_users ai
+  ON ai.id=b.ai_user_id AND ai.company_id=b.company_id
+JOIN crm_users human
+  ON human.id=b.authorized_by_user_id AND human.company_id=b.company_id
+JOIN company_memberships cm
+  ON cm.user_id=human.id AND cm.company_id=b.company_id
+WHERE b.id=:bindingId
+  AND b.company_id=:companyId
+  AND b.ai_user_id=:aiUserId
+  AND b.authorized_by_user_id=:authorizerId
+  AND b.status='active'
+  AND mi.status='connected'
+  AND c.status='active'
+  AND ai.kind='agent' AND ai.status='active' AND ai.onboarding_status='active'
+  AND human.status='active' AND human.onboarding_status='active'
+  AND cm.status='active' AND cm.role_key='tenant_admin'
+FOR SHARE OF b, mi, c, ai, human, cm;
+-- recheck current entity + exact tool grants under the binding lock
+handler(companyId, aiUserId, args, same_client)
+COMMIT
+```
+
+An empty recheck is `403 MCP_BINDING_INVALID`; any error rolls back. Reads keep
+their one request-time identity resolution. The real DB race test resolves auth,
+disconnects the installation before this query, and proves the handler leaves
+zero rows.
+
+Existing bindings remain read-only. `S1_GRANTS` stays bundle v2. The separate
+`S2_WRITE_GRANTS` bundle v3 is added or removed only by:
+
+- `POST /api/marketplace/apps/chatgpt-crm-mcp/writes/enable`
+- `POST /api/marketplace/apps/chatgpt-crm-mcp/writes/disable`
+
+Both endpoints derive the company from `req.companyFilter.company_id`, require
+the active human authorizer to remain a `tenant_admin`, lock the active binding,
+and transactionally insert/delete only S2 write grants while changing
+`binding.grant_version` to 3/2. They are idempotent. There is deliberately no
+migration or write-grant backfill.
+
+| Tool | Permission pair (business + exact) | Input/behavior | Tenant-safe seam |
+|---|---|---|---|
+| `svc.create_lead` | `leads.create` + `mcp.tool.svc.create_lead` | Dispatcher-editable identity, source, description/address fields and optional text note; no status. | Transactional contact resolution pairs every natural key with company and uses fill-empty-never-steal propagation. |
+| `svc.update_lead` | `leads.edit` + exact | `lead_uuid` plus allowlisted non-status fields. | `SELECT ... WHERE uuid=$1 AND company_id=$2 FOR UPDATE`; update repeats both predicates. |
+| `svc.transition_lead` | `leads.edit` + exact | `lead_uuid` + published-FSM `action`, never target state. | Owned row lock, `getAvailableActions(...,['dispatcher'])`, exact event match, then scoped update; no FSM fallback. |
+| `svc.create_job` | `jobs.create` + exact | Dispatcher-editable customer/service/schedule/address fields and optional text note; no status. | Contact ownership/resolution and insert use the binding company in one transaction; no Zenbooker side effect in S2a. |
+| `svc.update_job` | `jobs.edit` + exact | `job_id` plus allowlisted non-status fields. | `SELECT ... WHERE id=$1 AND company_id=$2 FOR UPDATE`; update repeats both predicates. |
+| `svc.transition_job` | `jobs.edit`, `jobs.close` + exact | `job_id` + published-FSM dispatcher action. | Same action-only FSM seam as Leads; the close grant keeps the first batch fail-closed for any closing action. |
+| `svc.add_note` | `jobs.edit`, `leads.edit`, `contacts.edit` + exact | `parent_type=job\|lead\|contact`, `parent_id`, text only. | Parent lock/update repeat company; note `created_by` is the AI `crm_users.id`; no attachment or Keycloak-sub path. |
+
+`svc.create_lead` and `svc.create_job` claim
+`mcp_tool_idempotency(company_id, agent_user_id, tool_name, idempotency_key)`
+inside the same transaction. `argument_hash` is SHA-256 of recursively
+key-sorted JSON; the server-derived idempotency key hashes
+`bindingId + toolName + argument_hash`. A succeeded replay returns the stored
+safe result and creates no second entity. Updates and transitions do not claim
+this table.
+
+### 7.2.1 S2b — deferred internal writes and files
 
 | Tool | Kind | Required permission(s) / OAuth scope | Confirm | Wrapped route/service | Tenant-scoping note |
 |---|---|---|---|---|---|
-| `svc.create_job` | write | `jobs.create` / `albusto.mcp.write` | W | `POST /api/jobs`; `jobsService.createJob` | Server injects company/AI actor; referenced contact/lead/address must belong to company. |
-| `svc.create_lead` | write | `leads.create` / write | W | `POST /api/leads`; `leadsService.createLead` | Company is explicit; contact dedupe pairs phone/email with company. |
-| `svc.transition_job` | write | `jobs.edit`; dynamically `jobs.close` for closing/cancel / write | D | `POST /api/fsm/job/apply`; job status services | Input is FSM event, not arbitrary status; published FSM required; job/update/ZB side effects all company-scoped. |
-| `svc.update_lead` | write | `leads.edit` / write | W | `PATCH /api/leads/:uuid`; `leadsService.updateLead` | Allowlisted non-status fields; company required in reads, update, and contact/address cascades. |
-| `svc.transition_lead` | write | `leads.edit` / write | D | published lead FSM plus hardened `leadsService.updateLead` | Event only; published company FSM required; no additive fallback. |
 | `svc.assign_lead` | write | `leads.edit` / write | W | `POST /api/leads/:uuid/assign`; `leadsService.assignUser` | Assignee and lead both revalidated in company; join/write includes company. |
 | `svc.unassign_lead` | write | `leads.edit` / write | W | `POST /api/leads/:uuid/unassign` | Same company checks as assign. |
 | `svc.convert_lead` | write | `leads.convert`, `jobs.create` / write | D | `POST /api/leads/:uuid/convert`; `leadsService.convertLead` | One company-scoped transaction/idempotency claim; every contact/timeline/call/job join repeats company. |
 | `svc.update_contact` | write | `contacts.edit` / write | W | `PATCH /api/contacts/:id` | Allowlisted fields; base, emails, merge/cascade queries all company-scoped. |
 | `svc.update_contact_address` | write | `contacts.edit` / write | W | `PATCH /api/contacts/:id/addresses/:addressId`; `contactAddressService` | Both contact and address owned by company; cascaded leads repeat company. |
 | `svc.set_contact_default_address` | write | `contacts.edit` / write | W | `PUT /api/contacts/:id/addresses/:addressId/default` | Clear/set operations include company through contact join. |
-| `svc.add_job_note` | write | `jobs.edit` / write | W | `POST /api/jobs/:id/notes`; hardened job-note service | Company required; AI UUID authorship; no unscoped fallback. |
-| `svc.add_lead_note` | write | `leads.edit` / write | W | `POST /api/leads/:uuid/notes` | Lead and update company-scoped; AI UUID authorship. |
-| `svc.add_contact_note` | write | `contacts.edit` / write | W | `POST /api/contacts/:id/notes` | Contact and update company-scoped; AI UUID authorship. |
 | `svc.edit_job_note` | write | `jobs.edit` / write | W | `PATCH /api/jobs/:id/notes/:noteId`; `notesMutationService.editNote` | Company-required job adapter; `edited_by=aiUser.id`. |
 | `svc.delete_job_note` | write | `jobs.edit` / write | D | `DELETE /api/jobs/:id/notes/:noteId`; `notesMutationService.softDeleteNote` | Company-required job adapter; `deleted_by=aiUser.id`; foreign note is not found. |
 | `svc.edit_lead_note` | write | `leads.edit` / write | W | `PATCH /api/leads/:uuid/notes/:noteId`; `notesMutationService.editNote` | Company-required lead adapter; `edited_by=aiUser.id`. |
@@ -414,6 +481,19 @@ These blockers are fixed and tested before the corresponding tool is discoverabl
 | Email route stamps Keycloak sub | `backend/src/routes/emailTimeline.js:41-48` | Pass AI CRM UUID and retain company/contact-recipient validation. |
 | Deferred payment surfaces remain unsafe for MCP exposure | event-only link send at `backend/src/services/stripePaymentsService.js:306-314`; platform wallet at `backend/db/migrations/109_billing_wallet.sql:1-13` is unrelated | Keep every payment tool, scope, and grant unregistered in v1. A future spec must solve real delivery, tenant-customer consent, balance locking, and idempotency before exposure. |
 
+S2a closes only its reachable rows. `leadsService.createLead/updateLead` now
+reject a missing company; the update's metadata/status pre-reads and mutation
+all repeat `company_id`. `jobsService.updateBlancStatus` now rejects a missing
+company, scopes its pre-read, and mutates with
+`WHERE id=$3 AND company_id=$4`. The MCP batch does not call the remaining
+optional job action helpers: its dedicated transaction-bound data layer scopes
+every parent/contact/note read and write and uses the AI UUID.
+`jobsService.addNote` now rejects a missing company and every existing caller
+passes an explicit company; its job read and both note updates always repeat
+`company_id`. UI job/lead/contact note creation also no longer falls back from
+`crmUser.id` to Keycloak `sub`. All other table rows above remain S2b blockers
+and their tools remain unregistered.
+
 Shared HTTP routes remain green after hardening. No MCP wrapper may call a forbidden optional-company helper.
 
 ## 9. Tenancy & Roles
@@ -470,8 +550,12 @@ Each control is executed against the real code path after taking a `cp` backup. 
 | `SAB-MCP-SEND-PERM` | Send is unreachable without scope, business permission, and exact tool grant. | Remove `messages.send` from `svc.send_sms.requiredPermissions` (then separately the exact grant/scope gate). | `chatgptMcpSends.test.js` — `SAB-MCP-SEND-PERM`; outbound provider fake remains at zero. |
 | `SAB-MCP-DEFERRED-PAYMENTS` | No payment capability is registered or granted in v1. | Add a plausible `svc.collect_invoice_saved_method` descriptor or payment grant to the S1 bundle. | `chatgptMcpAuthorization.test.js` — `SAB-MCP-DEFERRED-PAYMENTS`. |
 | `SAB-MCP-OAUTH-TENANT` | A token maps only through its unique active binding and cannot act on B. | Resolve binding by human subject only while ignoring installation/company uniqueness, or trust a client company argument. | `chatgptMcpIdentity.db.test.js` — `SAB-MCP-OAUTH-TENANT`; ambiguous binding denied and B snapshot unchanged. |
-| `SAB-MCP-FSM-CLOSED` | Missing company-published FSM never mutates status. | Treat `resolveTransition(...).fallback` as valid. | `chatgptMcpInternalWrites.test.js` — `SAB-MCP-FSM-CLOSED`. |
-| `SAB-MCP-ACTOR` | Every FK author is the AI CRM UUID, never human `sub`. | Pass the decoded Keycloak subject to the note/task target. | `chatgptMcpAuthorship.db.test.js` — `SAB-MCP-ACTOR` (FK/audit assertions). |
+| `SAB-MCP-WRITE-CONSENT` | Existing/read-only bindings cannot discover or invoke writes without both v3 grants and `albusto.mcp.write`. | Merge S2 grants into `S1_GRANTS`, skip the live grant recheck, or omit the write-scope requirement. | `chatgptMcpAuthorization.test.js` write discovery contract plus `chatgptMcpWrites.test.js` stale-grant and missing-scope cases. |
+| `SAB-MCP-DISCONNECT-RACE` | A revoked binding/install between request auth and execution leaves zero domain rows. | Remove `requireLiveBinding` from the transaction or run it before `BEGIN`. | `chatgptMcpWrites.db.test.js` — `SAB-MCP-DISCONNECT-RACE`; marker Lead count stays zero. |
+| `SAB-MCP-WRITE-BLAST` | Every S2a parent/contact lookup and mutation pairs its key with the bound company. | Remove the company predicate from any of the seven handlers. | `chatgptMcpWrites.db.test.js` per-tool own/foreign loop; foreign call is not-found and the tenant-B byte snapshot is unchanged. |
+| `SAB-MCP-CREATE-REPLAY` | Identical create calls under one binding return the stored result without a second Lead/Job. | Bypass the idempotency claim or omit binding/tool/argument hash from its key. | `chatgptMcpWrites.db.test.js` replay assertions for both create tools; canonical entity count must remain one. |
+| `SAB-MCP-FSM-CLOSED` | Missing/unavailable company-published FSM action never mutates status. | Skip `getAvailableActions` or accept `resolveTransition(...).fallback`. | `chatgptMcpWrites.db.test.js` — unavailable/injected action is denied after own/foreign transition checks. |
+| `SAB-MCP-ACTOR` | Every S2a note author is the AI CRM UUID, never human `sub`. | Pass the decoded Keycloak subject or human authorizer to the note target. | `chatgptMcpWrites.db.test.js` — Job, Lead, and Contact note `created_by` fields equal the bound AI UUID. |
 | `SAB-MCP-ESTIMATE-ITEMS` | An estimate update cannot replace another company's line items. | Remove the company-owned estimate join/predicate from the S2 line-item replacement target. | `chatgptMcpInternalWrites.test.js` — `SAB-MCP-ESTIMATE-ITEMS`; company B snapshot changes only under the break. |
 | `SAB-MCP-INVOICE-ITEMS` | An invoice update cannot replace another company's line items. | Remove the company-owned invoice join/predicate from the S2 line-item replacement target. | `chatgptMcpInternalWrites.test.js` — `SAB-MCP-INVOICE-ITEMS`; company B snapshot changes only under the break. |
 
@@ -485,7 +569,25 @@ All commands run from the worktree root. They use the main checkout's Jest binar
 env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpOAuth.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/agentSkillsMcp.test.js tests/tenantSafetyLint.test.js
 ```
 
-### S2 command — internal writes, FSM, authorship, files, route regressions
+### S2a command — write foundation, consent, first seven tools, and regressions
+
+```bash
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpOAuth.test.js tests/keycloakAuthMcpIsolation.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpConsentRoutes.test.js tests/agentSkillsMcp.test.js tests/tenantSafetyLint.test.js
+```
+
+Company-scoped service regressions:
+
+```bash
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/jobsStatusUpdate.test.js tests/jobsPartArrived.test.js tests/jobsPartArrivedForward.test.js tests/jobsService.test.js tests/notesEditDelete.test.js tests/relyLeadIngest.test.js
+```
+
+The DB command uses a real PostgreSQL schema through `DATABASE_URL`. The
+`chatgptMcpWrites.db` suite performs consent enable/disable, a real stale-auth
+disconnect race, protocol/executor T-own/T-foreign/T-blast for each of the seven
+tools, byte snapshots of tenant B, replay checks for both creates, action-only
+FSM denial, fill-empty-never-steal contact checks, and AI-UUID note authorship.
+
+### S2b command — remaining internal writes, FSM, authorship, files, route regressions
 
 ```bash
 node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --config ./package.json --testPathIgnorePatterns "/node_modules/" --runTestsByPath tests/chatgptMcpInternalWrites.test.js tests/chatgptMcpAuthorship.db.test.js tests/chatgptMcpFiles.test.js tests/chatgptMcpTenancy.db.test.js tests/estimatesConvert.test.js tests/invoicesQueriesReplaceItems.test.js tests/invoicesUpdateItems.test.js tests/jobsCreate.test.js tests/jobsStatusRbac.test.js tests/jobsStatusUpdate.test.js tests/leadsService.convert.test.js tests/contactsPatchEmails.test.js tests/notesEditDelete.test.js tests/scheduleReassign.test.js tests/scheduleServiceRescheduleZb.test.js tests/tasksActionRoute.test.js tests/tasksLeadUuid.test.js tests/tenantSafetyLint.test.js
@@ -504,7 +606,7 @@ There is no S4 implementation command in v1. S1/S2 authorization tests assert th
 ### Full MCP regression
 
 ```bash
-node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --config ./package.json --testPathIgnorePatterns "/node_modules/" --runTestsByPath tests/agentSkillsMcp.test.js tests/chatgptMcpOAuth.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpInternalWrites.test.js tests/chatgptMcpAuthorship.db.test.js tests/chatgptMcpFiles.test.js tests/chatgptMcpSends.test.js tests/chatgptMcpTenancy.db.test.js tests/tenantSafetyLint.test.js
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/agentSkillsMcp.test.js tests/chatgptMcpOAuth.test.js tests/keycloakAuthMcpIsolation.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpConsentRoutes.test.js tests/tenantSafetyLint.test.js
 ```
 
 Backend-only means there is no frontend build/test gate for this project. The protected-file gate for D1 is an exact-diff inspection:
@@ -514,7 +616,9 @@ git diff --unified=0 -- src/server.js
 git diff --numstat -- src/server.js
 ```
 
-D1 authorizes exactly two connector `require(...)` declarations and two mounts. The expected numstat is `4 0 src/server.js`; any additional changed or deleted line is a release blocker. `git diff --exit-code -- src/server.js` is intentionally non-zero because these four lines are owner-authorized.
+D1 authorized exactly two connector `require(...)` declarations and two mounts
+in the already-merged S1 baseline. S2a does not edit this protected file:
+`git diff --exit-code -- src/server.js` must return 0.
 
 ### 13.1 End-to-end real MCP client checks
 
@@ -548,11 +652,33 @@ Acceptance criteria:
 - `SAB-MCP-UNMAPPED`, `SAB-MCP-FOREIGN`, and `SAB-MCP-OAUTH-TENANT` each prove break-red-restore-green;
 - S1 verification and real-client fixed-bearer read pass.
 
-### S2 — internal writes and file attachment
+### S2a — transactional foundation and first write batch
 
-Carry-forward S2 prerequisites from the S1 red-team (release blockers):
+Implemented scope:
 
-- Immediately before every S2/S3 side effect, re-resolve the active binding, company, AI agent, Marketplace installation, and human authorizer chain. S2/S3 cannot ship without a real disconnect-between-authorization-and-side-effect race test proving zero mutation/provider work.
+1. Transactional executor rechecks binding/install/company/AI/authorizer and
+   current grants under a binding share-lock before the first side effect.
+2. Tenant-admin-only enable/disable endpoints manage a separate v3 write bundle;
+   existing/read-only bindings receive no migration backfill.
+3. Register only create/update/transition for Leads and Jobs plus text-only
+   `svc.add_note`, all with strict schemas, write scope, exact grants, and W
+   confirmation annotations.
+4. Use action-only published FSM transitions, AI CRM UUID notes, contact
+   fill-empty-never-steal behavior, and transaction-local create idempotency.
+5. Gate with a real disconnect race and per-tool real-DB
+   T-own/T-foreign/T-blast through the executor/protocol path.
+
+Acceptance: discovery is 19 before consent, 26 after enable, and 19 after
+disable; stale resolved auth plus disconnect leaves zero rows; tenant B remains
+byte-identical for every own/foreign call; both creates replay to one entity;
+unavailable FSM actions do not mutate; `src/server.js`, frontend, migrations,
+S2b, and S3 are untouched.
+
+### S2b — remaining internal writes and file attachment
+
+Carry-forward prerequisites from the S1 red-team:
+
+- S2a satisfies the common write prerequisite: immediately before every S2/S3 side effect, re-resolve the active binding, company, AI agent, Marketplace installation, and human authorizer chain. Every later handler must use that executor and retain a real disconnect-between-authorization-and-side-effect race proving zero mutation/provider work.
 - Strengthen the read contract with real-PostgreSQL T-own/T-foreign/T-blast calls through the MCP protocol for every S1 read tool, rather than mocked read seams, and add a real signed-token verification test rather than mocking `jwt.verify`. These are required S2 regression gates.
 
 Tasks:

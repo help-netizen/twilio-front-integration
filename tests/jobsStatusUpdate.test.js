@@ -43,11 +43,12 @@ describe('updateBlancStatus query shape', () => {
 
     it('binds the canceled flag as its own boolean param', async () => {
         await jobsService.updateBlancStatus(5, 'Canceled', COMPANY);
-        expect(updateCall()[1]).toEqual(['Canceled', true, 5]);
+        expect(updateCall()[1]).toEqual(['Canceled', true, 5, COMPANY]);
+        expect(String(updateCall()[0])).toContain('AND company_id = $4');
     });
 
     it('passes canceled=false for a non-cancel transition', async () => {
         await jobsService.updateBlancStatus(5, 'Job is Done', COMPANY);
-        expect(updateCall()[1]).toEqual(['Job is Done', false, 5]);
+        expect(updateCall()[1]).toEqual(['Job is Done', false, 5, COMPANY]);
     });
 });

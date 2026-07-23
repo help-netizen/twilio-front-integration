@@ -193,12 +193,30 @@ describe('jobsService.addNote stamps id + created_by', () => {
             .mockResolvedValueOnce({ rows: [] })
             .mockResolvedValue({ rows: [] }); // the UPDATE
 
-        const result = await jobsService.addNote(5, 'hi', [], 'Alex', 'kc-sub-123');
+        const result = await jobsService.addNote(
+            5,
+            'hi',
+            [],
+            'Alex',
+            'crm-user-123',
+            null,
+            'c1'
+        );
 
         const note = result.notes[result.notes.length - 1];
         expect(note.id).toBeTruthy();
         expect(typeof note.id).toBe('string');
-        expect(note.created_by).toBe('kc-sub-123');
+        expect(note.created_by).toBe('crm-user-123');
         expect(note.text).toBe('hi');
+    });
+
+    it('fails closed before an ID-only note write when companyId is missing', async () => {
+        const jobsService = require('../backend/src/services/jobsService');
+        await expect(jobsService.addNote(5, 'hi', [], 'Alex', 'crm-user-123'))
+            .rejects.toMatchObject({
+                code: 'TENANT_CONTEXT_REQUIRED',
+                httpStatus: 403,
+            });
+        expect(db.query).not.toHaveBeenCalled();
     });
 });

@@ -784,7 +784,7 @@ describe('CANCEL-001: cancelScheduledRobotCalls — cancel core (TC-CC-01…05)'
         expect(jobsService.addNote).toHaveBeenCalledWith(
             5,
             "AI: robot call canceled — job left 'Part arrived' (status changed to 'Rescheduled').",
-            [], 'AI Phone', 'AI Phone',
+            [], 'AI Phone', 'AI Phone', null, CO,
         );
 
         // Task 7's robot_call action → {state:'canceled', reason}; other actions verbatim.

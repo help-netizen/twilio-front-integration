@@ -49,6 +49,28 @@ router.get('/installations', async (req, res) => {
     }
 });
 
+async function setChatgptMcpWrites(req, res, enabled) {
+    try {
+        const result = await marketplaceService.setChatgptMcpWrites(
+            companyId(req),
+            actorId(req),
+            enabled,
+            { requestId: req.requestId }
+        );
+        res.json({ success: true, ...result, request_id: req.requestId });
+    } catch (err) {
+        handleError(err, req, res);
+    }
+}
+
+router.post('/apps/chatgpt-crm-mcp/writes/enable', async (req, res) => {
+    await setChatgptMcpWrites(req, res, true);
+});
+
+router.post('/apps/chatgpt-crm-mcp/writes/disable', async (req, res) => {
+    await setChatgptMcpWrites(req, res, false);
+});
+
 router.get('/apps/:appKey/settings', async (req, res) => {
     try {
         const result = await marketplaceService.getAppSettings(

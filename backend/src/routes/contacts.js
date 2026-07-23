@@ -873,7 +873,7 @@ router.post('/:id/notes', requirePermission('contacts.edit'), upload.array('atta
     const reqId = requestId();
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || null;
+        const userId = req.user?.crmUser?.id || null;
         const contactId = parseInt(req.params.id, 10);
         const contact = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));

@@ -227,8 +227,8 @@ function buildCancelCopy(cause = {}) {
  *
  * When anything was canceled/marked, per affected job (all best-effort, each
  * sub-step guarded — partial progress acceptable, the row flip is the source of
- * truth): ONE job note via `jobsService.addNote(jobId, text, [], 'AI Phone',
- * 'AI Phone')` (+ mid-flight suffix when a marker was inserted), the task's
+ * truth): ONE company-scoped job note via `jobsService.addNote(...)`
+ * (+ mid-flight suffix when a marker was inserted), the task's
  * robot_call action stamped `{state:'canceled', reason}` (task id from the
  * attempt row, else the open part_arrived_call task), and an
  * `outbound_call_canceled` domain event.
@@ -316,7 +316,15 @@ async function cancelScheduledRobotCalls(scope = {}, companyId, cause = {}, clie
             // 3) ONE job note (FR-3; + suffix when an in-flight call survived).
             const noteText = copy.noteText + (marker ? MIDFLIGHT_NOTE_SUFFIX : '');
             try {
-                await jobsService.addNote(jobId, noteText, [], 'AI Phone', 'AI Phone');
+                await jobsService.addNote(
+                    jobId,
+                    noteText,
+                    [],
+                    'AI Phone',
+                    'AI Phone',
+                    null,
+                    companyId
+                );
             } catch (err) {
                 console.warn('[partsCallService] cancel note failed (non-fatal):', err.message);
             }

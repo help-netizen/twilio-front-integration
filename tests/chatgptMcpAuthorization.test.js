@@ -46,6 +46,53 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         }
     });
 
+    test('all 7 consent-gated S2a writes bring the dispatcher surface to 26 tools', () => {
+        expect(permissions.WRITE_BUNDLE_VERSION).toBe(3);
+        expect(permissions.WRITE_TOOL_NAMES).toHaveLength(7);
+        expect(permissions.S1_GRANTS).not.toEqual(
+            expect.arrayContaining(permissions.S2_WRITE_GRANTS)
+        );
+        for (const name of permissions.WRITE_TOOL_NAMES) {
+            const tool = registry.getTool(name);
+            expect(tool).toBeDefined();
+            expect(tool.kind).toBe('write');
+            expect(tool.requiresConfirmation).toBe(true);
+            expect(tool.confirmationClass).toBe('W');
+            expect(tool.destructiveHint).toBe(false);
+            expect(tool.inputSchema.additionalProperties).toBe(false);
+            expect(tool.requiredPermissions).toEqual(expect.arrayContaining([
+                `mcp.tool.${name}`,
+                ...permissions.WRITE_TOOL_PERMISSIONS[name],
+            ]));
+            expect(tool.requiredOAuthScopes).toEqual([permissions.WRITE_SCOPE]);
+            expect(tool.frameworkWritePermission).toBeNull();
+        }
+        expect(registry.listTools({ includeDispatcher: true, dispatcherOnly: true }))
+            .toHaveLength(26);
+    });
+
+    test('write discovery requires explicit v3 grants and albusto.mcp.write scope', () => {
+        const dispatcherTools = registry.listTools({
+            includeDispatcher: true,
+            dispatcherOnly: true,
+        });
+        expect(authorization.filterTools(
+            dispatcherTools,
+            permissions.S1_GRANTS,
+            [permissions.READ_SCOPE, permissions.WRITE_SCOPE]
+        )).toHaveLength(19);
+        expect(authorization.filterTools(
+            dispatcherTools,
+            [...permissions.S1_GRANTS, ...permissions.S2_WRITE_GRANTS],
+            [permissions.READ_SCOPE]
+        )).toHaveLength(19);
+        expect(authorization.filterTools(
+            dispatcherTools,
+            [...permissions.S1_GRANTS, ...permissions.S2_WRITE_GRANTS],
+            [permissions.READ_SCOPE, permissions.WRITE_SCOPE]
+        )).toHaveLength(26);
+    });
+
     test('S1 business grants are view-only and task assignee discovery works without mutation grants', async () => {
         expect(permissions.READ_TOOL_PERMISSIONS['svc.list_task_assignees']).toEqual(['tasks.view']);
         expect(permissions.BUSINESS_READ_PERMISSIONS.every((permission) => permission.endsWith('.view')))

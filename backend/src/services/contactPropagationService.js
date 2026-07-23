@@ -51,7 +51,14 @@ function normalizeEmail(value) {
  *   'added_primary' | 'added_secondary' | 'added' | 'already' | 'conflict' | 'no_slot' | 'skipped'
  */
 async function propagateContactDetails(companyId, contactId, details = {}, opts = {}) {
-    const { source = 'unknown', logPrefix = '[ContactPropagation]', redactEmail = false } = opts;
+    const {
+        source = 'unknown',
+        logPrefix = '[ContactPropagation]',
+        redactEmail = false,
+        client = db,
+        relinkHistory = true,
+        logEvents = true,
+    } = opts;
     const result = { phone: 'skipped', email: 'skipped' };
 
     if (!companyId || contactId == null) return result;
@@ -60,7 +67,7 @@ async function propagateContactDetails(companyId, contactId, details = {}, opts 
     const email = normalizeEmail(details.email);
     if (!digits && !email) return result;
 
-    const { rows } = await db.query(
+    const { rows } = await client.query(
         'SELECT id, phone_e164, secondary_phone, email FROM contacts WHERE id = $1 AND company_id = $2',
         [contactId, companyId]
     );
@@ -69,23 +76,29 @@ async function propagateContactDetails(companyId, contactId, details = {}, opts 
 
     // ── Phone ────────────────────────────────────────────────────────────────
     if (digits) {
-        result.phone = await propagatePhone(companyId, contact, digits, details.phone, { source, logPrefix });
+        result.phone = await propagatePhone(companyId, contact, digits, details.phone, {
+            source, logPrefix, client, relinkHistory, logEvents,
+        });
     }
 
     // ── Email ────────────────────────────────────────────────────────────────
     if (email) {
-        result.email = await propagateEmail(companyId, contact, email, { source, logPrefix, redactEmail });
+        result.email = await propagateEmail(companyId, contact, email, {
+            source, logPrefix, redactEmail, client, relinkHistory, logEvents,
+        });
     }
 
     return result;
 }
 
-async function propagatePhone(companyId, contact, digits, rawPhone, { source, logPrefix }) {
+async function propagatePhone(companyId, contact, digits, rawPhone, {
+    source, logPrefix, client, relinkHistory, logEvents,
+}) {
     const ownDigits = [phoneDigits(contact.phone_e164), phoneDigits(contact.secondary_phone)].filter(Boolean);
     if (ownDigits.includes(digits)) return 'already';
 
     // Never steal: does any OTHER contact in this company own the number?
-    const { rows: owners } = await db.query(
+    const { rows: owners } = await client.query(
         `SELECT id FROM contacts
           WHERE company_id = $1 AND id <> $2
             AND (RIGHT(REGEXP_REPLACE(COALESCE(phone_e164, ''), '[^0-9]', '', 'g'), 10) = $3
@@ -104,30 +117,34 @@ async function propagatePhone(companyId, contact, digits, rawPhone, { source, lo
     else if (!String(contact.secondary_phone || '').trim()) slot = 'secondary_phone';
     if (!slot) return 'no_slot'; // both slots hold OTHER numbers — a human call, not ours
 
-    await db.query(
+    await client.query(
         `UPDATE contacts SET ${slot} = $1, updated_at = NOW() WHERE id = $2 AND company_id = $3`,
         [value, contact.id, companyId]
     );
     console.log(`${logPrefix} contact ${contact.id}: ${slot} ← …${digits.slice(-4)} (source=${source})`);
 
     // Attach orphaned call/SMS history for this number right away.
-    try {
-        const { mergeOrphanTimelines } = require('./timelineMergeService');
-        await mergeOrphanTimelines(contact.id, [value], logPrefix);
-    } catch (e) {
-        console.error(`${logPrefix} orphan-timeline merge failed (non-fatal): ${e.message}`);
+    if (relinkHistory) {
+        try {
+            const { mergeOrphanTimelines } = require('./timelineMergeService');
+            await mergeOrphanTimelines(contact.id, [value], logPrefix);
+        } catch (e) {
+            console.error(`${logPrefix} orphan-timeline merge failed (non-fatal): ${e.message}`);
+        }
     }
 
-    logEnrichmentEvent(companyId, contact.id, { phone_added: value, source });
+    if (logEvents) logEnrichmentEvent(companyId, contact.id, { phone_added: value, source });
     return slot === 'phone_e164' ? 'added_primary' : 'added_secondary';
 }
 
-async function propagateEmail(companyId, contact, email, { source, logPrefix, redactEmail }) {
+async function propagateEmail(companyId, contact, email, {
+    source, logPrefix, redactEmail, client, relinkHistory, logEvents,
+}) {
     if (String(contact.email || '').trim().toLowerCase() === email) return 'already';
     if (String(contact.email || '').trim()) return 'no_slot'; // holds a DIFFERENT email — human decision
 
     // Never steal: primary emails + the contact_emails identity table.
-    const { rows: owners } = await db.query(
+    const { rows: owners } = await client.query(
         `SELECT c.id FROM contacts c
           WHERE c.company_id = $1 AND c.id <> $2 AND LOWER(COALESCE(c.email, '')) = $3
           UNION
@@ -143,7 +160,7 @@ async function propagateEmail(companyId, contact, email, { source, logPrefix, re
         return 'conflict';
     }
 
-    const updated = await db.query(
+    const updated = await client.query(
         `UPDATE contacts SET email = $1, updated_at = NOW()
           WHERE id = $2 AND company_id = $3
             AND NULLIF(BTRIM(email), '') IS NULL`,
@@ -155,14 +172,18 @@ async function propagateEmail(companyId, contact, email, { source, logPrefix, re
     console.log(`${logPrefix} contact ${contact.id}: email ← ${emailLabel} (source=${source})`);
 
     // Attach the email history for this address (same seam CONTACT-EMAIL-MERGE-001 uses).
-    try {
-        const { linkInboxMessages } = require('./contactEmailMergeService');
-        await linkInboxMessages(contact.id, email, companyId);
-    } catch (e) {
-        console.error(`${logPrefix} inbox re-link failed (non-fatal): ${e.message}`);
+    if (relinkHistory) {
+        try {
+            const { linkInboxMessages } = require('./contactEmailMergeService');
+            await linkInboxMessages(contact.id, email, companyId);
+        } catch (e) {
+            console.error(`${logPrefix} inbox re-link failed (non-fatal): ${e.message}`);
+        }
     }
 
-    logEnrichmentEvent(companyId, contact.id, { email_added: redactEmail ? true : email, source });
+    if (logEvents) {
+        logEnrichmentEvent(companyId, contact.id, { email_added: redactEmail ? true : email, source });
+    }
     return 'added';
 }
 

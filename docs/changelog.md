@@ -2724,3 +2724,29 @@ Setup; шаги повторяют живой rollout — Developer mode, `chatg
 OAuth-значения пред-регистрированного клиента (Registration URL пустой),
 вход тем же админ-аккаунтом, @-упоминание коннектора в чате. Проверена
 реал-компонентным Vite-харнесом `chatgpt-connect-harness.html`.
+
+---
+
+## 2026-07-23 — CHATGPT-CRM-MCP-001 S2a: transactional writes + consent
+
+Добавлен первый write-этап коннектора без деплоя и без новой миграции: семь
+инструментов (`create/update/transition` для Lead и Job, плюс text-only
+`add_note`). Перед каждым handler общий executor открывает транзакцию и под
+`FOR SHARE` заново проверяет active binding, connected installation, active
+company/AI-user и активного human tenant_admin; handler получает тот же DB
+client. Disconnect между старым auth-resolve и recheck даёт
+`MCP_BINDING_INVALID`, rollback и ноль строк.
+
+Write-гранты выделены в bundle v3 и не бэкфиллятся: tenant_admin включает и
+отключает их идемпотентными Marketplace endpoints, поэтому discovery меняется
+19 → 26 → 19. Все инструменты требуют `albusto.mcp.write`, exact AI grant и
+confirmation class W. Переходы принимают только доступное событие
+company-published FSM; create Lead/Job используют transaction-local
+idempotency и contact fill-empty-never-steal; заметки пишут AI
+`crm_users.id`, без файлов. Company predicates повторены в каждом
+parent/contact/note read/write; legacy Lead writes и Job status write теперь
+fail-closed без company, а общий `jobsService.addNote` больше не имеет ID-only
+fallback: все callers передают company и заметка всегда обновляется с
+`AND company_id`. Real-PostgreSQL suite проверяет consent, честную
+disconnect-race, T-own/T-foreign/T-blast каждого инструмента, неизменность
+tenant B, replay, FSM denial и AI authorship.
