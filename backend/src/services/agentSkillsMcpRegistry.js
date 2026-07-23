@@ -308,6 +308,59 @@ const JOB_EDIT_PROPERTIES = Object.freeze({
     job_source: stringSchema(),
 });
 
+const FINANCIAL_ITEM_PROPERTIES = Object.freeze({
+    name: stringSchema(),
+    description: nullableSchema(stringSchema()),
+    quantity: numberSchema(0.000001),
+    unit_price: numberSchema(0),
+    unit: nullableSchema(stringSchema()),
+    taxable: booleanSchema(),
+});
+
+const ESTIMATE_ITEM_PROPERTIES = Object.freeze({
+    ...FINANCIAL_ITEM_PROPERTIES,
+    price_book_item_id: nullableSchema(integerSchema(1)),
+});
+
+const ESTIMATE_EDIT_PROPERTIES = Object.freeze({
+    contact_id: integerSchema(1),
+    lead_id: integerSchema(1),
+    job_id: integerSchema(1),
+    summary: nullableSchema(stringSchema()),
+    notes: nullableSchema(stringSchema()),
+    internal_note: nullableSchema(stringSchema()),
+    tax_rate: numberSchema(0, 100),
+    discount_type: nullableSchema(enumSchema(['fixed', 'percentage'])),
+    discount_value: numberSchema(0),
+    currency: stringSchema(),
+    signature_required: booleanSchema(),
+});
+
+const INVOICE_EDIT_PROPERTIES = Object.freeze({
+    contact_id: integerSchema(1),
+    lead_id: integerSchema(1),
+    job_id: integerSchema(1),
+    estimate_id: integerSchema(1),
+    title: nullableSchema(stringSchema()),
+    notes: nullableSchema(stringSchema()),
+    internal_note: nullableSchema(stringSchema()),
+    tax_rate: numberSchema(0, 100),
+    discount_amount: numberSchema(0),
+    payment_terms: nullableSchema(stringSchema()),
+    due_date: nullableSchema(dateSchema()),
+});
+
+function itemCreateSchema(properties) {
+    return strictObjectSchema(properties, ['name', 'quantity', 'unit_price']);
+}
+
+function itemUpdateSchema(properties) {
+    return strictObjectSchema({
+        item_id: integerSchema(1),
+        ...properties,
+    }, ['item_id']);
+}
+
 const DISPATCHER_WRITE_TOOLS = [
     dispatcherWrite('svc.create_lead', 'createLead', 'Create a company Lead and canonically link or create its Contact.', strictObjectSchema({
         ...LEAD_EDIT_PROPERTIES,
@@ -338,6 +391,29 @@ const DISPATCHER_WRITE_TOOLS = [
         parent_id: stringSchema(),
         text: stringSchema(),
     }, ['parent_type', 'parent_id', 'text'])),
+    dispatcherWrite('svc.create_estimate', 'createEstimate', 'Create a draft company Estimate with server-calculated totals and bounded line items.', strictObjectSchema({
+        ...ESTIMATE_EDIT_PROPERTIES,
+        items: arraySchema(itemCreateSchema(ESTIMATE_ITEM_PROPERTIES), 50),
+    })),
+    dispatcherWrite('svc.update_estimate', 'updateEstimate', 'Edit a company Estimate and apply bounded add/update/remove line-item operations; totals remain server-calculated.', strictObjectSchema({
+        estimate_id: integerSchema(1),
+        ...ESTIMATE_EDIT_PROPERTIES,
+        items_add: arraySchema(itemCreateSchema(ESTIMATE_ITEM_PROPERTIES), 50),
+        items_update: arraySchema(itemUpdateSchema(ESTIMATE_ITEM_PROPERTIES), 50),
+        item_ids_remove: arraySchema(integerSchema(1), 50),
+    }, ['estimate_id'])),
+    dispatcherWrite('svc.create_invoice', 'createInvoice', 'Create a draft company Invoice with server-calculated totals and bounded line items.', strictObjectSchema({
+        ...INVOICE_EDIT_PROPERTIES,
+        currency: stringSchema(),
+        items: arraySchema(itemCreateSchema(FINANCIAL_ITEM_PROPERTIES), 50),
+    })),
+    dispatcherWrite('svc.update_invoice', 'updateInvoice', 'Edit a company Invoice and apply bounded add/update/remove line-item operations; totals remain server-calculated.', strictObjectSchema({
+        invoice_id: integerSchema(1),
+        ...INVOICE_EDIT_PROPERTIES,
+        items_add: arraySchema(itemCreateSchema(FINANCIAL_ITEM_PROPERTIES), 50),
+        items_update: arraySchema(itemUpdateSchema(FINANCIAL_ITEM_PROPERTIES), 50),
+        item_ids_remove: arraySchema(integerSchema(1), 50),
+    }, ['invoice_id'])),
 ];
 
 const TOOLS = Object.freeze([
@@ -360,6 +436,14 @@ function stringSchema() {
 
 function integerSchema(minimum, maximum) {
     return { type: 'integer', minimum, ...(maximum ? { maximum } : {}) };
+}
+
+function numberSchema(minimum, maximum) {
+    return {
+        type: 'number',
+        ...(minimum !== undefined ? { minimum } : {}),
+        ...(maximum !== undefined ? { maximum } : {}),
+    };
 }
 
 function booleanSchema() {
@@ -389,6 +473,10 @@ function objectSchema(properties, required = []) {
 
 function strictObjectSchema(properties, required = []) {
     return { type: 'object', additionalProperties: false, properties, required };
+}
+
+function nullableSchema(schema) {
+    return { ...schema, nullable: true };
 }
 
 function dispatcherRead(name, handler, description, inputSchema) {

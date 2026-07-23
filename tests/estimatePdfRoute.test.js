@@ -98,8 +98,8 @@ test('GET /:id/pdf returns a valid inline PDF with no stored template and nullab
     expect(response.body.subarray(0, 8).toString('utf8')).toMatch(/^%PDF-/);
     expect(response.body.subarray(-16).toString('utf8')).toContain('%%EOF');
 
-    expect(mockGetEstimateById).toHaveBeenCalledWith(COMPANY_ID, '57');
-    expect(mockGetEstimateItems).toHaveBeenCalledWith('57');
-    expect(mockGetDefaultTemplate).toHaveBeenCalledWith(COMPANY_ID, 'estimate');
+    expect(mockGetEstimateById).toHaveBeenCalledWith(COMPANY_ID, '57', null);
+    expect(mockGetEstimateItems).toHaveBeenCalledWith(COMPANY_ID, '57', null);
+    expect(mockGetDefaultTemplate).toHaveBeenCalledWith(COMPANY_ID, 'estimate', null);
     expect(mockBuildBrand).toHaveBeenCalledWith(COMPANY_ID);
 });

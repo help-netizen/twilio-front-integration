@@ -9,6 +9,8 @@ const permissions = require('../backend/src/services/chatgptMcpPermissions');
 const registry = require('../backend/src/services/agentSkillsMcpRegistry');
 const protocol = require('../backend/src/services/agentSkillsMcpProtocolService');
 const executor = require('../backend/src/services/agentSkillsMcpExecutor');
+const estimatesService = require('../backend/src/services/estimatesService');
+const invoicesService = require('../backend/src/services/invoicesService');
 
 jest.setTimeout(90000);
 
@@ -271,7 +273,27 @@ async function snapshotCompany(companyId) {
             (SELECT COALESCE(jsonb_agg(to_jsonb(ce) ORDER BY ce.id), '[]')
              FROM contact_emails ce
              JOIN contacts c ON c.id=ce.contact_id AND c.company_id=$1
-             WHERE c.company_id=$1) AS contact_emails`,
+             WHERE c.company_id=$1) AS contact_emails,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]')
+             FROM estimates e WHERE e.company_id=$1) AS estimates,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(ei) ORDER BY ei.id), '[]')
+             FROM estimate_items ei
+             JOIN estimates e ON e.id=ei.estimate_id AND e.company_id=$1
+             WHERE e.company_id=$1) AS estimate_items,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(i) ORDER BY i.id), '[]')
+             FROM invoices i WHERE i.company_id=$1) AS invoices,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(ii) ORDER BY ii.id), '[]')
+             FROM invoice_items ii
+             JOIN invoices i ON i.id=ii.invoice_id AND i.company_id=$1
+             WHERE i.company_id=$1) AS invoice_items,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(ee) ORDER BY ee.id), '[]')
+             FROM estimate_events ee
+             JOIN estimates e ON e.id=ee.estimate_id AND e.company_id=$1
+             WHERE e.company_id=$1) AS estimate_events,
+            (SELECT COALESCE(jsonb_agg(to_jsonb(ie) ORDER BY ie.id), '[]')
+             FROM invoice_events ie
+             JOIN invoices i ON i.id=ie.invoice_id AND i.company_id=$1
+             WHERE i.company_id=$1) AS invoice_events`,
         [companyId]
     );
     return JSON.stringify(rows[0]);
@@ -345,7 +367,7 @@ beforeAll(async () => {
 });
 
 describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => {
-    databaseTest('consent is tenant_admin-only, idempotent, and filters 19 → 26 → 19 tools', async () => {
+    databaseTest('consent is tenant_admin-only, idempotent, and filters 19 → 30 → 19 tools', async () => {
         let resolved = await resolveA();
         let response = await protocol.handleJsonRpc(protocolRequest(resolved), {
             jsonrpc: '2.0',
@@ -372,8 +394,18 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
             [state.humanA.id, state.companyA]
         );
 
+        // Settings-surface read used by the connect panel's write toggle.
+        await expect(identityService.getWriteConsent(state.companyA)).resolves.toEqual({
+            writes_enabled: false,
+            grant_version: 2,
+        });
+
         await expect(setConsent(true)).resolves.toMatchObject({ enabled: true, grant_version: 3 });
         await expect(setConsent(true)).resolves.toMatchObject({ enabled: true, grant_version: 3 });
+        await expect(identityService.getWriteConsent(state.companyA)).resolves.toEqual({
+            writes_enabled: true,
+            grant_version: 3,
+        });
         resolved = await resolveA();
         response = await protocol.handleJsonRpc(protocolRequest(resolved), {
             jsonrpc: '2.0',
@@ -381,11 +413,15 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(26);
-        expect(response.result.tools.filter((tool) => tool.annotations.kind === 'write')).toHaveLength(7);
+        expect(response.result.tools).toHaveLength(30);
+        expect(response.result.tools.filter((tool) => tool.annotations.kind === 'write')).toHaveLength(11);
 
         await expect(setConsent(false)).resolves.toMatchObject({ enabled: false, grant_version: 2 });
         await expect(setConsent(false)).resolves.toMatchObject({ enabled: false, grant_version: 2 });
+        await expect(identityService.getWriteConsent(state.companyA)).resolves.toEqual({
+            writes_enabled: false,
+            grant_version: 2,
+        });
         resolved = await resolveA();
         response = await protocol.handleJsonRpc(protocolRequest(resolved), {
             jsonrpc: '2.0',
@@ -602,6 +638,233 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL per-tool tenancy contract', () => 
             contact_actor: state.identityA.aiUser.id,
             job_actor: state.identityA.aiUser.id,
         });
+    });
+});
+
+describe('CHATGPT-CRM-MCP S2b real-PostgreSQL financial write contract', () => {
+    databaseTest('legacy v3 consent exposes 26 tools; repeat enable grants all 30', async () => {
+        const s2bNames = [
+            'svc.create_estimate',
+            'svc.update_estimate',
+            'svc.create_invoice',
+            'svc.update_invoice',
+        ];
+        await db.query(
+            `DELETE FROM mcp_agent_permission_grants
+             WHERE company_id=$1
+               AND agent_user_id=$2
+               AND permission_key = ANY($3::text[])`,
+            [
+                state.companyA,
+                state.identityA.aiUser.id,
+                [
+                    'estimates.create',
+                    'invoices.create',
+                    ...s2bNames.map((name) => `mcp.tool.${name}`),
+                ],
+            ]
+        );
+        let resolved = await resolveA();
+        let response = await protocol.handleJsonRpc(protocolRequest(resolved), {
+            jsonrpc: '2.0',
+            id: 41,
+            method: 'tools/list',
+            params: {},
+        });
+        expect(response.result.tools).toHaveLength(26);
+        expect(response.result.tools.map((tool) => tool.name))
+            .not.toEqual(expect.arrayContaining(s2bNames));
+        await expect(invoke(resolved, 'svc.create_invoice', {
+            contact_id: state.contactA,
+            items: [{ name: 'Denied', quantity: 1, unit_price: 1 }],
+        })).rejects.toMatchObject({ mcpCode: 'access_denied' });
+
+        await expect(setConsent(true)).resolves.toMatchObject({
+            enabled: true,
+            grant_version: 3,
+        });
+        resolved = await resolveA();
+        response = await protocol.handleJsonRpc(protocolRequest(resolved), {
+            jsonrpc: '2.0',
+            id: 42,
+            method: 'tools/list',
+            params: {},
+        });
+        expect(response.result.tools).toHaveLength(30);
+        expect(response.result.tools.map((tool) => tool.name))
+            .toEqual(expect.arrayContaining(s2bNames));
+    });
+
+    databaseTest('T-own / T-foreign / T-blast, item ownership, replay, and server totals hold for all 4 tools', async () => {
+        const seedClient = await db.pool.connect();
+        try {
+            await seedClient.query('BEGIN');
+            const estimateB = await estimatesService.createEstimate(
+                state.companyB,
+                state.identityB.aiUser.id,
+                {
+                    job_id: state.jobB,
+                    summary: 'B estimate',
+                    items: [{ name: 'B item', quantity: 1, unit_price: 700, taxable: true }],
+                },
+                seedClient
+            );
+            state.estimateB = estimateB;
+            const invoiceB = await invoicesService.createInvoice(
+                state.companyB,
+                state.identityB.aiUser.id,
+                {
+                    contact_id: state.contactB,
+                    job_id: state.jobB,
+                    title: 'B invoice',
+                    due_date: '2026-08-31',
+                    items: [{ name: 'B item', quantity: 1, unit_price: 900, taxable: true }],
+                },
+                seedClient
+            );
+            state.invoiceB = invoiceB;
+            await seedClient.query('COMMIT');
+        } catch (err) {
+            await seedClient.query('ROLLBACK');
+            throw err;
+        } finally {
+            seedClient.release();
+        }
+
+        const resolved = await resolveA();
+        const estimateArgs = {
+            job_id: state.jobA,
+            summary: 'A canonical totals',
+            tax_rate: 6,
+            discount_type: 'fixed',
+            discount_value: 90,
+            items: [
+                { name: 'Taxable part', quantity: 1, unit_price: 95, taxable: true },
+                { name: 'Non-taxable labor', quantity: 1, unit_price: 100, taxable: false },
+            ],
+        };
+        let beforeB = await snapshotCompany(state.companyB);
+        const createdEstimate = await invoke(
+            resolved,
+            'svc.create_estimate',
+            estimateArgs
+        );
+        await expect(invoke(resolved, 'svc.create_estimate', {
+            contact_id: state.contactB,
+            job_id: state.jobA,
+            summary: 'must-not-write',
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(await snapshotCompany(state.companyB)).toBe(beforeB);
+        expect({
+            subtotal: Number(createdEstimate.subtotal),
+            discount: Number(createdEstimate.discount_amount),
+            tax: Number(createdEstimate.tax_amount),
+            total: Number(createdEstimate.total),
+        }).toEqual({ subtotal: 195, discount: 90, tax: 0.3, total: 105.3 });
+
+        beforeB = await snapshotCompany(state.companyB);
+        const updatedEstimate = await invoke(resolved, 'svc.update_estimate', {
+            estimate_id: Number(createdEstimate.id),
+            notes: 'A updated',
+            items_update: [{
+                item_id: Number(createdEstimate.items[0].id),
+                unit_price: 100,
+            }],
+        });
+        expect(updatedEstimate.notes).toBe('A updated');
+        await expect(invoke(resolved, 'svc.update_estimate', {
+            estimate_id: Number(state.estimateB.id),
+            notes: 'must-not-write',
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        await expect(invoke(resolved, 'svc.update_estimate', {
+            estimate_id: Number(createdEstimate.id),
+            items_update: [{
+                item_id: Number(state.estimateB.items[0].id),
+                unit_price: 1,
+            }],
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(await snapshotCompany(state.companyB)).toBe(beforeB);
+
+        const estimateReplay = await invoke(
+            resolved,
+            'svc.create_estimate',
+            estimateArgs
+        );
+        expect(estimateReplay).toEqual(JSON.parse(JSON.stringify(createdEstimate)));
+        const estimateCount = await db.query(
+            `SELECT COUNT(*)::int AS count
+             FROM estimates
+             WHERE id=$1 AND company_id=$2`,
+            [createdEstimate.id, state.companyA]
+        );
+        expect(estimateCount.rows[0].count).toBe(1);
+
+        const invoiceArgs = {
+            contact_id: state.contactA,
+            job_id: state.jobA,
+            title: 'A canonical totals',
+            due_date: '2026-08-31',
+            tax_rate: 6,
+            discount_amount: 90,
+            items: [
+                { name: 'Taxable part', quantity: 1, unit_price: 95, taxable: true },
+                { name: 'Non-taxable labor', quantity: 1, unit_price: 100, taxable: false },
+            ],
+        };
+        beforeB = await snapshotCompany(state.companyB);
+        const createdInvoice = await invoke(resolved, 'svc.create_invoice', invoiceArgs);
+        await expect(invoke(resolved, 'svc.create_invoice', {
+            contact_id: state.contactB,
+            due_date: '2026-08-31',
+            items: [{ name: 'must-not-write', quantity: 1, unit_price: 1 }],
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(await snapshotCompany(state.companyB)).toBe(beforeB);
+        expect({
+            subtotal: Number(createdInvoice.subtotal),
+            discount: Number(createdInvoice.discount_amount),
+            tax: Number(createdInvoice.tax_amount),
+            total: Number(createdInvoice.total),
+            balance: Number(createdInvoice.balance_due),
+        }).toEqual({
+            subtotal: 195,
+            discount: 90,
+            tax: 0.3,
+            total: 105.3,
+            balance: 105.3,
+        });
+
+        beforeB = await snapshotCompany(state.companyB);
+        const updatedInvoice = await invoke(resolved, 'svc.update_invoice', {
+            invoice_id: Number(createdInvoice.id),
+            notes: 'A updated',
+            items_update: [{
+                item_id: Number(createdInvoice.items[0].id),
+                quantity: 2,
+            }],
+        });
+        expect(updatedInvoice.notes).toBe('A updated');
+        await expect(invoke(resolved, 'svc.update_invoice', {
+            invoice_id: Number(state.invoiceB.id),
+            notes: 'must-not-write',
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        await expect(invoke(resolved, 'svc.update_invoice', {
+            invoice_id: Number(createdInvoice.id),
+            items_update: [{
+                item_id: Number(state.invoiceB.items[0].id),
+                unit_price: 1,
+            }],
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(await snapshotCompany(state.companyB)).toBe(beforeB);
+
+        const invoiceReplay = await invoke(resolved, 'svc.create_invoice', invoiceArgs);
+        expect(invoiceReplay).toEqual(JSON.parse(JSON.stringify(createdInvoice)));
+        const invoiceCount = await db.query(
+            `SELECT COUNT(*)::int AS count
+             FROM invoices
+             WHERE id=$1 AND company_id=$2`,
+            [createdInvoice.id, state.companyA]
+        );
+        expect(invoiceCount.rows[0].count).toBe(1);
     });
 });
 

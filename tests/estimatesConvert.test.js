@@ -103,7 +103,7 @@ describe('estimatesService.convertToInvoice', () => {
             title: 'ESTIMATE 519-1',
         }));
         expect(mockAddInvoiceItem).toHaveBeenCalledTimes(2);
-        expect(mockRecalculateTotals).toHaveBeenCalledWith(99);
+        expect(mockRecalculateTotals).toHaveBeenCalledWith(COMPANY_ID, 99);
         expect(result).toMatchObject({ id: 99 });
     });
 
@@ -113,8 +113,8 @@ describe('estimatesService.convertToInvoice', () => {
 
         await convertToInvoice(COMPANY_ID, USER_ID, EST_ID);
 
-        expect(mockCreateEvent_inv).toHaveBeenCalledWith(99, 'created_from_estimate', 'user', USER_ID, { estimate_id: EST_ID });
-        expect(mockCreateEvent_est).toHaveBeenCalledWith(EST_ID, 'converted_to_invoice', 'user', USER_ID, { invoice_id: 99 });
+        expect(mockCreateEvent_inv).toHaveBeenCalledWith(COMPANY_ID, 99, 'created_from_estimate', 'user', USER_ID, { estimate_id: EST_ID });
+        expect(mockCreateEvent_est).toHaveBeenCalledWith(COMPANY_ID, EST_ID, 'converted_to_invoice', 'user', USER_ID, { invoice_id: 99 });
     });
 
     it('TC-S4T1-03: returns 404 when estimate not found', async () => {
@@ -155,6 +155,6 @@ describe('estimatesService.convertToInvoice', () => {
 
         await expect(convertToInvoice(COMPANY_ID, USER_ID, EST_ID)).resolves.toBeDefined();
         expect(mockAddInvoiceItem).not.toHaveBeenCalled();
-        expect(mockRecalculateTotals).toHaveBeenCalledWith(99);
+        expect(mockRecalculateTotals).toHaveBeenCalledWith(COMPANY_ID, 99);
     });
 });

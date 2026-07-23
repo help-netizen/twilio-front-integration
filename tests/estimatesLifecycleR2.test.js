@@ -11,6 +11,7 @@ const mockQueries = {
     getEstimateById: jest.fn(),
     getJobContext: jest.fn(),
     getLeadContext: jest.fn(),
+    getContactContext: jest.fn(),
     nextEstimateSequence: jest.fn(),
     buildEstimateNumber: jest.fn(({ leadSerialId, sequence }) => `ESTIMATE L-${leadSerialId}-${sequence}`),
     createEstimate: jest.fn(),
@@ -90,10 +91,10 @@ describe('estimatesService PF002-R2 lifecycle', () => {
             contact_id: 9,
             lead_id: 18,
             job_id: 519,
-        }));
-        expect(mockQueries.replaceEstimateItems).toHaveBeenCalledWith(EST_ID, [
+        }), null);
+        expect(mockQueries.replaceEstimateItems).toHaveBeenCalledWith(COMPANY_ID, EST_ID, [
             expect.objectContaining({ name: 'Labor', quantity: 1, taxable: false }),
-        ]);
+        ], null);
     });
 
     it('allows saving summary-only draft but blocks send/approve without items', async () => {
@@ -125,7 +126,7 @@ describe('estimatesService PF002-R2 lifecycle', () => {
 
         await service.approveEstimate(COMPANY_ID, EST_ID, 'user', USER_ID);
 
-        expect(mockQueries.createRevision).toHaveBeenCalledWith(EST_ID, expect.objectContaining({
+        expect(mockQueries.createRevision).toHaveBeenCalledWith(COMPANY_ID, EST_ID, expect.objectContaining({
             status: 'approved',
             items: [expect.objectContaining({ name: 'Labor' })],
         }), USER_ID);
@@ -146,11 +147,17 @@ describe('estimatesService PF002-R2 lifecycle', () => {
             items: [{ name: 'Labor with discount', unit_price: 90 }],
         });
 
-        expect(mockQueries.createRevision).toHaveBeenCalledWith(EST_ID, expect.objectContaining({ status: 'approved' }), USER_ID);
+        expect(mockQueries.createRevision).toHaveBeenCalledWith(
+            COMPANY_ID,
+            EST_ID,
+            expect.objectContaining({ status: 'approved' }),
+            USER_ID,
+            null
+        );
         expect(mockQueries.updateEstimate).toHaveBeenCalledWith(EST_ID, COMPANY_ID, expect.objectContaining({
             status: 'draft',
             accepted_at: null,
-        }));
+        }), null);
     });
 
     it('archives without changing status and restore delegates draft reset to query', async () => {

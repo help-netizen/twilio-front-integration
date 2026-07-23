@@ -175,7 +175,7 @@ describe('sendEstimate — email happy path', () => {
             EST_ID_S, COMPANY_A, expect.objectContaining({ status: 'sent', sent_at: expect.any(String) }),
         );
         expect(mockCreateEvent).toHaveBeenCalledWith(
-            EST_ID_S, 'sent', 'user', CRM_USER_ID, { channel: 'email', recipient: 'c@x.com' },
+            COMPANY_A, EST_ID_S, 'sent', 'user', CRM_USER_ID, { channel: 'email', recipient: 'c@x.com' },
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,
@@ -234,7 +234,7 @@ describe('sendEstimate — sms happy path', () => {
         expect(mockSendMessage.mock.invocationCallOrder[0])
             .toBeLessThan(mockUpdateEstimate.mock.invocationCallOrder[0]);
         expect(mockCreateEvent).toHaveBeenCalledWith(
-            EST_ID_S, 'sent', 'user', CRM_USER_ID, { channel: 'sms', recipient: '+15551234567' },
+            COMPANY_A, EST_ID_S, 'sent', 'user', CRM_USER_ID, { channel: 'sms', recipient: '+15551234567' },
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,

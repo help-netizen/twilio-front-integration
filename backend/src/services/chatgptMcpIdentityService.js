@@ -486,6 +486,30 @@ async function recordInvocation(context, {
     );
 }
 
+/**
+ * Read-only write-consent state for the Marketplace settings surface. No
+ * tenant-admin gate: the caller is already inside the company-scoped
+ * marketplace settings read; nothing here mutates.
+ */
+async function getWriteConsent(companyId, client = null) {
+    requireValue(companyId, 'companyId');
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT b.grant_version
+         FROM chatgpt_mcp_bindings b
+         WHERE b.company_id = $1 AND b.status = 'active'`,
+        [companyId]
+    );
+    if (rows.length !== 1) {
+        return { writes_enabled: false, grant_version: null };
+    }
+    const grantVersion = Number(rows[0].grant_version);
+    return {
+        writes_enabled: grantVersion >= WRITE_BUNDLE_VERSION,
+        grant_version: grantVersion,
+    };
+}
+
 module.exports = {
     APP_KEY,
     ChatgptMcpIdentityError,
@@ -498,5 +522,6 @@ module.exports = {
     resolveFixedBearerContext,
     requireLiveBinding,
     setWriteConsent,
+    getWriteConsent,
     recordInvocation,
 };

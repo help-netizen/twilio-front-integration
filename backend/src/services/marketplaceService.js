@@ -55,6 +55,7 @@ const SETTINGS_ENABLED_APP_KEYS = new Set([
     'rate-me',
     'outbound-parts-caller',
     'inspector',
+    'chatgpt-crm-mcp',
 ]);
 const RATE_ME_PUBLIC_HOST = String(
     process.env.RATE_ME_PUBLIC_HOST || 'rate.albusto.com'
@@ -618,6 +619,23 @@ const SETTINGS_HANDLERS = {
             actorId
         ),
         buildEventPayload: inspectorSettingsService.buildEventPayload,
+    },
+    // CHATGPT-CRM-MCP-001: read-only settings surface — the connect panel's
+    // write-consent toggle reads state here; mutations go through the dedicated
+    // tenant-admin-gated writes/enable|disable endpoints, never through PUT.
+    'chatgpt-crm-mcp': {
+        validate: () => {
+            throw new MarketplaceServiceError(
+                'ChatGPT connector settings are read-only; use the write-consent endpoints.',
+                'SETTINGS_READ_ONLY',
+                405
+            );
+        },
+        buildResponse: async (companyId, appKey) => ({
+            app_key: appKey,
+            settings: await chatgptMcpIdentityService.getWriteConsent(companyId),
+        }),
+        buildEventPayload: () => ({ app_key: 'chatgpt-crm-mcp' }),
     },
 };
 

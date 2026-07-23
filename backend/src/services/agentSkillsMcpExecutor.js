@@ -40,6 +40,17 @@ const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
 const chatgptMcpWriteService = require('./chatgptMcpWriteService');
 
 const WRITE_PERMISSION = registry.SERVICE_WRITE_PERMISSION;
+const S2B_TOOL_NAMES = new Set([
+    'svc.create_estimate',
+    'svc.update_estimate',
+    'svc.create_invoice',
+    'svc.update_invoice',
+]);
+
+function auditStage(tool) {
+    if (tool.kind !== 'write') return 'S1';
+    return S2B_TOOL_NAMES.has(tool.name) ? 'S2b' : 'S2a';
+}
 
 function ensureRequestId(req) {
     const existing = req.requestId || req.traceId || null;
@@ -171,7 +182,7 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
                         ? chatgptMcpWriteService.argumentHash(sanitizedArguments)
                         : null,
                     safeMetadata: { kind: tool.kind },
-                    stage: tool.kind === 'write' ? 'S2a' : 'S1',
+                    stage: auditStage(tool),
                 });
             } catch (auditErr) {
                 // The domain transaction already committed. Never turn a
@@ -199,7 +210,7 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
                             mcpToolAuthorization.sanitizeArguments(toolArguments)
                         )
                         : null,
-                    stage: tool.kind === 'write' ? 'S2a' : 'S1',
+                    stage: auditStage(tool),
                 });
             } catch (auditErr) {
                 console.error('[ChatGPT MCP] failed to record denied/failed invocation:', auditErr.message);

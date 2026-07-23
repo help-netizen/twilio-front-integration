@@ -162,11 +162,11 @@ async function resetTemplate(companyId, id, { updatedBy = null } = {}) {
  * Used by renderers (e.g., estimatesService.generatePdf) to get the descriptor
  * to pass to the renderer adapter. Always returns a valid descriptor; never throws.
  */
-async function resolveTemplate(companyId, documentType) {
+async function resolveTemplate(companyId, documentType, client = null) {
     let descriptor = null;
     try {
         ensureType(documentType);
-        const row = await queries.getDefaultByType(companyId, documentType);
+        const row = await queries.getDefaultByType(companyId, documentType, client);
         if (row && row.content && row.content.schema_version === 1) {
             const result = validateDescriptor(row.content);
             if (result.valid) {

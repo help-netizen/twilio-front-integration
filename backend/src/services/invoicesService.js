@@ -39,27 +39,55 @@ async function listInvoices(companyId, filters = {}) {
 /**
  * Get a single invoice with its items.
  */
-async function getInvoice(companyId, id) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, id);
+async function getInvoice(companyId, id, client = null) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
-    const items = await invoicesQueries.getInvoiceItems(id);
+    const items = await invoicesQueries.getInvoiceItems(companyId, id, client);
     return { ...invoice, items };
+}
+
+async function validateLinkedEntities(companyId, data = {}, client = null) {
+    if (data.contact_id != null) {
+        const contact = await estimatesQueries.getContactContext(companyId, data.contact_id, client);
+        if (!contact) throw new InvoicesServiceError('NOT_FOUND', 'Contact not found', 404);
+    }
+    if (data.lead_id != null) {
+        const lead = await estimatesQueries.getLeadContext(companyId, data.lead_id, client);
+        if (!lead) throw new InvoicesServiceError('NOT_FOUND', 'Lead not found', 404);
+    }
+    if (data.job_id != null) {
+        const job = await estimatesQueries.getJobContext(companyId, data.job_id, client);
+        if (!job) throw new InvoicesServiceError('NOT_FOUND', 'Job not found', 404);
+    }
+    if (data.estimate_id != null) {
+        const estimate = await estimatesQueries.getEstimateById(
+            companyId,
+            data.estimate_id,
+            client
+        );
+        if (!estimate) throw new InvoicesServiceError('NOT_FOUND', 'Estimate not found', 404);
+    }
 }
 
 /**
  * Create a new invoice with optional line items.
  * Resolves contact_id from the linked job/lead/estimate when not explicitly provided.
  */
-async function createInvoice(companyId, userId, data) {
+async function createInvoice(companyId, userId, data, client = null) {
     const resolved = { ...data };
+    await validateLinkedEntities(companyId, resolved, client);
 
     if (!resolved.contact_id) {
         // Try the linked estimate first (most precise — invoice was converted from one).
         if (resolved.estimate_id) {
             try {
-                const est = await estimatesQueries.getEstimateById(companyId, resolved.estimate_id);
+                const est = await estimatesQueries.getEstimateById(
+                    companyId,
+                    resolved.estimate_id,
+                    client
+                );
                 if (est?.contact_id) resolved.contact_id = est.contact_id;
                 if (!resolved.lead_id && est?.lead_id) resolved.lead_id = est.lead_id;
                 if (!resolved.job_id && est?.job_id) resolved.job_id = est.job_id;
@@ -69,7 +97,11 @@ async function createInvoice(companyId, userId, data) {
         // Then try the linked job's contact.
         if (!resolved.contact_id && resolved.job_id) {
             try {
-                const job = await estimatesQueries.getJobContext(companyId, resolved.job_id);
+                const job = await estimatesQueries.getJobContext(
+                    companyId,
+                    resolved.job_id,
+                    client
+                );
                 if (job?.contact_id) resolved.contact_id = job.contact_id;
                 if (!resolved.lead_id && job?.lead_id) resolved.lead_id = job.lead_id;
             } catch { /* fall through */ }
@@ -78,7 +110,11 @@ async function createInvoice(companyId, userId, data) {
         // Finally try the linked lead's contact.
         if (!resolved.contact_id && resolved.lead_id) {
             try {
-                const lead = await estimatesQueries.getLeadContext(companyId, resolved.lead_id);
+                const lead = await estimatesQueries.getLeadContext(
+                    companyId,
+                    resolved.lead_id,
+                    client
+                );
                 if (lead?.contact_id) resolved.contact_id = lead.contact_id;
             } catch { /* fall through */ }
         }
@@ -97,7 +133,11 @@ async function createInvoice(companyId, userId, data) {
     if (!resolved.due_date) {
         try {
             const documentTemplatesService = require('./documentTemplatesService');
-            const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice');
+            const descriptor = await documentTemplatesService.resolveTemplate(
+                companyId,
+                'invoice',
+                client
+            );
             const days = Number(descriptor?.invoice_settings?.default_due_days);
             const effectiveDays = Number.isFinite(days) && days >= 0 ? days : 14;
             const d = new Date();
@@ -113,17 +153,29 @@ async function createInvoice(companyId, userId, data) {
             let leadSerialId = null;
             let jobIdForNum = resolved.job_id || null;
             if (resolved.job_id) {
-                const job = await estimatesQueries.getJobContext(companyId, resolved.job_id);
+                const job = await estimatesQueries.getJobContext(
+                    companyId,
+                    resolved.job_id,
+                    client
+                );
                 leadSerialId = job?.lead_serial_id || job?.lead_id || null;
                 jobIdForNum = job?.id || jobIdForNum;
             } else if (resolved.lead_id) {
-                const lead = await estimatesQueries.getLeadContext(companyId, resolved.lead_id);
+                const lead = await estimatesQueries.getLeadContext(
+                    companyId,
+                    resolved.lead_id,
+                    client
+                );
                 leadSerialId = lead?.serial_id || lead?.id || null;
             }
-            const sequence = await invoicesQueries.nextInvoiceSequence(companyId, {
-                jobId: resolved.job_id,
-                leadId: resolved.lead_id,
-            });
+            const sequence = await invoicesQueries.nextInvoiceSequence(
+                companyId,
+                {
+                    jobId: resolved.job_id,
+                    leadId: resolved.lead_id,
+                },
+                client
+            );
             resolved.invoice_number = invoicesQueries.buildInvoiceNumber({
                 leadSerialId,
                 jobId: jobIdForNum,
@@ -135,42 +187,51 @@ async function createInvoice(companyId, userId, data) {
     const invoice = await invoicesQueries.createInvoice(companyId, {
         ...resolved,
         created_by: userId,
-    });
+    }, client);
 
     // Add items if provided
     if (data.items && Array.isArray(data.items)) {
         for (const item of data.items) {
-            await invoicesQueries.addInvoiceItem(invoice.id, item);
+            await invoicesQueries.addInvoiceItem(companyId, invoice.id, item, client);
         }
-        await invoicesQueries.recalculateInvoiceTotals(invoice.id);
+        await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id, client);
     }
 
     // Log creation event
-    await invoicesQueries.createEvent(invoice.id, 'created', 'user', userId, null);
+    await invoicesQueries.createEvent(
+        companyId,
+        invoice.id,
+        'created',
+        'user',
+        userId,
+        null,
+        client
+    );
 
     // Return full invoice with items
-    return getInvoice(companyId, invoice.id);
+    return getInvoice(companyId, invoice.id, client);
 }
 
 /**
  * Update an invoice. If status is not 'draft', create a revision snapshot first.
  */
-async function updateInvoice(companyId, userId, id, data) {
-    const existing = await invoicesQueries.getInvoiceById(companyId, id);
+async function updateInvoice(companyId, userId, id, data, client = null) {
+    const existing = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!existing) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
+    await validateLinkedEntities(companyId, data, client);
 
     // Create revision snapshot if not draft
     if (existing.status !== 'draft') {
-        const items = await invoicesQueries.getInvoiceItems(id);
+        const items = await invoicesQueries.getInvoiceItems(companyId, id, client);
         const snapshot = { ...existing, items };
-        await invoicesQueries.createRevision(id, snapshot, userId);
+        await invoicesQueries.createRevision(companyId, id, snapshot, userId, client);
     }
 
     // `updateInvoice`'s allowlist ignores `items`, so passing the full `data`
     // (scalars + items) is safe — only whitelisted scalar columns are written.
-    const updated = await invoicesQueries.updateInvoice(id, companyId, data);
+    const updated = await invoicesQueries.updateInvoice(id, companyId, data, client);
     if (!updated) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
@@ -182,22 +243,28 @@ async function updateInvoice(companyId, userId, id, data) {
     // omit `items` entirely — those must NOT touch the persisted items.
     const itemsReconciled = Array.isArray(data.items);
     if (itemsReconciled) {
-        await invoicesQueries.replaceInvoiceItems(id, data.items);
+        await invoicesQueries.replaceInvoiceItems(companyId, id, data.items, client);
     }
 
     // Recalculate totals when items were reconciled OR a totals-affecting scalar changed.
     const TOTALS_AFFECTING = new Set(['tax_rate', 'discount_amount']);
     const scalarTotalsChanged = Object.keys(data).some(k => TOTALS_AFFECTING.has(k));
     if (itemsReconciled || scalarTotalsChanged) {
-        await invoicesQueries.recalculateInvoiceTotals(id);
+        await invoicesQueries.recalculateInvoiceTotals(companyId, id, client);
     }
 
     // Log update event
-    await invoicesQueries.createEvent(id, 'updated', 'user', userId, {
-        fields: Object.keys(data),
-    });
+    await invoicesQueries.createEvent(
+        companyId,
+        id,
+        'updated',
+        'user',
+        userId,
+        { fields: Object.keys(data) },
+        client
+    );
 
-    return getInvoice(companyId, id);
+    return getInvoice(companyId, id, client);
 }
 
 /**
@@ -225,19 +292,32 @@ async function deleteInvoice(companyId, id) {
 /**
  * Add a line item to an invoice.
  */
-async function addItem(companyId, invoiceId, userId, item) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+async function addItem(companyId, invoiceId, userId, item, client = null) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
 
-    const newItem = await invoicesQueries.addInvoiceItem(invoiceId, item);
-    await invoicesQueries.recalculateInvoiceTotals(invoiceId);
+    const newItem = await invoicesQueries.addInvoiceItem(
+        companyId,
+        invoiceId,
+        item,
+        client
+    );
+    await invoicesQueries.recalculateInvoiceTotals(companyId, invoiceId, client);
 
-    await invoicesQueries.createEvent(invoiceId, 'item_added', 'user', userId, {
-        item_id: newItem.id,
-        name: item.name,
-    });
+    await invoicesQueries.createEvent(
+        companyId,
+        invoiceId,
+        'item_added',
+        'user',
+        userId,
+        {
+            item_id: newItem.id,
+            name: item.name,
+        },
+        client
+    );
 
     return newItem;
 }
@@ -246,8 +326,8 @@ async function addItem(companyId, invoiceId, userId, item) {
  * PRICEBOOK-001: bulk add (Price Book group expanded into items).
  * ONE recalc + ONE event vs N round-trips.
  */
-async function addItems(companyId, invoiceId, userId, items) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+async function addItems(companyId, invoiceId, userId, items, client = null) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
@@ -256,10 +336,23 @@ async function addItems(companyId, invoiceId, userId, items) {
 
     const created = [];
     for (const item of list) {
-        created.push(await invoicesQueries.addInvoiceItem(invoiceId, item));
+        created.push(await invoicesQueries.addInvoiceItem(
+            companyId,
+            invoiceId,
+            item,
+            client
+        ));
     }
-    await invoicesQueries.recalculateInvoiceTotals(invoiceId);
-    await invoicesQueries.createEvent(invoiceId, 'items_added', 'user', userId, { count: created.length });
+    await invoicesQueries.recalculateInvoiceTotals(companyId, invoiceId, client);
+    await invoicesQueries.createEvent(
+        companyId,
+        invoiceId,
+        'items_added',
+        'user',
+        userId,
+        { count: created.length },
+        client
+    );
 
     return { added: created.length, items: created };
 }
@@ -267,23 +360,37 @@ async function addItems(companyId, invoiceId, userId, items) {
 /**
  * Update a line item.
  */
-async function updateItem(companyId, invoiceId, userId, itemId, data) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+async function updateItem(companyId, invoiceId, userId, itemId, data, client = null) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
 
-    const updated = await invoicesQueries.updateInvoiceItem(itemId, data);
+    const updated = await invoicesQueries.updateInvoiceItem(
+        companyId,
+        invoiceId,
+        itemId,
+        data,
+        client
+    );
     if (!updated) {
         throw new InvoicesServiceError('NOT_FOUND', `Item ${itemId} not found`, 404);
     }
 
-    await invoicesQueries.recalculateInvoiceTotals(invoiceId);
+    await invoicesQueries.recalculateInvoiceTotals(companyId, invoiceId, client);
 
-    await invoicesQueries.createEvent(invoiceId, 'item_updated', 'user', userId, {
-        item_id: itemId,
-        fields: Object.keys(data),
-    });
+    await invoicesQueries.createEvent(
+        companyId,
+        invoiceId,
+        'item_updated',
+        'user',
+        userId,
+        {
+            item_id: itemId,
+            fields: Object.keys(data),
+        },
+        client
+    );
 
     return updated;
 }
@@ -291,22 +398,33 @@ async function updateItem(companyId, invoiceId, userId, itemId, data) {
 /**
  * Remove a line item.
  */
-async function removeItem(companyId, invoiceId, userId, itemId) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+async function removeItem(companyId, invoiceId, userId, itemId, client = null) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
 
-    const deleted = await invoicesQueries.deleteInvoiceItem(itemId);
+    const deleted = await invoicesQueries.deleteInvoiceItem(
+        companyId,
+        invoiceId,
+        itemId,
+        client
+    );
     if (!deleted) {
         throw new InvoicesServiceError('NOT_FOUND', `Item ${itemId} not found`, 404);
     }
 
-    await invoicesQueries.recalculateInvoiceTotals(invoiceId);
+    await invoicesQueries.recalculateInvoiceTotals(companyId, invoiceId, client);
 
-    await invoicesQueries.createEvent(invoiceId, 'item_removed', 'user', userId, {
-        item_id: itemId,
-    });
+    await invoicesQueries.createEvent(
+        companyId,
+        invoiceId,
+        'item_removed',
+        'user',
+        userId,
+        { item_id: itemId },
+        client
+    );
 
     return { deleted: true };
 }
@@ -454,7 +572,7 @@ async function sendInvoice(companyId, userId, id, { channel, recipient, message,
 
     // Dispatch resolved → NOW flip status and record the send (never before).
     const updated = await invoicesQueries.updateInvoiceStatus(id, companyId, 'sent', 'sent_at');
-    await invoicesQueries.createEvent(id, 'sent', 'user', userId, {
+    await invoicesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
         channel: normalizedChannel,
         recipient: to,
         message: message || null,
@@ -492,7 +610,7 @@ async function voidInvoice(companyId, id, userId) {
 
     const updated = await invoicesQueries.updateInvoiceStatus(id, companyId, 'void', 'voided_at');
 
-    await invoicesQueries.createEvent(id, 'voided', 'user', userId, null);
+    await invoicesQueries.createEvent(companyId, id, 'voided', 'user', userId, null);
 
     return updated;
 }
@@ -541,7 +659,7 @@ async function recordPayment(companyId, userId, id, { amount, payment_method, re
     }
 
     // Log event
-    await invoicesQueries.createEvent(id, 'payment_recorded', 'user', userId, {
+    await invoicesQueries.createEvent(companyId, id, 'payment_recorded', 'user', userId, {
         amount,
         payment_method: payment_method || null,
         reference: reference || null,
@@ -568,13 +686,17 @@ async function syncItemsFromEstimate(companyId, userId, invoiceId, estimateId) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
 
-    const estimateItems = await estimatesQueries.getEstimateItems(estimateId);
+    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
+    if (!estimate) {
+        throw new InvoicesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
+    }
+    const estimateItems = await estimatesQueries.getEstimateItems(companyId, estimateId);
     if (!estimateItems || estimateItems.length === 0) {
         throw new InvoicesServiceError('VALIDATION', `No items found on estimate ${estimateId}`, 400);
     }
 
     for (const item of estimateItems) {
-        await invoicesQueries.addInvoiceItem(invoiceId, {
+        await invoicesQueries.addInvoiceItem(companyId, invoiceId, {
             name: item.description || '',
             description: item.description || '',
             quantity: item.quantity,
@@ -584,9 +706,9 @@ async function syncItemsFromEstimate(companyId, userId, invoiceId, estimateId) {
         });
     }
 
-    await invoicesQueries.recalculateInvoiceTotals(invoiceId);
+    await invoicesQueries.recalculateInvoiceTotals(companyId, invoiceId);
 
-    await invoicesQueries.createEvent(invoiceId, 'items_synced_from_estimate', 'user', userId, {
+    await invoicesQueries.createEvent(companyId, invoiceId, 'items_synced_from_estimate', 'user', userId, {
         estimate_id: estimateId,
         items_count: estimateItems.length,
     });
@@ -705,7 +827,7 @@ async function ensurePublicLink(companyId, id) {
 async function generatePdfByPublicToken(publicToken) {
     const invoice = await invoicesQueries.getInvoiceByPublicToken(publicToken);
     if (!invoice) throw new InvoicesServiceError('NOT_FOUND', 'Invoice not found', 404);
-    const items = await invoicesQueries.getInvoiceItems(invoice.id);
+    const items = await invoicesQueries.getInvoiceItems(invoice.company_id, invoice.id);
     const fullInvoice = { ...invoice, items };
 
     const documentTemplatesService = require('./documentTemplatesService');

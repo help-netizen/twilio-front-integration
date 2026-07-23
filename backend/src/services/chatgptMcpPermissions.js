@@ -51,6 +51,12 @@ const WRITE_TOOL_PERMISSIONS = Object.freeze({
     'svc.update_job': ['jobs.edit'],
     'svc.transition_job': ['jobs.edit', 'jobs.close'],
     'svc.add_note': ['jobs.edit', 'leads.edit', 'contacts.edit'],
+    // The existing HTTP PUT routes intentionally use the same create permission
+    // as POST; there is no estimates.edit / invoices.edit catalog key.
+    'svc.create_estimate': ['estimates.create'],
+    'svc.update_estimate': ['estimates.create'],
+    'svc.create_invoice': ['invoices.create'],
+    'svc.update_invoice': ['invoices.create'],
 });
 const WRITE_TOOL_NAMES = Object.freeze(Object.keys(WRITE_TOOL_PERMISSIONS));
 const BUSINESS_WRITE_PERMISSIONS = Object.freeze([

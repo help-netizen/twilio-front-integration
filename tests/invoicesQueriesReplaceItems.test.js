@@ -3,7 +3,7 @@
 /**
  * INVOICE-EDIT-ITEMS-PERSIST-001 — query-layer coverage of replaceInvoiceItems.
  *
- * replaceInvoiceItems(invoiceId, items) is a transactional delete-then-reinsert on
+ * replaceInvoiceItems(companyId, invoiceId, items) is a transactional delete-then-reinsert on
  * its OWN pooled client: db.getClient() → BEGIN → DELETE FROM invoice_items → one
  * INSERT per item → COMMIT (ROLLBACK on error), client.release() in finally, then it
  * returns getInvoiceItems(invoiceId) via the POOL (module-level `query`).
@@ -29,6 +29,7 @@ jest.mock('../backend/src/db/connection', () => ({
 const db = require('../backend/src/db/connection');
 const invoicesQueries = require('../backend/src/db/invoicesQueries');
 
+const COMPANY_ID = '00000000-0000-4000-8000-000000000501';
 const INV_ID = 501;
 
 // A fresh fake pooled client per test. `.query` resolves by default (BEGIN/DELETE/
@@ -64,7 +65,7 @@ describe('replaceInvoiceItems — happy path (2 items)', () => {
         const client = fakeClient();
         db.getClient.mockResolvedValue(client);
 
-        const result = await invoicesQueries.replaceInvoiceItems(INV_ID, ITEMS);
+        const result = await invoicesQueries.replaceInvoiceItems(COMPANY_ID, INV_ID, ITEMS);
 
         const calls = client.query.mock.calls;
 
@@ -92,7 +93,7 @@ describe('replaceInvoiceItems — happy path (2 items)', () => {
         expect(countCallsMatching(client, /INSERT INTO invoice_items/i)).toBe(2);
 
         // The DELETE targeted this invoice.
-        expect(calls[deleteIdx][1]).toEqual([INV_ID]);
+        expect(calls[deleteIdx][1]).toEqual([COMPANY_ID, INV_ID]);
 
         // Committed, never rolled back, released exactly once.
         expect(countCallsMatching(client, /COMMIT/)).toBe(1);
@@ -111,7 +112,7 @@ describe('replaceInvoiceItems — empty items array (clear all)', () => {
         const client = fakeClient();
         db.getClient.mockResolvedValue(client);
 
-        await invoicesQueries.replaceInvoiceItems(INV_ID, []);
+        await invoicesQueries.replaceInvoiceItems(COMPANY_ID, INV_ID, []);
 
         const beginIdx = firstCallMatching(client, /BEGIN/);
         const deleteIdx = firstCallMatching(client, /DELETE FROM invoice_items/i);
@@ -143,7 +144,7 @@ describe('replaceInvoiceItems — INSERT failure', () => {
         });
         db.getClient.mockResolvedValue(client);
 
-        await expect(invoicesQueries.replaceInvoiceItems(INV_ID, ITEMS)).rejects.toBe(boom);
+        await expect(invoicesQueries.replaceInvoiceItems(COMPANY_ID, INV_ID, ITEMS)).rejects.toBe(boom);
 
         // Transaction was opened, the doomed insert was attempted, then unwound.
         expect(countCallsMatching(client, /BEGIN/)).toBe(1);

@@ -4,6 +4,10 @@
  */
 const db = require('./connection');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 function toNumber(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
@@ -116,8 +120,9 @@ async function listEstimates(companyId, filters = {}) {
     };
 }
 
-async function getEstimateById(companyId, id) {
-    const { rows } = await db.query(
+async function getEstimateById(companyId, id, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT e.*,
                 c.full_name AS contact_name,
                 c.email AS contact_email,
@@ -141,14 +146,19 @@ async function getEstimateById(companyId, id) {
                 inv.id AS invoice_id,
                 inv.invoice_number AS invoice_number
          FROM estimates e
-         LEFT JOIN contacts c ON c.id = e.contact_id
+         LEFT JOIN contacts c
+           ON c.id = e.contact_id
+          AND c.company_id = e.company_id
          LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
          LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
          LEFT JOIN LATERAL (
             SELECT street_line1, street_line2, city, state, postal_code, country
-            FROM contact_addresses
-            WHERE contact_id = e.contact_id
-            ORDER BY is_primary DESC, created_at ASC
+            FROM contact_addresses ca_owned
+            JOIN contacts ca_contact
+              ON ca_contact.id = ca_owned.contact_id
+             AND ca_contact.company_id = e.company_id
+            WHERE ca_owned.contact_id = e.contact_id
+            ORDER BY ca_owned.is_primary DESC, ca_owned.created_at ASC
             LIMIT 1
          ) ca ON true
          LEFT JOIN LATERAL (
@@ -164,8 +174,9 @@ async function getEstimateById(companyId, id) {
     return rows[0] || null;
 }
 
-async function getJobContext(companyId, jobId) {
-    const { rows } = await db.query(
+async function getJobContext(companyId, jobId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT j.id,
                 j.company_id,
                 j.lead_id,
@@ -181,8 +192,9 @@ async function getJobContext(companyId, jobId) {
     return rows[0] || null;
 }
 
-async function getLeadContext(companyId, leadId) {
-    const { rows } = await db.query(
+async function getLeadContext(companyId, leadId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT id, company_id, contact_id, serial_id, first_name, last_name, email, phone
          FROM leads
          WHERE id = $1 AND company_id = $2`,
@@ -191,7 +203,19 @@ async function getLeadContext(companyId, leadId) {
     return rows[0] || null;
 }
 
-async function nextEstimateSequence(companyId, { jobId, leadId }) {
+async function getContactContext(companyId, contactId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT id, company_id, full_name
+         FROM contacts
+         WHERE id = $1 AND company_id = $2`,
+        [contactId, companyId]
+    );
+    return rows[0] || null;
+}
+
+async function nextEstimateSequence(companyId, { jobId, leadId }, client = null) {
+    const query = queryFor(client);
     const params = [companyId];
     let clause = '';
     if (jobId) {
@@ -202,7 +226,7 @@ async function nextEstimateSequence(companyId, { jobId, leadId }) {
         clause = 'lead_id = $2 AND job_id IS NULL';
     }
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `SELECT COALESCE(MAX(estimate_sequence), 0) + 1 AS next_sequence
          FROM estimates
          WHERE company_id = $1 AND ${clause}`,
@@ -215,7 +239,8 @@ function buildEstimateNumber({ leadSerialId, sequence }) {
     return `ESTIMATE L-${leadSerialId || '0'}-${sequence}`;
 }
 
-async function createEstimate(companyId, data) {
+async function createEstimate(companyId, data, client = null) {
+    const query = queryFor(client);
     const {
         contact_id,
         lead_id,
@@ -233,7 +258,7 @@ async function createEstimate(companyId, data) {
         created_by,
     } = data;
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `INSERT INTO estimates (
             company_id, contact_id, lead_id, job_id,
             estimate_number, estimate_sequence, summary, notes, internal_note, status,
@@ -270,7 +295,8 @@ async function createEstimate(companyId, data) {
     return rows[0];
 }
 
-async function updateEstimate(id, companyId, data) {
+async function updateEstimate(id, companyId, data, client = null) {
+    const query = queryFor(client);
     const allowedFields = [
         'contact_id', 'lead_id', 'job_id', 'estimate_number', 'estimate_sequence',
         'summary', 'notes', 'internal_note', 'tax_rate', 'discount_type',
@@ -291,10 +317,10 @@ async function updateEstimate(id, companyId, data) {
         }
     }
 
-    if (sets.length === 0) return getEstimateById(companyId, id);
+    if (sets.length === 0) return getEstimateById(companyId, id, client);
     sets.push('updated_at = NOW()');
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `UPDATE estimates
          SET ${sets.join(', ')}
          WHERE id = $1 AND company_id = $2
@@ -338,32 +364,42 @@ async function updateEstimateStatus(id, companyId, status, timestampField) {
     return rows[0] || null;
 }
 
-async function getEstimateItems(estimateId) {
-    const { rows } = await db.query(
-        `SELECT * FROM estimate_items WHERE estimate_id = $1 ORDER BY sort_order ASC, id ASC`,
-        [estimateId]
+async function getEstimateItems(companyId, estimateId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT ei.*
+         FROM estimate_items ei
+         JOIN estimates e
+           ON e.id = ei.estimate_id
+          AND e.company_id = $1
+         WHERE ei.estimate_id = $2
+         ORDER BY ei.sort_order ASC, ei.id ASC`,
+        [companyId, estimateId]
     );
     return rows;
 }
 
-async function addEstimateItem(estimateId, item) {
+async function addEstimateItem(companyId, estimateId, item, client = null) {
+    const query = queryFor(client);
     const quantity = toNumber(item.quantity, 1);
     const unitPrice = toNumber(item.unit_price, 0);
     const amount = Number((quantity * unitPrice).toFixed(2));
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `INSERT INTO estimate_items (
             estimate_id, sort_order, name, description, quantity, unit, unit_price,
             amount, taxable, metadata, item_type, category_id, price_book_item_id
         )
-        VALUES (
-            $1,
-            COALESCE($2, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM estimate_items WHERE estimate_id = $1)),
-            $3, $4, $5, $6, $7, $8, COALESCE($9, false), COALESCE($10::jsonb, '{}'::jsonb),
-            $11, $12, $13
-        )
+        SELECT
+            e.id,
+            COALESCE($3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM estimate_items WHERE estimate_id = e.id)),
+            $4, $5, $6, $7, $8, $9, COALESCE($10, false), COALESCE($11::jsonb, '{}'::jsonb),
+            $12, $13, $14
+        FROM estimates e
+        WHERE e.id = $2 AND e.company_id = $1
         RETURNING *`,
         [
+            companyId,
             estimateId,
             item.sort_order != null ? item.sort_order : null,
             item.name,
@@ -382,8 +418,17 @@ async function addEstimateItem(estimateId, item) {
     return rows[0];
 }
 
-async function updateEstimateItem(itemId, data) {
-    const current = await db.query(`SELECT * FROM estimate_items WHERE id = $1`, [itemId]);
+async function updateEstimateItem(companyId, estimateId, itemId, data, client = null) {
+    const query = queryFor(client);
+    const current = await query(
+        `SELECT ei.*
+         FROM estimate_items ei
+         JOIN estimates e
+           ON e.id = ei.estimate_id
+          AND e.company_id = $1
+         WHERE ei.id = $2 AND ei.estimate_id = $3`,
+        [companyId, itemId, estimateId]
+    );
     if (!current.rows[0]) return null;
 
     const next = { ...current.rows[0], ...data };
@@ -391,25 +436,34 @@ async function updateEstimateItem(itemId, data) {
     const unitPrice = toNumber(next.unit_price, 0);
     const amount = Number((quantity * unitPrice).toFixed(2));
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `UPDATE estimate_items
-         SET name = $2,
-             description = $3,
-             quantity = $4,
-             unit = $5,
-             unit_price = $6,
-             amount = $7,
-             taxable = $8,
-             sort_order = $9,
-             metadata = COALESCE($10::jsonb, '{}'::jsonb),
-             item_type = $11,
-             category_id = $12,
-             price_book_item_id = $13,
+         SET name = $4,
+             description = $5,
+             quantity = $6,
+             unit = $7,
+             unit_price = $8,
+             amount = $9,
+             taxable = $10,
+             sort_order = $11,
+             metadata = COALESCE($12::jsonb, '{}'::jsonb),
+             item_type = $13,
+             category_id = $14,
+             price_book_item_id = $15,
              updated_at = NOW()
-         WHERE id = $1
+         WHERE id = $2
+           AND estimate_id = $3
+           AND EXISTS (
+                SELECT 1
+                FROM estimates e
+                WHERE e.id = estimate_items.estimate_id
+                  AND e.company_id = $1
+           )
          RETURNING *`,
         [
+            companyId,
             itemId,
+            estimateId,
             next.name,
             next.description || null,
             quantity,
@@ -427,29 +481,61 @@ async function updateEstimateItem(itemId, data) {
     return rows[0] || null;
 }
 
-async function deleteEstimateItem(itemId) {
-    const { rowCount } = await db.query(`DELETE FROM estimate_items WHERE id = $1`, [itemId]);
+async function deleteEstimateItem(companyId, estimateId, itemId, client = null) {
+    const query = queryFor(client);
+    const { rowCount } = await query(
+        `DELETE FROM estimate_items
+         WHERE id = $2
+           AND estimate_id = $3
+           AND EXISTS (
+                SELECT 1
+                FROM estimates e
+                WHERE e.id = estimate_items.estimate_id
+                  AND e.company_id = $1
+           )`,
+        [companyId, itemId, estimateId]
+    );
     return rowCount > 0;
 }
 
-async function replaceEstimateItems(estimateId, items = []) {
-    await db.query(`DELETE FROM estimate_items WHERE estimate_id = $1`, [estimateId]);
+async function replaceEstimateItems(companyId, estimateId, items = [], client = null) {
+    const query = queryFor(client);
+    await query(
+        `DELETE FROM estimate_items
+         WHERE estimate_id = $2
+           AND EXISTS (
+                SELECT 1
+                FROM estimates e
+                WHERE e.id = estimate_items.estimate_id
+                  AND e.company_id = $1
+           )`,
+        [companyId, estimateId]
+    );
     const created = [];
     for (let i = 0; i < items.length; i++) {
-        created.push(await addEstimateItem(estimateId, { ...items[i], sort_order: i }));
+        created.push(await addEstimateItem(
+            companyId,
+            estimateId,
+            { ...items[i], sort_order: i },
+            client
+        ));
     }
     return created;
 }
 
-async function recalculateEstimateTotals(estimateId) {
-    const { rows } = await db.query(
+async function recalculateEstimateTotals(companyId, estimateId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `WITH item_totals AS (
             SELECT
                 estimate_id,
                 COALESCE(SUM(amount), 0) AS subtotal,
                 COALESCE(SUM(CASE WHEN taxable THEN amount ELSE 0 END), 0) AS taxable_subtotal
             FROM estimate_items
-            WHERE estimate_id = $1
+            JOIN estimates item_owner
+              ON item_owner.id = estimate_items.estimate_id
+             AND item_owner.company_id = $1
+            WHERE estimate_id = $2
             GROUP BY estimate_id
         ),
         calc AS (
@@ -466,7 +552,7 @@ async function recalculateEstimateTotals(estimateId) {
                 COALESCE(it.taxable_subtotal, 0) AS taxable_subtotal
             FROM estimates e
             LEFT JOIN item_totals it ON it.estimate_id = e.id
-            WHERE e.id = $1
+            WHERE e.id = $2 AND e.company_id = $1
         )
         UPDATE estimates e
         SET subtotal = calc.subtotal,
@@ -477,22 +563,24 @@ async function recalculateEstimateTotals(estimateId) {
         FROM calc
         WHERE e.id = calc.id
         RETURNING e.*`,
-        [estimateId]
+        [companyId, estimateId]
     );
     return rows[0] || null;
 }
 
-async function createRevision(estimateId, snapshot, createdBy) {
-    const { rows } = await db.query(
+async function createRevision(companyId, estimateId, snapshot, createdBy, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `INSERT INTO estimate_revisions (estimate_id, revision_number, snapshot, created_by)
-         VALUES (
-            $1,
-            COALESCE((SELECT MAX(revision_number) + 1 FROM estimate_revisions WHERE estimate_id = $1), 1),
-            $2,
-            $3
-         )
+         SELECT
+            e.id,
+            COALESCE((SELECT MAX(revision_number) + 1 FROM estimate_revisions WHERE estimate_id = e.id), 1),
+            $3,
+            $4
+         FROM estimates e
+         WHERE e.id = $2 AND e.company_id = $1
          RETURNING *`,
-        [estimateId, JSON.stringify(snapshot), createdBy || null]
+        [companyId, estimateId, JSON.stringify(snapshot), createdBy || null]
     );
     return rows[0];
 }
@@ -505,12 +593,22 @@ async function listRevisions(estimateId) {
     return rows;
 }
 
-async function createEvent(estimateId, eventType, actorType, actorId, metadata) {
-    const { rows } = await db.query(
+async function createEvent(companyId, estimateId, eventType, actorType, actorId, metadata, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `INSERT INTO estimate_events (estimate_id, event_type, actor_type, actor_id, metadata)
-         VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb))
+         SELECT e.id, $3, $4, $5, COALESCE($6::jsonb, '{}'::jsonb)
+         FROM estimates e
+         WHERE e.id = $2 AND e.company_id = $1
          RETURNING *`,
-        [estimateId, eventType, actorType || 'user', actorId || null, JSON.stringify(metadata || {})]
+        [
+            companyId,
+            estimateId,
+            eventType,
+            actorType || 'user',
+            actorId || null,
+            JSON.stringify(metadata || {}),
+        ]
     );
     return rows[0];
 }
@@ -566,6 +664,7 @@ module.exports = {
     getEstimateById,
     getJobContext,
     getLeadContext,
+    getContactContext,
     nextEstimateSequence,
     buildEstimateNumber,
     createEstimate,

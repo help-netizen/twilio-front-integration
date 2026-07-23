@@ -10,7 +10,7 @@
  * array (no per-item id) on update, so edits/adds/removes were lost.
  *
  * FIX: when `Array.isArray(data.items)`, updateInvoice calls
- * invoicesQueries.replaceInvoiceItems(id, items) (delete-then-reinsert, atomic) and then
+ * invoicesQueries.replaceInvoiceItems(companyId, id, items) (delete-then-reinsert, atomic) and then
  * recalculateInvoiceTotals(id). Recalc also fires when a totals-affecting scalar changed.
  *
  * CRITICAL regression guard: scalar-only patches from InvoiceDetailPanel.persist()
@@ -84,13 +84,13 @@ beforeEach(() => {
 
 // ─── T1: changed items array → replace + recalc, returns invoice ─────────────
 describe('T1 — updateInvoice with a changed items array', () => {
-    it('calls replaceInvoiceItems(id, items) then recalculateInvoiceTotals(id) and returns the invoice', async () => {
+    it('calls company-scoped replaceInvoiceItems then recalculateInvoiceTotals and returns the invoice', async () => {
         const result = await invoicesService.updateInvoice(COMPANY_A, USER_ID, INV_ID, { items: NEW_ITEMS });
 
         expect(mockReplaceInvoiceItems).toHaveBeenCalledTimes(1);
-        expect(mockReplaceInvoiceItems).toHaveBeenCalledWith(INV_ID, NEW_ITEMS);
+        expect(mockReplaceInvoiceItems).toHaveBeenCalledWith(COMPANY_A, INV_ID, NEW_ITEMS, null);
         expect(mockRecalculateInvoiceTotals).toHaveBeenCalledTimes(1);
-        expect(mockRecalculateInvoiceTotals).toHaveBeenCalledWith(INV_ID);
+        expect(mockRecalculateInvoiceTotals).toHaveBeenCalledWith(COMPANY_A, INV_ID, null);
 
         // Ordering: items replaced BEFORE totals recalc (recalc reads the fresh items).
         expect(mockReplaceInvoiceItems.mock.invocationCallOrder[0])
@@ -117,21 +117,21 @@ describe('T2 — updateInvoice with NO items key (scalar-only patch)', () => {
 
         expect(mockReplaceInvoiceItems).not.toHaveBeenCalled();
         expect(mockRecalculateInvoiceTotals).toHaveBeenCalledTimes(1);
-        expect(mockRecalculateInvoiceTotals).toHaveBeenCalledWith(INV_ID);
+        expect(mockRecalculateInvoiceTotals).toHaveBeenCalledWith(COMPANY_A, INV_ID, null);
     });
 });
 
 // ─── T3: items: [] → clear all items + recalc ────────────────────────────────
 describe('T3 — updateInvoice with items: [] (clear all)', () => {
-    it('calls replaceInvoiceItems(id, []) and recalculates totals', async () => {
+    it('calls company-scoped replaceInvoiceItems with [] and recalculates totals', async () => {
         mockReplaceInvoiceItems.mockResolvedValue([]);
 
         await invoicesService.updateInvoice(COMPANY_A, USER_ID, INV_ID, { items: [] });
 
         expect(mockReplaceInvoiceItems).toHaveBeenCalledTimes(1);
-        expect(mockReplaceInvoiceItems).toHaveBeenCalledWith(INV_ID, []);
+        expect(mockReplaceInvoiceItems).toHaveBeenCalledWith(COMPANY_A, INV_ID, [], null);
         expect(mockRecalculateInvoiceTotals).toHaveBeenCalledTimes(1);
-        expect(mockRecalculateInvoiceTotals).toHaveBeenCalledWith(INV_ID);
+        expect(mockRecalculateInvoiceTotals).toHaveBeenCalledWith(COMPANY_A, INV_ID, null);
     });
 });
 
@@ -166,7 +166,8 @@ describe('T5 — non-draft invoice (status sent)', () => {
 
         // Revision snapshot was taken (old state) …
         expect(mockCreateRevision).toHaveBeenCalledTimes(1);
-        const [snapInvoiceId, snapshot] = mockCreateRevision.mock.calls[0];
+        const [snapCompanyId, snapInvoiceId, snapshot] = mockCreateRevision.mock.calls[0];
+        expect(snapCompanyId).toBe(COMPANY_A);
         expect(snapInvoiceId).toBe(INV_ID);
         expect(snapshot).toMatchObject({ status: 'sent' });
         // Snapshot captured the OLD items (the pre-edit state), NOT the incoming NEW ones.
@@ -174,7 +175,7 @@ describe('T5 — non-draft invoice (status sent)', () => {
         expect(snapshot.items).not.toEqual(NEW_ITEMS);
 
         // … and items were still reconciled.
-        expect(mockReplaceInvoiceItems).toHaveBeenCalledWith(INV_ID, NEW_ITEMS);
+        expect(mockReplaceInvoiceItems).toHaveBeenCalledWith(COMPANY_A, INV_ID, NEW_ITEMS, null);
 
         // ORDER: snapshot BEFORE the item replace (so it captures the pre-edit state).
         expect(mockCreateRevision.mock.invocationCallOrder[0])

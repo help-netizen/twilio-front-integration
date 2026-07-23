@@ -6,6 +6,10 @@
  */
 const db = require('./connection');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 // =============================================================================
 // Invoice CRUD
 // =============================================================================
@@ -123,8 +127,9 @@ async function listInvoices(companyId, filters = {}) {
  * Joins contact (for display name / email / phone), job, and lead
  * (so callers can reference `lead_serial_id` etc.).
  */
-async function getInvoiceById(companyId, id) {
-    const { rows } = await db.query(
+async function getInvoiceById(companyId, id, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT i.*,
                 c.full_name AS contact_name,
                 c.email AS contact_email,
@@ -133,7 +138,9 @@ async function getInvoiceById(companyId, id) {
                 j.address AS service_address,
                 l.serial_id AS lead_serial_id
          FROM invoices i
-         LEFT JOIN contacts c ON c.id = i.contact_id
+         LEFT JOIN contacts c
+           ON c.id = i.contact_id
+          AND c.company_id = i.company_id
          LEFT JOIN jobs j ON j.id = i.job_id AND j.company_id = i.company_id
          LEFT JOIN leads l ON l.id = i.lead_id AND l.company_id = i.company_id
          WHERE i.id = $1 AND i.company_id = $2`,
@@ -146,7 +153,8 @@ async function getInvoiceById(companyId, id) {
  * Compute the next per-(job|lead) invoice sequence number.
  * Mirrors `nextEstimateSequence` from estimatesQueries.
  */
-async function nextInvoiceSequence(companyId, { jobId, leadId }) {
+async function nextInvoiceSequence(companyId, { jobId, leadId }, client = null) {
+    const query = queryFor(client);
     const params = [companyId];
     let clause = '';
     if (jobId) {
@@ -160,7 +168,7 @@ async function nextInvoiceSequence(companyId, { jobId, leadId }) {
         clause = 'TRUE';
     }
     // Count existing invoices for the same job/lead bucket; sequence = count + 1.
-    const { rows } = await db.query(
+    const { rows } = await query(
         `SELECT COUNT(*)::int + 1 AS next_sequence
          FROM invoices
          WHERE company_id = $1 AND ${clause}`,
@@ -183,7 +191,8 @@ function buildInvoiceNumber({ leadSerialId, jobId, sequence }) {
  * Create a new invoice. If `invoice_number` is provided, it is used as-is;
  * otherwise we fall back to a per-day INV-YYYYMMDD-NNN sequence (legacy format).
  */
-async function createInvoice(companyId, data) {
+async function createInvoice(companyId, data, client = null) {
+    const query = queryFor(client);
     const {
         contact_id,
         lead_id,
@@ -229,7 +238,7 @@ async function createInvoice(companyId, data) {
     ];
     if (invoice_number) params.push(invoice_number);
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `INSERT INTO invoices (
             company_id, contact_id, lead_id, job_id, estimate_id,
             invoice_number, title, notes, internal_note, status,
@@ -254,7 +263,8 @@ async function createInvoice(companyId, data) {
 /**
  * Update allowed fields on an invoice.
  */
-async function updateInvoice(id, companyId, data) {
+async function updateInvoice(id, companyId, data, client = null) {
+    const query = queryFor(client);
     const allowedFields = [
         'contact_id', 'lead_id', 'job_id', 'estimate_id',
         'title', 'notes', 'internal_note',
@@ -274,12 +284,12 @@ async function updateInvoice(id, companyId, data) {
     }
 
     if (sets.length === 0) {
-        return getInvoiceById(companyId, id);
+        return getInvoiceById(companyId, id, client);
     }
 
     sets.push('updated_at = NOW()');
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `UPDATE invoices SET ${sets.join(', ')}
          WHERE id = $1 AND company_id = $2
          RETURNING *`,
@@ -322,10 +332,17 @@ async function updateInvoiceStatus(id, companyId, status, timestampField) {
 /**
  * Get all items for an invoice, ordered by sort_order.
  */
-async function getInvoiceItems(invoiceId) {
-    const { rows } = await db.query(
-        `SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order ASC, id ASC`,
-        [invoiceId]
+async function getInvoiceItems(companyId, invoiceId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT ii.*
+         FROM invoice_items ii
+         JOIN invoices i
+           ON i.id = ii.invoice_id
+          AND i.company_id = $1
+         WHERE ii.invoice_id = $2
+         ORDER BY ii.sort_order ASC, ii.id ASC`,
+        [companyId, invoiceId]
     );
     return rows;
 }
@@ -333,7 +350,8 @@ async function getInvoiceItems(invoiceId) {
 /**
  * Add a line item to an invoice.
  */
-async function addInvoiceItem(invoiceId, item) {
+async function addInvoiceItem(companyId, invoiceId, item, client = null) {
+    const query = queryFor(client);
     const {
         name,
         description,
@@ -347,16 +365,18 @@ async function addInvoiceItem(invoiceId, item) {
 
     const amount = (quantity || 1) * (unit_price || 0);
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `INSERT INTO invoice_items (
             invoice_id, name, description, quantity, unit_price, unit,
             amount, taxable, metadata, sort_order
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-            COALESCE($10, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM invoice_items WHERE invoice_id = $1))
-        )
+        SELECT i.id, $3, $4, $5, $6, $7, $8, $9, $10,
+            COALESCE($11, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM invoice_items WHERE invoice_id = i.id))
+        FROM invoices i
+        WHERE i.id = $2 AND i.company_id = $1
         RETURNING *`,
         [
+            companyId,
             invoiceId,
             name || '',
             description || '',
@@ -388,77 +408,60 @@ async function addInvoiceItem(invoiceId, item) {
  *
  * `items = []` is valid — it clears the invoice (summary-only invoices are allowed).
  * NOTE: totals are NOT recalculated here — the caller invokes
- * recalculateInvoiceTotals(invoiceId) AFTER this commits.
+ * recalculateInvoiceTotals(companyId, invoiceId) AFTER this commits.
  *
  * @param {number|string} invoiceId
  * @param {Array<object>} items
  * @returns {Promise<object[]>} inserted rows, ordered by sort_order
  */
-async function replaceInvoiceItems(invoiceId, items) {
+async function replaceInvoiceItems(companyId, invoiceId, items, existingClient = null) {
     const list = Array.isArray(items) ? items : [];
-    const client = await db.getClient();
+    const client = existingClient || await db.getClient();
+    const ownsTransaction = !existingClient;
     try {
-        await client.query('BEGIN');
-        await client.query(`DELETE FROM invoice_items WHERE invoice_id = $1`, [invoiceId]);
+        if (ownsTransaction) await client.query('BEGIN');
+        await client.query(
+            `DELETE FROM invoice_items
+             WHERE invoice_id = $2
+               AND EXISTS (
+                    SELECT 1
+                    FROM invoices i
+                    WHERE i.id = invoice_items.invoice_id
+                      AND i.company_id = $1
+               )`,
+            [companyId, invoiceId]
+        );
 
         for (let idx = 0; idx < list.length; idx++) {
-            const item = list[idx] || {};
-            const {
-                name,
-                description,
-                quantity,
-                unit_price,
-                unit,
-                taxable,
-                metadata,
-                sort_order,
-            } = item;
-
-            const amount = (quantity || 1) * (unit_price || 0);
-
-            await client.query(
-                `INSERT INTO invoice_items (
-                    invoice_id, name, description, quantity, unit_price, unit,
-                    amount, taxable, metadata, sort_order
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-                [
-                    invoiceId,
-                    name || '',
-                    description || '',
-                    quantity || 1,
-                    unit_price || 0,
-                    unit || null,
-                    amount,
-                    taxable != null ? taxable : true,
-                    // metadata column is NOT NULL; default to empty JSON object when not provided.
-                    JSON.stringify(metadata ?? {}),
-                    // Preserve the caller's explicit ordering; fall back to the array index.
-                    sort_order != null ? sort_order : idx,
-                ]
+            await addInvoiceItem(
+                companyId,
+                invoiceId,
+                { ...(list[idx] || {}), sort_order: list[idx]?.sort_order ?? idx },
+                client
             );
         }
 
-        await client.query('COMMIT');
+        if (ownsTransaction) await client.query('COMMIT');
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (ownsTransaction) await client.query('ROLLBACK');
         throw err;
     } finally {
-        client.release();
+        if (ownsTransaction) client.release();
     }
 
-    // Return the freshly-persisted items (ordered), reusing the shared reader.
-    return getInvoiceItems(invoiceId);
+    return getInvoiceItems(companyId, invoiceId, existingClient);
 }
 
 /**
  * Update a line item.
  */
-async function updateInvoiceItem(itemId, data) {
+async function updateInvoiceItem(companyId, invoiceId, itemId, data, client = null) {
+    const query = queryFor(client);
     const allowedFields = ['name', 'description', 'quantity', 'unit_price', 'unit', 'taxable', 'metadata', 'sort_order'];
     const sets = [];
-    const params = [itemId];
-    let idx = 1;
+    const params = [companyId, invoiceId, itemId];
+    const placeholders = {};
+    let idx = 3;
 
     for (const field of allowedFields) {
         if (data[field] !== undefined) {
@@ -470,21 +473,46 @@ async function updateInvoiceItem(itemId, data) {
                 sets.push(`${field} = $${idx}`);
                 params.push(data[field]);
             }
+            placeholders[field] = `$${idx}`;
         }
     }
 
     if (sets.length === 0) {
-        const { rows } = await db.query(`SELECT * FROM invoice_items WHERE id = $1`, [itemId]);
+        const { rows } = await query(
+            `SELECT ii.*
+             FROM invoice_items ii
+             JOIN invoices i
+               ON i.id = ii.invoice_id
+              AND i.company_id = $1
+             WHERE ii.invoice_id = $2 AND ii.id = $3`,
+            [companyId, invoiceId, itemId]
+        );
         return rows[0] || null;
     }
 
     // Always recalculate amount from the final quantity * unit_price
     // Use COALESCE to fall back to existing column value if not being updated
-    sets.push(`amount = COALESCE(${data.quantity !== undefined ? `$${params.indexOf(data.quantity) + 1}` : 'quantity'}, 1) * COALESCE(${data.unit_price !== undefined ? `$${params.indexOf(data.unit_price) + 1}` : 'unit_price'}, 0)`);
+    const quantityValue = placeholders.quantity
+        ? `${placeholders.quantity}::numeric`
+        : 'quantity';
+    const unitPriceValue = placeholders.unit_price
+        ? `${placeholders.unit_price}::numeric`
+        : 'unit_price';
+    sets.push(`amount = COALESCE(${quantityValue}, 1::numeric) * COALESCE(${unitPriceValue}, 0::numeric)`);
     sets.push('updated_at = NOW()');
 
-    const { rows } = await db.query(
-        `UPDATE invoice_items SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
+    const { rows } = await query(
+        `UPDATE invoice_items
+         SET ${sets.join(', ')}
+         WHERE invoice_id = $2
+           AND id = $3
+           AND EXISTS (
+                SELECT 1
+                FROM invoices i
+                WHERE i.id = invoice_items.invoice_id
+                  AND i.company_id = $1
+           )
+         RETURNING *`,
         params
     );
     return rows[0] || null;
@@ -493,10 +521,19 @@ async function updateInvoiceItem(itemId, data) {
 /**
  * Delete a line item.
  */
-async function deleteInvoiceItem(itemId) {
-    const { rowCount } = await db.query(
-        `DELETE FROM invoice_items WHERE id = $1`,
-        [itemId]
+async function deleteInvoiceItem(companyId, invoiceId, itemId, client = null) {
+    const query = queryFor(client);
+    const { rowCount } = await query(
+        `DELETE FROM invoice_items
+         WHERE invoice_id = $2
+           AND id = $3
+           AND EXISTS (
+                SELECT 1
+                FROM invoices i
+                WHERE i.id = invoice_items.invoice_id
+                  AND i.company_id = $1
+           )`,
+        [companyId, invoiceId, itemId]
     );
     return rowCount > 0;
 }
@@ -505,8 +542,9 @@ async function deleteInvoiceItem(itemId) {
  * Recalculate invoice totals from its items.
  * Also updates balance_due = total - amount_paid.
  */
-async function recalculateInvoiceTotals(invoiceId) {
-    const { rows } = await db.query(
+async function recalculateInvoiceTotals(companyId, invoiceId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `UPDATE invoices inv SET
             subtotal = COALESCE(sub.item_total, 0),
             tax_amount = ROUND(
@@ -542,21 +580,26 @@ async function recalculateInvoiceTotals(invoiceId) {
                 SUM(amount) AS item_total,
                 SUM(CASE WHEN taxable THEN amount ELSE 0 END) AS taxable_subtotal
             FROM invoice_items
-            WHERE invoice_id = $1
+            JOIN invoices item_owner
+              ON item_owner.id = invoice_items.invoice_id
+             AND item_owner.company_id = $1
+            WHERE invoice_id = $2
             GROUP BY invoice_id
         ) sub
-        WHERE inv.id = $1 AND inv.id = sub.invoice_id
-        RETURNING inv.*`,
-        [invoiceId]
+        WHERE inv.id = $2
+          AND inv.company_id = $1
+          AND inv.id = sub.invoice_id
+         RETURNING inv.*`,
+        [companyId, invoiceId]
     );
 
     // If no items exist, the subquery returns nothing — handle that
     if (rows.length === 0) {
-        const { rows: fallback } = await db.query(
+        const { rows: fallback } = await query(
             `UPDATE invoices SET subtotal = 0, tax_amount = 0, total = 0,
                     balance_due = 0 - COALESCE(amount_paid, 0), updated_at = NOW()
-             WHERE id = $1 RETURNING *`,
-            [invoiceId]
+             WHERE id = $2 AND company_id = $1 RETURNING *`,
+            [companyId, invoiceId]
         );
         return fallback[0] || null;
     }
@@ -571,19 +614,21 @@ async function recalculateInvoiceTotals(invoiceId) {
 /**
  * Create a revision snapshot.
  */
-async function createRevision(invoiceId, snapshot, createdBy) {
-    const { rows } = await db.query(
+async function createRevision(companyId, invoiceId, snapshot, createdBy, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `INSERT INTO invoice_revisions (
             invoice_id, revision_number, snapshot, created_by
         )
-        VALUES (
-            $1,
-            COALESCE((SELECT MAX(revision_number) + 1 FROM invoice_revisions WHERE invoice_id = $1), 1),
-            $2,
-            $3
-        )
+        SELECT
+            i.id,
+            COALESCE((SELECT MAX(revision_number) + 1 FROM invoice_revisions WHERE invoice_id = i.id), 1),
+            $3,
+            $4
+        FROM invoices i
+        WHERE i.id = $2 AND i.company_id = $1
         RETURNING *`,
-        [invoiceId, JSON.stringify(snapshot), createdBy || null]
+        [companyId, invoiceId, JSON.stringify(snapshot), createdBy || null]
     );
     return rows[0];
 }
@@ -606,13 +651,23 @@ async function listRevisions(invoiceId) {
 /**
  * Create an audit event.
  */
-async function createEvent(invoiceId, eventType, actorType, actorId, metadata) {
-    const { rows } = await db.query(
+async function createEvent(companyId, invoiceId, eventType, actorType, actorId, metadata, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `INSERT INTO invoice_events (invoice_id, event_type, actor_type, actor_id, metadata)
-         VALUES ($1, $2, $3, $4, $5)
+         SELECT i.id, $3, $4, $5, $6
+         FROM invoices i
+         WHERE i.id = $2 AND i.company_id = $1
          RETURNING *`,
         // metadata column is NOT NULL; default to empty JSON object when none provided.
-        [invoiceId, eventType, actorType || 'user', actorId || null, JSON.stringify(metadata ?? {})]
+        [
+            companyId,
+            invoiceId,
+            eventType,
+            actorType || 'user',
+            actorId || null,
+            JSON.stringify(metadata ?? {}),
+        ]
     );
     return rows[0];
 }

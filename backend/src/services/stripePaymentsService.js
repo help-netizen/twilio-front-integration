@@ -307,7 +307,7 @@ async function sendPaymentLink(companyId, actor, invoiceId, { channel = 'email',
     const link = await ensurePaymentLink(companyId, actor, invoiceId);
     // Delivery follows the existing invoice send pattern (event-logged). Actual
     // email/SMS dispatch is handled by the shared messaging path / invoice send.
-    await invoicesQueries.createEvent(invoiceId, 'payment_link_sent', 'user', actor?.id || null, {
+    await invoicesQueries.createEvent(companyId, invoiceId, 'payment_link_sent', 'user', actor?.id || null, {
         channel, message: message || null, url: link.url,
     });
     await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_sent', target_type: 'invoice', target_id: String(invoiceId), company_id: companyId, details: { channel } });
@@ -731,7 +731,7 @@ async function applyStripeRefund(companyId, { refundId, paymentIntentId, amount,
                 if (inv && Number(inv.balance_due) > 0) {
                     await invoicesQueries.updateInvoiceStatus(original.invoice_id, companyId, Number(inv.amount_paid) > 0 ? 'partial' : 'sent', null);
                 }
-                await invoicesQueries.createEvent(original.invoice_id, 'payment_recorded', 'system', null, { amount: -invoiceReversal, tip_refunded: Number((refundAmt - invoiceReversal).toFixed(2)), payment_method: 'credit_card', source: 'stripe', refund: true, external_id: refundId });
+                await invoicesQueries.createEvent(companyId, original.invoice_id, 'payment_recorded', 'system', null, { amount: -invoiceReversal, tip_refunded: Number((refundAmt - invoiceReversal).toFixed(2)), payment_method: 'credit_card', source: 'stripe', refund: true, external_id: refundId });
             } catch (e) { console.warn('[StripePayments] refund invoice adjust failed:', e.message); }
         }
     }
@@ -883,7 +883,7 @@ async function applyStripePayment(companyId, { externalId, invoiceId, contactId,
                 } else if (Number(inv.amount_paid) > 0) {
                     await invoicesQueries.updateInvoiceStatus(invoiceId, companyId, 'partial', null);
                 }
-                await invoicesQueries.createEvent(invoiceId, 'payment_recorded', 'system', null, {
+                await invoicesQueries.createEvent(companyId, invoiceId, 'payment_recorded', 'system', null, {
                     amount: balancePortion, tip, payment_method: 'credit_card', source: 'stripe', external_id: externalId,
                 });
             }

@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-07-23 — CHATGPT-CRM-MCP-001 S2b: CRUD смет и инвойсов
+
+ChatGPT MCP получил четыре consent-gated write-инструмента:
+`svc.create_estimate`, `svc.update_estimate`, `svc.create_invoice`,
+`svc.update_invoice` (W-confirmation, `albusto.mcp.write`, реальные
+`estimates.create` / `invoices.create` permission-гейты). Create идемпотентен
+через существующий argument-hash claim; update использует bounded
+add/update/remove item-операции. Все связанные Contact/Lead/Job/Estimate,
+Price Book и item IDs проверяются с `company_id` в той же транзакции после
+live-binding recheck. Totals принимает и считает только серверный
+Estimate/Invoice recalc; direct status/send/payment/file surface отсутствует.
+Старым v3-binding нужен повторный idempotent **Enable writes**, чтобы discovery
+обновился с 26 до 30 инструментов; миграции и автоматического бэкфилла
+write-грантов нет. Real-DB T-own/T-foreign/T-blast, replay, canonical totals и
+byte-identical tenant-B gate добавлены. **НЕ задеплоено.**
+
+Тем же этапом — consent-тумблер целиком: панель подключения получила секцию
+**Writes** (включение через подтверждающий модал → `writes/enable`,
+выключение мгновенно; после включения — copy-строка scope
+`albusto.mcp.read albusto.mcp.write` с напоминанием переподключить коннектор),
+а Marketplace settings — read-only хэндлер `chatgpt-crm-mcp`
+(`identityService.getWriteConsent`: `writes_enabled = grant_version ≥ 3`;
+PUT отвечает 405 SETTINGS_READ_ONLY — мутации только через
+tenant-admin-гейтнутые consent-эндпоинты). Цикл тумблера проверен
+реал-компонентным харнесом, состояние — real-DB проверками в
+`chatgptMcpWrites.db.test.js`.
+
 ## 2026-07-23 — ESTINV-BATCH-001: батч OB-23…OB-31 по редактору сметы/инвойса
 
 Девять замечаний владельца одной волной (фронт — Claude, бэкенд+тесты — Codex, параллельно):

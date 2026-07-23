@@ -3,6 +3,8 @@
 const crypto = require('crypto');
 const fsmService = require('./fsmService');
 const contactPropagationService = require('./contactPropagationService');
+const estimatesService = require('./estimatesService');
+const invoicesService = require('./invoicesService');
 const { toE164 } = require('../utils/phoneUtils');
 
 class ChatgptMcpWriteError extends Error {
@@ -625,6 +627,146 @@ async function addNote(context, args, client) {
     };
 }
 
+const FINANCIAL_OPERATION_FIELDS = new Set([
+    'items_add',
+    'items_update',
+    'item_ids_remove',
+]);
+
+function financialBasePatch(args, idField) {
+    return Object.fromEntries(
+        Object.entries(args).filter(([key]) => (
+            key !== idField && !FINANCIAL_OPERATION_FIELDS.has(key)
+        ))
+    );
+}
+
+function hasOwnFields(value) {
+    return Object.keys(value).length > 0;
+}
+
+async function createEstimate(context, args, client) {
+    return estimatesService.createEstimate(
+        context.companyId,
+        context.actorId,
+        args,
+        client
+    );
+}
+
+async function updateEstimate(context, args, client) {
+    const patch = financialBasePatch(args, 'estimate_id');
+    const hasOperations = (
+        (args.items_add?.length || 0)
+        + (args.items_update?.length || 0)
+        + (args.item_ids_remove?.length || 0)
+    ) > 0;
+    if (!hasOwnFields(patch) && !hasOperations) {
+        validation('At least one Estimate field or item operation is required.');
+    }
+    if (hasOwnFields(patch)) {
+        await estimatesService.updateEstimate(
+            context.companyId,
+            context.actorId,
+            args.estimate_id,
+            patch,
+            client
+        );
+    }
+    if (args.items_add?.length) {
+        await estimatesService.addItems(
+            context.companyId,
+            args.estimate_id,
+            context.actorId,
+            args.items_add,
+            client
+        );
+    }
+    for (const item of args.items_update || []) {
+        const { item_id: itemId, ...itemPatch } = item;
+        if (!hasOwnFields(itemPatch)) validation('Each items_update entry requires a field to edit.');
+        await estimatesService.updateItem(
+            context.companyId,
+            args.estimate_id,
+            context.actorId,
+            itemId,
+            itemPatch,
+            client
+        );
+    }
+    for (const itemId of args.item_ids_remove || []) {
+        await estimatesService.removeItem(
+            context.companyId,
+            args.estimate_id,
+            context.actorId,
+            itemId,
+            client
+        );
+    }
+    return estimatesService.getEstimate(context.companyId, args.estimate_id, client);
+}
+
+async function createInvoice(context, args, client) {
+    return invoicesService.createInvoice(
+        context.companyId,
+        context.actorId,
+        args,
+        client
+    );
+}
+
+async function updateInvoice(context, args, client) {
+    const patch = financialBasePatch(args, 'invoice_id');
+    const hasOperations = (
+        (args.items_add?.length || 0)
+        + (args.items_update?.length || 0)
+        + (args.item_ids_remove?.length || 0)
+    ) > 0;
+    if (!hasOwnFields(patch) && !hasOperations) {
+        validation('At least one Invoice field or item operation is required.');
+    }
+    if (hasOwnFields(patch)) {
+        await invoicesService.updateInvoice(
+            context.companyId,
+            context.actorId,
+            args.invoice_id,
+            patch,
+            client
+        );
+    }
+    if (args.items_add?.length) {
+        await invoicesService.addItems(
+            context.companyId,
+            args.invoice_id,
+            context.actorId,
+            args.items_add,
+            client
+        );
+    }
+    for (const item of args.items_update || []) {
+        const { item_id: itemId, ...itemPatch } = item;
+        if (!hasOwnFields(itemPatch)) validation('Each items_update entry requires a field to edit.');
+        await invoicesService.updateItem(
+            context.companyId,
+            args.invoice_id,
+            context.actorId,
+            itemId,
+            itemPatch,
+            client
+        );
+    }
+    for (const itemId of args.item_ids_remove || []) {
+        await invoicesService.removeItem(
+            context.companyId,
+            args.invoice_id,
+            context.actorId,
+            itemId,
+            client
+        );
+    }
+    return invoicesService.getInvoice(context.companyId, args.invoice_id, client);
+}
+
 const HANDLERS = Object.freeze({
     createLead,
     updateLead,
@@ -633,8 +775,17 @@ const HANDLERS = Object.freeze({
     updateJob,
     transitionJob,
     addNote,
+    createEstimate,
+    updateEstimate,
+    createInvoice,
+    updateInvoice,
 });
-const CREATE_HANDLERS = new Set(['createLead', 'createJob']);
+const CREATE_HANDLERS = new Set([
+    'createLead',
+    'createJob',
+    'createEstimate',
+    'createInvoice',
+]);
 
 async function execute(handler, toolName, context, args, client) {
     requireContext(context, client);

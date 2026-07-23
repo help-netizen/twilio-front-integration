@@ -46,9 +46,9 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         }
     });
 
-    test('all 7 consent-gated S2a writes bring the dispatcher surface to 26 tools', () => {
+    test('all 11 consent-gated S2 writes bring the dispatcher surface to 30 tools', () => {
         expect(permissions.WRITE_BUNDLE_VERSION).toBe(3);
-        expect(permissions.WRITE_TOOL_NAMES).toHaveLength(7);
+        expect(permissions.WRITE_TOOL_NAMES).toHaveLength(11);
         expect(permissions.S1_GRANTS).not.toEqual(
             expect.arrayContaining(permissions.S2_WRITE_GRANTS)
         );
@@ -68,7 +68,7 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
             expect(tool.frameworkWritePermission).toBeNull();
         }
         expect(registry.listTools({ includeDispatcher: true, dispatcherOnly: true }))
-            .toHaveLength(26);
+            .toHaveLength(30);
     });
 
     test('write discovery requires explicit v3 grants and albusto.mcp.write scope', () => {
@@ -90,7 +90,7 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
             dispatcherTools,
             [...permissions.S1_GRANTS, ...permissions.S2_WRITE_GRANTS],
             [permissions.READ_SCOPE, permissions.WRITE_SCOPE]
-        )).toHaveLength(26);
+        )).toHaveLength(30);
     });
 
     test('S1 business grants are view-only and task assignee discovery works without mutation grants', async () => {

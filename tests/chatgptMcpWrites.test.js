@@ -162,16 +162,16 @@ describe('CHATGPT-CRM-MCP S2a write executor', () => {
         expect(db.pool.connect).not.toHaveBeenCalled();
     });
 
-    test('protocol advertises non-destructive W confirmation for all 7 write tools', async () => {
+    test('protocol advertises non-destructive W confirmation for all 11 write tools', async () => {
         const response = await protocol.handleJsonRpc(requestContext(), {
             jsonrpc: '2.0',
             id: 1,
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(26);
+        expect(response.result.tools).toHaveLength(30);
         const writes = response.result.tools.filter((tool) => tool.annotations.kind === 'write');
-        expect(writes).toHaveLength(7);
+        expect(writes).toHaveLength(11);
         expect(writes.every((tool) => (
             tool.annotations.requiresConfirmation === true
             && tool.annotations.confirmationClass === 'W'

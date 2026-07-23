@@ -147,14 +147,14 @@ async function getDocument(sessionId, documentType, documentId) {
         if (estimate.archived_at) {
             throw new PortalServiceError('NOT_FOUND', 'Document not found', 404);
         }
-        const items = await estimatesQueries.getEstimateItems(documentId);
+        const items = await estimatesQueries.getEstimateItems(session.company_id, documentId);
         document = { ...estimate, items };
     } else if (documentType === 'invoice') {
         const invoice = await invoicesQueries.getInvoiceById(session.company_id, documentId);
         if (!invoice || invoice.contact_id !== session.contact_id) {
             throw new PortalServiceError('NOT_FOUND', 'Document not found', 404);
         }
-        const items = await invoicesQueries.getInvoiceItems(documentId);
+        const items = await invoicesQueries.getInvoiceItems(session.company_id, documentId);
         document = { ...invoice, items };
     } else {
         throw new PortalServiceError('VALIDATION', `Invalid document type: ${documentType}`, 400);

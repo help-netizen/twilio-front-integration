@@ -41,7 +41,7 @@ async function createInvoice({ label, taxRate, discountAmount, amountPaid = 0, i
     });
 
     for (const item of items) {
-        await invoicesQueries.addInvoiceItem(invoice.id, {
+        await invoicesQueries.addInvoiceItem(companyId, invoice.id, {
             name: item.name,
             quantity: 1,
             unit_price: item.amount,
@@ -58,7 +58,7 @@ async function createInvoice({ label, taxRate, discountAmount, amountPaid = 0, i
         );
     }
 
-    return invoicesQueries.recalculateInvoiceTotals(invoice.id);
+    return invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id);
 }
 
 beforeAll(async () => {
@@ -169,20 +169,23 @@ describe('estimate to invoice conversion totals contract', () => {
             created_by: null,
         });
 
-        await estimatesQueries.addEstimateItem(estimate.id, {
+        await estimatesQueries.addEstimateItem(companyId, estimate.id, {
             name: 'Taxable part',
             quantity: 1,
             unit_price: 95,
             taxable: true,
         });
-        await estimatesQueries.addEstimateItem(estimate.id, {
+        await estimatesQueries.addEstimateItem(companyId, estimate.id, {
             name: 'Non-taxable labor',
             quantity: 1,
             unit_price: 100,
             taxable: false,
         });
 
-        const recalculatedEstimate = await estimatesQueries.recalculateEstimateTotals(estimate.id);
+        const recalculatedEstimate = await estimatesQueries.recalculateEstimateTotals(
+            companyId,
+            estimate.id
+        );
         await estimatesQueries.updateEstimateStatus(estimate.id, companyId, 'approved');
 
         const converted = await estimatesService.convertToInvoice(companyId, null, estimate.id);

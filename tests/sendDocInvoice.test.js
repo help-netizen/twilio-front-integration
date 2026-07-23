@@ -166,7 +166,7 @@ describe('sendInvoice — email happy path', () => {
         // status + event written
         expect(mockUpdateInvoiceStatus).toHaveBeenCalledWith(INV_ID_S, COMPANY_A, 'sent', 'sent_at');
         expect(mockCreateEvent).toHaveBeenCalledWith(
-            INV_ID_S, 'sent', 'user', CRM_USER_ID, expect.objectContaining({ channel: 'email', recipient: 'c@x.com' }),
+            COMPANY_A, INV_ID_S, 'sent', 'user', CRM_USER_ID, expect.objectContaining({ channel: 'email', recipient: 'c@x.com' }),
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,

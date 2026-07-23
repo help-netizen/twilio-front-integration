@@ -93,6 +93,38 @@ function validateValue(key, value, schema) {
         }
         value.forEach((item, index) => validateValue(`${key}[${index}]`, item, schema.items || {}));
     }
+    if (schema.type === 'object') {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            throw mcpError('invalid_request', `${key} must be an object`, { field: key });
+        }
+        for (const requiredKey of schema.required || []) {
+            const requiredSchema = schema.properties?.[requiredKey];
+            const acceptsNull = requiredSchema?.nullable === true;
+            if (
+                !Object.prototype.hasOwnProperty.call(value, requiredKey)
+                || value[requiredKey] === undefined
+                || (value[requiredKey] === null && !acceptsNull)
+            ) {
+                throw mcpError('invalid_request', `${key}.${requiredKey} is required`, {
+                    field: `${key}.${requiredKey}`,
+                });
+            }
+        }
+        for (const [nestedKey, nestedValue] of Object.entries(value)) {
+            const nestedSchema = schema.properties?.[nestedKey];
+            if (!nestedSchema) {
+                if (schema.additionalProperties === false) {
+                    throw mcpError('invalid_request', `${key}.${nestedKey} is not allowed`, {
+                        field: `${key}.${nestedKey}`,
+                    });
+                }
+                continue;
+            }
+            if (nestedValue === null && nestedSchema.nullable === true) continue;
+            if (nestedValue === null) continue;
+            validateValue(`${key}.${nestedKey}`, nestedValue, nestedSchema);
+        }
+    }
 }
 
 function isIsoDate(value) {

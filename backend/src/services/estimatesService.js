@@ -5,6 +5,7 @@
 
 const crypto = require('crypto');
 const estimatesQueries = require('../db/estimatesQueries');
+const estimateItemPresetsQueries = require('../db/estimateItemPresetsQueries');
 const { renderEstimatePdf } = require('./estimatePdfService');
 const { toE164 } = require('../utils/phoneUtils');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
@@ -108,21 +109,52 @@ async function listEstimates(companyId, filters = {}) {
     return estimatesQueries.listEstimates(companyId, filters);
 }
 
-async function getEstimate(companyId, id) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
+async function getEstimate(companyId, id, client = null) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) {
         throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     }
-    const items = await estimatesQueries.getEstimateItems(id);
+    const items = await estimatesQueries.getEstimateItems(companyId, id, client);
     return { ...estimate, items };
 }
 
-async function resolveContext(companyId, data = {}) {
-    if (data.job_id) {
-        const job = await estimatesQueries.getJobContext(companyId, data.job_id);
-        if (!job) throw new EstimatesServiceError('VALIDATION', 'Job not found', 400);
+async function validateLinkedEntities(companyId, data = {}, client = null) {
+    if (data.contact_id != null) {
+        const contact = await estimatesQueries.getContactContext(companyId, data.contact_id, client);
+        if (!contact) throw new EstimatesServiceError('NOT_FOUND', 'Contact not found', 404);
+    }
+    if (data.lead_id != null) {
+        const lead = await estimatesQueries.getLeadContext(companyId, data.lead_id, client);
+        if (!lead) throw new EstimatesServiceError('NOT_FOUND', 'Lead not found', 404);
+    }
+    if (data.job_id != null) {
+        const job = await estimatesQueries.getJobContext(companyId, data.job_id, client);
+        if (!job) throw new EstimatesServiceError('NOT_FOUND', 'Job not found', 404);
+    }
+}
 
-        const sequence = await estimatesQueries.nextEstimateSequence(companyId, { jobId: job.id });
+async function validatePriceBookItems(companyId, items = [], client = null) {
+    const ids = [...new Set(items
+        .map(item => item?.price_book_item_id)
+        .filter(id => id != null)
+        .map(Number))];
+    if (ids.length === 0) return;
+    const owned = await estimateItemPresetsQueries.findActiveIdsScoped(companyId, ids, client);
+    if (owned.length !== ids.length) {
+        throw new EstimatesServiceError('NOT_FOUND', 'Price Book item not found', 404);
+    }
+}
+
+async function resolveContext(companyId, data = {}, client = null) {
+    await validateLinkedEntities(companyId, data, client);
+    if (data.job_id) {
+        const job = await estimatesQueries.getJobContext(companyId, data.job_id, client);
+
+        const sequence = await estimatesQueries.nextEstimateSequence(
+            companyId,
+            { jobId: job.id },
+            client
+        );
         return {
             contact_id: data.contact_id || job.contact_id || null,
             lead_id: data.lead_id || job.lead_id || null,
@@ -136,10 +168,13 @@ async function resolveContext(companyId, data = {}) {
     }
 
     if (data.lead_id) {
-        const lead = await estimatesQueries.getLeadContext(companyId, data.lead_id);
-        if (!lead) throw new EstimatesServiceError('VALIDATION', 'Lead not found', 400);
+        const lead = await estimatesQueries.getLeadContext(companyId, data.lead_id, client);
 
-        const sequence = await estimatesQueries.nextEstimateSequence(companyId, { leadId: lead.id });
+        const sequence = await estimatesQueries.nextEstimateSequence(
+            companyId,
+            { leadId: lead.id },
+            client
+        );
         return {
             contact_id: data.contact_id || lead.contact_id || null,
             lead_id: lead.id,
@@ -155,18 +190,19 @@ async function resolveContext(companyId, data = {}) {
     throw new EstimatesServiceError('VALIDATION', 'lead_id or job_id is required', 400);
 }
 
-async function snapshotEstimate(companyId, id) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
-    const items = await estimatesQueries.getEstimateItems(id);
+async function snapshotEstimate(companyId, id, client = null) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
+    const items = await estimatesQueries.getEstimateItems(companyId, id, client);
     return { ...estimate, items };
 }
 
-async function createEstimate(companyId, userId, data = {}) {
+async function createEstimate(companyId, userId, data = {}, client = null) {
     const items = normalizeItems(data.items) || [];
     validateSavePayload(data, items);
     validateDiscount(data, itemSubtotal(items));
+    await validatePriceBookItems(companyId, items, client);
 
-    const context = await resolveContext(companyId, data);
+    const context = await resolveContext(companyId, data, client);
     const estimate = await estimatesQueries.createEstimate(companyId, {
         ...data,
         ...context,
@@ -175,30 +211,48 @@ async function createEstimate(companyId, userId, data = {}) {
         discount_value: data.discount_value != null ? asNumber(data.discount_value, 0) : 0,
         signature_required: data.signature_required === true,
         created_by: userId,
-    });
+    }, client);
 
     if (items.length > 0) {
-        await estimatesQueries.replaceEstimateItems(estimate.id, items);
+        await estimatesQueries.replaceEstimateItems(companyId, estimate.id, items, client);
     }
-    await estimatesQueries.recalculateEstimateTotals(estimate.id);
-    await estimatesQueries.createEvent(estimate.id, 'created', 'user', userId, null);
+    await estimatesQueries.recalculateEstimateTotals(companyId, estimate.id, client);
+    await estimatesQueries.createEvent(
+        companyId,
+        estimate.id,
+        'created',
+        'user',
+        userId,
+        null,
+        client
+    );
 
-    return getEstimate(companyId, estimate.id);
+    return getEstimate(companyId, estimate.id, client);
 }
 
-async function updateEstimate(companyId, userId, id, data = {}) {
-    const existing = await estimatesQueries.getEstimateById(companyId, id);
+async function updateEstimate(companyId, userId, id, data = {}, client = null) {
+    const existing = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!existing) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(existing);
+    await validateLinkedEntities(companyId, data, client);
 
     const incomingItems = normalizeItems(data.items);
-    const currentItems = incomingItems || await estimatesQueries.getEstimateItems(id);
+    if (incomingItems) await validatePriceBookItems(companyId, incomingItems, client);
+    const currentItems = incomingItems
+        || await estimatesQueries.getEstimateItems(companyId, id, client);
     validateSavePayload({ ...existing, ...data }, currentItems);
     validateDiscount(data.discount_type !== undefined || data.discount_value !== undefined ? data : existing, itemSubtotal(currentItems));
 
     if (existing.status === 'approved') {
-        const approvedSnapshot = existing.approved_snapshot || await snapshotEstimate(companyId, id);
-        await estimatesQueries.createRevision(id, approvedSnapshot, userId);
+        const approvedSnapshot = existing.approved_snapshot
+            || await snapshotEstimate(companyId, id, client);
+        await estimatesQueries.createRevision(
+            companyId,
+            id,
+            approvedSnapshot,
+            userId,
+            client
+        );
     }
 
     const updateData = {
@@ -218,16 +272,24 @@ async function updateEstimate(companyId, userId, id, data = {}) {
         updateData.declined_at = null;
     }
 
-    const updated = await estimatesQueries.updateEstimate(id, companyId, updateData);
+    const updated = await estimatesQueries.updateEstimate(id, companyId, updateData, client);
     if (!updated) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
     if (incomingItems) {
-        await estimatesQueries.replaceEstimateItems(id, incomingItems);
+        await estimatesQueries.replaceEstimateItems(companyId, id, incomingItems, client);
     }
-    await estimatesQueries.recalculateEstimateTotals(id);
-    await estimatesQueries.createEvent(id, 'updated', 'user', userId, { fields: Object.keys(data) });
+    await estimatesQueries.recalculateEstimateTotals(companyId, id, client);
+    await estimatesQueries.createEvent(
+        companyId,
+        id,
+        'updated',
+        'user',
+        userId,
+        { fields: Object.keys(data) },
+        client
+    );
 
-    return getEstimate(companyId, id);
+    return getEstimate(companyId, id, client);
 }
 
 async function archiveEstimate(companyId, userId, id) {
@@ -237,7 +299,7 @@ async function archiveEstimate(companyId, userId, id) {
     const updated = await estimatesQueries.archiveEstimate(id, companyId, userId);
     if (!updated) return getEstimate(companyId, id);
 
-    await estimatesQueries.createEvent(id, 'archived', 'user', userId, null);
+    await estimatesQueries.createEvent(companyId, id, 'archived', 'user', userId, null);
     return getEstimate(companyId, id);
 }
 
@@ -248,14 +310,28 @@ async function restoreEstimate(companyId, userId, id) {
     const updated = await estimatesQueries.restoreEstimate(id, companyId, userId);
     if (!updated) return getEstimate(companyId, id);
 
-    await estimatesQueries.createEvent(id, 'restored', 'user', userId, { status: 'draft' });
+    await estimatesQueries.createEvent(
+        companyId,
+        id,
+        'restored',
+        'user',
+        userId,
+        { status: 'draft' }
+    );
     return getEstimate(companyId, id);
 }
 
-async function resetStatusAfterItemEdit(companyId, userId, estimate) {
+async function resetStatusAfterItemEdit(companyId, userId, estimate, client = null) {
     if (estimate.status === 'approved') {
-        const approvedSnapshot = estimate.approved_snapshot || await snapshotEstimate(companyId, estimate.id);
-        await estimatesQueries.createRevision(estimate.id, approvedSnapshot, userId);
+        const approvedSnapshot = estimate.approved_snapshot
+            || await snapshotEstimate(companyId, estimate.id, client);
+        await estimatesQueries.createRevision(
+            companyId,
+            estimate.id,
+            approvedSnapshot,
+            userId,
+            client
+        );
     }
     if (estimate.status !== 'draft') {
         await estimatesQueries.updateEstimate(estimate.id, companyId, {
@@ -264,85 +340,141 @@ async function resetStatusAfterItemEdit(companyId, userId, estimate) {
             accepted_at: null,
             declined_at: null,
             updated_by: userId,
-        });
+        }, client);
     }
 }
 
-async function addItem(companyId, estimateId, userId, item) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
+async function addItem(companyId, estimateId, userId, item, client = null) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
     assertNotArchived(estimate);
 
-    await resetStatusAfterItemEdit(companyId, userId, estimate);
-    const newItem = await estimatesQueries.addEstimateItem(estimateId, normalizeItem(item));
-    await estimatesQueries.recalculateEstimateTotals(estimateId);
-    await estimatesQueries.createEvent(estimateId, 'item_added', 'user', userId, { item_id: newItem.id });
+    await validatePriceBookItems(companyId, [item], client);
+    await resetStatusAfterItemEdit(companyId, userId, estimate, client);
+    const newItem = await estimatesQueries.addEstimateItem(
+        companyId,
+        estimateId,
+        normalizeItem(item),
+        client
+    );
+    await estimatesQueries.recalculateEstimateTotals(companyId, estimateId, client);
+    await estimatesQueries.createEvent(
+        companyId,
+        estimateId,
+        'item_added',
+        'user',
+        userId,
+        { item_id: newItem.id },
+        client
+    );
 
     return newItem;
 }
 
 // PRICEBOOK-001: bulk add (e.g. a Price Book group expanded into its items).
 // One status-reset + ONE recalc + ONE event, vs N round-trips of addItem.
-async function addItems(companyId, estimateId, userId, items) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
+async function addItems(companyId, estimateId, userId, items, client = null) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
     assertNotArchived(estimate);
 
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) return { added: 0, items: [] };
 
-    await resetStatusAfterItemEdit(companyId, userId, estimate);
+    await validatePriceBookItems(companyId, list, client);
+    await resetStatusAfterItemEdit(companyId, userId, estimate, client);
     const created = [];
     for (const item of list) {
-        created.push(await estimatesQueries.addEstimateItem(estimateId, normalizeItem(item)));
+        created.push(await estimatesQueries.addEstimateItem(
+            companyId,
+            estimateId,
+            normalizeItem(item),
+            client
+        ));
     }
-    await estimatesQueries.recalculateEstimateTotals(estimateId);
-    await estimatesQueries.createEvent(estimateId, 'items_added', 'user', userId, { count: created.length });
+    await estimatesQueries.recalculateEstimateTotals(companyId, estimateId, client);
+    await estimatesQueries.createEvent(
+        companyId,
+        estimateId,
+        'items_added',
+        'user',
+        userId,
+        { count: created.length },
+        client
+    );
 
     return { added: created.length, items: created };
 }
 
-async function updateItem(companyId, estimateId, userId, itemId, data) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
+async function updateItem(companyId, estimateId, userId, itemId, data, client = null) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
     assertNotArchived(estimate);
 
-    const items = await estimatesQueries.getEstimateItems(estimateId);
+    const items = await estimatesQueries.getEstimateItems(companyId, estimateId, client);
     const existingItem = items.find(item => String(item.id) === String(itemId));
     if (!existingItem) throw new EstimatesServiceError('NOT_FOUND', `Item ${itemId} not found`, 404);
 
-    await resetStatusAfterItemEdit(companyId, userId, estimate);
-    const updated = await estimatesQueries.updateEstimateItem(itemId, normalizeItem({ ...existingItem, ...data }));
+    await validatePriceBookItems(companyId, [{ ...existingItem, ...data }], client);
+    await resetStatusAfterItemEdit(companyId, userId, estimate, client);
+    const updated = await estimatesQueries.updateEstimateItem(
+        companyId,
+        estimateId,
+        itemId,
+        normalizeItem({ ...existingItem, ...data }),
+        client
+    );
     if (!updated) throw new EstimatesServiceError('NOT_FOUND', `Item ${itemId} not found`, 404);
 
-    await estimatesQueries.recalculateEstimateTotals(estimateId);
-    await estimatesQueries.createEvent(estimateId, 'item_updated', 'user', userId, { item_id: itemId, fields: Object.keys(data) });
+    await estimatesQueries.recalculateEstimateTotals(companyId, estimateId, client);
+    await estimatesQueries.createEvent(
+        companyId,
+        estimateId,
+        'item_updated',
+        'user',
+        userId,
+        { item_id: itemId, fields: Object.keys(data) },
+        client
+    );
 
     return updated;
 }
 
-async function removeItem(companyId, estimateId, userId, itemId) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
+async function removeItem(companyId, estimateId, userId, itemId, client = null) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
     assertNotArchived(estimate);
 
-    const items = await estimatesQueries.getEstimateItems(estimateId);
+    const items = await estimatesQueries.getEstimateItems(companyId, estimateId, client);
     if (!items.some(item => String(item.id) === String(itemId))) {
         throw new EstimatesServiceError('NOT_FOUND', `Item ${itemId} not found`, 404);
     }
 
-    await resetStatusAfterItemEdit(companyId, userId, estimate);
-    const deleted = await estimatesQueries.deleteEstimateItem(itemId);
+    await resetStatusAfterItemEdit(companyId, userId, estimate, client);
+    const deleted = await estimatesQueries.deleteEstimateItem(
+        companyId,
+        estimateId,
+        itemId,
+        client
+    );
     if (!deleted) throw new EstimatesServiceError('NOT_FOUND', `Item ${itemId} not found`, 404);
 
-    await estimatesQueries.recalculateEstimateTotals(estimateId);
-    await estimatesQueries.createEvent(estimateId, 'item_removed', 'user', userId, { item_id: itemId });
+    await estimatesQueries.recalculateEstimateTotals(companyId, estimateId, client);
+    await estimatesQueries.createEvent(
+        companyId,
+        estimateId,
+        'item_removed',
+        'user',
+        userId,
+        { item_id: itemId },
+        client
+    );
 
     return { deleted: true };
 }
 
-async function assertHasItems(estimateId) {
-    const items = await estimatesQueries.getEstimateItems(estimateId);
+async function assertHasItems(companyId, estimateId, client = null) {
+    const items = await estimatesQueries.getEstimateItems(companyId, estimateId, client);
     if (!items || items.length === 0) {
         throw new EstimatesServiceError('VALIDATION', 'В эстимейте нет items', 400);
     }
@@ -382,7 +514,7 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
     const estimate = await estimatesQueries.getEstimateById(companyId, id);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
-    await assertHasItems(id);
+    await assertHasItems(companyId, id);
 
     const normalizedChannel = channel === 'text' ? 'sms' : channel;
     if (!['email', 'sms'].includes(normalizedChannel)) {
@@ -472,7 +604,7 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
         status: 'sent',
         sent_at: new Date().toISOString(),
     });
-    await estimatesQueries.createEvent(id, 'sent', 'user', userId, {
+    await estimatesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
         channel: normalizedChannel,
         recipient: to,
     });
@@ -494,7 +626,7 @@ async function approveEstimate(companyId, id, actorType, actorId, options = {}) 
     const estimate = await estimatesQueries.getEstimateById(companyId, id);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
-    const items = await assertHasItems(id);
+    const items = await assertHasItems(companyId, id);
 
     if (estimate.signature_required && actorType === 'client') {
         if (!asText(options.signature_name) || options.signature_consent !== true) {
@@ -513,7 +645,7 @@ async function approveEstimate(companyId, id, actorType, actorId, options = {}) 
         signature_consented_at: signatureConsentedAt,
         items,
     };
-    await estimatesQueries.createRevision(id, snapshot, actorId);
+    await estimatesQueries.createRevision(companyId, id, snapshot, actorId);
 
     const updated = await estimatesQueries.updateEstimate(id, companyId, {
         status: 'approved',
@@ -523,7 +655,7 @@ async function approveEstimate(companyId, id, actorType, actorId, options = {}) 
         signature_consented_at: signatureConsentedAt,
     });
 
-    await estimatesQueries.createEvent(id, 'approved', actorType || 'user', actorId, {
+    await estimatesQueries.createEvent(companyId, id, 'approved', actorType || 'user', actorId, {
         signature_required: !!estimate.signature_required,
     });
 
@@ -541,7 +673,14 @@ async function declineEstimate(companyId, id, actorType, actorId, { reason } = {
     }
 
     const updated = await estimatesQueries.updateEstimateStatus(id, companyId, 'declined', 'declined_at');
-    await estimatesQueries.createEvent(id, 'declined', actorType || 'user', actorId, { reason: comment });
+    await estimatesQueries.createEvent(
+        companyId,
+        id,
+        'declined',
+        actorType || 'user',
+        actorId,
+        { reason: comment }
+    );
 
     return updated;
 }
@@ -565,7 +704,14 @@ async function linkJob(companyId, userId, id, jobId) {
         updated_by: userId,
     });
 
-    await estimatesQueries.createEvent(id, 'job_linked', 'user', userId, { job_id: jobId });
+    await estimatesQueries.createEvent(
+        companyId,
+        id,
+        'job_linked',
+        'user',
+        userId,
+        { job_id: jobId }
+    );
     return updated;
 }
 
@@ -640,9 +786,9 @@ async function convertToInvoice(companyId, userId, id) {
         created_by: userId,
     });
 
-    const items = await estimatesQueries.getEstimateItems(id);
+    const items = await estimatesQueries.getEstimateItems(companyId, id);
     for (const item of items) {
-        await invoicesQueries.addInvoiceItem(invoice.id, {
+        await invoicesQueries.addInvoiceItem(companyId, invoice.id, {
             name: item.name,
             description: item.description,
             quantity: item.quantity,
@@ -654,9 +800,23 @@ async function convertToInvoice(companyId, userId, id) {
         });
     }
 
-    await invoicesQueries.recalculateInvoiceTotals(invoice.id);
-    await invoicesQueries.createEvent(invoice.id, 'created_from_estimate', 'user', userId, { estimate_id: estimate.id });
-    await estimatesQueries.createEvent(id, 'converted_to_invoice', 'user', userId, { invoice_id: invoice.id });
+    await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id);
+    await invoicesQueries.createEvent(
+        companyId,
+        invoice.id,
+        'created_from_estimate',
+        'user',
+        userId,
+        { estimate_id: estimate.id }
+    );
+    await estimatesQueries.createEvent(
+        companyId,
+        id,
+        'converted_to_invoice',
+        'user',
+        userId,
+        { invoice_id: invoice.id }
+    );
 
     const invoicesService = require('./invoicesService');
     return invoicesService.getInvoice(companyId, invoice.id);
@@ -724,7 +884,7 @@ async function ensurePublicLink(companyId, id) {
 async function getPublicEstimate(publicToken) {
     const estimate = await estimatesQueries.getEstimateByPublicToken(publicToken);
     if (!estimate) return null;
-    const items = await estimatesQueries.getEstimateItems(estimate.id);
+    const items = await estimatesQueries.getEstimateItems(estimate.company_id, estimate.id);
 
     return {
         estimate_number: estimate.estimate_number,
