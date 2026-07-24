@@ -466,6 +466,7 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
                     .map(a => a.normalized);
                 if (ownEmails.length === 0) continue;
                 await client.query(
+                    // tenant-safety-allow R-write-scope: outer contacts write has c.company_id=$2; nested SELECT confuses the static parser
                     `UPDATE contacts c
                         SET email = (
                             SELECT ce.email FROM contact_emails ce
@@ -744,8 +745,16 @@ router.patch('/:id/addresses/:addressId', requirePermission('contacts.edit'), as
         await db.query(
             `UPDATE leads
              SET address = $1, unit = $2, city = $3, state = $4, postal_code = $5, updated_at = NOW()
-             WHERE contact_address_id = $6`,
-            [street || '', apt || '', city || '', state || '', zip || '', addressId]
+             WHERE contact_address_id = $6 AND company_id = $7`,
+            [
+                street || '',
+                apt || '',
+                city || '',
+                state || '',
+                zip || '',
+                addressId,
+                req.companyFilter?.company_id,
+            ]
         );
         console.log(`[ContactsAPI][${reqId}] Cascaded address fields to leads with contact_address_id ${addressId}`);
 
