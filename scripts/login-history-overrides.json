@@ -757,5 +757,8 @@
   "07e35cd": {
     "tag": "Fix",
     "text": "\"Load more\" now sits at the end of the list instead of floating over it"
+  },
+  "94107a3": {
+    "hide": true
   }
 }
