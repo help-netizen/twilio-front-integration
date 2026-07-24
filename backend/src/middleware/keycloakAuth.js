@@ -26,6 +26,13 @@ function readCookie(req, name) {
     return null;
 }
 
+function readNativeDeviceCredential(req) {
+    const value = req.headers['x-albusto-device'];
+    if (typeof value !== 'string') return null;
+    const credential = value.trim();
+    return credential && credential.length <= 256 ? credential : null;
+}
+
 let jwksRsa = null;
 function getJwksClient() {
     if (jwksRsa) return jwksRsa;
@@ -134,15 +141,20 @@ function authenticate(req, res, next) {
         }
 
         // SMS 2FA (ALB-101, FEATURE_SMS_2FA): users with a verified phone must
-        // present a trusted-device cookie; otherwise the API answers with a
-        // dedicated code and the frontend runs the OTP flow.
+        // present either the existing trusted-device cookie or the native app's
+        // Keychain-backed device credential. The two transports resolve through
+        // the same hashed trusted_devices lookup; web cookie behavior is unchanged.
         try {
             const crmUser = req.user?.crmUser;
             if (FEATURE_SMS_2FA() && crmUser?.phone_verified_at
                 && !TWO_FA_EXEMPT.some(rx => rx.test(req.originalUrl || req.path || ''))) {
                 const otpService = require('../services/otpService');
-                const deviceId = readCookie(req, 'albusto_td');
-                const trusted = await otpService.isDeviceTrusted(crmUser.id, deviceId);
+                const cookieCredential = readCookie(req, 'albusto_td');
+                const nativeCredential = readNativeDeviceCredential(req);
+                let trusted = await otpService.isDeviceTrusted(crmUser.id, cookieCredential);
+                if (!trusted && nativeCredential && nativeCredential !== cookieCredential) {
+                    trusted = await otpService.isDeviceTrusted(crmUser.id, nativeCredential);
+                }
                 if (!trusted) {
                     return res.status(401).json({
                         code: 'PHONE_VERIFICATION_REQUIRED',

@@ -4,6 +4,7 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const db = require('../db/connection');
 const otpService = require('../services/otpService');
@@ -64,6 +65,55 @@ router.post('/trust-device', async (req, res) => {
         res.json({ ok: true, trusted_days: Math.round(maxAgeSec / 86400) });
     } catch (err) {
         console.error('[AuthDevice] trust-device error:', err.message);
+        res.status(500).json({ code: 'INTERNAL_ERROR' });
+    }
+});
+
+// POST /api/auth/trust-native-device — exchange a login otp_token for a
+// Keychain-backed credential. Unlike /trust-device, this endpoint never sets a
+// cookie and returns the raw credential exactly once; only its hash is stored.
+router.post('/trust-native-device', async (req, res) => {
+    try {
+        const crmUser = req.user?.crmUser;
+        if (!crmUser?.id) return res.status(401).json({ code: 'AUTH_REQUIRED' });
+
+        const otp = otpService.validateOtpToken(req.body?.otp_token, 'login');
+        if (!otp) return res.status(401).json({ code: 'OTP_REQUIRED', message: 'Verify the code first' });
+
+        const deviceId = typeof req.body?.device_id === 'string' ? req.body.device_id.trim() : '';
+        if (deviceId.length < 8 || deviceId.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(deviceId)) {
+            return res.status(400).json({
+                code: 'VALIDATION_ERROR',
+                message: 'device_id must be 8-200 characters using letters, numbers, dot, underscore, colon, or hyphen',
+            });
+        }
+
+        // Bind the OTP proof to the authenticated CRM user, not merely to any
+        // bearer holding a valid login-purpose otp_token.
+        const { rows } = await db.query('SELECT phone_e164 FROM crm_users WHERE id = $1', [crmUser.id]);
+        if (!rows[0]?.phone_e164 || rows[0].phone_e164 !== otp.phone) {
+            return res.status(401).json({ code: 'OTP_REQUIRED', message: 'Verify the code first' });
+        }
+
+        const rawName = typeof req.body?.device_name === 'string' ? req.body.device_name.trim() : '';
+        const deviceName = rawName.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 60);
+        const binding = crypto.createHash('sha256').update(deviceId).digest('hex').slice(0, 24);
+        const label = `native:${binding}${deviceName ? `:${deviceName}` : ''}`;
+        const { deviceId: credential, maxAgeSec } = await otpService.trustDevice(crmUser.id, {
+            ip: req.ip,
+            label,
+        });
+
+        res.set('Cache-Control', 'no-store');
+        res.set('Pragma', 'no-cache');
+        res.json({
+            ok: true,
+            device_credential: credential,
+            trusted_days: Math.round(maxAgeSec / 86400),
+            expires_in_seconds: maxAgeSec,
+        });
+    } catch (err) {
+        console.error('[AuthDevice] trust-native-device error:', err.message);
         res.status(500).json({ code: 'INTERNAL_ERROR' });
     }
 });

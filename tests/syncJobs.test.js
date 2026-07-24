@@ -89,6 +89,7 @@ function jobRow(id, updatedAtIso, over = {}) {
         end_date: null,
         created_at: new Date('2026-01-01T00:00:00.000Z'),
         updated_at: new Date(updatedAtIso),
+        sync_changed_at: new Date(updatedAtIso),
         ...over,
     };
 }
@@ -119,7 +120,7 @@ describe('syncQueries.parseCursor', () => {
 // ─── syncQueries.getChangedJobs — cursor / tiebreak / has_more ───────────────
 
 describe('syncQueries.getChangedJobs', () => {
-    it('incremental builds a forward (updated_at,id) > cursor predicate, ASC order, LIMIT+1', async () => {
+    it('incremental builds a forward (effective changed_at,id) > cursor predicate, ASC order, LIMIT+1', async () => {
         db.query
             .mockResolvedValueOnce({ rows: [] })   // changed page
             .mockResolvedValueOnce({ rows: [] });  // attachments (jobIds empty → still guarded, but called only if ids)
@@ -130,8 +131,9 @@ describe('syncQueries.getChangedJobs', () => {
         const [sql, params] = db.query.mock.calls[0];
         expect(sql).toContain('j.company_id = $1');
         expect(sql).toContain('j.assigned_provider_user_ids @> $2::jsonb');
-        expect(sql).toContain('(j.updated_at, j.id) > ($3, $4)');
-        expect(sql).toContain('ORDER BY j.updated_at ASC, j.id ASC');
+        expect(sql).toContain('(GREATEST(j.updated_at, COALESCE(c.updated_at, j.updated_at)), j.id) > ($3, $4)');
+        expect(sql).toContain('ORDER BY GREATEST(j.updated_at, COALESCE(c.updated_at, j.updated_at)) ASC, j.id ASC');
+        expect(sql).toContain('LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id');
         // has_more detection → LIMIT is limit+1
         expect(sql).toMatch(/LIMIT \$5/);
         expect(params[0]).toBe(COMPANY_A);
@@ -147,7 +149,7 @@ describe('syncQueries.getChangedJobs', () => {
             companyId: COMPANY_A, crmUserId: PROVIDER_A, cursor: null, limit: 200, windowDays: 30,
         });
         const [sql, params] = db.query.mock.calls[0];
-        expect(sql).not.toContain('(j.updated_at, j.id) >');
+        expect(sql).not.toContain('j.id) >');
         expect(sql).toContain('start_date >= now()');
         expect(sql).toContain('blanc_status <> ALL');
         expect(params).toContain('30');            // windowDays
@@ -198,8 +200,26 @@ describe('syncQueries.getChangedJobs', () => {
         expect(page2.jobs.map(j => j.id)).toEqual([12]);
         // id 11 (the page-1 boundary) is neither repeated nor skipped.
         const [sql, params] = db.query.mock.calls[0];
-        expect(sql).toContain('(j.updated_at, j.id) > ($3, $4)');
+        expect(sql).toContain('(GREATEST(j.updated_at, COALESCE(c.updated_at, j.updated_at)), j.id) > ($3, $4)');
         expect(params[3]).toBe('11');
+    });
+
+    it('uses contact updated_at for the cursor but preserves public job.updated_at', async () => {
+        db.query
+            .mockResolvedValueOnce({ rows: [jobRow(25, '2026-07-01T00:00:00.000Z', {
+                customer_name: 'Live Contact Name',
+                sync_changed_at: new Date('2026-07-03T12:00:00.000Z'),
+            })] })
+            .mockResolvedValueOnce({ rows: [] });
+
+        const out = await syncQueries.getChangedJobs({
+            companyId: COMPANY_A, crmUserId: PROVIDER_A, cursor: null, limit: 200, windowDays: 30,
+        });
+
+        expect(out.jobs[0].customer_name).toBe('Live Contact Name');
+        expect(out.jobs[0].updated_at).toBe('2026-07-01T00:00:00.000Z');
+        expect(out.jobs[0]).not.toHaveProperty('sync_changed_at');
+        expect(out.nextCursor).toBe('2026-07-03T12:00:00.000Z|25');
     });
 
     it('enriches notes[] with attachments as {id,fileName,contentType,fileSize} — NO url', async () => {

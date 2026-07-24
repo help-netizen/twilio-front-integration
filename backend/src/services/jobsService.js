@@ -671,9 +671,11 @@ async function getJobById(id, companyId = null, providerScope = null) {
         conditions.push(`j.assigned_provider_user_ids @> $${params.length}::jsonb`);
     }
     const { rows } = await db.query(
-        `SELECT j.*, l.serial_id AS lead_serial_id
+        `SELECT j.*, l.serial_id AS lead_serial_id,
+                COALESCE(c.full_name, j.customer_name) AS customer_name
          FROM jobs j
          LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
+         LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
          WHERE ${conditions.join(' AND ')}`,
         params
     );
@@ -693,7 +695,7 @@ async function getJobByZbId(zbJobId) {
 
 const JOB_LIST_SORTS = Object.freeze({
     job_number: { expression: `LOWER(COALESCE(j.job_number, '')) COLLATE "C"`, type: 'text' },
-    customer_name: { expression: `LOWER(COALESCE(j.customer_name, '')) COLLATE "C"`, type: 'text' },
+    customer_name: { expression: `LOWER(COALESCE(c.full_name, j.customer_name, '')) COLLATE "C"`, type: 'text' },
     customer_phone: { expression: `LOWER(COALESCE(j.customer_phone, '')) COLLATE "C"`, type: 'text' },
     customer_email: { expression: `LOWER(COALESCE(j.customer_email, '')) COLLATE "C"`, type: 'text' },
     service_name: { expression: `LOWER(COALESCE(j.service_name, '')) COLLATE "C"`, type: 'text' },
@@ -840,7 +842,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
         const searchClauses = [
             `j.job_number ILIKE $${idx}`,
             `j.service_name ILIKE $${idx}`,
-            `j.customer_name ILIKE $${idx}`,
+            `COALESCE(c.full_name, j.customer_name) ILIKE $${idx}`,
             `j.customer_phone ILIKE $${idx}`,
             `j.address ILIKE $${idx}`,
             `EXISTS (
@@ -917,6 +919,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
                 FROM (
                     SELECT DISTINCT BTRIM(tech.value ->> 'name') AS provider
                     FROM jobs j
+                    LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
                     CROSS JOIN LATERAL jsonb_array_elements(COALESCE(j.assigned_techs, '[]'::jsonb)) AS tech(value)
                     ${facetWhereClause}
                       AND BTRIM(COALESCE(tech.value ->> 'name', '')) <> ''
@@ -924,7 +927,9 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
             : 'NULL::json';
         const metadataResult = await db.query(
             `SELECT
-                (SELECT COUNT(*)::int FROM jobs j ${whereClause}) AS total,
+                (SELECT COUNT(*)::int FROM jobs j
+                 LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
+                 ${whereClause}) AS total,
                 ${providersSql} AS providers`,
             params,
         );
@@ -983,8 +988,10 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
     }
 
     const { rows: probedRows } = await db.query(`
-        SELECT j.*, ${cursorProjections.join(', ')}
+        SELECT j.*, COALESCE(c.full_name, j.customer_name) AS customer_name,
+               ${cursorProjections.join(', ')}
         FROM jobs j
+        LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
         ${whereClause}${cursorPredicate}
         ORDER BY ${orderParts.join(', ')}
         LIMIT $${limitParam}${offsetSql}

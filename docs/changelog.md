@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-07-23 — MOBILE-CATCHUP-BE: native 2FA trust, provider contacts, live job names
+
+Backend-часть догоняющего релиза technician iOS app. Для live SMS-2FA добавлен
+отдельный Bearer-authenticated `POST /api/auth/trust-native-device`: после login
+OTP он один раз возвращает opaque credential без cookie и с `no-store`; в
+существующем `trusted_devices` остаётся только peppered SHA-256, привязанный к
+`crm_users.id` и device label. Обычные API принимают credential через
+`X-Albusto-Device` либо прежний `albusto_td` cookie; blanket-исключения для
+`crm-mobile` нет, web-путь не изменён.
+
+Provider с `provider.enabled` получил только route-local
+`GET /api/contacts?search=...`: обязательно assigned-only scope, ответ строго
+`{id,name,phone,email}`; глобальный `contacts.view` не выдан. Job
+sync/list/detail/search теперь читают live `contacts.full_name` через
+same-company join; sync-курсор учитывает `contacts.updated_at`, но публичный
+`job.updated_at` остаётся временем job. Миграции нет. Verification: affected
+backend 15 suites / 178 tests + rollback real-PostgreSQL; тимлид-диверсия на
+native-ветке red→restore. Спека: `docs/specs/MOBILE-CATCHUP-BE.md`.
+
 ## 2026-07-23 — CHATGPT-CRM-MCP-001 S3: отправка смет и инвойсов
 
 Добавлены `svc.send_estimate` и `svc.send_invoice`: строгие W-confirmation

@@ -108,4 +108,19 @@ describe('ordinary Keycloak middleware isolates the ChatGPT connector client', (
         expect(res.body).toEqual({ company_id: 'company-a', actor_id: 'human-a' });
         expect(userService.findOrCreateUser).toHaveBeenCalledTimes(1);
     });
+
+    test('crm-mobile azp remains distinct and its normal /api token is authorized', async () => {
+        jwt.verify.mockImplementation((_token, _key, _options, callback) => callback(null, claims({
+            azp: 'crm-mobile',
+            realm_access: { roles: ['company_member'] },
+        })));
+
+        const res = await request(app())
+            .get('/api/auth-boundary-probe')
+            .set('Authorization', 'Bearer mobile-token');
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ company_id: 'company-a', actor_id: 'human-a' });
+        expect(userService.findOrCreateUser).toHaveBeenCalledTimes(1);
+    });
 });

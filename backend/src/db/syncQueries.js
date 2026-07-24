@@ -5,9 +5,11 @@
  * §4.1). Three company-scoped, provider-scoped queries:
  *
  *   - getChangedJobs   — the `changed[]` page: jobs assigned to the current
- *                        crm_user, forward-paginated on a stable (updated_at, id)
- *                        cursor (initial full sync uses a window + open-status
- *                        filter instead of a cursor). Returns full Job objects
+ *                        crm_user, forward-paginated on a stable
+ *                        (effective_changed_at, id) cursor, where linked contact
+ *                        renames participate without rewriting job.updated_at
+ *                        (initial full sync uses a window + open-status filter).
+ *                        Returns full Job objects
  *                        (same shape as GET /api/jobs/:id) with a guaranteed
  *                        notes[] whose attachments carry NO presigned URL.
  *   - getUnassignedJobIds — `unassigned[]`: ids of company jobs touched since the
@@ -17,10 +19,9 @@
  *                        (from job_tombstones, migration 150).
  *
  * Cursor pattern mirrors backend/src/db/emailQueries.js (`"{ts}|{id}"`,
- * `(col, id) <cmp> ($ts, $id)`) but FORWARD: `ORDER BY updated_at ASC, id ASC`,
- * `WHERE (updated_at, id) > ($ts, $id)` — so a batch of jobs sharing one
- * updated_at (e.g. a Zenbooker bulk sync) is neither lost nor duplicated; id
- * breaks the tie deterministically (same trick as getUnifiedTimelinePage).
+ * `(col, id) <cmp> ($ts, $id)`) but FORWARD on
+ * `GREATEST(j.updated_at, c.updated_at)`. A batch sharing one effective timestamp
+ * is neither lost nor duplicated; id breaks the tie deterministically.
  *
  * Tenant isolation: EVERY query is filtered by company_id (spec §10). The scope
  * predicate is `assigned_provider_user_ids @> $me::jsonb` (GIN-indexed) with the
@@ -33,12 +34,19 @@ const db = require('./connection');
 // job outside it, so an old-but-active job is never missed.
 const TERMINAL_BLANC_STATUSES = ['Visit completed', 'Job is Done', 'Canceled'];
 
-// Column list mirrors jobsService.getJobById's `SELECT j.*, l.serial_id AS
-// lead_serial_id` so rowToSyncJob() below can reuse the exact same mapping.
+// Contact updates participate in the sync cursor without changing the public
+// job.updated_at value. The same-company join also keeps customer_name live.
+const SYNC_CHANGED_AT = 'GREATEST(j.updated_at, COALESCE(c.updated_at, j.updated_at))';
+
+// Column list mirrors jobsService.getJobById's select so rowToSyncJob() below
+// can reuse the exact same mapping.
 const JOB_SELECT = `
-    SELECT j.*, l.serial_id AS lead_serial_id
+    SELECT j.*, l.serial_id AS lead_serial_id,
+           COALESCE(c.full_name, j.customer_name) AS customer_name,
+           ${SYNC_CHANGED_AT} AS sync_changed_at
     FROM jobs j
     LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
+    LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
 `;
 
 /**
@@ -124,8 +132,10 @@ function parseCursor(since) {
 }
 
 /** Serialize the cursor for the last row of a `changed` page. */
-function serializeCursor(job) {
-    return `${job.updated_at}|${job.id}`;
+function serializeCursor(row) {
+    const changedAt = row.sync_changed_at || row.updated_at;
+    const timestamp = changedAt instanceof Date ? changedAt.toISOString() : changedAt;
+    return `${timestamp}|${row.id}`;
 }
 
 /**
@@ -270,7 +280,7 @@ async function getChangedJobs({ companyId, crmUserId, cursor, limit, windowDays 
         // Incremental: strictly after the cursor, NO window bound (spec §2.4 —
         // an edit to an old open job outside the window must not be missed).
         params.push(cursor.ts, cursor.id);
-        conditions.push(`(j.updated_at, j.id) > ($${params.length - 1}, $${params.length})`);
+        conditions.push(`(${SYNC_CHANGED_AT}, j.id) > ($${params.length - 1}, $${params.length})`);
     } else {
         // Initial full sync: jobs whose start_date is within ±windowDays of now,
         // OR any still-open job (regardless of date). start_date NULL jobs are
@@ -291,7 +301,7 @@ async function getChangedJobs({ companyId, crmUserId, cursor, limit, windowDays 
     const { rows } = await db.query(
         `${JOB_SELECT}
          WHERE ${conditions.join(' AND ')}
-         ORDER BY j.updated_at ASC, j.id ASC
+         ORDER BY ${SYNC_CHANGED_AT} ASC, j.id ASC
          LIMIT $${params.length}`,
         params
     );
@@ -309,7 +319,7 @@ async function getChangedJobs({ companyId, crmUserId, cursor, limit, windowDays 
         job.notes = enrichNotes(raw, attachMap.get(String(job.id)), job.updated_at);
     }
 
-    const nextCursor = jobs.length > 0 ? serializeCursor(jobs[jobs.length - 1]) : null;
+    const nextCursor = rows.length > 0 ? serializeCursor(rows[rows.length - 1]) : null;
     return { jobs, hasMore, nextCursor };
 }
 

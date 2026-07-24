@@ -135,7 +135,7 @@ function matchResolutions(conflicts, rawResolutions) {
 // =============================================================================
 // GET /api/contacts — List contacts
 // =============================================================================
-router.get('/', requirePermission('contacts.view'), async (req, res) => {
+router.get('/', requirePermission('contacts.view', 'provider.enabled'), async (req, res) => {
     const reqId = requestId();
     try {
         const { search, offset, limit, cursor } = req.query;
@@ -152,17 +152,40 @@ router.get('/', requirePermission('contacts.view'), async (req, res) => {
             return res.status(400).json(errorResponse('INVALID_QUERY', 'search must be at most 500 characters', reqId));
         }
 
+        const permissions = req.authz?.permissions || [];
+        const hasContactsView = permissions.includes('contacts.view');
+        const providerSearchOnly = !hasContactsView && permissions.includes('provider.enabled');
+        const providerScope = getProviderScope(req);
+        if (providerSearchOnly && (!providerScope.assignedOnly || !String(search || '').trim())) {
+            return res.status(403).json(errorResponse(
+                'ACCESS_DENIED',
+                'Provider access is limited to assigned-contact search',
+                reqId,
+            ));
+        }
+
         const params = {
             search: search || undefined,
             offset: offset === undefined ? undefined : Number(offset),
             limit: limit === undefined ? 50 : Number(limit),
             cursor,
             companyId: req.companyFilter?.company_id,
-            providerScope: getProviderScope(req),
+            providerScope,
         };
 
         const result = await contactsService.listContacts(params);
-        res.json(successResponse(result, reqId));
+        const responseData = providerSearchOnly
+            ? {
+                ...result,
+                results: result.results.map(contact => ({
+                    id: contact.id,
+                    name: contact.full_name || null,
+                    phone: contact.phone_e164 || contact.secondary_phone || null,
+                    email: contact.email || null,
+                })),
+            }
+            : result;
+        res.json(successResponse(responseData, reqId));
     } catch (err) {
         if (err?.httpStatus || err?.code === 'INVALID_CURSOR' || err?.code === 'INVALID_CURSOR_REQUEST') {
             return res.status(err?.httpStatus || 400).json(errorResponse(err.code || 'INVALID_QUERY', err.message, reqId));
