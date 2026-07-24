@@ -76,6 +76,17 @@ scope-проверку и блокируют опорные строки в то
 T-blast, live demotion/tier race и break-to-red sabotage контракты.
 `src/server.js`, frontend и схема БД не менялись. **НЕ задеплоено.**
 
+## 2026-07-24 — JOBPANEL-REWORK-001: Finance-панель без вкладок + кебаб транзакций + мобильный ввод заметки
+
+Переработка Finance-поверхности в карточке работы и вокруг заметок (tandem; фронт — Claude, бэкенд чеков — Codex). **НЕ задеплоено.**
+
+- **Десктоп: убраны вкладки Details/Finance.** Правая колонка карточки работы теперь один скролл: Description → заметки → Metadata → **большой заголовок «Finance»** (делит секцию) → блок денег → документы. Раньше Finance пряталась за вкладкой.
+- **Блок денег компактнее и в правильном порядке:** плитки Estimated/Invoiced/Paid/Due → кнопки **Pay by Card + Record Payment** → список транзакций (новые сверху) — всё в одном блоке до Estimate/Invoices. Отдельная секция «Payments» под инвойсами убрана; пустые состояния Estimate/Invoice сжаты из крупных плиток в одну строку.
+- **Кебаб у каждой транзакции:** **Review** (read-only шторка чека), **Email receipt** (`POST /api/payments/:id/receipt/email` — бэкенд сам берёт e-mail клиента, для Stripe-карт — родной чек Stripe), **View in Stripe** (только для Stripe-карт: `GET /api/payments/:id/receipt/view` → hosted Stripe-receipt). На мобиле кебаб раскрывается канон-шитом.
+- **OB-35 — мобильный ввод заметки:** на телефоне «Add note…» открывает **bottom sheet** с просторным полем и крупными кнопками Attach + Add note в футере (клавиатура не перекрывает — canonical `BottomSheet` держит keyboard-safe viewport). Десктоп — прежний инлайн-композер.
+- **Мелочи:** affordance C у бара заметок (Add note — мягкий фиолет, Add task — нейтральный чип); в редакторе позиции Taxable ушёл вниз, итоговая цена поднялась на его место; тосты на мобиле показываются сверху.
+- **Backend/tests:** новые эндпоинты `receipt/view` + `receipt/email` с tenant-скоупом и source+method card-only гейтом (нельзя выдать cash-строку за Stripe-действие); 28 jest-тестов (вкл. кросс-компани изоляцию чека) зелёные; фронт-билд `tsc -b` чистый.
+
 ## 2026-07-23 — CHATGPT-CRM-MCP human-readable tool titles
 
 Все 33 ChatGPT dispatcher-инструмента получили display-only MCP `title`; invocation names и authorization-контракты не изменились. **НЕ задеплоено.**

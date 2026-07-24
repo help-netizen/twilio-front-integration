@@ -75,6 +75,19 @@ describe('Stripe Connect result retrieval', () => {
         expect(options).toMatchObject({ method: 'GET', body: undefined });
         expect(options.headers['Stripe-Account']).toBe('acct_merchant');
     });
+
+    it('retrieves a Charge on the stored connected account without a body', async () => {
+        global.fetch.mockResolvedValueOnce(stripeResponse({
+            id: 'ch_1',
+            receipt_url: 'https://pay.stripe.com/receipts/test',
+        }));
+        await provider.retrieveCharge('acct_merchant', 'ch_1');
+
+        const [url, options] = global.fetch.mock.calls[0];
+        expect(url).toBe('https://api.stripe.com/v1/charges/ch_1');
+        expect(options).toMatchObject({ method: 'GET', body: undefined });
+        expect(options.headers['Stripe-Account']).toBe('acct_merchant');
+    });
 });
 
 describe('Stripe Connect native receipt', () => {

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
-import { Archive, Banknote, ChevronRight, CreditCard, FileText, Loader2, Lock, Plus, Receipt } from 'lucide-react';
+import { Archive, Banknote, ChevronRight, CreditCard, ExternalLink, FileText, Loader2, Lock, Mail, MoreVertical, Plus, Receipt } from 'lucide-react';
 import { CloudBanner } from '../ui/CloudBanner';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
 import { useAuthz } from '../../hooks/useAuthz';
@@ -26,6 +26,8 @@ import { deleteInvoice } from '../../services/invoicesApi';
 import { toast } from 'sonner';
 import { calculateJobFinanceSummary, formatSignedCurrency } from './jobFinanceMath';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import { emailTransactionReceipt, fetchReceiptView, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,6 +95,8 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
     const [showInvoiceSend, setShowInvoiceSend] = useState(false);
     const [showCollect, setShowCollect] = useState(false);
     const [showRecord, setShowRecord] = useState(false);
+    // JOBPANEL-REWORK-001: transaction "Review" opens a read-only receipt slide-over.
+    const [receiptPayment, setReceiptPayment] = useState<PaymentTransaction | null>(null);
 
     // ── STRIPE-ADHOC-PAY-001: collect-payment button/CTA gating ─────────────────
     const navigate = useNavigate();
@@ -139,6 +143,29 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
         && payment.transaction_type === 'payment'
         && payment.status === 'completed'
     ));
+    // Newest → oldest (owner directive). Fall back to created_at when unprocessed.
+    const sortedJobPayments = [...jobLedgerPayments].sort((a, b) => (
+        (b.processed_at || b.created_at).localeCompare(a.processed_at || a.created_at)
+    ));
+
+    // Transaction kebab actions. "View in Stripe" only for our own Stripe card charges
+    // (external_source==='stripe'); Zenbooker/cash/check have no Stripe object. Matches
+    // the backend's isStripeCardPayment gate so the item never shows for a non-Stripe row.
+    const isStripePayment = (p: PaymentTransaction) => p.external_source === 'stripe' && p.payment_method === 'credit_card';
+    const emailReceipt = async (p: PaymentTransaction) => {
+        try {
+            await emailTransactionReceipt(p.id, contactEmail || undefined);
+            toast.success(contactEmail ? `Receipt emailed to ${contactEmail}` : 'Receipt emailed');
+        } catch (err: any) { toast.error(err?.message || 'Could not email receipt'); }
+    };
+    const viewInStripe = async (p: PaymentTransaction) => {
+        try {
+            const { receipt_url } = await fetchReceiptView(p.id);
+            if (receipt_url) window.open(receipt_url, '_blank', 'noopener,noreferrer');
+            else toast.error('Stripe receipt is not available for this payment yet');
+        } catch (err: any) { toast.error(err?.message || 'Could not open Stripe receipt'); }
+    };
+
     const {
         estimated: totalEstimated,
         invoiced: totalInvoiced,
@@ -160,8 +187,13 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
     const showCta = canCollect && !stripeLoading && !!stripeStatus?.configured && !stripeStatus?.can_collect && !!readiness;
 
     return (
-        <div className="flex-1 overflow-y-auto bg-[var(--blanc-panel-surface,#fffdf9)] p-5 text-[var(--blanc-ink-1)]">
-            <div className="mx-auto max-w-5xl space-y-5">
+        <div className="space-y-5 text-[var(--blanc-ink-1)]">
+            {/* JOBPANEL-REWORK-001: a big section heading divides Finance from the
+                Details content it now shares one scroller with (the tabs are gone). */}
+            <div>
+                <h2 className="text-xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em' }}>Finance</h2>
+                <p className="mt-0.5 text-sm text-[var(--blanc-ink-2)]">Estimates, invoices and payments for this job.</p>
+            </div>
                 <div className="overflow-hidden rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-line)]">
                     <div className="grid grid-cols-2 gap-px sm:grid-cols-4">
                         <MetricCell label="Estimated" value={money(totalEstimated)} />
@@ -185,6 +217,55 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
                                     <Banknote className="mr-1.5 size-4" />Record Payment
                                 </Button>
                             )}
+                        </div>
+                    )}
+                    {/* Transactions live INSIDE the money block, right under the pay
+                        buttons — newest first, each with a kebab (Review / Email receipt
+                        / View in Stripe). No separate "Payments" section (owner). */}
+                    {sortedJobPayments.length > 0 && (
+                        <div className="mt-px space-y-2 bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-3">
+                            {sortedJobPayments.map(payment => (
+                                <div
+                                    key={payment.id}
+                                    className="flex items-center gap-2.5 rounded-md bg-[rgba(25,25,25,0.04)] px-3 py-2.5"
+                                >
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-sm font-medium">{paymentMethodLabel(payment.payment_method)}</p>
+                                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--blanc-ink-2)]">
+                                            {payment.processed_at && <span>{paymentDate(payment.processed_at)}</span>}
+                                            {payment.processed_at && payment.reference_number && <span aria-hidden="true">·</span>}
+                                            {payment.reference_number && <span>Ref {payment.reference_number}</span>}
+                                        </div>
+                                    </div>
+                                    <span className="font-mono text-sm font-semibold">{money(payment.amount)}</span>
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <button
+                                                type="button"
+                                                className="flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--blanc-ink-3)] transition-colors hover:bg-[rgba(25,25,25,0.06)] hover:text-[var(--blanc-ink-1)]"
+                                                title="Transaction actions"
+                                            >
+                                                <MoreVertical className="size-4" />
+                                            </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end" className="w-48">
+                                            <DropdownMenuItem onSelect={() => setReceiptPayment(payment)}>
+                                                <Receipt className="size-4" />Review
+                                            </DropdownMenuItem>
+                                            {contactEmail && (
+                                                <DropdownMenuItem onSelect={() => emailReceipt(payment)}>
+                                                    <Mail className="size-4" />Email receipt
+                                                </DropdownMenuItem>
+                                            )}
+                                            {isStripePayment(payment) && (
+                                                <DropdownMenuItem onSelect={() => viewInStripe(payment)}>
+                                                    <ExternalLink className="size-4" />View in Stripe
+                                                </DropdownMenuItem>
+                                            )}
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>
@@ -246,17 +327,12 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
                         )}
                     </div>
                     {estimates.length === 0 && !loading ? (
-                        <div className="px-4 py-8">
-                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(25,25,25,0.03)] px-4 py-6 text-center">
-                                <FileText className="mx-auto size-8 text-[var(--blanc-ink-3)]" />
-                                <p className="mt-3 text-sm font-medium">No estimate yet</p>
-                                <p className="mx-auto mt-1 max-w-md text-sm text-[var(--blanc-ink-2)]">
-                                    Start with one custom item or Summary. The estimate is saved only after useful content is added.
-                                </p>
-                                <Button className="mt-4" size="sm" onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}>
-                                    <Plus className="mr-1 size-4" />Create estimate
-                                </Button>
-                            </div>
+                        <div className="flex items-center gap-3 px-4 py-4">
+                            <FileText className="size-5 shrink-0 text-[var(--blanc-ink-3)]" />
+                            <p className="min-w-0 flex-1 text-sm text-[var(--blanc-ink-2)]">No estimate yet.</p>
+                            <Button size="sm" onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}>
+                                <Plus className="mr-1 size-4" />Create
+                            </Button>
                         </div>
                     ) : (
                         <div className="divide-y">
@@ -300,7 +376,7 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
                 <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
                     <div className="flex items-start justify-between gap-3 border-b border-[var(--blanc-line)] px-4 py-3">
                         <div>
-                            <h3 className="text-sm font-semibold">Invoices & payments</h3>
+                            <h3 className="text-sm font-semibold">Invoices</h3>
                             <p className="mt-0.5 text-xs text-[var(--blanc-ink-2)]">Billing documents created after approval.</p>
                         </div>
                         {invoices.length > 0 && (
@@ -310,17 +386,12 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
                         )}
                     </div>
                     {invoices.length === 0 && !loading ? (
-                        <div className="px-4 py-8">
-                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(25,25,25,0.03)] px-4 py-6 text-center">
-                                <Receipt className="mx-auto size-8 text-[var(--blanc-ink-3)]" />
-                                <p className="mt-3 text-sm font-medium">No invoices yet</p>
-                                <p className="mx-auto mt-1 max-w-md text-sm text-[var(--blanc-ink-2)]">
-                                    Create an invoice once the work is ready to bill, or convert an approved estimate.
-                                </p>
-                                <Button className="mt-4" size="sm" onClick={() => setShowInvoiceEditor(true)}>
-                                    <Plus className="mr-1 size-4" />Create invoice
-                                </Button>
-                            </div>
+                        <div className="flex items-center gap-3 px-4 py-4">
+                            <Receipt className="size-5 shrink-0 text-[var(--blanc-ink-3)]" />
+                            <p className="min-w-0 flex-1 text-sm text-[var(--blanc-ink-2)]">No invoices yet.</p>
+                            <Button size="sm" onClick={() => setShowInvoiceEditor(true)}>
+                                <Plus className="mr-1 size-4" />Create
+                            </Button>
                         </div>
                     ) : (
                         <div className="divide-y">
@@ -352,31 +423,7 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
                             ))}
                         </div>
                     )}
-                    {jobLedgerPayments.length > 0 && (
-                        <div className="space-y-3 px-4 py-4">
-                            <p className="blanc-eyebrow">Payments</p>
-                            <div className="space-y-2">
-                                {jobLedgerPayments.map(payment => (
-                                    <div
-                                        key={payment.id}
-                                        className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-md bg-[rgba(25,25,25,0.04)] px-3 py-3"
-                                    >
-                                        <div className="min-w-0">
-                                            <p className="text-sm font-medium">{paymentMethodLabel(payment.payment_method)}</p>
-                                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[var(--blanc-ink-2)]">
-                                                {payment.processed_at && <span>{paymentDate(payment.processed_at)}</span>}
-                                                {payment.processed_at && payment.reference_number && <span aria-hidden="true">·</span>}
-                                                {payment.reference_number && <span>Ref {payment.reference_number}</span>}
-                                            </div>
-                                        </div>
-                                        <span className="font-mono text-sm font-semibold">{money(payment.amount)}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
                 </section>
-            </div>
 
             {/* Estimate editor dialog */}
             <EstimateEditorDialog
@@ -564,6 +611,53 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
                 outstanding={totalDue}
                 onSuccess={() => refresh()}
             />
+
+            {/* Transaction "Review" — read-only receipt slide-over (JOBPANEL-REWORK-001) */}
+            {receiptPayment && (
+                <FloatingDetailPanel open={!!receiptPayment} onClose={() => setReceiptPayment(null)}>
+                    <div className="space-y-6 p-6">
+                        <div>
+                            <p className="blanc-eyebrow">Payment receipt</p>
+                            <p className="mt-1 font-mono text-3xl font-semibold text-[var(--blanc-ink-1)]">{money(receiptPayment.amount)}</p>
+                            <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{paymentMethodLabel(receiptPayment.payment_method)}</p>
+                        </div>
+                        <div className="space-y-3">
+                            {receiptPayment.processed_at && (
+                                <div className="flex items-baseline justify-between gap-4">
+                                    <span className="blanc-eyebrow">Date</span>
+                                    <span className="text-sm text-[var(--blanc-ink-1)]">{paymentDate(receiptPayment.processed_at)}</span>
+                                </div>
+                            )}
+                            {receiptPayment.reference_number && (
+                                <div className="flex items-baseline justify-between gap-4">
+                                    <span className="blanc-eyebrow">Reference</span>
+                                    <span className="font-mono text-sm text-[var(--blanc-ink-1)]">{receiptPayment.reference_number}</span>
+                                </div>
+                            )}
+                            {receiptPayment.memo && (
+                                <div className="flex items-baseline justify-between gap-4">
+                                    <span className="blanc-eyebrow">Memo</span>
+                                    <span className="max-w-[60%] text-right text-sm text-[var(--blanc-ink-1)]">{receiptPayment.memo}</span>
+                                </div>
+                            )}
+                        </div>
+                        {(contactEmail || isStripePayment(receiptPayment)) && (
+                            <div className="flex flex-wrap gap-2">
+                                {contactEmail && (
+                                    <Button variant="outline" size="sm" onClick={() => emailReceipt(receiptPayment)}>
+                                        <Mail className="mr-1.5 size-4" />Email receipt
+                                    </Button>
+                                )}
+                                {isStripePayment(receiptPayment) && (
+                                    <Button variant="outline" size="sm" onClick={() => viewInStripe(receiptPayment)}>
+                                        <ExternalLink className="mr-1.5 size-4" />View in Stripe
+                                    </Button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </FloatingDetailPanel>
+            )}
         </div>
     );
 }

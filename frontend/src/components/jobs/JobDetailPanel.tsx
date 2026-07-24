@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import type { LocalJob, JobTag } from '../../services/jobsApi';
 import { JobDetailHeader } from './JobDetailHeader';
 import { JobOpsSection } from './JobStatusTags';
@@ -48,17 +47,12 @@ export function JobDetailPanel({
     onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
     navigate, allTags, onTagsChange, onJobUpdated, onNotified, onCopy,
 }: JobDetailPanelProps) {
-    const [rightTab, setRightTab] = useState<'notes' | 'financials'>('notes');
     const [cancelOpen, setCancelOpen] = useState(false);
     const [cancelReason, setCancelReason] = useState('');
     const [cancelSubmitting, setCancelSubmitting] = useState(false);
     const { hasAnyPermission } = useAuthz();
     // Finance surface renders only with finance visibility (PF007)
     const canViewFinancials = hasAnyPermission('financial_data.view', 'estimates.view', 'invoices.view');
-
-    useEffect(() => {
-        setRightTab('notes');
-    }, [job.id]);
 
     const requestCancel = (_id?: number) => {
         setCancelReason('');
@@ -117,15 +111,12 @@ export function JobDetailPanel({
                             <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
                             <JobMetadataSection job={job} />
                             {canViewFinancials && (
-                                <>
-                                    <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
-                                    <JobFinancialsTab
-                                        jobId={job.id}
-                                        leadSerialId={job.lead_serial_id}
-                                        contactEmail={contactInfo?.email}
-                                        hasContact={Boolean(contactInfo?.id || job.contact_id)}
-                                    />
-                                </>
+                                <JobFinancialsTab
+                                    jobId={job.id}
+                                    leadSerialId={job.lead_serial_id}
+                                    contactEmail={contactInfo?.email}
+                                    hasContact={Boolean(contactInfo?.id || job.contact_id)}
+                                />
                             )}
                         </div>
                     </>
@@ -137,33 +128,22 @@ export function JobDetailPanel({
                 className="w-full md:w-1/2 flex-col overflow-y-auto hidden md:flex"
                 style={{ borderLeft: '1px solid var(--blanc-line)' }}
             >
-                <Tabs value={rightTab} onValueChange={v => setRightTab(v as 'notes' | 'financials')} className="flex flex-col h-full">
-                    <div className="shrink-0" style={{ padding: '8px 16px 0' }}>
-                        <TabsList className="h-9">
-                            <TabsTrigger value="notes" className="text-xs">Details</TabsTrigger>
-                            {canViewFinancials && <TabsTrigger value="financials" className="text-xs">Finance</TabsTrigger>}
-                        </TabsList>
-                    </div>
-
-                    <TabsContent value="notes" className="flex-1 flex flex-col mt-0 min-h-0 data-[state=inactive]:hidden">
-                        <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                            <JobDescription job={job} />
-                            <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
-                            <JobMetadataSection job={job} />
-                        </div>
-                    </TabsContent>
-
+                {/* JOBPANEL-REWORK-001: the Details/Finance tabs are gone. Details
+                    content and Finance now share ONE scroller — Description, notes,
+                    metadata, then the Finance section (its own heading divides it). */}
+                <div className="flex-1 flex flex-col min-h-0 p-4 space-y-5">
+                    <JobDescription job={job} />
+                    <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
+                    <JobMetadataSection job={job} />
                     {canViewFinancials && (
-                        <TabsContent value="financials" className="flex-1 flex flex-col mt-0 data-[state=inactive]:hidden">
-                            <JobFinancialsTab
-                                jobId={job.id}
-                                leadSerialId={job.lead_serial_id}
-                                contactEmail={contactInfo?.email}
-                                hasContact={Boolean(contactInfo?.id || job.contact_id)}
-                            />
-                        </TabsContent>
+                        <JobFinancialsTab
+                            jobId={job.id}
+                            leadSerialId={job.lead_serial_id}
+                            contactEmail={contactInfo?.email}
+                            hasContact={Boolean(contactInfo?.id || job.contact_id)}
+                        />
                     )}
-                </Tabs>
+                </div>
             </div>
 
             <Dialog open={cancelOpen} onOpenChange={closeCancelDialog}>

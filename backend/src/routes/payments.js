@@ -215,6 +215,51 @@ router.post('/:id/void', requirePermission('payments.refund'), async (req, res) 
 // Receipts
 // =============================================================================
 
+// GET /api/payments/:id/receipt/view — Resolve a hosted or recorded receipt.
+router.get('/:id/receipt/view', requirePermission('payments.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const result = await paymentsService.getTransactionReceiptView(companyId, req.params.id);
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Payments] GET /:id/receipt/view error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/payments/:id/receipt/email — Deliver this payment's receipt.
+router.post(
+    '/:id/receipt/email',
+    requirePermission(
+        'payments.collect_online',
+        'payments.collect_offline',
+        'payments.collect_keyed',
+        'payments.collect_terminal'
+    ),
+    async (req, res) => {
+        try {
+            const { actorFromRequest } = require('../services/documentSendNoteService');
+            const companyId = req.companyFilter?.company_id;
+            const actor = {
+                ...actorFromRequest(req),
+                email: req.user?.email || null,
+            };
+            const result = await paymentsService.emailTransactionReceipt(
+                companyId,
+                req.params.id,
+                req.body?.email,
+                actor
+            );
+            res.json({ ok: true, data: result });
+        } catch (err) {
+            console.error('[Payments] POST /:id/receipt/email error:', err.message);
+            const status = err.httpStatus || 500;
+            res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+        }
+    }
+);
+
 // GET /api/payments/:id/receipt — Get receipt
 router.get('/:id/receipt', requirePermission('payments.view'), async (req, res) => {
     try {

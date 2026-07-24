@@ -179,6 +179,10 @@ async function retrievePaymentMethod(accountId, paymentMethodId) {
     return call('GET', `/payment_methods/${encodeURIComponent(paymentMethodId)}`, undefined, { stripeAccount: accountId });
 }
 
+async function retrieveCharge(accountId, chargeId) {
+    return call('GET', `/charges/${encodeURIComponent(chargeId)}`, undefined, { stripeAccount: accountId });
+}
+
 /**
  * Ask Stripe to email its native receipt for an existing direct charge.
  * Stripe sends the receipt when receipt_email is updated in live mode; test mode
@@ -270,6 +274,7 @@ module.exports = {
     createCardPaymentIntent,
     retrievePaymentIntent,
     retrievePaymentMethod,
+    retrieveCharge,
     updateChargeReceiptEmail,
     createConnectionToken,
     createTerminalLocation,

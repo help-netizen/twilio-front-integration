@@ -6,6 +6,48 @@
  */
 const db = require('./connection');
 
+const STRIPE_TRANSACTION_JOINS = `
+        LEFT JOIN LATERAL (
+            SELECT s.id, s.contact_id, s.invoice_id, s.job_id,
+                   s.stripe_payment_intent_id, s.stripe_charge_id,
+                   s.stripe_account_id
+            FROM stripe_payment_sessions s
+            WHERE s.company_id = t.company_id
+              AND (
+                    s.stripe_payment_intent_id = t.external_id
+                 OR s.stripe_charge_id = t.external_id
+                 OR s.stripe_checkout_session_id = t.external_id
+                 OR s.stripe_payment_intent_id = NULLIF(t.metadata->>'payment_intent_id', '')
+                 OR s.stripe_checkout_session_id = NULLIF(t.metadata->>'checkout_session_id', '')
+              )
+            ORDER BY s.created_at DESC
+            LIMIT 1
+        ) stripe_session ON true
+        LEFT JOIN stripe_connected_accounts stripe_account
+          ON stripe_account.company_id = t.company_id
+`;
+
+const STRIPE_TRANSACTION_COLUMNS = `
+        CASE
+            WHEN t.external_source = 'stripe' AND t.payment_method = 'credit_card'
+            THEN COALESCE(
+                stripe_session.stripe_charge_id,
+                stripe_session.stripe_payment_intent_id,
+                NULLIF(t.metadata->>'payment_intent_id', ''),
+                CASE
+                    WHEN LEFT(t.external_id, 3) IN ('ch_', 'pi_') THEN t.external_id
+                    ELSE NULL
+                END
+            )
+            ELSE NULL
+        END AS stripe_payment_id,
+        CASE
+            WHEN t.external_source = 'stripe' AND t.payment_method = 'credit_card'
+            THEN stripe_account.livemode
+            ELSE NULL
+        END AS stripe_livemode
+`;
+
 // =============================================================================
 // Transaction CRUD
 // =============================================================================
@@ -120,8 +162,9 @@ async function listTransactions(companyId, filters = {}) {
     params.push(offset);
 
     const sql = `
-        SELECT t.*, COUNT(*) OVER() AS _total
+        SELECT t.*, ${STRIPE_TRANSACTION_COLUMNS}, COUNT(*) OVER() AS _total
         FROM payment_transactions t
+        ${STRIPE_TRANSACTION_JOINS}
         WHERE ${where}
         ORDER BY t.created_at DESC
         LIMIT $${limitIdx} OFFSET $${offsetIdx}
@@ -140,8 +183,51 @@ async function listTransactions(companyId, filters = {}) {
  */
 async function getTransactionById(companyId, id) {
     const { rows } = await db.query(
-        `SELECT * FROM payment_transactions WHERE id = $1 AND company_id = $2`,
-        [id, companyId]
+        `SELECT t.*, ${STRIPE_TRANSACTION_COLUMNS}
+         FROM payment_transactions t
+         ${STRIPE_TRANSACTION_JOINS}
+         WHERE t.company_id = $1 AND t.id = $2`,
+        [companyId, id]
+    );
+    return rows[0] || null;
+}
+
+/**
+ * Resolve a receipt action from the owned ledger row through its Stripe session
+ * and customer/job fallbacks. The transaction company predicate is the security
+ * boundary; every joined tenant table is pinned back to that owned row.
+ */
+async function getTransactionReceiptContext(companyId, id) {
+    const { rows } = await db.query(
+        `SELECT t.*,
+                stripe_session.id AS stripe_session_id,
+                stripe_session.stripe_payment_intent_id,
+                stripe_session.stripe_charge_id,
+                COALESCE(stripe_session.stripe_account_id, stripe_account.stripe_account_id)
+                    AS stripe_account_id,
+                stripe_account.livemode AS stripe_livemode,
+                COALESCE(t.contact_id, stripe_session.contact_id, i.contact_id, j.contact_id)
+                    AS receipt_contact_id,
+                c.email AS receipt_contact_email,
+                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, ''))
+                    AS customer_email,
+                COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, ''))
+                    AS customer_name,
+                COALESCE(t.job_id, stripe_session.job_id, i.job_id)
+                    AS receipt_job_id
+         FROM payment_transactions t
+         ${STRIPE_TRANSACTION_JOINS}
+         LEFT JOIN invoices i
+           ON i.id = COALESCE(t.invoice_id, stripe_session.invoice_id)
+          AND i.company_id = t.company_id
+         LEFT JOIN jobs j
+           ON j.id = COALESCE(t.job_id, stripe_session.job_id, i.job_id)
+          AND j.company_id = t.company_id
+         LEFT JOIN contacts c
+           ON c.id = COALESCE(t.contact_id, stripe_session.contact_id, i.contact_id, j.contact_id)
+          AND c.company_id = t.company_id
+         WHERE t.company_id = $1 AND t.id = $2`,
+        [companyId, id]
     );
     return rows[0] || null;
 }
@@ -514,6 +600,7 @@ async function getTransactionSummary(companyId, filters = {}) {
 module.exports = {
     listTransactions,
     getTransactionById,
+    getTransactionReceiptContext,
     createTransaction,
     findByExternalSourceId,
     updateTransactionStatus,

@@ -211,6 +211,38 @@ export async function sendReceipt(transactionId: number, data: SendReceiptData):
     });
 }
 
+// JOBPANEL-REWORK-001 — transaction kebab (Review / Email receipt / View in Stripe).
+
+export interface ReceiptView {
+    receipt_type: 'recorded' | 'stripe';
+    /** Stripe hosted receipt URL for card charges; null for recorded cash/check. */
+    receipt_url: string | null;
+    receipt: {
+        transaction_id: number;
+        amount: string;
+        currency: string;
+        payment_method: string;
+        processed_at: string | null;
+        created_at: string;
+        reference_number: string | null;
+        customer_name: string | null;
+        job_id: number | null;
+    };
+}
+
+/** Resolve a transaction's receipt — Stripe's hosted receipt for card charges, a recorded view model otherwise. */
+export async function fetchReceiptView(transactionId: number): Promise<ReceiptView> {
+    return paymentsRequest<ReceiptView>(`${PAYMENTS_BASE}/${transactionId}/receipt/view`);
+}
+
+/** Email a transaction's receipt to the customer (backend falls back to the on-file email when omitted). */
+export async function emailTransactionReceipt(transactionId: number, email?: string): Promise<{ receipt_url: string | null }> {
+    return paymentsRequest<{ receipt_url: string | null }>(`${PAYMENTS_BASE}/${transactionId}/receipt/email`, {
+        method: 'POST',
+        body: JSON.stringify(email ? { email } : {}),
+    });
+}
+
 export async function fetchTransactionsForInvoice(invoiceId: number): Promise<PaymentTransaction[]> {
     return paymentsRequest<PaymentTransaction[]>(`${PAYMENTS_BASE}/invoice/${invoiceId}`);
 }

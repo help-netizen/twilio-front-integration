@@ -7,10 +7,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Plus, MoreVertical, Pencil, Trash2, X } from 'lucide-react';
 import { Button } from '../ui/button';
+import { BottomSheet } from '../ui/BottomSheet';
 import { NoteAttachmentInput, type AttachmentState } from './NoteAttachmentInput';
 import { NoteAttachmentDisplay } from './NoteAttachmentDisplay';
 import { authedFetch } from '../../services/apiClient';
 import { useAuthz } from '../../hooks/useAuthz';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { TaskStack } from '../tasks/TaskStack';
 import { prepareNotesForDisplay } from './notesDisplay';
 
@@ -87,6 +89,10 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const [composeAttach, setComposeAttach] = useState<AttachmentState>({ ids: [], blocked: false });
     const [composeAttachKey, setComposeAttachKey] = useState(0);
     const [expanded, setExpanded] = useState(false);
+    // OB-35: on phones the inline composer button is a tiny tap target and the
+    // keyboard covers it — mobile opens a dedicated bottom-sheet composer instead.
+    const isMobile = useIsMobile();
+    const [sheetOpen, setSheetOpen] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -145,6 +151,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
             setComposeAttach({ ids: [], blocked: false });
             setComposeAttachKey(k => k + 1); // remount the input → clears its chips
             setExpanded(false);
+            setSheetOpen(false);
             fetchNotes();
             onNoteAdded?.();
         } catch (err) {
@@ -155,6 +162,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     }, [text, composeAttach, basePath, fetchNotes, onNoteAdded]);
 
     const expand = () => {
+        if (isMobile) { setSheetOpen(true); return; }
         setExpanded(true);
         setTimeout(() => textareaRef.current?.focus(), 0);
     };
@@ -303,41 +311,45 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                 </div>
             ) : (
                 <div className="flex items-center gap-2">
+                    {/* NOTE-TASK-BAR-AFFORDANCE-001 variant C: the frequent primary action
+                        (Add note) gets a soft violet fill so it stops disappearing; Add task
+                        stays a calm neutral chip. Filled affordances read as tappable without a
+                        loud border — the old transparent + faint hairline vanished on the panel. */}
                     <button
                         onClick={expand}
-                        className="flex-1 flex items-center gap-2 transition-opacity hover:opacity-70"
+                        className="flex-1 flex items-center gap-2 transition-opacity hover:opacity-80"
                         style={{
-                            height: 34,
+                            height: 36,
                             borderRadius: 10,
-                            border: '1px solid var(--blanc-line)',
-                            background: 'transparent',
+                            border: 'none',
+                            background: 'var(--blanc-accent-soft)',
                             paddingLeft: 12,
                             paddingRight: 12,
                             cursor: 'text',
                             textAlign: 'left',
                         }}
                     >
-                        <Plus className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                        <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Add note…</span>
+                        <Plus className="size-4 shrink-0" style={{ color: 'var(--blanc-accent)' }} />
+                        <span className="text-sm font-medium" style={{ color: 'var(--blanc-accent)' }}>Add note…</span>
                     </button>
                     {canCreateTask && (
                         <button
                             onClick={() => setTaskCreateOpen(true)}
-                            className="flex items-center gap-1.5 shrink-0 transition-opacity hover:opacity-70"
+                            className="flex items-center gap-1.5 shrink-0 transition-opacity hover:opacity-80"
                             style={{
-                                height: 34,
+                                height: 36,
                                 borderRadius: 10,
-                                border: '1px solid var(--blanc-line)',
-                                background: 'transparent',
+                                border: 'none',
+                                background: 'var(--blanc-field)',
                                 paddingLeft: 12,
                                 paddingRight: 12,
                                 cursor: 'pointer',
-                                color: 'var(--blanc-ink-2)',
+                                color: 'var(--blanc-ink-1)',
                             }}
                             title="Add task"
                         >
-                            <Plus className="size-3.5 shrink-0" />
-                            <span className="text-sm">Add task</span>
+                            <Plus className="size-4 shrink-0" style={{ color: 'var(--blanc-ink-2)' }} />
+                            <span className="text-sm font-medium">Add task</span>
                         </button>
                     )}
                 </div>
@@ -508,6 +520,39 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     </div>
                 );
             })}
+
+            {/* OB-35: mobile note composer — a bottom-sheet with a roomy textarea and
+                big attach + Add note controls pinned to the footer, above the keyboard
+                (BottomSheet owns the keyboard-safe viewport). Desktop keeps the inline
+                composer above. */}
+            <BottomSheet
+                open={isMobile && sheetOpen}
+                onClose={() => setSheetOpen(false)}
+                size="auto"
+                title="Add note"
+                footer={
+                    <div className="flex items-center gap-3">
+                        <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} compact />
+                        <Button className="h-12 flex-1 text-base" onClick={handleSubmit} disabled={!canSubmit}>
+                            <Plus className="size-5 mr-1.5" /> Add note
+                        </Button>
+                    </div>
+                }
+            >
+                <textarea
+                    className="w-full resize-none bg-transparent text-base leading-6 outline-none"
+                    style={{
+                        border: '1px solid var(--blanc-line)',
+                        borderRadius: 12,
+                        padding: '12px 14px',
+                        minHeight: 140,
+                        color: 'var(--blanc-ink-1)',
+                    }}
+                    placeholder="Write a note..."
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                />
+            </BottomSheet>
         </div>
     );
 }

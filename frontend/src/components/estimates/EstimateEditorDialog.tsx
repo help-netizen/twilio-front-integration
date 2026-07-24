@@ -363,19 +363,21 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                             className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
                                                         />
                                                     </div>
-                                                    <label className="flex items-center gap-2 pt-4 text-xs cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
-                                                        <Checkbox
-                                                            checked={item.taxable}
-                                                            onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
-                                                        />
-                                                        Taxable
-                                                    </label>
+                                                    {/* Total price rides up next to the fields (where Taxable used to sit);
+                                                        Taxable drops to its own line below via basis-full. */}
                                                     <div className="ml-auto flex items-center gap-1 pt-4">
                                                         <p className="font-mono text-sm font-semibold text-right whitespace-nowrap" style={{ color: 'var(--blanc-ink-1)' }}>{money(amount(item))}</p>
                                                         <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
                                                             <Trash2 className="size-4" />
                                                         </Button>
                                                     </div>
+                                                    <label className="basis-full flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
+                                                        <Checkbox
+                                                            checked={item.taxable}
+                                                            onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
+                                                        />
+                                                        Taxable
+                                                    </label>
                                                 </div>
                                             </div>
                                         ))}
