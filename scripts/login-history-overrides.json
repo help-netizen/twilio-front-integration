@@ -1,4 +1,28 @@
 {
+  "6c10055": {
+    "tag": "Fix",
+    "text": "Fixed the message timeline scrolling past the reply box on phones"
+  },
+  "e4104bb": {
+    "tag": "Fix",
+    "text": "Estimate & invoice preview now shows your logo and company details from your profile"
+  },
+  "4dff8dc": {
+    "tag": "Feature",
+    "text": "ChatGPT connector can now create and edit records and email or text documents to customers — only after you turn it on"
+  },
+  "c6d00b4": {
+    "hide": true
+  },
+  "07da027": {
+    "hide": true
+  },
+  "b6d9805": {
+    "hide": true
+  },
+  "3689024": {
+    "hide": true
+  },
   "49339d4": {
     "tag": "Feature",
     "text": "ChatGPT connector — ask about your jobs, leads, calls and finances; with your approval it can also create and edit records"
