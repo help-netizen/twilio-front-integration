@@ -1,4 +1,21 @@
 {
+  "1e02264": {
+    "tag": "Feature",
+    "text": "Avatars — give each teammate a personal ChatGPT copy that works in Albusto with their own access, never more"
+  },
+  "0be1875": { "hide": true },
+  "e3af485": { "hide": true },
+  "bc3fe81": { "hide": true },
+  "03de707": { "hide": true },
+  "71dd077": { "hide": true },
+  "520d9bd": { "hide": true },
+  "4d47ae0": { "hide": true },
+  "4bea552": { "hide": true },
+  "6f32353": {
+    "tag": "Polish",
+    "text": "Marketplace apps show a logo (or their initial) on every card"
+  },
+  "630bc24": { "hide": true },
   "6c10055": {
     "tag": "Fix",
     "text": "Fixed the message timeline scrolling past the reply box on phones"
