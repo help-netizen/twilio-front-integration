@@ -267,6 +267,7 @@ export async function removeRateMeDomain(): Promise<void> {
 
 export interface ChatgptMcpWriteSettings {
     writes_enabled: boolean;
+    sends_enabled: boolean;
     grant_version: number;
 }
 
@@ -281,6 +282,13 @@ export async function fetchChatgptMcpWriteSettings(): Promise<ChatgptMcpWriteSet
 export async function setChatgptMcpWrites(enabled: boolean): Promise<ChatgptMcpWriteSettings> {
     return request<ChatgptMcpWriteSettings>(
         `${API_BASE}/apps/chatgpt-crm-mcp/writes/${enabled ? 'enable' : 'disable'}`,
+        { method: 'POST', body: JSON.stringify({}) }
+    );
+}
+
+export async function setChatgptMcpSends(enabled: boolean): Promise<ChatgptMcpWriteSettings> {
+    return request<ChatgptMcpWriteSettings>(
+        `${API_BASE}/apps/chatgpt-crm-mcp/sends/${enabled ? 'enable' : 'disable'}`,
         { method: 'POST', body: JSON.stringify({}) }
     );
 }

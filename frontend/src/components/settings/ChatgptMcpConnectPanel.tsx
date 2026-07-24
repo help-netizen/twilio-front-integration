@@ -18,10 +18,12 @@ import { Switch } from '../ui/switch';
 import {
     fetchChatgptMcpWriteSettings,
     setChatgptMcpWrites,
+    setChatgptMcpSends,
     type MarketplaceApp,
 } from '../../services/marketplaceApi';
 
 const WRITE_SCOPE_VALUE = 'albusto.mcp.read albusto.mcp.write';
+const SEND_SCOPE_VALUE = 'albusto.mcp.read albusto.mcp.write albusto.mcp.send';
 
 const MCP_SERVER_URL = 'https://api.albusto.com/mcp/chatgpt';
 const OAUTH_AUTH_URL = 'https://auth.albusto.com/realms/crm-prod/protocol/openid-connect/auth';
@@ -95,6 +97,7 @@ export function ChatgptMcpConnectPanel({ open, onOpenChange, app, onDisconnect }
         : [];
     const queryClient = useQueryClient();
     const [confirmWritesOpen, setConfirmWritesOpen] = useState(false);
+    const [confirmSendsOpen, setConfirmSendsOpen] = useState(false);
 
     const writeSettingsQuery = useQuery({
         queryKey: ['chatgpt-mcp-write-settings'],
@@ -104,6 +107,7 @@ export function ChatgptMcpConnectPanel({ open, onOpenChange, app, onDisconnect }
         retry: false,
     });
     const writesEnabled = writeSettingsQuery.data?.settings.writes_enabled === true;
+    const sendsEnabled = writeSettingsQuery.data?.settings.sends_enabled === true;
 
     const writesMutation = useMutation({
         mutationFn: setChatgptMcpWrites,
@@ -113,6 +117,16 @@ export function ChatgptMcpConnectPanel({ open, onOpenChange, app, onDisconnect }
             toast.success(enabled ? 'Write access enabled' : 'Write access disabled');
         },
         onError: (err: Error) => toast.error(err.message || 'Failed to update write access'),
+    });
+
+    const sendsMutation = useMutation({
+        mutationFn: setChatgptMcpSends,
+        onSuccess: (_data, enabled) => {
+            queryClient.invalidateQueries({ queryKey: ['chatgpt-mcp-write-settings'] });
+            setConfirmSendsOpen(false);
+            toast.success(enabled ? 'Customer sends enabled' : 'Customer sends disabled');
+        },
+        onError: (err: Error) => toast.error(err.message || 'Failed to update send access'),
     });
 
     return (
@@ -246,13 +260,53 @@ export function ChatgptMcpConnectPanel({ open, onOpenChange, app, onDisconnect }
                                         Write-access status is unavailable right now.
                                     </p>
                                 )}
-                                {writesEnabled && (
+                                {writesEnabled && !sendsEnabled && (
                                     <div className="space-y-2">
                                         <p className="text-sm text-[var(--blanc-ink-2)]">
                                             To activate writes, update the connector&apos;s <strong>Scope</strong> in
                                             ChatGPT and re-connect:
                                         </p>
                                         <CopyRow label="Scope" value={WRITE_SCOPE_VALUE} />
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
+                        {connected && (
+                            <section className="space-y-3.5">
+                                <div className="blanc-eyebrow">Customer sends</div>
+                                <div className="flex items-start justify-between gap-5 rounded-xl bg-[var(--blanc-field)] px-4 py-4">
+                                    <div className="min-w-0">
+                                        <div className="text-sm font-semibold text-[var(--blanc-ink-1)]">
+                                            Allow ChatGPT to send to customers
+                                        </div>
+                                        <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">
+                                            Email or text estimates and invoices to the customer on a job. ChatGPT can
+                                            only send to the contact already on the record — never an address it picks —
+                                            and confirms each send first. Turning this off stops sends instantly.
+                                        </p>
+                                    </div>
+                                    {writeSettingsQuery.isLoading ? (
+                                        <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-[var(--blanc-ink-3)]" />
+                                    ) : (
+                                        <Switch
+                                            checked={sendsEnabled}
+                                            disabled={writeSettingsQuery.isError || sendsMutation.isPending}
+                                            aria-label="Allow ChatGPT to send to customers"
+                                            onCheckedChange={value => {
+                                                if (value) setConfirmSendsOpen(true);
+                                                else sendsMutation.mutate(false);
+                                            }}
+                                        />
+                                    )}
+                                </div>
+                                {sendsEnabled && (
+                                    <div className="space-y-2">
+                                        <p className="text-sm text-[var(--blanc-ink-2)]">
+                                            To activate sends, update the connector&apos;s <strong>Scope</strong> in
+                                            ChatGPT and re-connect:
+                                        </p>
+                                        <CopyRow label="Scope" value={SEND_SCOPE_VALUE} />
                                     </div>
                                 )}
                             </section>
@@ -296,6 +350,30 @@ export function ChatgptMcpConnectPanel({ open, onOpenChange, app, onDisconnect }
                             disabled={writesMutation.isPending}
                         >
                             {writesMutation.isPending ? 'Enabling…' : 'Enable writes'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={confirmSendsOpen} onOpenChange={setConfirmSendsOpen}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Allow ChatGPT to send to customers?</DialogTitle>
+                        <DialogDescription>
+                            The AI dispatcher will be able to email or text estimates and invoices to the customer
+                            already linked to a job — never an address it chooses. ChatGPT confirms each send first,
+                            and every send is logged. You can turn this off at any time — sends stop immediately.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setConfirmSendsOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={() => sendsMutation.mutate(true)}
+                            disabled={sendsMutation.isPending}
+                        >
+                            {sendsMutation.isPending ? 'Enabling…' : 'Enable sends'}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

@@ -15,21 +15,32 @@ import { Button } from '../components/ui/button';
 import { ChatgptMcpConnectPanel } from '../components/settings/ChatgptMcpConnectPanel';
 import type { MarketplaceApp } from '../services/marketplaceApi';
 
-/* ── Fetch stub: in-memory write-consent state, no backend ── */
+/* ── Fetch stub: in-memory write/send-consent state, no backend ── */
 let writesEnabled = false;
+let sendsEnabled = false;
+const grantVersion = () => (sendsEnabled ? 4 : writesEnabled ? 3 : 2);
+const settingsBody = () => JSON.stringify({
+    success: true,
+    settings: { writes_enabled: writesEnabled, sends_enabled: sendsEnabled, grant_version: grantVersion() },
+});
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     if (url.includes('/api/marketplace/apps/chatgpt-crm-mcp/settings')) {
-        return new Response(
-            JSON.stringify({ success: true, settings: { writes_enabled: writesEnabled, grant_version: writesEnabled ? 3 : 2 } }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
+        return new Response(settingsBody(), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     if (url.includes('/api/marketplace/apps/chatgpt-crm-mcp/writes/')) {
         writesEnabled = url.endsWith('/enable');
+        if (!writesEnabled) sendsEnabled = false; // disabling writes cascades in the stub
         return new Response(
-            JSON.stringify({ success: true, enabled: writesEnabled, grant_version: writesEnabled ? 3 : 2 }),
+            JSON.stringify({ success: true, writes_enabled: writesEnabled, sends_enabled: sendsEnabled, grant_version: grantVersion() }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+    if (url.includes('/api/marketplace/apps/chatgpt-crm-mcp/sends/')) {
+        sendsEnabled = url.endsWith('/enable');
+        return new Response(
+            JSON.stringify({ success: true, writes_enabled: writesEnabled, sends_enabled: sendsEnabled, grant_version: grantVersion() }),
             { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
     }
