@@ -18,7 +18,8 @@ import { RateMeSettingsDialog } from './RateMeSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { MarketplaceBrowser } from '../components/settings/MarketplaceBrowser';
 import { InspectorSettingsPanel } from '../components/settings/InspectorSettingsPanel';
-import { ChatgptMcpConnectPanel } from '../components/settings/ChatgptMcpConnectPanel';
+import { AvatarsPanel } from '../components/settings/AvatarsPanel';
+import { useAuth } from '../auth/AuthProvider';
 import { INTEGRATION_TAB_COPY, integrationTabFromSearchParams } from './integrationSettingsTabs';
 
 function formatDate(dateStr: string | null | undefined) {
@@ -178,6 +179,7 @@ function MarketplaceDisconnectDialog({
 
 export function IntegrationsPage() {
     const navigate = useNavigate();
+    const { user, company } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
     const queryClient = useQueryClient();
     const activeTab = integrationTabFromSearchParams(searchParams);
@@ -491,15 +493,11 @@ export function IntegrationsPage() {
             <RelyLeadsSettingsDialog open={relySettingsOpen} onOpenChange={setRelySettingsOpen} />
             <RateMeSettingsDialog open={rateMeSettingsOpen} onOpenChange={setRateMeSettingsOpen} />
             <InspectorSettingsPanel open={inspectorSettingsOpen} onOpenChange={setInspectorSettingsOpen} />
-            <ChatgptMcpConnectPanel
+            <AvatarsPanel
                 open={chatgptMcpPanelOpen}
                 onOpenChange={setChatgptMcpPanelOpen}
-                app={apps.find(candidate => candidate.app_key === 'chatgpt-crm-mcp') ?? null}
-                onDisconnect={() => {
-                    setChatgptMcpPanelOpen(false);
-                    const target = apps.find(candidate => candidate.app_key === 'chatgpt-crm-mcp');
-                    if (target?.installation) setDisconnectTarget(target);
-                }}
+                myName={user?.name || 'You'}
+                companyName={company?.name || 'your company'}
             />
             <CreateDialog open={createOpen} onOpenChange={setCreateOpen} clientName={clientName} setClientName={setClientName} onSubmit={handleCreate} isPending={createMutation.isPending} />
             <SecretDialog open={secretModalOpen} onOpenChange={setSecretModalOpen} integration={newIntegration} />

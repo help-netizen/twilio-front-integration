@@ -69,6 +69,15 @@ export async function setMyAvatarSends(enabled: boolean): Promise<MyAvatar> {
     });
 }
 
+/**
+ * Pre-provision the caller's own avatar binding before opening the ChatGPT
+ * OAuth connect steps. Idempotent; 409 AVATARS_NOT_ENABLED if an admin has not
+ * enabled Avatars for the company.
+ */
+export async function connectMyAvatar(): Promise<MyAvatar> {
+    return request<MyAvatar>(`${API_BASE}/me/connect`, { method: 'POST', body: JSON.stringify({}) });
+}
+
 /** Self-revoke the caller's own avatar. */
 export async function disconnectMyAvatar(): Promise<void> {
     await request<{ success: true }>(`${API_BASE}/me/disconnect`, { method: 'POST' });

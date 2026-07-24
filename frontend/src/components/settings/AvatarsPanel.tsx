@@ -17,6 +17,7 @@ import {
 } from '../ui/dialog';
 import { ConnectAvatarWizard } from './ConnectAvatarWizard';
 import {
+    connectMyAvatar,
     disconnectMyAvatar,
     fetchAvatars,
     setMyAvatarSends,
@@ -116,6 +117,12 @@ export function AvatarsPanel({ open, onOpenChange, myName, companyName }: Avatar
         onSuccess: () => { invalidate(); toast.success('Avatar disconnected'); },
         onError: (e: Error) => toast.error(e.message || 'Failed to disconnect'),
     });
+    // Pre-provision the caller's own binding before the ChatGPT OAuth steps.
+    const connectMut = useMutation({
+        mutationFn: connectMyAvatar,
+        onSuccess: () => { invalidate(); setView('connect'); },
+        onError: (e: Error) => toast.error(e.message || 'Could not start the connection'),
+    });
 
     const title = view === 'wizard' ? 'New avatar' : view === 'connect' ? 'Connect in ChatGPT' : 'Avatars';
     const eyebrow = view === 'hub' ? 'Marketplace' : 'Connect your avatar';
@@ -153,7 +160,7 @@ export function AvatarsPanel({ open, onOpenChange, myName, companyName }: Avatar
                                 Settings → Integrations → Marketplace.
                             </div>
                         ) : view === 'wizard' ? (
-                            <ConnectAvatarWizard onCancel={() => setView('hub')} onContinue={() => setView('connect')} />
+                            <ConnectAvatarWizard onCancel={() => setView('hub')} onContinue={() => connectMut.mutate()} />
                         ) : view === 'connect' ? (
                             <div className="space-y-6">
                                 <ol className="space-y-4">
