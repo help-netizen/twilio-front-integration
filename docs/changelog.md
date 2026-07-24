@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-07-23 — CHATGPT-CRM-MCP-001 S3: отправка смет и инвойсов
+
+Добавлены `svc.send_estimate` и `svc.send_invoice`: строгие W-confirmation
+схемы без `recipient`, отдельный `albusto.mcp.send`, реальные
+`estimates.send`/`invoices.send` permission-гейты и exact AI grants. Получатель
+резолвится сервером только из company-owned Contact, привязанного к документу:
+primary email для email и primary phone для SMS; отсутствие адреса даёт
+`NO_RECIPIENT` без provider call. Канонные `sendEstimate`/`sendInvoice` теперь
+принимают live-recheck transaction client; public-link, status/event и
+argument-hash idempotency остаются в этом пути.
+
+Добавлен независимый v4 Sends-consent с tenant-admin-only
+`sends/enable|disable`; Writes не включает Sends, и отключение одного яруса не
+снимает другой. Инвентарь реестра — 33: 19 reads + 12 internal writes + 2
+sends, при этом send tools видны только с send-consent и scope. Добавлены
+unit/schema/auth, real-PG T-own/T-foreign/T-blast, byte-identical tenant B,
+recipient-injection, mailbox, no-recipient и replay/provider-once тесты.
+Frontend-тумблер Sends оставлен владельцу. **НЕ задеплоено.**
+
 ## 2026-07-23 — OB-10: SSE delivery + tenant isolation contract
 
 Добавлен `tests/realtimeSse.test.js`: реальная доставка SSE, byte-zero

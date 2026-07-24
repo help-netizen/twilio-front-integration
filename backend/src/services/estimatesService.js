@@ -511,11 +511,17 @@ function buildSmsBody(message, link) {
  * Coded errors carry { code, httpStatus } so routes/estimates.js maps them to
  * the SEND-DOC-001 §2.5 matrix; anything unexpected surfaces as 500.
  */
-async function sendEstimate(companyId, userId, id, { channel, recipient, message, userEmail, noteActor } = {}) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
+async function sendEstimate(
+    companyId,
+    userId,
+    id,
+    { channel, recipient, message, userEmail, noteActor } = {},
+    client = null
+) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
-    await assertHasItems(companyId, id);
+    await assertHasItems(companyId, id, client);
 
     const normalizedChannel = channel === 'text' ? 'sms' : channel;
     if (!['email', 'sms'].includes(normalizedChannel)) {
@@ -529,7 +535,7 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
     let noteRecipient = to;
 
     // Public page link is shared by both channels (idempotent — never re-mints).
-    const { url: link } = await ensurePublicLink(companyId, id);
+    const { url: link } = await ensurePublicLink(companyId, id, client);
 
     if (normalizedChannel === 'email') {
         // Pre-check: a mailbox that is missing / disconnected / reconnect_required
@@ -550,7 +556,7 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
             ? `Estimate ${number} from ${companyName}`
             : `Estimate ${number}`;
 
-        const { buffer } = await generatePdf(companyId, id);
+        const { buffer } = await generatePdf(companyId, id, client);
         const safeFile = String(number).replace(/[^a-z0-9_-]+/gi, '_');
 
         const emailService = require('./emailService');
@@ -601,14 +607,23 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
     }
 
     // Dispatch resolved → NOW flip status and record the send (never before).
-    await estimatesQueries.updateEstimate(id, companyId, {
+    const statusPatch = {
         status: 'sent',
         sent_at: new Date().toISOString(),
-    });
-    await estimatesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
-        channel: normalizedChannel,
-        recipient: to,
-    });
+    };
+    if (client) {
+        await estimatesQueries.updateEstimate(id, companyId, statusPatch, client);
+        await estimatesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
+            channel: normalizedChannel,
+            recipient: to,
+        }, client);
+    } else {
+        await estimatesQueries.updateEstimate(id, companyId, statusPatch);
+        await estimatesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
+            channel: normalizedChannel,
+            recipient: to,
+        });
+    }
 
     await recordDocumentSendNote({
         companyId,
@@ -620,7 +635,7 @@ async function sendEstimate(companyId, userId, id, { channel, recipient, message
         recipient: noteRecipient,
     });
 
-    return getEstimate(companyId, id);
+    return getEstimate(companyId, id, client);
 }
 
 async function approveEstimate(companyId, id, actorType, actorId, options = {}) {
@@ -893,11 +908,11 @@ async function getEvents(companyId, id) {
     return estimatesQueries.listEvents(id);
 }
 
-async function generatePdf(companyId, id) {
-    const estimate = await getEstimate(companyId, id);
+async function generatePdf(companyId, id, client = null) {
+    const estimate = await getEstimate(companyId, id, client);
     // F015: resolve company-specific document template; falls back to factory descriptor.
     const documentTemplatesService = require('./documentTemplatesService');
-    const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'estimate');
+    const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'estimate', client);
     return {
         estimate,
         buffer: await renderEstimatePdf(estimate, descriptor),
@@ -913,15 +928,19 @@ async function generatePdf(companyId, id) {
  * Return (creating if necessary) a public link for the estimate. Idempotent —
  * subsequent calls return the same token + URL. Re-send never re-mints.
  */
-async function ensurePublicLink(companyId, id) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
+async function ensurePublicLink(companyId, id, client = null) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
     let token = estimate.public_token;
     if (!token) {
         // 8 bytes of entropy → 11 url-safe chars. 2^64 keyspace is plenty for unguessability.
         token = crypto.randomBytes(8).toString('base64url');
-        await estimatesQueries.setPublicToken(estimate.id, companyId, token);
+        if (client) {
+            await estimatesQueries.setPublicToken(estimate.id, companyId, token, client);
+        } else {
+            await estimatesQueries.setPublicToken(estimate.id, companyId, token);
+        }
     }
 
     const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');

@@ -477,8 +477,14 @@ function buildSmsBody(message, link) {
  * Coded errors carry { code, httpStatus } so routes/invoices.js maps them to
  * the SEND-DOC-001 §2.5 matrix; anything unexpected surfaces as 500.
  */
-async function sendInvoice(companyId, userId, id, { channel, recipient, message, includePaymentLink, userEmail, noteActor } = {}) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, id);
+async function sendInvoice(
+    companyId,
+    userId,
+    id,
+    { channel, recipient, message, includePaymentLink, userEmail, noteActor } = {},
+    client = null
+) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
@@ -497,7 +503,7 @@ async function sendInvoice(companyId, userId, id, { channel, recipient, message,
     // Branded pay page link, derived from the token ensurePublicLink mints
     // (ensurePublicLink itself returns the /i/<token> PDF redirect — we want /pay).
     // Idempotent: ensurePublicLink never re-mints. Omitted when includePaymentLink === false.
-    const { token } = await ensurePublicLink(companyId, id);
+    const { token } = await ensurePublicLink(companyId, id, client);
     const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
     const payPath = `/pay/${token}`;
     const link = includePaymentLink === false ? '' : (base ? `${base}${payPath}` : payPath);
@@ -521,7 +527,7 @@ async function sendInvoice(companyId, userId, id, { channel, recipient, message,
             ? `Invoice #${number} from ${companyName}`
             : `Invoice #${number}`;
 
-        const { buffer } = await generatePdf(companyId, id);
+        const { buffer } = await generatePdf(companyId, id, client);
         const safeFile = String(number).replace(/[^a-z0-9_-]+/gi, '_');
 
         const emailService = require('./emailService');
@@ -571,12 +577,28 @@ async function sendInvoice(companyId, userId, id, { channel, recipient, message,
     }
 
     // Dispatch resolved → NOW flip status and record the send (never before).
-    const updated = await invoicesQueries.updateInvoiceStatus(id, companyId, 'sent', 'sent_at');
-    await invoicesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
-        channel: normalizedChannel,
-        recipient: to,
-        message: message || null,
-    });
+    let updated;
+    if (client) {
+        updated = await invoicesQueries.updateInvoiceStatus(
+            id,
+            companyId,
+            'sent',
+            'sent_at',
+            client
+        );
+        await invoicesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
+            channel: normalizedChannel,
+            recipient: to,
+            message: message || null,
+        }, client);
+    } else {
+        updated = await invoicesQueries.updateInvoiceStatus(id, companyId, 'sent', 'sent_at');
+        await invoicesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
+            channel: normalizedChannel,
+            recipient: to,
+            message: message || null,
+        });
+    }
 
     await recordDocumentSendNote({
         companyId,
@@ -746,11 +768,11 @@ async function getEvents(companyId, id) {
  * Generate a PDF buffer for an invoice using the F015 document-templates pipeline.
  * Returns { invoice, buffer } in parallel with estimatesService.generatePdf.
  */
-async function generatePdf(companyId, id) {
-    const invoice = await getInvoice(companyId, id);
+async function generatePdf(companyId, id, client = null) {
+    const invoice = await getInvoice(companyId, id, client);
     const documentTemplatesService = require('./documentTemplatesService');
     const rendererRegistry = require('./documentTemplates');
-    const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice');
+    const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice', client);
     const adapter = rendererRegistry.get('invoice');
     if (!adapter) {
         throw new InvoicesServiceError('INTERNAL', 'Invoice renderer adapter not registered', 500);
@@ -803,15 +825,19 @@ module.exports = {
  * Return (creating if necessary) a public link for the invoice. Idempotent —
  * subsequent calls return the same token + URL.
  */
-async function ensurePublicLink(companyId, id) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, id);
+async function ensurePublicLink(companyId, id, client = null) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!invoice) throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
 
     let token = invoice.public_token;
     if (!token) {
         // 8 bytes of entropy → 11 url-safe chars. 2^64 keyspace is plenty for unguessability.
         token = crypto.randomBytes(8).toString('base64url');
-        await invoicesQueries.setPublicToken(invoice.id, companyId, token);
+        if (client) {
+            await invoicesQueries.setPublicToken(invoice.id, companyId, token, client);
+        } else {
+            await invoicesQueries.setPublicToken(invoice.id, companyId, token);
+        }
     }
 
     const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');

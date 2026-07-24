@@ -312,7 +312,8 @@ async function deleteInvoice(id, companyId) {
 /**
  * Update invoice status and optionally set a timestamp field.
  */
-async function updateInvoiceStatus(id, companyId, status, timestampField) {
+async function updateInvoiceStatus(id, companyId, status, timestampField, client = null) {
+    const query = queryFor(client);
     let sql;
     if (timestampField) {
         sql = `UPDATE invoices SET status = $3, ${timestampField} = NOW(), updated_at = NOW()
@@ -321,7 +322,7 @@ async function updateInvoiceStatus(id, companyId, status, timestampField) {
         sql = `UPDATE invoices SET status = $3, updated_at = NOW()
                WHERE id = $1 AND company_id = $2 RETURNING *`;
     }
-    const { rows } = await db.query(sql, [id, companyId, status]);
+    const { rows } = await query(sql, [id, companyId, status]);
     return rows[0] || null;
 }
 
@@ -731,8 +732,9 @@ async function getInvoiceByPublicToken(publicToken) {
 }
 
 /** Persist a public_token on the invoice (idempotent — caller checks if one already exists first). */
-async function setPublicToken(invoiceId, companyId, token) {
-    const { rows } = await db.query(
+async function setPublicToken(invoiceId, companyId, token, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `UPDATE invoices SET public_token = $3, updated_at = NOW()
          WHERE id = $1 AND company_id = $2
          RETURNING *`,

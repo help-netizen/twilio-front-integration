@@ -46,7 +46,7 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         }
     });
 
-    test('all 12 consent-gated S2 writes bring the dispatcher surface to 31 tools', () => {
+    test('all 12 consent-gated S2 writes remain a 31-tool visible tier inside the 33-tool registry', () => {
         expect(permissions.WRITE_BUNDLE_VERSION).toBe(3);
         expect(permissions.WRITE_TOOL_NAMES).toHaveLength(12);
         expect(permissions.S1_GRANTS).not.toEqual(
@@ -68,7 +68,25 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
             expect(tool.frameworkWritePermission).toBeNull();
         }
         expect(registry.listTools({ includeDispatcher: true, dispatcherOnly: true }))
-            .toHaveLength(31);
+            .toHaveLength(33);
+    });
+
+    test('both S3 sends require their independent business grant, exact grant, and send scope', () => {
+        expect(permissions.SEND_BUNDLE_VERSION).toBe(4);
+        expect(permissions.SEND_TOOL_NAMES).toHaveLength(2);
+        expect(permissions.S2_WRITE_GRANTS).not.toEqual(
+            expect.arrayContaining(permissions.S3_SEND_GRANTS)
+        );
+        for (const name of permissions.SEND_TOOL_NAMES) {
+            const tool = registry.getTool(name);
+            expect(tool.requiredPermissions).toEqual(expect.arrayContaining([
+                `mcp.tool.${name}`,
+                ...permissions.SEND_TOOL_PERMISSIONS[name],
+            ]));
+            expect(tool.requiredOAuthScopes).toEqual([permissions.SEND_SCOPE]);
+            expect(tool.requiresConfirmation).toBe(true);
+            expect(tool.confirmationClass).toBe('W');
+        }
     });
 
     test('write discovery requires explicit v3 grants and albusto.mcp.write scope', () => {

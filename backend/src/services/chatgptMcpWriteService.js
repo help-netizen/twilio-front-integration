@@ -10,12 +10,10 @@ const { safeResult } = require('./chatgptMcpReadService');
 const { CrmServiceError } = require('./crmErrors');
 const { toE164 } = require('../utils/phoneUtils');
 
-class ChatgptMcpWriteError extends Error {
+class ChatgptMcpWriteError extends CrmServiceError {
     constructor(code, message, httpStatus = 400) {
-        super(message);
+        super(code, message, httpStatus);
         this.name = 'ChatgptMcpWriteError';
-        this.code = code;
-        this.httpStatus = httpStatus;
     }
 }
 
@@ -804,6 +802,149 @@ async function convertEstimateToInvoice(context, args, client) {
     };
 }
 
+const DOCUMENT_SEND_CONFIG = Object.freeze({
+    estimate: Object.freeze({
+        table: 'estimates',
+        idField: 'estimate_id',
+        service: estimatesService,
+        serviceMethod: 'sendEstimate',
+    }),
+    invoice: Object.freeze({
+        table: 'invoices',
+        idField: 'invoice_id',
+        service: invoicesService,
+        serviceMethod: 'sendInvoice',
+    }),
+});
+
+/**
+ * Resolve an outbound document recipient only from the document's owned Contact.
+ * No caller-supplied address participates. The document and Contact are both
+ * share-locked in the executor transaction, and the contact-email subquery
+ * repeats company ownership before selecting the primary address.
+ */
+async function resolveDocumentRecipient(context, documentType, documentId, channel, client) {
+    const config = DOCUMENT_SEND_CONFIG[documentType];
+    const document = await client.query(
+        `SELECT id, contact_id
+         FROM ${config.table}
+         WHERE id = $1 AND company_id = $2
+         FOR SHARE`,
+        [documentId, context.companyId]
+    );
+    if (document.rows.length !== 1) notFound(
+        documentType === 'estimate' ? 'Estimate' : 'Invoice'
+    );
+    if (!document.rows[0].contact_id) {
+        throw new ChatgptMcpWriteError(
+            'NO_RECIPIENT',
+            `The ${documentType} has no linked Contact recipient.`,
+            422
+        );
+    }
+
+    const contact = await client.query(
+        `SELECT c.id,
+                NULLIF(BTRIM(c.phone_e164), '') AS primary_phone,
+                COALESCE(
+                    (
+                        SELECT NULLIF(BTRIM(ce.email), '')
+                        FROM contact_emails ce
+                        JOIN contacts ce_contact
+                          ON ce_contact.id = ce.contact_id
+                         AND ce_contact.company_id = $2
+                        WHERE ce.contact_id = c.id
+                          AND ce_contact.company_id = c.company_id
+                          AND ce.is_primary = true
+                          AND NULLIF(BTRIM(ce.email), '') IS NOT NULL
+                        ORDER BY ce.is_primary DESC, ce.created_at ASC, ce.id ASC
+                        LIMIT 1
+                    ),
+                    NULLIF(BTRIM(c.email), '')
+                ) AS primary_email
+         FROM contacts c
+         WHERE c.id = $1 AND c.company_id = $2
+         FOR SHARE`,
+        [document.rows[0].contact_id, context.companyId]
+    );
+    const recipient = channel === 'email'
+        ? contact.rows[0]?.primary_email
+        : contact.rows[0]?.primary_phone;
+    if (!recipient) {
+        throw new ChatgptMcpWriteError(
+            'NO_RECIPIENT',
+            `The linked Contact has no ${channel === 'email' ? 'email address' : 'phone number'}.`,
+            422
+        );
+    }
+    return recipient;
+}
+
+function normalizeDocumentSendError(err) {
+    if (err?.name === 'EstimatesServiceError' || err?.name === 'InvoicesServiceError') {
+        return new CrmServiceError(
+            err.code || 'DOCUMENT_SEND_FAILED',
+            err.message,
+            err.httpStatus || 400
+        );
+    }
+    return err;
+}
+
+async function sendDocument(context, args, client, documentType) {
+    const config = DOCUMENT_SEND_CONFIG[documentType];
+    const documentId = args[config.idField];
+    const recipient = await resolveDocumentRecipient(
+        context,
+        documentType,
+        documentId,
+        args.channel,
+        client
+    );
+    let sent;
+    try {
+        sent = await config.service[config.serviceMethod](
+            context.companyId,
+            context.actorId,
+            documentId,
+            {
+                channel: args.channel,
+                recipient,
+                message: args.message,
+                ...(documentType === 'invoice'
+                    ? { includePaymentLink: args.include_payment_link !== false }
+                    : {}),
+                userEmail: context.actorEmail,
+                noteActor: {
+                    id: context.actorId,
+                    name: 'ChatGPT AI Dispatcher',
+                },
+            },
+            client
+        );
+    } catch (err) {
+        throw normalizeDocumentSendError(err);
+    }
+    return {
+        sent: true,
+        [config.idField]: sent?.id ?? documentId,
+        status: sent?.status || 'sent',
+        channel: args.channel,
+        recipient_source: 'linked_contact',
+        ...(documentType === 'invoice'
+            ? { include_payment_link: args.include_payment_link !== false }
+            : {}),
+    };
+}
+
+async function sendEstimate(context, args, client) {
+    return sendDocument(context, args, client, 'estimate');
+}
+
+async function sendInvoice(context, args, client) {
+    return sendDocument(context, args, client, 'invoice');
+}
+
 const HANDLERS = Object.freeze({
     createLead,
     updateLead,
@@ -817,6 +958,8 @@ const HANDLERS = Object.freeze({
     createInvoice,
     updateInvoice,
     convertEstimateToInvoice,
+    sendEstimate,
+    sendInvoice,
 });
 const IDEMPOTENT_HANDLERS = new Set([
     'createLead',
@@ -824,6 +967,8 @@ const IDEMPOTENT_HANDLERS = new Set([
     'createEstimate',
     'createInvoice',
     'convertEstimateToInvoice',
+    'sendEstimate',
+    'sendInvoice',
 ]);
 
 async function execute(handler, toolName, context, args, client) {

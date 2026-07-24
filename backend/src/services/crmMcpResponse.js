@@ -73,6 +73,9 @@ function mapCrmError(err) {
     const code = (() => {
         if (crmCode === 'NOT_FOUND') return 'not_found';
         if (crmCode === 'TENANT_CONTEXT_REQUIRED') return 'access_denied';
+        if (['MAILBOX_NOT_CONNECTED', 'NO_RECIPIENT'].includes(crmCode)) {
+            return 'invalid_request';
+        }
         if (crmCode === 'BAD_REQUEST' || err.httpStatus === 400) return 'invalid_request';
         if (err.httpStatus === 403) return 'access_denied';
         return 'internal_error';

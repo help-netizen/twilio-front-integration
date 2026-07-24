@@ -14,6 +14,7 @@ class MockMarketplaceServiceError extends Error {
 jest.mock('../backend/src/services/marketplaceService', () => ({
     MarketplaceServiceError: MockMarketplaceServiceError,
     setChatgptMcpWrites: jest.fn(),
+    setChatgptMcpSends: jest.fn(),
 }));
 
 const marketplaceService = require('../backend/src/services/marketplaceService');
@@ -37,6 +38,59 @@ beforeEach(() => {
     marketplaceService.setChatgptMcpWrites.mockResolvedValue({
         enabled: true,
         grant_version: 3,
+    });
+    marketplaceService.setChatgptMcpSends.mockResolvedValue({
+        enabled: true,
+        grant_version: 4,
+    });
+});
+
+describe('ChatGPT MCP Marketplace send consent routes', () => {
+    test.each([
+        ['enable', true],
+        ['disable', false],
+    ])('POST sends/%s derives company and CRM actor from request context', async (action, enabled) => {
+        marketplaceService.setChatgptMcpSends.mockResolvedValueOnce({
+            enabled,
+            sends_enabled: enabled,
+            grant_version: enabled ? 4 : 3,
+        });
+        const response = await request(app())
+            .post(`/api/marketplace/apps/chatgpt-crm-mcp/sends/${action}`)
+            .send({});
+
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({
+            success: true,
+            enabled,
+            sends_enabled: enabled,
+            grant_version: enabled ? 4 : 3,
+        });
+        expect(marketplaceService.setChatgptMcpSends).toHaveBeenCalledWith(
+            'company-a',
+            'admin-a',
+            enabled,
+            { requestId: 'request-a' }
+        );
+    });
+
+    test('tenant-admin denial preserves the fail-closed 403 code', async () => {
+        marketplaceService.setChatgptMcpSends.mockRejectedValueOnce(
+            new MockMarketplaceServiceError(
+                'Only an active tenant administrator can configure this connector.',
+                'TENANT_ADMIN_REQUIRED',
+                403
+            )
+        );
+        const response = await request(app())
+            .post('/api/marketplace/apps/chatgpt-crm-mcp/sends/enable')
+            .send({});
+
+        expect(response.status).toBe(403);
+        expect(response.body).toMatchObject({
+            success: false,
+            code: 'TENANT_ADMIN_REQUIRED',
+        });
     });
 });
 

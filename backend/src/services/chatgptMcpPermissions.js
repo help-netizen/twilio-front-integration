@@ -3,8 +3,10 @@
 const APP_KEY = 'chatgpt-crm-mcp';
 const BUNDLE_VERSION = 2;
 const WRITE_BUNDLE_VERSION = 3;
+const SEND_BUNDLE_VERSION = 4;
 const READ_SCOPE = 'albusto.mcp.read';
 const WRITE_SCOPE = 'albusto.mcp.write';
+const SEND_SCOPE = 'albusto.mcp.send';
 
 const READ_TOOL_PERMISSIONS = Object.freeze({
     'svc.list_jobs': ['jobs.view'],
@@ -71,12 +73,32 @@ const S2_WRITE_GRANTS = Object.freeze([
     ...EXACT_WRITE_TOOL_PERMISSIONS,
 ]);
 
+// CHATGPT-CRM-MCP-001 S3. Customer delivery is a separate consent tier:
+// enabling ordinary CRM writes never grants an external Estimate/Invoice send.
+const SEND_TOOL_PERMISSIONS = Object.freeze({
+    'svc.send_estimate': ['estimates.send'],
+    'svc.send_invoice': ['invoices.send'],
+});
+const SEND_TOOL_NAMES = Object.freeze(Object.keys(SEND_TOOL_PERMISSIONS));
+const BUSINESS_SEND_PERMISSIONS = Object.freeze([
+    ...new Set(Object.values(SEND_TOOL_PERMISSIONS).flat()),
+]);
+const EXACT_SEND_TOOL_PERMISSIONS = Object.freeze(
+    SEND_TOOL_NAMES.map((name) => `mcp.tool.${name}`)
+);
+const S3_SEND_GRANTS = Object.freeze([
+    ...BUSINESS_SEND_PERMISSIONS,
+    ...EXACT_SEND_TOOL_PERMISSIONS,
+]);
+
 module.exports = {
     APP_KEY,
     BUNDLE_VERSION,
     WRITE_BUNDLE_VERSION,
+    SEND_BUNDLE_VERSION,
     READ_SCOPE,
     WRITE_SCOPE,
+    SEND_SCOPE,
     READ_TOOL_PERMISSIONS,
     READ_TOOL_NAMES,
     BUSINESS_READ_PERMISSIONS,
@@ -87,4 +109,9 @@ module.exports = {
     BUSINESS_WRITE_PERMISSIONS,
     EXACT_WRITE_TOOL_PERMISSIONS,
     S2_WRITE_GRANTS,
+    SEND_TOOL_PERMISSIONS,
+    SEND_TOOL_NAMES,
+    BUSINESS_SEND_PERMISSIONS,
+    EXACT_SEND_TOOL_PERMISSIONS,
+    S3_SEND_GRANTS,
 };

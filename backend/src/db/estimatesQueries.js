@@ -669,8 +669,9 @@ async function getEstimateByPublicToken(publicToken) {
 }
 
 /** Persist a public_token on the estimate (idempotent — caller checks if one already exists first). */
-async function setPublicToken(estimateId, companyId, token) {
-    const { rows } = await db.query(
+async function setPublicToken(estimateId, companyId, token, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `UPDATE estimates SET public_token = $3, updated_at = NOW()
          WHERE id = $1 AND company_id = $2
          RETURNING *`,

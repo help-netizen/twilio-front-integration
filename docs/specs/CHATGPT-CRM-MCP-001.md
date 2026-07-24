@@ -1,6 +1,6 @@
 # CHATGPT-CRM-MCP-001 — OAuth CRM connector
 
-Status: approved specification; S1/S1.1/S2a/S2b/MCP hardening/S2c-b implemented; S2c-b pending architect gate
+Status: approved specification; S1/S1.1/S2a/S2b/MCP hardening/S2c-b implemented; S3 implemented, pending architect gate
 Date: 2026-07-23
 Scope: backend-only ChatGPT MCP connector with company-scoped reads, internal CRM writes, and customer sends; payments deferred
 
@@ -210,7 +210,9 @@ All tool input schemas:
 - contain no tenant selector;
 - separate status transitions from other edits;
 - reject remote file URLs;
-- require an idempotency key for external effects, payments, conversions, scheduling changes, and sends.
+- use a server-derived binding + tool + canonical-argument hash idempotency
+  key for creates, conversions, scheduling effects, and sends; strict tool
+  schemas do not expose a caller-controlled idempotency key.
 
 Error normalization is stable: foreign/missing entities are `not_found`; missing permission/scope is `access_denied`; absent published FSM is `workflow_unavailable`; same idempotency key with different arguments is `idempotency_conflict`; provider failures expose a safe code, not credentials or raw upstream payloads.
 
@@ -219,11 +221,13 @@ Error normalization is stable: foreign/missing entities are `not_found`; missing
 | Code | MCP annotations and client behavior |
 |---|---|
 | `R` | `readOnlyHint=true`, `destructiveHint=false`, `openWorldHint=false`; no action confirmation. |
-| `W` | internal mutation, `readOnlyHint=false`; ChatGPT asks before changing CRM state. |
+| `W` | non-destructive mutation, `readOnlyHint=false`; ChatGPT asks before changing CRM state or performing an owner-classified document send. |
 | `D` | destructive/terminal or externally synchronized mutation, `destructiveHint=true`; ChatGPT asks every time. |
 | `I` | important external action (customer send or money movement/link delivery), `readOnlyHint=false`, `openWorldHint=true`; connector must be configured to always ask. |
 
 The annotations communicate risk to ChatGPT but do not prove approval to Albusto. The existing custom `{confirmed, confirmation_id}` check at `backend/src/services/agentSkillsMcpExecutor.js:101-112` is client-asserted and must not be described as cryptographic human approval. The dedicated connector follows the standard MCP call shape and relies on the locked owner decision that ChatGPT's UI is the only approval gate.
+The owner explicitly classified S3 Estimate/Invoice sends as `W`; the stricter
+server-side send scope and independent consent tier remain mandatory.
 
 ### 6.2 Fixed-bearer development path
 
@@ -390,9 +394,14 @@ confirmation in a small centered dialog, then calls
 panel shows a copyable connector scope (`albusto.mcp.read albusto.mcp.write`)
 with a re-connect reminder. State comes from the read-only Marketplace
 settings handler (`GET /apps/chatgpt-crm-mcp/settings` →
-`identityService.getWriteConsent`, `writes_enabled = grant_version ≥ 3`);
+`identityService.getWriteConsent`, with write/send state derived from their
+independent anchor grants rather than inferring writes from the higher send
+bundle version);
 `PUT` on that settings surface answers 405 `SETTINGS_READ_ONLY`, so the only
 mutation paths remain the tenant-admin-gated consent endpoints.
+S3 adds a separate server-side `sends_enabled` setting and
+`sends/enable|disable` endpoints. The owner will add the independent Sends
+toggle to this panel; S3 intentionally does not modify frontend code.
 That is why a call with `contact_id IS NULL` remains visible to its own company
 and cannot enter another company's result. The optional contact join repeats
 tenant ownership and supplies only `contact_name`.
@@ -546,10 +555,10 @@ S2b extends `S2_WRITE_GRANTS`; it does not change the consent endpoints and
 ships no migration/backfill. A binding whose writes were enabled against the
 seven-tool S2a bundle still exposes 26 tools. Its tenant administrator must
 invoke the existing enable endpoint again; the idempotent enable operation
-reconciles the current grant set. With S2c-b included, current discovery is
-19 reads + 12 writes = 31 tools. Disable removes the complete current write set
-and returns discovery
-to 19 reads.
+reconciles the current grant set. With S2c-b included, S2 discovery is
+19 reads + 12 internal writes = 31 tools. Before S3 consent exists, disabling
+writes returns discovery to 19 reads; after S3, the separate send tier is
+preserved independently as specified in Section 7.5.
 
 ### 7.4 S2c-b — Estimate-to-Invoice conversion
 
@@ -630,10 +639,82 @@ the idempotent writes-enable operation; it then exposes the full inventory of
 
 ### 7.5 S3 — customer sends
 
-| Tool | Kind | Required permission(s) / OAuth scope | Confirm | Wrapped route/service | Tenant-scoping note |
-|---|---|---|---|---|---|
-| `svc.send_sms` | external write | `messages.send` / `albusto.mcp.send` | I | `POST /api/messaging/:id/messages` and safe company-owned conversation creation | Accept contact/conversation IDs and body, never arbitrary proxy/recipient phone; resolve owned contact phone and company Twilio number; idempotency required. |
-| `svc.send_email` | external write | `messages.send` / send | I | `POST /api/email-timeline/contacts/:contactId/send`; `emailTimelineService.sendForContact` | Recipient must be an email already owned by that company contact; sender/mailbox from company config; AI UUID actor; idempotency required. |
+S3 exposes exactly two `kind=write`, confirmation-class-W document-delivery
+tools. They require the independent `albusto.mcp.send` OAuth scope and do not
+accept a recipient, sender, proxy, public token, attachment, or company
+selector.
+
+| Tool | Strict input | Permission pair | Wrapped route/service |
+|---|---|---|---|
+| `svc.send_estimate` | `{ estimate_id:int>=1, channel:'email'\|'sms', message?:string<=500 }` | `estimates.send` + `mcp.tool.svc.send_estimate` | `POST /api/estimates/:id/send`; canonical `estimatesService.sendEstimate` |
+| `svc.send_invoice` | `{ invoice_id:int>=1, channel:'email'\|'sms', message?:string<=500, include_payment_link?:boolean=true }` | `invoices.send` + `mcp.tool.svc.send_invoice` | `POST /api/invoices/:id/send`; canonical `invoicesService.sendInvoice` |
+
+#### Recipient anti-injection invariant
+
+The model never supplies `recipient`. Immediately after the live-binding
+recheck, the executor locks the company-owned Estimate/Invoice and resolves the
+address only from its linked, company-owned Contact:
+
+```sql
+SELECT id, contact_id
+FROM estimates -- or invoices
+WHERE id = :documentId AND company_id = :companyId
+FOR SHARE;
+
+SELECT c.id,
+       NULLIF(BTRIM(c.phone_e164), '') AS primary_phone,
+       COALESCE(
+         (
+           SELECT NULLIF(BTRIM(ce.email), '')
+           FROM contact_emails ce
+           JOIN contacts ce_contact
+             ON ce_contact.id = ce.contact_id
+            AND ce_contact.company_id = :companyId
+           WHERE ce.contact_id = c.id
+             AND ce_contact.company_id = c.company_id
+             AND ce.is_primary = true
+           ORDER BY ce.is_primary DESC, ce.created_at, ce.id
+           LIMIT 1
+         ),
+         NULLIF(BTRIM(c.email), '')
+       ) AS primary_email
+FROM contacts c
+WHERE c.id = :contactId AND c.company_id = :companyId
+FOR SHARE;
+```
+
+Email uses `primary_email`; SMS uses `primary_phone`. A missing linked Contact
+or missing channel address is `NO_RECIPIENT` and performs no provider call.
+This server-only resolution is an explicit prompt-injection boundary: record
+text and model arguments cannot redirect a document to an arbitrary address.
+
+Both canonical services accept the executor transaction client. Document
+ownership, Contact ownership, public-link reuse/mint, status/event writes, and
+the MCP idempotency row therefore share the transaction that performed the
+live-binding check. The service receives `userId` and `noteActor.id` as the AI
+CRM UUID. `MAILBOX_NOT_CONNECTED` remains a safe, explicit tool error and never
+reports success.
+
+Both tools use
+`mcp_tool_idempotency(binding/agent + tool + normalized arguments)`. A
+completed replay returns the stored safe result without invoking Gmail/Twilio
+or minting another public link.
+
+#### Independent send consent
+
+S3 adds `SEND_BUNDLE_VERSION=4` and `S3_SEND_GRANTS`, separate from the v3
+`S2_WRITE_GRANTS`. Only an active tenant administrator may call:
+
+- `POST /api/marketplace/apps/chatgpt-crm-mcp/sends/enable`
+- `POST /api/marketplace/apps/chatgpt-crm-mcp/sends/disable`
+
+Both are idempotent and transactional. Write consent alone exposes 19 reads +
+12 internal writes = 31 tools; it never grants either send. Send consent plus
+`albusto.mcp.send` exposes the full registry of 33. Disabling sends preserves
+writes; disabling writes preserves sends. The settings read returns
+`{writes_enabled, sends_enabled, grant_version}`. There is no migration or
+grant backfill; the tenant administrator explicitly enables this higher-risk
+tier.
 
 ### 7.6 S4 — payments (deferred, outside v1)
 
@@ -683,8 +764,11 @@ S2b closes the two Estimate/Invoice CRUD rows above. Canonical services now
 participate in S2a's transaction client; direct parent/item/revision/event
 helpers require `companyId`, and joins repeat parent ownership. S2c-b closes
 the conversion row: the company-owned Estimate is locked in the live-recheck
-transaction and every copied item/write/event uses that client. Contact
-mutation, assignment, task, file, send, and payment rows remain unregistered.
+transaction and every copied item/write/event uses that client. S3 extends only
+the canonical Estimate/Invoice send paths with that client, then resolves the
+recipient through the owned document and Contact predicates in Section 7.5.
+Generic contact mutation, assignment, task, file, arbitrary-message, and
+payment rows remain unregistered.
 
 Shared HTTP routes remain green after hardening. No MCP wrapper may call a forbidden optional-company helper.
 
@@ -698,7 +782,7 @@ Shared HTTP routes remain green after hardening. No MCP wrapper may call a forbi
 | S1 read tools | binding company | tenant entity ID or company-paired natural key | exact tool key + read business permission + read scope | exact AI grant ✓; tenant_admin/manager/dispatcher/provider/custom direct MCP actor ✗ | Aggregates, shared phone/email/external IDs, and child joins can leak B. |
 | S2a/S2b/S2c-b registered internal writes | binding company, rechecked in the mutation transaction | entity/item ID plus company; create/conversion argument hash for replay | exact tool key + listed business permission + write scope | exact consented AI grant ✓; all human roles as direct MCP actor ✗ | ID-only parent/item/conversion mutation or a stale binding can alter B. |
 | Remaining S2c/later internal writes and files (deferred) | no current surface | n/a | no exact tool grant or descriptor | all actors ✗ | Any deferred task/contact/file tool becoming discoverable is a release-blocking scope expansion. |
-| S3 sends | binding company and company-owned recipient/sender resolution | contact/conversation ID + company; idempotency key | exact tool key + `messages.send` + send scope | exact AI grant ✓; all human roles as direct MCP actor ✗ | Arbitrary recipient/proxy or retry can message the wrong customer. |
+| S3 Estimate/Invoice sends | binding company, rechecked in the send transaction | document ID + company; linked Contact ID + company; server argument hash | exact tool key + `estimates.send`/`invoices.send` + send scope + separate send consent | exact send-consented AI grant ✓; all human roles as direct MCP actor ✗ | Foreign document/contact, arbitrary recipient injection, or retry can deliver tenant data to the wrong customer. |
 | S4 payments (deferred) | no v1 surface | n/a | no scope, grant, or registered tool | all actors ✗ | Any discovered/invocable payment tool is a release-blocking v1 failure. |
 | `mcp_tool_invocations` / idempotency writes | trusted execution context | request/tool/idempotency key + company + AI user | internal only | connector executor ✓; all direct callers ✗ | Missing company or weak uniqueness could replay across tenants. |
 | fixed-bearer `POST /mcp/agent-skills` | non-prod explicit env company + resolved AI user | fixed bearer + company/agent configuration | same exact DB grants; no synthesized broad permission | configured AI agent ✓; production ✗; human roles ✗ | Current default company is unsafe; absence of any required env must disable path. |
@@ -740,7 +824,7 @@ Each control is executed against the real code path after taking a `cp` backup. 
 |---|---|---|---|
 | `SAB-MCP-UNMAPPED` | A tool without a non-empty mapped permission is absent and denied. | Change `mcpToolAuthorization.canInvoke` to allow an empty required set, or remove the test tool's mapping while forcing discovery. | `chatgptMcpAuthorization.test.js` — `SAB-MCP-UNMAPPED`. |
 | `SAB-MCP-FOREIGN` | Company A calls cannot read or mutate B and return `not_found`. | Remove the `company_id` predicate from the dedicated test target's base query. | `chatgptMcpTenancy.db.test.js` — `SAB-MCP-FOREIGN` and B snapshot assertion. |
-| `SAB-MCP-SEND-PERM` | Send is unreachable without scope, business permission, and exact tool grant. | Remove `messages.send` from `svc.send_sms.requiredPermissions` (then separately the exact grant/scope gate). | `chatgptMcpSends.test.js` — `SAB-MCP-SEND-PERM`; outbound provider fake remains at zero. |
+| `SAB-MCP-SEND-PERM` | Send is unreachable without separate consent, send scope, business permission, and exact tool grant. | Merge `S3_SEND_GRANTS` into the write/read bundle, remove `estimates.send` from `svc.send_estimate`, or omit its send-scope requirement. | `chatgptMcpSends.test.js` consent/scope matrix plus `chatgptMcpSends.db.test.js` 19→31→33 contract; outbound provider fake remains at zero. |
 | `SAB-MCP-DEFERRED-PAYMENTS` | No payment capability is registered or granted in v1. | Add a plausible `svc.collect_invoice_saved_method` descriptor or payment grant to the S1 bundle. | `chatgptMcpAuthorization.test.js` — `SAB-MCP-DEFERRED-PAYMENTS`. |
 | `SAB-MCP-OAUTH-TENANT` | A token maps only through its unique active binding and cannot act on B. | Resolve binding by human subject only while ignoring installation/company uniqueness, or trust a client company argument. | `chatgptMcpIdentity.db.test.js` — `SAB-MCP-OAUTH-TENANT`; ambiguous binding denied and B snapshot unchanged. |
 | `SAB-MCP-WRITE-CONSENT` | Existing/read-only bindings cannot discover or invoke writes without both v3 grants and `albusto.mcp.write`. | Merge S2 grants into `S1_GRANTS`, skip the live grant recheck, or omit the write-scope requirement. | `chatgptMcpAuthorization.test.js` write discovery contract plus `chatgptMcpWrites.test.js` stale-grant and missing-scope cases. |
@@ -823,7 +907,13 @@ parallel MCP plus direct canonical-service replay with exactly one Invoice.
 ### S3 command — customer sends
 
 ```bash
-node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --config ./package.json --testPathIgnorePatterns "/node_modules/" --runTestsByPath tests/chatgptMcpSends.test.js tests/chatgptMcpTenancy.db.test.js tests/emailTimelineOutbound.test.js tests/emailMailboxMultitenancy.test.js tests/contactsPulseTenantIsolation.test.js tests/tenantSafetyLint.test.js
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpSends.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpFinancialWrites.test.js tests/chatgptMcpConsentRoutes.test.js tests/sendDocEstimate.test.js tests/sendDocInvoice.test.js tests/tenantSafetyLint.test.js
+```
+
+The production-shaped PostgreSQL contract runs separately and must not skip:
+
+```bash
+DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpSends.db.test.js
 ```
 
 ### S4 — payments deferred
@@ -833,7 +923,7 @@ There is no S4 implementation command in v1. S1/S2 authorization tests assert th
 ### Full MCP regression
 
 ```bash
-env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/agentSkillsMcp.test.js tests/chatgptMcpOAuth.test.js tests/chatgptMcpRateLimit.test.js tests/chatgptMcpJwtHonest.test.js tests/keycloakAuthMcpIsolation.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpFinancialWrites.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpConsentRoutes.test.js tests/tenantSafetyLint.test.js
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/agentSkillsMcp.test.js tests/chatgptMcpOAuth.test.js tests/chatgptMcpRateLimit.test.js tests/chatgptMcpJwtHonest.test.js tests/keycloakAuthMcpIsolation.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpFinancialWrites.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpSends.test.js tests/chatgptMcpSends.db.test.js tests/chatgptMcpConsentRoutes.test.js tests/sendDocEstimate.test.js tests/sendDocInvoice.test.js tests/tenantSafetyLint.test.js
 ```
 
 ### MCP hardening commands
@@ -851,7 +941,9 @@ migration-built PostgreSQL schema:
 DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpTenancy.db.test.js
 ```
 
-The tool-count contract is exactly 19 reads + 12 writes = 31.
+The registry contract is exactly 19 reads + 12 internal writes + 2 sends = 33.
+Visibility is 19 without consent, 31 with writes only, and 33 only with both
+send grants and `albusto.mcp.send`.
 
 Backend-only means there is no frontend build/test gate for this project. The protected-file gate for D1 is an exact-diff inspection:
 
@@ -982,23 +1074,38 @@ through the real JSON-RPC protocol against PostgreSQL, and the authorization
 middleware has a real signed-RS256 test in addition to the seam-mocked unit
 suite. That hardening does not expand the deferred file/contact surfaces.
 
-### S3 — customer SMS and email sends
+### S3 — Estimate and Invoice customer sends
 
-Tasks:
+Implemented scope:
 
-1. Build company-required send facades that accept owned contact/conversation identifiers, never an arbitrary proxy or recipient.
-2. Resolve company credentials, sender, recipient, and timeline/conversation under the same tenant; stamp AI actor/audit.
-3. Require `messages.send`, exact tool grant, `albusto.mcp.send`, idempotency, and `I` confirmation metadata.
-4. Add provider fakes and contract/attack tests for duplicate, foreign, arbitrary-recipient, disconnect-race, and provider-error behavior.
+1. Register only `svc.send_estimate` and `svc.send_invoice`, with strict
+   Section 7.5 schemas, class-W confirmation, the real
+   `estimates.send`/`invoices.send` business permissions, exact grants, and
+   `albusto.mcp.send`.
+2. Resolve email/phone exclusively from the linked company-owned Contact after
+   locking the company-owned document. No recipient field exists.
+3. Reuse only `estimatesService.sendEstimate` and
+   `invoicesService.sendInvoice`; thread the live-recheck transaction client
+   through document reads, public-link reuse, status, and events, and stamp the
+   AI CRM UUID.
+4. Add an independent v4 send-consent bundle and tenant-admin-only
+   `sends/enable|disable` endpoints. Preserve write consent in both directions;
+   frontend toggle work belongs to the owner.
+5. Use the existing argument-hash idempotency table for both tools and gate
+   provider calls with unit plus production-shaped DB fakes.
 
-Acceptance criteria:
+Acceptance:
 
-- sends are absent and directly denied if any one gate is missing;
-- each approved call sends at most once and records the AI actor;
-- raw recipient/proxy inputs and foreign conversations/contacts are rejected before provider call;
-- provider errors do not report success and are safely auditable;
-- `SAB-MCP-SEND-PERM` proves break-red-restore-green;
-- S1/S2 remain green and S3 verification passes.
+- discovery is 19 initially, 31 with writes only, and 33 only after send consent;
+- write enable never grants sends, while either consent tier may be disabled
+  without removing the other;
+- recipient/proxy/company injection is schema-invalid, missing channel contact
+  data is `NO_RECIPIENT`, and mailbox absence is
+  `MAILBOX_NOT_CONNECTED`; every case performs zero provider calls;
+- both tools pass T-own/T-foreign/T-blast with company B byte-identical;
+- identical completed replay returns its safe result and invokes the provider
+  once;
+- canonical Estimate/Invoice send regressions, S1, and S2 remain green.
 
 ### S4 — payments deferred
 

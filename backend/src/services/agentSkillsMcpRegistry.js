@@ -43,6 +43,10 @@ const {
     WRITE_TOOL_NAMES: CHATGPT_S2_WRITE_TOOL_NAMES,
     WRITE_SCOPE: CHATGPT_WRITE_SCOPE,
     S2_WRITE_GRANTS: CHATGPT_S2_WRITE_GRANTS,
+    SEND_TOOL_PERMISSIONS: CHATGPT_SEND_TOOL_PERMISSIONS,
+    SEND_TOOL_NAMES: CHATGPT_S3_SEND_TOOL_NAMES,
+    SEND_SCOPE: CHATGPT_SEND_SCOPE,
+    S3_SEND_GRANTS: CHATGPT_S3_SEND_GRANTS,
 } = require('./chatgptMcpPermissions');
 
 const TOOL_PERMISSION_MAP = Object.freeze({
@@ -63,6 +67,10 @@ const TOOL_PERMISSION_MAP = Object.freeze({
         [...permissions, `mcp.tool.${name}`],
     ])),
     ...Object.fromEntries(Object.entries(CHATGPT_WRITE_TOOL_PERMISSIONS).map(([name, permissions]) => [
+        name,
+        [...permissions, `mcp.tool.${name}`],
+    ])),
+    ...Object.fromEntries(Object.entries(CHATGPT_SEND_TOOL_PERMISSIONS).map(([name, permissions]) => [
         name,
         [...permissions, `mcp.tool.${name}`],
     ])),
@@ -424,22 +432,55 @@ const DISPATCHER_WRITE_TOOLS = [
     ),
 ];
 
+// CHATGPT-CRM-MCP-001 S3 — external customer sends remain `kind=write` for
+// the shared transaction/confirmation executor, but have their own OAuth scope
+// and consent-grant bundle. The recipient is intentionally absent: the handler
+// resolves it from the company-owned document Contact.
+const DISPATCHER_SEND_TOOLS = [
+    dispatcherSend(
+        'svc.send_estimate',
+        'sendEstimate',
+        'Send one company Estimate to its linked Contact by email or SMS.',
+        strictObjectSchema({
+            estimate_id: integerSchema(1),
+            channel: enumSchema(['email', 'sms']),
+            message: stringSchema(500),
+        }, ['estimate_id', 'channel'])
+    ),
+    dispatcherSend(
+        'svc.send_invoice',
+        'sendInvoice',
+        'Send one company Invoice to its linked Contact by email or SMS.',
+        strictObjectSchema({
+            invoice_id: integerSchema(1),
+            channel: enumSchema(['email', 'sms']),
+            message: stringSchema(500),
+            include_payment_link: booleanSchema(),
+        }, ['invoice_id', 'channel'])
+    ),
+];
+
 const TOOLS = Object.freeze([
     ...READ_TOOLS.map((tool) => normalizeTool(tool, 'read')),
     ...WRITE_TOOLS.map((tool) => normalizeTool(tool, 'write')),
     ...DISPATCHER_READ_TOOLS.map((tool) => normalizeTool(tool, 'read')),
     ...DISPATCHER_WRITE_TOOLS.map((tool) => normalizeTool(tool, 'write')),
+    ...DISPATCHER_SEND_TOOLS.map((tool) => normalizeTool(tool, 'write')),
 ]);
 const LEGACY_TOOL_NAMES = new Set([...READ_TOOLS, ...WRITE_TOOLS].map((tool) => tool.name));
 const CHATGPT_TOOL_NAMES = Object.freeze([
     ...CHATGPT_S1_TOOL_NAMES,
     ...CHATGPT_S2_WRITE_TOOL_NAMES,
+    ...CHATGPT_S3_SEND_TOOL_NAMES,
 ]);
 
 // --- schema helpers (mirror crmMcpToolRegistry.js) --------------------------
 
-function stringSchema() {
-    return { type: 'string' };
+function stringSchema(maxLength) {
+    return {
+        type: 'string',
+        ...(maxLength !== undefined ? { maxLength } : {}),
+    };
 }
 
 function integerSchema(minimum, maximum) {
@@ -504,6 +545,19 @@ function dispatcherWrite(name, handler, description, inputSchema) {
         handler,
         requiredLevel: null,
         requiredOAuthScopes: [CHATGPT_WRITE_SCOPE],
+        confirmationClass: 'W',
+        destructiveHint: false,
+        description,
+        inputSchema,
+    };
+}
+
+function dispatcherSend(name, handler, description, inputSchema) {
+    return {
+        name,
+        handler,
+        requiredLevel: null,
+        requiredOAuthScopes: [CHATGPT_SEND_SCOPE],
         confirmationClass: 'W',
         destructiveHint: false,
         description,
@@ -604,6 +658,8 @@ module.exports = {
     CHATGPT_S1_GRANTS,
     CHATGPT_S2_WRITE_TOOL_NAMES,
     CHATGPT_S2_WRITE_GRANTS,
+    CHATGPT_S3_SEND_TOOL_NAMES,
+    CHATGPT_S3_SEND_GRANTS,
     CHATGPT_TOOL_NAMES,
     listTools,
     getTool,

@@ -32,7 +32,9 @@ function validateArguments(tool, args = {}) {
         }
         if (Object.keys(propertySchema).length === 0) continue;
         if (value === null && propertySchema.nullable === true) continue;
-        if (value === null) continue;
+        if (value === null) {
+            throw mcpError('invalid_request', `${key} must not be null`, { field: key });
+        }
         validateValue(key, value, propertySchema);
     }
 }
@@ -68,6 +70,14 @@ function validateValue(key, value, schema) {
     }
     if (schema.type === 'string' && typeof value !== 'string') {
         throw mcpError('invalid_request', `${key} must be a string`, { field: key });
+    }
+    if (schema.type === 'string'
+        && schema.maxLength !== undefined
+        && value.length > schema.maxLength) {
+        throw mcpError('invalid_request', `${key} must contain at most ${schema.maxLength} characters`, {
+            field: key,
+            max_length: schema.maxLength,
+        });
     }
     if (schema.type === 'string' && schema.format === 'date' && !isIsoDate(value)) {
         throw mcpError('invalid_request', `${key} must be a valid YYYY-MM-DD date`, {
@@ -121,7 +131,11 @@ function validateValue(key, value, schema) {
                 continue;
             }
             if (nestedValue === null && nestedSchema.nullable === true) continue;
-            if (nestedValue === null) continue;
+            if (nestedValue === null) {
+                throw mcpError('invalid_request', `${key}.${nestedKey} must not be null`, {
+                    field: `${key}.${nestedKey}`,
+                });
+            }
             validateValue(`${key}.${nestedKey}`, nestedValue, nestedSchema);
         }
     }

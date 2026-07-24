@@ -7,6 +7,8 @@ const {
     S1_GRANTS,
     WRITE_BUNDLE_VERSION,
     S2_WRITE_GRANTS,
+    SEND_BUNDLE_VERSION,
+    S3_SEND_GRANTS,
 } = require('./chatgptMcpPermissions');
 
 class ChatgptMcpIdentityError extends Error {
@@ -374,7 +376,7 @@ async function requireLiveBinding({
     return rows[0];
 }
 
-async function setWriteConsent({ companyId, actorId, enabled }, client) {
+async function lockConsentBinding(companyId, actorId, client) {
     if (!client?.query) {
         throw new ChatgptMcpIdentityError(
             'MCP_TRANSACTION_REQUIRED',
@@ -412,17 +414,19 @@ async function setWriteConsent({ companyId, actorId, enabled }, client) {
             403
         );
     }
-    const binding = rows[0];
+    return rows[0];
+}
 
+async function replaceTierGrants(companyId, agentUserId, grants, bundleVersion, enabled, client) {
     if (enabled) {
-        for (const permission of S2_WRITE_GRANTS) {
+        for (const permission of grants) {
             await client.query(
                 `INSERT INTO mcp_agent_permission_grants
                     (company_id, agent_user_id, permission_key, bundle_version)
                  VALUES ($1, $2, $3, $4)
                  ON CONFLICT (company_id, agent_user_id, permission_key) DO UPDATE
                  SET bundle_version = EXCLUDED.bundle_version, updated_at = NOW()`,
-                [companyId, binding.ai_user_id, permission, WRITE_BUNDLE_VERSION]
+                [companyId, agentUserId, permission, bundleVersion]
             );
         }
     } else {
@@ -431,18 +435,90 @@ async function setWriteConsent({ companyId, actorId, enabled }, client) {
              WHERE company_id = $1
                AND agent_user_id = $2
                AND permission_key = ANY($3::text[])`,
-            [companyId, binding.ai_user_id, S2_WRITE_GRANTS]
+            [companyId, agentUserId, grants]
         );
     }
-    const grantVersion = enabled ? WRITE_BUNDLE_VERSION : BUNDLE_VERSION;
+}
+
+async function currentTierState(companyId, agentUserId, client) {
+    const { rows } = await client.query(
+        `SELECT permission_key
+         FROM mcp_agent_permission_grants
+         WHERE company_id = $1
+           AND agent_user_id = $2
+           AND permission_key = ANY($3::text[])`,
+        [
+            companyId,
+            agentUserId,
+            [
+                'mcp.tool.svc.create_lead',
+                'mcp.tool.svc.send_estimate',
+            ],
+        ]
+    );
+    const granted = new Set(rows.map((row) => row.permission_key));
+    return {
+        writes_enabled: granted.has('mcp.tool.svc.create_lead'),
+        sends_enabled: granted.has('mcp.tool.svc.send_estimate'),
+    };
+}
+
+function consentGrantVersion({ writes_enabled: writesEnabled, sends_enabled: sendsEnabled }) {
+    if (sendsEnabled) return SEND_BUNDLE_VERSION;
+    if (writesEnabled) return WRITE_BUNDLE_VERSION;
+    return BUNDLE_VERSION;
+}
+
+async function updateBindingGrantVersion(binding, companyId, tierState, client) {
+    const grantVersion = consentGrantVersion(tierState);
     await client.query(
         `UPDATE chatgpt_mcp_bindings
          SET grant_version = $3, updated_at = NOW()
          WHERE id = $1 AND company_id = $2 AND status = 'active'`,
         [binding.id, companyId, grantVersion]
     );
+    return grantVersion;
+}
+
+async function setWriteConsent({ companyId, actorId, enabled }, client) {
+    const binding = await lockConsentBinding(companyId, actorId, client);
+    await replaceTierGrants(
+        companyId,
+        binding.ai_user_id,
+        S2_WRITE_GRANTS,
+        WRITE_BUNDLE_VERSION,
+        enabled,
+        client
+    );
+    const tierState = await currentTierState(companyId, binding.ai_user_id, client);
+    const grantVersion = await updateBindingGrantVersion(binding, companyId, tierState, client);
     return {
         enabled: Boolean(enabled),
+        writes_enabled: tierState.writes_enabled,
+        sends_enabled: tierState.sends_enabled,
+        binding_id: binding.id,
+        installation_id: binding.installation_id,
+        agent_user_id: binding.ai_user_id,
+        grant_version: grantVersion,
+    };
+}
+
+async function setSendConsent({ companyId, actorId, enabled }, client) {
+    const binding = await lockConsentBinding(companyId, actorId, client);
+    await replaceTierGrants(
+        companyId,
+        binding.ai_user_id,
+        S3_SEND_GRANTS,
+        SEND_BUNDLE_VERSION,
+        enabled,
+        client
+    );
+    const tierState = await currentTierState(companyId, binding.ai_user_id, client);
+    const grantVersion = await updateBindingGrantVersion(binding, companyId, tierState, client);
+    return {
+        enabled: Boolean(enabled),
+        writes_enabled: tierState.writes_enabled,
+        sends_enabled: tierState.sends_enabled,
         binding_id: binding.id,
         installation_id: binding.installation_id,
         agent_user_id: binding.ai_user_id,
@@ -487,7 +563,7 @@ async function recordInvocation(context, {
 }
 
 /**
- * Read-only write-consent state for the Marketplace settings surface. No
+ * Read-only write/send consent state for the Marketplace settings surface. No
  * tenant-admin gate: the caller is already inside the company-scoped
  * marketplace settings read; nothing here mutates.
  */
@@ -495,17 +571,37 @@ async function getWriteConsent(companyId, client = null) {
     requireValue(companyId, 'companyId');
     const query = queryFor(client);
     const { rows } = await query(
-        `SELECT b.grant_version
+        `SELECT b.grant_version,
+                b.ai_user_id,
+                ARRAY(
+                    SELECT g.permission_key
+                    FROM mcp_agent_permission_grants g
+                    WHERE g.company_id = b.company_id
+                      AND g.agent_user_id = b.ai_user_id
+                      AND g.permission_key = ANY($2::text[])
+                ) AS tier_permissions
          FROM chatgpt_mcp_bindings b
          WHERE b.company_id = $1 AND b.status = 'active'`,
-        [companyId]
+        [
+            companyId,
+            [
+                'mcp.tool.svc.create_lead',
+                'mcp.tool.svc.send_estimate',
+            ],
+        ]
     );
     if (rows.length !== 1) {
-        return { writes_enabled: false, grant_version: null };
+        return {
+            writes_enabled: false,
+            sends_enabled: false,
+            grant_version: null,
+        };
     }
     const grantVersion = Number(rows[0].grant_version);
+    const granted = new Set(rows[0].tier_permissions || []);
     return {
-        writes_enabled: grantVersion >= WRITE_BUNDLE_VERSION,
+        writes_enabled: granted.has('mcp.tool.svc.create_lead'),
+        sends_enabled: granted.has('mcp.tool.svc.send_estimate'),
         grant_version: grantVersion,
     };
 }
@@ -522,6 +618,7 @@ module.exports = {
     resolveFixedBearerContext,
     requireLiveBinding,
     setWriteConsent,
+    setSendConsent,
     getWriteConsent,
     recordInvocation,
 };

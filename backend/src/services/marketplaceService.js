@@ -1071,6 +1071,46 @@ async function setChatgptMcpWrites(companyId, actorId, enabled, { requestId = nu
     }
 }
 
+async function setChatgptMcpSends(companyId, actorId, enabled, { requestId = null } = {}) {
+    if (!companyId) {
+        throw new MarketplaceServiceError('Company context is required.', 'TENANT_CONTEXT_REQUIRED', 403);
+    }
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        let result;
+        try {
+            result = await chatgptMcpIdentityService.setSendConsent({
+                companyId,
+                actorId,
+                enabled: Boolean(enabled),
+            }, client);
+        } catch (err) {
+            if (err instanceof chatgptMcpIdentityService.ChatgptMcpIdentityError) {
+                throw new MarketplaceServiceError(err.message, err.code, err.httpStatus);
+            }
+            throw err;
+        }
+        const app = await marketplaceQueries.getPublishedAppByKey(CHATGPT_CRM_MCP_APP_KEY, client);
+        await marketplaceQueries.writeEvent({
+            companyId,
+            installationId: result.installation_id,
+            appId: app?.id || null,
+            actorId,
+            eventType: enabled ? 'mcp_sends_enabled' : 'mcp_sends_disabled',
+            requestId,
+            payload: { grant_version: result.grant_version },
+        }, client);
+        await client.query('COMMIT');
+        return result;
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 async function retryProvisioning(companyId, actorId, installationId, { requestId = null, req = null } = {}) {
     await marketplaceQueries.ensureMarketplaceSchema();
 
@@ -1224,6 +1264,7 @@ module.exports = {
     installApp,
     disconnectInstallation,
     setChatgptMcpWrites,
+    setChatgptMcpSends,
     retryProvisioning,
     validateRelySettingsInput,
     validateRateMeSettingsInput,

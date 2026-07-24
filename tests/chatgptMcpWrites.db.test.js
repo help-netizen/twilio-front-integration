@@ -397,6 +397,7 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
         // Settings-surface read used by the connect panel's write toggle.
         await expect(identityService.getWriteConsent(state.companyA)).resolves.toEqual({
             writes_enabled: false,
+            sends_enabled: false,
             grant_version: 2,
         });
 
@@ -404,6 +405,7 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
         await expect(setConsent(true)).resolves.toMatchObject({ enabled: true, grant_version: 3 });
         await expect(identityService.getWriteConsent(state.companyA)).resolves.toEqual({
             writes_enabled: true,
+            sends_enabled: false,
             grant_version: 3,
         });
         resolved = await resolveA();
@@ -420,6 +422,7 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
         await expect(setConsent(false)).resolves.toMatchObject({ enabled: false, grant_version: 2 });
         await expect(identityService.getWriteConsent(state.companyA)).resolves.toEqual({
             writes_enabled: false,
+            sends_enabled: false,
             grant_version: 2,
         });
         resolved = await resolveA();
