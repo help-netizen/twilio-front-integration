@@ -1,6 +1,6 @@
 # AVATARS-001 — per-user CRM avatars
 
-Status: owner decisions approved; Phases A and B implemented; Phase C not started
+Status: owner decisions approved; Phases A, B, and C implemented; Phase D pending
 Date: 2026-07-24
 Parent contract: `docs/specs/CHATGPT-CRM-MCP-001.md`
 
@@ -55,12 +55,12 @@ Out of scope:
   resolution, or confirmation requirements;
 - cross-request authorization caches;
 - frontend work by the GPT implementer; Phase D belongs to Claude;
-- Phase C `/api/avatars` routes/roster, frontend, or protected `src/server.js`.
+- frontend Avatars hub and consent controls.
 
 Phase A supplied the schema and identity foundation. Phase B replaces the
 legacy static AI-grant authority with live owner authorization and threads the
-record/FSM scopes in the parity table. The later company roster and self/admin
-HTTP surface remain Phase C.
+record/FSM scopes in the parity table. Phase C supplies the company roster and
+member self-service HTTP surface. Phase D remains frontend-only.
 
 ## 3. Settled owner decisions
 
@@ -241,26 +241,48 @@ scope uses the live human owner's ID and server-resolved scope map.
 
 ## 7. Roster contract
 
-The Phase C company roster joins active bindings to the same-company owner
-membership and synthetic AI identity. `last_activity_at` is
-`MAX(mcp_tool_invocations.started_at)` constrained by both `company_id` and
-`binding_id`.
+`GET /api/avatars` is member-level and returns exactly:
 
-Allowed response fields:
-
-```text
-owner_user_id
-owner_name
-base = ChatGPT
-connection_status
-presence = active | idle
-last_activity_at
+```json
+{
+  "installation_enabled": true,
+  "me": {
+    "connected": true,
+    "base": "chatgpt",
+    "mode": "mcp",
+    "writes_enabled": false,
+    "sends_enabled": false
+  },
+  "roster": [
+    {
+      "owner_user_id": "<crm user UUID>",
+      "owner_name": "<live DB profile name>",
+      "base": "chatgpt",
+      "connection_status": "connected",
+      "presence": "idle",
+      "is_me": true
+    }
+  ]
+}
 ```
 
-The user-facing roster omits `last_activity_at` if the final owner design
-chooses only the requested status fields. It must never return email,
-Keycloak/OAuth subject, permissions, scopes, role, tool names, arguments,
-result metadata, AI email, or token data.
+`me` is `null` until that member has binding history. The roster contains
+active company members that have an active or historical avatar binding.
+Disconnected/revoked bindings remain visible as `connection_status=
+'disconnected'`; the row does not expose revoke metadata. Connected means the
+exact owner binding, same-company installation, published app, and synthetic
+AI identity are all active. A disconnected company installation makes every
+avatar disconnected and idle.
+
+`owner_name` is read live from the human `crm_users` profile, not the AI-user
+snapshot or OAuth claims. Presence is `active` only when the connected
+binding's `MAX(mcp_tool_invocations.started_at)` is within 15 minutes. The
+aggregate repeats both `company_id` and `binding_id`; the timestamp itself is
+not returned.
+
+The response must never return email, Keycloak/OAuth subject, permissions,
+scopes, role, tool names, arguments, result metadata, AI email, token data, or
+raw activity timestamps.
 
 Every active company member may read the roster. Tenant administrators may
 globally disable the company installation or revoke one avatar. An owner may
@@ -269,6 +291,27 @@ revoke only their own avatar. Only the owner may enable Writes/Sends.
 Invocation audit is best-effort after a domain action, so presence is an
 operational hint rather than a security signal. Binding/install/user state,
 not presence, controls authorization.
+
+### 7.1 Member self-service endpoints
+
+All routes are mounted under `authenticate, requireCompanyAccess`; company
+identity comes only from `req.companyFilter.company_id`, and owner identity
+comes only from `req.user.crmUser.id`.
+
+| Endpoint | Request | Response | Rule |
+|---|---|---|---|
+| `GET /api/avatars` | none | overview contract above | Any active company member; no `tenant.integrations.manage` requirement. |
+| `POST /api/avatars/me/connect` | empty object/body | exact `me` object | Idempotent self-provision; 409 `AVATARS_NOT_ENABLED` unless the admin-owned company installation is connected; tiers start false. |
+| `POST /api/avatars/me/writes` | `{ "enabled": boolean }` | `{ writes_enabled, sends_enabled }` | Reuses the per-owner v3 consent transaction for the signed-in actor's binding only. |
+| `POST /api/avatars/me/sends` | `{ "enabled": boolean }` | `{ writes_enabled, sends_enabled }` | Reuses the independent per-owner v4 consent transaction for the signed-in actor's binding only. |
+| `POST /api/avatars/me/disconnect` | empty object/body | `{ "connected": false }` | Idempotently revokes only `(company_id, actor owner_user_id)`. |
+
+Connect is explicit because the OAuth resolver deliberately resolves only an
+existing active binding and does not mutate identity state. The frontend
+connect flow pre-provisions via `/me/connect`, then opens the ChatGPT OAuth
+wizard. This does not change token validation or the existing OAuth path.
+Bodies containing `owner_user_id`, `company_id`, or any other extra key are
+rejected, so the self routes cannot target another avatar.
 
 ## 8. Tenancy & Roles
 
@@ -317,6 +360,20 @@ Phase A additionally requires:
 - self-revoke affects only the exact owner/company avatar;
 - no write/send grant is created for a new avatar.
 
+Phase C additionally requires:
+
+- active ordinary members without `tenant.integrations.manage` can read the
+  roster and their own state;
+- the response has an exact allowlist and no identity, permission, scope,
+  tool, audit-content, or activity-timestamp leakage;
+- the presence boundary is 15 minutes and a disconnected chain is always
+  idle;
+- every self mutation derives owner identity from the authenticated CRM user;
+  extra target/company fields are rejected;
+- roster, consent, connect, and disconnect are T-blast safe across two
+  companies; foreign rows remain absent or byte-identical;
+- unauthenticated and missing-company requests fail before the service.
+
 ## 10. Staged implementation plan
 
 ### Phase A — identity foundation (this implementation)
@@ -362,13 +419,13 @@ Phase B implementation notes:
 - The required attack-only review is a separate post-implementation turn. It
   is intentionally not folded into the implementation/repair pass.
 
-### Phase C — roster and HTTP endpoints (owner approval for protected mount)
+### Phase C — roster and HTTP endpoints (implemented)
 
 | Task | Deliverable | Acceptance |
 |---|---|---|
-| T12 | `/api/avatars` self/admin endpoints | Active members self-connect/revoke/toggle own tiers; admin can revoke/disable but cannot enable another owner's tier. |
+| T12 | `/api/avatars` self endpoints | Active members self-connect/revoke/toggle only their own tiers. Marketplace admin enable/disable and revocation seams are unchanged; member routes cannot expand another owner's tier. |
 | T13 | Roster query/route | All active members see only the allowlisted fields; 15-minute presence; T-blast aggregate isolation. |
-| T14 | Protected runtime hook | Minimal `src/server.js` require/mount only after explicit owner approval; no Marketplace-wide permission relaxation. |
+| T14 | Protected runtime hook | The owner-approved `app.use('/api/avatars', authenticate, requireCompanyAccess, require('../backend/src/routes/avatars'))` is the only runtime-shell change; Marketplace permissions are not relaxed. |
 
 ### Phase D — frontend (Claude)
 
@@ -464,11 +521,25 @@ Final post-restore result for the full MCP regression command above:
 ### Phase C focused
 
 ```bash
-env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/avatarsRoutes.test.js tests/avatarsRoster.db.test.js
+DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/avatarsRoutes.test.js tests/avatarsRoster.db.test.js
 ```
 
 Phase C sabotage removes the roster `company_id` predicate and must make the
 two-company aggregate test expose B and fail.
+
+Phase C implementation result: focused routes + production-shaped roster
+contract passed 2 suites / 11 tests, exit 0. Final full MCP+Avatars regression
+passed 25 suites / 283 tests, exit 0. The DB suite used the canonical pre-096
+baseline, compatibility migrations 084–089, and migrations 096–200; it is a
+visible release blocker rather than a silent pass when PostgreSQL is
+unavailable.
+
+`SAB-AVATAR-ROSTER-TBLAST`: removing all roster membership/binding
+`company_id` restrictions exposed tenant B and other test tenants
+(`Expected length: 3; Received length: 8`), so the selected test failed
+1 suite / 1 selected test with exit 1. Restoring from the pre-mutation `cp`
+backup made the same selected test pass (1 passed, 4 filtered tests skipped,
+exit 0).
 
 ### Phase D
 

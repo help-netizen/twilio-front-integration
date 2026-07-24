@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-24 — AVATARS-001 Phase C: roster and member self-service
+
+Добавлен member-level `/api/avatars`: любой active-член компании видит только
+allowlisted roster (живое имя владельца, ChatGPT base, connected/disconnected,
+15-минутный active/idle presence, is_me) и состояние своего аватара без
+email/sub/permissions/tool/audit данных. Self-connect идемпотентно требует
+включённую администратором company-installation; отдельные Writes/Sends и
+self-disconnect всегда таргетят только `(company_id, authenticated actor)`.
+Marketplace admin-гейт не ослаблялся. `src/server.js` изменён только
+одобренным mount `authenticate → requireCompanyAccess → avatars router`.
+Добавлены route guards и prod-shaped PG T-blast/byte-snapshot контракты.
+Frontend оставлен Phase D. **НЕ задеплоено.**
+
 ## 2026-07-24 — AVATARS-001 Phase B red-team fixes
 
 Job/Lead FSM-запись теперь применяет точный target перехода, уже

@@ -279,6 +279,7 @@ app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
 // Integration settings API (§15)
 app.use('/api/admin/integrations', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, integrationsAdminRouter);
 app.use('/api/marketplace', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, marketplaceRouter);
+app.use('/api/avatars', authenticate, requireCompanyAccess, require('../backend/src/routes/avatars'));
 // MAIL-AGENT-001: Mail Secretary settings + activity (same gate as marketplace).
 app.use('/api/mail-agent', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,
     require('../backend/src/routes/mailAgent'));
