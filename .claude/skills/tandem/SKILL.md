@@ -97,7 +97,9 @@ call — ask now, once, consolidated (AskUserQuestion).
 **Turn 1 (exec, background):** send the frame. Ask Codex to (a) explore the code itself
 and return a current-state map (files/flows, existing components/patterns, file:line),
 (b) sketch the backend/data implementation (endpoints, data shape, reuse-not-duplicate),
-(c) surface the conceptual forks it sees, (d) list DECISIONS NEEDED / RISKS / QUESTIONS.
+(c) surface the conceptual forks it sees, (d) the **MCP parity** check (see the section
+below) — does this touch a CRM capability, readable field, permission, FSM/status, or a
+shared service the ChatGPT connector reuses, (e) list DECISIONS NEEDED / RISKS / QUESTIONS.
 Do NOT ask Codex for the visual mockup — the design is yours.
 
 **Your move — design the UX yourself.** From Codex's current-state map, YOU work out the
@@ -171,7 +173,8 @@ directive 2026-07-19; leaked sessions pile up and eat the Mac's RAM):**
   session is a FIX-round defect, same severity as a failing test.
 
 ### Phase 3 — Acceptance, docs, report (you; small)
-- Full targeted regression sweep (one jest regex over the affected domains).
+- Full targeted regression sweep (one jest regex over the affected domains); include the
+  MCP suite whenever a shared CRM service/route/permission/schema was touched (**MCP parity**).
 - **Durable artifacts (MANDATORY — see the section below):** Codex drafts the
   requirements/architecture/changelog blocks and the spec incl. its Verification
   section (resume); you red-pen and OWN the final spec wording, confirm the
@@ -189,6 +192,49 @@ Structure: What shipped (1 line per capability, user language) · Key decisions 
 (and which were owner's vs yours vs Codex's) · Verification (tests/sabotage/build,
 numbers only) · Deviations & debt · NOT done / next · Commits. No file-by-file
 narration; no code snippets unless asked.
+
+## MCP parity — MANDATORY (the ChatGPT connector must not drift from the app)
+
+The ChatGPT CRM connector (`docs/specs/CHATGPT-CRM-MCP-001.md`) mirrors dispatcher-level
+CRM capability through a tenant-bound AI identity: read/write/send tools, deny-by-default
+grants, independent consent tiers (reads · writes · sends). Every feature that touches CRM
+capability must leave the connector CONSISTENT with the app. Drift is a defect in either
+direction: the app gains an action the AI can't do (stale), or — worse — the AI can reach
+a new outward/destructive action nobody gated (unsafe capability creep).
+
+**Adding a NEW capability to the MCP is the OWNER's call — always ask first.** Surfacing
+any new tool / new reach to the connector (a new action the AI dispatcher can take, a new
+entity/field it can read, a new customer-send path) is an OWNER decision, never Claude's
+and never Codex's — ask via AskUserQuestion BEFORE building it, with the one-line "what
+this lets ChatGPT now do." Keeping the connector *consistent* (regression, closed
+projection, removing dead tools) is automatic and needs no approval; *growing* its reach
+needs an explicit owner yes. Default posture stays deny-by-default: no write/send/financial
+grant is ever auto-added, and recipient/actor stay server-resolved (anti-injection),
+`created_by` = AI-user id.
+
+**In Phase 1 the current-state map records MCP impact.** If the feature adds/changes a
+capability an AI dispatcher could use, a readable field, a permission key, an FSM/status
+transition, or a shared service the MCP reuses, it names the affected files
+(`agentSkillsMcpRegistry.js`, `chatgptMcpPermissions.js`, `chatgptMcp{Read,Write}Service.js`,
+the spec). No impact → say "no MCP impact" and move on.
+
+**Handle the impact:**
+- **New capability worth exposing** → STOP, ask the owner. On yes: ship tool + permission
+  pair + grant-bundle entry + real-DB tenant T-blast + inventory-count bump + spec section
+  in the same feature (or a recorded fast-follow). New write/send capability goes behind
+  the matching consent tier + scope — never auto-granted, no backfill migration.
+- **New readable field/output** → only widen a read projection if it carries no new
+  PII/secret; the allowlist stays closed (never leak a new sensitive field).
+- **Removed/renamed capability** → drop/rename the tool + grant in lockstep so the
+  connector can't call a dead path.
+- **Shared CRM service/route/permission/schema touched** (estimates/invoices/jobs/leads/
+  notes/calls/send services, permissionCatalog, entity schemas) → the MCP suite is part of
+  the acceptance sweep. The connector rides those seams and breaks silently on a signature
+  or behavior change (this project has hit `addNote` arity, empty-catch-in-transaction, and
+  template client-threading exactly this way).
+
+A capability change with no matching MCP spec update (tool inventory + consent-tier counts)
+is undone — the spec is the parity source of truth.
 
 ## Durable artifacts — MANDATORY (the project must be re-enterable from these alone)
 
