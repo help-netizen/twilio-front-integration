@@ -7,6 +7,10 @@
 
 const db = require('./connection');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 /**
  * Get all role configs for a company.
  */
@@ -30,8 +34,8 @@ async function listRoleConfigs(companyId) {
 /**
  * Get a specific role config by company + role_key.
  */
-async function getRoleConfig(companyId, roleKey) {
-    const { rows } = await db.query(
+async function getRoleConfig(companyId, roleKey, client = null) {
+    const { rows } = await queryFor(client)(
         `SELECT id, company_id, role_key, display_name, description, is_locked,
                 created_at, updated_at
          FROM company_role_configs
@@ -84,8 +88,8 @@ async function getRoleScopes(roleConfigId) {
  * Get allowed permission keys for a role config.
  * Returns flat array of permission_key strings.
  */
-async function getAllowedPermissionKeys(roleConfigId) {
-    const { rows } = await db.query(
+async function getAllowedPermissionKeys(roleConfigId, client = null) {
+    const { rows } = await queryFor(client)(
         `SELECT permission_key FROM company_role_permissions
          WHERE role_config_id = $1 AND is_allowed = true
          ORDER BY permission_key`,
@@ -98,8 +102,8 @@ async function getAllowedPermissionKeys(roleConfigId) {
  * Get scope map for a role config.
  * Returns { scope_key: scope_json } object.
  */
-async function getScopeMap(roleConfigId) {
-    const { rows } = await db.query(
+async function getScopeMap(roleConfigId, client = null) {
+    const { rows } = await queryFor(client)(
         `SELECT scope_key, scope_json FROM company_role_scopes
          WHERE role_config_id = $1`,
         [roleConfigId]

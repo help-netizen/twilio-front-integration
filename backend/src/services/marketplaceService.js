@@ -620,9 +620,9 @@ const SETTINGS_HANDLERS = {
         ),
         buildEventPayload: inspectorSettingsService.buildEventPayload,
     },
-    // CHATGPT-CRM-MCP-001: read-only settings surface — the connect panel's
-    // write-consent toggle reads state here; mutations go through the dedicated
-    // tenant-admin-gated writes/enable|disable endpoints, never through PUT.
+    // CHATGPT-CRM-MCP-001: read-only settings surface. Consent mutations never
+    // go through PUT; AVATARS-001 Phase C replaces this company-wide response
+    // with the signed-in owner's per-avatar settings endpoint.
     'chatgpt-crm-mcp': {
         validate: () => {
             throw new MarketplaceServiceError(
@@ -916,9 +916,15 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
                 installationId: installation.id,
             }, doneClient);
             if (app.app_key === CHATGPT_CRM_MCP_APP_KEY) {
-                await chatgptMcpIdentityService.provisionInstallation({
+                await chatgptMcpIdentityService.enableCompanyInstallation({
                     companyId,
                     installationId: installation.id,
+                    actorId,
+                }, doneClient);
+                await chatgptMcpIdentityService.provisionAvatar({
+                    companyId,
+                    installationId: installation.id,
+                    ownerUserId: actorId,
                     actorId,
                 }, doneClient);
             }

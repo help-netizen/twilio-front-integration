@@ -66,6 +66,7 @@ function buildContext(binding, { ip, requestId }) {
             name: binding.ai_full_name,
             kind: 'agent',
             oauthAuthorizerId: binding.authorized_by_user_id,
+            avatarOwnerId: binding.owner_user_id,
             crmUser: {
                 id: binding.ai_user_id,
                 email: binding.ai_email,
@@ -78,6 +79,14 @@ function buildContext(binding, { ip, requestId }) {
         authz: {
             permissions: binding.permissions || [],
             oauthScopes: ['albusto.mcp.read'],
+            avatarOwner: {
+                id: binding.owner_user_id,
+                display_name: binding.owner_display_name,
+                role_key: binding.owner_role_key,
+                membership: binding.owner_membership,
+                permissions: binding.owner_permissions || [],
+                scopes: binding.owner_scopes || {},
+            },
             company: {
                 id: binding.company_id,
                 name: binding.company_name,
@@ -89,6 +98,7 @@ function buildContext(binding, { ip, requestId }) {
             id: binding.binding_id,
             installationId: binding.installation_id,
             authorizerId: binding.authorized_by_user_id,
+            ownerUserId: binding.owner_user_id,
         },
     };
 }

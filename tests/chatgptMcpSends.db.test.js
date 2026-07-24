@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { randomUUID } = require('crypto');
 const { spawnSync } = require('child_process');
 
@@ -42,6 +44,11 @@ const protocol = require('../backend/src/services/agentSkillsMcpProtocolService'
 const executor = require('../backend/src/services/agentSkillsMcpExecutor');
 const estimatesService = require('../backend/src/services/estimatesService');
 const invoicesService = require('../backend/src/services/invoicesService');
+
+const AVATARS = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '200_avatars_per_user_identity.sql'),
+    'utf8'
+);
 
 jest.setTimeout(90000);
 
@@ -96,6 +103,7 @@ async function setup() {
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
+        await client.query(AVATARS);
         await client.query(
             `INSERT INTO companies (id, name, slug, status, timezone)
              VALUES ($1, 'S3 Tenant A', $2, 'active', 'America/New_York'),
@@ -354,8 +362,12 @@ function protocolRequest(resolved) {
         user: {
             kind: 'agent',
             oauthAuthorizerId: resolved.authorized_by_user_id,
+            avatarOwnerId: resolved.owner_user_id,
             email: resolved.ai_email,
-            crmUser: { id: resolved.ai_user_id },
+            crmUser: {
+                id: resolved.ai_user_id,
+                full_name: resolved.ai_full_name,
+            },
         },
         authz: {
             permissions: resolved.permissions,
@@ -365,10 +377,16 @@ function protocolRequest(resolved) {
                 permissions.SEND_SCOPE,
             ],
             company: { timezone: 'America/New_York' },
+            avatarOwner: {
+                id: resolved.owner_user_id,
+                role_key: resolved.owner_role_key,
+                scopes: resolved.owner_scopes,
+            },
         },
         chatgptMcpBinding: {
             id: resolved.binding_id,
             authorizerId: resolved.authorized_by_user_id,
+            ownerUserId: resolved.owner_user_id,
         },
         requestId: `s3-protocol-${randomUUID()}`,
     };

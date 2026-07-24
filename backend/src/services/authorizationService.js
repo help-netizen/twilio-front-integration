@@ -34,6 +34,15 @@ const LEGACY_ROLE_MAPPING = {
     'company_member': 'dispatcher',
 };
 
+class CompanyUserAuthzError extends Error {
+    constructor(code = 'COMPANY_USER_ACCESS_INACTIVE', message = 'Company user access is not active.') {
+        super(message);
+        this.name = 'CompanyUserAuthzError';
+        this.code = code;
+        this.httpStatus = 403;
+    }
+}
+
 /**
  * Build the full authorization context for a CRM user.
  * This is called on every authenticated request by keycloakAuth.authenticate().
@@ -134,21 +143,40 @@ async function resolveAuthzContext(crmUser) {
  * Merges: role matrix permissions + user permission overrides
  *         role scopes + user scope overrides
  */
-async function resolveEffectivePermissionsAndScopes(companyId, roleKey, membershipId) {
+async function resolveEffectivePermissionsAndScopes(
+    companyId,
+    roleKey,
+    membershipId,
+    { client = null } = {}
+) {
     // Get the role config for this company + role
-    const roleConfig = await roleQueries.getRoleConfig(companyId, roleKey);
+    const roleConfig = client
+        ? await roleQueries.getRoleConfig(companyId, roleKey, client)
+        : await roleQueries.getRoleConfig(companyId, roleKey);
 
     // The role config can legitimately be missing for a beat (a brand-new company
     // mid-onboarding, before 050/bootstrap seeding finishes). Do NOT early-return
     // empty: a tenant_admin must still receive the mandatory admin baseline below,
     // or they're locked out of their own company in that window (the onboarding-race
     // 0-permissions bug). Non-admin roles with no config correctly resolve to [].
-    const rolePermissionKeys = roleConfig ? await roleQueries.getAllowedPermissionKeys(roleConfig.id) : [];
-    const roleScopeMap = roleConfig ? await roleQueries.getScopeMap(roleConfig.id) : {};
+    const rolePermissionKeys = roleConfig
+        ? (client
+            ? await roleQueries.getAllowedPermissionKeys(roleConfig.id, client)
+            : await roleQueries.getAllowedPermissionKeys(roleConfig.id))
+        : [];
+    const roleScopeMap = roleConfig
+        ? (client
+            ? await roleQueries.getScopeMap(roleConfig.id, client)
+            : await roleQueries.getScopeMap(roleConfig.id))
+        : {};
 
     // Get user-level overrides
-    const permOverrides = await membershipQueries.getPermissionOverrides(membershipId);
-    const scopeOverrides = await membershipQueries.getScopeOverrides(membershipId);
+    const permOverrides = client
+        ? await membershipQueries.getPermissionOverrides(membershipId, client)
+        : await membershipQueries.getPermissionOverrides(membershipId);
+    const scopeOverrides = client
+        ? await membershipQueries.getScopeOverrides(membershipId, client)
+        : await membershipQueries.getScopeOverrides(membershipId);
 
     // Merge permissions: start with role matrix, apply user overrides
     const permissionSet = new Set(rolePermissionKeys);
@@ -176,6 +204,58 @@ async function resolveEffectivePermissionsAndScopes(companyId, roleKey, membersh
     return {
         permissions: Array.from(permissionSet).sort(),
         scopes: scopeMap,
+    };
+}
+
+/**
+ * Resolve live human authorization inside one explicitly selected company.
+ * AVATARS-001 uses this instead of the primary-membership resolver so a
+ * binding can never drift to a different company. No cross-request cache.
+ */
+async function resolveCompanyUserAuthz(companyId, ownerUserId, { client = null } = {}) {
+    if (!companyId || !ownerUserId) {
+        throw new CompanyUserAuthzError(
+            'COMPANY_USER_CONTEXT_REQUIRED',
+            'Company and owner context are required.'
+        );
+    }
+    const membership = await membershipQueries.getActiveMembershipInCompany(
+        ownerUserId,
+        companyId,
+        client
+    );
+    if (!membership?.keycloak_sub) {
+        throw new CompanyUserAuthzError();
+    }
+    const roleKey = membership.role_key || LEGACY_ROLE_MAPPING[membership.role];
+    if (!roleKey) {
+        throw new CompanyUserAuthzError(
+            'COMPANY_USER_ROLE_REQUIRED',
+            'Company user role context is required.'
+        );
+    }
+    const { permissions, scopes } = await resolveEffectivePermissionsAndScopes(
+        companyId,
+        roleKey,
+        membership.id,
+        { client }
+    );
+    return {
+        owner_user_id: membership.user_id,
+        owner_display_name: membership.full_name || membership.email || 'User',
+        owner_email: membership.email || null,
+        owner_keycloak_sub: membership.keycloak_sub,
+        company: {
+            id: membership.company_id,
+            name: membership.company_name,
+            slug: membership.company_slug,
+            status: membership.company_status,
+            timezone: membership.company_timezone,
+        },
+        membership: formatMembership(membership),
+        role_key: roleKey,
+        permissions,
+        scopes,
     };
 }
 
@@ -256,7 +336,9 @@ function buildDevAuthzContext() {
 }
 
 module.exports = {
+    CompanyUserAuthzError,
     resolveAuthzContext,
+    resolveCompanyUserAuthz,
     resolveEffectivePermissionsAndScopes,
     buildDevAuthzContext,
     LEGACY_ROLE_MAPPING,

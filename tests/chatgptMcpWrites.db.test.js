@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { randomUUID } = require('crypto');
 const { spawnSync } = require('child_process');
 const db = require('../backend/src/db/connection');
@@ -11,6 +13,11 @@ const protocol = require('../backend/src/services/agentSkillsMcpProtocolService'
 const executor = require('../backend/src/services/agentSkillsMcpExecutor');
 const estimatesService = require('../backend/src/services/estimatesService');
 const invoicesService = require('../backend/src/services/invoicesService');
+
+const AVATARS = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '200_avatars_per_user_identity.sql'),
+    'utf8'
+);
 
 jest.setTimeout(90000);
 
@@ -99,6 +106,7 @@ async function setup() {
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
+        await client.query(AVATARS);
         await client.query(
             `INSERT INTO companies (id, name, slug, status, timezone)
              VALUES ($1, 'S2a Tenant A', $2, 'active', 'America/New_York'),
@@ -137,8 +145,9 @@ async function setup() {
             [state.humanA.id, state.companyA, state.humanB.id, state.companyB]
         );
         // A prod-shaped DB carries the LAST_ADMIN_REQUIRED guard, so the consent
-        // test cannot demote company A's only tenant_admin. Seed a second admin
-        // purely to satisfy that trigger; the gate is still asserted on humanA.
+        // The prod-shaped LAST_ADMIN_REQUIRED trigger needs a second admin
+        // while this test proves the avatar owner's self-consent survives a
+        // role change. That second admin must not control the owner's tiers.
         const spareAdmin = await client.query(
             `INSERT INTO crm_users
                 (keycloak_sub, email, full_name, role, status, company_id,
@@ -156,6 +165,7 @@ async function setup() {
              VALUES ($1,$2,'company_admin','tenant_admin','active')`,
             [spareAdmin.rows[0].id, state.companyA]
         );
+        state.spareAdminA = spareAdmin.rows[0];
         const app = await client.query(
             `SELECT id FROM marketplace_apps
              WHERE app_key = 'chatgpt-crm-mcp' AND status = 'published'`
@@ -303,7 +313,9 @@ function writeContext(resolved) {
     return {
         companyId: resolved.company_id,
         actorId: resolved.ai_user_id,
+        actorName: resolved.ai_full_name,
         authorizerId: resolved.authorized_by_user_id,
+        ownerUserId: resolved.owner_user_id,
         bindingId: resolved.binding_id,
         oauthScopes: [permissions.READ_SCOPE, permissions.WRITE_SCOPE],
         permissions: resolved.permissions,
@@ -317,16 +329,26 @@ function protocolRequest(resolved) {
         user: {
             kind: 'agent',
             oauthAuthorizerId: resolved.authorized_by_user_id,
-            crmUser: { id: resolved.ai_user_id },
+            avatarOwnerId: resolved.owner_user_id,
+            crmUser: {
+                id: resolved.ai_user_id,
+                full_name: resolved.ai_full_name,
+            },
         },
         authz: {
             permissions: resolved.permissions,
             oauthScopes: [permissions.READ_SCOPE, permissions.WRITE_SCOPE],
             company: { timezone: 'America/New_York' },
+            avatarOwner: {
+                id: resolved.owner_user_id,
+                role_key: resolved.owner_role_key,
+                scopes: resolved.owner_scopes,
+            },
         },
         chatgptMcpBinding: {
             id: resolved.binding_id,
             authorizerId: resolved.authorized_by_user_id,
+            ownerUserId: resolved.owner_user_id,
         },
         requestId: `s2a-protocol-${randomUUID()}`,
     };
@@ -367,7 +389,7 @@ beforeAll(async () => {
 });
 
 describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => {
-    databaseTest('consent is tenant_admin-only, idempotent, and filters 19 → 30 → 19 tools', async () => {
+    databaseTest('consent is owner-only, idempotent, and filters 19 → 30 → 19 tools', async () => {
         let resolved = await resolveA();
         let response = await protocol.handleJsonRpc(protocolRequest(resolved), {
             jsonrpc: '2.0',
@@ -377,15 +399,33 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
         });
         expect(response.result.tools).toHaveLength(19);
 
+        await expect(marketplaceService.setChatgptMcpWrites(
+            state.companyA,
+            state.spareAdminA.id,
+            true,
+            { requestId: `foreign-consent-${randomUUID()}` }
+        )).rejects.toMatchObject({
+            code: 'MCP_BINDING_INVALID',
+            httpStatus: 403,
+        });
         await db.query(
             `UPDATE company_memberships
              SET role='company_member', role_key='manager'
              WHERE user_id=$1 AND company_id=$2`,
             [state.humanA.id, state.companyA]
         );
-        await expect(setConsent(true)).rejects.toMatchObject({
-            code: 'TENANT_ADMIN_REQUIRED',
-            httpStatus: 403,
+        await expect(setConsent(true)).resolves.toMatchObject({
+            enabled: true,
+            grant_version: 3,
+        });
+        await expect(identityService.getWriteConsent(state.companyA)).resolves.toEqual({
+            writes_enabled: true,
+            sends_enabled: false,
+            grant_version: 3,
+        });
+        await expect(setConsent(false)).resolves.toMatchObject({
+            enabled: false,
+            grant_version: 2,
         });
         await db.query(
             `UPDATE company_memberships

@@ -23,6 +23,11 @@ const DOCS_LINK_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_199_chatgpt_mcp_docs_link.sql'),
     'utf8'
 );
+const AVATARS = fs.readFileSync(path.join(MIGRATIONS, '200_avatars_per_user_identity.sql'), 'utf8');
+const AVATARS_ROLLBACK = fs.readFileSync(
+    path.join(MIGRATIONS, 'rollback_200_avatars_per_user_identity.sql'),
+    'utf8'
+);
 const MARKETPLACE_SOURCE = fs.readFileSync(path.join(__dirname, '../backend/src/services/marketplaceService.js'), 'utf8');
 
 jest.setTimeout(60000);
@@ -92,7 +97,11 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
         expect(DOCS_LINK_ROLLBACK).toContain(
             "docs_url = '/docs/integrations/chatgpt-crm-mcp'"
         );
-        expect(MARKETPLACE_SOURCE).toContain('chatgptMcpIdentityService.provisionInstallation');
+        expect(AVATARS).toContain('uq_chatgpt_mcp_binding_active_owner');
+        expect(AVATARS).toContain('fk_chatgpt_binding_owner_membership');
+        expect(AVATARS_ROLLBACK).toContain('AVATARS_ROLLBACK_MULTIPLE_ACTIVE_BINDINGS');
+        expect(MARKETPLACE_SOURCE).toContain('chatgptMcpIdentityService.enableCompanyInstallation');
+        expect(MARKETPLACE_SOURCE).toContain('chatgptMcpIdentityService.provisionAvatar');
         expect(MARKETPLACE_SOURCE).toContain('chatgptMcpIdentityService.revokeInstallation');
         expect(MARKETPLACE_SOURCE).toContain('requireChatgptTenantAdmin');
 
@@ -106,7 +115,7 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
         }
     });
 
-    databaseTest('SAB-MCP-OAUTH-TENANT + R-matrix: OAuth and fixed-bearer chains require an active tenant-admin authorizer', async () => {
+    databaseTest('SAB-MCP-OAUTH-TENANT + R-matrix: OAuth and fixed bearer require an active avatar owner membership', async () => {
         const client = await db.pool.connect();
         const companyA = randomUUID();
         const companyB = randomUUID();
@@ -119,6 +128,7 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
             await client.query('BEGIN');
             await client.query(SCHEMA);
             await client.query(SEED);
+            await client.query(AVATARS);
             dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => client.query(text, params));
 
             await client.query(
@@ -274,6 +284,10 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
             });
             expect(resolved.company_id).toBe(companyA);
             expect(resolved.ai_user_id).toBe(provisionA.aiUser.id);
+            expect(resolved.owner_user_id).toBe(humanA.id);
+            expect(resolved.owner_display_name).toBe('Admin A');
+            expect(resolved.owner_role_key).toBe('tenant_admin');
+            expect(resolved.ai_full_name).toBe('Avatar of Admin A');
             expect(resolved.permissions.sort()).toEqual([...grants.S1_GRANTS].sort());
             await identityService.recordInvocation({
                 companyId: companyA,
@@ -324,7 +338,11 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
             await expect(identityService.resolveFixedBearerContext({
                 companyId: companyA,
                 agentUserId: provisionA.aiUser.id,
-            })).rejects.toMatchObject({ code: 'MCP_BINDING_INVALID' });
+            })).resolves.toMatchObject({
+                company_id: companyA,
+                owner_user_id: humanA.id,
+                owner_role_key: 'manager',
+            });
             await client.query(
                 `UPDATE company_memberships
                  SET role_key='tenant_admin', role='company_admin'

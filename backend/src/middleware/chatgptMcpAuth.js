@@ -181,6 +181,7 @@ async function authenticateChatgptMcp(req, res, next) {
                 status: 'active',
             },
             oauthAuthorizerId: binding.authorized_by_user_id,
+            avatarOwnerId: binding.owner_user_id,
         };
         req.authz = {
             company: {
@@ -192,11 +193,20 @@ async function authenticateChatgptMcp(req, res, next) {
             membership: null,
             permissions: binding.permissions || [],
             oauthScopes,
+            avatarOwner: {
+                id: binding.owner_user_id,
+                display_name: binding.owner_display_name,
+                role_key: binding.owner_role_key,
+                membership: binding.owner_membership,
+                permissions: binding.owner_permissions || [],
+                scopes: binding.owner_scopes || {},
+            },
         };
         req.chatgptMcpBinding = {
             id: binding.binding_id,
             installationId: binding.installation_id,
             authorizerId: binding.authorized_by_user_id,
+            ownerUserId: binding.owner_user_id,
         };
         return next();
     } catch (err) {

@@ -234,7 +234,7 @@ async function nextLeadUuid(client) {
     throw new ChatgptMcpWriteError('UUID_GENERATION_FAILED', 'Could not allocate a Lead identifier.', 500);
 }
 
-function noteObject(textValue, actorId) {
+function noteObject(textValue, actorId, actorName) {
     const noteText = text(textValue);
     if (!noteText) return null;
     return {
@@ -242,7 +242,7 @@ function noteObject(textValue, actorId) {
         text: noteText,
         created: new Date().toISOString(),
         created_by: actorId,
-        author: 'ChatGPT AI Dispatcher',
+        author: actorName || 'Avatar',
     };
 }
 
@@ -255,7 +255,7 @@ async function createLead(context, args, client) {
         email: args.email,
     }, client);
     const uuid = await nextLeadUuid(client);
-    const note = noteObject(args.note, context.actorId);
+    const note = noteObject(args.note, context.actorId, context.actorName);
     const inserted = await client.query(
         `INSERT INTO leads
             (company_id, uuid, first_name, last_name, company, phone, email,
@@ -460,7 +460,7 @@ async function createJob(context, args, client) {
         phone: args.customer_phone,
         email: args.customer_email,
     }, client);
-    const note = noteObject(args.note, context.actorId);
+    const note = noteObject(args.note, context.actorId, context.actorName);
     const inserted = await client.query(
         `INSERT INTO jobs
             (company_id, contact_id, blanc_status, zb_status, service_name,
@@ -575,7 +575,7 @@ async function transitionJob(context, args, client) {
 }
 
 async function addNote(context, args, client) {
-    const note = noteObject(args.text, context.actorId);
+    const note = noteObject(args.text, context.actorId, context.actorName);
     if (!note) validation('text is required.');
     let table;
     let keyColumn;
@@ -917,7 +917,7 @@ async function sendDocument(context, args, client, documentType) {
                 userEmail: context.actorEmail,
                 noteActor: {
                     id: context.actorId,
-                    name: 'ChatGPT AI Dispatcher',
+                    name: context.actorName || 'Avatar',
                 },
             },
             client

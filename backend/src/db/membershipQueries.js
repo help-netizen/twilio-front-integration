@@ -6,6 +6,10 @@
 
 const db = require('./connection');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 /**
  * Get the primary active membership for a user.
  * Prefers is_primary = true, then falls back to most recent active.
@@ -46,8 +50,8 @@ async function getMembershipById(membershipId) {
 /**
  * Get permission overrides for a membership.
  */
-async function getPermissionOverrides(membershipId) {
-    const { rows } = await db.query(
+async function getPermissionOverrides(membershipId, client = null) {
+    const { rows } = await queryFor(client)(
         `SELECT permission_key, override_mode
          FROM company_membership_permission_overrides
          WHERE membership_id = $1`,
@@ -88,14 +92,48 @@ async function setPermissionOverride(membershipId, permissionKey, overrideMode) 
 /**
  * Get scope overrides for a membership.
  */
-async function getScopeOverrides(membershipId) {
-    const { rows } = await db.query(
+async function getScopeOverrides(membershipId, client = null) {
+    const { rows } = await queryFor(client)(
         `SELECT scope_key, scope_json
          FROM company_membership_scope_overrides
          WHERE membership_id = $1`,
         [membershipId]
     );
     return rows;
+}
+
+/**
+ * Resolve one active human membership inside an explicitly selected company.
+ * Unlike getActiveMembership(), this never falls back to another/primary
+ * company and may participate in the caller's transaction.
+ */
+async function getActiveMembershipInCompany(userId, companyId, client = null) {
+    if (!userId || !companyId) return null;
+    const { rows } = await queryFor(client)(
+        `SELECT m.id, m.user_id, m.company_id, m.role, m.role_key, m.status,
+                m.is_primary, m.created_at, m.updated_at,
+                c.name AS company_name, c.slug AS company_slug,
+                c.status AS company_status,
+                COALESCE(c.timezone, 'America/New_York') AS company_timezone,
+                u.keycloak_sub, u.email, u.full_name,
+                u.status AS user_status, u.onboarding_status, u.kind
+         FROM company_memberships m
+         JOIN companies c
+           ON c.id = m.company_id
+          AND c.id = $2
+          AND c.status = 'active'
+         JOIN crm_users u
+           ON u.id = m.user_id
+          AND u.id = $1
+          AND u.status = 'active'
+          AND u.onboarding_status = 'active'
+          AND COALESCE(u.kind, 'user') = 'user'
+         WHERE m.user_id = $1
+           AND m.company_id = $2
+           AND m.status = 'active'`,
+        [userId, companyId]
+    );
+    return rows.length === 1 ? rows[0] : null;
 }
 
 /**
@@ -213,6 +251,7 @@ async function getZenbookerTeamMemberIdForUser(companyId, userId) {
 module.exports = {
     getActiveMembership,
     getMembershipById,
+    getActiveMembershipInCompany,
     getPermissionOverrides,
     setPermissionOverride,
     getScopeOverrides,

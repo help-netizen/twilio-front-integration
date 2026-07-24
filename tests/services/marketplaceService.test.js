@@ -51,6 +51,8 @@ jest.mock('../../backend/src/services/chatgptMcpIdentityService', () => {
     return {
         ChatgptMcpIdentityError,
         requireTenantAdmin: jest.fn(),
+        enableCompanyInstallation: jest.fn(),
+        provisionAvatar: jest.fn(),
         provisionInstallation: jest.fn(),
         revokeInstallation: jest.fn(),
     };
@@ -68,6 +70,8 @@ describe('marketplaceService', () => {
         jest.clearAllMocks();
         mockClient.query.mockResolvedValue({ rows: [] });
         chatgptMcpIdentityService.requireTenantAdmin.mockResolvedValue({ id: 'user-1' });
+        chatgptMcpIdentityService.enableCompanyInstallation.mockResolvedValue({});
+        chatgptMcpIdentityService.provisionAvatar.mockResolvedValue({});
         chatgptMcpIdentityService.provisionInstallation.mockResolvedValue({});
         chatgptMcpIdentityService.revokeInstallation.mockResolvedValue(1);
         queries.countOtherActiveInstallationsOnCredential.mockResolvedValue(0);
@@ -189,8 +193,14 @@ describe('marketplaceService', () => {
 
         expect(chatgptMcpIdentityService.requireTenantAdmin)
             .toHaveBeenCalledWith('company-1', 'user-1', mockClient);
-        expect(chatgptMcpIdentityService.provisionInstallation).toHaveBeenCalledWith({
+        expect(chatgptMcpIdentityService.enableCompanyInstallation).toHaveBeenCalledWith({
             companyId: 'company-1', installationId: 1950, actorId: 'user-1',
+        }, mockClient);
+        expect(chatgptMcpIdentityService.provisionAvatar).toHaveBeenCalledWith({
+            companyId: 'company-1',
+            installationId: 1950,
+            ownerUserId: 'user-1',
+            actorId: 'user-1',
         }, mockClient);
         expect(integrationsService.createIntegration).not.toHaveBeenCalled();
         expect(result.status).toBe('connected');
@@ -209,7 +219,7 @@ describe('marketplaceService', () => {
         await expect(marketplaceService.installApp('company-1', 'provider-1', 'chatgpt-crm-mcp'))
             .rejects.toMatchObject({ code: 'TENANT_ADMIN_REQUIRED', httpStatus: 403 });
         expect(queries.createInstallation).not.toHaveBeenCalled();
-        expect(chatgptMcpIdentityService.provisionInstallation).not.toHaveBeenCalled();
+        expect(chatgptMcpIdentityService.provisionAvatar).not.toHaveBeenCalled();
     });
 
     test('ChatGPT connector disconnect rechecks tenant-admin and revokes the binding before disconnect', async () => {

@@ -18,6 +18,7 @@ const permissions = require('../backend/src/services/chatgptMcpPermissions');
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '195_chatgpt_crm_mcp.sql'), 'utf8');
 const SEED = fs.readFileSync(path.join(MIGRATIONS, '196_seed_chatgpt_crm_mcp_marketplace_app.sql'), 'utf8');
+const AVATARS = fs.readFileSync(path.join(MIGRATIONS, '200_avatars_per_user_identity.sql'), 'utf8');
 
 jest.setTimeout(60000);
 
@@ -112,6 +113,7 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
             await client.query('BEGIN');
             await client.query(SCHEMA);
             await client.query(SEED);
+            await client.query(AVATARS);
             dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => client.query(text, params));
 
             await client.query(

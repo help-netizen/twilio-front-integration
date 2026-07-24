@@ -79,6 +79,7 @@ describe('CHATGPT-CRM-MCP S2a write executor', () => {
             companyId: 'company-a',
             agentUserId: 'agent-a',
             authorizerId: 'human-a',
+            ownerUserId: 'human-a',
         }, mockClient);
         expect(identityService.requireLiveBinding.mock.invocationCallOrder[0])
             .toBeLessThan(writeService.execute.mock.invocationCallOrder[0]);

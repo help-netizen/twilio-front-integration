@@ -83,6 +83,7 @@ function buildContext(req) {
         // Tenant scope — ONLY from context/env, never from the client payload.
         companyId: req.companyFilter?.company_id || null,
         actorId: req.user?.crmUser?.id || null,
+        actorName: req.user?.crmUser?.full_name || req.user?.name || null,
         actorEmail: req.user?.email || null,
         actorIp: req.ip || null,
         requestId,
@@ -93,6 +94,9 @@ function buildContext(req) {
         oauthScopes: req.authz?.oauthScopes || [],
         bindingId: req.chatgptMcpBinding?.id || null,
         authorizerId: req.chatgptMcpBinding?.authorizerId || req.user?.oauthAuthorizerId || null,
+        ownerUserId: req.chatgptMcpBinding?.ownerUserId || req.user?.avatarOwnerId || null,
+        ownerRoleKey: req.authz?.avatarOwner?.role_key || null,
+        ownerScopes: req.authz?.avatarOwner?.scopes || {},
     };
 }
 
@@ -257,6 +261,7 @@ async function dispatchDispatcherWrite(tool, context, args, { beforeLiveRecheck 
             companyId: context.companyId,
             agentUserId: context.actorId,
             authorizerId: context.authorizerId,
+            ownerUserId: context.ownerUserId || context.authorizerId,
         }, client);
         // Permission consent is re-derived under the same binding lock. OAuth
         // scopes remain signature-verified token claims and cannot be upgraded
@@ -265,7 +270,10 @@ async function dispatchDispatcherWrite(tool, context, args, { beforeLiveRecheck 
         const result = await chatgptMcpWriteService.execute(
             tool.handler,
             tool.name,
-            context,
+            {
+                ...context,
+                actorName: live.ai_full_name || context.actorName,
+            },
             args,
             client
         );

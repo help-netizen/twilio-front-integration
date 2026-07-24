@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../db/connection');
+const authorizationService = require('./authorizationService');
 const {
     APP_KEY,
     BUNDLE_VERSION,
@@ -69,17 +70,166 @@ async function requireTenantAdmin(companyId, actorId, client = null) {
     return rows[0];
 }
 
-async function provisionInstallation({ companyId, installationId, actorId }, client) {
+function avatarDisplayName(ownerDisplayName) {
+    return `Avatar of ${String(ownerDisplayName || 'User').trim() || 'User'}`;
+}
+
+async function requireOwnerAuthz(companyId, ownerUserId, client = null) {
+    try {
+        return await authorizationService.resolveCompanyUserAuthz(
+            companyId,
+            ownerUserId,
+            { client }
+        );
+    } catch (err) {
+        if (err instanceof authorizationService.CompanyUserAuthzError) {
+            throw new ChatgptMcpIdentityError(
+                'MCP_BINDING_INVALID',
+                'Avatar owner access is not active.',
+                403
+            );
+        }
+        throw err;
+    }
+}
+
+async function requireConnectedInstallation(companyId, installationId, client = null) {
     const query = queryFor(client);
-    const human = await requireTenantAdmin(companyId, actorId, client);
+    const { rows } = await query(
+        `SELECT mi.id
+         FROM marketplace_installations mi
+         JOIN marketplace_apps ma
+           ON ma.id = mi.app_id
+          AND ma.app_key = $3
+          AND ma.status = 'published'
+         WHERE mi.id = $1
+           AND mi.company_id = $2
+           AND mi.status = 'connected'`,
+        [installationId, companyId, APP_KEY]
+    );
+    if (rows.length !== 1) {
+        throw new ChatgptMcpIdentityError(
+            'MCP_INSTALLATION_INVALID',
+            'Avatars is not enabled for this company.',
+            409
+        );
+    }
+    return rows[0];
+}
+
+async function enableCompanyInstallation({ companyId, installationId, actorId }, client) {
+    const admin = await requireTenantAdmin(companyId, actorId, client);
+    await requireConnectedInstallation(companyId, installationId, client);
+    return { installationId, admin };
+}
+
+async function seedReadGrants(companyId, agentUserId, client) {
+    for (const permission of S1_GRANTS) {
+        await client.query(
+            `INSERT INTO mcp_agent_permission_grants
+                (company_id, agent_user_id, permission_key, bundle_version)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (company_id, agent_user_id, permission_key) DO UPDATE
+             SET bundle_version = EXCLUDED.bundle_version, updated_at = NOW()`,
+            [companyId, agentUserId, permission, BUNDLE_VERSION]
+        );
+    }
+}
+
+async function provisionAvatar({
+    companyId,
+    installationId,
+    ownerUserId,
+    actorId = ownerUserId,
+}, client) {
+    if (!client?.query) {
+        throw new ChatgptMcpIdentityError(
+            'MCP_TRANSACTION_REQUIRED',
+            'Avatar provisioning requires a transaction.',
+            500
+        );
+    }
+    if (actorId !== ownerUserId) {
+        throw new ChatgptMcpIdentityError(
+            'AVATAR_SELF_SERVICE_REQUIRED',
+            'A member may provision only their own avatar.',
+            403
+        );
+    }
+    const ownerAuthz = await requireOwnerAuthz(companyId, ownerUserId, client);
+    await requireConnectedInstallation(companyId, installationId, client);
+    await client.query(
+        `SELECT 1
+         FROM company_memberships
+         WHERE user_id = $1 AND company_id = $2 AND status = 'active'
+         FOR UPDATE`,
+        [ownerUserId, companyId]
+    );
+
     const issuer = configuredIssuer();
     const clientId = configuredClientId();
-    const syntheticSub = `agent:${APP_KEY}:${companyId}`;
-    const { rows: aiRows } = await query(
+    const syntheticSub = `agent:${APP_KEY}:${companyId}:${ownerUserId}`;
+    const displayName = avatarDisplayName(ownerAuthz.owner_display_name);
+    const email = `chatgpt-avatar+${companyId}+${ownerUserId}@albusto.invalid`;
+    const existing = await client.query(
+        `SELECT b.*
+         FROM chatgpt_mcp_bindings b
+         JOIN crm_users ai
+           ON ai.id = b.ai_user_id
+          AND ai.company_id = b.company_id
+          AND ai.kind = 'agent'
+         WHERE b.company_id = $1
+           AND b.owner_user_id = $2
+           AND b.status = 'active'
+         FOR UPDATE OF b, ai`,
+        [companyId, ownerUserId]
+    );
+    if (existing.rows.length === 1) {
+        const binding = existing.rows[0];
+        const { rows: bindingRows } = await client.query(
+            `UPDATE chatgpt_mcp_bindings
+             SET installation_id = $4,
+                 authorized_by_user_id = $2,
+                 oauth_issuer = $5,
+                 oauth_subject = $6,
+                 oauth_client_id = $7,
+                 updated_at = NOW()
+             WHERE id = $1
+               AND owner_user_id = $2
+               AND company_id = $3
+               AND status = 'active'
+             RETURNING *`,
+            [
+                binding.id,
+                ownerUserId,
+                companyId,
+                installationId,
+                issuer,
+                ownerAuthz.owner_keycloak_sub,
+                clientId,
+            ]
+        );
+        const { rows: aiRows } = await client.query(
+            `UPDATE crm_users
+             SET keycloak_sub = $3,
+                 email = $4,
+                 full_name = $5,
+                 status = 'active',
+                 onboarding_status = 'active',
+                 updated_at = NOW()
+             WHERE id = $1 AND company_id = $2 AND kind = 'agent'
+             RETURNING *`,
+            [binding.ai_user_id, companyId, syntheticSub, email, displayName]
+        );
+        await seedReadGrants(companyId, binding.ai_user_id, client);
+        return { binding: bindingRows[0], aiUser: aiRows[0], ownerAuthz };
+    }
+
+    const { rows: aiRows } = await client.query(
         `INSERT INTO crm_users
             (keycloak_sub, email, full_name, role, company_id, status,
              platform_role, onboarding_status, kind, updated_at)
-         VALUES ($1, $2, 'ChatGPT AI Dispatcher', 'company_member', $3, 'active',
+         VALUES ($1, $2, $3, 'company_member', $4, 'active',
                  'none', 'active', 'agent', NOW())
          ON CONFLICT (keycloak_sub) DO UPDATE
          SET email = EXCLUDED.email,
@@ -90,27 +240,28 @@ async function provisionInstallation({ companyId, installationId, actorId }, cli
          WHERE crm_users.company_id = EXCLUDED.company_id
            AND crm_users.kind = 'agent'
          RETURNING *`,
-        [syntheticSub, `chatgpt-agent+${companyId}@albusto.invalid`, companyId]
+        [syntheticSub, email, displayName, companyId]
     );
     if (aiRows.length !== 1) {
         throw new ChatgptMcpIdentityError('AI_IDENTITY_CONFLICT', 'AI identity provisioning failed.', 409);
     }
     const aiUser = aiRows[0];
 
-    await query(
-        `UPDATE chatgpt_mcp_bindings
-         SET status = 'revoked', revoked_at = NOW(), revoked_by_user_id = $3, updated_at = NOW()
-         WHERE company_id = $1 AND installation_id <> $2 AND status = 'active'`,
-        [companyId, installationId, actorId]
+    await client.query(
+        `DELETE FROM mcp_agent_permission_grants
+         WHERE company_id = $1 AND agent_user_id = $2`,
+        [companyId, aiUser.id]
     );
 
-    const { rows: bindingRows } = await query(
-        `INSERT INTO chatgpt_mcp_bindings
+    let bindingRows;
+    try {
+        ({ rows: bindingRows } = await client.query(
+            `INSERT INTO chatgpt_mcp_bindings
             (company_id, installation_id, authorized_by_user_id,
              oauth_issuer, oauth_subject, oauth_client_id, ai_user_id,
-             status, grant_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8)
-         ON CONFLICT (company_id) WHERE status = 'active' DO UPDATE
+             owner_user_id, status, grant_version, writes_enabled, sends_enabled)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $3, 'active', $8, false, false)
+         ON CONFLICT (company_id, owner_user_id) WHERE status = 'active' DO UPDATE
          SET installation_id = EXCLUDED.installation_id,
              authorized_by_user_id = EXCLUDED.authorized_by_user_id,
              oauth_issuer = EXCLUDED.oauth_issuer,
@@ -122,25 +273,85 @@ async function provisionInstallation({ companyId, installationId, actorId }, cli
              revoked_at = NULL,
              revoked_by_user_id = NULL
          RETURNING *`,
-        [companyId, installationId, actorId, issuer, human.keycloak_sub, clientId, aiUser.id, BUNDLE_VERSION]
-    );
+            [
+                companyId,
+                installationId,
+                ownerUserId,
+                issuer,
+                ownerAuthz.owner_keycloak_sub,
+                clientId,
+                aiUser.id,
+                BUNDLE_VERSION,
+            ]
+        ));
+    } catch (err) {
+        if (err?.code === '23505'
+            && err?.constraint === 'uq_chatgpt_mcp_binding_active_principal') {
+            throw new ChatgptMcpIdentityError(
+                'AVATAR_ALREADY_CONNECTED',
+                'This member already has an active avatar in another company.',
+                409
+            );
+        }
+        throw err;
+    }
+    await seedReadGrants(companyId, aiUser.id, client);
+    return { binding: bindingRows[0], aiUser, ownerAuthz };
+}
 
-    await query(
-        `DELETE FROM mcp_agent_permission_grants
-         WHERE company_id = $1 AND agent_user_id = $2`,
-        [companyId, aiUser.id]
-    );
-    for (const permission of S1_GRANTS) {
-        await query(
-            `INSERT INTO mcp_agent_permission_grants
-                (company_id, agent_user_id, permission_key, bundle_version)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (company_id, agent_user_id, permission_key) DO UPDATE
-             SET bundle_version = EXCLUDED.bundle_version, updated_at = NOW()`,
-            [companyId, aiUser.id, permission, BUNDLE_VERSION]
+/**
+ * Backward-compatible Marketplace composition: enabling the company app also
+ * provisions the installing administrator's own avatar.
+ */
+async function provisionInstallation({ companyId, installationId, actorId }, client) {
+    await enableCompanyInstallation({ companyId, installationId, actorId }, client);
+    return provisionAvatar({
+        companyId,
+        installationId,
+        ownerUserId: actorId,
+        actorId,
+    }, client);
+}
+
+async function revokeAvatar({ companyId, ownerUserId, actorId }, client) {
+    if (!client?.query) {
+        throw new ChatgptMcpIdentityError(
+            'MCP_TRANSACTION_REQUIRED',
+            'Avatar revocation requires a transaction.',
+            500
         );
     }
-    return { binding: bindingRows[0], aiUser };
+    if (actorId === ownerUserId) {
+        await requireOwnerAuthz(companyId, ownerUserId, client);
+    } else {
+        await requireTenantAdmin(companyId, actorId, client);
+    }
+    const { rows } = await client.query(
+        `UPDATE chatgpt_mcp_bindings
+         SET status = 'revoked',
+             revoked_at = NOW(),
+             revoked_by_user_id = $3,
+             updated_at = NOW()
+         WHERE company_id = $1
+           AND owner_user_id = $2
+           AND status = 'active'
+         RETURNING ai_user_id`,
+        [companyId, ownerUserId, actorId]
+    );
+    for (const row of rows) {
+        await client.query(
+            `DELETE FROM mcp_agent_permission_grants
+             WHERE company_id = $1 AND agent_user_id = $2`,
+            [companyId, row.ai_user_id]
+        );
+        await client.query(
+            `UPDATE crm_users
+             SET status = 'disabled', onboarding_status = 'disabled', updated_at = NOW()
+             WHERE id = $1 AND company_id = $2 AND kind = 'agent'`,
+            [row.ai_user_id, companyId]
+        );
+    }
+    return rows.length;
 }
 
 async function revokeInstallation({ companyId, installationId, actorId }, client) {
@@ -171,6 +382,19 @@ async function revokeInstallation({ companyId, installationId, actorId }, client
     return rows.length;
 }
 
+async function withOwnerAuthz(row, client = null) {
+    const ownerAuthz = await requireOwnerAuthz(row.company_id, row.owner_user_id, client);
+    return {
+        ...row,
+        ai_full_name: avatarDisplayName(ownerAuthz.owner_display_name),
+        owner_display_name: ownerAuthz.owner_display_name,
+        owner_role_key: ownerAuthz.role_key,
+        owner_membership: ownerAuthz.membership,
+        owner_permissions: ownerAuthz.permissions,
+        owner_scopes: ownerAuthz.scopes,
+    };
+}
+
 async function resolveOAuthContext({ issuer, subject, clientId }) {
     requireValue(issuer, 'issuer');
     requireValue(subject, 'subject');
@@ -180,12 +404,15 @@ async function resolveOAuthContext({ issuer, subject, clientId }) {
                 b.company_id,
                 b.installation_id,
                 b.authorized_by_user_id,
+                b.owner_user_id,
                 b.ai_user_id,
+                b.writes_enabled,
+                b.sends_enabled,
                 c.name AS company_name,
                 COALESCE(c.timezone, 'America/New_York') AS company_timezone,
                 ai.email AS ai_email,
                 ai.full_name AS ai_full_name,
-                human.email AS authorizer_email,
+                human.email AS owner_email,
                 ARRAY(
                     SELECT g.permission_key
                     FROM mcp_agent_permission_grants g
@@ -212,26 +439,26 @@ async function resolveOAuthContext({ issuer, subject, clientId }) {
           AND ai.status = 'active'
           AND ai.onboarding_status = 'active'
          JOIN crm_users human
-           ON human.id = b.authorized_by_user_id
+           ON human.id = b.owner_user_id
           AND human.keycloak_sub = b.oauth_subject
           AND human.status = 'active'
           AND human.onboarding_status = 'active'
           AND COALESCE(human.kind, 'user') = 'user'
          JOIN company_memberships cm
-           ON cm.user_id = human.id
+          ON cm.user_id = human.id
           AND cm.company_id = b.company_id
           AND cm.status = 'active'
-          AND cm.role_key = 'tenant_admin'
          WHERE b.oauth_issuer = $1
            AND b.oauth_subject = $2
            AND b.oauth_client_id = $3
+           AND b.authorized_by_user_id = b.owner_user_id
            AND b.status = 'active'`,
         [issuer, subject, clientId, APP_KEY]
     );
     if (rows.length !== 1) {
         throw new ChatgptMcpIdentityError('MCP_BINDING_INVALID', 'Connector authorization is not active.', 403);
     }
-    return rows[0];
+    return withOwnerAuthz(rows[0]);
 }
 
 async function resolveFixedBearerContext({ companyId, agentUserId }) {
@@ -242,7 +469,10 @@ async function resolveFixedBearerContext({ companyId, agentUserId }) {
                 b.company_id,
                 b.installation_id,
                 b.authorized_by_user_id,
+                b.owner_user_id,
                 b.ai_user_id,
+                b.writes_enabled,
+                b.sends_enabled,
                 c.name AS company_name,
                 COALESCE(c.timezone, 'America/New_York') AS company_timezone,
                 ai.email AS ai_email,
@@ -269,26 +499,25 @@ async function resolveFixedBearerContext({ companyId, agentUserId }) {
           AND ai.status = 'active'
           AND ai.onboarding_status = 'active'
          JOIN crm_users human
-           ON human.id = b.authorized_by_user_id
-          AND human.company_id = b.company_id
+           ON human.id = b.owner_user_id
           AND human.keycloak_sub = b.oauth_subject
           AND human.status = 'active'
           AND human.onboarding_status = 'active'
           AND COALESCE(human.kind, 'user') = 'user'
          JOIN company_memberships cm
-           ON cm.user_id = human.id
+          ON cm.user_id = human.id
           AND cm.company_id = b.company_id
           AND cm.status = 'active'
-          AND cm.role_key = 'tenant_admin'
          WHERE b.company_id = $1
            AND b.ai_user_id = $2
+           AND b.authorized_by_user_id = b.owner_user_id
            AND b.status = 'active'`,
         [companyId, agentUserId, APP_KEY]
     );
     if (rows.length !== 1) {
         throw new ChatgptMcpIdentityError('MCP_BINDING_INVALID', 'Fixed-bearer AI context is not active.', 403);
     }
-    return rows[0];
+    return withOwnerAuthz(rows[0]);
 }
 
 /**
@@ -303,11 +532,20 @@ async function requireLiveBinding({
     companyId,
     agentUserId,
     authorizerId,
+    ownerUserId = authorizerId,
 }, client) {
     requireValue(bindingId, 'bindingId');
     requireValue(companyId, 'companyId');
     requireValue(agentUserId, 'agentUserId');
     requireValue(authorizerId, 'authorizerId');
+    requireValue(ownerUserId, 'ownerUserId');
+    if (ownerUserId !== authorizerId) {
+        throw new ChatgptMcpIdentityError(
+            'MCP_BINDING_INVALID',
+            'Avatar owner and authorizer do not match.',
+            403
+        );
+    }
     if (!client?.query) {
         throw new ChatgptMcpIdentityError(
             'MCP_TRANSACTION_REQUIRED',
@@ -318,6 +556,10 @@ async function requireLiveBinding({
 
     const { rows } = await client.query(
         `SELECT b.id,
+                b.company_id,
+                b.owner_user_id,
+                b.writes_enabled,
+                b.sends_enabled,
                 ARRAY(
                     SELECT g.permission_key
                     FROM mcp_agent_permission_grants g
@@ -346,21 +588,20 @@ async function requireLiveBinding({
           AND ai.status = 'active'
           AND ai.onboarding_status = 'active'
          JOIN crm_users human
-           ON human.id = b.authorized_by_user_id
+           ON human.id = b.owner_user_id
           AND human.id = $4
-          AND human.company_id = b.company_id
           AND human.keycloak_sub = b.oauth_subject
           AND human.status = 'active'
           AND human.onboarding_status = 'active'
           AND COALESCE(human.kind, 'user') = 'user'
          JOIN company_memberships cm
-           ON cm.user_id = human.id
+          ON cm.user_id = human.id
           AND cm.company_id = b.company_id
           AND cm.status = 'active'
-          AND cm.role_key = 'tenant_admin'
          WHERE b.id = $1
            AND b.company_id = $2
            AND b.ai_user_id = $3
+           AND b.owner_user_id = $4
            AND b.authorized_by_user_id = $4
            AND b.status = 'active'
          FOR SHARE OF b, mi, c, ai, human, cm`,
@@ -373,7 +614,7 @@ async function requireLiveBinding({
             403
         );
     }
-    return rows[0];
+    return withOwnerAuthz(rows[0], client);
 }
 
 async function lockConsentBinding(companyId, actorId, client) {
@@ -384,9 +625,10 @@ async function lockConsentBinding(companyId, actorId, client) {
             500
         );
     }
-    await requireTenantAdmin(companyId, actorId, client);
+    await requireOwnerAuthz(companyId, actorId, client);
     const { rows } = await client.query(
-        `SELECT b.id, b.ai_user_id, b.installation_id
+        `SELECT b.id, b.ai_user_id, b.installation_id,
+                b.owner_user_id, b.writes_enabled, b.sends_enabled
          FROM chatgpt_mcp_bindings b
          JOIN marketplace_installations mi
            ON mi.id = b.installation_id
@@ -403,9 +645,11 @@ async function lockConsentBinding(companyId, actorId, client) {
           AND ai.status = 'active'
           AND ai.onboarding_status = 'active'
          WHERE b.company_id = $1
+           AND b.owner_user_id = $3
+           AND b.authorized_by_user_id = b.owner_user_id
            AND b.status = 'active'
          FOR UPDATE OF b`,
-        [companyId, APP_KEY]
+        [companyId, APP_KEY, actorId]
     );
     if (rows.length !== 1) {
         throw new ChatgptMcpIdentityError(
@@ -440,26 +684,23 @@ async function replaceTierGrants(companyId, agentUserId, grants, bundleVersion, 
     }
 }
 
-async function currentTierState(companyId, agentUserId, client) {
+async function currentTierState(companyId, bindingId, client) {
     const { rows } = await client.query(
-        `SELECT permission_key
-         FROM mcp_agent_permission_grants
-         WHERE company_id = $1
-           AND agent_user_id = $2
-           AND permission_key = ANY($3::text[])`,
-        [
-            companyId,
-            agentUserId,
-            [
-                'mcp.tool.svc.create_lead',
-                'mcp.tool.svc.send_estimate',
-            ],
-        ]
+        `SELECT writes_enabled, sends_enabled
+         FROM chatgpt_mcp_bindings
+         WHERE company_id = $1 AND id = $2 AND status = 'active'`,
+        [companyId, bindingId]
     );
-    const granted = new Set(rows.map((row) => row.permission_key));
+    if (rows.length !== 1) {
+        throw new ChatgptMcpIdentityError(
+            'MCP_BINDING_INVALID',
+            'Connector authorization is not active.',
+            403
+        );
+    }
     return {
-        writes_enabled: granted.has('mcp.tool.svc.create_lead'),
-        sends_enabled: granted.has('mcp.tool.svc.send_estimate'),
+        writes_enabled: rows[0].writes_enabled === true,
+        sends_enabled: rows[0].sends_enabled === true,
     };
 }
 
@@ -467,6 +708,29 @@ function consentGrantVersion({ writes_enabled: writesEnabled, sends_enabled: sen
     if (sendsEnabled) return SEND_BUNDLE_VERSION;
     if (writesEnabled) return WRITE_BUNDLE_VERSION;
     return BUNDLE_VERSION;
+}
+
+async function updateBindingTier(binding, companyId, {
+    writesEnabled = null,
+    sendsEnabled = null,
+}, client) {
+    const { rows } = await client.query(
+        `UPDATE chatgpt_mcp_bindings
+         SET writes_enabled = COALESCE($3::boolean, writes_enabled),
+             sends_enabled = COALESCE($4::boolean, sends_enabled),
+             updated_at = NOW()
+         WHERE id = $1 AND company_id = $2 AND status = 'active'
+         RETURNING writes_enabled, sends_enabled`,
+        [binding.id, companyId, writesEnabled, sendsEnabled]
+    );
+    if (rows.length !== 1) {
+        throw new ChatgptMcpIdentityError(
+            'MCP_BINDING_INVALID',
+            'Connector authorization is not active.',
+            403
+        );
+    }
+    return rows[0];
 }
 
 async function updateBindingGrantVersion(binding, companyId, tierState, client) {
@@ -490,7 +754,10 @@ async function setWriteConsent({ companyId, actorId, enabled }, client) {
         enabled,
         client
     );
-    const tierState = await currentTierState(companyId, binding.ai_user_id, client);
+    await updateBindingTier(binding, companyId, {
+        writesEnabled: Boolean(enabled),
+    }, client);
+    const tierState = await currentTierState(companyId, binding.id, client);
     const grantVersion = await updateBindingGrantVersion(binding, companyId, tierState, client);
     return {
         enabled: Boolean(enabled),
@@ -513,7 +780,10 @@ async function setSendConsent({ companyId, actorId, enabled }, client) {
         enabled,
         client
     );
-    const tierState = await currentTierState(companyId, binding.ai_user_id, client);
+    await updateBindingTier(binding, companyId, {
+        sendsEnabled: Boolean(enabled),
+    }, client);
+    const tierState = await currentTierState(companyId, binding.id, client);
     const grantVersion = await updateBindingGrantVersion(binding, companyId, tierState, client);
     return {
         enabled: Boolean(enabled),
@@ -573,22 +843,11 @@ async function getWriteConsent(companyId, client = null) {
     const { rows } = await query(
         `SELECT b.grant_version,
                 b.ai_user_id,
-                ARRAY(
-                    SELECT g.permission_key
-                    FROM mcp_agent_permission_grants g
-                    WHERE g.company_id = b.company_id
-                      AND g.agent_user_id = b.ai_user_id
-                      AND g.permission_key = ANY($2::text[])
-                ) AS tier_permissions
+                b.writes_enabled,
+                b.sends_enabled
          FROM chatgpt_mcp_bindings b
          WHERE b.company_id = $1 AND b.status = 'active'`,
-        [
-            companyId,
-            [
-                'mcp.tool.svc.create_lead',
-                'mcp.tool.svc.send_estimate',
-            ],
-        ]
+        [companyId]
     );
     if (rows.length !== 1) {
         return {
@@ -598,10 +857,9 @@ async function getWriteConsent(companyId, client = null) {
         };
     }
     const grantVersion = Number(rows[0].grant_version);
-    const granted = new Set(rows[0].tier_permissions || []);
     return {
-        writes_enabled: granted.has('mcp.tool.svc.create_lead'),
-        sends_enabled: granted.has('mcp.tool.svc.send_estimate'),
+        writes_enabled: rows[0].writes_enabled === true,
+        sends_enabled: rows[0].sends_enabled === true,
         grant_version: grantVersion,
     };
 }
@@ -612,7 +870,10 @@ module.exports = {
     configuredIssuer,
     configuredClientId,
     requireTenantAdmin,
+    enableCompanyInstallation,
+    provisionAvatar,
     provisionInstallation,
+    revokeAvatar,
     revokeInstallation,
     resolveOAuthContext,
     resolveFixedBearerContext,

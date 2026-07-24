@@ -23,6 +23,7 @@ const ACTOR = '10000000-0000-4000-8000-00000000000a';
 const CONTEXT = Object.freeze({
     companyId: COMPANY,
     actorId: ACTOR,
+    actorName: 'Avatar of Morgan A',
     actorEmail: 'chatgpt-agent@albusto.invalid',
     bindingId: '20000000-0000-4000-8000-00000000000a',
 });
@@ -175,7 +176,7 @@ describe('CHATGPT-CRM-MCP S3 canonical dispatch and recipient invariant', () => 
                 userEmail: CONTEXT.actorEmail,
                 noteActor: {
                     id: ACTOR,
-                    name: 'ChatGPT AI Dispatcher',
+                    name: CONTEXT.actorName,
                 },
             },
             tx
@@ -218,7 +219,7 @@ describe('CHATGPT-CRM-MCP S3 canonical dispatch and recipient invariant', () => 
                 channel: 'sms',
                 recipient: '+16175550200',
                 includePaymentLink: true,
-                noteActor: { id: ACTOR, name: 'ChatGPT AI Dispatcher' },
+                noteActor: { id: ACTOR, name: CONTEXT.actorName },
             }),
             tx
         );
