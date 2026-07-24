@@ -412,16 +412,14 @@ async function transitionEntity(context, {
             403
         );
     }
-    const resolved = await fsmService.resolveTransition(
-        context.companyId,
-        machineKey,
-        current.rows[0].current_status,
-        action
-    );
-    if (resolved.valid !== true || !resolved.targetState) {
+    // `selected` is already filtered by the live owner's role. Do not resolve
+    // the event a second time through the role-agnostic FSM helper: published
+    // workflows may intentionally reuse an event for role-specific targets.
+    const targetState = selected.targetStatusName || selected.target;
+    if (!targetState) {
         throw new ChatgptMcpWriteError(
             'FSM_TRANSITION_DENIED',
-            resolved.error || 'The requested dispatcher action is not available.',
+            'The requested dispatcher action has no valid target.',
             403
         );
     }
@@ -430,7 +428,7 @@ async function transitionEntity(context, {
          SET ${statusColumn} = $1, updated_at = NOW()
          WHERE ${keyColumn} = $2 AND company_id = $3
          RETURNING id, ${keyColumn} AS entity_key, ${statusColumn} AS status`,
-        [resolved.targetState, keyValue, context.companyId]
+        [targetState, keyValue, context.companyId]
     );
     if (changed.rows.length !== 1) notFound(entityName);
     return {

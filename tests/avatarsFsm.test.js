@@ -3,11 +3,11 @@
 jest.mock('../backend/src/services/fsmService', () => ({
     getAvailableActions: jest.fn(async () => ({
         fallback: false,
-        actions: [{ event: 'advance', target: 'Review' }],
+        actions: [{ event: 'advance', targetStatusName: 'Review' }],
     })),
     resolveTransition: jest.fn(async () => ({
         valid: true,
-        targetState: 'Review',
+        targetState: 'Wrong role target',
     })),
 }));
 
@@ -56,12 +56,13 @@ describe('AVATARS-001 Phase B FSM role parity', () => {
         machineKey,
         keyColumn
     ) => {
+        const transaction = transactionFor(keyColumn);
         await writeService.execute(
             handler,
             toolName,
             context,
             args,
-            transactionFor(keyColumn)
+            transaction
         );
         expect(fsmService.getAvailableActions).toHaveBeenCalledWith(
             'company-a',
@@ -74,6 +75,11 @@ describe('AVATARS-001 Phase B FSM role parity', () => {
             expect.anything(),
             expect.anything(),
             ['dispatcher']
+        );
+        expect(fsmService.resolveTransition).not.toHaveBeenCalled();
+        expect(transaction.query).toHaveBeenCalledWith(
+            expect.stringContaining(`SET ${keyColumn === 'uuid' ? 'status' : 'blanc_status'} = $1`),
+            ['Review', keyColumn === 'uuid' ? 'LEAD-A' : 9, 'company-a']
         );
     });
 });

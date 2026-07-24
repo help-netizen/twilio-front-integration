@@ -13,6 +13,7 @@ const protocol = require('../backend/src/services/agentSkillsMcpProtocolService'
 const executor = require('../backend/src/services/agentSkillsMcpExecutor');
 const estimatesService = require('../backend/src/services/estimatesService');
 const invoicesService = require('../backend/src/services/invoicesService');
+const fsmService = require('../backend/src/services/fsmService');
 
 const AVATARS = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '200_avatars_per_user_identity.sql'),
@@ -77,6 +78,25 @@ function workflow(machineKey) {
 </scxml>`;
 }
 
+function roleTargetWorkflow(machineKey) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:blanc="https://albusto.com/fsm"
+       initial="submitted"
+       blanc:machine="${machineKey}">
+  <state id="submitted" blanc:label="Submitted" blanc:statusName="Submitted">
+    <transition event="advance" target="completed"
+                blanc:action="true" blanc:label="Complete"
+                blanc:roles="tenant_admin" />
+    <transition event="advance" target="in_progress"
+                blanc:action="true" blanc:label="Start"
+                blanc:roles="provider" />
+  </state>
+  <final id="completed" blanc:label="Completed" blanc:statusName="Completed" />
+  <final id="in_progress" blanc:label="In progress" blanc:statusName="InProgress" />
+</scxml>`;
+}
+
 async function seedWorkflow(client, companyId, machineKey) {
     const machine = await client.query(
         `INSERT INTO fsm_machines (company_id, machine_key, title)
@@ -97,6 +117,29 @@ async function seedWorkflow(client, companyId, machineKey) {
          WHERE id = $2 AND company_id = $3`,
         [version.rows[0].id, machine.rows[0].id, companyId]
     );
+}
+
+async function publishWorkflow(machineKey, source, changeNote) {
+    const saved = await fsmService.saveDraft(
+        state.companyA,
+        machineKey,
+        source,
+        state.humanA.id,
+        `s2a-a-${state.companyA}@example.test`
+    );
+    if (!saved.ok) {
+        throw new Error(`Failed to save ${machineKey} test workflow: ${JSON.stringify(saved)}`);
+    }
+    const published = await fsmService.publishDraft(
+        state.companyA,
+        machineKey,
+        changeNote,
+        state.humanA.id,
+        `s2a-a-${state.companyA}@example.test`
+    );
+    if (!published.ok) {
+        throw new Error(`Failed to publish ${machineKey} test workflow: ${JSON.stringify(published)}`);
+    }
 }
 
 async function setup() {
@@ -1228,6 +1271,203 @@ describe('AVATARS-001 Phase B real-PostgreSQL parity and scope contract', () => 
         permissions.WRITE_SCOPE,
         permissions.SEND_SCOPE,
     ];
+    const callProtocolTool = (req, name, args) => protocol.handleJsonRpc(req, {
+        jsonrpc: '2.0',
+        id: `avatars-live-follow-${randomUUID()}`,
+        method: 'tools/call',
+        params: {
+            name,
+            arguments: args,
+            confirmation: {
+                confirmed: true,
+                confirmation_id: `avatars-live-follow-${randomUUID()}`,
+            },
+        },
+    });
+    const listProtocolTools = (req) => protocol.handleJsonRpc(req, {
+        jsonrpc: '2.0',
+        id: `avatars-live-list-${randomUUID()}`,
+        method: 'tools/list',
+        params: {},
+    });
+
+    databaseTest('SAB-AVATAR-FSM-ROLE-TARGET: duplicate events persist only the owner-role target', async () => {
+        const machineKeys = ['job', 'lead'];
+        const originals = new Map();
+        const createdJobIds = [];
+        const createdLeadIds = [];
+        let membershipId = null;
+        try {
+            await marketplaceService.setChatgptMcpWrites(
+                state.companyA,
+                state.humanA.id,
+                true,
+                { requestId: `avatars-fsm-tier-${randomUUID()}` }
+            );
+            const membership = await db.query(
+                `SELECT id
+                 FROM company_memberships
+                 WHERE user_id=$1 AND company_id=$2 AND status='active'`,
+                [state.humanA.id, state.companyA]
+            );
+            membershipId = membership.rows[0].id;
+            for (const permission of ['jobs.edit', 'jobs.close', 'leads.edit']) {
+                await db.query(
+                    `INSERT INTO company_membership_permission_overrides
+                        (membership_id, permission_key, override_mode)
+                     VALUES ($1,$2,'allow')
+                     ON CONFLICT (membership_id, permission_key)
+                     DO UPDATE SET override_mode='allow'`,
+                    [membershipId, permission]
+                );
+            }
+
+            for (const machineKey of machineKeys) {
+                const active = await fsmService.getActiveVersion(state.companyA, machineKey);
+                originals.set(machineKey, active.scxml_source);
+                const source = roleTargetWorkflow(machineKey);
+                const validation = fsmService.validateSCXML(source);
+                expect(validation.valid).toBe(true);
+                expect(validation.warnings).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ message: expect.stringContaining('Duplicate event "advance"') }),
+                ]));
+                await publishWorkflow(
+                    machineKey,
+                    source,
+                    `Avatar role-target sabotage ${machineKey}`
+                );
+            }
+
+            const assignedMirror = JSON.stringify([state.humanA.id]);
+            const jobs = await db.query(
+                `INSERT INTO jobs
+                    (company_id, contact_id, blanc_status, zb_status, customer_name,
+                     service_name, description, assigned_provider_user_ids, notes, zb_raw)
+                 VALUES
+                    ($1,$2,'Submitted','scheduled','FSM Provider','Role target','provider-before',$3::jsonb,'[]'::jsonb,'{}'::jsonb),
+                    ($1,$2,'Submitted','scheduled','FSM Admin','Role target','admin-before',$3::jsonb,'[]'::jsonb,'{}'::jsonb),
+                    ($1,$2,'Submitted','scheduled','FSM Manager','Role target','manager-before',$3::jsonb,'[]'::jsonb,'{}'::jsonb)
+                 RETURNING id`,
+                [state.companyA, state.contactA, assignedMirror]
+            );
+            createdJobIds.push(...jobs.rows.map((row) => Number(row.id)));
+            const leadUuids = [
+                `P${randomUUID().replace(/-/g, '').slice(0, 9).toUpperCase()}`,
+                `A${randomUUID().replace(/-/g, '').slice(0, 9).toUpperCase()}`,
+                `M${randomUUID().replace(/-/g, '').slice(0, 9).toUpperCase()}`,
+            ];
+            const leads = await db.query(
+                `INSERT INTO leads
+                    (company_id, uuid, status, first_name, last_name, contact_id, structured_notes)
+                 VALUES
+                    ($1,$2,'Submitted','FSM','Provider',$5,'[]'::jsonb),
+                    ($1,$3,'Submitted','FSM','Admin',$5,'[]'::jsonb),
+                    ($1,$4,'Submitted','FSM','Manager',$5,'[]'::jsonb)
+                 RETURNING id, uuid`,
+                [state.companyA, ...leadUuids, state.contactA]
+            );
+            createdLeadIds.push(...leads.rows.map((row) => Number(row.id)));
+
+            const setOwnerRole = async (roleKey) => {
+                await db.query(
+                    `UPDATE company_memberships
+                     SET role=CASE WHEN $3='tenant_admin' THEN 'company_admin' ELSE 'company_member' END,
+                         role_key=$3
+                     WHERE user_id=$1 AND company_id=$2`,
+                    [state.humanA.id, state.companyA, roleKey]
+                );
+                return resolveA();
+            };
+            const transitions = [
+                {
+                    tool: 'svc.transition_job',
+                    key: 'job_id',
+                    values: jobs.rows.map((row) => Number(row.id)),
+                    table: 'jobs',
+                    idColumn: 'id',
+                    statusColumn: 'blanc_status',
+                },
+                {
+                    tool: 'svc.transition_lead',
+                    key: 'lead_uuid',
+                    values: leads.rows.map((row) => row.uuid),
+                    table: 'leads',
+                    idColumn: 'uuid',
+                    statusColumn: 'status',
+                },
+            ];
+
+            let resolved = await setOwnerRole('provider');
+            for (const transition of transitions) {
+                const result = await invoke(resolved, transition.tool, {
+                    [transition.key]: transition.values[0],
+                    action: 'advance',
+                });
+                expect(result.status).toBe('InProgress');
+            }
+
+            resolved = await setOwnerRole('tenant_admin');
+            for (const transition of transitions) {
+                const result = await invoke(resolved, transition.tool, {
+                    [transition.key]: transition.values[1],
+                    action: 'advance',
+                });
+                expect(result.status).toBe('Completed');
+            }
+
+            resolved = await setOwnerRole('manager');
+            for (const transition of transitions) {
+                await expect(invoke(resolved, transition.tool, {
+                    [transition.key]: transition.values[2],
+                    action: 'advance',
+                })).rejects.toMatchObject({
+                    code: 'FSM_TRANSITION_DENIED',
+                    httpStatus: 403,
+                });
+                const unchanged = await db.query(
+                    `SELECT ${transition.statusColumn} AS status
+                     FROM ${transition.table}
+                     WHERE ${transition.idColumn}=$1 AND company_id=$2`,
+                    [transition.values[2], state.companyA]
+                );
+                expect(unchanged.rows[0].status).toBe('Submitted');
+            }
+        } finally {
+            for (const [machineKey, source] of originals) {
+                await publishWorkflow(
+                    machineKey,
+                    source,
+                    `Restore Avatar role-target workflow ${machineKey}`
+                );
+            }
+            if (membershipId) {
+                await db.query(
+                    `DELETE FROM company_membership_permission_overrides
+                     WHERE membership_id=$1
+                       AND permission_key=ANY($2::text[])`,
+                    [membershipId, ['jobs.edit', 'jobs.close', 'leads.edit']]
+                );
+            }
+            if (createdJobIds.length > 0) {
+                await db.query(
+                    `DELETE FROM jobs WHERE company_id=$1 AND id=ANY($2::bigint[])`,
+                    [state.companyA, createdJobIds]
+                );
+            }
+            if (createdLeadIds.length > 0) {
+                await db.query(
+                    `DELETE FROM leads WHERE company_id=$1 AND id=ANY($2::bigint[])`,
+                    [state.companyA, createdLeadIds]
+                );
+            }
+            await db.query(
+                `UPDATE company_memberships
+                 SET role='company_admin', role_key='tenant_admin'
+                 WHERE user_id=$1 AND company_id=$2`,
+                [state.humanA.id, state.companyA]
+            );
+        }
+    });
 
     databaseTest('33 tools × 4 roles: live tools/list and direct denied calls match the parity table', async () => {
         await marketplaceService.setChatgptMcpWrites(
@@ -1297,6 +1537,327 @@ describe('AVATARS-001 Phase B real-PostgreSQL parity and scope contract', () => 
              WHERE user_id=$1 AND company_id=$2`,
             [state.humanA.id, state.companyA]
         );
+    });
+
+    databaseTest('live-follow: a call started after committed permission-override revoke is denied', async () => {
+        let membershipId = null;
+        try {
+            await marketplaceService.setChatgptMcpWrites(
+                state.companyA,
+                state.humanA.id,
+                true,
+                { requestId: `avatars-permission-tier-${randomUUID()}` }
+            );
+            const membership = await db.query(
+                `UPDATE company_memberships
+                 SET role='company_member', role_key='manager'
+                 WHERE user_id=$1 AND company_id=$2
+                 RETURNING id`,
+                [state.humanA.id, state.companyA]
+            );
+            membershipId = membership.rows[0].id;
+            await db.query(
+                `DELETE FROM company_membership_permission_overrides
+                 WHERE membership_id=$1 AND permission_key='jobs.edit'`,
+                [membershipId]
+            );
+            const beforeRevoke = await resolveA();
+            expect(beforeRevoke.owner_permissions).toContain('jobs.edit');
+            const staleReq = protocolRequest(beforeRevoke, allOauthScopes);
+            const before = await db.query(
+                `SELECT description FROM jobs WHERE id=$1 AND company_id=$2`,
+                [state.jobA, state.companyA]
+            );
+
+            await db.query(
+                `INSERT INTO company_membership_permission_overrides
+                    (membership_id, permission_key, override_mode)
+                 VALUES ($1,'jobs.edit','deny')
+                 ON CONFLICT (membership_id, permission_key)
+                 DO UPDATE SET override_mode='deny'`,
+                [membershipId]
+            );
+
+            const listed = await listProtocolTools(staleReq);
+            expect(listed.result.tools.map((tool) => tool.name)).not.toContain('svc.update_job');
+            const denied = await callProtocolTool(staleReq, 'svc.update_job', {
+                job_id: state.jobA,
+                description: 'must-not-follow-revoked-permission',
+            });
+            expect(denied.error).toEqual(expect.objectContaining({
+                code: -32001,
+                data: expect.objectContaining({
+                    code: 'access_denied',
+                    details: expect.objectContaining({ reason: 'OWNER_PERMISSION_REQUIRED' }),
+                }),
+            }));
+            const after = await db.query(
+                `SELECT description FROM jobs WHERE id=$1 AND company_id=$2`,
+                [state.jobA, state.companyA]
+            );
+            expect(after.rows[0]).toEqual(before.rows[0]);
+        } finally {
+            if (membershipId) {
+                await db.query(
+                    `DELETE FROM company_membership_permission_overrides
+                     WHERE membership_id=$1 AND permission_key='jobs.edit'`,
+                    [membershipId]
+                );
+            }
+            await db.query(
+                `UPDATE company_memberships
+                 SET role='company_admin', role_key='tenant_admin'
+                 WHERE user_id=$1 AND company_id=$2`,
+                [state.humanA.id, state.companyA]
+            );
+        }
+    });
+
+    databaseTest('live-follow: a committed scope override narrows the next call to assigned records', async () => {
+        let membershipId = null;
+        let jobId = null;
+        try {
+            await marketplaceService.setChatgptMcpWrites(
+                state.companyA,
+                state.humanA.id,
+                true,
+                { requestId: `avatars-scope-tier-${randomUUID()}` }
+            );
+            const membership = await db.query(
+                `UPDATE company_memberships
+                 SET role='company_member', role_key='manager'
+                 WHERE user_id=$1 AND company_id=$2
+                 RETURNING id`,
+                [state.humanA.id, state.companyA]
+            );
+            membershipId = membership.rows[0].id;
+            await db.query(
+                `DELETE FROM company_membership_scope_overrides
+                 WHERE membership_id=$1 AND scope_key='job_visibility'`,
+                [membershipId]
+            );
+            const created = await db.query(
+                `INSERT INTO jobs
+                    (company_id, contact_id, blanc_status, zb_status, customer_name,
+                     service_name, description, assigned_provider_user_ids, notes, zb_raw)
+                 VALUES
+                    ($1,$2,'Submitted','scheduled','Scope revoke','Scope test',
+                     'scope-before','[]'::jsonb,'[]'::jsonb,'{}'::jsonb)
+                 RETURNING id`,
+                [state.companyA, state.contactA]
+            );
+            jobId = Number(created.rows[0].id);
+            const beforeRevoke = await resolveA();
+            expect(beforeRevoke.owner_scopes).toMatchObject({ job_visibility: 'all' });
+            const staleReq = protocolRequest(beforeRevoke, allOauthScopes);
+
+            await db.query(
+                `INSERT INTO company_membership_scope_overrides
+                    (membership_id, scope_key, scope_json)
+                 VALUES ($1,'job_visibility',$2::jsonb)
+                 ON CONFLICT (membership_id, scope_key)
+                 DO UPDATE SET scope_json=EXCLUDED.scope_json`,
+                [membershipId, JSON.stringify('assigned_only')]
+            );
+
+            const listed = await listProtocolTools(staleReq);
+            expect(listed.result.tools.map((tool) => tool.name)).toContain('svc.update_job');
+            await expect(executor.execute(
+                staleReq,
+                'svc.update_job',
+                {
+                    job_id: jobId,
+                    description: 'must-not-follow-narrowed-scope',
+                },
+                {
+                    confirmed: true,
+                    confirmation_id: `avatars-scope-revoke-${randomUUID()}`,
+                }
+            )).rejects.toMatchObject({
+                code: 'NOT_FOUND',
+                httpStatus: 404,
+            });
+            const unchanged = await db.query(
+                `SELECT description FROM jobs WHERE id=$1 AND company_id=$2`,
+                [jobId, state.companyA]
+            );
+            expect(unchanged.rows[0].description).toBe('scope-before');
+        } finally {
+            if (membershipId) {
+                await db.query(
+                    `DELETE FROM company_membership_scope_overrides
+                     WHERE membership_id=$1 AND scope_key='job_visibility'`,
+                    [membershipId]
+                );
+            }
+            if (jobId) {
+                await db.query(
+                    `DELETE FROM jobs WHERE id=$1 AND company_id=$2`,
+                    [jobId, state.companyA]
+                );
+            }
+            await db.query(
+                `UPDATE company_memberships
+                 SET role='company_admin', role_key='tenant_admin'
+                 WHERE user_id=$1 AND company_id=$2`,
+                [state.humanA.id, state.companyA]
+            );
+        }
+    });
+
+    databaseTest('live-follow: committed Writes tier-off hides and denies the next call', async () => {
+        await db.query(
+            `UPDATE company_memberships
+             SET role='company_admin', role_key='tenant_admin'
+             WHERE user_id=$1 AND company_id=$2`,
+            [state.humanA.id, state.companyA]
+        );
+        await marketplaceService.setChatgptMcpWrites(
+            state.companyA,
+            state.humanA.id,
+            true,
+            { requestId: `avatars-write-on-${randomUUID()}` }
+        );
+        const beforeRevoke = await resolveA();
+        const staleReq = protocolRequest(beforeRevoke, allOauthScopes);
+        const before = await db.query(
+            `SELECT description FROM jobs WHERE id=$1 AND company_id=$2`,
+            [state.jobA, state.companyA]
+        );
+        try {
+            await marketplaceService.setChatgptMcpWrites(
+                state.companyA,
+                state.humanA.id,
+                false,
+                { requestId: `avatars-write-off-${randomUUID()}` }
+            );
+            const listed = await listProtocolTools(staleReq);
+            expect(listed.result.tools.map((tool) => tool.name)).not.toContain('svc.update_job');
+            const denied = await callProtocolTool(staleReq, 'svc.update_job', {
+                job_id: state.jobA,
+                description: 'must-not-follow-disabled-write-tier',
+            });
+            expect(denied.error).toEqual(expect.objectContaining({
+                code: -32001,
+                data: expect.objectContaining({
+                    code: 'access_denied',
+                    details: expect.objectContaining({ reason: 'OWNER_TIER_REQUIRED' }),
+                }),
+            }));
+            const after = await db.query(
+                `SELECT description FROM jobs WHERE id=$1 AND company_id=$2`,
+                [state.jobA, state.companyA]
+            );
+            expect(after.rows[0]).toEqual(before.rows[0]);
+        } finally {
+            await marketplaceService.setChatgptMcpWrites(
+                state.companyA,
+                state.humanA.id,
+                true,
+                { requestId: `avatars-write-restore-${randomUUID()}` }
+            );
+        }
+    });
+
+    databaseTest('live-follow: committed send permission and Sends tier revokes affect the next call', async () => {
+        let membershipId = null;
+        try {
+            const membership = await db.query(
+                `UPDATE company_memberships
+                 SET role='company_member', role_key='manager'
+                 WHERE user_id=$1 AND company_id=$2
+                 RETURNING id`,
+                [state.humanA.id, state.companyA]
+            );
+            membershipId = membership.rows[0].id;
+            await db.query(
+                `DELETE FROM company_membership_permission_overrides
+                 WHERE membership_id=$1 AND permission_key='estimates.send'`,
+                [membershipId]
+            );
+            await marketplaceService.setChatgptMcpSends(
+                state.companyA,
+                state.humanA.id,
+                true,
+                { requestId: `avatars-send-on-${randomUUID()}` }
+            );
+            let beforeRevoke = await resolveA();
+            expect(beforeRevoke.owner_permissions).toContain('estimates.send');
+            let staleReq = protocolRequest(beforeRevoke, allOauthScopes);
+
+            await db.query(
+                `INSERT INTO company_membership_permission_overrides
+                    (membership_id, permission_key, override_mode)
+                 VALUES ($1,'estimates.send','deny')
+                 ON CONFLICT (membership_id, permission_key)
+                 DO UPDATE SET override_mode='deny'`,
+                [membershipId]
+            );
+
+            let listed = await listProtocolTools(staleReq);
+            expect(listed.result.tools.map((tool) => tool.name)).not.toContain('svc.send_estimate');
+            let denied = await callProtocolTool(staleReq, 'svc.send_estimate', {
+                estimate_id: 1,
+                channel: 'email',
+            });
+            expect(denied.error).toEqual(expect.objectContaining({
+                code: -32001,
+                data: expect.objectContaining({
+                    code: 'access_denied',
+                    details: expect.objectContaining({ reason: 'OWNER_PERMISSION_REQUIRED' }),
+                }),
+            }));
+
+            await db.query(
+                `DELETE FROM company_membership_permission_overrides
+                 WHERE membership_id=$1 AND permission_key='estimates.send'`,
+                [membershipId]
+            );
+            beforeRevoke = await resolveA();
+            staleReq = protocolRequest(beforeRevoke, allOauthScopes);
+            await marketplaceService.setChatgptMcpSends(
+                state.companyA,
+                state.humanA.id,
+                false,
+                { requestId: `avatars-send-off-${randomUUID()}` }
+            );
+
+            listed = await listProtocolTools(staleReq);
+            const listedNames = listed.result.tools.map((tool) => tool.name);
+            expect(listedNames).not.toContain('svc.send_estimate');
+            expect(listedNames).not.toContain('svc.send_invoice');
+            denied = await callProtocolTool(staleReq, 'svc.send_estimate', {
+                estimate_id: 1,
+                channel: 'email',
+            });
+            expect(denied.error).toEqual(expect.objectContaining({
+                code: -32001,
+                data: expect.objectContaining({
+                    code: 'access_denied',
+                    details: expect.objectContaining({ reason: 'OWNER_TIER_REQUIRED' }),
+                }),
+            }));
+        } finally {
+            if (membershipId) {
+                await db.query(
+                    `DELETE FROM company_membership_permission_overrides
+                     WHERE membership_id=$1 AND permission_key='estimates.send'`,
+                    [membershipId]
+                );
+            }
+            await db.query(
+                `UPDATE company_memberships
+                 SET role='company_admin', role_key='tenant_admin'
+                 WHERE user_id=$1 AND company_id=$2`,
+                [state.humanA.id, state.companyA]
+            );
+            await marketplaceService.setChatgptMcpSends(
+                state.companyA,
+                state.humanA.id,
+                true,
+                { requestId: `avatars-send-restore-${randomUUID()}` }
+            );
+        }
     });
 
     databaseTest('SAB-AVATAR-RECORD-SCOPE: provider avatar sees and mutates only owner-assigned records', async () => {

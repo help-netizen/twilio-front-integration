@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-07-24 — AVATARS-001 Phase B red-team fixes
+
+Job/Lead FSM-запись теперь применяет точный target перехода, уже
+отрезолвленного по живой роли владельца: одинаковый event больше не может
+подменить provider-target первым admin-target из опубликованного SCXML.
+Real-PG контракт публикует такой граф для обеих сущностей и проверяет
+provider/admin/denied роли. Дополнительно зафиксирована HTTP-подобная
+гранулярность live-follow: permission/scope override и Writes/Sends revoke,
+закоммиченные до нового MCP-вызова, действуют на нём; отмена уже начатой
+транзакции и блокировки строк RBAC сознательно не добавлялись. **НЕ задеплоено.**
+
 ## 2026-07-24 — AVATARS-001 Phase B: live owner authorization
 
 Все 33 ChatGPT Avatar-инструмента теперь авторизуются по живым permissions,

@@ -418,8 +418,12 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
                     expect(String(data.contact.id)).toBe(String(contactA));
                 }],
                 ['svc.list_schedule', { search: sharedText, limit: 20 }, (data) => {
-                    expect(data.items.map((row) => String(row.entity_id))).toContain(String(jobA));
-                    expect(data.items.map((row) => String(row.entity_id))).not.toContain(String(jobB));
+                    const jobIds = data.items
+                        .filter((row) => row.entity_type === 'job')
+                        .map((row) => String(row.entity_id));
+                    expect(data.items.every((row) => row.company_id === companyA)).toBe(true);
+                    expect(jobIds).toContain(String(jobA));
+                    expect(jobIds).not.toContain(String(jobB));
                 }],
                 ['svc.list_calls', { limit: 20 }, (data) => {
                     expect(data.rows.map((row) => String(row.id)).sort()).toEqual(callIdsA);

@@ -22,10 +22,10 @@ effective avatar authority
   ∩ token OAuth scope
 ```
 
-An avatar must never see or do anything its human owner cannot see or do at the
-same instant. Writes and Sends are independent, owner-controlled narrowing
-tiers; neither tier can grant a missing human permission or widen a record
-scope.
+An avatar must never see or do anything its human owner cannot see or do at
+the authorization decision for that MCP call. Writes and Sends are
+independent, owner-controlled narrowing tiers; neither tier can grant a
+missing human permission or widen a record scope.
 
 This specification is separate from `CHATGPT-CRM-MCP-001` because it replaces
 that document's company-wide identity and static-agent-grant authorization
@@ -171,6 +171,21 @@ Normal MCP reads resolve it once after OAuth binding resolution. Writes resolve
 it again inside their existing transaction, after locking the active binding
 chain and before the handler's first side effect.
 
+Authorization follows the same request-granularity semantics as a human HTTP
+request. Effective owner permissions, role, record-scope overrides, and tier
+state are resolved once at the start of each MCP call; for a write, the
+decisive resolution occurs at the start of its transaction under the live
+binding recheck. A role, permission, override, tier, or scope revocation
+committed before a new call begins applies to that call. A revocation committed
+after an in-flight call has already resolved authorization applies from the
+next call.
+
+Strict concurrent-revoke cancellation of an already authorized in-flight call
+is deliberately out of scope. It would require a shared authorization-version
+or lock protocol with the role editor. Avatar execution must not add
+`FOR SHARE`/`FOR UPDATE` locks to permission, role, or scope rows: that would
+diverge from human-request semantics and introduce role-editor deadlock risk.
+
 ## 6. Tool parity checklist for Phase B
 
 Every row also needs its exact internal `mcp.tool.<name>` key and the OAuth
@@ -282,6 +297,15 @@ Every new company-scoped read/write follows `TENANCY-RBAC-CANON`:
 - `R-matrix`: every allow and deny role/permission/tier/scope cell is explicit.
 - sabotage: removing the owner/company predicate, live permission resolution,
   record scope, or tier check makes its named test red.
+- duplicate-event FSM sabotage: when one event has role-specific targets, the
+  persisted Job/Lead target must be the transition selected for the live owner
+  role, never the first same-event transition in the published graph.
+- post-commit live-follow: a call begun after a committed permission override,
+  scope override, Writes tier-off, Sends permission denial, or Sends tier-off
+  must rediscover/deny accordingly and leave protected records unchanged.
+- no test may claim that a revoke cancels a write whose transaction has already
+  resolved authorization; that stronger concurrent-revoke guarantee is not
+  part of this contract.
 
 Phase A additionally requires:
 
@@ -332,7 +356,9 @@ Phase B implementation notes:
   discovery. Direct invocation requires the selected allowlisted parent's
   permission; Job/Contact parents additionally enforce their live owner scope.
 - Job and Lead FSM reads/writes pass the live owner `role_key`; there is no
-  dispatcher fallback.
+  dispatcher fallback. A transition write persists the exact target selected
+  by `getAvailableActions(..., [ownerRoleKey])`; it never re-resolves a
+  duplicate event through the role-agnostic first-match helper.
 - The required attack-only review is a separate post-implementation turn. It
   is intentionally not folded into the implementation/repair pass.
 
@@ -412,6 +438,28 @@ three-suite set passed 3 suites / 40 tests with exit 0. The record-scope
 mutation was also exercised against live PostgreSQL by widening the read scope
 to tenant-wide; the provider test exposed the unassigned Job and failed with
 exit 1 before restore. The final full regression above is the post-restore run.
+
+Phase B red-team repair verification:
+
+```bash
+DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpWrites.db.test.js -t 'SAB-AVATAR-FSM-ROLE-TARGET|live-follow:'
+```
+
+Result: 1 suite / 5 selected tests passed, 11 filtered tests skipped, exit 0.
+The selected real-PostgreSQL cases cover the duplicate-event Job/Lead target,
+committed permission override, committed record-scope override, Writes
+tier-off, and both Sends permission/tier revocation.
+
+`SAB-AVATAR-FSM-ROLE-TARGET` break-to-red result: restoring the old
+role-agnostic `resolveTransition(action)` path made the provider assertion fail
+with `Expected: "InProgress"; Received: "Completed"` (1 failed, exit 1).
+Restoring the implementation from a `cp` backup made the same selected test
+pass (1 passed, exit 0).
+
+Final post-restore result for the full MCP regression command above:
+23 suites / 272 tests passed, exit 0. The database was built from
+`backend/db/test-fixtures/schema_pre_096.sql`, compatibility migrations
+084–089, and migrations 096–200.
 
 ### Phase C focused
 
