@@ -40,6 +40,33 @@ function marketplaceStatusBadge(app: MarketplaceApp) {
     return <Badge variant="outline">Available</Badge>;
 }
 
+// App icon: the uploaded logo when present, otherwise a monogram of the app's
+// first letter. A broken/absent image falls back to the same monogram so a card
+// never shows a blank tile.
+function MarketplaceAppLogo({ app }: { app: MarketplaceApp }) {
+    const [imgOk, setImgOk] = useState(true);
+    const letter = (app.name?.trim()?.[0] ?? '?').toUpperCase();
+    if (app.logo_url && imgOk) {
+        return (
+            <img
+                src={app.logo_url}
+                alt=""
+                className="h-11 w-11 shrink-0 rounded-xl object-contain bg-[var(--blanc-surface-muted)]"
+                onError={() => setImgOk(false)}
+            />
+        );
+    }
+    return (
+        <div
+            aria-hidden
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--blanc-field)] text-lg font-bold text-[var(--blanc-ink-2)]"
+            style={{ fontFamily: 'var(--blanc-font-heading)' }}
+        >
+            {letter}
+        </div>
+    );
+}
+
 function MarketplaceConnectDialog({
     app,
     open,
@@ -261,9 +288,12 @@ export function IntegrationsPage() {
                             renderApp={app => (
                                 <div className="flex min-h-[230px] flex-col rounded-xl border border-[var(--blanc-line)] bg-[var(--blanc-surface-strong)] p-5">
                                     <div className="flex items-start justify-between gap-4">
-                                        <div className="min-w-0">
-                                            <h3 className="text-lg font-semibold truncate text-[var(--blanc-ink-1)]">{app.name}</h3>
-                                            <p className="text-sm text-[var(--blanc-ink-2)] mt-1">{app.provider_name} · {app.category.replace(/_/g, ' ')}</p>
+                                        <div className="flex min-w-0 items-start gap-3">
+                                            <MarketplaceAppLogo app={app} />
+                                            <div className="min-w-0">
+                                                <h3 className="text-lg font-semibold truncate text-[var(--blanc-ink-1)]">{app.name}</h3>
+                                                <p className="text-sm text-[var(--blanc-ink-2)] mt-1">{app.provider_name} · {app.category.replace(/_/g, ' ')}</p>
+                                            </div>
                                         </div>
                                         {marketplaceStatusBadge(app)}
                                     </div>
