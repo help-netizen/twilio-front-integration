@@ -9,6 +9,43 @@ const readService = require('../backend/src/services/chatgptMcpReadService');
 const identityService = require('../backend/src/services/chatgptMcpIdentityService');
 const authorization = require('../backend/src/services/mcpToolAuthorization');
 const permissions = require('../backend/src/services/chatgptMcpPermissions');
+const protocol = require('../backend/src/services/agentSkillsMcpProtocolService');
+
+const EXPECTED_DISPATCHER_TITLES = Object.freeze({
+    'svc.list_jobs': 'List jobs',
+    'svc.get_job': 'Open a job',
+    'svc.get_job_transitions': 'See a job\'s available status changes',
+    'svc.list_leads': 'List leads',
+    'svc.get_lead': 'Open a lead',
+    'svc.get_lead_transitions': 'See a lead\'s available status changes',
+    'svc.search_contacts': 'Search contacts',
+    'svc.get_contact': 'Look up a contact',
+    'svc.get_contact_history': 'See a contact\'s history',
+    'svc.list_schedule': 'View the schedule',
+    'svc.get_schedule_item': 'Open a schedule item',
+    'svc.list_tasks': 'List tasks',
+    'svc.list_entity_tasks': 'List tasks on a job or lead',
+    'svc.list_task_assignees': 'List who can be assigned tasks',
+    'svc.list_estimates': 'List estimates',
+    'svc.get_estimate': 'Open an estimate',
+    'svc.list_invoices': 'List invoices',
+    'svc.get_invoice': 'Open an invoice',
+    'svc.list_calls': 'View recent calls',
+    'svc.create_lead': 'Create a lead',
+    'svc.update_lead': 'Edit a lead',
+    'svc.transition_lead': 'Change a lead\'s status',
+    'svc.create_job': 'Create a job',
+    'svc.update_job': 'Edit a job',
+    'svc.transition_job': 'Change a job\'s status',
+    'svc.add_note': 'Add a note',
+    'svc.create_estimate': 'Create an estimate',
+    'svc.update_estimate': 'Edit an estimate',
+    'svc.create_invoice': 'Create an invoice',
+    'svc.update_invoice': 'Edit an invoice',
+    'svc.convert_estimate_to_invoice': 'Turn an estimate into an invoice',
+    'svc.send_estimate': 'Email or text an estimate to the customer',
+    'svc.send_invoice': 'Email or text an invoice to the customer',
+});
 
 function requestContext(granted = permissions.S1_GRANTS) {
     return {
@@ -31,6 +68,25 @@ function requestContext(granted = permissions.S1_GRANTS) {
 beforeEach(() => jest.clearAllMocks());
 
 describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
+    test('all 33 dispatcher tools expose the exact human-readable protocol title, with no extras', () => {
+        const tools = registry.listTools({
+            includeDispatcher: true,
+            dispatcherOnly: true,
+        });
+        const expectedNames = Object.keys(EXPECTED_DISPATCHER_TITLES).sort();
+
+        expect(expectedNames).toHaveLength(33);
+        expect(tools).toHaveLength(33);
+        expect(tools.map((tool) => tool.name).sort()).toEqual(expectedNames);
+
+        for (const tool of tools) {
+            const expectedTitle = EXPECTED_DISPATCHER_TITLES[tool.name];
+            expect(tool.title).toBe(expectedTitle);
+            expect(expectedTitle).not.toMatch(/^svc\./i);
+            expect(protocol.toProtocolTool(tool)).toHaveProperty('title', expectedTitle);
+        }
+    });
+
     test('all 19 S1 reads require business permission plus their exact AI-only key', () => {
         expect(permissions.READ_TOOL_NAMES).toHaveLength(19);
         for (const name of permissions.READ_TOOL_NAMES) {

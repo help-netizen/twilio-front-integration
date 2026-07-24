@@ -294,6 +294,14 @@ tool prose or ordinary JSON arguments.
 
 Every permission cell below also requires the exact system key `mcp.tool.<tool name>`. Every read uses the binding company from server context; every write rechecks ownership in the mutation predicate. “Wrap” names the existing route/service behavior to reuse after any listed hardening. In the OAuth-scope column, `read`, `write`, and `send` abbreviate `albusto.mcp.read`, `albusto.mcp.write`, and `albusto.mcp.send` respectively.
 
+### 7.0 Human-readable tool titles
+
+All 33 ChatGPT dispatcher `svc.*` descriptors expose the optional MCP 2025-06-18
+`title` field with an owner-approved human-readable label. `title` is display
+metadata only: invocation `name`, schemas, grants, permissions, scopes, and
+confirmation behavior are unchanged. Legacy voice/customer skills have no
+dispatcher title and omit the field from their protocol form.
+
 ### 7.1 S1 — reads
 
 | Tool | Kind | Required permission(s) / OAuth scope | Confirm | Wrapped route/service | Tenant-scoping note |

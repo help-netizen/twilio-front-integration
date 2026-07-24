@@ -60,6 +60,7 @@ const chatgptMcpReadService = require('../backend/src/services/chatgptMcpReadSer
 
 const registry = require('../backend/src/services/agentSkillsMcpRegistry');
 const mcpResponse = require('../backend/src/services/crmMcpResponse');
+const protocolService = require('../backend/src/services/agentSkillsMcpProtocolService');
 const agentSkillsMcpRouter = require('../backend/src/routes/agentSkillsMcp');
 const agentSkillsMcpPublicRouter = require('../backend/src/routes/agentSkillsMcpPublic');
 
@@ -376,6 +377,29 @@ describe('svc.* JSON-RPC protocol (ASK-MCP-13 / 14)', () => {
             requiredPermissions: ['leads.edit', 'leads.create'],
             frameworkWritePermission: WRITE_PERM,
         });
+    });
+
+    test('protocol projection emits a dispatcher title and omits it for untitled voice tools', () => {
+        const dispatcherTool = protocolService.toProtocolTool(
+            registry.getTool('svc.get_contact')
+        );
+        const voiceTool = protocolService.toProtocolTool(
+            registry.getTool('svc.get_job_status')
+        );
+
+        expect(dispatcherTool).toMatchObject({
+            name: 'svc.get_contact',
+            title: 'Look up a contact',
+        });
+        expect(dispatcherTool.title).not.toMatch(/^svc\./i);
+        expect(voiceTool).not.toHaveProperty('title');
+        expect(protocolService.toProtocolTool({
+            name: 'svc.empty_title',
+            title: '',
+            description: 'No display title',
+            inputSchema: { type: 'object', properties: {}, required: [] },
+            kind: 'read',
+        })).not.toHaveProperty('title');
     });
 
     test('tools/call read over JSON-RPC returns structuredContent from the skill layer', async () => {

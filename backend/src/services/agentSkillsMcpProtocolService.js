@@ -112,6 +112,9 @@ async function dispatch(req, method, params) {
 function toProtocolTool(tool) {
     return {
         name: tool.name,
+        ...(typeof tool.title === 'string' && tool.title.trim()
+            ? { title: tool.title }
+            : {}),
         description: tool.description,
         inputSchema: tool.inputSchema,
         annotations: {

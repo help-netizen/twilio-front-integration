@@ -4,6 +4,10 @@
 
 ---
 
+## 2026-07-23 — CHATGPT-CRM-MCP human-readable tool titles
+
+Все 33 ChatGPT dispatcher-инструмента получили display-only MCP `title`; invocation names и authorization-контракты не изменились. **НЕ задеплоено.**
+
 ## 2026-07-23 — MOBILE-CATCHUP-BE: native 2FA trust, provider contacts, live job names
 
 Backend-часть догоняющего релиза technician iOS app. Для live SMS-2FA добавлен

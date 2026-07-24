@@ -49,6 +49,45 @@ const {
     S3_SEND_GRANTS: CHATGPT_S3_SEND_GRANTS,
 } = require('./chatgptMcpPermissions');
 
+// MCP 2025-06-18 display labels for the ChatGPT dispatcher surface. Tool
+// identifiers remain stable; legacy voice/customer svc.* descriptors are
+// intentionally absent and therefore do not receive a title.
+const DISPATCHER_TOOL_TITLES = Object.freeze({
+    'svc.list_jobs': 'List jobs',
+    'svc.get_job': 'Open a job',
+    'svc.get_job_transitions': 'See a job\'s available status changes',
+    'svc.list_leads': 'List leads',
+    'svc.get_lead': 'Open a lead',
+    'svc.get_lead_transitions': 'See a lead\'s available status changes',
+    'svc.search_contacts': 'Search contacts',
+    'svc.get_contact': 'Look up a contact',
+    'svc.get_contact_history': 'See a contact\'s history',
+    'svc.list_schedule': 'View the schedule',
+    'svc.get_schedule_item': 'Open a schedule item',
+    'svc.list_tasks': 'List tasks',
+    'svc.list_entity_tasks': 'List tasks on a job or lead',
+    'svc.list_task_assignees': 'List who can be assigned tasks',
+    'svc.list_estimates': 'List estimates',
+    'svc.get_estimate': 'Open an estimate',
+    'svc.list_invoices': 'List invoices',
+    'svc.get_invoice': 'Open an invoice',
+    'svc.list_calls': 'View recent calls',
+    'svc.create_lead': 'Create a lead',
+    'svc.update_lead': 'Edit a lead',
+    'svc.transition_lead': 'Change a lead\'s status',
+    'svc.create_job': 'Create a job',
+    'svc.update_job': 'Edit a job',
+    'svc.transition_job': 'Change a job\'s status',
+    'svc.add_note': 'Add a note',
+    'svc.create_estimate': 'Create an estimate',
+    'svc.update_estimate': 'Edit an estimate',
+    'svc.create_invoice': 'Create an invoice',
+    'svc.update_invoice': 'Edit an invoice',
+    'svc.convert_estimate_to_invoice': 'Turn an estimate into an invoice',
+    'svc.send_estimate': 'Email or text an estimate to the customer',
+    'svc.send_invoice': 'Email or text an invoice to the customer',
+});
+
 const TOOL_PERMISSION_MAP = Object.freeze({
     'svc.identify_caller': ['contacts.view'],
     'svc.get_customer_overview': ['contacts.view'],
@@ -604,8 +643,10 @@ function newPreferredSlotSchema() {
  */
 function normalizeTool(tool, kind) {
     const requiredPermissions = TOOL_PERMISSION_MAP[tool.name] || [];
+    const title = DISPATCHER_TOOL_TITLES[tool.name];
     return Object.freeze({
         ...tool,
+        ...(title ? { title } : {}),
         kind,
         requiresConfirmation: kind === 'write',
         requiredPermission: requiredPermissions[0] || null,
