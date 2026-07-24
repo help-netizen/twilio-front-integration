@@ -18,6 +18,10 @@ const AVATARS = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '200_avatars_per_user_identity.sql'),
     'utf8'
 );
+const ROLE_SEED = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '050_seed_role_configs.sql'),
+    'utf8'
+);
 
 jest.setTimeout(90000);
 
@@ -67,7 +71,7 @@ function workflow(machineKey) {
   <state id="submitted" blanc:label="Submitted" blanc:statusName="Submitted">
     <transition event="advance" target="review"
                 blanc:action="true" blanc:label="Advance"
-                blanc:roles="dispatcher" />
+                blanc:roles="tenant_admin, manager, dispatcher, provider" />
   </state>
   <final id="review" blanc:label="Review" blanc:statusName="Review" />
 </scxml>`;
@@ -118,6 +122,7 @@ async function setup() {
                 `s2a-b-${state.companyB}`,
             ]
         );
+        await client.query(ROLE_SEED);
         const humans = await client.query(
             `INSERT INTO crm_users
                 (keycloak_sub, email, full_name, role, status, company_id,
@@ -323,7 +328,7 @@ function writeContext(resolved) {
     };
 }
 
-function protocolRequest(resolved) {
+function protocolRequest(resolved, oauthScopes = [permissions.READ_SCOPE, permissions.WRITE_SCOPE]) {
     return {
         companyFilter: { company_id: resolved.company_id },
         user: {
@@ -337,7 +342,7 @@ function protocolRequest(resolved) {
         },
         authz: {
             permissions: resolved.permissions,
-            oauthScopes: [permissions.READ_SCOPE, permissions.WRITE_SCOPE],
+            oauthScopes,
             company: { timezone: 'America/New_York' },
             avatarOwner: {
                 id: resolved.owner_user_id,
@@ -352,6 +357,60 @@ function protocolRequest(resolved) {
         },
         requestId: `s2a-protocol-${randomUUID()}`,
     };
+}
+
+function requiredValue(name, schema) {
+    if (schema.enum) return schema.enum[0];
+    if (schema.type === 'integer' || schema.type === 'number') return Math.max(1, schema.minimum || 1);
+    if (schema.type === 'boolean') return true;
+    if (schema.type === 'array') {
+        return schema.minItems > 0 ? [requiredValue(`${name}_item`, schema.items)] : [];
+    }
+    if (schema.type === 'object') {
+        return Object.fromEntries(
+            (schema.required || []).map((key) => [
+                key,
+                requiredValue(key, schema.properties[key]),
+            ])
+        );
+    }
+    if (name === 'action') return 'advance';
+    if (name === 'parent_id') return '1';
+    if (schema.format === 'date') return '2026-07-24';
+    return `${name}-value`;
+}
+
+function validArgumentsFor(tool) {
+    return Object.fromEntries(
+        (tool.inputSchema.required || []).map((key) => [
+            key,
+            requiredValue(key, tool.inputSchema.properties[key]),
+        ])
+    );
+}
+
+function expectedAvatarTool(tool, resolved) {
+    const granted = new Set(resolved.owner_permissions || []);
+    let required;
+    let any = [];
+    if (tool.name === 'svc.list_entity_tasks') {
+        required = ['tasks.view'];
+        any = ['jobs.view', 'leads.view'];
+    } else if (tool.name === 'svc.add_note') {
+        required = [];
+        any = ['jobs.edit', 'leads.edit', 'contacts.edit'];
+    } else {
+        required = permissions.READ_TOOL_PERMISSIONS[tool.name]
+            || permissions.WRITE_TOOL_PERMISSIONS[tool.name]
+            || permissions.SEND_TOOL_PERMISSIONS[tool.name]
+            || [];
+    }
+    const permissionAllowed = required.every((key) => granted.has(key))
+        && (any.length === 0 || any.some((key) => granted.has(key)));
+    const tierAllowed = permissions.READ_TOOL_PERMISSIONS[tool.name]
+        || (permissions.WRITE_TOOL_PERMISSIONS[tool.name] && resolved.writes_enabled === true)
+        || (permissions.SEND_TOOL_PERMISSIONS[tool.name] && resolved.sends_enabled === true);
+    return Boolean(permissionAllowed && tierAllowed);
 }
 
 async function setConsent(enabled) {
@@ -685,7 +744,7 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL per-tool tenancy contract', () => 
 });
 
 describe('CHATGPT-CRM-MCP S2b real-PostgreSQL financial write contract', () => {
-    databaseTest('legacy v3 consent exposes 26 tools; repeat enable grants all 31', async () => {
+    databaseTest('legacy grant rows cannot narrow or widen the live-owner write tier', async () => {
         const s2bNames = [
             'svc.create_estimate',
             'svc.update_estimate',
@@ -714,13 +773,9 @@ describe('CHATGPT-CRM-MCP S2b real-PostgreSQL financial write contract', () => {
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(26);
+        expect(response.result.tools).toHaveLength(31);
         expect(response.result.tools.map((tool) => tool.name))
-            .not.toEqual(expect.arrayContaining(s2bNames));
-        await expect(invoke(resolved, 'svc.create_invoice', {
-            contact_id: state.contactA,
-            items: [{ name: 'Denied', quantity: 1, unit_price: 1 }],
-        })).rejects.toMatchObject({ mcpCode: 'access_denied' });
+            .toEqual(expect.arrayContaining(s2bNames));
 
         await expect(setConsent(true)).resolves.toMatchObject({
             enabled: true,
@@ -962,7 +1017,7 @@ describe('CHATGPT-CRM-MCP S2c-b Estimate-to-Invoice conversion contract', () => 
         }
     }
 
-    databaseTest('existing v3 consent needs repeat enable before the 31st tool is visible', async () => {
+    databaseTest('missing legacy exact grant cannot hide a live-owner/tier-authorized tool', async () => {
         await setConsent(true);
         await db.query(
             `DELETE FROM mcp_agent_permission_grants
@@ -983,10 +1038,8 @@ describe('CHATGPT-CRM-MCP S2c-b Estimate-to-Invoice conversion contract', () => 
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(30);
-        expect(response.result.tools.map((tool) => tool.name)).not.toContain(TOOL_NAME);
-        await expect(invoke(resolved, TOOL_NAME, { estimate_id: 1 }))
-            .rejects.toMatchObject({ mcpCode: 'access_denied' });
+        expect(response.result.tools).toHaveLength(31);
+        expect(response.result.tools.map((tool) => tool.name)).toContain(TOOL_NAME);
 
         await expect(setConsent(true)).resolves.toMatchObject({
             enabled: true,
@@ -1166,6 +1219,371 @@ describe('CHATGPT-CRM-MCP S2c-b Estimate-to-Invoice conversion contract', () => 
             { estimate_id: String(mcpEstimate.id), count: 1 },
             { estimate_id: String(serviceEstimate.id), count: 1 },
         ]);
+    });
+});
+
+describe('AVATARS-001 Phase B real-PostgreSQL parity and scope contract', () => {
+    const allOauthScopes = [
+        permissions.READ_SCOPE,
+        permissions.WRITE_SCOPE,
+        permissions.SEND_SCOPE,
+    ];
+
+    databaseTest('33 tools × 4 roles: live tools/list and direct denied calls match the parity table', async () => {
+        await marketplaceService.setChatgptMcpWrites(
+            state.companyA,
+            state.humanA.id,
+            true,
+            { requestId: `avatars-write-tier-${randomUUID()}` }
+        );
+        await marketplaceService.setChatgptMcpSends(
+            state.companyA,
+            state.humanA.id,
+            true,
+            { requestId: `avatars-send-tier-${randomUUID()}` }
+        );
+        const allTools = registry.listTools({
+            includeDispatcher: true,
+            dispatcherOnly: true,
+        });
+        expect(allTools).toHaveLength(33);
+
+        for (const role of ['tenant_admin', 'manager', 'dispatcher', 'provider']) {
+            await db.query(
+                `UPDATE company_memberships
+                 SET role = CASE WHEN $3='tenant_admin' THEN 'company_admin' ELSE 'company_member' END,
+                     role_key=$3
+                 WHERE user_id=$1 AND company_id=$2`,
+                [state.humanA.id, state.companyA, role]
+            );
+            const resolved = await resolveA();
+            expect(resolved.owner_role_key).toBe(role);
+            const req = protocolRequest(resolved, allOauthScopes);
+            const listed = await protocol.handleJsonRpc(req, {
+                jsonrpc: '2.0',
+                id: `list-${role}`,
+                method: 'tools/list',
+                params: {},
+            });
+            const visible = new Set(listed.result.tools.map((tool) => tool.name));
+            for (const tool of allTools) {
+                const expected = expectedAvatarTool(tool, resolved);
+                expect(visible.has(tool.name)).toBe(expected);
+                if (expected) continue;
+                const denied = await protocol.handleJsonRpc(req, {
+                    jsonrpc: '2.0',
+                    id: `deny-${role}-${tool.name}`,
+                    method: 'tools/call',
+                    params: {
+                        name: tool.name,
+                        arguments: validArgumentsFor(tool),
+                        ...(tool.kind === 'write' ? {
+                            confirmation: {
+                                confirmed: true,
+                                confirmation_id: `deny-${role}-${tool.name}`,
+                            },
+                        } : {}),
+                    },
+                });
+                expect(denied.error).toEqual(expect.objectContaining({
+                    code: -32001,
+                    data: expect.objectContaining({ code: 'access_denied' }),
+                }));
+            }
+        }
+        await db.query(
+            `UPDATE company_memberships
+             SET role='company_admin', role_key='tenant_admin'
+             WHERE user_id=$1 AND company_id=$2`,
+            [state.humanA.id, state.companyA]
+        );
+    });
+
+    databaseTest('SAB-AVATAR-RECORD-SCOPE: provider avatar sees and mutates only owner-assigned records', async () => {
+        const membership = await db.query(
+            `UPDATE company_memberships
+             SET role='company_member', role_key='provider'
+             WHERE user_id=$1 AND company_id=$2
+             RETURNING id`,
+            [state.humanA.id, state.companyA]
+        );
+        for (const permission of ['jobs.edit', 'jobs.close', 'contacts.view', 'contacts.edit']) {
+            await db.query(
+                `INSERT INTO company_membership_permission_overrides
+                    (membership_id, permission_key, override_mode)
+                 VALUES ($1,$2,'allow')
+                 ON CONFLICT (membership_id, permission_key)
+                 DO UPDATE SET override_mode='allow'`,
+                [membership.rows[0].id, permission]
+            );
+        }
+        await db.query(
+            `UPDATE jobs
+             SET assigned_provider_user_ids=$1::jsonb,
+                 start_date=NOW()+INTERVAL '1 day',
+                 end_date=NOW()+INTERVAL '1 day 2 hours'
+             WHERE id=$2 AND company_id=$3`,
+            [JSON.stringify([state.humanA.id]), state.jobA, state.companyA]
+        );
+        const unassignedContact = await db.query(
+            `INSERT INTO contacts (company_id, full_name, phone_e164, email)
+             VALUES ($1,'Provider Hidden Contact',$2,$3)
+             RETURNING id`,
+            [
+                state.companyA,
+                `+1555${String(Date.now() + 1).slice(-7)}`,
+                `provider-hidden-${randomUUID()}@example.test`,
+            ]
+        );
+        const unassignedJob = await db.query(
+            `INSERT INTO jobs
+                (company_id, contact_id, blanc_status, customer_name, service_name,
+                 description, start_date, end_date, assigned_provider_user_ids)
+             VALUES ($1,$2,'Submitted','Provider Hidden','Hidden service','before',
+                     NOW()+INTERVAL '1 day',NOW()+INTERVAL '1 day 2 hours','[]'::jsonb)
+             RETURNING id`,
+            [state.companyA, unassignedContact.rows[0].id]
+        );
+        const callRows = await db.query(
+            `INSERT INTO calls
+                (call_sid, company_id, contact_id, direction, from_number, to_number,
+                 status, started_at, is_final)
+             VALUES
+                ($1,$2,$3,'inbound','+16175550100','+16175550200','completed',NOW(),true),
+                ($4,$2,$5,'inbound','+16175550101','+16175550200','completed',NOW(),true),
+                ($6,$2,NULL,'inbound','+16175550102','+16175550200','completed',NOW(),true)
+             RETURNING id, contact_id`,
+            [
+                `CA-AVATAR-ASSIGNED-${randomUUID()}`,
+                state.companyA,
+                state.contactA,
+                `CA-AVATAR-HIDDEN-${randomUUID()}`,
+                unassignedContact.rows[0].id,
+                `CA-AVATAR-ORPHAN-${randomUUID()}`,
+            ]
+        );
+        await db.query(
+            `INSERT INTO tasks
+                (company_id,title,status,created_by,job_id,owner_user_id,author_user_id)
+             VALUES
+                ($1,'Assigned task','open','user',$2,$3,$4),
+                ($1,'Authored task','open','user',$2,$4,$3),
+                ($1,'Hidden task','open','user',$5,$4,$4)`,
+            [
+                state.companyA,
+                state.jobA,
+                state.humanA.id,
+                state.spareAdminA.id,
+                unassignedJob.rows[0].id,
+            ]
+        );
+        const beforeB = await snapshotCompany(state.companyB);
+        const resolved = await resolveA();
+        expect(resolved.owner_scopes).toMatchObject({ job_visibility: 'assigned_only' });
+        const req = protocolRequest(resolved, allOauthScopes);
+        const call = async (name, args) => protocol.handleJsonRpc(req, {
+            jsonrpc: '2.0',
+            id: `scope-${name}-${randomUUID()}`,
+            method: 'tools/call',
+            params: { name, arguments: args },
+        });
+
+        const jobs = await call('svc.list_jobs', { limit: 100 });
+        expect(jobs.result.structuredContent.results.map((row) => Number(row.id)))
+            .toContain(state.jobA);
+        expect(jobs.result.structuredContent.results.map((row) => Number(row.id)))
+            .not.toContain(Number(unassignedJob.rows[0].id));
+        for (const [name, args] of [
+            ['svc.get_job', { job_id: Number(unassignedJob.rows[0].id) }],
+            ['svc.get_schedule_item', {
+                entity_type: 'job',
+                entity_id: Number(unassignedJob.rows[0].id),
+            }],
+            ['svc.get_contact', { contact_id: Number(unassignedContact.rows[0].id) }],
+            ['svc.list_entity_tasks', {
+                parent_type: 'job',
+                parent_id: String(unassignedJob.rows[0].id),
+            }],
+        ]) {
+            const denied = await call(name, args);
+            expect(denied.error).toEqual(expect.objectContaining({
+                code: -32004,
+                data: expect.objectContaining({ code: 'not_found' }),
+            }));
+        }
+        const schedule = await call('svc.list_schedule', { limit: 100 });
+        expect(schedule.result.structuredContent.items.map((row) => Number(row.entity_id)))
+            .toContain(state.jobA);
+        expect(schedule.result.structuredContent.items.map((row) => Number(row.entity_id)))
+            .not.toContain(Number(unassignedJob.rows[0].id));
+        const calls = await call('svc.list_calls', { limit: 50 });
+        expect(calls.result.structuredContent.rows.map((row) => Number(row.id)))
+            .toEqual([Number(callRows.rows[0].id)]);
+        const tasks = await call('svc.list_tasks', { status: 'open', limit: 100 });
+        expect(tasks.result.structuredContent.tasks.map((row) => row.description))
+            .toEqual(expect.arrayContaining(['Assigned task', 'Authored task']));
+        expect(tasks.result.structuredContent.tasks.map((row) => row.description))
+            .not.toContain('Hidden task');
+
+        const scopedContext = writeContext(resolved);
+        await expect(invokeDirect(
+            scopedContext,
+            'svc.update_job',
+            { job_id: state.jobA, description: 'provider-owned' }
+        )).resolves.toMatchObject({ job_id: String(state.jobA) });
+        await expect(invokeDirect(
+            scopedContext,
+            'svc.update_job',
+            { job_id: Number(unassignedJob.rows[0].id), description: 'must-not-write' }
+        )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        await expect(invokeDirect(
+            scopedContext,
+            'svc.add_note',
+            {
+                parent_type: 'contact',
+                parent_id: String(state.contactA),
+                text: 'provider-visible contact',
+            }
+        )).resolves.toMatchObject({ parent_type: 'contact' });
+        await expect(invokeDirect(
+            scopedContext,
+            'svc.add_note',
+            {
+                parent_type: 'contact',
+                parent_id: String(unassignedContact.rows[0].id),
+                text: 'must-not-write',
+            }
+        )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        const unchanged = await db.query(
+            `SELECT description
+             FROM jobs
+             WHERE id=$1 AND company_id=$2`,
+            [unassignedJob.rows[0].id, state.companyA]
+        );
+        expect(unchanged.rows[0].description).toBe('before');
+        expect(await snapshotCompany(state.companyB)).toBe(beforeB);
+
+        await db.query(
+            `DELETE FROM company_membership_permission_overrides
+             WHERE membership_id=$1`,
+            [membership.rows[0].id]
+        );
+        await db.query(
+            `UPDATE company_memberships
+             SET role='company_admin', role_key='tenant_admin'
+             WHERE id=$1`,
+            [membership.rows[0].id]
+        );
+    });
+
+    databaseTest('role/tier changes between discovery and call/write fail with zero side effects', async () => {
+        await db.query(
+            `UPDATE company_memberships
+             SET role='company_admin', role_key='tenant_admin'
+             WHERE user_id=$1 AND company_id=$2`,
+            [state.humanA.id, state.companyA]
+        );
+        await marketplaceService.setChatgptMcpWrites(
+            state.companyA,
+            state.humanA.id,
+            true,
+            { requestId: `avatars-race-enable-${randomUUID()}` }
+        );
+        let resolved = await resolveA();
+        let req = protocolRequest(resolved, allOauthScopes);
+        const beforeList = await protocol.handleJsonRpc(req, {
+            jsonrpc: '2.0',
+            id: 'before-demotion',
+            method: 'tools/list',
+            params: {},
+        });
+        expect(beforeList.result.tools.map((tool) => tool.name)).toContain('svc.get_lead');
+        await db.query(
+            `UPDATE company_memberships
+             SET role='company_member', role_key='provider'
+             WHERE user_id=$1 AND company_id=$2`,
+            [state.humanA.id, state.companyA]
+        );
+        const demotedCall = await protocol.handleJsonRpc(req, {
+            jsonrpc: '2.0',
+            id: 'after-demotion',
+            method: 'tools/call',
+            params: {
+                name: 'svc.get_lead',
+                arguments: { lead_uuid: state.leadA.uuid },
+            },
+        });
+        expect(demotedCall.error).toEqual(expect.objectContaining({
+            code: -32001,
+            data: expect.objectContaining({ code: 'access_denied' }),
+        }));
+        await db.query(
+            `UPDATE company_memberships
+             SET role='company_admin', role_key='tenant_admin'
+             WHERE user_id=$1 AND company_id=$2`,
+            [state.humanA.id, state.companyA]
+        );
+
+        resolved = await resolveA();
+        const beforeLead = await db.query(
+            `SELECT comments FROM leads WHERE uuid=$1 AND company_id=$2`,
+            [state.leadA.uuid, state.companyA]
+        );
+        await expect(invokeDirect(
+            writeContext(resolved),
+            'svc.update_lead',
+            { lead_uuid: state.leadA.uuid, comments: 'race-must-rollback' },
+            {
+                beforeLiveRecheck: async (client) => {
+                    await client.query(
+                        `UPDATE company_memberships
+                         SET role='company_member', role_key='provider'
+                         WHERE user_id=$1 AND company_id=$2`,
+                        [state.humanA.id, state.companyA]
+                    );
+                },
+            }
+        )).rejects.toMatchObject({ mcpCode: 'access_denied' });
+        const afterLead = await db.query(
+            `SELECT comments FROM leads WHERE uuid=$1 AND company_id=$2`,
+            [state.leadA.uuid, state.companyA]
+        );
+        expect(afterLead.rows[0]).toEqual(beforeLead.rows[0]);
+
+        await marketplaceService.setChatgptMcpWrites(
+            state.companyA,
+            state.humanA.id,
+            false,
+            { requestId: `avatars-race-disable-${randomUUID()}` }
+        );
+        req = protocolRequest(await resolveA(), allOauthScopes);
+        const tierList = await protocol.handleJsonRpc(req, {
+            jsonrpc: '2.0',
+            id: 'tier-off',
+            method: 'tools/list',
+            params: {},
+        });
+        expect(tierList.result.tools.map((tool) => tool.name)).not.toContain('svc.update_lead');
+        const tierCall = await protocol.handleJsonRpc(req, {
+            jsonrpc: '2.0',
+            id: 'tier-off-call',
+            method: 'tools/call',
+            params: {
+                name: 'svc.update_lead',
+                arguments: { lead_uuid: state.leadA.uuid, comments: 'denied' },
+                confirmation: { confirmed: true, confirmation_id: 'tier-off' },
+            },
+        });
+        expect(tierCall.error).toEqual(expect.objectContaining({
+            code: -32001,
+            data: expect.objectContaining({ code: 'access_denied' }),
+        }));
+        await marketplaceService.setChatgptMcpWrites(
+            state.companyA,
+            state.humanA.id,
+            true,
+            { requestId: `avatars-race-restore-${randomUUID()}` }
+        );
     });
 });
 

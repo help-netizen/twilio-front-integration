@@ -19,6 +19,7 @@ const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '195_chatgpt_crm_mcp.sql'), 'utf8');
 const SEED = fs.readFileSync(path.join(MIGRATIONS, '196_seed_chatgpt_crm_mcp_marketplace_app.sql'), 'utf8');
 const AVATARS = fs.readFileSync(path.join(MIGRATIONS, '200_avatars_per_user_identity.sql'), 'utf8');
+const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
 
 jest.setTimeout(60000);
 
@@ -122,6 +123,7 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
                         ($3, 'Tenant B', $4, 'active', 'America/Chicago')`,
                 [companyA, `mcp-ten-a-${companyA}`, companyB, `mcp-ten-b-${companyB}`]
             );
+            await client.query(ROLE_SEED);
             const humans = await client.query(
                 `INSERT INTO crm_users
                     (keycloak_sub, email, full_name, role, status, company_id, platform_role, onboarding_status, kind)

@@ -36,7 +36,7 @@ describe('CHATGPT-CRM-MCP S1.1 call-history query', () => {
         });
 
         const [sql, params] = db.query.mock.calls[0];
-        expect(params).toEqual([COMPANY, null, null, null, null, 20]);
+        expect(params).toEqual([COMPANY, null, null, null, null, 20, false, null]);
         expect(sql).toContain('WHERE c.company_id = tenant.id');
         expect(sql).toContain("COALESCE(tenant.timezone, 'America/New_York')");
         expect(sql).toContain('::date - 13');
@@ -61,6 +61,8 @@ describe('CHATGPT-CRM-MCP S1.1 call-history query', () => {
             '2026-07-01',
             '2026-07-15',
             50,
+            false,
+            null,
         ]);
         expect(sql).toContain('($2::text IS NULL OR c.direction = $2)');
         expect(sql).toContain('($3::bigint IS NULL OR c.contact_id = $3)');

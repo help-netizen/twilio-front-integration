@@ -38,7 +38,8 @@ describe('buildTaskListFilters — shared predicate (TC-2)', () => {
             scopeOwnerId: ME,
         });
         // scopeOwnerId pushes before status → $2 owner, $3 status.
-        expect(conditions).toContain('t.owner_user_id = $2');
+        expect(conditions.join(' ')).toContain('t.owner_user_id = $2');
+        expect(conditions.join(' ')).toContain('t.author_user_id = $2');
         expect(conditions).toContain('t.status = $3');
         expect(params).toEqual([COMPANY, ME, 'open']);
     });
@@ -103,7 +104,10 @@ describe('drift guard — listTasks & countTasks share the builder (TC-9 mock)',
         // The full predicate is identical — same source builder, no drift.
         expect(countWhere).toBe(listWhere);
         expect(listWhere).toBe(
-            "t.company_id = $1 AND " + HAS_ENTITY_PARENT + " AND t.owner_user_id = $2 AND t.status = $3"
+            "t.company_id = $1 AND " + HAS_ENTITY_PARENT
+            + " AND (\n                t.owner_user_id = $2\n"
+            + "                OR t.author_user_id = $2\n"
+            + "            ) AND t.status = $3"
         );
 
         // Shared param prefix identical; count carries no limit/offset tail.
@@ -140,6 +144,7 @@ describe('countTasks — SQL shape + return (TC-3)', () => {
         expect(sql).toContain(HAS_ENTITY_PARENT);
         expect(sql).toContain('t.status = $3');
         expect(sql).toContain('t.owner_user_id = $2');
+        expect(sql).toContain('t.author_user_id = $2');
         // Must NOT carry any SELECT_TASK label-hydration joins.
         expect(sql).not.toMatch(/LEFT JOIN/);
         expect(sql).not.toMatch(/crm_users ow/);

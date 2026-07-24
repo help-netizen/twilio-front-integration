@@ -344,7 +344,7 @@ async function listAssignees(companyId, limit = 100) {
     return { users: rows };
 }
 
-async function listCalls(companyId, filters = {}) {
+async function listCalls(companyId, filters = {}, providerScope = null) {
     requireCompanyId(companyId);
     const limit = bounded(filters.limit, 20, 50);
     const direction = filters.direction || null;
@@ -409,9 +409,33 @@ async function listCalls(companyId, filters = {}) {
                     ) + 1
                 ) AT TIME ZONE COALESCE(tenant.timezone, 'America/New_York')
            )
+           AND (
+                $7::boolean = false
+                OR (
+                    $8::jsonb IS NOT NULL
+                    AND EXISTS (
+                        SELECT 1
+                        FROM jobs visible_job
+                        WHERE visible_job.company_id = c.company_id
+                          AND visible_job.contact_id = c.contact_id
+                          AND visible_job.assigned_provider_user_ids @> $8::jsonb
+                    )
+                )
+           )
          ORDER BY c.started_at DESC NULLS LAST, c.id DESC
          LIMIT $6`,
-        [companyId, direction, contactId, dateFrom, dateTo, limit]
+        [
+            companyId,
+            direction,
+            contactId,
+            dateFrom,
+            dateTo,
+            limit,
+            providerScope?.assignedOnly === true,
+            providerScope?.assignedOnly && providerScope.userId
+                ? JSON.stringify([String(providerScope.userId)])
+                : null,
+        ]
     );
     const total = rows[0]?._total || 0;
     return {

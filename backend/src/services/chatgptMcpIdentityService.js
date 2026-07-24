@@ -617,6 +617,86 @@ async function requireLiveBinding({
     return withOwnerAuthz(rows[0], client);
 }
 
+/**
+ * Refresh the complete binding/installation/company/owner chain for a read or
+ * tools/list operation. Unlike requireLiveBinding this does not lock rows; no
+ * side effect follows it. It deliberately re-resolves owner permissions and
+ * scopes on every call so a demotion between discovery and invocation fails.
+ */
+async function resolveLiveBinding({
+    bindingId,
+    companyId,
+    agentUserId,
+    authorizerId,
+    ownerUserId = authorizerId,
+}) {
+    requireValue(bindingId, 'bindingId');
+    requireValue(companyId, 'companyId');
+    requireValue(agentUserId, 'agentUserId');
+    requireValue(authorizerId, 'authorizerId');
+    requireValue(ownerUserId, 'ownerUserId');
+    if (ownerUserId !== authorizerId) {
+        throw new ChatgptMcpIdentityError(
+            'MCP_BINDING_INVALID',
+            'Avatar owner and authorizer do not match.',
+            403
+        );
+    }
+    const { rows } = await db.query(
+        `SELECT b.id,
+                b.company_id,
+                b.owner_user_id,
+                b.writes_enabled,
+                b.sends_enabled
+         FROM chatgpt_mcp_bindings b
+         JOIN marketplace_installations mi
+           ON mi.id = b.installation_id
+          AND mi.company_id = b.company_id
+          AND mi.status = 'connected'
+         JOIN marketplace_apps ma
+           ON ma.id = mi.app_id
+          AND ma.app_key = $5
+          AND ma.status = 'published'
+         JOIN companies c
+           ON c.id = b.company_id
+          AND c.id = $2
+          AND c.status = 'active'
+         JOIN crm_users ai
+           ON ai.id = b.ai_user_id
+          AND ai.id = $3
+          AND ai.company_id = b.company_id
+          AND ai.kind = 'agent'
+          AND ai.status = 'active'
+          AND ai.onboarding_status = 'active'
+         JOIN crm_users human
+           ON human.id = b.owner_user_id
+          AND human.id = $4
+          AND human.keycloak_sub = b.oauth_subject
+          AND human.status = 'active'
+          AND human.onboarding_status = 'active'
+          AND COALESCE(human.kind, 'user') = 'user'
+         JOIN company_memberships cm
+           ON cm.user_id = human.id
+          AND cm.company_id = b.company_id
+          AND cm.status = 'active'
+         WHERE b.id = $1
+           AND b.company_id = $2
+           AND b.ai_user_id = $3
+           AND b.owner_user_id = $4
+           AND b.authorized_by_user_id = $4
+           AND b.status = 'active'`,
+        [bindingId, companyId, agentUserId, authorizerId, APP_KEY]
+    );
+    if (rows.length !== 1) {
+        throw new ChatgptMcpIdentityError(
+            'MCP_BINDING_INVALID',
+            'Connector authorization is not active.',
+            403
+        );
+    }
+    return withOwnerAuthz(rows[0]);
+}
+
 async function lockConsentBinding(companyId, actorId, client) {
     if (!client?.query) {
         throw new ChatgptMcpIdentityError(
@@ -877,6 +957,7 @@ module.exports = {
     revokeInstallation,
     resolveOAuthContext,
     resolveFixedBearerContext,
+    resolveLiveBinding,
     requireLiveBinding,
     setWriteConsent,
     setSendConsent,

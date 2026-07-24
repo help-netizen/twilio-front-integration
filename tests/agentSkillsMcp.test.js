@@ -40,11 +40,19 @@ jest.mock('../backend/src/services/chatgptMcpIdentityService', () => ({
         installation_id: 1,
         company_id: companyId,
         authorized_by_user_id: 'authorizer-1',
+        owner_user_id: 'authorizer-1',
         ai_user_id: agentUserId,
         ai_email: 'svc-mcp@local',
         ai_full_name: 'Service MCP Agent',
         company_name: 'Test Company',
         company_timezone: 'America/New_York',
+        owner_role_key: 'tenant_admin',
+        owner_permissions: [
+            'contacts.view', 'jobs.view', 'estimates.view', 'invoices.view',
+        ],
+        owner_scopes: { job_visibility: 'all' },
+        writes_enabled: false,
+        sends_enabled: false,
         permissions: [
             'contacts.view', 'jobs.view', 'estimates.view', 'invoices.view',
             'mcp.tool.svc.get_job',
@@ -52,6 +60,16 @@ jest.mock('../backend/src/services/chatgptMcpIdentityService', () => ({
                 ? ['service.crm.write', 'jobs.edit', 'jobs.close', 'leads.edit', 'leads.create']
                 : []),
         ],
+    })),
+    resolveLiveBinding: jest.fn(async () => ({
+        owner_user_id: 'authorizer-1',
+        owner_role_key: 'tenant_admin',
+        owner_permissions: [
+            'contacts.view', 'jobs.view', 'estimates.view', 'invoices.view',
+        ],
+        owner_scopes: { job_visibility: 'all' },
+        writes_enabled: false,
+        sends_enabled: false,
     })),
     recordInvocation: jest.fn(async () => {}),
 }));
@@ -469,7 +487,12 @@ describe('svc.* public transport — token/env gates (ASK-MCP-09/10/11/12)', () 
             .send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'svc.get_job', arguments: { job_id: 7, company_id: 'company-999' } } });
         expect(res.status).toBe(200);
         expect(chatgptMcpReadService.execute).toHaveBeenCalledWith(
-            'getJob', '00000000-0000-0000-0000-000000000001', { job_id: 7 }
+            'getJob',
+            expect.objectContaining({
+                companyId: '00000000-0000-0000-0000-000000000001',
+                ownerUserId: 'authorizer-1',
+            }),
+            { job_id: 7 }
         );
     });
 

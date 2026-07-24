@@ -27,6 +27,7 @@ jest.mock('../backend/src/services/chatgptMcpIdentityService', () => {
             return value;
         },
         resolveOAuthContext: jest.fn(),
+        resolveLiveBinding: jest.fn(),
         recordInvocation: jest.fn(async () => {}),
     };
 });
@@ -65,18 +66,28 @@ beforeEach(() => {
     process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
     process.env.CHATGPT_MCP_RESOURCE = RESOURCE;
     jwt.verify.mockImplementation((_token, _getKey, _options, callback) => callback(null, claims()));
-    identityService.resolveOAuthContext.mockResolvedValue({
+    const binding = {
         binding_id: 'binding-a',
         company_id: 'company-a',
         installation_id: 101,
         authorized_by_user_id: 'human-a',
+        owner_user_id: 'human-a',
         ai_user_id: 'agent-a',
         company_name: 'Company A',
         company_timezone: 'America/New_York',
         ai_email: 'agent-a@albusto.invalid',
-        ai_full_name: 'ChatGPT AI Dispatcher',
+        ai_full_name: 'Avatar of Human A',
+        owner_display_name: 'Human A',
+        owner_role_key: 'provider',
+        owner_membership: { id: 'membership-a', role_key: 'provider' },
+        owner_permissions: ['jobs.view'],
+        owner_scopes: { job_visibility: 'assigned_only' },
+        writes_enabled: false,
+        sends_enabled: false,
         permissions: ['jobs.view', 'mcp.tool.svc.get_job'],
-    });
+    };
+    identityService.resolveOAuthContext.mockResolvedValue(binding);
+    identityService.resolveLiveBinding.mockResolvedValue(binding);
 });
 
 afterAll(() => {
@@ -113,7 +124,7 @@ describe('CHATGPT-CRM-MCP OAuth protected resource', () => {
         expect(jwt.verify).not.toHaveBeenCalled();
     });
 
-    test('valid token maps through the active binding and filters discovery to exact grants', async () => {
+    test('valid token maps through the avatar and filters discovery by live owner rights', async () => {
         const res = await request(app())
             .post('/mcp/chatgpt')
             .set('Authorization', 'Bearer valid')
@@ -122,7 +133,18 @@ describe('CHATGPT-CRM-MCP OAuth protected resource', () => {
         expect(identityService.resolveOAuthContext).toHaveBeenCalledWith({
             issuer: ISSUER, subject: 'human-sub-a', clientId: 'chatgpt-crm-mcp',
         });
-        expect(res.body.result.tools.map((tool) => tool.name)).toEqual(['svc.get_job']);
+        expect(res.body.result.tools.map((tool) => tool.name)).toEqual([
+            'svc.list_jobs',
+            'svc.get_job',
+            'svc.get_job_transitions',
+        ]);
+        expect(identityService.resolveLiveBinding).toHaveBeenCalledWith({
+            bindingId: 'binding-a',
+            companyId: 'company-a',
+            agentUserId: 'agent-a',
+            authorizerId: 'human-a',
+            ownerUserId: 'human-a',
+        });
     });
 
     test.each([

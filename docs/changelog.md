@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-24 — AVATARS-001 Phase B: live owner authorization
+
+Все 33 ChatGPT Avatar-инструмента теперь авторизуются по живым permissions,
+record scopes и FSM-роли человека-владельца, пересечённым с его собственными
+Writes/Sends tier и OAuth scope. Статические AI grants больше не являются
+источником власти. Owner-ID прошит в Jobs/Contacts/Schedule/Calls/Tasks;
+provider видит только назначенные ему записи, а Job/Contact writes повторяют
+scope-проверку и блокируют опорные строки в той же транзакции до side effect.
+Полиморфные task/note инструменты проверяют выбранный parent, а FSM больше не
+подменяет роль на dispatcher. Добавлены 33×4 role parity, T-own/T-foreign/
+T-blast, live demotion/tier race и break-to-red sabotage контракты.
+`src/server.js`, frontend и схема БД не менялись. **НЕ задеплоено.**
+
 ## 2026-07-23 — CHATGPT-CRM-MCP human-readable tool titles
 
 Все 33 ChatGPT dispatcher-инструмента получили display-only MCP `title`; invocation names и authorization-контракты не изменились. **НЕ задеплоено.**

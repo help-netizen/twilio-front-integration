@@ -1,6 +1,6 @@
 # AVATARS-001 — per-user CRM avatars
 
-Status: owner decisions approved; Phase A implemented and awaiting review; not deployable before Phase B
+Status: owner decisions approved; Phases A and B implemented; Phase C not started
 Date: 2026-07-24
 Parent contract: `docs/specs/CHATGPT-CRM-MCP-001.md`
 
@@ -55,13 +55,12 @@ Out of scope:
   resolution, or confirmation requirements;
 - cross-request authorization caches;
 - frontend work by the GPT implementer; Phase D belongs to Claude;
-- Phase A edits to record-scope plumbing, FSM actor roles, `/api/avatars`,
-  frontend, or protected `src/server.js`.
+- Phase C `/api/avatars` routes/roster, frontend, or protected `src/server.js`.
 
-Phase A is a schema and identity foundation only. It intentionally keeps the
-existing static tool gate while making live owner context available. It must
-not be deployed before Phase B replaces that gate and threads all record
-scopes.
+Phase A supplied the schema and identity foundation. Phase B replaces the
+legacy static AI-grant authority with live owner authorization and threads the
+record/FSM scopes in the parity table. The later company roster and self/admin
+HTTP surface remain Phase C.
 
 ## 3. Settled owner decisions
 
@@ -307,7 +306,7 @@ Phase A additionally requires:
 | T5 | Owner-aware OAuth/live binding context | OAuth/fixed bearer/live write recheck return owner identity/context while the Phase A static gate behavior remains unchanged. |
 | T6 | Phase A tests/regression | Migration, resolver, identity, self-provision/revoke, uniqueness, OAuth, and existing MCP suites are green. |
 
-### Phase B — live permission and record-scope core (owner greenlight required)
+### Phase B — live permission and record-scope core (implemented)
 
 | Task | Deliverable | Acceptance |
 |---|---|---|
@@ -316,6 +315,26 @@ Phase A additionally requires:
 | T9 | Write record scopes and live race | Job/contact/host writes recheck scope in the existing transaction immediately before side effect; revoke/role/tier races leave zero changes. |
 | T10 | FSM and polymorphic parity | Job/Lead transitions use owner role; add-note/entity-task permissions depend only on the selected allowlisted host type. |
 | T11 | 33-tool parity/red team | Each row has tools/list, direct-call, R-matrix, T-own/T-foreign/T-blast where applicable, and break-to-red record-scope controls. |
+
+Phase B implementation notes:
+
+- `tools/list` and `tools/call` resolve the complete binding and human owner
+  authorization afresh. Persisted `mcp_agent_permission_grants` remain only as
+  legacy/bundle bookkeeping and cannot authorize or hide an Avatar tool.
+- Reads build the canonical provider scope from `owner_user_id` and the live
+  owner's `job_visibility`. Jobs, Contacts, Schedule, Calls, and Tasks reuse
+  their existing human-service visibility seams.
+- Writes repeat binding, installation, company, AI-user, owner membership,
+  owner permission, tier, record-scope, and FSM-role checks with the handler's
+  transaction client. Visible Job/Contact ownership rows are share-locked
+  before the first side effect.
+- `svc.list_entity_tasks` and `svc.add_note` use OR semantics only for
+  discovery. Direct invocation requires the selected allowlisted parent's
+  permission; Job/Contact parents additionally enforce their live owner scope.
+- Job and Lead FSM reads/writes pass the live owner `role_key`; there is no
+  dispatcher fallback.
+- The required attack-only review is a separate post-implementation turn. It
+  is intentionally not folded into the implementation/repair pass.
 
 ### Phase C — roster and HTTP endpoints (owner approval for protected mount)
 
@@ -358,8 +377,26 @@ Phase A implementation result: 22 suites / 258 tests passed, exit 0.
 ### Phase B focused
 
 ```bash
-env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/avatarsAuthorization.test.js tests/avatarsScopes.db.test.js tests/chatgptMcpReadsProtocol.db.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpSends.db.test.js
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/avatarsAuthorization.test.js tests/avatarsFsm.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpCalls.test.js tests/tasksCount.test.js tests/contactsListPagination.test.js tests/jobsProviderScope.test.js tests/scheduleProviderScope.test.js
 ```
+
+Production-shaped database contract:
+
+```bash
+DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/chatgptMcpTenancy.db.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpSends.db.test.js
+```
+
+Full MCP regression:
+
+```bash
+DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/agentSkillsMcp.test.js tests/avatarsPhaseA.test.js tests/avatarsPhaseA.db.test.js tests/avatarsAuthorization.test.js tests/avatarsFsm.test.js tests/chatgptMcpOAuth.test.js tests/chatgptMcpRateLimit.test.js tests/chatgptMcpJwtHonest.test.js tests/keycloakAuthMcpIsolation.test.js tests/chatgptMcpIdentity.db.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpReads.test.js tests/chatgptMcpCalls.test.js tests/chatgptMcpTenancy.db.test.js tests/chatgptMcpWrites.test.js tests/chatgptMcpFinancialWrites.test.js tests/chatgptMcpWrites.db.test.js tests/chatgptMcpSends.test.js tests/chatgptMcpSends.db.test.js tests/chatgptMcpConsentRoutes.test.js tests/sendDocEstimate.test.js tests/sendDocInvoice.test.js tests/tenantSafetyLint.test.js
+```
+
+Phase B implementation result: focused unit/service contract 10 suites / 139
+tests passed, exit 0; production-shaped tenancy/write/send contract 3 suites /
+17 tests passed, exit 0 (canonical pre-096 baseline plus migrations 084–089 and
+096–200); final post-sabotage full MCP regression 23 suites / 267 tests passed,
+exit 0.
 
 Phase B named sabotage minimum:
 
@@ -368,6 +405,13 @@ Phase B named sabotage minimum:
 - restore hardcoded dispatcher FSM role → `SAB-AVATAR-FSM-ROLE` red;
 - bypass owner tier → `SAB-AVATAR-SELF-CONSENT` red;
 - change owner role between list/call or before write → live call/race tests red.
+
+Implementation sabotage result: each of the four named mutations failed its
+named test with exit 1, was restored from a `cp` backup, and the restored
+three-suite set passed 3 suites / 40 tests with exit 0. The record-scope
+mutation was also exercised against live PostgreSQL by widening the read scope
+to tenant-wide; the provider test exposed the unassigned Job and failed with
+exit 1 before restore. The final full regression above is the post-restore run.
 
 ### Phase C focused
 

@@ -74,14 +74,25 @@ async function dispatch(req, method, params) {
         case 'ping':
             return {};
         case 'tools/list': {
-            const dispatcherSurface = req.user?.kind === 'agent' || Boolean(req.chatgptMcpBinding);
+            const dispatcherSurface = req.user?.kind === 'agent'
+                && Boolean(req.chatgptMcpBinding?.id);
+            const tools = registry.listTools({
+                kind: params.kind,
+                includeDispatcher: dispatcherSurface,
+                dispatcherOnly: dispatcherSurface,
+            });
+            if (dispatcherSurface) {
+                const context = executor.buildContext(req);
+                const live = await executor.resolveLiveDispatcherContext(context);
+                return {
+                    tools: mcpToolAuthorization
+                        .filterAvatarTools(tools, live, req.authz?.oauthScopes)
+                        .map(toProtocolTool),
+                };
+            }
             return {
                 tools: mcpToolAuthorization
-                    .filterTools(registry.listTools({
-                        kind: params.kind,
-                        includeDispatcher: dispatcherSurface,
-                        dispatcherOnly: dispatcherSurface,
-                    }), req.authz?.permissions, req.authz?.oauthScopes)
+                    .filterTools(tools, req.authz?.permissions, req.authz?.oauthScopes)
                     .map(toProtocolTool),
             };
         }

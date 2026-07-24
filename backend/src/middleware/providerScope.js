@@ -12,15 +12,21 @@
  * visibility degrades to NOTHING (deny-by-default), never to tenant-wide.
  */
 
-function getProviderScope(req) {
-    const visibility = req.authz?.scopes?.job_visibility;
+function resolveProviderScope(scopes, userId) {
+    const visibility = scopes?.job_visibility;
     // `all` is the only value that may widen beyond the current actor. Missing,
     // malformed, and future/unknown values stay on the restrictive branch.
     if (visibility === 'all') {
         return { assignedOnly: false, userId: null };
     }
-    const userId = req.user?.crmUser?.id ? String(req.user.crmUser.id) : null;
-    return { assignedOnly: true, userId };
+    return { assignedOnly: true, userId: userId ? String(userId) : null };
 }
 
-module.exports = { getProviderScope };
+function getProviderScope(req) {
+    return resolveProviderScope(
+        req.authz?.scopes,
+        req.user?.crmUser?.id
+    );
+}
+
+module.exports = { getProviderScope, resolveProviderScope };

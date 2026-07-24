@@ -160,7 +160,13 @@ async function parentExists(companyId, parentType, parentId, client = null) {
  * ownership, while entity-card reads must also enforce the caller's assigned-only
  * visibility. The predicate matches jobsService.listJobs/getJobById.
  */
-async function jobParentVisible(companyId, parentId, providerScope, client = null) {
+async function jobParentVisible(
+    companyId,
+    parentId,
+    providerScope,
+    client = null,
+    { lock = false } = {}
+) {
     requireCompanyId(companyId);
     const query = queryFor(client, db);
     const params = [companyId, parentId];
@@ -171,7 +177,11 @@ async function jobParentVisible(companyId, parentId, providerScope, client = nul
         conditions.push(`assigned_provider_user_ids @> $${params.length}::jsonb`);
     }
     const { rows } = await query(
-        `SELECT 1 FROM jobs WHERE ${conditions.join(' AND ')} LIMIT 1`,
+        `SELECT 1
+         FROM jobs
+         WHERE ${conditions.join(' AND ')}
+         LIMIT 1
+         ${lock ? 'FOR SHARE' : ''}`,
         params
     );
     return rows.length > 0;
@@ -217,7 +227,10 @@ function buildTaskListFilters(companyId, filters = {}) {
     if (Object.prototype.hasOwnProperty.call(filters, 'scopeOwnerId')) {
         if (filters.scopeOwnerId) {
             params.push(filters.scopeOwnerId);
-            conditions.push(`t.owner_user_id = $${params.length}`);
+            conditions.push(`(
+                t.owner_user_id = $${params.length}
+                OR t.author_user_id = $${params.length}
+            )`);
         } else {
             // A requested owner scope with no actor must never collapse into the
             // company-wide branch. Routes reject it; this is query-layer defense.

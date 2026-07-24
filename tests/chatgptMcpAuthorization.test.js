@@ -1,7 +1,10 @@
 'use strict';
 
 jest.mock('../backend/src/services/chatgptMcpReadService', () => ({ execute: jest.fn(async () => ({ ok: true })) }));
-jest.mock('../backend/src/services/chatgptMcpIdentityService', () => ({ recordInvocation: jest.fn(async () => {}) }));
+jest.mock('../backend/src/services/chatgptMcpIdentityService', () => ({
+    resolveLiveBinding: jest.fn(),
+    recordInvocation: jest.fn(async () => {}),
+}));
 
 const registry = require('../backend/src/services/agentSkillsMcpRegistry');
 const executor = require('../backend/src/services/agentSkillsMcpExecutor');
@@ -10,6 +13,19 @@ const identityService = require('../backend/src/services/chatgptMcpIdentityServi
 const authorization = require('../backend/src/services/mcpToolAuthorization');
 const permissions = require('../backend/src/services/chatgptMcpPermissions');
 const protocol = require('../backend/src/services/agentSkillsMcpProtocolService');
+const ALL_BUSINESS_PERMISSIONS = [...new Set([
+    ...Object.values(permissions.READ_TOOL_PERMISSIONS).flat(),
+    ...Object.values(permissions.WRITE_TOOL_PERMISSIONS).flat(),
+    ...Object.values(permissions.SEND_TOOL_PERMISSIONS).flat(),
+])];
+const LIVE_OWNER = Object.freeze({
+    owner_user_id: 'human-a',
+    owner_role_key: 'tenant_admin',
+    owner_permissions: ALL_BUSINESS_PERMISSIONS,
+    owner_scopes: { job_visibility: 'all' },
+    writes_enabled: true,
+    sends_enabled: true,
+});
 
 const EXPECTED_DISPATCHER_TITLES = Object.freeze({
     'svc.list_jobs': 'List jobs',
@@ -60,12 +76,19 @@ function requestContext(granted = permissions.S1_GRANTS) {
             oauthScopes: [permissions.READ_SCOPE],
             company: { timezone: 'America/New_York' },
         },
-        chatgptMcpBinding: { id: 'binding-a', authorizerId: 'human-a' },
+        chatgptMcpBinding: {
+            id: 'binding-a',
+            authorizerId: 'human-a',
+            ownerUserId: 'human-a',
+        },
         requestId: 'request-a',
     };
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+    jest.clearAllMocks();
+    identityService.resolveLiveBinding.mockResolvedValue({ ...LIVE_OWNER });
+});
 
 describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
     test('all 33 dispatcher tools expose the exact human-readable protocol title, with no extras', () => {
@@ -145,24 +168,24 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         }
     });
 
-    test('write discovery requires explicit v3 grants and albusto.mcp.write scope', () => {
+    test('avatar discovery uses live owner rights, tier booleans, and OAuth scope', () => {
         const dispatcherTools = registry.listTools({
             includeDispatcher: true,
             dispatcherOnly: true,
         });
-        expect(authorization.filterTools(
+        expect(authorization.filterAvatarTools(
             dispatcherTools,
-            permissions.S1_GRANTS,
+            { ...LIVE_OWNER, writes_enabled: false, sends_enabled: false },
             [permissions.READ_SCOPE, permissions.WRITE_SCOPE]
         )).toHaveLength(19);
-        expect(authorization.filterTools(
+        expect(authorization.filterAvatarTools(
             dispatcherTools,
-            [...permissions.S1_GRANTS, ...permissions.S2_WRITE_GRANTS],
+            { ...LIVE_OWNER, writes_enabled: true, sends_enabled: false },
             [permissions.READ_SCOPE]
         )).toHaveLength(19);
-        expect(authorization.filterTools(
+        expect(authorization.filterAvatarTools(
             dispatcherTools,
-            [...permissions.S1_GRANTS, ...permissions.S2_WRITE_GRANTS],
+            { ...LIVE_OWNER, writes_enabled: true, sends_enabled: false },
             [permissions.READ_SCOPE, permissions.WRITE_SCOPE]
         )).toHaveLength(31);
     });
@@ -174,11 +197,19 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         expect(permissions.S1_GRANTS).not.toEqual(expect.arrayContaining(['tasks.create', 'tasks.manage']));
 
         const granted = ['tasks.view', 'mcp.tool.svc.list_task_assignees'];
+        identityService.resolveLiveBinding.mockResolvedValueOnce({
+            ...LIVE_OWNER,
+            owner_permissions: ['tasks.view'],
+        });
         await expect(executor.execute(requestContext(granted), 'svc.list_task_assignees', { limit: 25 }))
             .resolves.toEqual({ ok: true });
         expect(readService.execute).toHaveBeenCalledWith(
             'listTaskAssignees',
-            'company-a',
+            expect.objectContaining({
+                companyId: 'company-a',
+                ownerUserId: 'human-a',
+                ownerPermissions: ['tasks.view'],
+            }),
             { limit: 25 }
         );
     });
@@ -210,30 +241,33 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         expect(tool.inputSchema.properties).not.toHaveProperty('companyId');
     });
 
-    test('missing exact grant hides discovery and denies direct invocation before dispatch', async () => {
+    test('static AI grants are not an authority for avatar discovery or invocation', async () => {
         const name = 'svc.get_job';
-        const granted = permissions.S1_GRANTS.filter((permission) => permission !== `mcp.tool.${name}`);
-        const visible = authorization.filterTools(
+        const visible = authorization.filterAvatarTools(
             registry.listTools({ includeDispatcher: true }),
-            granted,
+            LIVE_OWNER,
             [permissions.READ_SCOPE]
         ).map((tool) => tool.name);
-        expect(visible).not.toContain(name);
-        await expect(executor.execute(requestContext(granted), name, { job_id: 1 }))
-            .rejects.toMatchObject({ mcpCode: 'access_denied' });
-        expect(readService.execute).not.toHaveBeenCalled();
+        expect(visible).toContain(name);
+        await expect(executor.execute(requestContext([]), name, { job_id: 1 }))
+            .resolves.toEqual({ ok: true });
+        expect(readService.execute).toHaveBeenCalled();
     });
 
-    test('R-matrix: missing business permission hides and denies an otherwise exact-granted tool', async () => {
+    test('R-matrix: missing live owner business permission hides and denies the tool', async () => {
         const name = 'svc.get_job';
-        const granted = permissions.S1_GRANTS.filter((permission) => permission !== 'jobs.view');
-        const visible = authorization.filterTools(
+        const deniedOwner = {
+            ...LIVE_OWNER,
+            owner_permissions: LIVE_OWNER.owner_permissions.filter((key) => key !== 'jobs.view'),
+        };
+        identityService.resolveLiveBinding.mockResolvedValue(deniedOwner);
+        const visible = authorization.filterAvatarTools(
             registry.listTools({ includeDispatcher: true }),
-            granted,
+            deniedOwner,
             [permissions.READ_SCOPE]
         ).map((tool) => tool.name);
         expect(visible).not.toContain(name);
-        await expect(executor.execute(requestContext(granted), name, { job_id: 1 }))
+        await expect(executor.execute(requestContext(), name, { job_id: 1 }))
             .rejects.toMatchObject({ mcpCode: 'access_denied' });
         expect(readService.execute).not.toHaveBeenCalled();
     });
@@ -243,9 +277,9 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         async (name) => {
             const req = requestContext();
             req.authz.oauthScopes = [];
-            const visible = authorization.filterTools(
+            const visible = authorization.filterAvatarTools(
                 registry.listTools({ includeDispatcher: true, dispatcherOnly: true }),
-                req.authz.permissions,
+                LIVE_OWNER,
                 req.authz.oauthScopes
             ).map((tool) => tool.name);
             expect(visible).not.toContain(name);
@@ -290,7 +324,11 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         await expect(executor.execute(requestContext(), 'svc.get_job', {
             job_id: 1, companyId: 'company-b', company_id: 'company-b',
         })).resolves.toEqual({ ok: true });
-        expect(readService.execute).toHaveBeenCalledWith('getJob', 'company-a', { job_id: 1 });
+        expect(readService.execute).toHaveBeenCalledWith(
+            'getJob',
+            expect.objectContaining({ companyId: 'company-a', ownerUserId: 'human-a' }),
+            { job_id: 1 }
+        );
     });
 
     test('SAB-MCP-DEFERRED-PAYMENTS: v1 has no payment scope, grant, or tool', () => {

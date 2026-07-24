@@ -7,6 +7,7 @@ const scheduleService = require('./scheduleService');
 const fsmService = require('./fsmService');
 const tasksQueries = require('../db/tasksQueries');
 const queries = require('../db/chatgptMcpQueries');
+const { resolveProviderScope } = require('../middleware/providerScope');
 const { CrmServiceError } = require('./crmErrors');
 
 class ChatgptMcpReadError extends CrmServiceError {
@@ -56,9 +57,17 @@ function projectCall(row) {
     return Object.fromEntries(CALL_FIELDS.map((key) => [key, row?.[key] ?? null]));
 }
 
-async function transitions(companyId, machineKey, currentState) {
+async function transitions(companyId, machineKey, currentState, ownerRoleKey) {
     if (!currentState) return notFound(machineKey === 'job' ? 'Job' : 'Lead');
-    const result = await fsmService.getAvailableActions(companyId, machineKey, currentState, ['dispatcher']);
+    if (!ownerRoleKey) {
+        throw new ChatgptMcpReadError('MCP_BINDING_INVALID', 'Avatar owner role is required.', 403);
+    }
+    const result = await fsmService.getAvailableActions(
+        companyId,
+        machineKey,
+        currentState,
+        [ownerRoleKey]
+    );
     if (result.fallback) return { workflow_available: false, actions: [] };
     return { workflow_available: true, actions: result.actions || [] };
 }
@@ -71,8 +80,11 @@ function listFilters(args = {}) {
     };
 }
 
-async function execute(handler, companyId, args = {}) {
+async function execute(handler, context, args = {}) {
+    const companyId = context?.companyId;
     requireCompanyId(companyId);
+    const providerScope = resolveProviderScope(context.ownerScopes, context.ownerUserId);
+    const ownerPermissions = new Set(context.ownerPermissions || []);
     let result;
     switch (handler) {
         case 'listJobs':
@@ -85,16 +97,22 @@ async function execute(handler, companyId, args = {}) {
                 onlyOpen: args.only_open,
                 sortBy: 'updated_at',
                 sortOrder: 'desc',
+                providerScope,
             });
             break;
         case 'getJob':
-            result = await queries.getJob(companyId, args.job_id);
+            result = await jobsService.getJobById(args.job_id, companyId, providerScope);
             if (!result) notFound('Job');
             break;
         case 'getJobTransitions': {
-            const job = await queries.getJob(companyId, args.job_id);
+            const job = await jobsService.getJobById(args.job_id, companyId, providerScope);
             if (!job) notFound('Job');
-            result = await transitions(companyId, 'job', job.blanc_status);
+            result = await transitions(
+                companyId,
+                'job',
+                job.blanc_status,
+                context.ownerRoleKey
+            );
             break;
         }
         case 'listLeads':
@@ -115,20 +133,43 @@ async function execute(handler, companyId, args = {}) {
         case 'getLeadTransitions': {
             const lead = await queries.getLead(companyId, args.lead_uuid);
             if (!lead) notFound('Lead');
-            result = await transitions(companyId, 'lead', lead.status);
+            result = await transitions(
+                companyId,
+                'lead',
+                lead.status,
+                context.ownerRoleKey
+            );
             break;
         }
         case 'searchContacts':
-            result = await contactsService.listContacts({ companyId, ...listFilters(args) });
+            result = await contactsService.listContacts({
+                companyId,
+                ...listFilters(args),
+                providerScope,
+            });
             break;
-        case 'getContact':
+        case 'getContact': {
+            const visible = await contactsService.getById(
+                args.contact_id,
+                companyId,
+                providerScope
+            );
+            if (!visible) notFound('Contact');
             result = await queries.getContact(companyId, args.contact_id);
             if (!result) notFound('Contact');
             break;
-        case 'getContactHistory':
+        }
+        case 'getContactHistory': {
+            const visible = await contactsService.getById(
+                args.contact_id,
+                companyId,
+                providerScope
+            );
+            if (!visible) notFound('Contact');
             result = await queries.getContactHistory(companyId, args.contact_id, args.limit);
             if (!result) notFound('Contact');
             break;
+        }
         case 'listSchedule':
             result = await scheduleService.getScheduleItems(companyId, {
                 startDate: args.start_date,
@@ -140,14 +181,15 @@ async function execute(handler, companyId, args = {}) {
                 search: args.search,
                 limit: args.limit,
                 offset: args.offset,
-            });
+            }, providerScope);
             break;
         case 'getScheduleItem':
             try {
                 result = await scheduleService.getScheduleItemDetail(
                     companyId,
                     args.entity_type,
-                    args.entity_id
+                    args.entity_id,
+                    providerScope
                 );
             } catch (err) {
                 if (err?.code === 'NOT_FOUND') notFound('Schedule item');
@@ -166,10 +208,23 @@ async function execute(handler, companyId, args = {}) {
                 offset: args.offset,
                 sort_by: 'due_at',
                 sort_order: 'asc',
+                ...(!ownerPermissions.has('tasks.manage')
+                    ? { scopeOwnerId: context.ownerUserId }
+                    : {}),
             });
             break;
         case 'listEntityTasks': {
-            const exists = await tasksQueries.parentExists(companyId, args.parent_type, args.parent_id);
+            const exists = args.parent_type === 'job'
+                ? await tasksQueries.jobParentVisible(
+                    companyId,
+                    args.parent_id,
+                    providerScope
+                )
+                : await tasksQueries.parentExists(
+                    companyId,
+                    args.parent_type,
+                    args.parent_id
+                );
             if (!exists) notFound(args.parent_type === 'job' ? 'Job' : 'Lead');
             result = {
                 tasks: await tasksQueries.listEntityTasks(companyId, {
@@ -184,7 +239,7 @@ async function execute(handler, companyId, args = {}) {
             result = await queries.listAssignees(companyId, args.limit);
             break;
         case 'listCalls': {
-            const page = await queries.listCalls(companyId, args);
+            const page = await queries.listCalls(companyId, args, providerScope);
             result = {
                 rows: (page.rows || []).map(projectCall),
                 total: page.total || 0,

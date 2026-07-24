@@ -16,9 +16,9 @@
  *     `req.companyFilter?.company_id` (authed route) or the env-bound public
  *     context — NEVER from the client payload/`arguments`.
  *   - **Composing write gates.** Legacy skills keep `service.crm.write` plus
- *     their L0/L1/L2 verification. ChatGPT dispatcher writes require their
- *     entity + exact grants, OAuth write scope, explicit confirmation, and a
- *     same-transaction live-binding/grant recheck.
+ *     their L0/L1/L2 verification. Avatar writes require the human owner's
+ *     live entity permission and record scope, owner consent, OAuth scope,
+ *     confirmation, and a same-transaction binding/authz recheck.
  *   - **Thin dispatch.** Legacy tools funnel into `runSkill`; ChatGPT dispatcher
  *     descriptors funnel into dedicated company-required read/write services.
  *   - **Sanitized errors.** `runSkill` itself never throws internals (it returns
@@ -38,6 +38,9 @@ const agentSkills = require('./agentSkills');
 const chatgptMcpReadService = require('./chatgptMcpReadService');
 const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
 const chatgptMcpWriteService = require('./chatgptMcpWriteService');
+const contactsService = require('./contactsService');
+const tasksQueries = require('../db/tasksQueries');
+const { resolveProviderScope } = require('../middleware/providerScope');
 
 const WRITE_PERMISSION = registry.SERVICE_WRITE_PERMISSION;
 const S2B_TOOL_NAMES = new Set([
@@ -119,10 +122,20 @@ function requireCompanyContext(context) {
     }
 }
 
+async function resolveLiveDispatcherContext(context) {
+    return chatgptMcpIdentityService.resolveLiveBinding({
+        bindingId: context.bindingId,
+        companyId: context.companyId,
+        agentUserId: context.actorId,
+        authorizerId: context.authorizerId,
+        ownerUserId: context.ownerUserId || context.authorizerId,
+    });
+}
+
 /**
  * Confirmation gate shared by all writes. Legacy skills additionally require
- * service.crm.write; bound dispatcher writes instead use the exact deny-by-
- * default grants checked before and inside their transaction.
+ * service.crm.write; bound avatar writes use live owner authority and consent
+ * before and inside their transaction.
  * @param {Object} context Built context (carries `permissions`).
  * @param {Object} tool The resolved tool descriptor.
  * @param {Object|null} confirmation The client-supplied confirmation envelope.
@@ -130,8 +143,7 @@ function requireCompanyContext(context) {
 function requireWriteAccess(context, tool, confirmation) {
     if (tool.kind !== 'write') return;
     // Legacy caller-verification skills keep their framework permission. The
-    // bound dispatcher surface instead uses its deny-by-default entity + exact
-    // grants and the S2 consent bundle.
+    // bound avatar surface instead uses live owner authority and self-consent.
     if (!tool.handler && !context.permissions.includes(WRITE_PERMISSION)) {
         throw mcpResponse.mcpError('access_denied', 'Insufficient service CRM write permission', {
             required_permission: WRITE_PERMISSION,
@@ -179,11 +191,23 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
     requireCompanyContext(context);
     const executionContext = contextWithConfirmation(context, confirmation);
     try {
-        mcpToolAuthorization.requireToolAccess(tool, context.permissions, context.oauthScopes);
         const sanitizedArguments = mcpToolAuthorization.sanitizeArguments(toolArguments);
         validateArguments(tool, sanitizedArguments);
         requireWriteAccess(context, tool, confirmation);
-        const result = await dispatch(tool, executionContext, sanitizedArguments);
+        const live = isBoundAgent
+            ? await resolveLiveDispatcherContext(context)
+            : null;
+        if (isBoundAgent) {
+            mcpToolAuthorization.requireAvatarToolAccess(
+                tool,
+                live,
+                context.oauthScopes,
+                sanitizedArguments
+            );
+        } else {
+            mcpToolAuthorization.requireToolAccess(tool, context.permissions, context.oauthScopes);
+        }
+        const result = await dispatch(tool, executionContext, sanitizedArguments, live);
         if (tool.handler && executionContext.bindingId) {
             try {
                 await chatgptMcpIdentityService.recordInvocation(executionContext, {
@@ -241,14 +265,55 @@ async function execute(req, toolName, toolArguments = {}, confirmation = null) {
  * @param {Object} args Sanitized client arguments passed through as skill `input`.
  * @returns {Promise<Object>} The skill result (already safe-shaped by `runSkill`).
  */
-async function dispatch(tool, context, args) {
+async function dispatch(tool, context, args, live = null) {
     if (tool.handler) {
         if (tool.kind === 'write') {
             return dispatchDispatcherWrite(tool, context, args);
         }
-        return chatgptMcpReadService.execute(tool.handler, context.companyId, args);
+        return chatgptMcpReadService.execute(tool.handler, {
+            ...context,
+            ownerUserId: live.owner_user_id,
+            ownerRoleKey: live.owner_role_key,
+            ownerPermissions: live.owner_permissions,
+            ownerScopes: live.owner_scopes,
+        }, args);
     }
     return agentSkills.runSkill(tool.skill, context.companyId, context, args);
+}
+
+async function requireWriteRecordAccess(tool, live, context, args, client) {
+    const providerScope = resolveProviderScope(live.owner_scopes, live.owner_user_id);
+    let visible = true;
+    if (tool.name === 'svc.update_job' || tool.name === 'svc.transition_job') {
+        visible = await tasksQueries.jobParentVisible(
+            context.companyId,
+            args.job_id,
+            providerScope,
+            client,
+            { lock: true }
+        );
+    } else if (tool.name === 'svc.add_note' && args.parent_type === 'job') {
+        visible = await tasksQueries.jobParentVisible(
+            context.companyId,
+            args.parent_id,
+            providerScope,
+            client,
+            { lock: true }
+        );
+    } else if (tool.name === 'svc.add_note' && args.parent_type === 'contact') {
+        visible = Boolean(await contactsService.getById(
+            args.parent_id,
+            context.companyId,
+            providerScope,
+            client
+        ));
+    }
+    if (!visible) {
+        const err = new Error('Entity not found');
+        err.code = 'NOT_FOUND';
+        err.httpStatus = 404;
+        throw err;
+    }
 }
 
 async function dispatchDispatcherWrite(tool, context, args, { beforeLiveRecheck = null } = {}) {
@@ -263,16 +328,21 @@ async function dispatchDispatcherWrite(tool, context, args, { beforeLiveRecheck 
             authorizerId: context.authorizerId,
             ownerUserId: context.ownerUserId || context.authorizerId,
         }, client);
-        // Permission consent is re-derived under the same binding lock. OAuth
-        // scopes remain signature-verified token claims and cannot be upgraded
-        // by this transaction.
-        mcpToolAuthorization.requireToolAccess(tool, live.permissions, context.oauthScopes);
+        // Permissions, record scopes, FSM role, and consent are re-derived
+        // under the same binding/membership lock. OAuth scopes remain verified
+        // token claims and cannot be upgraded by this transaction.
+        mcpToolAuthorization.requireAvatarToolAccess(tool, live, context.oauthScopes, args);
+        await requireWriteRecordAccess(tool, live, context, args, client);
         const result = await chatgptMcpWriteService.execute(
             tool.handler,
             tool.name,
             {
                 ...context,
                 actorName: live.ai_full_name || context.actorName,
+                ownerUserId: live.owner_user_id,
+                ownerRoleKey: live.owner_role_key,
+                ownerPermissions: live.owner_permissions,
+                ownerScopes: live.owner_scopes,
             },
             args,
             client
@@ -291,5 +361,7 @@ module.exports = {
     WRITE_PERMISSION,
     buildContext,
     execute,
+    resolveLiveDispatcherContext,
     _dispatchDispatcherWrite: dispatchDispatcherWrite,
+    _requireWriteRecordAccess: requireWriteRecordAccess,
 };

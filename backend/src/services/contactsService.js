@@ -16,6 +16,10 @@ const {
     bigintCursorExpression,
 } = require('../utils/listCursor');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 // =============================================================================
 // DB row → Contact object
 // =============================================================================
@@ -205,8 +209,8 @@ async function listContacts({ search, offset, limit = 50, cursor, companyId, pro
 // =============================================================================
 // Get Contact by ID
 // =============================================================================
-async function getContactById(id, companyId = null, providerScope = null) {
-    const contact = await getById(id, companyId, providerScope);
+async function getContactById(id, companyId = null, providerScope = null, client = null) {
+    const contact = await getById(id, companyId, providerScope, client);
     if (!contact) {
         const err = new Error('Contact not found');
         err.code = 'NOT_FOUND';
@@ -221,7 +225,7 @@ async function getContactById(id, companyId = null, providerScope = null) {
  * does not exist, belongs to another company, or is not visible under the
  * provider scope — callers translate null into 404 (PF007-HARDENING-001).
  */
-async function getById(id, companyId = null, providerScope = null) {
+async function getById(id, companyId = null, providerScope = null, client = null) {
     const conditions = ['c.id = $1'];
     const params = [id];
     if (companyId) {
@@ -230,6 +234,21 @@ async function getById(id, companyId = null, providerScope = null) {
     }
     if (providerScope?.assignedOnly) {
         if (!providerScope.userId) return null;
+        if (client?.query) {
+            const visibleJobs = await queryFor(client)(
+                `SELECT pj.id
+                 FROM jobs pj
+                 JOIN contacts owner
+                   ON owner.id = pj.contact_id
+                  AND owner.company_id = pj.company_id
+                 WHERE owner.id = $1
+                   AND owner.company_id = $2
+                   AND pj.assigned_provider_user_ids @> $3::jsonb
+                 FOR SHARE OF pj`,
+                [id, companyId, JSON.stringify([providerScope.userId])]
+            );
+            if (visibleJobs.rows.length === 0) return null;
+        }
         params.push(JSON.stringify([providerScope.userId]));
         conditions.push(`EXISTS (
             SELECT 1 FROM jobs pj
@@ -238,8 +257,11 @@ async function getById(id, companyId = null, providerScope = null) {
               AND pj.assigned_provider_user_ids @> $${params.length}::jsonb
         )`);
     }
-    const sql = `SELECT c.* FROM contacts c WHERE ${conditions.join(' AND ')}`;
-    const { rows } = await db.query(sql, params);
+    const sql = `SELECT c.*
+                 FROM contacts c
+                 WHERE ${conditions.join(' AND ')}
+                 ${client?.query ? 'FOR SHARE OF c' : ''}`;
+    const { rows } = await queryFor(client)(sql, params);
     return rows.length ? rowToContact(rows[0]) : null;
 }
 

@@ -49,6 +49,10 @@ const AVATARS = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '200_avatars_per_user_identity.sql'),
     'utf8'
 );
+const ROLE_SEED = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '050_seed_role_configs.sql'),
+    'utf8'
+);
 
 jest.setTimeout(90000);
 
@@ -115,6 +119,7 @@ async function setup() {
                 `s3-b-${state.companyB}`,
             ]
         );
+        await client.query(ROLE_SEED);
         const humans = await client.query(
             `INSERT INTO crm_users
                 (keycloak_sub, email, full_name, role, status, company_id,

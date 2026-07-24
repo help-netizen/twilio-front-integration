@@ -376,6 +376,13 @@ async function transitionEntity(context, {
     entityName,
     action,
 }, client) {
+    if (!context.ownerRoleKey) {
+        throw new ChatgptMcpWriteError(
+            'MCP_BINDING_INVALID',
+            'Avatar owner role is required.',
+            403
+        );
+    }
     const current = await client.query(
         `SELECT id, ${statusColumn} AS current_status
          FROM ${table}
@@ -388,7 +395,7 @@ async function transitionEntity(context, {
         context.companyId,
         machineKey,
         current.rows[0].current_status,
-        ['dispatcher']
+        [context.ownerRoleKey]
     );
     if (available.fallback) {
         throw new ChatgptMcpWriteError(
