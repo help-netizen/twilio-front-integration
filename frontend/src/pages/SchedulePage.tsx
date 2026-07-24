@@ -5,7 +5,8 @@
  */
 
 import { useState, useCallback, useMemo, useEffect, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useScheduleData } from '../hooks/useScheduleData';
 import { useJobDetail } from '../hooks/useJobDetail';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -69,21 +70,47 @@ export function SchedulePage() {
     const [hoveredScheduleItemKey, setHoveredScheduleItemKey] = useState<string | null>(null);
 
     // ─── Job detail floating panel (same as Jobs page) ───────────────
-    const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+    // SCHEDULE-JOB-DEEPLINK-001: the open job IS the URL. `/schedule/jobs/:jobId`
+    // drives the panel, so the browser bar always holds a copyable direct link and
+    // Back closes the card. A deep link opens the job even when it isn't in the
+    // visible day/range — useJobDetail fetches it via GET /api/jobs/:id, the same
+    // path the /jobs/:id page uses.
+    const { jobId: jobIdParam } = useParams<{ jobId?: string }>();
+    const selectedJobId = useMemo(() => {
+        if (!jobIdParam) return null;
+        const n = Number(jobIdParam);
+        return Number.isInteger(n) && n > 0 ? n : null;
+    }, [jobIdParam]);
+
     const jobDetail = useJobDetail({
         jobId: selectedJobId,
         onJobMutated: schedule.refresh,
+        onNotFound: useCallback(() => {
+            toast.error('Job not found or unavailable');
+            navigate('/schedule', { replace: true });
+        }, [navigate]),
     });
+
+    // Highlight the calendar card for the URL-selected job when it is on screen
+    // (a click already set it; this covers arriving via a deep link).
+    useEffect(() => {
+        if (selectedJobId == null) return;
+        const match = schedule.scheduledItems.find(item =>
+            item.entity_type === 'job' && item.entity_id === selectedJobId);
+        if (match) setSelectedScheduleItemKey(scheduleJobKey(match));
+    }, [selectedJobId, schedule.scheduledItems]);
 
     /** When a schedule item is clicked, jobs open in FloatingDetailPanel; others go to SidebarStack */
     const handleSelectItem = useCallback((item: ScheduleItem) => {
         if (item.entity_type === 'job') {
             setSelectedScheduleItemKey(scheduleJobKey(item));
-            setSelectedJobId(item.entity_id);
+            // PUSH on first open from /schedule so Back closes; REPLACE when
+            // switching between cards so Back doesn't walk every card glanced at.
+            navigate(`/schedule/jobs/${item.entity_id}`, { replace: selectedJobId != null });
         } else {
             schedule.selectItem(item);
         }
-    }, [schedule.selectItem]);
+    }, [schedule.selectItem, navigate, selectedJobId]);
 
     const handleMapJobSelect = useCallback((item: ScheduleItem) => {
         setSelectedScheduleItemKey(scheduleJobKey(item));
@@ -106,8 +133,9 @@ export function SchedulePage() {
     }, [schedule.scheduledItems, selectedScheduleItemKey]);
 
     const handleCloseJobDetail = useCallback(() => {
-        setSelectedJobId(null);
-    }, []);
+        setSelectedScheduleItemKey(null);
+        navigate('/schedule');
+    }, [navigate]);
 
     const handleMonthDaySelect = (date: Date) => {
         schedule.setCurrentDate(date);

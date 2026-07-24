@@ -24,6 +24,8 @@ interface ContactInfo {
 
 interface UseJobDetailParams {
     jobId: number | null;
+    /** Fired when the job fetch fails (404/403) — e.g. a stale or forbidden deep link. */
+    onNotFound?: (jobId: number) => void;
     /** Called after any mutation so the parent can refresh its own list */
     onJobMutated?: () => void;
 }
@@ -51,7 +53,7 @@ export interface UseJobDetailResult {
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
-export function useJobDetail({ jobId, onJobMutated }: UseJobDetailParams): UseJobDetailResult {
+export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailParams): UseJobDetailResult {
     const [job, setJob] = useState<LocalJob | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
     const [contactInfo, setContactInfo] = useState<ContactInfo | null>(null);
@@ -94,13 +96,16 @@ export function useJobDetail({ jobId, onJobMutated }: UseJobDetailParams): UseJo
                         });
                     } catch { /* no contact found */ }
                 }
-            } catch { /* job not found */ }
+            } catch {
+                if (!cancelled) { setJob(null); onNotFound?.(jobId); }
+            }
             finally {
                 if (!cancelled) setDetailLoading(false);
             }
         })();
 
         return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [jobId]);
 
     // ─── Fetch tags once ─────────────────────────────────────────────

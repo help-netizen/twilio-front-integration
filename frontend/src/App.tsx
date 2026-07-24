@@ -137,6 +137,7 @@ function App() {
               <Route path="/jobs" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/jobs/:jobId" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/schedule" element={<ProtectedRoute permissions={['schedule.view']}><SchedulePage /></ProtectedRoute>} />
+              <Route path="/schedule/jobs/:jobId" element={<ProtectedRoute permissions={['schedule.view']}><SchedulePage /></ProtectedRoute>} />
               <Route path="/tasks" element={<ProtectedRoute permissions={['tasks.view']}><TasksPage /></ProtectedRoute>} />
               <Route path="/estimates" element={<ProtectedRoute permissions={['estimates.view']}><EstimatesPage /></ProtectedRoute>} />
               <Route path="/invoices" element={<ProtectedRoute permissions={['invoices.view']}><InvoicesPage /></ProtectedRoute>} />
