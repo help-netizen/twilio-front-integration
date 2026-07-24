@@ -182,3 +182,21 @@ keychain crash and does not change application behavior.
   out-of-range fetch, invalid/unavailable handling, unchanged tenancy and RBAC,
   focused route/hook tests, and the proven `SAB-SJD-PUSH-REPLACE` negative
   control. No backend, migration, permission, role, commit, or push.
+
+## Production deploy — 2026-07-24
+
+Deployed master `8a8ffe3`. This was a catch-up deploy: a parallel session had built the
+02:30 image (MCP + estinv work) BEFORE this deep-link landed, so the live bundle lacked it.
+Verified by grep — `schedule/jobs/` marker was 0 in the running bundle, so the deploy was
+genuinely needed. Migrations 195/196 were already applied by that session; this deploy
+applied **197 (invoice payment void — voided_at/voided_by on payment_transactions), 198, 199
+(MCP grants)** — probed by object, not number.
+
+Backup 93M, rollback image `4e594d131267`. After rebuild the `schedule/jobs/` marker is
+present in the bundle; `/schedule/jobs/1463` serves the SPA (200, same bundle as `/schedule`).
+logout-all, KC force-recreated (theme changed), smoke green (api/app/well-known 200, stripe
+webhook 400), 6 workers up, 0 errors.
+
+Probe lesson re-learned: `backfilled_by` in migration 197 is a STRING LITERAL inside the
+backfill metadata JSON, not a column — the real columns are voided_at/voided_by. Grep the
+migration for the actual DDL before probing.
