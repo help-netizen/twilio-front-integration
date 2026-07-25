@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const userService = require('../services/userService');
 const auditService = require('../services/auditService');
 const authorizationService = require('../services/authorizationService');
+const avatarBases = require('../config/avatarBases');
 
 const KEYCLOAK_REALM_URL = process.env.KEYCLOAK_REALM_URL;
 const FEATURE_AUTH = process.env.FEATURE_AUTH_ENABLED === 'true';
@@ -108,10 +109,10 @@ function authenticate(req, res, next) {
         // Connector access tokens are deliberately bound to /mcp/chatgpt. Their
         // human subject authorizes the AI identity but must never be resolved as
         // that human on the ordinary CRM API surface.
-        const connectorClientId = String(process.env.CHATGPT_MCP_CLIENT_ID || '').trim();
+        const connectorClientIds = new Set(avatarBases.connectorClientIds());
         const isConnectorToken = [decoded.azp, decoded.client_id]
-            .some((tokenClientId) => tokenClientId === connectorClientId);
-        if (connectorClientId && isConnectorToken) {
+            .some((tokenClientId) => connectorClientIds.has(tokenClientId));
+        if (isConnectorToken) {
             return res.status(401).json({
                 code: 'AUTH_INVALID',
                 message: 'Invalid or expired token',

@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../db/connection');
+const avatarBases = require('../config/avatarBases');
 const authorizationService = require('./authorizationService');
 const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
 const marketplaceService = require('./marketplaceService');
@@ -131,6 +132,7 @@ async function listRoster(companyId, actorId, client) {
                     b.authorized_by_user_id,
                     b.oauth_subject,
                     b.status,
+                    b.base,
                     b.writes_enabled,
                     b.sends_enabled,
                     b.updated_at
@@ -145,6 +147,7 @@ async function listRoster(companyId, actorId, client) {
          )
          SELECT binding.owner_user_id,
                 member.owner_name,
+                binding.base,
                 (
                     binding.status = 'active'
                     AND binding.authorized_by_user_id = binding.owner_user_id
@@ -190,7 +193,7 @@ async function listRoster(companyId, actorId, client) {
         return {
             owner_user_id: row.owner_user_id,
             owner_name: row.owner_name,
-            base: 'chatgpt',
+            base: row.base,
             connection_status: connected ? 'connected' : 'disconnected',
             presence: recentlyActive ? 'active' : 'idle',
             is_me: row.owner_user_id === actorId,
@@ -202,7 +205,7 @@ async function listRoster(companyId, actorId, client) {
         roster,
         me: ownRow ? {
             connected: ownConnected,
-            base: 'chatgpt',
+            base: ownRow.base,
             mode: 'mcp',
             writes_enabled: ownConnected && ownRow.writes_enabled === true,
             sends_enabled: ownConnected && ownRow.sends_enabled === true,
@@ -224,8 +227,15 @@ async function getOverview(companyId, actorId) {
     }, { readOnly: true });
 }
 
-async function connectSelf(companyId, actorId) {
+async function connectSelf(companyId, actorId, base = 'chatgpt') {
     requireContext(companyId, actorId);
+    if (!avatarBases.isSupportedBase(base)) {
+        throw new AvatarsServiceError(
+            'AVATAR_BASE_UNSUPPORTED',
+            'Avatar base must be chatgpt or claude.',
+            400
+        );
+    }
     return withTransaction(async (client) => {
         await requireActiveMember(companyId, actorId, client);
         const installation = await getInstallation(companyId, client, { lock: true });
@@ -241,10 +251,11 @@ async function connectSelf(companyId, actorId) {
             installationId: installation.id,
             ownerUserId: actorId,
             actorId,
+            base,
         }, client);
         return {
             connected: true,
-            base: 'chatgpt',
+            base: provisioned.binding.base,
             mode: 'mcp',
             writes_enabled: provisioned.binding.writes_enabled === true,
             sends_enabled: provisioned.binding.sends_enabled === true,

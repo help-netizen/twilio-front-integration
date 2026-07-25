@@ -106,12 +106,22 @@ describe('CHATGPT-CRM-MCP S1 identity schema and Marketplace seam', () => {
         expect(MARKETPLACE_SOURCE).toContain('requireChatgptTenantAdmin');
 
         const priorClientId = process.env.CHATGPT_MCP_CLIENT_ID;
+        const priorClaudeClientId = process.env.CLAUDE_MCP_CLIENT_ID;
         delete process.env.CHATGPT_MCP_CLIENT_ID;
         try {
             expect(() => identityService.configuredClientId()).toThrow('CHATGPT_MCP_CLIENT_ID is required');
+            process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+            delete process.env.CLAUDE_MCP_CLIENT_ID;
+            expect(() => identityService.configuredClientId('claude'))
+                .toThrow('CLAUDE_MCP_CLIENT_ID is required');
+            process.env.CLAUDE_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+            expect(identityService.configuredClientBase('chatgpt-crm-mcp'))
+                .toBeNull();
         } finally {
             if (priorClientId === undefined) delete process.env.CHATGPT_MCP_CLIENT_ID;
             else process.env.CHATGPT_MCP_CLIENT_ID = priorClientId;
+            if (priorClaudeClientId === undefined) delete process.env.CLAUDE_MCP_CLIENT_ID;
+            else process.env.CLAUDE_MCP_CLIENT_ID = priorClaudeClientId;
         }
     });
 

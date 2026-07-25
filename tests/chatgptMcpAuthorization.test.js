@@ -80,6 +80,8 @@ function requestContext(granted = permissions.S1_GRANTS) {
             id: 'binding-a',
             authorizerId: 'human-a',
             ownerUserId: 'human-a',
+            base: 'chatgpt',
+            clientId: 'chatgpt-crm-mcp',
         },
         requestId: 'request-a',
     };

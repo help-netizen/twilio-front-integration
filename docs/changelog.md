@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-07-24 — AVATARS-001 multi-base backend: Claude
+
+Avatars backend now accepts env-mapped ChatGPT and Claude OAuth clients on the
+unchanged `/mcp/chatgpt` protected resource. Migration 201 persists
+`base='chatgpt'|'claude'`, keeps one active `(company, owner)` slot, and makes
+the active OAuth principal unique across connector clients; switching bases
+reuses the binding/AI identity while preserving consent tiers. Roster/self state
+returns the persisted base, `/me/connect` accepts ChatGPT or Claude (Gemini
+remains rejected), both connector tokens are blocked from ordinary `/api/*`,
+and live owner RBAC/record scopes remain base-agnostic.
+
+Frontend (hub + wizard): Claude is now a selectable base alongside ChatGPT
+(Gemini stays "Soon"). The wizard, connect steps, connected card, and roster are
+base-aware — Claude connect steps use client `claude-crm-mcp` and the same
+`/mcp/chatgpt` MCP URL/resource, with Claude-specific instructions (Claude →
+Settings → Connectors → Add custom connector). One avatar per person: choosing a
+different base re-points the same slot. Deploy needs the Keycloak `claude-crm-mcp`
+public-PKCE client (callback `https://claude.ai/api/mcp/auth_callback`
++ `https://claude.com/api/mcp/auth_callback`) and `CLAUDE_MCP_CLIENT_ID`. **НЕ задеплоено.**
+
 ## 2026-07-24 — AVATARS-001 Phase C: roster and member self-service
 
 Добавлен member-level `/api/avatars`: любой active-член компании видит только

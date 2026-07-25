@@ -98,10 +98,13 @@ beforeAll(async () => {
     if (!DATABASE.ready) return;
     const oldIssuer = process.env.KEYCLOAK_REALM_URL;
     const oldClientId = process.env.CHATGPT_MCP_CLIENT_ID;
+    const oldClaudeClientId = process.env.CLAUDE_MCP_CLIENT_ID;
     fixture.oldIssuer = oldIssuer;
     fixture.oldClientId = oldClientId;
+    fixture.oldClaudeClientId = oldClaudeClientId;
     process.env.KEYCLOAK_REALM_URL = 'https://auth.albusto.test/realms/crm-prod';
     process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+    process.env.CLAUDE_MCP_CLIENT_ID = 'claude-crm-mcp';
 
     const client = await db.pool.connect();
     try {
@@ -181,6 +184,24 @@ beforeAll(async () => {
                 ($1,'manager','Manager',true),
                 ($2,'dispatcher','Dispatcher',true)`,
             [fixture.companyA, fixture.companyB]
+        );
+        const providerRole = await client.query(
+            `SELECT id
+             FROM company_role_configs
+             WHERE company_id=$1 AND role_key='provider'`,
+            [fixture.companyA]
+        );
+        await client.query(
+            `INSERT INTO company_role_permissions
+                (role_config_id,permission_key,is_allowed)
+             VALUES ($1,'jobs.view',true)`,
+            [providerRole.rows[0].id]
+        );
+        await client.query(
+            `INSERT INTO company_role_scopes
+                (role_config_id,scope_key,scope_json)
+             VALUES ($1,'job_visibility','"assigned_only"'::jsonb)`,
+            [providerRole.rows[0].id]
         );
 
         const app = await client.query(
@@ -388,6 +409,72 @@ describe('AVATARS-001 Phase C roster and self-service tenancy', () => {
         }
     });
 
+    databaseTest('Claude replaces ChatGPT in the same owner slot and inherits the same live provider scope', async () => {
+        const before = await db.query(
+            `SELECT id,ai_user_id
+             FROM chatgpt_mcp_bindings
+             WHERE company_id=$1 AND owner_user_id=$2 AND status='active'`,
+            [fixture.companyA, fixture.otherA.id]
+        );
+        const connected = await avatarsService.connectSelf(
+            fixture.companyA,
+            fixture.otherA.id,
+            'claude'
+        );
+        expect(connected).toEqual({
+            connected: true,
+            base: 'claude',
+            mode: 'mcp',
+            writes_enabled: false,
+            sends_enabled: false,
+        });
+
+        const switched = await db.query(
+            `SELECT id,ai_user_id,base,oauth_client_id
+             FROM chatgpt_mcp_bindings
+             WHERE company_id=$1 AND owner_user_id=$2 AND status='active'`,
+            [fixture.companyA, fixture.otherA.id]
+        );
+        expect(switched.rows).toEqual([{
+            id: before.rows[0].id,
+            ai_user_id: before.rows[0].ai_user_id,
+            base: 'claude',
+            oauth_client_id: 'claude-crm-mcp',
+        }]);
+
+        const identityService = require('../backend/src/services/chatgptMcpIdentityService');
+        const oauth = await identityService.resolveOAuthContext({
+            issuer: process.env.KEYCLOAK_REALM_URL,
+            subject: fixture.otherA.keycloak_sub,
+            clientId: process.env.CLAUDE_MCP_CLIENT_ID,
+        });
+        expect(oauth).toMatchObject({
+            binding_id: before.rows[0].id,
+            owner_user_id: fixture.otherA.id,
+            owner_role_key: 'provider',
+            owner_permissions: ['jobs.view'],
+            owner_scopes: { job_visibility: 'assigned_only' },
+            base: 'claude',
+            oauth_client_id: 'claude-crm-mcp',
+        });
+
+        const overview = await avatarsService.getOverview(
+            fixture.companyA,
+            fixture.otherA.id
+        );
+        expect(overview.me?.base).toBe('claude');
+        expect(overview.roster.find(
+            (row) => row.owner_user_id === fixture.otherA.id
+        )?.base).toBe('claude');
+
+        const restored = await avatarsService.connectSelf(
+            fixture.companyA,
+            fixture.otherA.id,
+            'chatgpt'
+        );
+        expect(restored.base).toBe('chatgpt');
+    });
+
     databaseTest('self-consent changes only the actor binding and preserves the foreign tenant byte-for-byte', async () => {
         const beforeB = await snapshotCompany(fixture.companyB);
         expect(await avatarsService.setWrites(
@@ -566,6 +653,8 @@ afterAll(async () => {
         else process.env.KEYCLOAK_REALM_URL = fixture.oldIssuer;
         if (fixture.oldClientId === undefined) delete process.env.CHATGPT_MCP_CLIENT_ID;
         else process.env.CHATGPT_MCP_CLIENT_ID = fixture.oldClientId;
+        if (fixture.oldClaudeClientId === undefined) delete process.env.CLAUDE_MCP_CLIENT_ID;
+        else process.env.CLAUDE_MCP_CLIENT_ID = fixture.oldClaudeClientId;
     }
     try { await db.pool.end(); } catch { /* ignore */ }
 });

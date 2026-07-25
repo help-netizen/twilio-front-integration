@@ -79,11 +79,12 @@ function tokenScopes(decoded) {
 
 function validateConnectorClaims(decoded) {
     const expectedResource = resourceUri();
-    const expectedClient = identityService.configuredClientId();
+    const tokenClient = decoded.azp || decoded.client_id;
+    const tokenBase = identityService.configuredClientBase(tokenClient);
     if (!values(decoded.aud).includes(expectedResource)) {
         throw Object.assign(new Error('Invalid token audience'), { code: 'MCP_TOKEN_AUDIENCE' });
     }
-    if ((decoded.azp || decoded.client_id) !== expectedClient) {
+    if (!tokenBase) {
         throw Object.assign(new Error('Invalid authorized party'), { code: 'MCP_TOKEN_CLIENT' });
     }
     if (!values(decoded.resource).includes(expectedResource)) {
@@ -207,6 +208,8 @@ async function authenticateChatgptMcp(req, res, next) {
             installationId: binding.installation_id,
             authorizerId: binding.authorized_by_user_id,
             ownerUserId: binding.owner_user_id,
+            base: binding.base,
+            clientId: binding.oauth_client_id,
         };
         return next();
     } catch (err) {

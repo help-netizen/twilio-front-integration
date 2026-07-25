@@ -18,6 +18,14 @@ const AVATARS_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_200_avatars_per_user_identity.sql'),
     'utf8'
 );
+const MULTI_BASE = fs.readFileSync(
+    path.join(MIGRATIONS, '201_avatars_multi_base.sql'),
+    'utf8'
+);
+const MULTI_BASE_ROLLBACK = fs.readFileSync(
+    path.join(MIGRATIONS, 'rollback_201_avatars_multi_base.sql'),
+    'utf8'
+);
 
 jest.setTimeout(90000);
 
@@ -135,7 +143,7 @@ function minimalPreAvatarSchema(schemaName) {
 }
 
 describe('AVATARS-001 Phase A migration and per-owner identity', () => {
-    databaseTest('migration 200 backfills the existing binding in place, is idempotent, and rollback refuses multiple avatars', async () => {
+    databaseTest('migrations 200/201 backfill the existing binding in place, are idempotent, and preserve rollback guards', async () => {
         const client = await db.pool.connect();
         const schemaName = `avatars_m200_${randomUUID().replaceAll('-', '')}`;
         const companyId = randomUUID();
@@ -203,9 +211,11 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
 
             await client.query(AVATARS);
             await client.query(AVATARS);
+            await client.query(MULTI_BASE);
+            await client.query(MULTI_BASE);
 
             const binding = await client.query(
-                `SELECT id, ai_user_id, owner_user_id, writes_enabled, sends_enabled
+                `SELECT id, ai_user_id, owner_user_id, writes_enabled, sends_enabled, base
                  FROM chatgpt_mcp_bindings
                  WHERE id=$1`,
                 [bindingId]
@@ -216,6 +226,7 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
                 owner_user_id: ownerId,
                 writes_enabled: true,
                 sends_enabled: true,
+                base: 'chatgpt',
             }]);
             const ai = await client.query(
                 `SELECT id, keycloak_sub, full_name
@@ -225,9 +236,22 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
             );
             expect(ai.rows).toEqual([{
                 id: aiUserId,
-                keycloak_sub: `agent:chatgpt-crm-mcp:${companyId}:${ownerId}`,
+                keycloak_sub: `agent:chatgpt-crm-mcp:chatgpt:${companyId}:${ownerId}`,
                 full_name: 'Avatar of ABC Owner',
             }]);
+            const principalIndex = await client.query(
+                `SELECT indexdef
+                 FROM pg_indexes
+                 WHERE schemaname=$1
+                   AND indexname='uq_chatgpt_mcp_binding_active_principal'`,
+                [schemaName]
+            );
+            expect(principalIndex.rows[0].indexdef).toContain(
+                '(oauth_issuer, oauth_subject)'
+            );
+            expect(principalIndex.rows[0].indexdef).not.toContain(
+                'oauth_client_id'
+            );
             const preserved = await client.query(
                 `SELECT
                     (SELECT COUNT(*)::int FROM mcp_tool_invocations
@@ -253,6 +277,24 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
             });
             await client.query('ROLLBACK TO SAVEPOINT avatars_duplicate_owner');
 
+            await client.query('SAVEPOINT avatars_multibase_rollback_guard');
+            await client.query(
+                `UPDATE chatgpt_mcp_bindings SET base='claude' WHERE id=$1`,
+                [bindingId]
+            );
+            await expect(client.query(MULTI_BASE_ROLLBACK))
+                .rejects.toThrow('AVATARS_MULTI_BASE_ROLLBACK_CLAUDE_BINDINGS');
+            await client.query('ROLLBACK TO SAVEPOINT avatars_multibase_rollback_guard');
+
+            await client.query(MULTI_BASE_ROLLBACK);
+            const phaseAIdentity = await client.query(
+                `SELECT keycloak_sub
+                 FROM crm_users
+                 WHERE id=$1`,
+                [aiUserId]
+            );
+            expect(phaseAIdentity.rows[0].keycloak_sub)
+                .toBe(`agent:chatgpt-crm-mcp:${companyId}:${ownerId}`);
             await client.query(AVATARS_ROLLBACK);
             const rolledBack = await client.query(
                 `SELECT ai.keycloak_sub, ai.full_name, ma.name,
@@ -365,8 +407,10 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
         const client = await db.pool.connect();
         const oldIssuer = process.env.KEYCLOAK_REALM_URL;
         const oldClientId = process.env.CHATGPT_MCP_CLIENT_ID;
+        const oldClaudeClientId = process.env.CLAUDE_MCP_CLIENT_ID;
         process.env.KEYCLOAK_REALM_URL = 'https://auth.albusto.test/realms/crm-prod';
         process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+        process.env.CLAUDE_MCP_CLIENT_ID = 'claude-crm-mcp';
         const companyA = randomUUID();
         const companyB = randomUUID();
         let ownerA;
@@ -375,6 +419,7 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
         try {
             await client.query('BEGIN');
             await client.query(AVATARS);
+            await client.query(MULTI_BASE);
             await client.query(
                 `INSERT INTO companies (id,name,slug,status,timezone)
                  VALUES
@@ -560,6 +605,35 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
                     'mcp.tool.svc.send_estimate',
                 ]));
 
+            const avatarAClaude = await identityService.provisionAvatar({
+                companyId: companyA,
+                installationId: installA.id,
+                ownerUserId: ownerA.id,
+                actorId: ownerA.id,
+                base: 'claude',
+            }, client);
+            expect(avatarAClaude.binding.id).toBe(avatarA.binding.id);
+            expect(avatarAClaude.aiUser.id).toBe(avatarA.aiUser.id);
+            expect(avatarAClaude.binding).toMatchObject({
+                base: 'claude',
+                oauth_client_id: 'claude-crm-mcp',
+                owner_user_id: ownerA.id,
+                writes_enabled: false,
+                sends_enabled: false,
+            });
+            expect(avatarAClaude.aiUser.keycloak_sub)
+                .toBe(`agent:chatgpt-crm-mcp:claude:${companyA}:${ownerA.id}`);
+            const avatarAChatgptAgain = await identityService.provisionAvatar({
+                companyId: companyA,
+                installationId: installA.id,
+                ownerUserId: ownerA.id,
+                actorId: ownerA.id,
+                base: 'chatgpt',
+            }, client);
+            expect(avatarAChatgptAgain.binding.id).toBe(avatarA.binding.id);
+            expect(avatarAChatgptAgain.aiUser.id).toBe(avatarA.aiUser.id);
+            expect(avatarAChatgptAgain.binding.base).toBe('chatgpt');
+
             await client.query(
                 `INSERT INTO company_memberships
                     (user_id,company_id,role,role_key,status)
@@ -572,6 +646,7 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
                 installationId: installB.id,
                 ownerUserId: ownerA.id,
                 actorId: ownerA.id,
+                base: 'claude',
             }, client)).rejects.toMatchObject({
                 code: 'AVATAR_ALREADY_CONNECTED',
                 httpStatus: 409,
@@ -649,6 +724,8 @@ describe('AVATARS-001 Phase A migration and per-owner identity', () => {
             else process.env.KEYCLOAK_REALM_URL = oldIssuer;
             if (oldClientId === undefined) delete process.env.CHATGPT_MCP_CLIENT_ID;
             else process.env.CHATGPT_MCP_CLIENT_ID = oldClientId;
+            if (oldClaudeClientId === undefined) delete process.env.CLAUDE_MCP_CLIENT_ID;
+            else process.env.CLAUDE_MCP_CLIENT_ID = oldClaudeClientId;
         }
     });
 });

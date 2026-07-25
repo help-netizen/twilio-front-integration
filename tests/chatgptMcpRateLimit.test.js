@@ -32,7 +32,13 @@ function buildApp() {
         return {
             ChatgptMcpIdentityError,
             configuredIssuer: () => ISSUER,
-            configuredClientId: () => 'chatgpt-crm-mcp',
+            configuredClientId: (base = 'chatgpt') => (
+                base === 'claude' ? 'claude-crm-mcp' : 'chatgpt-crm-mcp'
+            ),
+            configuredClientBase: (clientId) => ({
+                'chatgpt-crm-mcp': 'chatgpt',
+                'claude-crm-mcp': 'claude',
+            })[clientId] || null,
             resolveOAuthContext: jest.fn(async ({ subject }) => ({
                 binding_id: `binding-${subject}`,
                 company_id: `company-${subject}`,
@@ -43,6 +49,12 @@ function buildApp() {
                 company_timezone: 'America/New_York',
                 ai_email: `agent-${subject}@albusto.invalid`,
                 ai_full_name: 'ChatGPT AI Dispatcher',
+                owner_user_id: `human-${subject}`,
+                owner_role_key: 'tenant_admin',
+                owner_permissions: [],
+                owner_scopes: { job_visibility: 'all' },
+                base: 'chatgpt',
+                oauth_client_id: 'chatgpt-crm-mcp',
                 permissions: [],
             })),
             recordInvocation: jest.fn(async () => {}),

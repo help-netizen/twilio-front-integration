@@ -8,8 +8,9 @@ Parent contract: `docs/specs/CHATGPT-CRM-MCP-001.md`
 
 The Marketplace app currently identified by `app_key='chatgpt-crm-mcp'` becomes
 **Avatars**: one company installation enables the product, then each active CRM
-member may connect one ChatGPT-backed avatar that acts as that member's digital
-copy.
+member may connect one AI-backed avatar that acts as that member's digital
+copy. The security core supports a user-selected ChatGPT or Claude remote-MCP
+base; Gemini remains unavailable.
 
 The load-bearing authorization invariant is:
 
@@ -42,7 +43,8 @@ In scope:
 - live, uncached human permissions, scopes, and role on every MCP call;
 - owner-only Writes/Sends consent;
 - tenant-admin global enable/disable and per-avatar revoke;
-- company roster with owner name, `base='ChatGPT'`, connection status,
+- company roster with owner name, persisted `base='chatgpt'|'claude'`,
+  connection status,
   presence, and no other identity/tool data;
 - display name and domain authorship as `Avatar of <DB owner name>`.
 
@@ -65,6 +67,8 @@ member self-service HTTP surface. Phase D remains frontend-only.
 ## 3. Settled owner decisions
 
 - V1 permits one active avatar per human OAuth principal, in one company.
+- That single avatar may use either ChatGPT or Claude; selecting another base
+  replaces the active binding slot instead of creating a second avatar.
 - A tenant administrator enables the shared company installation.
 - Every active member self-provisions and self-revokes only their own avatar.
 - Only the owner may enable that avatar's Writes or Sends tier.
@@ -80,8 +84,9 @@ member self-service HTTP surface. Phase D remains frontend-only.
 - The existing ABC Homes binding becomes its authorizer's avatar without OAuth
   reconnect and preserves binding ID, AI user ID, invocation audit, and
   idempotency records.
-- `app_key='chatgpt-crm-mcp'` and the Keycloak client stay unchanged; only the
-  Marketplace display name becomes `Avatars`.
+- `app_key='chatgpt-crm-mcp'` and the established ChatGPT Keycloak client stay
+  unchanged; Claude uses a second env-configured Keycloak client and the
+  Marketplace display name remains `Avatars`.
 - Roster visibility is allowed to every active company member.
 - Presence is `active` when the binding has an invocation in the preceding
   15 minutes; otherwise it is `idle`.
@@ -100,10 +105,11 @@ tenant enablement switch. `chatgpt_mcp_bindings` gains:
 - `sends_enabled BOOLEAN NOT NULL DEFAULT false`;
 - partial uniqueness on `(company_id, owner_user_id)` while active.
 
-The existing active-principal unique index on
-`(oauth_issuer, oauth_subject, oauth_client_id)` remains. It enforces the v1
-one-active-avatar-per-human rule across companies and prevents OAuth lookup
-ambiguity.
+Migration 201 changes the active-principal unique index from
+`(oauth_issuer, oauth_subject, oauth_client_id)` to
+`(oauth_issuer, oauth_subject)`. This preserves the v1
+one-active-avatar-per-human rule across companies and across connector clients.
+The active `(company_id, owner_user_id)` unique key is unchanged.
 
 `owner_user_id` is the canonical local owner. The external binding additionally
 requires `owner.keycloak_sub = oauth_subject` under the configured issuer and
@@ -115,7 +121,7 @@ self-provision requires it to equal `owner_user_id`.
 Each avatar has one company-owned `crm_users.kind='agent'` row:
 
 ```text
-keycloak_sub = agent:chatgpt-crm-mcp:<companyId>:<ownerUserId>
+keycloak_sub = agent:chatgpt-crm-mcp:<base>:<companyId>:<ownerUserId>
 full_name    = Avatar of <current DB owner full_name>
 ```
 
@@ -142,6 +148,37 @@ current exact anchors:
 Phase B stops treating persisted business/tool grants as authority. It may keep
 the table for historical rollback compatibility, but all effective tool access
 will be synthesized from live owner rights plus tier booleans.
+
+### 4.4 Multi-base connector contract
+
+The allowed connector-client mapping is entirely environment-driven:
+
+| Environment variable | Persisted `base` |
+|---|---|
+| `CHATGPT_MCP_CLIENT_ID` | `chatgpt` |
+| `CLAUDE_MCP_CLIENT_ID` | `claude` |
+
+Both clients use the existing protected resource and endpoint:
+
+```text
+resource / aud = https://api.albusto.com/mcp/chatgpt
+HTTP endpoint  = /mcp/chatgpt
+```
+
+This deliberately preserves the already connected ChatGPT resource identifier
+and requires no additional `src/server.js` mount. The Claude Keycloak client is
+public PKCE and carries the same read/write/send scopes plus the same audience
+and resource mappers. A token is accepted only when its `azp`/`client_id`
+matches exactly one configured client; that client determines `base`. Both
+configured connector clients are rejected by ordinary `/api/*` Keycloak auth.
+
+`chatgpt_mcp_bindings.base TEXT NOT NULL DEFAULT 'chatgpt'` is constrained to
+`chatgpt|claude`. Migration 201 backfills existing bindings as ChatGPT and
+renames active AI subjects in place without changing binding, AI-user, audit,
+or idempotency IDs. A base switch updates the existing active owner slot,
+OAuth client, base, and synthetic subject; tier booleans remain unchanged.
+Rollback aborts while any Claude binding history exists rather than silently
+coercing it to ChatGPT.
 
 ## 5. Live owner authorization seam
 
@@ -274,7 +311,8 @@ exact owner binding, same-company installation, published app, and synthetic
 AI identity are all active. A disconnected company installation makes every
 avatar disconnected and idle.
 
-`owner_name` is read live from the human `crm_users` profile, not the AI-user
+`base` is read from the selected binding and is either `chatgpt` or `claude`;
+it is never inferred from UI text. `owner_name` is read live from the human `crm_users` profile, not the AI-user
 snapshot or OAuth claims. Presence is `active` only when the connected
 binding's `MAX(mcp_tool_invocations.started_at)` is within 15 minutes. The
 aggregate repeats both `company_id` and `binding_id`; the timestamp itself is
@@ -301,15 +339,15 @@ comes only from `req.user.crmUser.id`.
 | Endpoint | Request | Response | Rule |
 |---|---|---|---|
 | `GET /api/avatars` | none | overview contract above | Any active company member; no `tenant.integrations.manage` requirement. |
-| `POST /api/avatars/me/connect` | empty object/body | exact `me` object | Idempotent self-provision; 409 `AVATARS_NOT_ENABLED` unless the admin-owned company installation is connected; tiers start false. |
+| `POST /api/avatars/me/connect` | `{ "base": "chatgpt" \| "claude" }`; empty object/body defaults to ChatGPT | exact `me` object with persisted `base` | Idempotent self-provision; 409 `AVATARS_NOT_ENABLED` unless the admin-owned company installation is connected; selecting another base reuses the owner slot; Gemini/extra fields are 400; tiers start false. |
 | `POST /api/avatars/me/writes` | `{ "enabled": boolean }` | `{ writes_enabled, sends_enabled }` | Reuses the per-owner v3 consent transaction for the signed-in actor's binding only. |
 | `POST /api/avatars/me/sends` | `{ "enabled": boolean }` | `{ writes_enabled, sends_enabled }` | Reuses the independent per-owner v4 consent transaction for the signed-in actor's binding only. |
 | `POST /api/avatars/me/disconnect` | empty object/body | `{ "connected": false }` | Idempotently revokes only `(company_id, actor owner_user_id)`. |
 
 Connect is explicit because the OAuth resolver deliberately resolves only an
 existing active binding and does not mutate identity state. The frontend
-connect flow pre-provisions via `/me/connect`, then opens the ChatGPT OAuth
-wizard. This does not change token validation or the existing OAuth path.
+connect flow pre-provisions via `/me/connect`, then opens the selected app's
+OAuth wizard. This does not change the existing MCP resource or route.
 Bodies containing `owner_user_id`, `company_id`, or any other extra key are
 rejected, so the self routes cannot target another avatar.
 
@@ -359,6 +397,17 @@ Phase A additionally requires:
 - foreign/inactive company membership cannot resolve live authorization;
 - self-revoke affects only the exact owner/company avatar;
 - no write/send grant is created for a new avatar.
+- migration 201 is idempotent, preserves existing IDs, defaults legacy rows to
+  ChatGPT, and refuses rollback while Claude history exists;
+- ChatGPT and Claude tokens share the protected resource but resolve only a
+  binding whose `oauth_client_id` and `base` match;
+- an unconfigured/foreign client fails closed, and both configured connector
+  clients are rejected by ordinary `/api/*` authentication;
+- switching ChatGPT → Claude uses the same active owner binding/AI slot, while
+  the principal unique key prevents a second company avatar through another
+  connector client;
+- live owner permissions, record scopes, and FSM role are identical across
+  bases; no authorization branch may key on `base`.
 
 Phase C additionally requires:
 
@@ -545,3 +594,23 @@ exit 0).
 
 Claude records the exact frontend build and Vitest commands after the approved
 components exist.
+
+### Multi-base backend focused
+
+```bash
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/avatarsRoutes.test.js tests/chatgptMcpOAuth.test.js tests/chatgptMcpJwtHonest.test.js tests/keycloakAuthMcpIsolation.test.js tests/chatgptMcpRateLimit.test.js tests/chatgptMcpAuthorization.test.js tests/chatgptMcpWrites.test.js tests/avatarsPhaseA.test.js tests/avatarsAuthorization.test.js
+```
+
+Production-shaped migration/binding/roster contract:
+
+```bash
+DATABASE_URL=postgresql://localhost/<full-schema-test-db> env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/avatarsPhaseA.db.test.js tests/avatarsRoster.db.test.js
+```
+
+Multi-base implementation result: focused auth/route/executor contract passed
+9 suites / 102 tests, exit 0; production-shaped migration and roster contract
+passed 2 suites / 9 tests, exit 0. The database used
+`backend/db/test-fixtures/schema_pre_096.sql`, compatibility migrations
+084–090, and every numbered migration 096–201 with `ON_ERROR_STOP=1`.
+The final post-review full MCP+Avatars regression passed 25 suites / 289 tests,
+exit 0.

@@ -53,6 +53,8 @@ jest.mock('../backend/src/services/chatgptMcpIdentityService', () => ({
         owner_scopes: { job_visibility: 'all' },
         writes_enabled: false,
         sends_enabled: false,
+        base: 'chatgpt',
+        oauth_client_id: 'chatgpt-crm-mcp',
         permissions: [
             'contacts.view', 'jobs.view', 'estimates.view', 'invoices.view',
             'mcp.tool.svc.get_job',

@@ -9,11 +9,13 @@ const ORIGINAL_ENV = {
     FEATURE_AUTH_ENABLED: process.env.FEATURE_AUTH_ENABLED,
     KEYCLOAK_REALM_URL: process.env.KEYCLOAK_REALM_URL,
     CHATGPT_MCP_CLIENT_ID: process.env.CHATGPT_MCP_CLIENT_ID,
+    CLAUDE_MCP_CLIENT_ID: process.env.CLAUDE_MCP_CLIENT_ID,
 };
 
 process.env.FEATURE_AUTH_ENABLED = 'true';
 process.env.KEYCLOAK_REALM_URL = 'https://auth.albusto.test/realms/crm-prod';
 process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+process.env.CLAUDE_MCP_CLIENT_ID = 'claude-crm-mcp';
 
 jest.mock('jsonwebtoken', () => ({ verify: jest.fn() }));
 jest.mock('jwks-rsa', () => jest.fn(() => ({ getSigningKey: jest.fn() })));
@@ -76,9 +78,12 @@ afterAll(() => {
 
 describe('ordinary Keycloak middleware isolates the ChatGPT connector client', () => {
     test.each([
-        ['azp', claims({ azp: 'chatgpt-crm-mcp' })],
-        ['client_id', claims({ azp: undefined, client_id: 'chatgpt-crm-mcp' })],
-        ['conflicting client_id', claims({ azp: 'crm-web', client_id: 'chatgpt-crm-mcp' })],
+        ['ChatGPT azp', claims({ azp: 'chatgpt-crm-mcp' })],
+        ['ChatGPT client_id', claims({ azp: undefined, client_id: 'chatgpt-crm-mcp' })],
+        ['ChatGPT conflicting client_id', claims({ azp: 'crm-web', client_id: 'chatgpt-crm-mcp' })],
+        ['Claude azp', claims({ azp: 'claude-crm-mcp' })],
+        ['Claude client_id', claims({ azp: undefined, client_id: 'claude-crm-mcp' })],
+        ['Claude conflicting client_id', claims({ azp: 'crm-web', client_id: 'claude-crm-mcp' })],
     ])('connector token identified by %s is rejected on a normal /api route', async (_claim, decoded) => {
         jwt.verify.mockImplementation((_token, _key, _options, callback) => callback(null, decoded));
 
@@ -98,6 +103,7 @@ describe('ordinary Keycloak middleware isolates the ChatGPT connector client', (
         );
         expect(authProviderSource).toContain("VITE_KEYCLOAK_CLIENT_ID || 'crm-web'");
         expect('crm-web').not.toBe(process.env.CHATGPT_MCP_CLIENT_ID);
+        expect('crm-web').not.toBe(process.env.CLAUDE_MCP_CLIENT_ID);
         jwt.verify.mockImplementation((_token, _key, _options, callback) => callback(null, claims()));
 
         const res = await request(app())

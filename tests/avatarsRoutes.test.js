@@ -147,7 +147,7 @@ describe('AVATARS-001 Phase C member routes', () => {
         expect(avatarsService.getOverview).toHaveBeenCalledWith(COMPANY_A, MEMBER_A);
     });
 
-    test('self connect and disconnect accept no targetable body', async () => {
+    test('self connect defaults to ChatGPT, accepts Claude, and rejects unsupported/targetable input', async () => {
         await request(appWithMemberGuard())
             .post('/api/avatars/me/connect')
             .set('Authorization', 'Bearer member')
@@ -160,15 +160,58 @@ describe('AVATARS-001 Phase C member routes', () => {
                 writes_enabled: false,
                 sends_enabled: false,
             });
+        avatarsService.connectSelf.mockResolvedValueOnce({
+            connected: true,
+            base: 'claude',
+            mode: 'mcp',
+            writes_enabled: false,
+            sends_enabled: false,
+        });
+        await request(appWithMemberGuard())
+            .post('/api/avatars/me/connect')
+            .set('Authorization', 'Bearer member')
+            .send({ base: 'claude' })
+            .expect(200)
+            .expect({
+                connected: true,
+                base: 'claude',
+                mode: 'mcp',
+                writes_enabled: false,
+                sends_enabled: false,
+            });
         await request(appWithMemberGuard())
             .post('/api/avatars/me/disconnect')
             .set('Authorization', 'Bearer member')
             .send({})
             .expect(200, { connected: false });
 
-        expect(avatarsService.connectSelf).toHaveBeenCalledWith(COMPANY_A, MEMBER_A);
+        expect(avatarsService.connectSelf).toHaveBeenNthCalledWith(
+            1,
+            COMPANY_A,
+            MEMBER_A,
+            'chatgpt'
+        );
+        expect(avatarsService.connectSelf).toHaveBeenNthCalledWith(
+            2,
+            COMPANY_A,
+            MEMBER_A,
+            'claude'
+        );
         expect(avatarsService.disconnectSelf).toHaveBeenCalledWith(COMPANY_A, MEMBER_A);
 
+        await request(appWithMemberGuard())
+            .post('/api/avatars/me/connect')
+            .set('Authorization', 'Bearer member')
+            .send({ base: 'gemini' })
+            .expect(400, {
+                code: 'AVATAR_BASE_UNSUPPORTED',
+                message: 'Avatar base must be chatgpt or claude.',
+            });
+        await request(appWithMemberGuard())
+            .post('/api/avatars/me/connect')
+            .set('Authorization', 'Bearer member')
+            .send({ base: 'claude', owner_user_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' })
+            .expect(400);
         await request(appWithMemberGuard())
             .post('/api/avatars/me/disconnect')
             .set('Authorization', 'Bearer member')
@@ -177,6 +220,7 @@ describe('AVATARS-001 Phase C member routes', () => {
                 code: 'INVALID_REQUEST',
                 message: 'Request body must be empty.',
             });
+        expect(avatarsService.connectSelf).toHaveBeenCalledTimes(2);
         expect(avatarsService.disconnectSelf).toHaveBeenCalledTimes(1);
     });
 

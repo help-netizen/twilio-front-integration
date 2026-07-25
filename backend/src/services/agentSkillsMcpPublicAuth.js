@@ -99,6 +99,8 @@ function buildContext(binding, { ip, requestId }) {
             installationId: binding.installation_id,
             authorizerId: binding.authorized_by_user_id,
             ownerUserId: binding.owner_user_id,
+            base: binding.base,
+            clientId: binding.oauth_client_id,
         },
     };
 }

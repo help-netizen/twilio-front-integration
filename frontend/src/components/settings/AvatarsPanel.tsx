@@ -15,13 +15,14 @@ import {
     DialogPanelHeader,
     DialogTitle,
 } from '../ui/dialog';
-import { ConnectAvatarWizard } from './ConnectAvatarWizard';
+import { ConnectAvatarWizard, baseLabel, type AvatarBase } from './ConnectAvatarWizard';
 import {
     connectMyAvatar,
     disconnectMyAvatar,
     fetchAvatars,
     setMyAvatarSends,
     setMyAvatarWrites,
+    type AvatarBaseModel,
     type MyAvatar,
     type RosterAvatar,
 } from '../../services/avatarsApi';
@@ -30,7 +31,11 @@ const MCP_SERVER_URL = 'https://api.albusto.com/mcp/chatgpt';
 const OAUTH_AUTH_URL = 'https://auth.albusto.com/realms/crm-prod/protocol/openid-connect/auth';
 const OAUTH_TOKEN_URL = 'https://auth.albusto.com/realms/crm-prod/protocol/openid-connect/token';
 const OAUTH_SERVER_BASE = 'https://auth.albusto.com/realms/crm-prod';
-const OAUTH_CLIENT_ID = 'chatgpt-crm-mcp';
+/** OAuth client per base — same Keycloak realm, one pre-registered client each. */
+const OAUTH_CLIENT_ID: Record<AvatarBaseModel, string> = {
+    chatgpt: 'chatgpt-crm-mcp',
+    claude: 'claude-crm-mcp',
+};
 const scopeFor = (a: MyAvatar | null) =>
     a?.sends_enabled ? 'albusto.mcp.read albusto.mcp.write albusto.mcp.send'
         : a?.writes_enabled ? 'albusto.mcp.read albusto.mcp.write'
@@ -76,7 +81,7 @@ function RosterRow({ a }: { a: RosterAvatar }) {
                 <div className="truncate text-sm font-semibold text-[var(--blanc-ink-1)]">
                     Avatar of {a.owner_name}{a.is_me && <span className="ml-1 text-[var(--blanc-ink-3)]">· you</span>}
                 </div>
-                <div className="text-xs text-[var(--blanc-ink-3)]">ChatGPT</div>
+                <div className="text-xs text-[var(--blanc-ink-3)]">{baseLabel((a.base ?? 'chatgpt') as AvatarBase)}</div>
             </div>
             <span className={`ml-auto text-xs ${a.presence === 'active' ? 'text-[var(--blanc-task)]' : 'text-[var(--blanc-ink-3)]'}`}>
                 {a.presence === 'active' ? '● active' : 'idle'}
@@ -88,6 +93,7 @@ function RosterRow({ a }: { a: RosterAvatar }) {
 export function AvatarsPanel({ open, onOpenChange, myName, companyName }: AvatarsPanelProps) {
     const queryClient = useQueryClient();
     const [view, setView] = useState<'hub' | 'wizard' | 'connect'>('hub');
+    const [connectBase, setConnectBase] = useState<AvatarBaseModel>('chatgpt');
     const [confirmWrites, setConfirmWrites] = useState(false);
     const [confirmSends, setConfirmSends] = useState(false);
 
@@ -117,14 +123,14 @@ export function AvatarsPanel({ open, onOpenChange, myName, companyName }: Avatar
         onSuccess: () => { invalidate(); toast.success('Avatar disconnected'); },
         onError: (e: Error) => toast.error(e.message || 'Failed to disconnect'),
     });
-    // Pre-provision the caller's own binding before the ChatGPT OAuth steps.
+    // Pre-provision the caller's own binding on the chosen base before its OAuth steps.
     const connectMut = useMutation({
-        mutationFn: connectMyAvatar,
+        mutationFn: (base: AvatarBaseModel) => connectMyAvatar(base),
         onSuccess: () => { invalidate(); setView('connect'); },
         onError: (e: Error) => toast.error(e.message || 'Could not start the connection'),
     });
 
-    const title = view === 'wizard' ? 'New avatar' : view === 'connect' ? 'Connect in ChatGPT' : 'Avatars';
+    const title = view === 'wizard' ? 'New avatar' : view === 'connect' ? `Connect in ${baseLabel(connectBase)}` : 'Avatars';
     const eyebrow = view === 'hub' ? 'Marketplace' : 'Connect your avatar';
 
     return (
@@ -160,20 +166,34 @@ export function AvatarsPanel({ open, onOpenChange, myName, companyName }: Avatar
                                 Settings → Integrations → Marketplace.
                             </div>
                         ) : view === 'wizard' ? (
-                            <ConnectAvatarWizard onCancel={() => setView('hub')} onContinue={() => connectMut.mutate()} />
+                            <ConnectAvatarWizard
+                                onCancel={() => setView('hub')}
+                                onContinue={({ base }) => { setConnectBase(base as AvatarBaseModel); connectMut.mutate(base as AvatarBaseModel); }}
+                            />
                         ) : view === 'connect' ? (
                             <div className="space-y-6">
                                 <ol className="space-y-4">
-                                    <li className="text-sm text-[var(--blanc-ink-2)]"><strong className="text-[var(--blanc-ink-1)]">1.</strong> On a computer, open chatgpt.com → enable <strong>Developer mode</strong> (Settings), then add a connector at <strong>chatgpt.com/plugins</strong>.</li>
-                                    <li><CopyRow label="MCP server URL" value={MCP_SERVER_URL} /></li>
-                                    <li className="text-sm text-[var(--blanc-ink-2)]"><strong className="text-[var(--blanc-ink-1)]">2.</strong> Choose <strong>OAuth</strong>, leave <strong>Registration URL empty</strong>. If it asks for OAuth details, use the values below (Client secret empty, token auth <strong>none</strong>).</li>
-                                    <li><CopyRow label="Client ID" value={OAUTH_CLIENT_ID} /></li>
+                                    {connectBase === 'claude' ? (
+                                        <>
+                                            <li className="text-sm text-[var(--blanc-ink-2)]"><strong className="text-[var(--blanc-ink-1)]">1.</strong> On a computer, open <strong>Claude → Settings → Connectors → Add custom connector</strong>.</li>
+                                            <li><CopyRow label="MCP server URL" value={MCP_SERVER_URL} /></li>
+                                            <li className="text-sm text-[var(--blanc-ink-2)]"><strong className="text-[var(--blanc-ink-1)]">2.</strong> Open <strong>Advanced settings</strong> and set the <strong>OAuth Client ID</strong> (leave Client secret empty). Claude finds the rest automatically; if it asks, use the values below.</li>
+                                            <li><CopyRow label="Client ID" value={OAUTH_CLIENT_ID.claude} /></li>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <li className="text-sm text-[var(--blanc-ink-2)]"><strong className="text-[var(--blanc-ink-1)]">1.</strong> On a computer, open chatgpt.com → enable <strong>Developer mode</strong> (Settings), then add a connector at <strong>chatgpt.com/plugins</strong>.</li>
+                                            <li><CopyRow label="MCP server URL" value={MCP_SERVER_URL} /></li>
+                                            <li className="text-sm text-[var(--blanc-ink-2)]"><strong className="text-[var(--blanc-ink-1)]">2.</strong> Choose <strong>OAuth</strong>, leave <strong>Registration URL empty</strong>. If it asks for OAuth details, use the values below (Client secret empty, token auth <strong>none</strong>).</li>
+                                            <li><CopyRow label="Client ID" value={OAUTH_CLIENT_ID.chatgpt} /></li>
+                                        </>
+                                    )}
                                     <li><CopyRow label="Authorization URL" value={OAUTH_AUTH_URL} /></li>
                                     <li><CopyRow label="Token URL" value={OAUTH_TOKEN_URL} /></li>
                                     <li><CopyRow label="Authorization server base" value={OAUTH_SERVER_BASE} /></li>
                                     <li><CopyRow label="Resource" value={MCP_SERVER_URL} /></li>
                                     <li><CopyRow label="Scope" value={scopeFor(me)} /></li>
-                                    <li className="text-sm text-[var(--blanc-ink-2)]"><strong className="text-[var(--blanc-ink-1)]">3.</strong> Sign in with <strong>your own</strong> Albusto account, then mention the connector (e.g. <code className="rounded bg-[var(--blanc-field)] px-1.5 py-0.5 font-mono text-xs">@Albusto MCP</code>) in a chat.</li>
+                                    <li className="text-sm text-[var(--blanc-ink-2)]"><strong className="text-[var(--blanc-ink-1)]">3.</strong> Sign in with <strong>your own</strong> Albusto account, then start using the connector in a chat.</li>
                                 </ol>
                             </div>
                         ) : (
@@ -187,7 +207,7 @@ export function AvatarsPanel({ open, onOpenChange, myName, companyName }: Avatar
                                                     style={{ fontFamily: 'var(--blanc-font-heading)' }} aria-hidden>{initials(myName)}</div>
                                                 <div className="min-w-0">
                                                     <div className="text-base font-semibold text-[var(--blanc-ink-1)]">Avatar of {myName}</div>
-                                                    <div className="text-sm text-[var(--blanc-ink-2)]">Based on ChatGPT · via ChatGPT (MCP)</div>
+                                                    <div className="text-sm text-[var(--blanc-ink-2)]">Based on {baseLabel((me?.base ?? 'chatgpt') as AvatarBase)} · via {baseLabel((me?.base ?? 'chatgpt') as AvatarBase)} (MCP)</div>
                                                 </div>
                                                 <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-[rgba(27,139,99,0.12)] px-2.5 py-1 text-xs font-semibold text-[var(--blanc-task)]">
                                                     <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[var(--blanc-task)]" /> Active
@@ -213,14 +233,14 @@ export function AvatarsPanel({ open, onOpenChange, myName, companyName }: Avatar
 
                                             {(me?.writes_enabled || me?.sends_enabled) && (
                                                 <div className="mt-3 space-y-2">
-                                                    <p className="text-sm text-[var(--blanc-ink-2)]">Update the connector’s <strong>Scope</strong> in ChatGPT and re-connect:</p>
+                                                    <p className="text-sm text-[var(--blanc-ink-2)]">Update the connector’s <strong>Scope</strong> in {baseLabel((me?.base ?? 'chatgpt') as AvatarBase)} and re-connect:</p>
                                                     <CopyRow label="Scope" value={scopeFor(me)} />
                                                 </div>
                                             )}
                                         </div>
                                     ) : (
                                         <div className="rounded-xl bg-[var(--blanc-field)] p-5 text-center">
-                                            <p className="text-sm text-[var(--blanc-ink-2)]">You don’t have an avatar yet — a ChatGPT copy of you that works in Albusto with your access.</p>
+                                            <p className="text-sm text-[var(--blanc-ink-2)]">You don’t have an avatar yet — an AI copy of you (ChatGPT or Claude) that works in Albusto with your access.</p>
                                             <Button className="mt-3.5" onClick={() => setView('wizard')}>Connect your Avatar</Button>
                                         </div>
                                     )}

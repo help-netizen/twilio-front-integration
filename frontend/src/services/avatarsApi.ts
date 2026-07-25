@@ -2,7 +2,7 @@ import { authedFetch } from './apiClient';
 
 const API_BASE = '/api/avatars';
 
-export type AvatarBaseModel = 'chatgpt';
+export type AvatarBaseModel = 'chatgpt' | 'claude';
 export type AvatarMode = 'mcp';
 export type AvatarConnectionStatus = 'connected' | 'disconnected';
 export type AvatarPresence = 'active' | 'idle';
@@ -70,12 +70,13 @@ export async function setMyAvatarSends(enabled: boolean): Promise<MyAvatar> {
 }
 
 /**
- * Pre-provision the caller's own avatar binding before opening the ChatGPT
- * OAuth connect steps. Idempotent; 409 AVATARS_NOT_ENABLED if an admin has not
- * enabled Avatars for the company.
+ * Pre-provision the caller's own avatar binding on the chosen base before
+ * opening that app's OAuth connect steps. One avatar per person: connecting a
+ * different base re-points the same slot. Idempotent; 409 AVATARS_NOT_ENABLED
+ * if an admin has not enabled Avatars for the company.
  */
-export async function connectMyAvatar(): Promise<MyAvatar> {
-    return request<MyAvatar>(`${API_BASE}/me/connect`, { method: 'POST', body: JSON.stringify({}) });
+export async function connectMyAvatar(base: AvatarBaseModel = 'chatgpt'): Promise<MyAvatar> {
+    return request<MyAvatar>(`${API_BASE}/me/connect`, { method: 'POST', body: JSON.stringify({ base }) });
 }
 
 /** Self-revoke the caller's own avatar. */

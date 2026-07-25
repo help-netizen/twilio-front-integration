@@ -98,6 +98,8 @@ function buildContext(req) {
         bindingId: req.chatgptMcpBinding?.id || null,
         authorizerId: req.chatgptMcpBinding?.authorizerId || req.user?.oauthAuthorizerId || null,
         ownerUserId: req.chatgptMcpBinding?.ownerUserId || req.user?.avatarOwnerId || null,
+        connectorBase: req.chatgptMcpBinding?.base || 'chatgpt',
+        connectorClientId: req.chatgptMcpBinding?.clientId || null,
         ownerRoleKey: req.authz?.avatarOwner?.role_key || null,
         ownerScopes: req.authz?.avatarOwner?.scopes || {},
     };
@@ -129,6 +131,8 @@ async function resolveLiveDispatcherContext(context) {
         agentUserId: context.actorId,
         authorizerId: context.authorizerId,
         ownerUserId: context.ownerUserId || context.authorizerId,
+        connectorBase: context.connectorBase,
+        connectorClientId: context.connectorClientId,
     });
 }
 
@@ -327,6 +331,8 @@ async function dispatchDispatcherWrite(tool, context, args, { beforeLiveRecheck 
             agentUserId: context.actorId,
             authorizerId: context.authorizerId,
             ownerUserId: context.ownerUserId || context.authorizerId,
+            connectorBase: context.connectorBase,
+            connectorClientId: context.connectorClientId,
         }, client);
         // Permissions, record scopes, FSM role, and consent are re-derived
         // under the same binding/membership lock. OAuth scopes remain verified

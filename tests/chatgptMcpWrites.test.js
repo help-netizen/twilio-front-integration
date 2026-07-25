@@ -69,6 +69,8 @@ function requestContext(overrides = {}) {
             id: 'binding-a',
             authorizerId: 'human-a',
             ownerUserId: 'human-a',
+            base: 'chatgpt',
+            clientId: 'chatgpt-crm-mcp',
         },
         requestId: 'request-a',
         ...overrides,
@@ -106,6 +108,8 @@ describe('CHATGPT-CRM-MCP S2a write executor', () => {
             agentUserId: 'agent-a',
             authorizerId: 'human-a',
             ownerUserId: 'human-a',
+            connectorBase: 'chatgpt',
+            connectorClientId: 'chatgpt-crm-mcp',
         }, mockClient);
         expect(identityService.requireLiveBinding.mock.invocationCallOrder[0])
             .toBeLessThan(writeService.execute.mock.invocationCallOrder[0]);

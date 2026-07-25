@@ -27,17 +27,33 @@ jest.mock('../backend/src/services/chatgptMcpIdentityService', () => {
     return {
         ChatgptMcpIdentityError,
         configuredIssuer: () => process.env.KEYCLOAK_REALM_URL,
-        configuredClientId: () => process.env.CHATGPT_MCP_CLIENT_ID,
-        resolveOAuthContext: jest.fn(async () => ({
+        configuredClientId: (base = 'chatgpt') => (
+            base === 'claude'
+                ? process.env.CLAUDE_MCP_CLIENT_ID
+                : process.env.CHATGPT_MCP_CLIENT_ID
+        ),
+        configuredClientBase: (clientId) => ({
+            [process.env.CHATGPT_MCP_CLIENT_ID]: 'chatgpt',
+            [process.env.CLAUDE_MCP_CLIENT_ID]: 'claude',
+        })[clientId] || null,
+        resolveOAuthContext: jest.fn(async ({ clientId }) => ({
             binding_id: 'binding-honest-jwt',
             company_id: 'company-a',
             installation_id: 1,
             authorized_by_user_id: 'human-a',
+            owner_user_id: 'human-a',
             ai_user_id: 'agent-a',
             company_name: 'Company A',
             company_timezone: 'America/New_York',
             ai_email: 'agent-a@albusto.invalid',
             ai_full_name: 'ChatGPT AI Dispatcher',
+            owner_display_name: 'Human A',
+            owner_role_key: 'tenant_admin',
+            owner_membership: { role_key: 'tenant_admin' },
+            owner_permissions: [],
+            owner_scopes: { job_visibility: 'all' },
+            base: clientId === process.env.CLAUDE_MCP_CLIENT_ID ? 'claude' : 'chatgpt',
+            oauth_client_id: clientId,
             permissions: [],
         })),
     };
@@ -83,6 +99,7 @@ function app() {
     server.get('/probe', authenticateChatgptMcp, (req, res) => res.json({
         company_id: req.companyFilter.company_id,
         binding_id: req.chatgptMcpBinding.id,
+        base: req.chatgptMcpBinding.base,
         scopes: req.authz.oauthScopes,
     }));
     return server;
@@ -109,12 +126,14 @@ beforeEach(() => {
     jest.clearAllMocks();
     process.env.KEYCLOAK_REALM_URL = ISSUER;
     process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+    process.env.CLAUDE_MCP_CLIENT_ID = 'claude-crm-mcp';
     process.env.CHATGPT_MCP_RESOURCE = RESOURCE;
 });
 
 afterAll(() => {
     delete process.env.KEYCLOAK_REALM_URL;
     delete process.env.CHATGPT_MCP_CLIENT_ID;
+    delete process.env.CLAUDE_MCP_CLIENT_ID;
     delete process.env.CHATGPT_MCP_RESOURCE;
 });
 
@@ -125,6 +144,7 @@ describe('ChatGPT MCP honest RS256 authorization chain', () => {
         expect(res.body).toEqual({
             company_id: 'company-a',
             binding_id: 'binding-honest-jwt',
+            base: 'chatgpt',
             scopes: ['openid', 'albusto.mcp.read'],
         });
         expect(mockGetSigningKey).toHaveBeenCalledWith(
@@ -135,6 +155,22 @@ describe('ChatGPT MCP honest RS256 authorization chain', () => {
             issuer: ISSUER,
             subject: 'human-sub-a',
             clientId: 'chatgpt-crm-mcp',
+        });
+    });
+
+    test('a valid Claude token uses the same signed claim chain and shared resource', async () => {
+        const res = await probe(signedToken({ azp: 'claude-crm-mcp' }));
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+            company_id: 'company-a',
+            binding_id: 'binding-honest-jwt',
+            base: 'claude',
+            scopes: ['openid', 'albusto.mcp.read'],
+        });
+        expect(identityService.resolveOAuthContext).toHaveBeenCalledWith({
+            issuer: ISSUER,
+            subject: 'human-sub-a',
+            clientId: 'claude-crm-mcp',
         });
     });
 

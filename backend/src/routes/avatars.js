@@ -57,6 +57,30 @@ function enabledValue(req, res) {
     return body.enabled;
 }
 
+function connectBase(req, res) {
+    const body = req.body;
+    if (body === undefined || body === null) return 'chatgpt';
+    if (typeof body !== 'object' || Array.isArray(body)) {
+        res.status(400).json({
+            code: 'INVALID_REQUEST',
+            message: 'Request body must be { base: "chatgpt" | "claude" }.',
+        });
+        return null;
+    }
+    const keys = Object.keys(body);
+    if (keys.length === 0) return 'chatgpt';
+    if (keys.length !== 1
+        || keys[0] !== 'base'
+        || !['chatgpt', 'claude'].includes(body.base)) {
+        res.status(400).json({
+            code: 'AVATAR_BASE_UNSUPPORTED',
+            message: 'Avatar base must be chatgpt or claude.',
+        });
+        return null;
+    }
+    return body.base;
+}
+
 // tenant-safety-allow R-route-permission: active company membership intentionally grants the allowlisted roster read
 router.get('/', async (req, res) => {
     try {
@@ -68,9 +92,10 @@ router.get('/', async (req, res) => {
 
 // tenant-safety-allow R-route-permission: member self-provision targets only the authenticated actor and cannot enable the company app
 router.post('/me/connect', async (req, res) => {
-    if (!requireEmptyBody(req, res)) return;
+    const base = connectBase(req, res);
+    if (base === null) return;
     try {
-        res.json(await avatarsService.connectSelf(companyId(req), actorId(req)));
+        res.json(await avatarsService.connectSelf(companyId(req), actorId(req), base));
     } catch (err) {
         handleError(err, res);
     }

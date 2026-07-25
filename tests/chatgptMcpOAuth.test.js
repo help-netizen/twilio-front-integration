@@ -15,16 +15,34 @@ jest.mock('../backend/src/services/chatgptMcpIdentityService', () => {
     return {
         ChatgptMcpIdentityError,
         configuredIssuer: () => process.env.KEYCLOAK_REALM_URL,
-        configuredClientId: () => {
-            const value = String(process.env.CHATGPT_MCP_CLIENT_ID || '').trim();
+        configuredClientId: (base = 'chatgpt') => {
+            const envName = base === 'claude'
+                ? 'CLAUDE_MCP_CLIENT_ID'
+                : 'CHATGPT_MCP_CLIENT_ID';
+            const value = String(process.env[envName] || '').trim();
             if (!value) {
+                throw new ChatgptMcpIdentityError(
+                    'MCP_CONTEXT_NOT_CONFIGURED',
+                    `${envName} is required`,
+                    503
+                );
+            }
+            return value;
+        },
+        configuredClientBase: (clientId) => {
+            const chatgpt = String(process.env.CHATGPT_MCP_CLIENT_ID || '').trim();
+            if (!chatgpt) {
                 throw new ChatgptMcpIdentityError(
                     'MCP_CONTEXT_NOT_CONFIGURED',
                     'CHATGPT_MCP_CLIENT_ID is required',
                     503
                 );
             }
-            return value;
+            const matches = [
+                [chatgpt, 'chatgpt'],
+                [String(process.env.CLAUDE_MCP_CLIENT_ID || '').trim(), 'claude'],
+            ].filter(([configuredId]) => configuredId && configuredId === clientId);
+            return matches.length === 1 ? matches[0][1] : null;
         },
         resolveOAuthContext: jest.fn(),
         resolveLiveBinding: jest.fn(),
@@ -64,6 +82,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     process.env.KEYCLOAK_REALM_URL = ISSUER;
     process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+    process.env.CLAUDE_MCP_CLIENT_ID = 'claude-crm-mcp';
     process.env.CHATGPT_MCP_RESOURCE = RESOURCE;
     jwt.verify.mockImplementation((_token, _getKey, _options, callback) => callback(null, claims()));
     const binding = {
@@ -84,6 +103,8 @@ beforeEach(() => {
         owner_scopes: { job_visibility: 'assigned_only' },
         writes_enabled: false,
         sends_enabled: false,
+        base: 'chatgpt',
+        oauth_client_id: 'chatgpt-crm-mcp',
         permissions: ['jobs.view', 'mcp.tool.svc.get_job'],
     };
     identityService.resolveOAuthContext.mockResolvedValue(binding);
@@ -93,6 +114,7 @@ beforeEach(() => {
 afterAll(() => {
     delete process.env.KEYCLOAK_REALM_URL;
     delete process.env.CHATGPT_MCP_CLIENT_ID;
+    delete process.env.CLAUDE_MCP_CLIENT_ID;
     delete process.env.CHATGPT_MCP_RESOURCE;
 });
 
@@ -144,7 +166,71 @@ describe('CHATGPT-CRM-MCP OAuth protected resource', () => {
             agentUserId: 'agent-a',
             authorizerId: 'human-a',
             ownerUserId: 'human-a',
+            connectorBase: 'chatgpt',
+            connectorClientId: 'chatgpt-crm-mcp',
         });
+    });
+
+    test('Claude client uses the same resource and live provider inheritance path', async () => {
+        jwt.verify.mockImplementation((_token, _getKey, _options, callback) => callback(null, claims({
+            azp: 'claude-crm-mcp',
+        })));
+        identityService.resolveOAuthContext.mockResolvedValueOnce({
+            binding_id: 'binding-a',
+            company_id: 'company-a',
+            installation_id: 101,
+            authorized_by_user_id: 'human-a',
+            owner_user_id: 'human-a',
+            ai_user_id: 'agent-a',
+            company_name: 'Company A',
+            company_timezone: 'America/New_York',
+            ai_email: 'agent-a@albusto.invalid',
+            ai_full_name: 'Avatar of Human A',
+            owner_display_name: 'Human A',
+            owner_role_key: 'provider',
+            owner_membership: { id: 'membership-a', role_key: 'provider' },
+            owner_permissions: ['jobs.view'],
+            owner_scopes: { job_visibility: 'assigned_only' },
+            writes_enabled: false,
+            sends_enabled: false,
+            base: 'claude',
+            oauth_client_id: 'claude-crm-mcp',
+            permissions: ['jobs.view', 'mcp.tool.svc.get_job'],
+        });
+        identityService.resolveLiveBinding.mockResolvedValueOnce({
+            owner_user_id: 'human-a',
+            owner_role_key: 'provider',
+            owner_permissions: ['jobs.view'],
+            owner_scopes: { job_visibility: 'assigned_only' },
+            writes_enabled: false,
+            sends_enabled: false,
+            base: 'claude',
+            oauth_client_id: 'claude-crm-mcp',
+        });
+
+        const res = await request(app())
+            .post('/mcp/chatgpt')
+            .set('Authorization', 'Bearer claude-valid')
+            .send({ jsonrpc: '2.0', id: 22, method: 'tools/list', params: {} });
+
+        expect(res.status).toBe(200);
+        expect(res.body.result.tools.map((tool) => tool.name)).toEqual([
+            'svc.list_jobs',
+            'svc.get_job',
+            'svc.get_job_transitions',
+        ]);
+        expect(identityService.resolveOAuthContext).toHaveBeenCalledWith({
+            issuer: ISSUER,
+            subject: 'human-sub-a',
+            clientId: 'claude-crm-mcp',
+        });
+        expect(identityService.resolveLiveBinding).toHaveBeenCalledWith(
+            expect.objectContaining({
+                connectorBase: 'claude',
+                connectorClientId: 'claude-crm-mcp',
+                ownerUserId: 'human-a',
+            })
+        );
     });
 
     test.each([
@@ -175,6 +261,20 @@ describe('CHATGPT-CRM-MCP OAuth protected resource', () => {
         expect(identityService.resolveOAuthContext).not.toHaveBeenCalled();
 
         process.env.CHATGPT_MCP_CLIENT_ID = 'chatgpt-crm-mcp';
+        delete process.env.CLAUDE_MCP_CLIENT_ID;
+        jwt.verify.mockImplementation((_token, _getKey, _options, callback) => callback(null, claims({
+            azp: 'claude-crm-mcp',
+        })));
+        res = await request(app())
+            .post('/mcp/chatgpt')
+            .set('Authorization', 'Bearer claude-without-config')
+            .send({ jsonrpc: '2.0', id: 311, method: 'tools/list' });
+        expect(res.status).toBe(401);
+        expect(res.body.error.data.code).toBe('MCP_TOKEN_CLIENT');
+        expect(identityService.resolveOAuthContext).not.toHaveBeenCalled();
+
+        process.env.CLAUDE_MCP_CLIENT_ID = 'claude-crm-mcp';
+        jwt.verify.mockImplementation((_token, _getKey, _options, callback) => callback(null, claims()));
         delete process.env.CHATGPT_MCP_RESOURCE;
         res = await request(app())
             .post('/mcp/chatgpt')

@@ -4,13 +4,16 @@ import { Button } from '../ui/button';
 
 /**
  * AVATARS-001 — the "Connect your avatar" wizard: pick the base model, then how
- * it works. v1 exposes only ChatGPT + the MCP (ChatGPT-interface) mode; the
- * other bases and the autonomous mode are visible-but-disabled "Soon" so the
- * shape of the product is clear. Continue advances to the ChatGPT connect steps.
+ * it works. v1 exposes ChatGPT + Claude on the MCP (chat-app) mode; Gemini and
+ * the autonomous mode are visible-but-disabled "Soon" so the shape of the
+ * product is clear. Continue advances to that base's connect steps.
  */
 
 export type AvatarBase = 'chatgpt' | 'claude' | 'gemini';
 export type AvatarMode = 'mcp' | 'autonomous';
+
+export const baseLabel = (base: AvatarBase): string =>
+    base === 'claude' ? 'Claude' : base === 'gemini' ? 'Gemini' : 'ChatGPT';
 
 interface ConnectAvatarWizardProps {
     onCancel: () => void;
@@ -28,14 +31,19 @@ interface Choice {
 
 const BASES: Choice[] = [
     { id: 'chatgpt', title: 'ChatGPT', desc: 'OpenAI — available now.', icon: 'GPT', iconClass: 'bg-[#10a37f] text-white' },
-    { id: 'claude', title: 'Claude', desc: 'Anthropic.', icon: 'Cl', soon: true },
+    { id: 'claude', title: 'Claude', desc: 'Anthropic — available now.', icon: 'Cl', iconClass: 'bg-[#d97757] text-white' },
     { id: 'gemini', title: 'Gemini', desc: 'Google.', icon: 'G', soon: true },
 ];
 
-const MODES: Choice[] = [
-    { id: 'mcp', title: 'Through ChatGPT (MCP)', desc: 'You chat in ChatGPT; it reads and acts in Albusto on your behalf, asking you to confirm changes.', icon: '↔', iconClass: 'bg-[#10a37f] text-white' },
-    { id: 'autonomous', title: 'Autonomous', desc: 'Runs on its own from an instruction you write — no chat needed.', icon: '⚙', soon: true },
-];
+/** The MCP mode is worded for whichever base is selected; autonomous stays "Soon". */
+const modesFor = (base: AvatarBase): Choice[] => {
+    const name = baseLabel(base);
+    const accent = base === 'claude' ? 'bg-[#d97757] text-white' : 'bg-[#10a37f] text-white';
+    return [
+        { id: 'mcp', title: `Through ${name} (MCP)`, desc: `You chat in ${name}; it reads and acts in Albusto on your behalf, asking you to confirm changes.`, icon: '↔', iconClass: accent },
+        { id: 'autonomous', title: 'Autonomous', desc: 'Runs on its own from an instruction you write — no chat needed.', icon: '⚙', soon: true },
+    ];
+};
 
 function OptionCard({
     choice,
@@ -122,7 +130,7 @@ export function ConnectAvatarWizard({ onCancel, onContinue }: ConnectAvatarWizar
                 <section className="space-y-2.5">
                     <div className="blanc-eyebrow">Step 2 · How it works</div>
                     <div className="space-y-2.5">
-                        {MODES.map(m => (
+                        {modesFor(base).map(m => (
                             <OptionCard
                                 key={m.id}
                                 choice={m}
@@ -144,7 +152,7 @@ export function ConnectAvatarWizard({ onCancel, onContinue }: ConnectAvatarWizar
                 <Button variant="ghost" onClick={onCancel}>Cancel</Button>
                 <span className="flex-1" />
                 <Button onClick={() => onContinue({ base, mode })}>
-                    Continue → connect in ChatGPT
+                    Continue → connect in {baseLabel(base)}
                 </Button>
             </div>
         </div>
