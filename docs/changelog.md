@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-07-25 — AVATARS-001: durable "Avatars" marketplace name (migration 202)
+
+Migration 202 re-asserts `marketplace_apps.name='Avatars'` and refreshes the
+assistant metadata to the multi-base (ChatGPT + Claude) copy for
+`app_key='chatgpt-crm-mcp'`. Root cause of the prod revert observed 2026-07-25:
+migrations here are **re-run idempotently every deploy** (`schema_migrations` is
+legacy, max version 18 — the 083+ chain is untracked), so the original seed 196
+(`INSERT … ON CONFLICT DO UPDATE SET name=EXCLUDED.name`) re-clobbers the app
+back to "ChatGPT CRM Connector" on any deploy whose migration set stops before
+200. As the highest-numbered migration touching the row, 202 makes a full replay
+end on "Avatars"; a master deploy self-heals it. Does **not** protect against a
+deploy from a branch that lacks 200/202 — deploy only from master (or rebase
+first). Validated against a temp table: name→Avatars, other metadata keys
+preserved, idempotent. **НЕ задеплоено.**
+
 ## 2026-07-24 — AVATARS-001 multi-base backend: Claude
 
 Avatars backend now accepts env-mapped ChatGPT and Claude OAuth clients on the
