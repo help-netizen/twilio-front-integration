@@ -22,6 +22,7 @@ import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 import { ItemPresetSearchCombobox } from '../estimates/ItemPresetSearchCombobox';
+import { OrderListSection, makeOrderRow, serializeOrderList, type OrderRow } from '../estimates/OrderListSection';
 import {
     createEstimateItemPreset,
     recordEstimateItemPresetUsage,
@@ -104,6 +105,7 @@ export function InvoiceEditorDialog({
     const [saving, setSaving] = useState(false);
     const [aiReport, setAiReport] = useState('');
     const [aiGenerating, setAiGenerating] = useState(false);
+    const [orderList, setOrderList] = useState<OrderRow[]>([]);
 
     // Item dialog (for "Create new" path from combobox)
     const [itemDialogOpen, setItemDialogOpen] = useState(false);
@@ -129,6 +131,8 @@ export function InvoiceEditorDialog({
             unit_price: String(item.unit_price ?? '0'),
             taxable: !!item.taxable,
         })));
+        setOrderList((invoice?.order_list || []).map(p => makeOrderRow(p.part_number, p.part_name, String(p.quantity))));
+        setAiReport('');
     }, [open, invoice]);
 
     // ── Totals ───────────────────────────────────────────────────────────────
@@ -165,6 +169,12 @@ export function InvoiceEditorDialog({
                         unit_price: String(li.unit_price ?? 0),
                         taxable: true,
                     })),
+                ]);
+            }
+            if (draft.order_list?.length) {
+                setOrderList(prev => [
+                    ...prev,
+                    ...draft.order_list!.map(p => makeOrderRow(p.part_number, p.part_name, String(p.quantity))),
                 ]);
             }
             const created = draft.line_items.filter(li => li.created).length;
@@ -258,6 +268,7 @@ export function InvoiceEditorDialog({
                     unit_price: item.unit_price || '0',
                     taxable: item.taxable,
                 } as any)),
+                order_list: serializeOrderList(orderList),
             };
             await onSave(data);
         } finally {
@@ -470,6 +481,8 @@ export function InvoiceEditorDialog({
                                     <span className="font-mono">{money(total)}</span>
                                 </div>
                             </section>
+
+                            <OrderListSection value={orderList} onChange={setOrderList} disabled={saving} />
 
                             {/* Document settings */}
                             <section className="space-y-3">

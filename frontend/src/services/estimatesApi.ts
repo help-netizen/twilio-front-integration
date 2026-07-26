@@ -41,6 +41,7 @@ export interface Estimate {
     summary: string | null;
     notes: string | null;
     internal_note: string | null;
+    order_list?: OrderListApiPart[] | null;
     subtotal: string;
     tax_rate: string;
     tax_amount: string;
@@ -135,6 +136,7 @@ export interface EstimateCreateData {
     signature_required?: boolean;
     valid_until?: string | null;
     items?: Omit<EstimateItem, 'id' | 'estimate_id'>[];
+    order_list?: OrderListApiPart[];
 }
 
 export interface EstimateSendData {
@@ -183,9 +185,16 @@ export interface AiDraftLineItem {
     category_path?: string[];
 }
 
+export interface OrderListApiPart {
+    part_number: string;
+    part_name: string;
+    quantity: number;
+}
+
 export interface AiDraftResult {
     summary: string;
     line_items: AiDraftLineItem[];
+    order_list?: OrderListApiPart[];
 }
 
 /**

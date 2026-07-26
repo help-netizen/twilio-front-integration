@@ -4,6 +4,7 @@
  */
 
 import { authedFetch } from './apiClient';
+import type { OrderListApiPart } from './estimatesApi';
 
 const INVOICES_BASE = '/api/invoices';
 
@@ -35,6 +36,7 @@ export interface Invoice {
     title: string | null;
     notes: string | null;
     internal_note: string | null;
+    order_list?: OrderListApiPart[] | null;
     subtotal: string;
     tax_rate: string;
     tax_amount: string;
@@ -111,6 +113,7 @@ export interface InvoiceCreateData {
     payment_terms?: string | null;
     due_date?: string | null;
     items?: Omit<InvoiceItem, 'id' | 'invoice_id'>[];
+    order_list?: OrderListApiPart[];
 }
 
 export interface InvoiceSendData {

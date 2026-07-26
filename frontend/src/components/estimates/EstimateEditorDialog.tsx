@@ -20,6 +20,7 @@ import { AutoGrowTextarea } from '../ui/AutoGrowTextarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 import { EstimatePreviewDialog } from './EstimatePreviewDialog';
 import { ItemPresetSearchCombobox } from './ItemPresetSearchCombobox';
+import { OrderListSection, makeOrderRow, serializeOrderList, type OrderRow } from './OrderListSection';
 import {
     createEstimateItemPreset,
     recordEstimateItemPresetUsage,
@@ -80,6 +81,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
     const [saving, setSaving] = useState(false);
     const [aiReport, setAiReport] = useState('');
     const [aiGenerating, setAiGenerating] = useState(false);
+    const [orderList, setOrderList] = useState<OrderRow[]>([]);
 
     useEffect(() => {
         if (!open) return;
@@ -97,6 +99,8 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
             unit_price: item.unit_price || '0',
             taxable: !!item.taxable,
         })));
+        setOrderList((estimate?.order_list || []).map(p => makeOrderRow(p.part_number, p.part_name, String(p.quantity))));
+        setAiReport('');
     }, [open, estimate]);
 
     const subtotal = useMemo(() => items.reduce((sum, item) => sum + amount(item), 0), [items]);
@@ -188,6 +192,12 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                         unit_price: String(li.unit_price ?? 0),
                         taxable: true,
                     })),
+                ]);
+            }
+            if (draft.order_list?.length) {
+                setOrderList(prev => [
+                    ...prev,
+                    ...draft.order_list!.map(p => makeOrderRow(p.part_number, p.part_name, String(p.quantity))),
                 ]);
             }
             const created = draft.line_items.filter(li => li.created).length;
@@ -282,6 +292,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                     taxable: item.taxable,
                     metadata: {},
                 })),
+                order_list: serializeOrderList(orderList),
             };
             await onSave(data);
         } finally {
@@ -542,6 +553,8 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                         <span className="font-mono">{money(total)}</span>
                                     </div>
                                 </section>
+
+                                <OrderListSection value={orderList} onChange={setOrderList} disabled={saving} />
 
                                 {/* OB-26: document settings — flat rows in the flow, no card. */}
                                 <div className="space-y-3">
