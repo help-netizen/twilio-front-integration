@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { CompaniesManager } from '../components/super-admin/CompaniesManager';
 import { PlatformUsersTab } from '../components/super-admin/PlatformUsersTab';
 import { PlatformStatsTab } from '../components/super-admin/PlatformStatsTab';
+import { AppReviewsModeration } from '../components/super-admin/AppReviewsModeration';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 const KC_URL = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8080';
@@ -60,6 +61,7 @@ export default function SuperAdminPage() {
                     <TabsTrigger value="statistics">Statistics</TabsTrigger>
                     <TabsTrigger value="sessions">Sessions</TabsTrigger>
                     <TabsTrigger value="policy">Auth policy</TabsTrigger>
+                    <TabsTrigger value="app-reviews">App reviews</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="users" className="space-y-6 pt-4">
@@ -125,6 +127,10 @@ export default function SuperAdminPage() {
                         <div className="blanc-eyebrow">Realm policy</div>
                         {loading ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}</div> : policy ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><PolicyCard icon={Clock} label="Access Token" value={fmt(policy.session.accessTokenLifespan)} /><PolicyCard icon={Clock} label="Session Idle" value={fmt(policy.session.ssoSessionIdleTimeout)} /><PolicyCard icon={Clock} label="Session Max" value={fmt(policy.session.ssoSessionMaxLifespan)} /><PolicyCard icon={Lock} label="Password" value={policy.password.raw || 'Default'} />{policy.mfa.otpPolicyType && <PolicyCard icon={Fingerprint} label="MFA" value={policy.mfa.otpPolicyType} />}<PolicyCard icon={Shield} label="Brute Force" value={policy.bruteForce.enabled ? `On (${policy.bruteForce.failureFactor} attempts)` : 'Off'} variant={policy.bruteForce.enabled ? 'default' : 'destructive'} /></div> : <p className="text-sm text-muted-foreground">Failed to load policy.</p>}
                     </section>
+                </TabsContent>
+
+                <TabsContent value="app-reviews" className="space-y-6 pt-4">
+                    <AppReviewsModeration />
                 </TabsContent>
             </Tabs>
 
