@@ -116,11 +116,8 @@ export function SignupPage() {
         <div className="albusto-auth-shell">
             <div className="auth__form-col">
                 <div className="brand">
-                    <div className="brand__mark">A</div>
-                    <div>
-                        <div className="brand__name">Albusto</div>
-                        <div className="brand__sub">Contact center</div>
-                    </div>
+                    <img className="brand__logo" src="/albusto-wordmark.svg" alt="albusto" />
+                    <div className="brand__sub">Contact center</div>
                 </div>
 
                 <div className="form-wrap">

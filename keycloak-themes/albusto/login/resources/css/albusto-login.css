@@ -36,15 +36,11 @@ body{
   display:flex; flex-direction:column;
   padding:clamp(28px,4vw,56px) clamp(28px,4.5vw,72px);
 }
-.brand{display:flex; align-items:center; gap:11px; text-decoration:none; color:inherit}
-.brand__mark{
-  width:34px; height:34px; border-radius:10px;
-  background:linear-gradient(150deg,var(--blanc-job),#264fb0);
-  display:grid; place-items:center; color:#fff; font-family:var(--blanc-font-heading);
-  font-weight:800; font-size:18px; box-shadow:0 6px 16px rgba(47,99,216,.32);
-}
-.brand__name{font-family:var(--blanc-font-heading); font-weight:800; font-size:21px; letter-spacing:-.02em}
-.brand__sub{color:var(--blanc-ink-3); font-size:12.5px; margin-top:1px; letter-spacing:.01em}
+/* Wordmark-only lockup — icon and wordmark are separate expressions, never
+   combined in one signature (Albusto brand rule). */
+.brand{display:flex; flex-direction:column; align-items:flex-start; gap:6px; text-decoration:none; color:inherit}
+.brand__logo{height:34px; width:auto; display:block}
+.brand__sub{color:var(--blanc-ink-3); font-size:12.5px; letter-spacing:.01em}
 
 .form-wrap{margin:auto 0; width:100%; max-width:392px; padding:38px 0}
 .form-wrap h1{
@@ -204,7 +200,7 @@ a.btn:hover{text-decoration:none}
     min-height:100vh; min-height:100dvh;
     padding:clamp(24px,7vw,40px);
   }
-  .brand{justify-content:center; margin-bottom:30px}
+  .brand{align-items:center; margin-bottom:30px}
   .form-wrap{max-width:420px; margin:0; padding:0}
   .form-wrap h1{font-size:30px}
 }

@@ -18,15 +18,11 @@
   display:flex; flex-direction:column;
   padding:clamp(28px,4vw,56px) clamp(28px,4.5vw,72px);
 }
-.albusto-auth-shell .brand{display:flex; align-items:center; gap:11px; text-decoration:none; color:inherit}
-.albusto-auth-shell .brand__mark{
-  width:34px; height:34px; border-radius:10px;
-  background:linear-gradient(150deg,var(--blanc-job,#2f63d8),#264fb0);
-  display:grid; place-items:center; color:#fff; font-family:var(--blanc-font-heading,Manrope,sans-serif);
-  font-weight:800; font-size:18px; box-shadow:0 6px 16px rgba(47,99,216,.32);
-}
-.albusto-auth-shell .brand__name{font-family:var(--blanc-font-heading,Manrope,sans-serif); font-weight:800; font-size:21px; letter-spacing:-.02em}
-.albusto-auth-shell .brand__sub{color:var(--blanc-ink-3,#7d8796); font-size:12.5px; margin-top:1px}
+/* Wordmark-only lockup — the icon and the wordmark are separate brand
+   expressions; never combine them in one signature (Albusto brand rule). */
+.albusto-auth-shell .brand{display:flex; flex-direction:column; align-items:flex-start; gap:6px; text-decoration:none; color:inherit}
+.albusto-auth-shell .brand__logo{height:34px; width:auto; display:block}
+.albusto-auth-shell .brand__sub{color:var(--blanc-ink-3,#7d8796); font-size:12.5px}
 
 .albusto-auth-shell .form-wrap{margin:auto 0; width:100%; max-width:404px; padding:34px 0}
 .albusto-auth-shell .form-wrap h1{
@@ -129,7 +125,7 @@
     box-shadow:none; align-items:center; justify-content:center;
     min-height:100vh; min-height:100dvh; padding:clamp(24px,7vw,40px);
   }
-  .albusto-auth-shell .brand{justify-content:center; margin-bottom:26px}
+  .albusto-auth-shell .brand{align-items:center; margin-bottom:26px}
   .albusto-auth-shell .form-wrap{max-width:420px; margin:0; padding:0}
   .albusto-auth-shell .form-wrap h1{font-size:29px}
 }
