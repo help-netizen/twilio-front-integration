@@ -18,7 +18,7 @@ import {
     type ManualCardSession,
     type ManualCardSessionResult,
 } from '../../services/stripePaymentsApi';
-import { loadStripe } from '../../utils/loadStripe';
+import { loadStripe, teardownStripe } from '../../utils/loadStripe';
 import { formatSignedCurrency } from '../jobs/jobFinanceMath';
 
 // Stripe.js does not expose a challenge-start callback. `submitting` is therefore
@@ -447,6 +447,14 @@ export default function ManualCardDialog({
             reconcileRunningRef.current = false;
         };
     }, [open, invoiceId, jobId, amount, cancelWaits]);
+
+    // When the manual-card dialog closes, strip Stripe.js's document footprint so iOS
+    // Safari stops flagging the tab as payment-collecting (otherwise the saved-card
+    // AutoFill bar sticks on every input for the rest of the session). Runs only on
+    // close — never mid-session — so it can't tear down an active card field.
+    useEffect(() => {
+        if (!open) teardownStripe();
+    }, [open]);
 
     // Contact hydration can finish after the panel opens. Adopt that prefill only
     // until the technician edits the field; never recreate the PaymentIntent for it.
