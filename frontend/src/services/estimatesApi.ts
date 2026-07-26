@@ -171,6 +171,41 @@ async function estimatesRequest<T>(url: string, options?: RequestInit): Promise<
     return json.data;
 }
 
+// ── AI draft (AI-ESTIMATE-001) ───────────────────────────────────────────────
+
+export interface AiDraftLineItem {
+    title: string;
+    qty: number;
+    unit_price: number;
+    price_source: 'report' | 'price_book';
+    price_book_item_id: number | null;
+    created: boolean;
+    category_path?: string[];
+}
+
+export interface AiDraftResult {
+    summary: string;
+    line_items: AiDraftLineItem[];
+}
+
+/**
+ * POST /api/estimates/ai-draft — turn a pasted report into an UNSAVED editor draft.
+ * The endpoint returns the bare `{ summary, line_items }` on success and
+ * `{ ok:false, error }` on failure, so it can't use the `{ok,data}` helper.
+ */
+export async function aiDraftEstimate(reportText: string, jobId?: number): Promise<AiDraftResult> {
+    const res = await authedFetch(`${ESTIMATES_BASE}/ai-draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ report_text: reportText, job_id: jobId }),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error?.message || `AI draft failed (${res.status})`);
+    }
+    return json as AiDraftResult;
+}
+
 /**
  * Error carrying the server-supplied `code`/`status` so the send dialog can branch
  * (409 MAILBOX_NOT_CONNECTED, 402 WALLET_BLOCKED, 422 NO_PROXY|NO_PHONE, 400 VALIDATION).
