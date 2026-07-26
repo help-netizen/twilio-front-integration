@@ -16,11 +16,10 @@
  *
  * P0 GUARANTEES:
  *   - Verification: L2 already enforced by the choke-point (registry requiredLevel).
- *   - Company + contact isolation: `cancelJob(jobId)` takes ONLY `jobId` (no company
- *     arg — the P0 trap), so we FIRST `getJobById(jobId, companyId)` and confirm the
- *     job belongs to `companyId` AND to `verifiedContext.contactId` BEFORE calling
- *     `cancelJob`. A cross-company / cross-contact job → safe refusal, no cancel
- *     (ASK-ISO-02 / ASK-ISO-03).
+ *   - Company + contact isolation: both the ownership pre-check and
+ *     `cancelJob(jobId, companyId)` are tenant-scoped. The contact check also
+ *     confirms the job belongs to `verifiedContext.contactId`. A cross-company /
+ *     cross-contact job → safe refusal, no cancel (ASK-ISO-02 / ASK-ISO-03).
  *   - Audit note "AI Phone" INCLUDING the reason on EVERY successful cancel (AR-5 /
  *     ASK-WRITE-13) + a `job_canceled` domain event with { reason, retentionAttempted }.
  *   - Cancel is free before the visit; the skill captures the reason and states no
@@ -77,6 +76,7 @@ function retentionGate(src) {
 async function run(companyId, verifiedContext, input) {
     const jobsService = require('../../jobsService');
     const eventService = require('../../eventService');
+    const { aiActor } = require('../../jobActivityService');
 
     const src = input && typeof input === 'object' ? input : {};
     const jobId = src.jobId;
@@ -105,7 +105,7 @@ async function run(companyId, verifiedContext, input) {
         );
     }
 
-    // --- Ownership pre-check (P0 isolation) BEFORE cancelJob (which takes only jobId).
+    // --- Ownership pre-check (P0 isolation) before the independently scoped write.
     let job;
     try {
         job = await jobsService.getJobById(jobId, companyId);
@@ -125,7 +125,7 @@ async function run(companyId, verifiedContext, input) {
     //     ZB failure it can't reconcile throws → the choke-point returns SAFE_FALLBACK
     //     (E5). We only write the reason note + event AFTER a successful cancel, so a
     //     cancel that didn't happen is never falsely audited.
-    await jobsService.cancelJob(jobId);
+    await jobsService.cancelJob(jobId, companyId, aiActor('AI Phone'));
 
     // AR-5: reason note ("AI Phone") — MUST include the captured reason every time.
     const noteText = `Appointment canceled via AI Phone. Reason: ${gate.reason}. Retention attempt made. No cancellation fee (free before the visit).`;

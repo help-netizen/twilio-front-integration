@@ -20,8 +20,11 @@ const emailService = require('../services/emailService');
 const rateMeService = require('../services/rateMeService');
 const companyQueries = require('../db/companyQueries');
 const rateMeQueries = require('../db/rateMeQueries');
+const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
 const { resolveCompanyProxyE164 } = require('../services/messagingHelper');
+const { logJobActivity, userActor } = require('../services/jobActivityService');
+const { withTransaction } = require('../services/transactionService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -77,6 +80,10 @@ function normalizeCancelReason(input) {
         return { error: `cancel reason must be ${CANCEL_REASON_MAX_LENGTH} characters or less` };
     }
     return { reason };
+}
+
+function jobUserActor(req) {
+    return userActor(req.user?.crmUser?.id || null);
 }
 
 // ─── Sync Jobs from Zenbooker ────────────────────────────────────────────────
@@ -144,7 +151,11 @@ router.post('/', requirePermission('jobs.create'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         if (!companyId) return res.status(403).json({ ok: false, error: 'Tenant context required' });
-        const result = await jobsService.createDirectJob(companyId, req.body || {});
+        const result = await jobsService.createDirectJob(
+            companyId,
+            req.body || {},
+            jobUserActor(req)
+        );
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Create error:', err.message);
@@ -238,7 +249,12 @@ router.patch('/:id/coords', requirePermission('jobs.edit'), async (req, res) => 
         const { lat, lng } = req.body;
         if (lat == null || lng == null) return res.status(400).json({ ok: false, error: 'lat and lng required' });
         // SCHED-ROUTE-001 FR-002: also refresh geocoding_status + recalc routes.
-        await jobsService.updateJobLocation(companyId, req.params.id, { lat, lng });
+        await jobsService.updateJobLocation(
+            companyId,
+            req.params.id,
+            { lat, lng },
+            jobUserActor(req)
+        );
         res.json({ ok: true });
     } catch (err) {
         console.error('[Jobs API] Coords update error:', err.message);
@@ -259,7 +275,7 @@ router.patch('/:id/location', requirePermission('jobs.edit'), async (req, res) =
         }
         const job = await jobsService.updateJobLocation(companyId, req.params.id, {
             address, lat, lng, normalized_address, place_id,
-        });
+        }, jobUserActor(req));
         res.json({ ok: true, data: job });
     } catch (err) {
         console.error('[Jobs API] Location update error:', err.message);
@@ -276,7 +292,12 @@ router.patch('/:id/tags', requirePermission('jobs.edit'), async (req, res) => {
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { tag_ids } = req.body;
         if (!Array.isArray(tag_ids)) return res.status(400).json({ ok: false, error: 'tag_ids array required' });
-        const result = await jobsService.updateJobTags(parseInt(req.params.id, 10), tag_ids, companyId);
+        const result = await jobsService.updateJobTags(
+            parseInt(req.params.id, 10),
+            tag_ids,
+            companyId,
+            jobUserActor(req)
+        );
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Update tags error:', err.message);
@@ -294,7 +315,12 @@ router.patch('/:id/description', requirePermission('jobs.edit'), async (req, res
         const { description } = req.body;
         if (typeof description !== 'string') return res.status(400).json({ ok: false, error: 'description string required' });
         if (description.length > 5000) return res.status(400).json({ ok: false, error: 'description too long' });
-        const result = await jobsService.updateJobDescription(parseInt(req.params.id, 10), description, companyId);
+        const result = await jobsService.updateJobDescription(
+            parseInt(req.params.id, 10),
+            description,
+            companyId,
+            jobUserActor(req)
+        );
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Update description error:', err.message);
@@ -330,7 +356,12 @@ router.patch('/:id/status', requirePermission('jobs.edit', 'jobs.done_pending_ap
                 return res.status(403).json({ ok: false, error: 'Insufficient permissions to complete jobs' });
             }
         }
-        const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status, companyId);
+        const result = await jobsService.updateBlancStatus(
+            parseInt(req.params.id, 10),
+            blanc_status,
+            companyId,
+            jobUserActor(req)
+        );
         eventService.logEvent(companyId, 'job', req.params.id, 'status_changed',
             { from: existing.blanc_status, to: blanc_status, actor_name: eventService.actorName(req), reason: cancelReason }, 'user', req.user?.sub);
         // ADR-001: publish to the event bus so automation rules can react
@@ -606,7 +637,11 @@ router.post('/:id/cancel', requirePermission('jobs.close'), async (req, res) => 
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const parsedReason = normalizeCancelReason(req.body?.reason || req.body?.cancel_reason);
         if (parsedReason.error) return res.status(400).json({ ok: false, error: parsedReason.error });
-        const result = await jobsService.cancelJob(parseInt(req.params.id, 10));
+        const result = await jobsService.cancelJob(
+            parseInt(req.params.id, 10),
+            companyId,
+            jobUserActor(req)
+        );
         eventService.logEvent(companyId, 'job', req.params.id, 'canceled',
             { actor_name: eventService.actorName(req), reason: parsedReason.reason }, 'user', req.user?.sub);
         res.json({ ok: true, data: result });
@@ -623,7 +658,11 @@ router.post('/:id/enroute', requirePermission('jobs.edit', 'jobs.done_pending_ap
         const companyId = req.companyFilter?.company_id || null;
         const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
-        const result = await jobsService.markEnroute(parseInt(req.params.id, 10));
+        const result = await jobsService.markEnroute(
+            parseInt(req.params.id, 10),
+            companyId,
+            jobUserActor(req)
+        );
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] En-route error:', err.message);
@@ -638,7 +677,11 @@ router.post('/:id/start', requirePermission('jobs.edit', 'jobs.done_pending_appr
         const companyId = req.companyFilter?.company_id || null;
         const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
-        const result = await jobsService.markInProgress(parseInt(req.params.id, 10));
+        const result = await jobsService.markInProgress(
+            parseInt(req.params.id, 10),
+            companyId,
+            jobUserActor(req)
+        );
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Start error:', err.message);
@@ -653,7 +696,11 @@ router.post('/:id/complete', requirePermission('jobs.close', 'jobs.done_pending_
         const companyId = req.companyFilter?.company_id || null;
         const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
-        const result = await jobsService.markComplete(parseInt(req.params.id, 10));
+        const result = await jobsService.markComplete(
+            parseInt(req.params.id, 10),
+            companyId,
+            jobUserActor(req)
+        );
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Complete error:', err.message);
@@ -679,14 +726,20 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
     }
 
     try {
-        const db = require('../db/connection');
         const realtimeService = require('../services/realtimeService');
 
         // 1. Fetch local job to get ZB ID + current techs
-        const { rows } = await db.query('SELECT zenbooker_job_id, assigned_techs FROM jobs WHERE id = $1', [jobId]);
+        const { rows } = await db.query(
+            `SELECT zenbooker_job_id, assigned_techs
+             FROM jobs
+             WHERE id = $1 AND company_id = $2`,
+            [jobId, companyId]
+        );
         if (!rows.length) return res.status(404).json({ ok: false, error: 'Job not found' });
         const zbJobId = rows[0].zenbooker_job_id;
         const currentTechs = rows[0].assigned_techs || [];
+        let freshAssignedProviders = null;
+        let freshProviderMirror = null;
 
         // SCHED-ROUTE-VIS-001 (FR-1, S-8): capture the tech-day pairs this job
         // occupies BEFORE the reschedule (and before the ZB-assign block below
@@ -734,12 +787,11 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
                     try {
                         const freshJob = await zenbookerClient.getJob(zbJobId);
                         if (freshJob?.assigned_providers?.length > 0) {
-                            const mirror = await jobsService.resolveAssignedProviderUserIds(companyId, freshJob.assigned_providers);
-                            await db.query(
-                                `UPDATE jobs SET assigned_techs = $1::jsonb, assigned_provider_user_ids = $2::jsonb, updated_at = NOW() WHERE id = $3`,
-                                [JSON.stringify(freshJob.assigned_providers), mirror, jobId]
+                            freshAssignedProviders = freshJob.assigned_providers;
+                            freshProviderMirror = await jobsService.resolveAssignedProviderUserIds(
+                                companyId,
+                                freshJob.assigned_providers
                             );
-                            console.log(`[Jobs API] Immediately updated assigned_techs for job ${jobId}`);
                         }
                     } catch (fetchErr) {
                         console.warn(`[Jobs API] Could not immediately sync techs:`, fetchErr.message);
@@ -752,10 +804,42 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
 
         // 4. Update local DB immediately with known data
         const endDate = new Date(new Date(start_date).getTime() + Number(arrival_window_minutes) * 60000).toISOString();
-        await db.query(
-            `UPDATE jobs SET start_date = $1, end_date = $2, zb_rescheduled = true, updated_at = NOW() WHERE id = $3`,
-            [start_date, endDate, jobId]
-        );
+        await withTransaction(async (client) => {
+            if (freshAssignedProviders) {
+                await client.query(
+                    `UPDATE jobs
+                     SET assigned_techs = $1::jsonb,
+                         assigned_provider_user_ids = $2::jsonb,
+                         updated_at = NOW()
+                     WHERE id = $3 AND company_id = $4`,
+                    [
+                        JSON.stringify(freshAssignedProviders),
+                        freshProviderMirror,
+                        jobId,
+                        companyId,
+                    ]
+                );
+                console.log(`[Jobs API] Immediately updated assigned_techs for job ${jobId}`);
+            }
+            const { rowCount } = await client.query(
+                `UPDATE jobs
+                 SET start_date = $1,
+                     end_date = $2,
+                     zb_rescheduled = true,
+                     updated_at = NOW()
+                 WHERE id = $3 AND company_id = $4`,
+                [start_date, endDate, jobId, companyId]
+            );
+            if (rowCount === 0) {
+                throw Object.assign(new Error('Job not found'), { statusCode: 404 });
+            }
+            await logJobActivity({
+                companyId,
+                action: 'job.rescheduled',
+                jobId,
+                actor: jobUserActor(req),
+            }, { client });
+        });
 
         // SCHED-ROUTE-VIS-001 (FR-1, S-8): best-effort route recalc after the
         // local UPDATE — fire-and-forget, the HTTP response never waits.
@@ -766,7 +850,7 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
         }
 
         // 5. Return updated job immediately (frontend gets instant response)
-        const updated = await jobsService.getJobById(jobId);
+        const updated = await jobsService.getJobById(jobId, companyId);
         res.json({ ok: true, data: updated });
 
         // 6. Background: re-fetch from ZB to sync all fields (techs, status etc.)
@@ -777,8 +861,13 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
                     await new Promise(r => setTimeout(r, 3000));
                     const zbJob = await zenbookerClient.getJob(zbJobId);
                     if (zbJob) {
-                        await jobsService.syncFromZenbooker(zbJobId, zbJob, null, 'reschedule');
-                        const synced = await jobsService.getJobById(jobId);
+                        await jobsService.syncFromZenbooker(
+                            zbJobId,
+                            zbJob,
+                            companyId,
+                            'reschedule'
+                        );
+                        const synced = await jobsService.getJobById(jobId, companyId);
                         realtimeService.publishJobUpdate(synced);
                         console.log(`[Jobs API] Background ZB sync + SSE for job ${jobId}`);
                     }
@@ -915,9 +1004,22 @@ router.post('/:id/eta/notify', requirePermission('messages.send'), async (req, r
             return res.status(502).json({ ok: false, code: 'SMS_FAILED', message: "Couldn't send the message. Please try again." });
         }
 
+        await logJobActivity({
+            companyId,
+            action: 'job.eta_notified',
+            jobId,
+            actor: jobUserActor(req),
+            summary: { channel: 'sms' },
+        });
+
         // SMS sent (primary success). Advance status best-effort — no SMS rollback.
         try {
-            await jobsService.updateBlancStatus(jobId, 'On the way', companyId);
+            await jobsService.updateBlancStatus(
+                jobId,
+                'On the way',
+                companyId,
+                jobUserActor(req)
+            );
         } catch (statusErr) {
             console.warn('[Jobs API] ETA notify: status not advanced:', statusErr.message);
             return res.json({ ok: true, data: { sent: true }, warning: 'status_not_advanced' });
@@ -1030,6 +1132,13 @@ router.post('/:id/rate-link', requirePermission('messages.send'), async (req, re
         }
 
         const stamped = await rateMeQueries.stampTokenSent(token, companyId, channel);
+        await logJobActivity({
+            companyId,
+            action: 'job.rating_link_sent',
+            jobId,
+            actor: jobUserActor(req),
+            summary: { channel },
+        });
         const data = { channel, sent_at: stamped.sent_at };
         if (channel === 'copy') data.url = url;
         return res.json({ ok: true, data });

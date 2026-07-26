@@ -13,6 +13,10 @@ const {
     aiActor,
     logFinancialActivity,
 } = require('./financialActivityService');
+const {
+    aiActor: jobAiActor,
+    logJobActivity,
+} = require('./jobActivityService');
 
 class ChatgptMcpWriteError extends CrmServiceError {
     constructor(code, message, httpStatus = 400) {
@@ -495,11 +499,19 @@ async function createJob(context, args, client) {
             JSON.stringify(note ? [note] : []),
         ]
     );
-    return {
+    const result = {
         job_id: inserted.rows[0].id,
         status: inserted.rows[0].blanc_status,
         contact_id: inserted.rows[0].contact_id,
     };
+    await logJobActivity({
+        companyId: context.companyId,
+        action: 'job.created',
+        jobId: result.job_id,
+        actor: jobAiActor(context.actorName || 'Avatar', 'mcp'),
+        summary: { status: result.status },
+    }, { client });
+    return result;
 }
 
 const JOB_UPDATE_COLUMNS = Object.freeze({
@@ -564,15 +576,22 @@ async function updateJob(context, args, client) {
             }
         );
     }
-    return {
+    const result = {
         job_id: updated.rows[0].id,
         status: updated.rows[0].blanc_status,
         contact_id: updated.rows[0].contact_id,
     };
+    await logJobActivity({
+        companyId: context.companyId,
+        action: 'job.updated',
+        jobId: result.job_id,
+        actor: jobAiActor(context.actorName || 'Avatar', 'mcp'),
+    }, { client });
+    return result;
 }
 
 async function transitionJob(context, args, client) {
-    return transitionEntity(context, {
+    const result = await transitionEntity(context, {
         table: 'jobs',
         keyColumn: 'id',
         keyValue: args.job_id,
@@ -581,6 +600,14 @@ async function transitionJob(context, args, client) {
         entityName: 'Job',
         action: args.action,
     }, client);
+    await logJobActivity({
+        companyId: context.companyId,
+        action: 'job.status_changed',
+        jobId: result.entity_key,
+        actor: jobAiActor(context.actorName || 'Avatar', 'mcp'),
+        summary: { status: result.status },
+    }, { client });
+    return result;
 }
 
 async function addNote(context, args, client) {

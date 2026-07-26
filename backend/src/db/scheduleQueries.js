@@ -378,8 +378,9 @@ async function getTaskRow(companyId, entityId) {
 // Reschedule mutations
 // =============================================================================
 
-async function rescheduleJob(companyId, entityId, startAt, endAt) {
-    const { rows } = await db.query(
+async function rescheduleJob(companyId, entityId, startAt, endAt, client = null) {
+    const runner = client || db;
+    const { rows } = await runner.query(
         `UPDATE jobs SET start_date = $3, end_date = $4, updated_at = NOW()
          WHERE id = $1 AND company_id = $2 RETURNING *`,
         [entityId, companyId, startAt, endAt]
@@ -409,7 +410,13 @@ async function rescheduleTask(companyId, entityId, startAt, endAt) {
 // Reassign mutations
 // =============================================================================
 
-async function reassignJob(companyId, entityId, assignees = [], providerUserIds = null) {
+async function reassignJob(
+    companyId,
+    entityId,
+    assignees = [],
+    providerUserIds = null,
+    client = null
+) {
     // REPLACE assigned_techs with exactly the given providers (ZB team-member
     // shape [{id,name}]); [] unassigns. Supports one OR many providers, deduped by
     // id (JOB-PROVIDER-MULTI-001). REPLACE (not append) still guards the old bug
@@ -428,7 +435,8 @@ async function reassignJob(companyId, entityId, assignees = [], providerUserIds 
         params.push(providerUserIds);
         sets.push(`assigned_provider_user_ids = $${params.length}::jsonb`);
     }
-    const { rows } = await db.query(
+    const runner = client || db;
+    const { rows } = await runner.query(
         `UPDATE jobs SET ${sets.join(', ')} WHERE id = $1 AND company_id = $2 RETURNING *`,
         params
     );

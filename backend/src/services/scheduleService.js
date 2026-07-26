@@ -6,6 +6,8 @@
  */
 
 const scheduleQueries = require('../db/scheduleQueries');
+const { logJobActivity } = require('./jobActivityService');
+const { withTransaction } = require('./transactionService');
 
 // =============================================================================
 // Defaults for dispatch settings
@@ -171,14 +173,53 @@ async function getScheduleItemDetail(companyId, entityType, entityId, providerSc
  * push is default-company-only by construction — `zenbookerClient.rescheduleJob`
  * uses the env/default client.
  */
-async function rescheduleItem(companyId, entityType, entityId, newStartAt, newEndAt) {
+async function rescheduleItem(
+    companyId,
+    entityType,
+    entityId,
+    newStartAt,
+    newEndAt,
+    activityActor = null
+) {
     // SCHED-ROUTE-001: capture the job's technician/days before the date change.
     const before = entityType === 'job' ? await captureJobTechDays(companyId, entityId) : null;
     let updated;
     switch (entityType) {
-        case 'job':
-            updated = await scheduleQueries.rescheduleJob(companyId, entityId, newStartAt, newEndAt);
+        case 'job': {
+            if (activityActor) {
+                updated = await withTransaction(async (client) => {
+                    const row = await scheduleQueries.rescheduleJob(
+                        companyId,
+                        entityId,
+                        newStartAt,
+                        newEndAt,
+                        client
+                    );
+                    if (!row) {
+                        throw new ScheduleServiceError(
+                            'NOT_FOUND',
+                            `${entityType} ${entityId} not found`,
+                            404
+                        );
+                    }
+                    await logJobActivity({
+                        companyId,
+                        action: 'job.rescheduled',
+                        jobId: entityId,
+                        actor: activityActor,
+                    }, { client });
+                    return row;
+                });
+            } else {
+                updated = await scheduleQueries.rescheduleJob(
+                    companyId,
+                    entityId,
+                    newStartAt,
+                    newEndAt
+                );
+            }
             break;
+        }
         case 'lead':
             updated = await scheduleQueries.rescheduleLead(companyId, entityId, newStartAt, newEndAt);
             break;
@@ -334,7 +375,13 @@ async function captureJobTechDays(companyId, jobId) {
  * Jobs use assigned_techs (jsonb), tasks use assigned_provider_id.
  * Leads do not support assignment in this version.
  */
-async function reassignItem(companyId, entityType, entityId, assignees = []) {
+async function reassignItem(
+    companyId,
+    entityType,
+    entityId,
+    assignees = [],
+    activityActor = null
+) {
     // JOB-PROVIDER-MULTI-001: one OR many providers. Normalize to [{id,name}] and
     // dedupe by id (a client could send the same provider twice).
     const seenIds = new Set();
@@ -372,7 +419,39 @@ async function reassignItem(companyId, entityType, entityId, assignees = []) {
     let updated;
     switch (entityType) {
         case 'job':
-            updated = await scheduleQueries.reassignJob(companyId, entityId, list, providerUserIds);
+            if (activityActor) {
+                updated = await withTransaction(async (client) => {
+                    const row = await scheduleQueries.reassignJob(
+                        companyId,
+                        entityId,
+                        list,
+                        providerUserIds,
+                        client
+                    );
+                    if (!row) {
+                        throw new ScheduleServiceError(
+                            'NOT_FOUND',
+                            `${entityType} ${entityId} not found`,
+                            404
+                        );
+                    }
+                    await logJobActivity({
+                        companyId,
+                        action: list.length > 0 ? 'job.assigned' : 'job.unassigned',
+                        jobId: entityId,
+                        actor: activityActor,
+                        summary: { count: list.length },
+                    }, { client });
+                    return row;
+                });
+            } else {
+                updated = await scheduleQueries.reassignJob(
+                    companyId,
+                    entityId,
+                    list,
+                    providerUserIds
+                );
+            }
             break;
         case 'task':
             updated = await scheduleQueries.reassignTask(companyId, entityId, list[0]?.id ?? null);
@@ -435,7 +514,7 @@ async function reassignItem(companyId, entityType, entityId, assignees = []) {
  * Create a new entity from a schedule time slot.
  * Currently only supports 'task'. Lead/Job shells can be added later.
  */
-async function createFromSlot(companyId, entityType, slotData) {
+async function createFromSlot(companyId, entityType, slotData, activityActor = null) {
     switch (entityType) {
         case 'task': {
             const row = await scheduleQueries.createTask(companyId, {
@@ -464,7 +543,7 @@ async function createFromSlot(companyId, entityType, slotData) {
                 assignee_id: slotData.assignee_id,           // internal crm_users.id (C-2)
                 assigned_techs: slotData.assigned_techs,     // ZB-shaped lane provider (FR-001.4)
                 zb_address: slotData.zb_address,             // structured parts for ZB sync (C-12)
-            });
+            }, activityActor);
             await triggerJobRouteSideEffects(companyId, job.id, {
                 hasAddress: !!(slotData.address && String(slotData.address).trim()),
                 hasCoords: slotData.lat != null && slotData.lng != null,

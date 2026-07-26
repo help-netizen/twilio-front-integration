@@ -250,7 +250,7 @@ describe('CANCEL-001 leave-hooks (TC-CC-07 updateBlancStatus)', () => {
 describe('CANCEL-001 leave-hooks (TC-CC-08 cancelJob + markComplete direct writers)', () => {
     test('cancelJob on a Part-arrived job → cancel with newStatus Canceled', async () => {
         seedJob({ fromStatus: 'Part arrived' }); // zenbooker_job_id null → no ZB client call
-        const out = await jobsService.cancelJob(50);
+        const out = await jobsService.cancelJob(50, COMPANY);
         expect(out.blanc_status).toBe('Canceled');
         expect(mockCancelScheduledRobotCalls).toHaveBeenCalledTimes(1);
         expect(mockCancelScheduledRobotCalls).toHaveBeenCalledWith(
@@ -260,7 +260,7 @@ describe('CANCEL-001 leave-hooks (TC-CC-08 cancelJob + markComplete direct write
 
     test('markComplete on a Part-arrived job → cancel with newStatus Visit completed', async () => {
         seedJob({ fromStatus: 'Part arrived' });
-        const out = await jobsService.markComplete(50);
+        const out = await jobsService.markComplete(50, COMPANY);
         expect(out.blanc_status).toBe('Visit completed');
         expect(mockCancelScheduledRobotCalls).toHaveBeenCalledTimes(1);
         expect(mockCancelScheduledRobotCalls).toHaveBeenCalledWith(
@@ -270,16 +270,16 @@ describe('CANCEL-001 leave-hooks (TC-CC-08 cancelJob + markComplete direct write
 
     test('job in Submitted → neither direct writer fires the hook', async () => {
         seedJob({ fromStatus: 'Submitted' });
-        await jobsService.cancelJob(50);
+        await jobsService.cancelJob(50, COMPANY);
         seedJob({ fromStatus: 'Submitted' });
-        await jobsService.markComplete(50);
+        await jobsService.markComplete(50, COMPANY);
         expect(mockCancelScheduledRobotCalls).not.toHaveBeenCalled();
     });
 
     test('rejecting cancel does NOT reject cancelJob (non-fatal)', async () => {
         seedJob({ fromStatus: 'Part arrived' });
         mockCancelScheduledRobotCalls.mockRejectedValueOnce(new Error('boom'));
-        const out = await jobsService.cancelJob(50);
+        const out = await jobsService.cancelJob(50, COMPANY);
         expect(out.blanc_status).toBe('Canceled');
         await new Promise((r) => setImmediate(r));
     });

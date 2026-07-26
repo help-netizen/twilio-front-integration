@@ -10,6 +10,7 @@ const marketplaceService = require('../services/marketplaceService');
 const timeOffService = require('../services/timeOffService');
 const technicianAvailabilityService = require('../services/technicianAvailabilityService');
 const technicianServiceAreaService = require('../services/technicianServiceAreaService');
+const { userActor } = require('../services/jobActivityService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -79,7 +80,14 @@ router.patch('/items/:entityType/:entityId/reschedule', requirePermission('sched
             return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'start_at is required' } });
         }
 
-        const result = await scheduleService.rescheduleItem(companyId, entityType, entityId, start_at, end_at || null);
+        const result = await scheduleService.rescheduleItem(
+            companyId,
+            entityType,
+            entityId,
+            start_at,
+            end_at || null,
+            userActor(req.user?.crmUser?.id || null)
+        );
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Schedule] PATCH reschedule error:', err.message);
@@ -106,7 +114,13 @@ router.patch('/items/:entityType/:entityId/reassign', requirePermission('schedul
             return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'assignees (array) or assignee_id (use null to unassign) is required' } });
         }
 
-        const result = await scheduleService.reassignItem(companyId, entityType, entityId, list);
+        const result = await scheduleService.reassignItem(
+            companyId,
+            entityType,
+            entityId,
+            list,
+            userActor(req.user?.crmUser?.id || null)
+        );
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Schedule] PATCH reassign error:', err.message);
@@ -125,7 +139,12 @@ router.post('/items/from-slot', requirePermission('schedule.dispatch'), async (r
             return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'entity_type is required' } });
         }
 
-        const result = await scheduleService.createFromSlot(companyId, entity_type, slotData);
+        const result = await scheduleService.createFromSlot(
+            companyId,
+            entity_type,
+            slotData,
+            userActor(req.user?.crmUser?.id || null)
+        );
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Schedule] POST from-slot error:', err.message);

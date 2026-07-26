@@ -9,6 +9,7 @@ const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventBus = require('./eventBus');
+const { logJobActivity } = require('./jobActivityService');
 const {
     createCursorFingerprint,
     encodeCursor,
@@ -757,7 +758,14 @@ async function unassignUser(uuid, userName, companyId = null) {
 // =============================================================================
 // Convert Lead to Job
 // =============================================================================
-async function claimLocalJobForConversion({ leadRow, contactId, zenbookerJobId, localJobFields, companyId }) {
+async function claimLocalJobForConversion({
+    leadRow,
+    contactId,
+    zenbookerJobId,
+    localJobFields,
+    companyId,
+    activityActor,
+}) {
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
@@ -863,6 +871,16 @@ async function claimLocalJobForConversion({ leadRow, contactId, zenbookerJobId, 
             leadUpdateParams
         );
 
+        if (localJobCreated && activityActor) {
+            await logJobActivity({
+                companyId: leadRow.company_id,
+                action: 'job.created',
+                jobId: localJobId,
+                actor: activityActor,
+                summary: { status: 'Submitted' },
+            }, { client });
+        }
+
         await client.query('COMMIT');
 
         return {
@@ -905,7 +923,7 @@ async function persistZenbookerJobLink(localJobId, leadId, zenbookerJobId, compa
     );
 }
 
-async function convertLead(uuid, overrides = {}, companyId = null) {
+async function convertLead(uuid, overrides = {}, companyId = null, activityActor = null) {
     // 1. Fetch full lead
     const conditions = ['uuid = $1'];
     const params = [uuid];
@@ -995,6 +1013,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
             initialAssignedTechs,
         },
         companyId,
+        activityActor,
     });
 
     const localJobId = claimedJob.localJobId;

@@ -88,9 +88,15 @@ const REGISTRY = {
 
     async fsm_transition({ params, companyId, context }) {
         const jobsService = require('./jobsService');
+        const { systemActor } = require('./jobActivityService');
         const jobId = params.job_id || context.id;
         if (!jobId || !params.target_status) throw new Error('fsm_transition needs job_id + target_status');
-        await jobsService.updateBlancStatus(parseInt(jobId, 10), params.target_status, companyId);
+        await jobsService.updateBlancStatus(
+            parseInt(jobId, 10),
+            params.target_status,
+            companyId,
+            systemActor('Automation')
+        );
         return { job_id: jobId, status: params.target_status };
     },
 

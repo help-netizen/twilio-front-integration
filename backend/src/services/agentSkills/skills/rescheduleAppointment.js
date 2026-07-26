@@ -156,6 +156,7 @@ async function run(companyId, verifiedContext, input) {
     const jobsService = require('../../jobsService');
     const scheduleService = require('../../scheduleService');
     const eventService = require('../../eventService');
+    const { aiActor } = require('../../jobActivityService');
 
     const src = input && typeof input === 'object' ? input : {};
     const jobId = src.jobId;
@@ -204,7 +205,14 @@ async function run(companyId, verifiedContext, input) {
     //     On ZB failure it reconciles from the master and throws the friendly 409 →
     //     we return the graceful shape below and DO NOT write the audit note.
     try {
-        await scheduleService.rescheduleItem(companyId, 'job', jobId, newStartAt, newEndAt);
+        await scheduleService.rescheduleItem(
+            companyId,
+            'job',
+            jobId,
+            newStartAt,
+            newEndAt,
+            aiActor('AI Phone')
+        );
     } catch (err) {
         if (isConflictLike(err)) {
             // Blocking-with-recovery: never a false confirm. State stays recoverable.

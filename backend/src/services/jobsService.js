@@ -16,6 +16,8 @@ const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventService = require('./eventService');
 const eventBus = require('./eventBus');
+const { logJobActivity } = require('./jobActivityService');
+const { withTransaction } = require('./transactionService');
 const { deduplicateNotesByIdentity } = require('./noteDeduplication');
 const membershipQueries = require('../db/membershipQueries');
 const jobFinanceQueries = require('../db/jobFinanceQueries');
@@ -88,6 +90,29 @@ const ALLOWED_TRANSITIONS = {
 // =============================================================================
 // Helpers
 // =============================================================================
+
+async function mutateWithActivity(activityActor, activity, work) {
+    if (!activityActor) return work(db);
+    return withTransaction(async (client) => {
+        const result = await work(client);
+        const activityEvent = typeof activity === 'function' ? activity(result) : activity;
+        if (activityEvent) {
+            await logJobActivity({
+                ...activityEvent,
+                actor: activityActor,
+            }, { client });
+        }
+        return result;
+    });
+}
+
+async function updateOwnedJob(client, sql, params, jobId) {
+    const result = await client.query(sql, params);
+    if (result.rowCount === 0) {
+        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
+    }
+    return result;
+}
 
 function rowToJob(row) {
     return {
@@ -349,7 +374,7 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
  * paid geocode is needed; otherwise 'not_geocoded' and the caller enqueues one.
  * Returns the raw job row.
  */
-async function createManualJob(companyId, input = {}) {
+async function createManualJob(companyId, input = {}, activityActor = null) {
     if (!companyId) throw new Error('createManualJob requires companyId');
     const blancStatus = input.blanc_status || 'Submitted';
 
@@ -370,24 +395,35 @@ async function createManualJob(companyId, input = {}) {
     const hasCoords = input.lat != null && input.lng != null;
     const geocodingStatus = hasCoords ? 'success' : 'not_geocoded';
 
-    const { rows } = await db.query(
-        `INSERT INTO jobs
-            (company_id, blanc_status, zb_status, service_name, start_date, end_date,
-             customer_name, customer_phone, customer_email, address, lat, lng,
-             normalized_address, geocoding_status, geocoding_place_id, geocoded_at,
-             geocoding_provider, assigned_techs, assigned_provider_user_ids, notes, zb_raw)
-         VALUES ($1,$2,'scheduled',$3,$4,$5,$6,$7,$8,$9,$10::double precision,$11::double precision,$12,$13,$14,
-                 CASE WHEN $10::double precision IS NOT NULL AND $11::double precision IS NOT NULL THEN now() ELSE NULL END,
-                 'google_maps',$16::jsonb,$15::jsonb,'[]'::jsonb,'{}'::jsonb)
-         RETURNING *`,
-        [companyId, blancStatus, input.service_name || null,
-         input.start_date || null, input.end_date || null,
-         input.customer_name || null, input.customer_phone || null, input.customer_email || null,
-         input.address || null, hasCoords ? input.lat : null, hasCoords ? input.lng : null,
-         input.normalized_address || null, geocodingStatus, input.geocoding_place_id || null,
-         JSON.stringify(providerUserIds), JSON.stringify(assignedTechs)]
+    const job = await mutateWithActivity(
+        activityActor,
+        created => ({
+            companyId,
+            action: 'job.created',
+            jobId: created.id,
+            summary: { status: blancStatus },
+        }),
+        async (client) => {
+            const { rows } = await client.query(
+                `INSERT INTO jobs
+                    (company_id, blanc_status, zb_status, service_name, start_date, end_date,
+                     customer_name, customer_phone, customer_email, address, lat, lng,
+                     normalized_address, geocoding_status, geocoding_place_id, geocoded_at,
+                     geocoding_provider, assigned_techs, assigned_provider_user_ids, notes, zb_raw)
+                 VALUES ($1,$2,'scheduled',$3,$4,$5,$6,$7,$8,$9,$10::double precision,$11::double precision,$12,$13,$14,
+                         CASE WHEN $10::double precision IS NOT NULL AND $11::double precision IS NOT NULL THEN now() ELSE NULL END,
+                         'google_maps',$16::jsonb,$15::jsonb,'[]'::jsonb,'{}'::jsonb)
+                 RETURNING *`,
+                [companyId, blancStatus, input.service_name || null,
+                 input.start_date || null, input.end_date || null,
+                 input.customer_name || null, input.customer_phone || null, input.customer_email || null,
+                 input.address || null, hasCoords ? input.lat : null, hasCoords ? input.lng : null,
+                 input.normalized_address || null, geocodingStatus, input.geocoding_place_id || null,
+                 JSON.stringify(providerUserIds), JSON.stringify(assignedTechs)]
+            );
+            return rows[0];
+        }
     );
-    const job = rows[0];
 
     // C-12 / FR-001.4: best-effort, dedupe-guarded create back into ZenBooker
     // during the wind-down (flag-gated; async so the HTTP save never blocks).
@@ -422,7 +458,7 @@ async function createManualJob(companyId, input = {}) {
  * @param {Object} input
  * @returns {Promise<{ job_id:number, zenbooker_job_id:string|null, zb_warning:string|null }>}
  */
-async function createDirectJob(companyId, input = {}) {
+async function createDirectJob(companyId, input = {}, activityActor = null) {
     if (!companyId) {
         const err = new Error('createDirectJob requires companyId');
         err.httpStatus = 403;
@@ -589,6 +625,16 @@ async function createDirectJob(companyId, input = {}) {
         } catch (e) {
             console.error('[CreateDirectJob] metadata merge failed (non-fatal):', e.message);
         }
+    }
+
+    if (activityActor) {
+        await logJobActivity({
+            companyId,
+            action: 'job.created',
+            jobId: localJob.id,
+            actor: activityActor,
+            summary: { status: localJob.blanc_status || 'Submitted' },
+        });
     }
 
     // [CHANGE START] REPAIR-ADVISOR-001 (T6): post-commit domain event for the
@@ -1144,7 +1190,7 @@ function fireRobotCallLeaveHook(jobId, companyId, newStatus) {
     }
 }
 
-async function updateBlancStatus(jobId, newStatus, companyId) {
+async function updateBlancStatus(jobId, newStatus, companyId, activityActor = null) {
     if (!companyId) {
         const err = new Error('updateBlancStatus requires companyId');
         err.code = 'TENANT_CONTEXT_REQUIRED';
@@ -1152,7 +1198,9 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
         throw err;
     }
     const job = await getJobById(jobId, companyId);
-    if (!job) throw new Error(`Job #${jobId} not found`);
+    if (!job) {
+        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
+    }
 
     // Try FSM resolution first
     const result = await fsmService.resolveTransition(companyId, 'job', job.blanc_status, newStatus);
@@ -1179,13 +1227,24 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
     // Postgres then deduces two types for it ("inconsistent types deduced for
     // parameter $1") and the whole UPDATE fails for every status change. Pass the
     // canceled flag as its own boolean param.
-    await db.query(
-        `UPDATE jobs
-         SET blanc_status = $1,
-             zb_canceled = CASE WHEN $2 THEN true ELSE zb_canceled END,
-             updated_at = NOW()
-         WHERE id = $3 AND company_id = $4`,
-        [newStatus, newStatus === 'Canceled', jobId, companyId]
+    await mutateWithActivity(
+        activityActor,
+        {
+            companyId,
+            action: 'job.status_changed',
+            jobId,
+            summary: { status: newStatus },
+        },
+        client => updateOwnedJob(
+            client,
+            `UPDATE jobs
+             SET blanc_status = $1,
+                 zb_canceled = CASE WHEN $2 THEN true ELSE zb_canceled END,
+                 updated_at = NOW()
+             WHERE id = $3 AND company_id = $4`,
+            [newStatus, newStatus === 'Canceled', jobId, companyId],
+            jobId
+        )
     );
 
     // Outbound sync to Zenbooker — full mapping with no-op guards (§6).
@@ -1607,9 +1666,17 @@ async function forceSyncOnZbError(job, action, error) {
     throw err;
 }
 
-async function cancelJob(jobId) {
-    const job = await getJobById(jobId);
-    if (!job) throw new Error(`Job #${jobId} not found`);
+async function cancelJob(jobId, companyId, activityActor = null) {
+    if (!companyId) {
+        const err = new Error('cancelJob requires companyId');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
+    const job = await getJobById(jobId, companyId);
+    if (!job) {
+        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
+    }
 
     // Pre-check: skip ZB call if already canceled to avoid 4xx → forceSync → 409
     if (job.zenbooker_job_id && !job.zb_canceled) {
@@ -1619,9 +1686,22 @@ async function cancelJob(jobId) {
             await forceSyncOnZbError(job, 'cancel', e);
         }
     }
-    await db.query(
-        'UPDATE jobs SET zb_canceled = true, blanc_status = $1, updated_at = NOW() WHERE id = $2',
-        ['Canceled', jobId]
+    await mutateWithActivity(
+        activityActor,
+        {
+            companyId,
+            action: 'job.status_changed',
+            jobId,
+            summary: { status: 'Canceled' },
+        },
+        client => updateOwnedJob(
+            client,
+            `UPDATE jobs
+             SET zb_canceled = true, blanc_status = $1, updated_at = NOW()
+             WHERE id = $2 AND company_id = $3`,
+            ['Canceled', jobId, companyId],
+            jobId
+        )
     );
     // CANCEL-001 leave-hook (CC-02 S2): this writer sets blanc_status DIRECTLY
     // (bypasses updateBlancStatus — fsm.js /apply + the jobs.js cancel route), so
@@ -1632,9 +1712,17 @@ async function cancelJob(jobId) {
     return { ...job, blanc_status: 'Canceled', zb_canceled: true };
 }
 
-async function markEnroute(jobId) {
-    const job = await getJobById(jobId);
-    if (!job) throw new Error(`Job #${jobId} not found`);
+async function markEnroute(jobId, companyId, activityActor = null) {
+    if (!companyId) {
+        const err = new Error('markEnroute requires companyId');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
+    const job = await getJobById(jobId, companyId);
+    if (!job) {
+        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
+    }
 
     // Pre-check: skip ZB call if already en-route
     if (job.zenbooker_job_id && job.zb_status !== 'en-route') {
@@ -1644,16 +1732,36 @@ async function markEnroute(jobId) {
             await forceSyncOnZbError(job, 'enroute', e);
         }
     }
-    await db.query(
-        "UPDATE jobs SET zb_status = 'en-route', updated_at = NOW() WHERE id = $1",
-        [jobId]
+    await mutateWithActivity(
+        activityActor,
+        {
+            companyId,
+            action: 'job.status_changed',
+            jobId,
+            summary: { status: 'en-route' },
+        },
+        client => updateOwnedJob(
+            client,
+            `UPDATE jobs SET zb_status = 'en-route', updated_at = NOW()
+             WHERE id = $1 AND company_id = $2`,
+            [jobId, companyId],
+            jobId
+        )
     );
     return { ...job, zb_status: 'en-route' };
 }
 
-async function markInProgress(jobId) {
-    const job = await getJobById(jobId);
-    if (!job) throw new Error(`Job #${jobId} not found`);
+async function markInProgress(jobId, companyId, activityActor = null) {
+    if (!companyId) {
+        const err = new Error('markInProgress requires companyId');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
+    const job = await getJobById(jobId, companyId);
+    if (!job) {
+        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
+    }
 
     // Pre-check: skip ZB call if already in-progress
     if (job.zenbooker_job_id && job.zb_status !== 'in-progress') {
@@ -1663,16 +1771,36 @@ async function markInProgress(jobId) {
             await forceSyncOnZbError(job, 'start', e);
         }
     }
-    await db.query(
-        "UPDATE jobs SET zb_status = 'in-progress', updated_at = NOW() WHERE id = $1",
-        [jobId]
+    await mutateWithActivity(
+        activityActor,
+        {
+            companyId,
+            action: 'job.status_changed',
+            jobId,
+            summary: { status: 'in-progress' },
+        },
+        client => updateOwnedJob(
+            client,
+            `UPDATE jobs SET zb_status = 'in-progress', updated_at = NOW()
+             WHERE id = $1 AND company_id = $2`,
+            [jobId, companyId],
+            jobId
+        )
     );
     return { ...job, zb_status: 'in-progress' };
 }
 
-async function markComplete(jobId) {
-    const job = await getJobById(jobId);
-    if (!job) throw new Error(`Job #${jobId} not found`);
+async function markComplete(jobId, companyId, activityActor = null) {
+    if (!companyId) {
+        const err = new Error('markComplete requires companyId');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
+    const job = await getJobById(jobId, companyId);
+    if (!job) {
+        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
+    }
 
     // Pre-check: skip ZB call if already complete
     if (job.zenbooker_job_id && job.zb_status !== 'complete') {
@@ -1682,9 +1810,22 @@ async function markComplete(jobId) {
             await forceSyncOnZbError(job, 'complete', e);
         }
     }
-    await db.query(
-        "UPDATE jobs SET zb_status = 'complete', blanc_status = 'Visit completed', updated_at = NOW() WHERE id = $1",
-        [jobId]
+    await mutateWithActivity(
+        activityActor,
+        {
+            companyId,
+            action: 'job.status_changed',
+            jobId,
+            summary: { status: 'Visit completed' },
+        },
+        client => updateOwnedJob(
+            client,
+            `UPDATE jobs
+             SET zb_status = 'complete', blanc_status = 'Visit completed', updated_at = NOW()
+             WHERE id = $1 AND company_id = $2`,
+            [jobId, companyId],
+            jobId
+        )
     );
     // CANCEL-001 leave-hook (CC-02 S2): direct blanc_status writer, same as
     // cancelJob above — a completed visit ends the robot-call plan.
@@ -1702,15 +1843,12 @@ async function markComplete(jobId) {
  * Update tags assigned to a job.
  * Only active tags can be newly assigned; existing inactive tags are preserved if re-sent.
  */
-async function updateJobTags(jobId, tagIds, companyId) {
+async function updateJobTags(jobId, tagIds, companyId, activityActor = null) {
     if (!companyId) throw new Error('updateJobTags requires companyId');
     const job = await getJobById(jobId, companyId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    const client = await db.pool.connect();
-    try {
-        await client.query('BEGIN');
-
+    const replaceTags = async (client) => {
         // Get currently assigned tag IDs
         const { rows: currentRows } = await client.query(
             `SELECT jta.tag_id
@@ -1726,7 +1864,8 @@ async function updateJobTags(jobId, tagIds, companyId) {
             const newTagIds = tagIds.filter(id => !currentTagIds.has(id));
             if (newTagIds.length > 0) {
                 const { rows: tagRows } = await client.query(
-                    'SELECT id, is_active FROM job_tags WHERE id = ANY($1)', [newTagIds]
+                    'SELECT id, is_active FROM job_tags WHERE id = ANY($1)',
+                    [newTagIds]
                 );
                 const inactiveNew = tagRows.filter(r => !r.is_active);
                 if (inactiveNew.length > 0) {
@@ -1758,13 +1897,31 @@ async function updateJobTags(jobId, tagIds, companyId) {
                 );
             }
         }
+        return true;
+    };
 
-        await client.query('COMMIT');
-    } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
-    } finally {
-        client.release();
+    if (activityActor) {
+        await mutateWithActivity(
+            activityActor,
+            {
+                companyId,
+                action: 'job.updated',
+                jobId,
+            },
+            replaceTags
+        );
+    } else {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await replaceTags(client);
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
     }
 
     const tags = await getTagsForJob(jobId, companyId);
@@ -1812,7 +1969,12 @@ async function updateCoords(jobId, lat, lng) {
  * Semantics: changing the address invalidates old coords — when no coords are
  * supplied the stored lat/lng are cleared and a fresh geocode is enqueued.
  */
-async function updateJobLocation(companyId, jobId, { address, lat, lng, normalized_address, place_id } = {}) {
+async function updateJobLocation(
+    companyId,
+    jobId,
+    { address, lat, lng, normalized_address, place_id } = {},
+    activityActor = null
+) {
     if (!companyId) throw new Error('updateJobLocation requires companyId');
     const routeQueries = require('../db/routeQueries');
     const routeSeg = require('./routeSegmentService');
@@ -1826,25 +1988,33 @@ async function updateJobLocation(companyId, jobId, { address, lat, lng, normaliz
 
     const hasCoords = lat != null && lng != null;
     const geocodingStatus = hasCoords ? 'success' : 'not_geocoded';
-    const { rows } = await db.query(
-        `UPDATE jobs SET
-            address            = COALESCE($3::text, address),
-            lat                = $4::double precision,
-            lng                = $5::double precision,
-            normalized_address = $6::text,
-            geocoding_status   = $7::text,
-            geocoding_place_id = $8::text,
-            geocoded_at        = CASE WHEN $4::double precision IS NOT NULL AND $5::double precision IS NOT NULL THEN now() ELSE NULL END,
-            geocoding_provider = 'google_maps',
-            geocoding_error_code = NULL,
-            geocoding_error_message = NULL,
-            updated_at         = now()
-         WHERE id = $1 AND company_id = $2
-         RETURNING *`,
-        [jobId, companyId, address ?? null, hasCoords ? lat : null, hasCoords ? lng : null,
-         normalized_address ?? null, geocodingStatus, place_id ?? null]
+    const job = await mutateWithActivity(
+        activityActor,
+        updated => updated ? {
+            companyId, action: 'job.updated', jobId,
+        } : null,
+        async (client) => {
+            const { rows } = await client.query(
+                `UPDATE jobs SET
+                    address            = COALESCE($3::text, address),
+                    lat                = $4::double precision,
+                    lng                = $5::double precision,
+                    normalized_address = $6::text,
+                    geocoding_status   = $7::text,
+                    geocoding_place_id = $8::text,
+                    geocoded_at        = CASE WHEN $4::double precision IS NOT NULL AND $5::double precision IS NOT NULL THEN now() ELSE NULL END,
+                    geocoding_provider = 'google_maps',
+                    geocoding_error_code = NULL,
+                    geocoding_error_message = NULL,
+                    updated_at         = now()
+                 WHERE id = $1 AND company_id = $2
+                 RETURNING *`,
+                [jobId, companyId, address ?? null, hasCoords ? lat : null, hasCoords ? lng : null,
+                 normalized_address ?? null, geocodingStatus, place_id ?? null]
+            );
+            return rows[0] || null;
+        }
     );
-    const job = rows[0];
     if (!job) return null;
 
     // No coords but an address present → geocode async (FR-004).
@@ -1869,14 +2039,25 @@ async function updateJobLocation(companyId, jobId, { address, lat, lng, normaliz
  * Update a job's free-text description (inline edit on the job panel). Tenant-scoped;
  * the updated_at trigger stamps the change. Returns the reshaped job.
  */
-async function updateJobDescription(jobId, description, companyId) {
+async function updateJobDescription(jobId, description, companyId, activityActor = null) {
     if (!companyId) throw new Error('updateJobDescription requires companyId');
     const text = typeof description === 'string' ? description : '';
-    const { rows } = await db.pool.query(
-        `UPDATE jobs SET description = $1 WHERE id = $2 AND company_id = $3 RETURNING id`,
-        [text, jobId, companyId]
+    const updated = await mutateWithActivity(
+        activityActor,
+        row => row ? {
+            companyId, action: 'job.updated', jobId,
+        } : null,
+        async (client) => {
+            const { rows } = await client.query(
+                `UPDATE jobs SET description = $1
+                 WHERE id = $2 AND company_id = $3
+                 RETURNING id`,
+                [text, jobId, companyId]
+            );
+            return rows[0] || null;
+        }
     );
-    if (!rows[0]) {
+    if (!updated) {
         throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
     }
     return getJobById(jobId, companyId);

@@ -10,6 +10,7 @@ const { requirePermission } = require('../middleware/authorization');
 const fsmService = require('../services/fsmService');
 const jobsService = require('../services/jobsService');
 const eventService = require('../services/eventService');
+const { userActor } = require('../services/jobActivityService');
 const { getProviderScope } = require('../middleware/providerScope');
 
 /**
@@ -273,9 +274,18 @@ router.post('/:machineKey/apply', requirePermission('jobs.edit', 'jobs.done_pend
     // Apply the transition — update the entity's status
     if (machineKey === 'job') {
       if (result.targetState === 'Canceled') {
-        await jobsService.cancelJob(parseInt(entityId, 10));
+        await jobsService.cancelJob(
+          parseInt(entityId, 10),
+          companyId,
+          userActor(req.user?.crmUser?.id || null)
+        );
       } else {
-        await jobsService.updateBlancStatus(parseInt(entityId, 10), result.targetState, companyId);
+        await jobsService.updateBlancStatus(
+          parseInt(entityId, 10),
+          result.targetState,
+          companyId,
+          userActor(req.user?.crmUser?.id || null)
+        );
       }
 
       const eventData = {

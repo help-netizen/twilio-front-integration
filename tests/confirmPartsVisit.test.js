@@ -172,8 +172,16 @@ describe('TC-OPC-U14: confirmPartsVisit — success order + failure postures', (
         expect(seq[seq.length - 1]).toBe('updateTask');
 
         // Correct arg contracts.
-        expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(CO, 'job', 50, expect.any(String), expect.any(String));
-        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(50, 'Rescheduled', CO);
+        expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(
+            CO, 'job', 50, expect.any(String), expect.any(String),
+            expect.objectContaining({ type: 'ai', label: 'AI Phone' })
+        );
+        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(
+            50,
+            'Rescheduled',
+            CO,
+            expect.objectContaining({ type: 'ai', label: 'AI Phone' })
+        );
         expect(jobsService.addNote).toHaveBeenCalledWith(
             50, expect.stringMatching(/via AI Phone/i), [], 'AI Phone', 'AI Phone', null, CO
         );
@@ -297,7 +305,12 @@ describe('CC-07: confirmPartsVisit — booked-before-flip terminalizes own attem
         const out = await confirmPartsVisit.run(CO, L0, INPUT);
 
         expect(out).toMatchObject({ ok: true, success: true, conflict: false, statusFlipped: true, booked: true });
-        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(50, 'Rescheduled', CO);
+        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(
+            50,
+            'Rescheduled',
+            CO,
+            expect.objectContaining({ type: 'ai', label: 'AI Phone' })
+        );
         expect(jobsService.addNote).toHaveBeenCalledWith(
             50, expect.stringMatching(/via AI Phone/i), [], 'AI Phone', 'AI Phone', null, CO
         );
@@ -314,7 +327,12 @@ describe('CC-07: confirmPartsVisit — booked-before-flip terminalizes own attem
         expect(mockDbQuery).toHaveBeenCalledTimes(1);
         expect(mockDbQuery.mock.calls[0][1]).toEqual([CO, 50]);
         // …and the booking flow is byte-identical to the pre-CC-07 success path.
-        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(50, 'Rescheduled', CO);
+        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(
+            50,
+            'Rescheduled',
+            CO,
+            expect.objectContaining({ type: 'ai', label: 'AI Phone' })
+        );
         expect(tasksQueries.updateTask).toHaveBeenCalledWith(CO, 70, { status: 'done' });
         expect(out).toMatchObject({ ok: true, success: true, statusFlipped: true, booked: true });
     });

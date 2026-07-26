@@ -63,7 +63,10 @@ describe('rescheduleAppointment (L2 write) — G4 / AR-4 / AR-5', () => {
     test('ASK-WRITE-01/02: happy path → rescheduleItem + AI Phone note + job_rescheduled event + confirmed shape', async () => {
         jobsService.getJobById.mockResolvedValue(L2JOB);
         const out = await runSkill('rescheduleAppointment', CO, { source: 'test' }, { jobId: 7, newPreferredSlot: SLOT });
-        expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(CO, 'job', 7, expect.any(String), expect.any(String));
+        expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(
+            CO, 'job', 7, expect.any(String), expect.any(String),
+            expect.objectContaining({ type: 'ai', label: 'AI Phone' })
+        );
         expect(jobsService.addNote).toHaveBeenCalledWith(
             7, expect.stringMatching(/rescheduled/i), [], 'AI Phone', 'AI Phone', null, CO
         );
@@ -139,7 +142,10 @@ describe('rescheduleAppointment (L2 write) — G4 / AR-4 / AR-5', () => {
         const out = await runSkill('rescheduleAppointment', CO, {}, { jobId: 7, newPreferredSlot: SLOT });
         expect(out).toMatchObject({ ok: true, success: true, conflict: false });
         expect(out.needsVerification).toBeUndefined();
-        expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(CO, 'job', 7, expect.any(String), expect.any(String));
+        expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(
+            CO, 'job', 7, expect.any(String), expect.any(String),
+            expect.objectContaining({ type: 'ai', label: 'AI Phone' })
+        );
     });
 
     test('ASK-WRITE-L1b: an L1 caller cancels their OWN job (L2→L1) with the retention discipline intact', async () => {
@@ -147,7 +153,11 @@ describe('rescheduleAppointment (L2 write) — G4 / AR-4 / AR-5', () => {
         jobsService.getJobById.mockResolvedValue(L2JOB);
         const out = await runSkill('cancelAppointment', CO, {}, { jobId: 7, reason: 'timing', retentionAttempted: true });
         expect(out).toMatchObject({ ok: true, success: true });
-        expect(jobsService.cancelJob).toHaveBeenCalledWith(7);
+        expect(jobsService.cancelJob).toHaveBeenCalledWith(
+            7,
+            CO,
+            expect.objectContaining({ type: 'ai', label: 'AI Phone' })
+        );
         // retention still enforced at L1: first-ask (no retention) is still refused
         jest.clearAllMocks();
         gate.deriveLevel.mockResolvedValue({ level: 'L1', contactId: CONTACT, customerName: 'Jane', matchedPhone: '6175551212' });
@@ -162,7 +172,11 @@ describe('cancelAppointment (L2 write, retention-gated) — G5 / AR-5', () => {
     test('ASK-WRITE-12/13: happy path → cancelJob + reason-bearing AI Phone note + job_canceled event', async () => {
         jobsService.getJobById.mockResolvedValue(L2JOB);
         const out = await runSkill('cancelAppointment', CO, {}, { jobId: 7, reason: 'found-someone', retentionAttempted: true });
-        expect(jobsService.cancelJob).toHaveBeenCalledWith(7);
+        expect(jobsService.cancelJob).toHaveBeenCalledWith(
+            7,
+            CO,
+            expect.objectContaining({ type: 'ai', label: 'AI Phone' })
+        );
         expect(jobsService.addNote).toHaveBeenCalledWith(
             7, expect.stringContaining('found-someone'), [], 'AI Phone', 'AI Phone', null, CO
         );

@@ -85,6 +85,7 @@ async function run(companyId, verifiedContext, input) {
     const jobsService = require('../../jobsService');
     const scheduleService = require('../../scheduleService');
     const eventService = require('../../eventService');
+    const { aiActor } = require('../../jobActivityService');
     const tasksQueries = require('../../../db/tasksQueries');
 
     const src = input && typeof input === 'object' ? input : {};
@@ -150,7 +151,14 @@ async function run(companyId, verifiedContext, input) {
     //     the master and throws the friendly 409 → graceful conflict below, and
     //     NOTHING downstream runs (no flip, no note, no task-close, no booked).
     try {
-        await scheduleService.rescheduleItem(companyId, 'job', jobId, newStartAt, newEndAt);
+        await scheduleService.rescheduleItem(
+            companyId,
+            'job',
+            jobId,
+            newStartAt,
+            newEndAt,
+            aiActor('AI Phone')
+        );
     } catch (err) {
         if (isConflictLike(err)) {
             // Blocking-with-recovery: never a false confirm; state stays recoverable.
@@ -212,7 +220,12 @@ async function run(companyId, verifiedContext, input) {
     //     which happened.
     let statusFlipped = true;
     try {
-        await jobsService.updateBlancStatus(jobId, 'Rescheduled', companyId);
+        await jobsService.updateBlancStatus(
+            jobId,
+            'Rescheduled',
+            companyId,
+            aiActor('AI Phone')
+        );
     } catch (e) {
         statusFlipped = false;
         // eslint-disable-next-line no-console

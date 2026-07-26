@@ -50,7 +50,11 @@ function createApp(mode = 'auth', companyId = COMPANY_A) {
 
     if (mode === 'auth') {
         app.use((req, _res, next) => {
-            req.user = { sub: 'user-1', email: 'test@test.com' };
+            req.user = {
+                sub: 'user-1',
+                email: 'test@test.com',
+                crmUser: { id: 'crm-user-1' },
+            };
             // PF007: routes are permission-guarded; grant the schedule capabilities
             req.authz = { scope: 'tenant', permissions: ['schedule.view', 'schedule.dispatch'], scopes: {} };
             req.companyFilter = { company_id: companyId };
@@ -161,7 +165,8 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
                 'job',
                 '200',
                 '2026-03-30T17:00:00Z',
-                '2026-03-30T19:00:00Z'
+                '2026-03-30T19:00:00Z',
+                expect.objectContaining({ id: 'crm-user-1', type: 'user' })
             );
         });
 
@@ -211,7 +216,13 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
                 .send({ assignee_id: 'provider-1', assignee_name: 'Alex Kim' });
 
             expect(res.status).toBe(200);
-            expect(mockReassign).toHaveBeenCalledWith(COMPANY_A, 'job', '100', [{ id: 'provider-1', name: 'Alex Kim' }]);
+            expect(mockReassign).toHaveBeenCalledWith(
+                COMPANY_A,
+                'job',
+                '100',
+                [{ id: 'provider-1', name: 'Alex Kim' }],
+                expect.objectContaining({ id: 'crm-user-1', type: 'user' })
+            );
         });
 
         test('null assignee_id → empty array (unassign)', async () => {
@@ -223,7 +234,13 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
                 .send({ assignee_id: null });
 
             expect(res.status).toBe(200);
-            expect(mockReassign).toHaveBeenCalledWith(COMPANY_A, 'job', '100', []);
+            expect(mockReassign).toHaveBeenCalledWith(
+                COMPANY_A,
+                'job',
+                '100',
+                [],
+                expect.objectContaining({ id: 'crm-user-1', type: 'user' })
+            );
         });
 
         test('multi-provider assignees array is passed through (JOB-PROVIDER-MULTI-001)', async () => {
@@ -235,7 +252,13 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
                 .send({ assignees: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] });
 
             expect(res.status).toBe(200);
-            expect(mockReassign).toHaveBeenCalledWith(COMPANY_A, 'job', '100', [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]);
+            expect(mockReassign).toHaveBeenCalledWith(
+                COMPANY_A,
+                'job',
+                '100',
+                [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+                expect.objectContaining({ id: 'crm-user-1', type: 'user' })
+            );
         });
 
         test('400 only when neither assignees nor assignee_id is provided', async () => {

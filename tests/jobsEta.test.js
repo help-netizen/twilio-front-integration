@@ -91,6 +91,12 @@ jest.mock('../backend/src/db/companyQueries', () => ({
 const mockDbQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockDbQuery }));
 
+const mockLogJobActivity = jest.fn();
+jest.mock('../backend/src/services/jobActivityService', () => ({
+    userActor: (id) => ({ id, type: 'user', label: null, source: 'crm' }),
+    logJobActivity: (...args) => mockLogJobActivity(...args),
+}));
+
 // Cheap stubs for the unrelated modules the router pulls in at require()-time.
 jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
@@ -131,6 +137,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     // Default proxy resolution: MRU hit so notify happy-paths have a sender.
     mockDbQuery.mockResolvedValue({ rows: [{ proxy_e164: '+16175550000' }] });
+    mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
     process.env.SOFTPHONE_CALLER_ID = '+16175557777';
 });
 
@@ -358,12 +365,26 @@ describe('POST /api/jobs/:id/eta/notify', () => {
         expect(mockSendMessage.mock.calls[0][0]).toBe('conv-uuid');
         expect(mockSendMessage.mock.calls[0][1]).toEqual({ body: EXACT_SMS, author: 'agent' });
 
-        // updateBlancStatus(5, 'On the way', COMPANY).
+        // updateBlancStatus(5, 'On the way', COMPANY, CRM actor).
         expect(mockUpdateBlancStatus).toHaveBeenCalledTimes(1);
-        expect(mockUpdateBlancStatus.mock.calls[0]).toEqual([5, 'On the way', COMPANY]);
+        expect(mockUpdateBlancStatus.mock.calls[0]).toEqual([
+            5,
+            'On the way',
+            COMPANY,
+            { id: 'u-1', type: 'user', label: null, source: 'crm' },
+        ]);
+        expect(mockLogJobActivity).toHaveBeenCalledWith({
+            companyId: COMPANY,
+            action: 'job.eta_notified',
+            jobId: 5,
+            actor: { id: 'u-1', type: 'user', label: null, source: 'crm' },
+            summary: { channel: 'sms' },
+        });
 
-        // Ordering: SMS-first — sendMessage precedes updateBlancStatus.
+        // Ordering: SMS-first, then durable notify activity, then status.
         expect(mockSendMessage.mock.invocationCallOrder[0])
+            .toBeLessThan(mockLogJobActivity.mock.invocationCallOrder[0]);
+        expect(mockLogJobActivity.mock.invocationCallOrder[0])
             .toBeLessThan(mockUpdateBlancStatus.mock.invocationCallOrder[0]);
     });
 

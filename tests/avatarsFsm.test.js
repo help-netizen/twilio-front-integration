@@ -1,5 +1,7 @@
 'use strict';
 
+const mockLogJobActivity = jest.fn(async () => ({ ok: true, id: 1 }));
+
 jest.mock('../backend/src/services/fsmService', () => ({
     getAvailableActions: jest.fn(async () => ({
         fallback: false,
@@ -9,6 +11,12 @@ jest.mock('../backend/src/services/fsmService', () => ({
         valid: true,
         targetState: 'Wrong role target',
     })),
+}));
+jest.mock('../backend/src/services/jobActivityService', () => ({
+    aiActor: (label, source = 'agent') => ({
+        id: null, type: 'ai', label, source,
+    }),
+    logJobActivity: (...args) => mockLogJobActivity(...args),
 }));
 
 const fsmService = require('../backend/src/services/fsmService');
@@ -81,5 +89,19 @@ describe('AVATARS-001 Phase B FSM role parity', () => {
             expect.stringContaining(`SET ${keyColumn === 'uuid' ? 'status' : 'blanc_status'} = $1`),
             ['Review', keyColumn === 'uuid' ? 'LEAD-A' : 9, 'company-a']
         );
+        if (handler === 'transitionJob') {
+            expect(mockLogJobActivity).toHaveBeenCalledWith({
+                companyId: 'company-a',
+                action: 'job.status_changed',
+                jobId: 9,
+                actor: {
+                    id: null,
+                    type: 'ai',
+                    label: 'Avatar of Provider',
+                    source: 'mcp',
+                },
+                summary: { status: 'Review' },
+            }, { client: transaction });
+        }
     });
 });

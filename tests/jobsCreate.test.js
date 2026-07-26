@@ -51,8 +51,13 @@ function request(app, method, path, body = null) {
 // =============================================================================
 
 const mockCreateDirectJob = jest.fn();
+const mockLogJobActivity = jest.fn();
 jest.mock('../backend/src/services/jobsService', () => ({
     createDirectJob: mockCreateDirectJob,
+}));
+jest.mock('../backend/src/services/jobActivityService', () => ({
+    userActor: (id) => ({ id, type: 'user', label: null, source: 'crm' }),
+    logJobActivity: (...args) => mockLogJobActivity(...args),
 }));
 // Stub the other modules the route file pulls in so requiring it is cheap.
 jest.mock('../backend/src/services/zenbookerClient', () => ({}));
@@ -108,6 +113,12 @@ describe('POST /api/jobs — permission + tenant context', () => {
         expect(res.body.ok).toBe(true);
         expect(res.body.data).toEqual({ job_id: 7, zenbooker_job_id: 'zb-7', zb_warning: null });
         expect(mockCreateDirectJob.mock.calls[0][0]).toBe(COMPANY);
+        expect(mockCreateDirectJob.mock.calls[0][2]).toEqual({
+            id: 'u-1',
+            type: 'user',
+            label: null,
+            source: 'crm',
+        });
     });
 
     test('returns 403 when tenant context (companyFilter) is absent', async () => {
@@ -170,6 +181,11 @@ describe('jobsService.createDirectJob', () => {
         });
         return svc;
     }
+
+    beforeEach(() => {
+        mockLogJobActivity.mockReset();
+        mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
+    });
 
     afterEach(() => { jest.resetModules(); jest.dontMock('../backend/src/db/connection'); });
 
@@ -253,12 +269,18 @@ describe('jobsService.createDirectJob', () => {
 
         const svc = loadService({ dbQuery, resolveContact, createJob: createJobZb, getJob });
 
+        const actor = {
+            id: '10000000-0000-4000-8000-000000000001',
+            type: 'user',
+            label: null,
+            source: 'crm',
+        };
         const out = await svc.createDirectJob(COMPANY, {
             contact: { name: 'Jane Doe', phone: '+16175551234', email: 'jane@x.com' },
             address: { line1: '6 Cirrus Drive', city: 'Ashland', postal_code: '01721' },
             slot: { start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z' },
             job_type: 'Refrigerator repair',
-        });
+        }, actor);
 
         expect(createJobZb).toHaveBeenCalledTimes(1);
         // Payload sanity: custom service + arrival window + auto assignment.
@@ -273,6 +295,13 @@ describe('jobsService.createDirectJob', () => {
         expect(getJob).toHaveBeenCalledTimes(1);
 
         expect(out).toEqual({ job_id: 77, zenbooker_job_id: 'zb-123', zb_warning: null });
+        expect(mockLogJobActivity).toHaveBeenCalledWith({
+            companyId: COMPANY,
+            action: 'job.created',
+            jobId: 77,
+            actor,
+            summary: { status: 'Submitted' },
+        });
     });
 
     test('P1: pre-assigned tech omits assignment_method (ZB rejects both)', async () => {

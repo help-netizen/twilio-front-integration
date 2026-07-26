@@ -78,6 +78,12 @@ jest.mock('../backend/src/db/rateMeQueries', () => ({
 const mockDbQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockDbQuery }));
 
+const mockLogJobActivity = jest.fn();
+jest.mock('../backend/src/services/jobActivityService', () => ({
+    userActor: (id) => ({ id, type: 'user', label: null, source: 'crm' }),
+    logJobActivity: (...args) => mockLogJobActivity(...args),
+}));
+
 // Cheap require-time stubs for unrelated jobs-router dependencies.
 jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
@@ -132,7 +138,11 @@ function routeApp({
     app.use(express.json());
     app.use((req, _res, next) => {
         req.user = { sub: 'kc-sub', email: 'u@x.com', crmUser: { id: 'crm-user-1' } };
-        req.authz = { scope: 'tenant', permissions, scopes: {} };
+        req.authz = {
+            scope: 'tenant',
+            permissions,
+            scopes: { job_visibility: 'all' },
+        };
         req.companyFilter = companyFilter;
         req.companyId = 'LEGACY-DO-NOT-USE';
         next();
@@ -151,6 +161,7 @@ beforeEach(() => {
     mockGetOrCreateConversation.mockResolvedValue({ id: 'conv-1' });
     mockSendMessage.mockResolvedValue(undefined);
     mockSendEmail.mockResolvedValue(undefined);
+    mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
     process.env.SOFTPHONE_CALLER_ID = '+16175557777';
 });
 
@@ -179,6 +190,18 @@ describe('POST /api/jobs/:id/rate-link', () => {
             techName: 'Alex Petrov',
         });
         expect(mockStampTokenSent).toHaveBeenCalledWith(TOKEN, COMPANY_X, 'copy');
+        expect(mockLogJobActivity).toHaveBeenCalledWith({
+            companyId: COMPANY_X,
+            action: 'job.rating_link_sent',
+            jobId: 41,
+            actor: {
+                id: 'crm-user-1',
+                type: 'user',
+                label: null,
+                source: 'crm',
+            },
+            summary: { channel: 'copy' },
+        });
         expect(mockSendMessage).not.toHaveBeenCalled();
         expect(mockSendEmail).not.toHaveBeenCalled();
     });

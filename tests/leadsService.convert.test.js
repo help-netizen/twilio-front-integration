@@ -2,6 +2,7 @@ const mockClient = {
     query: jest.fn(),
     release: jest.fn(),
 };
+const mockLogJobActivity = jest.fn();
 
 jest.mock('../backend/src/db/connection', () => ({
     query: jest.fn(),
@@ -16,6 +17,9 @@ jest.mock('../backend/src/services/zenbookerClient', () => ({
 }));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
+jest.mock('../backend/src/services/jobActivityService', () => ({
+    logJobActivity: (...args) => mockLogJobActivity(...args),
+}));
 
 const db = require('../backend/src/db/connection');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
@@ -109,6 +113,7 @@ describe('leadsService.convertLead idempotency', () => {
             notes: [],
             invoice: {},
         });
+        mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
     });
 
     it('uses the custom Zenbooker service description for the local job', async () => {
@@ -161,6 +166,31 @@ describe('leadsService.convertLead idempotency', () => {
         expect(insertedJobDescription()).toBeNull();
     });
 
+    it('logs a newly created Job with the threaded CRM actor in the claim transaction', async () => {
+        mockClaimNewJob();
+        const actor = {
+            id: '10000000-0000-4000-8000-000000000001',
+            type: 'user',
+            label: null,
+            source: 'crm',
+        };
+
+        await leadsService.convertLead(
+            'ABC123',
+            { service: { name: 'Repair' } },
+            'company-1',
+            actor
+        );
+
+        expect(mockLogJobActivity).toHaveBeenCalledWith({
+            companyId: 'company-1',
+            action: 'job.created',
+            jobId: 1131,
+            actor,
+            summary: { status: 'Submitted' },
+        }, { client: mockClient });
+    });
+
     it('reuses an existing local job when retrying a conversion after Zenbooker failed', async () => {
         mockClaimExistingJob({ id: 1131, contact_id: 123, zenbooker_job_id: null });
         zenbookerClient.createJob.mockResolvedValue({ job_id: 'zb-1131' });
@@ -194,6 +224,7 @@ describe('leadsService.convertLead idempotency', () => {
         expect(zenbookerClient.createJob).toHaveBeenCalledTimes(1);
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO jobs'))).toBe(false);
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('pg_advisory_xact_lock'))).toBe(true);
+        expect(mockLogJobActivity).not.toHaveBeenCalled();
     });
 
     it('returns an already linked local job without creating another Zenbooker job', async () => {

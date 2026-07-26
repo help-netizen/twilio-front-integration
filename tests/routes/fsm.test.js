@@ -798,7 +798,11 @@ describe('PF007: FSM route authorization', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.newState).toBe('Canceled');
-    expect(jobsServiceMock.cancelJob).toHaveBeenCalledWith(1);
+    expect(jobsServiceMock.cancelJob).toHaveBeenCalledWith(
+      1,
+      FSM_COMPANY,
+      expect.objectContaining({ id: 'u-1', type: 'user' })
+    );
     expect(jobsServiceMock.updateBlancStatus).not.toHaveBeenCalled();
     expect(eventServiceMock.logEvent).toHaveBeenCalledWith(
       FSM_COMPANY,

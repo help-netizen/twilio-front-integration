@@ -24,6 +24,7 @@ const upload = multer({
 const contactDedupeService = require('../services/contactDedupeService');
 const contactAddressService = require('../services/contactAddressService');
 const eventService = require('../services/eventService');
+const { userActor } = require('../services/jobActivityService');
 
 // =============================================================================
 // Helpers
@@ -797,7 +798,12 @@ router.post('/:uuid/unassign', requirePermission('leads.edit'), async (req, res)
 router.post('/:uuid/convert', requirePermission('leads.convert'), async (req, res) => {
     const reqId = requestId();
     try {
-        const result = await leadsService.convertLead(req.params.uuid, req.body || {}, req.companyFilter?.company_id);
+        const result = await leadsService.convertLead(
+            req.params.uuid,
+            req.body || {},
+            req.companyFilter?.company_id,
+            userActor(req.user?.crmUser?.id || null)
+        );
         eventService.logEvent(req.companyFilter?.company_id, 'lead', result.ClientId, 'converted',
             { job_id: result.job_id, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));

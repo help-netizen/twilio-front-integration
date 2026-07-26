@@ -3,6 +3,10 @@
  */
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+const mockUpdateBlancStatus = jest.fn();
+jest.mock('../backend/src/services/jobsService', () => ({
+    updateBlancStatus: (...args) => mockUpdateBlancStatus(...args),
+}));
 
 const db = require('../backend/src/db/connection');
 const eventBus = require('../backend/src/services/eventBus');
@@ -82,6 +86,26 @@ describe('ruleActions template rendering', () => {
         expect(sql).toContain("'agent'");
         expect(sql).toContain("'queued'");
         expect(params[1]).toBe('summarize');
+    });
+    it('fsm_transition attributes the Job status action to automation', async () => {
+        mockUpdateBlancStatus.mockResolvedValueOnce({ id: 5, blanc_status: 'Canceled' });
+
+        await ruleActions.execute(
+            { type: 'fsm_transition', params: { job_id: 5, target_status: 'Canceled' } },
+            { context: {}, companyId: COMPANY }
+        );
+
+        expect(mockUpdateBlancStatus).toHaveBeenCalledWith(
+            5,
+            'Canceled',
+            COMPANY,
+            {
+                id: null,
+                type: 'system',
+                label: 'Automation',
+                source: 'crm',
+            }
+        );
     });
 });
 
