@@ -39,6 +39,12 @@ interface NoteAttachmentInputProps {
      * sheet's close X. Used by the mobile note composer.
      */
     variant?: 'text' | 'round';
+    /**
+     * Background of the 'round' button. Defaults to the field fill (its ground on
+     * a white sheet). Override to a contrasting tone when the round button sits on
+     * a filled --blanc-field composer card (desktop), so it stays visible.
+     */
+    roundBg?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -47,7 +53,7 @@ function formatSize(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function NoteAttachmentInput({ entityType, entityId, onStateChange, compact, variant = 'text' }: NoteAttachmentInputProps) {
+export function NoteAttachmentInput({ entityType, entityId, onStateChange, compact, variant = 'text', roundBg = 'var(--blanc-field)' }: NoteAttachmentInputProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const [items, setItems] = useState<Item[]>([]);
     const removedKeys = useRef<Set<string>>(new Set());
@@ -160,7 +166,7 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                     style={{
                         width: 44,
                         height: 44,
-                        background: 'var(--blanc-field)',
+                        background: roundBg,
                         border: 'none',
                         color: 'var(--blanc-ink-2)',
                     }}

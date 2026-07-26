@@ -272,18 +272,23 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         <div ref={containerRef} className="space-y-3">
             {/* Add note input — always at top */}
             {expanded ? (
-                <div className="space-y-2">
+                /* COMPOSER-CANON-001 (OB-38): the desktop inline composer matches the mobile
+                   one — a single rounded filled card holding a roomy borderless textarea over a
+                   row of round action buttons (attach + violet send-arrow, no "Add note" label).
+                   The attach circle rides a white ground so it stays visible on the field card. */
+                <div style={{ background: 'var(--blanc-field)', borderRadius: 16, padding: '10px 12px' }}>
                     <textarea
                         ref={textareaRef}
-                        className="w-full text-sm resize-none outline-none bg-transparent leading-5"
+                        className="w-full resize-none outline-none bg-transparent"
                         style={{
-                            border: '1px solid var(--blanc-line)',
-                            borderRadius: 10,
-                            padding: '8px 12px',
-                            minHeight: 72,
+                            border: 'none',
+                            padding: '2px 2px 0',
+                            minHeight: 64,
+                            fontSize: 15,
+                            lineHeight: 1.5,
                             color: 'var(--blanc-ink-1)',
                         }}
-                        placeholder="Write a note..."
+                        placeholder="Write a note…"
                         value={text}
                         onChange={e => setText(e.target.value)}
                         onKeyDown={e => {
@@ -299,14 +304,22 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         }}
                         autoFocus
                     />
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
                         <div className="flex items-center gap-3">
-                            <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} compact />
-                            <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Cmd + Enter</p>
+                            <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                            <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>⌘ + Enter</p>
                         </div>
-                        <Button size="sm" onMouseDown={e => e.preventDefault()} onClick={handleSubmit} disabled={!canSubmit}>
-                            <Plus className="size-4 mr-1" /> Add Note
-                        </Button>
+                        <button
+                            type="button"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={handleSubmit}
+                            disabled={!canSubmit}
+                            aria-label="Add note"
+                            className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                            style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
+                        >
+                            {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
+                        </button>
                     </div>
                 </div>
             ) : (
