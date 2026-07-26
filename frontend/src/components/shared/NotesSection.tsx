@@ -386,15 +386,18 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         {editing ? (
                             <div className="space-y-2">
                                 <textarea
-                                    className="w-full text-sm resize-none outline-none bg-transparent leading-5"
+                                    className="w-full resize-none outline-none"
                                     style={{
-                                        border: '1px solid var(--blanc-line)',
-                                        borderRadius: 10,
+                                        background: 'var(--blanc-surface-strong)',
+                                        border: 'none',
+                                        borderRadius: 12,
                                         padding: '8px 12px',
                                         minHeight: 72,
+                                        fontSize: 15,
+                                        lineHeight: 1.5,
                                         color: 'var(--blanc-ink-1)',
                                     }}
-                                    placeholder="Write a note..."
+                                    placeholder="Write a note…"
                                     value={editText}
                                     onChange={e => setEditText(e.target.value)}
                                     onInput={e => {

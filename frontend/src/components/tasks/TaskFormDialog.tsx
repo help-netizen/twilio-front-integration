@@ -128,7 +128,7 @@ export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, t
                         <FloatingField
                             label="Description"
                             textarea
-                            rows={3}
+                            rows={4}
                             value={description}
                             onChange={e => setDescription(e.target.value)}
                         />

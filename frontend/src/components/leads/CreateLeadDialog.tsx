@@ -172,7 +172,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                         {JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                                     </FloatingSelect>
                                 </div>
-                                <FloatingField id="cld-description" label="Description" textarea rows={3} value={formData.Description} onChange={(e) => setFormData({ ...formData, Description: e.target.value })} />
+                                <FloatingField id="cld-description" label="Description" textarea rows={4} value={formData.Description} onChange={(e) => setFormData({ ...formData, Description: e.target.value })} />
                             </div>
 
                             {/* ── Custom metadata (only if fields configured) ── */}

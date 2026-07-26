@@ -392,7 +392,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                                     {JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                                 </FloatingSelect>
                             </div>
-                            <FloatingField id="njd-desc" label="Details (the problem)" textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
+                            <FloatingField id="njd-desc" label="Details (the problem)" textarea rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
                         </div>
 
                         {/* Additional info — same custom fields as New Lead (only if configured) */}
