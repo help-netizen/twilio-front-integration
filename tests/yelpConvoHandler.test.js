@@ -30,11 +30,12 @@ jest.mock('../backend/src/db/yelpConversationQueries', () => ({
 
 const mockClaimYelpLead = jest.fn();
 const mockMarkReplied = jest.fn();
+const mockMarkGreeted = jest.fn();
 jest.mock('../backend/src/db/yelpLeadQueries', () => ({
     claimYelpLead: mockClaimYelpLead,
     markReplied: mockMarkReplied,
     releaseClaim: jest.fn(),
-    markGreeted: jest.fn(),
+    markGreeted: mockMarkGreeted,
     threadAlreadyGreeted: jest.fn(),
     getClaimByMessage: jest.fn(),
     attachLead: jest.fn(),
@@ -160,6 +161,43 @@ describe('yelp_convo Phase-B — claim-first → runTurn → markReplied (brain 
         expect(mockSendEmail).not.toHaveBeenCalled();
         expect(mockMarkReplied).not.toHaveBeenCalled();
         expect(out).toEqual({ skipped: 'no_reply_content', conversation_id: CONV_ID });
+    });
+
+    it('TURN-0 passes the allowlisted parsed greeting context, including ZIP, into runTurn', async () => {
+        process.env.YELP_CONVO_ENABLED = 'true';
+        const greetingContext = {
+            name: 'Kim',
+            service: 'dishwasher repair',
+            city: 'Newton',
+            state: 'MA',
+            zip: '02467',
+        };
+
+        await agentHandlers.run(convTask({
+            agent_input: {
+                conversation_id: CONV_ID,
+                inbound_provider_message_id: 'ymsg-NEW-1:greet0',
+                inbound_body_text: 'first-message wrapper',
+                thread_token: '8160b36a1c2d3e4f',
+                lead_id: 55,
+                greeting: true,
+                greeting_context: greetingContext,
+            },
+        }));
+
+        expect(mockRunTurn).toHaveBeenCalledWith(
+            DEFAULT_COMPANY_ID,
+            expect.objectContaining({ conversation_id: CONV_ID }),
+            expect.objectContaining({
+                provider_message_id: 'ymsg-NEW-1:greet0',
+                greeting: true,
+                greeting_context: greetingContext,
+            })
+        );
+        expect(mockMarkGreeted).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ threadToken: '8160b36a1c2d3e4f', leadId: 55 })
+        );
     });
 });
 

@@ -106,3 +106,74 @@ Backend-only; no new HTTP routes (background worker + ingest hook). Every `yelp_
 6. **B6 held-slot abandonment (RESOLVED at build, Phase B).** No speculative hold and no new TTL in v1: `updateLead` writes the window ONLY on an explicit customer accept of an offered slot (`book`), so there is no "held-then-cold" occupancy to reclaim — an unbooked conversation never touches `LeadDateTime`. A booked-then-cancelled case is left to the dispatcher (the existing lead is visible and the `Confirm Yelp booking` task surfaces it). Unknown-conv-id replies (§8 S11 / YCB-INT-03) are also RESOLVED = **fall-through** (never mis-threaded, never a new lead, never a write to a non-matching row).
 7. **Voice-hold parity (B7)** — email hold must be indistinguishable from a voice hold to the engine/dispatcher (same `tzCombine` window→`LeadDateTime` + both-or-nothing coords), WITHOUT `bookOnLead`'s identity gate.
 8. **Loop cost/latency** — enforce `MAX_TOOLCALLS`/turn + hard timeout/call + `MAX_TURNS`/conversation + loop-detector; `max_attempts=3` is the outer worker bound; any breach → safe reply, repeat → call-fallback.
+
+## 11. YELP-GRIT-001 — direct opener + early TURN-0 slot (2026-07-25)
+
+### 11.1 Parser and trusted TURN-0 seed
+
+The real `parseYelpLead` result has no `location` property. Its location shape is
+the existing flat `{ city, state, zip }`, alongside `{ name, service, problem,
+reply_to, thread_token, magic_link }`. Location is parsed only from the answer
+immediately attached to Yelp's labeled question “In what location/area do you
+need the/this service?”. A five-digit number in problem text, a link, or footer
+is not a ZIP source.
+
+`enqueueYelpConvoGreetingTask` copies only
+`{name,service,city,state,zip}` into `agent_input.greeting_context`. The handler
+passes that object to `runTurn` only for `greeting:true`. TURN-0 validates ZIP
+again as exactly five digits and ignores every extra key/raw location string.
+The raw parsed answer and whole parse object never enter a tool argument or
+system prompt.
+
+### 11.2 First-response behavior
+
+- Both greeting paths open `Hi {name},` or `Hi there,`; “Thanks”, “Thank you”,
+  and “Thanks so much” are prohibited as first-response openers. The one-shot
+  Gemini path enforces the opener after generation as well as in its prompt.
+- With a valid TURN-0 ZIP, the conversation agent calls
+  `checkServiceArea({zip})`, then `recommendSlots({zip})`. The slot engine's
+  ranked first result is the single nearest offer persisted in `offered_slots`;
+  later accept→book behavior remains the existing flow.
+- Without a ZIP, outside the service area, without available slots, or on a
+  tool failure, TURN-0 sends the deterministic contact/address ask and never
+  fabricates a window.
+- TURN-0 customer-facing prose is deterministic. Parsed record text is
+  untrusted data and cannot select a tool, company, recipient, slot, or message.
+
+### 11.3 Yelp Leads marketplace catalog and gating
+
+Migration 203 publishes `app_key='yelp-leads'`, display name “Yelp Leads”,
+`category='lead_generation'`, `requested_scopes=["leads:create"]`,
+`provisioning_mode='manual'`, no logo, and complete
+`metadata.assistant`. It is replayed by `ensureMarketplaceSchema` and creates no
+installation or credential.
+
+The six lead-generation cards (Website Leads, Pro Referral, Rely, NSA, LHG,
+Yelp) are informational in v1. The external lead endpoint gates on a
+company-owned API credential plus `leads:create`, not a source-app
+installation. The four split source cards deliberately do not enforce
+per-source admission; Rely's connected installation only supplies optional
+filter settings and absence fails open. Yelp therefore does not introduce a
+different per-company installation gate. Runtime behavior remains gated by
+`YELP_AUTORESPONDER_ENABLED`, `YELP_CONVO_ENABLED`, and the existing
+default-company controlled rollout.
+
+## 12. Verification — YELP-GRIT-001 / Yelp Leads
+
+Worktree-form Jest commands:
+
+```bash
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/yelpGreetingTone.test.js tests/yelpLeadSafeFail.test.js tests/yelpLeadService.parse.test.js tests/yelpConvoAgentLoop.test.js tests/yelpConvoHandler.test.js tests/yelpConvoIntercept.test.js
+
+DATABASE_URL=postgresql://127.0.0.1:<temp-port>/twilio_calls env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/yelpMarketplaceApp.db.test.js
+```
+
+Contracts: static + mocked-LLM opener; labeled-location parsing and injected
+ZIP rejection; TURN-0 ZIP→area→nearest-slot, no-ZIP/out-of-area/no-slots/down
+fallbacks; handler seed pass-through; migration apply/reapply/rollback and
+complete assistant metadata.
+
+Recorded worktree results: the complete non-DB Yelp batch passed 19 suites /
+200 tests; the prod-shaped real-PG Yelp batch passed 7 suites / 22 tests; the
+Marketplace regression batch passed 4 suites / 35 tests. All commands exited
+0.

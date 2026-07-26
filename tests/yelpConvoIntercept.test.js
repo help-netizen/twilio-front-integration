@@ -183,7 +183,18 @@ describe('YCB-INT-01 [B] · GREETER-SWITCH — YELP_CONVO_ENABLED ON → yelp_co
             expect(convoInserts).toHaveLength(1);
             expect(leadInserts).toHaveLength(0);
             const input = JSON.parse(convoInserts[0][1][1]);
-            expect(input).toMatchObject({ conversation_id: '9Xk2mZ7bQ1', greeting: true, lead_id: 55 });
+            expect(input).toMatchObject({
+                conversation_id: '9Xk2mZ7bQ1',
+                greeting: true,
+                lead_id: 55,
+                greeting_context: {
+                    name: 'Kim',
+                    service: 'dishwasher repair',
+                    city: 'Newton',
+                    state: 'MA',
+                    zip: '02467',
+                },
+            });
             // turn-0 claim key is suffixed so it never collides with the lead claim on the bare pmid
             expect(input.inbound_provider_message_id).toBe('ymsg-NEW-1:greet0');
 

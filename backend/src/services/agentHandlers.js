@@ -363,7 +363,12 @@ const HANDLERS = {
         // (3b) Phase B (brain ON): run the bounded tool-loop. runTurn sends the one email
         //      and persists conversation state; it throws ONLY on a sendEmail fault, which
         //      we deliberately let propagate (worker retry re-attempts the send).
-        const inbound = { provider_message_id: pmid, body_text: input.inbound_body_text };
+        const inbound = {
+            provider_message_id: pmid,
+            body_text: input.inbound_body_text,
+            greeting: input.greeting === true,
+            greeting_context: input.greeting_context,
+        };
         const result = await require('./yelpConvoAgentService').runTurn(companyId, conv, inbound);
 
         // (4) POST-SEND marker (best-effort; swallowed — the email is already out, so a

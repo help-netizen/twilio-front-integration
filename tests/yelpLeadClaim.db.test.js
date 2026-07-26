@@ -3,8 +3,9 @@
 /**
  * YELP-LEAD-AUTORESPONDER-001 — REAL-POSTGRES claim / idempotency (YLA-C-02, C-03).
  * The DB seam is NOT mocked here — the UNIQUE(company_id, provider_message_id)
- * constraint (migration 162) is what we are proving. Collaborators (leadsService,
- * emailService, yelpGreetingService) ARE mocked.
+ * constraint (migration 162) is what we are proving. leadsService is mocked,
+ * while the durable tasks INSERT is real: the current architecture enqueues one
+ * yelp_lead task and does zero SMTP work in the ingest path.
  *
  * SELF-SKIPS when no test DB is reachable (or the migration is not applied): the
  * probe in beforeAll sets dbReady=false and every case no-ops with a SKIPPED-NEEDS-DB
@@ -35,6 +36,7 @@ const { yNew } = require('./yelpFixtures');
 
 let dbReady = false;
 const usedPmids = [];
+const usedLeadIds = [];
 
 function uniquePmid(tag) {
     const id = `ymsg-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
@@ -64,7 +66,17 @@ beforeEach(() => {
 afterAll(async () => {
     if (dbReady && usedPmids.length) {
         try {
+            await db.query(
+                `DELETE FROM tasks
+                 WHERE company_id = $1
+                   AND agent_type = 'yelp_lead'
+                   AND agent_input->>'provider_message_id' = ANY($2)`,
+                [DEFAULT_COMPANY_ID, usedPmids]
+            );
             await db.query('DELETE FROM yelp_lead_events WHERE provider_message_id = ANY($1)', [usedPmids]);
+            if (usedLeadIds.length) {
+                await db.query('DELETE FROM leads WHERE id = ANY($1::bigint[])', [usedLeadIds]);
+            }
         } catch (e) {
             console.warn('[yelpLeadClaim.db] cleanup failed:', e.message);
         }
@@ -92,15 +104,38 @@ describe('YLA-C-02: real Postgres — two inserts of one (company, pmid) → exa
     });
 });
 
-describe('YLA-C-03 · CLAIM-single-greet-on-reingest: re-scan → ONE lead + ONE greeting (P0)', () => {
-    it('second maybeHandleYelpLead on the same pmid short-circuits at the lost claim', async () => {
+describe('YLA-C-03 · CLAIM-single-greet-task-on-reingest: re-scan → ONE lead + ONE durable greeter (P0)', () => {
+    it('second maybeHandleYelpLead on the same pmid creates no second greeting task', async () => {
         if (!dbReady) return console.warn('YLA-C-03 SKIPPED-NEEDS-DB');
         const msg = yNew({ provider_message_id: uniquePmid('C03') });
+        const leadUuid = `Y${Date.now()}${Math.floor(Math.random() * 1e5)}`.slice(0, 20);
+        const seeded = await db.query(
+            `INSERT INTO leads (uuid, company_id, status, first_name, job_source)
+             VALUES ($1, $2, 'Submitted', 'Kim', 'Yelp')
+             RETURNING id`,
+            [leadUuid, DEFAULT_COMPANY_ID]
+        );
+        const leadId = seeded.rows[0].id;
+        usedLeadIds.push(leadId);
+        mockCreateLead.mockResolvedValue({
+            UUID: leadUuid,
+            SerialId: 1,
+            ClientId: String(leadId),
+        });
 
         await maybeHandleYelpLead(DEFAULT_COMPANY_ID, msg); // push
         await maybeHandleYelpLead(DEFAULT_COMPANY_ID, msg); // poll re-scan of the SAME message
 
         expect(mockCreateLead).toHaveBeenCalledTimes(1);
-        expect(mockSendEmail).toHaveBeenCalledTimes(1);
+        const tasks = await db.query(
+            `SELECT id
+             FROM tasks
+             WHERE company_id = $1
+               AND agent_type = 'yelp_lead'
+               AND agent_input->>'provider_message_id' = $2`,
+            [DEFAULT_COMPANY_ID, msg.provider_message_id]
+        );
+        expect(tasks.rows).toHaveLength(1);
+        expect(mockSendEmail).not.toHaveBeenCalled();
     });
 });

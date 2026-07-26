@@ -57,6 +57,7 @@ describe('YLA-S-01 (re-homed): Gemini unavailable → STATIC greeting still sent
         expect(text.length).toBeGreaterThan(0);
         expect(text).toEqual(expect.stringContaining('Kim'));
         expect(text.toLowerCase()).toEqual(expect.stringContaining('dishwasher'));
+        expect(text).not.toMatch(/^(?:thanks|thank you)/i);
     });
 
     it('(b) handler end-to-end: the static greeting is sent exactly once to the relay', async () => {
@@ -81,6 +82,7 @@ describe('YLA-S-02 (re-homed): Gemini transport error → buildGreeting falls ba
             const text = await yelpGreetingService.buildGreeting({ name: 'Kim', service: 'dishwasher repair' });
             expect(text).toEqual(expect.stringContaining('Kim'));
             expect(text.toLowerCase()).toEqual(expect.stringContaining('dishwasher'));
+            expect(text).not.toMatch(/^(?:thanks|thank you)/i);
         } finally {
             global.fetch = origFetch;
             delete process.env.GEMINI_API_KEY;

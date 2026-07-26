@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-07-25 — Yelp first reply: direct opener, early slot, Marketplace tile
+
+Yelp's first reply now opens directly with “Hi …” instead of a gratitude
+opener. With a ZIP parsed from Yelp's labeled location answer, the conversation
+TURN-0 checks service area and offers the Smart Slot Engine's nearest ranked
+window immediately; missing/out-of-area/no-slot/down cases ask for phone and
+service address without inventing availability. The seed passed to the agent is
+an allowlisted flat `{name,service,city,state,zip}` object, with ZIP revalidated
+before tools and raw location prose excluded.
+
+Migration 203 adds the published “Yelp Leads” marketplace app with complete
+assistant metadata and no logo/installation backfill. As with the existing
+source lead cards, installation state is informational rather than an ingest
+gate; the existing Yelp env flags and default-company rollout remain the
+runtime master controls. **НЕ задеплоено.**
+
 ## 2026-07-25 — AVATARS-001: durable "Avatars" marketplace name (migration 202)
 
 Migration 202 re-asserts `marketplace_apps.name='Avatars'` and refreshes the

@@ -40,6 +40,8 @@ const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 const YELP_RELAY_DOMAIN_RE = /@messaging\.yelp\.com$/i;
 // Relay local-part → full reply address + hex thread token.
 const YELP_RELAY_ADDR_RE = /(reply\+([0-9a-f]+)@messaging\.yelp\.com)/i;
+const YELP_LOCATION_QUESTION_RE =
+    /^in what (?:location|area) do you need (?:the|this) service\??(?:\s*:\s*(.*))?$/i;
 
 // YELP-TIMELINE-DEDUP-001 — Yelp SYSTEM-notification senders (welcome/confirmation
 // echoes, "New message from ABC Homes" notices). These are NOT the customer relay
@@ -124,6 +126,37 @@ function detectYelpLead(msg) {
     return firstMessageUtm || requestedQuoteHeader;
 }
 
+function unwrapYelpFormLine(line) {
+    return String(line || '')
+        .trim()
+        .replace(/^[|\s*#]+/, '')
+        .replace(/[|\s*]+$/, '')
+        .trim();
+}
+
+/**
+ * Read only the answer attached to Yelp's location question. This deliberately
+ * does not scan the whole email for a ZIP: problem text, links, and signatures
+ * are untrusted and may contain unrelated or adversarial five-digit numbers.
+ */
+function extractYelpLocation(body) {
+    const lines = String(body || '').split(/\r\n?|\n/);
+    for (let index = 0; index < lines.length; index++) {
+        const question = unwrapYelpFormLine(lines[index]);
+        const match = question.match(YELP_LOCATION_QUESTION_RE);
+        if (!match) continue;
+        if (match[1] && match[1].trim()) return unwrapYelpFormLine(match[1]);
+
+        for (let answerIndex = index + 1; answerIndex < lines.length; answerIndex++) {
+            const answer = unwrapYelpFormLine(lines[answerIndex]);
+            if (!answer) continue;
+            return answer.slice(0, 200);
+        }
+        return null;
+    }
+    return null;
+}
+
 /**
  * Parse a Yelp new-lead email into structured fields. Fail-safe: any field that
  * cannot be recovered is null; NEVER throws.
@@ -176,14 +209,19 @@ function parseYelpLead(msg) {
             }
         }
 
-        // --- city / state / zip from a "City, ST 12345" line; then loose zip fallback.
-        const csz = body.match(/([A-Za-z][A-Za-z .'’-]*),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/);
+        // --- city / state / zip ONLY from Yelp's labeled location answer. The
+        //     returned parse shape stays flat ({city,state,zip}); raw location
+        //     prose is never promoted into the agent prompt.
+        const location = extractYelpLocation(body);
+        const csz = location && location.match(
+            /^([A-Za-z][A-Za-z .'’-]{0,80}),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$/i
+        );
         if (csz) {
             out.city = csz[1].trim();
             out.state = csz[2].trim().toUpperCase();
             out.zip = csz[3];
-        } else {
-            const zipOnly = body.match(/\b(\d{5})(?:-\d{4})?\b/);
+        } else if (location) {
+            const zipOnly = location.match(/\b(\d{5})(?:-\d{4})?\b/);
             if (zipOnly) out.zip = zipOnly[1];
         }
 
@@ -423,6 +461,16 @@ async function enqueueYelpConvoGreetingTask(companyId, { claimId, convId, msg, p
         lead_id: leadId,
         lead_uuid: leadUuid,
         greeting: true,
+        // TURN-0 server context. Keep an explicit allowlist and the parser's flat
+        // fields; never pass the raw labeled answer or the whole parsed object to
+        // the agent. yelpConvoAgentService validates the ZIP again before a tool call.
+        greeting_context: {
+            name: parsed.name,
+            service: parsed.service,
+            city: parsed.city,
+            state: parsed.state,
+            zip: parsed.zip,
+        },
     };
     const title = `Yelp greeting — ${parsed.name || 'new lead'}`;
     const { rows } = await db.query(
