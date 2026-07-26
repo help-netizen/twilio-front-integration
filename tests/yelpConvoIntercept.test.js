@@ -20,6 +20,12 @@
 const mockQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 
+const mockIsLeadAppInstalled = jest.fn();
+jest.mock('../backend/src/db/marketplaceQueries', () => ({
+    ...jest.requireActual('../backend/src/db/marketplaceQueries'),
+    isLeadAppInstalled: mockIsLeadAppInstalled,
+}));
+
 const mockCreateLead = jest.fn();
 jest.mock('../backend/src/services/leadsService', () => ({ createLead: mockCreateLead }));
 
@@ -111,6 +117,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     process.env.YELP_AUTORESPONDER_ENABLED = 'true';
     delete process.env.YELP_CONVO_ENABLED;
+    mockIsLeadAppInstalled.mockResolvedValue(true);
     mockQuery.mockImplementation(async (sql) =>
         /insert into tasks/i.test(sql) ? { rows: [{ id: 900 }] } : { rows: [] }
     );

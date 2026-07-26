@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-26 — Lead-install gate: Yelp autoresponder gated by Marketplace connection
+
+LEAD-INSTALL-GATE-001. The Yelp autoresponder now runs only when the **Yelp Leads**
+Marketplace app is installed+connected for the company (via
+`marketplaceQueries.isLeadAppInstalled`), replacing the hardcoded default-company
+scope; the `YELP_AUTORESPONDER_ENABLED` env stays a global kill-switch. Migration
+206 durably seeds ABC Homes' Yelp installation (shared credential #1, idempotent)
+so the live autoresponder is unaffected (install-first). The five lead-ingestion
+apps are **not** install-gated: discovery found the shared ingestion endpoint has
+no server-side source discriminator (JobSource is arbitrary/absent), so gating on
+it would be bypassable and could drop legitimate leads — deferred pending a
+per-source credential/discriminator. Yelp suites green (41). NOT deployed.
+
 ## 2026-07-26 — Marketplace ratings, moderated reviews, and human app copy
 
 Added one-review-per-user Marketplace ratings with posted-only global

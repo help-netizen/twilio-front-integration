@@ -33,8 +33,10 @@ const yelpConversationQueries = require('../db/yelpConversationQueries');
 const { parseConversationId } = require('./yelpConversationId');
 const { extractYelpReplyBody } = require('./yelpReplyExtract');
 const db = require('../db/connection');
+const marketplaceQueries = require('../db/marketplaceQueries');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+const YELP_APP_KEY = 'yelp-leads';
 
 // Relay domain gate — the real Yelp From IS reply+<hex>@messaging.yelp.com.
 const YELP_RELAY_DOMAIN_RE = /@messaging\.yelp\.com$/i;
@@ -278,13 +280,20 @@ function buildLeadFields(parsed) {
  */
 async function maybeHandleYelpLead(companyId, msg) {
     try {
-        // (0) env + company scope gate — Phase 1a is the default company only.
-        if (!isEnabled() || companyId !== DEFAULT_COMPANY_ID) {
+        // (0) Environment is the master kill-switch. Installation is checked
+        // after deterministic detection so non-Yelp mail pays no DB round trip.
+        if (!isEnabled()) {
             return { handled: false };
         }
 
         // (1) detect — both conditions (relay domain AND first-message signal).
         if (!detectYelpLead(msg)) {
+            return { handled: false };
+        }
+
+        // (1b) Company-scoped runtime gate. A disconnected/missing Yelp Leads
+        // installation fails closed before claims, leads, or tasks are written.
+        if (!await marketplaceQueries.isLeadAppInstalled(companyId, YELP_APP_KEY)) {
             return { handled: false };
         }
 
@@ -666,13 +675,19 @@ async function enqueueYelpConvoTurnTask(companyId, { conv, convId, msg, replyTo,
  */
 async function maybeHandleYelpReply(companyId, msg) {
     try {
-        // (0) env + company scope gate — Phase 1a is the default company only.
-        if (!isEnabled() || companyId !== DEFAULT_COMPANY_ID) {
+        // (0) Environment is the master kill-switch.
+        if (!isEnabled()) {
             return { handled: false };
         }
 
         // (1) detect — relay domain AND respondable new-message signal.
         if (!detectYelpReply(msg)) {
+            return { handled: false };
+        }
+
+        // (1b) Match first-message behavior: disconnect suppresses reply routing
+        // before any conversation read, update, or task enqueue.
+        if (!await marketplaceQueries.isLeadAppInstalled(companyId, YELP_APP_KEY)) {
             return { handled: false };
         }
 

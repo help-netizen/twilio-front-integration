@@ -19,6 +19,12 @@
 const mockQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 
+const mockIsLeadAppInstalled = jest.fn();
+jest.mock('../backend/src/db/marketplaceQueries', () => ({
+    ...jest.requireActual('../backend/src/db/marketplaceQueries'),
+    isLeadAppInstalled: mockIsLeadAppInstalled,
+}));
+
 // Collaborators mocked as spies for the ordering test.
 const mockCreateLead = jest.fn();
 const mockBuildGreeting = jest.fn();
@@ -37,6 +43,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     process.env.YELP_AUTORESPONDER_ENABLED = 'true';
     delete process.env.GEMINI_API_KEY; // greeting builder is mocked anyway
+    mockIsLeadAppInstalled.mockResolvedValue(true);
 });
 
 describe('claimYelpLead — SQL shape + idempotency (YLA-C-01, P0)', () => {

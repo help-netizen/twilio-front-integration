@@ -15,6 +15,12 @@
 const mockQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 
+const mockIsLeadAppInstalled = jest.fn();
+jest.mock('../backend/src/db/marketplaceQueries', () => ({
+    ...jest.requireActual('../backend/src/db/marketplaceQueries'),
+    isLeadAppInstalled: mockIsLeadAppInstalled,
+}));
+
 const mockCreateLead = jest.fn();
 jest.mock('../backend/src/services/leadsService', () => ({ createLead: mockCreateLead }));
 
@@ -47,6 +53,7 @@ const taskInserts = () => mockQuery.mock.calls.filter(([sql]) => /insert into ta
 beforeEach(() => {
     jest.clearAllMocks();
     process.env.YELP_AUTORESPONDER_ENABLED = 'true';
+    mockIsLeadAppInstalled.mockResolvedValue(true);
     // Enqueue INSERT → a task id; every other db.query → empty.
     mockQuery.mockImplementation(async (sql) =>
         /insert into tasks/i.test(sql) ? { rows: [{ id: 900 }] } : { rows: [] }
@@ -131,7 +138,7 @@ describe('B-03 · enqueue failure after a committed lead', () => {
     });
 });
 
-// ── B-04 · env gate OFF / non-default company → total no-op (P1, req #11) ──────
+// ── B-04 · env/install gates → total no-op (P1, req #11) ──────────────────────
 describe('B-04 · gate + tenant scope', () => {
     it('gate OFF → {handled:false} without claim/createLead/enqueue/greet', async () => {
         process.env.YELP_AUTORESPONDER_ENABLED = 'false';
@@ -146,15 +153,30 @@ describe('B-04 · gate + tenant scope', () => {
         expect(mockSendEmail).not.toHaveBeenCalled();
     });
 
-    it('gate ON but non-default company → {handled:false}, no side effects', async () => {
+    it('gate ON but Yelp Leads not installed → {handled:false}, no side effects', async () => {
         process.env.YELP_AUTORESPONDER_ENABLED = 'true';
+        mockIsLeadAppInstalled.mockResolvedValue(false);
 
         const r = await maybeHandleYelpLead('22222222-2222-2222-2222-222222222222', yNew());
 
         expect(r).toEqual({ handled: false });
+        expect(mockIsLeadAppInstalled).toHaveBeenCalledWith(
+            '22222222-2222-2222-2222-222222222222',
+            'yelp-leads'
+        );
         expect(mockClaimYelpLead).not.toHaveBeenCalled();
         expect(mockCreateLead).not.toHaveBeenCalled();
         expect(taskInserts()).toHaveLength(0);
+    });
+
+    it('installed non-default company is eligible', async () => {
+        const companyId = '22222222-2222-2222-2222-222222222222';
+
+        const r = await maybeHandleYelpLead(companyId, yNew());
+
+        expect(r).toMatchObject({ handled: true, skipped: 'yelp_lead' });
+        expect(mockIsLeadAppInstalled).toHaveBeenCalledWith(companyId, 'yelp-leads');
+        expect(mockCreateLead).toHaveBeenCalledWith(expect.any(Object), companyId);
     });
 });
 

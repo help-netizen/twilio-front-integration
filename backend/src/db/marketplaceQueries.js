@@ -69,8 +69,8 @@ async function ensureMarketplaceSchema(client = null) {
         // migration 195 remains in the normal migration path.
         await query(readMigration('196_seed_chatgpt_crm_mcp_marketplace_app.sql'));
         // YELP-LEADS-001: catalog-only lead source. Runtime enablement remains
-        // on the existing controlled-rollout env flags, matching the other
-        // informational lead-generation tiles.
+        // on the existing controlled-rollout env flag plus the company-scoped
+        // connected-installation gate added by LEAD-INSTALL-GATE-001.
         await query(readMigration('203_seed_yelp_leads_marketplace_app.sql'));
         // MARKETPLACE-RATINGS-001: ratings DDL plus the authoritative copy layer.
         // Copy MUST replay after every older app seed and assistant repair.
@@ -79,6 +79,9 @@ async function ensureMarketplaceSchema(client = null) {
         // MUST run AFTER every app seed above (it patches their metadata).
         await query(readMigration('173_seed_assistant_app_descriptions.sql'));
         await query(readMigration('205_marketplace_human_copy_pricing.sql'));
+        // LEAD-INSTALL-GATE-001: make the already-live default-company Yelp
+        // installation durable before runtime starts enforcing install state.
+        await query(readMigration('206_seed_default_yelp_installation.sql'));
         return;
     }
 
@@ -254,6 +257,26 @@ async function getConnectedRelySettings(companyId) {
         [companyId]
     );
     return rows[0] || null;
+}
+
+// LEAD-INSTALL-GATE-001: hot-path, fail-closed installation check. Deliberately
+// skips ensureMarketplaceSchema/reconciliation; callers must not run schema
+// mutation work while processing inbound messages.
+async function isLeadAppInstalled(companyId, appKey, client = null) {
+    if (!companyId || !appKey) return false;
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT 1
+         FROM marketplace_installations mi
+         JOIN marketplace_apps ma
+           ON ma.id = mi.app_id
+         WHERE mi.company_id = $1
+           AND ma.app_key = $2
+           AND mi.status = 'connected'
+         LIMIT 1`,
+        [companyId, appKey]
+    );
+    return Boolean(rows[0]);
 }
 
 async function listInstallations(companyId, includeInactive = false, client = null) {
@@ -489,6 +512,7 @@ module.exports = {
     getPublishedAppByKey,
     findActiveInstallation,
     getConnectedRelySettings,
+    isLeadAppInstalled,
     listInstallations,
     getInstallationById,
     createInstallation,

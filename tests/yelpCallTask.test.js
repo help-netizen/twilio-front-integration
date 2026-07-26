@@ -19,6 +19,12 @@
 const mockQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 
+const mockIsLeadAppInstalled = jest.fn();
+jest.mock('../backend/src/db/marketplaceQueries', () => ({
+    ...jest.requireActual('../backend/src/db/marketplaceQueries'),
+    isLeadAppInstalled: mockIsLeadAppInstalled,
+}));
+
 const mockCreateLead = jest.fn();
 jest.mock('../backend/src/services/leadsService', () => ({ createLead: mockCreateLead }));
 
@@ -50,6 +56,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     process.env.YELP_AUTORESPONDER_ENABLED = 'true';
     delete process.env.YELP_CONVO_ENABLED; // greeter switch irrelevant here
+    mockIsLeadAppInstalled.mockResolvedValue(true);
     mockQuery.mockImplementation(async (sql) => {
         if (/from timelines/i.test(sql)) return { rows: [{ id: TIMELINE_ID }] }; // conv-id → timeline
         if (/insert into tasks/i.test(sql)) return { rows: [{ id: 900 }] };      // greeter enqueue

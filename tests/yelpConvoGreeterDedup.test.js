@@ -82,6 +82,12 @@ jest.mock('../backend/src/db/yelpLeadQueries', () => ({
 const mockQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 
+const mockIsLeadAppInstalled = jest.fn();
+jest.mock('../backend/src/db/marketplaceQueries', () => ({
+    ...jest.requireActual('../backend/src/db/marketplaceQueries'),
+    isLeadAppInstalled: mockIsLeadAppInstalled,
+}));
+
 const mockCreateLead = jest.fn();
 jest.mock('../backend/src/services/leadsService', () => ({ createLead: mockCreateLead }));
 
@@ -138,6 +144,7 @@ beforeEach(() => {
     // The greeters run only under both gates ON (this is the defect's regime).
     process.env.YELP_AUTORESPONDER_ENABLED = 'true';
     process.env.YELP_CONVO_ENABLED = 'true';
+    mockIsLeadAppInstalled.mockResolvedValue(true);
 
     // db.query: an INSERT INTO tasks returns a fresh id and is captured as a runnable task.
     mockQuery.mockImplementation(async (sql, params) => {
