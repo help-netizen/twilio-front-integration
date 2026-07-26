@@ -9,6 +9,15 @@ import { SettingsSection } from '../../components/settings/SettingsSection';
 import { FloatingSelect } from '../../components/ui/floating-select';
 import { SelectItem } from '../../components/ui/select';
 import { Button } from '../../components/ui/button';
+import { Checkbox } from '../../components/ui/checkbox';
+
+/** Standard company roles, ordered field-first (the default masking audience). */
+const ROLE_OPTIONS: Array<{ key: string; label: string }> = [
+    { key: 'provider', label: 'Field Provider' },
+    { key: 'dispatcher', label: 'Dispatcher' },
+    { key: 'manager', label: 'Manager' },
+    { key: 'tenant_admin', label: 'Admin' },
+];
 
 const ACCENT = 'var(--blanc-accent)';
 const OK = 'var(--blanc-success)';
@@ -27,6 +36,7 @@ export default function CallMaskingPage() {
     const [numbers, setNumbers] = useState<PhoneNumber[]>([]);
     const [saved, setSaved] = useState<MaskingSettings | null>(null);
     const [selected, setSelected] = useState('');
+    const [roles, setRoles] = useState<string[]>(['provider']);
 
     useEffect(() => {
         let alive = true;
@@ -41,6 +51,7 @@ export default function CallMaskingPage() {
                 setNumbers(nums);
                 const owned = nums.some(n => n.number === settings.call_masking_number);
                 setSelected(owned ? settings.call_masking_number : (nums[0]?.number || settings.call_masking_number));
+                setRoles(settings.roles?.length ? settings.roles : ['provider']);
             } catch (err) {
                 if (alive) toast.error(err instanceof Error ? err.message : 'Failed to load call masking settings');
             } finally {
@@ -52,7 +63,13 @@ export default function CallMaskingPage() {
 
     const enabled = !!saved?.call_masking_enabled;
     const numberChanged = !!saved && enabled && selected !== saved.call_masking_number;
+    const savedRoles = saved?.roles ?? [];
+    const rolesChanged = !!saved && (roles.length !== savedRoles.length || roles.some(r => !savedRoles.includes(r)));
+    const dirty = numberChanged || rolesChanged;
     const activeNumber = enabled ? saved!.call_masking_number : selected;
+
+    const toggleRole = (key: string) =>
+        setRoles(prev => (prev.includes(key) ? prev.filter(r => r !== key) : [...prev, key]));
 
     const save = async (payload: MaskingSettings, okMsg: string) => {
         setSaving(true);
@@ -60,6 +77,7 @@ export default function CallMaskingPage() {
             const next = await telephonyApi.saveMaskingSettings(payload);
             setSaved(next);
             setSelected(next.call_masking_number);
+            setRoles(next.roles?.length ? next.roles : []);
             toast.success(okMsg);
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Could not save call masking settings');
@@ -83,15 +101,15 @@ export default function CallMaskingPage() {
 
     const noNumbers = numbers.length === 0;
 
-    // Footer action changes with state: Enable (off) · Save changes (on + number changed).
+    // Footer action changes with state: Enable (off) · Save changes (on + number/roles changed).
     const footer = noNumbers ? null : enabled ? (
-        numberChanged ? (
-            <Button onClick={() => save({ call_masking_enabled: true, call_masking_number: selected }, 'Masking number updated')} disabled={saving}>
+        dirty ? (
+            <Button onClick={() => save({ call_masking_enabled: true, call_masking_number: selected, roles }, 'Call masking updated')} disabled={saving}>
                 {saving ? 'Saving…' : 'Save changes'}
             </Button>
         ) : null
     ) : (
-        <Button onClick={() => save({ call_masking_enabled: true, call_masking_number: selected }, 'Call masking enabled')} disabled={saving || !selected}>
+        <Button onClick={() => save({ call_masking_enabled: true, call_masking_number: selected, roles }, 'Call masking enabled')} disabled={saving || !selected}>
             {saving ? 'Enabling…' : 'Enable'}
         </Button>
     );
@@ -124,7 +142,7 @@ export default function CallMaskingPage() {
                                 <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => save({ call_masking_enabled: false, call_masking_number: selected }, 'Call masking turned off')}
+                                    onClick={() => save({ call_masking_enabled: false, call_masking_number: selected, roles }, 'Call masking turned off')}
                                     disabled={saving}
                                     style={{ color: INK2 }}
                                 >
@@ -135,6 +153,21 @@ export default function CallMaskingPage() {
                         <FloatingSelect label="Masking number" value={selected} onValueChange={setSelected} disabled={saving}>
                             {options}
                         </FloatingSelect>
+
+                        <div>
+                            <div className="blanc-eyebrow" style={{ marginBottom: 8 }}>Who can place masked calls</div>
+                            <div className="flex flex-col gap-2.5">
+                                {ROLE_OPTIONS.map(r => (
+                                    <label key={r.key} className="flex cursor-pointer items-center gap-2.5">
+                                        <Checkbox checked={roles.includes(r.key)} onCheckedChange={() => toggleRole(r.key)} disabled={saving} />
+                                        <span className="text-sm" style={{ color: INK1 }}>{r.label}</span>
+                                    </label>
+                                ))}
+                            </div>
+                            <p className="text-[12px]" style={{ color: INK3, marginTop: 8, lineHeight: 1.5 }}>
+                                These roles see the masked line and reach customers through your company number; the customer's real number is hidden from them.
+                            </p>
+                        </div>
                     </div>
                 )}
             </SettingsSection>

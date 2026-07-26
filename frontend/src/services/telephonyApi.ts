@@ -60,6 +60,8 @@ async function blacklistFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 export interface MaskingSettings {
     call_masking_enabled: boolean;
     call_masking_number: string;
+    /** role_keys allowed to place masked calls (default: ['provider']). */
+    roles: string[];
 }
 
 /** Like apiFetch but surfaces the backend's friendly `error` message (422 guards). */
