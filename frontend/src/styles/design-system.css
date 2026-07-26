@@ -48,6 +48,10 @@
        variant="panel") AND view cards (FloatingDetailPanel) so they are ONE system:
        same width, both glued to the right edge below the app header. */
     --blanc-layer-width: min(760px, calc(100vw - 100px));
+    /* Wide entity-detail layers (job/lead/contact/estimate/invoice/payment) — match
+       the estimate editor's width per owner feedback (job layer felt ~50%). Forms
+       keep --blanc-layer-width; only .blanc-floating-panel--wide uses this. */
+    --blanc-layer-width-wide: min(1320px, calc(100vw - 72px));
     --blanc-layer-top: 64px;
 
     /* ── Borders ── */
@@ -977,7 +981,7 @@ table tbody tr:hover {
 /* Wide variant — heavier content. The slideover close × tracks this width via the
    `anchorRight` prop FloatingDetailPanel passes (not the shared size table). */
 .blanc-floating-panel--wide {
-    width: var(--blanc-layer-width);
+    width: var(--blanc-layer-width-wide);
 }
 
 @media (max-width: 768px) {

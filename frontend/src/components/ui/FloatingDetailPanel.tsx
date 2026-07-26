@@ -58,7 +58,7 @@ export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
             </div>
             {/* Desktop hover-reveal × anchored to THIS panel's real width (not the shared
                 size table) so the panel keeps its own 420px / --blanc-layer-width sizing */}
-            <OverlayClose variant="slideover" anchorRight={wide ? 'var(--blanc-layer-width)' : '420px'} onClose={onClose} />
+            <OverlayClose variant="slideover" anchorRight={wide ? 'var(--blanc-layer-width-wide)' : '420px'} onClose={onClose} />
         </>
             )}
         </Overlay>
