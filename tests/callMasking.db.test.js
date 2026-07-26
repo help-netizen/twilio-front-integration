@@ -8,7 +8,7 @@ const db = require('../backend/src/db/connection');
 const callMaskingService = require('../backend/src/services/callMaskingService');
 
 const MIGRATION = fs.readFileSync(
-    path.join(__dirname, '../backend/db/migrations/204_call_masking.sql'),
+    path.join(__dirname, '../backend/db/migrations/208_call_masking.sql'),
     'utf8'
 );
 

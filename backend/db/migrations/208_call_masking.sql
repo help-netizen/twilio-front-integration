@@ -1,5 +1,5 @@
 -- =============================================================================
--- 204: CALL-MASKING-001 — company settings, stable contact codes, call mapping
+-- 208: CALL-MASKING-001 — company settings, stable contact codes, call mapping
 -- =============================================================================
 
 ALTER TABLE company_telephony
