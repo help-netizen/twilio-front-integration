@@ -11,6 +11,10 @@ const estimatesQueries = require('../db/estimatesQueries');
 const paymentsService = require('./paymentsService');
 const { toE164 } = require('../utils/phoneUtils');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
+const {
+    normalizeOrderList,
+    stripInternalOrderList,
+} = require('../utils/orderList');
 
 // =============================================================================
 // Error class
@@ -77,6 +81,7 @@ async function validateLinkedEntities(companyId, data = {}, client = null) {
  */
 async function createInvoice(companyId, userId, data, client = null) {
     const resolved = { ...data };
+    resolved.order_list = normalizeOrderList(data.order_list ?? []);
     await validateLinkedEntities(companyId, resolved, client);
 
     if (!resolved.contact_id) {
@@ -221,6 +226,12 @@ async function updateInvoice(companyId, userId, id, data, client = null) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
     await validateLinkedEntities(companyId, data, client);
+    const updateData = {
+        ...data,
+        order_list: data.order_list !== undefined
+            ? normalizeOrderList(data.order_list)
+            : undefined,
+    };
 
     // Create revision snapshot if not draft
     if (existing.status !== 'draft') {
@@ -231,7 +242,7 @@ async function updateInvoice(companyId, userId, id, data, client = null) {
 
     // `updateInvoice`'s allowlist ignores `items`, so passing the full `data`
     // (scalars + items) is safe — only whitelisted scalar columns are written.
-    const updated = await invoicesQueries.updateInvoice(id, companyId, data, client);
+    const updated = await invoicesQueries.updateInvoice(id, companyId, updateData, client);
     if (!updated) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
@@ -770,6 +781,7 @@ async function getEvents(companyId, id) {
  */
 async function generatePdf(companyId, id, client = null) {
     const invoice = await getInvoice(companyId, id, client);
+    const customerInvoice = stripInternalOrderList(invoice);
     const documentTemplatesService = require('./documentTemplatesService');
     const rendererRegistry = require('./documentTemplates');
     const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice', client);
@@ -777,8 +789,8 @@ async function generatePdf(companyId, id, client = null) {
     if (!adapter) {
         throw new InvoicesServiceError('INTERNAL', 'Invoice renderer adapter not registered', 500);
     }
-    const buffer = await adapter.render(invoice, descriptor);
-    return { invoice, buffer };
+    const buffer = await adapter.render(customerInvoice, descriptor);
+    return { invoice: customerInvoice, buffer };
 }
 
 /**
@@ -854,7 +866,7 @@ async function generatePdfByPublicToken(publicToken) {
     const invoice = await invoicesQueries.getInvoiceByPublicToken(publicToken);
     if (!invoice) throw new InvoicesServiceError('NOT_FOUND', 'Invoice not found', 404);
     const items = await invoicesQueries.getInvoiceItems(invoice.company_id, invoice.id);
-    const fullInvoice = { ...invoice, items };
+    const fullInvoice = stripInternalOrderList({ ...invoice, items });
 
     const documentTemplatesService = require('./documentTemplatesService');
     const rendererRegistry = require('./documentTemplates');

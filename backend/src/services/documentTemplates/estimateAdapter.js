@@ -6,6 +6,7 @@
 'use strict';
 
 const { renderEstimatePdf } = require('../estimatePdfService');
+const { stripInternalOrderList } = require('../../utils/orderList');
 
 module.exports = {
     documentType: 'estimate',
@@ -18,6 +19,6 @@ module.exports = {
      * so this stays a passthrough — the contract exists for symmetry.
      */
     renderHtml(estimate, descriptor) {
-        return { estimate, descriptor };
+        return { estimate: stripInternalOrderList(estimate), descriptor };
     },
 };

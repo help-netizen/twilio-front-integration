@@ -275,6 +275,7 @@ async function createEstimate(companyId, data, client = null) {
         discount_value,
         currency,
         signature_required,
+        order_list,
         created_by,
     } = data;
 
@@ -284,14 +285,14 @@ async function createEstimate(companyId, data, client = null) {
             estimate_number, estimate_sequence, summary, notes, internal_note, status,
             tax_rate, discount_type, discount_value, discount_amount,
             subtotal, tax_amount, total, currency, signature_required,
-            created_by, updated_by
+            order_list, created_by, updated_by
         )
         VALUES (
             $1, $2, $3, $4,
             $5, COALESCE($6, 1), $7, $8, $9, 'draft',
             COALESCE($10::numeric, 0), $11, COALESCE($12::numeric, 0), 0,
             0, 0, 0, COALESCE($13, 'USD'), COALESCE($14, false),
-            $15, $15
+            COALESCE($15::jsonb, '[]'::jsonb), $16, $16
         )
         RETURNING *`,
         [
@@ -309,6 +310,7 @@ async function createEstimate(companyId, data, client = null) {
             discount_value != null ? discount_value : 0,
             currency || 'USD',
             !!signature_required,
+            JSON.stringify(order_list || []),
             created_by || null,
         ]
     );
@@ -322,7 +324,7 @@ async function updateEstimate(id, companyId, data, client = null) {
         'summary', 'notes', 'internal_note', 'tax_rate', 'discount_type',
         'discount_value', 'discount_amount', 'currency', 'signature_required',
         'signature_name', 'signature_consented_at', 'approved_snapshot', 'status',
-        'sent_at', 'accepted_at', 'declined_at', 'updated_by',
+        'sent_at', 'accepted_at', 'declined_at', 'updated_by', 'order_list',
     ];
 
     const sets = [];
@@ -332,8 +334,8 @@ async function updateEstimate(id, companyId, data, client = null) {
     for (const field of allowedFields) {
         if (data[field] !== undefined) {
             idx++;
-            sets.push(`${field} = $${idx}`);
-            params.push(data[field]);
+            sets.push(`${field} = $${idx}${field === 'order_list' ? '::jsonb' : ''}`);
+            params.push(field === 'order_list' ? JSON.stringify(data[field]) : data[field]);
         }
     }
 

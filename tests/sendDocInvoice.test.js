@@ -123,6 +123,11 @@ function invoiceRow(overrides = {}) {
         contact_id: 7,
         job_id: JOB_ID,
         public_token: 'tok_invABCDE', // pre-seeded → ensurePublicLink never re-mints
+        order_list: [{
+            part_number: 'EMAIL-INVOICE-SECRET',
+            part_name: 'Internal control board',
+            quantity: 1,
+        }],
         ...overrides,
     };
 }
@@ -148,6 +153,20 @@ beforeEach(() => {
 
 // ─── A. Email happy path — pay-page link + PDF + AFTER-success order (TC-SD-014) ─
 describe('sendInvoice — email happy path', () => {
+    it('ORDER-LIST-001: email body and PDF attachment payload exclude the internal order_list', async () => {
+        const res = await request(appWith())
+            .post(`/${INV_ID}/send`)
+            .send({ channel: 'email', recipient: 'c@x.com', message: 'Hi', includePaymentLink: true });
+
+        expect(res.status).toBe(200);
+        expect(mockRender).toHaveBeenCalledTimes(1);
+        expect(mockRender.mock.calls[0][0]).not.toHaveProperty('order_list');
+        expect(JSON.stringify(mockRender.mock.calls[0][0]))
+            .not.toContain('EMAIL-INVOICE-SECRET');
+        expect(JSON.stringify(mockSendEmail.mock.calls[0][1]))
+            .not.toContain('EMAIL-INVOICE-SECRET');
+    });
+
     it('TC-SD-014: body has /pay/<token> link + invoice PDF; status flips AFTER sendEmail', async () => {
         const res = await request(appWith())
             .post(`/${INV_ID}/send`)

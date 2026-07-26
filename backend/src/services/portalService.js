@@ -11,6 +11,7 @@ const estimatesQueries = require('../db/estimatesQueries');
 const invoicesQueries = require('../db/invoicesQueries');
 const paymentsQueries = require('../db/paymentsQueries');
 const estimatesService = require('./estimatesService');
+const { stripInternalOrderList } = require('../utils/orderList');
 
 // =============================================================================
 // Error class
@@ -148,14 +149,14 @@ async function getDocument(sessionId, documentType, documentId) {
             throw new PortalServiceError('NOT_FOUND', 'Document not found', 404);
         }
         const items = await estimatesQueries.getEstimateItems(session.company_id, documentId);
-        document = { ...estimate, items };
+        document = stripInternalOrderList({ ...estimate, items });
     } else if (documentType === 'invoice') {
         const invoice = await invoicesQueries.getInvoiceById(session.company_id, documentId);
         if (!invoice || invoice.contact_id !== session.contact_id) {
             throw new PortalServiceError('NOT_FOUND', 'Document not found', 404);
         }
         const items = await invoicesQueries.getInvoiceItems(session.company_id, documentId);
-        document = { ...invoice, items };
+        document = stripInternalOrderList({ ...invoice, items });
     } else {
         throw new PortalServiceError('VALIDATION', `Invalid document type: ${documentType}`, 400);
     }
@@ -209,7 +210,7 @@ async function acceptDocument(sessionId, documentType, documentId, options = {})
 
     await portalQueries.logEvent(session.id, session.contact_id, 'document_accepted', 'estimate', documentId);
 
-    return updated;
+    return stripInternalOrderList(updated);
 }
 
 /**
@@ -248,7 +249,7 @@ async function declineDocument(sessionId, documentType, documentId, options = {}
 
     await portalQueries.logEvent(session.id, session.contact_id, 'document_declined', 'estimate', documentId);
 
-    return updated;
+    return stripInternalOrderList(updated);
 }
 
 // =============================================================================

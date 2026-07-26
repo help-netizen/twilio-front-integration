@@ -80,8 +80,9 @@ jest.mock('../backend/src/db/companyQueries', () => ({
 jest.mock('../backend/src/services/documentTemplatesService', () => ({
     resolveTemplate: jest.fn().mockResolvedValue({ key: 'estimate' }),
 }));
+const mockRenderEstimatePdf = jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4 mock'));
 jest.mock('../backend/src/services/estimatePdfService', () => ({
-    renderEstimatePdf: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4 mock')),
+    renderEstimatePdf: (...a) => mockRenderEstimatePdf(...a),
 }));
 
 // auditService.log fires on the 403 path; stub so no real DB write.
@@ -125,6 +126,11 @@ function estimateRow(overrides = {}) {
         contact_id: 7,
         job_id: JOB_ID,
         public_token: 'tok_estABCDE', // pre-seeded → ensurePublicLink never re-mints
+        order_list: [{
+            part_number: 'EMAIL-ESTIMATE-SECRET',
+            part_name: 'Internal pump',
+            quantity: 1,
+        }],
         ...overrides,
     };
 }
@@ -150,6 +156,20 @@ beforeEach(() => {
 
 // ─── A. EMAIL happy path + ordering (TC-SD-010/011/016) ──────────────────────
 describe('sendEstimate — email happy path', () => {
+    it('ORDER-LIST-001: email body and PDF attachment payload exclude the internal order_list', async () => {
+        const res = await request(appWith())
+            .post(`/${EST_ID}/send`)
+            .send({ channel: 'email', recipient: 'c@x.com', message: 'Hi there' });
+
+        expect(res.status).toBe(200);
+        expect(mockRenderEstimatePdf).toHaveBeenCalledTimes(1);
+        expect(mockRenderEstimatePdf.mock.calls[0][0]).not.toHaveProperty('order_list');
+        expect(JSON.stringify(mockRenderEstimatePdf.mock.calls[0][0]))
+            .not.toContain('EMAIL-ESTIMATE-SECRET');
+        expect(JSON.stringify(mockSendEmail.mock.calls[0][1]))
+            .not.toContain('EMAIL-ESTIMATE-SECRET');
+    });
+
     it('TC-SD-010: sendEmail(files:[pdf] + link in body) THEN status→sent + sent_at + sent event', async () => {
         const res = await request(appWith())
             .post(`/${EST_ID}/send`)

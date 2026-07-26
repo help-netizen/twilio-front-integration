@@ -48,6 +48,11 @@ describe('provider-neutral JSON LLM client', () => {
             primaryModel: 'gemini-test',
             systemPrompt: 'policy',
             userPrompt: 'evidence',
+            responseSchema: {
+                type: 'OBJECT',
+                properties: { ok: { type: 'BOOLEAN' } },
+                required: ['ok'],
+            },
             maxRetries: 0,
             fetchImpl,
         });
@@ -59,6 +64,11 @@ describe('provider-neutral JSON LLM client', () => {
         // REGRESSION: Gemini 2.5 thinking must be disabled or it spends maxOutputTokens
         // on thoughts and truncates the JSON (finishReason=MAX_TOKENS → bad_json).
         expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+        expect(body.generationConfig.responseSchema).toEqual({
+            type: 'OBJECT',
+            properties: { ok: { type: 'BOOLEAN' } },
+            required: ['ok'],
+        });
     });
 
     test('REGRESSION bad_json: thinkingBudget defaults to 0 and is overridable', async () => {

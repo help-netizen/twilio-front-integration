@@ -73,6 +73,11 @@ describe('POST /api/estimates/ai-draft', () => {
                 created: false,
                 category_path: ['Washer Repair'],
             }],
+            order_list: [{
+                part_number: 'W10212596',
+                part_name: 'Inlet valve',
+                quantity: 1,
+            }],
         };
         aiEstimateService.generateDraft.mockResolvedValue(draft);
 
@@ -105,6 +110,7 @@ describe('POST /api/estimates/ai-draft', () => {
                 price_book_item_id: null,
                 created: false,
             }],
+            order_list: [],
         };
         aiEstimateService.generateDraft.mockResolvedValue(draft);
 

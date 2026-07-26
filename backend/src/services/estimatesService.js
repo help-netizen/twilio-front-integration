@@ -10,6 +10,10 @@ const estimateItemPresetsQueries = require('../db/estimateItemPresetsQueries');
 const { renderEstimatePdf } = require('./estimatePdfService');
 const { toE164 } = require('../utils/phoneUtils');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
+const {
+    normalizeOrderList,
+    stripInternalOrderList,
+} = require('../utils/orderList');
 
 class EstimatesServiceError extends Error {
     constructor(code, message, httpStatus = 500) {
@@ -199,6 +203,7 @@ async function snapshotEstimate(companyId, id, client = null) {
 
 async function createEstimate(companyId, userId, data = {}, client = null) {
     const items = normalizeItems(data.items) || [];
+    const orderList = normalizeOrderList(data.order_list ?? []);
     validateSavePayload(data, items);
     validateDiscount(data, itemSubtotal(items));
     await validatePriceBookItems(companyId, items, client);
@@ -211,6 +216,7 @@ async function createEstimate(companyId, userId, data = {}, client = null) {
         discount_type: data.discount_type || null,
         discount_value: data.discount_value != null ? asNumber(data.discount_value, 0) : 0,
         signature_required: data.signature_required === true,
+        order_list: orderList,
         created_by: userId,
     }, client);
 
@@ -243,6 +249,9 @@ async function updateEstimate(companyId, userId, id, data = {}, client = null) {
         || await estimatesQueries.getEstimateItems(companyId, id, client);
     validateSavePayload({ ...existing, ...data }, currentItems);
     validateDiscount(data.discount_type !== undefined || data.discount_value !== undefined ? data : existing, itemSubtotal(currentItems));
+    const orderList = data.order_list !== undefined
+        ? normalizeOrderList(data.order_list)
+        : undefined;
 
     if (existing.status === 'approved') {
         const approvedSnapshot = existing.approved_snapshot
@@ -262,6 +271,7 @@ async function updateEstimate(companyId, userId, id, data = {}, client = null) {
         discount_type: data.discount_type !== undefined ? data.discount_type || null : undefined,
         discount_value: data.discount_value !== undefined ? asNumber(data.discount_value, 0) : undefined,
         signature_required: data.signature_required !== undefined ? data.signature_required === true : undefined,
+        order_list: orderList,
         updated_by: userId,
     };
     delete updateData.items;
@@ -823,6 +833,7 @@ async function convertToInvoiceInTransaction(companyId, userId, id, client) {
         title: estimate.estimate_number,
         notes: estimate.summary || estimate.notes,
         internal_note: estimate.internal_note,
+        order_list: estimate.order_list || [],
         tax_rate: estimate.tax_rate,
         discount_amount: estimate.discount_amount,
         currency: estimate.currency,
@@ -910,12 +921,13 @@ async function getEvents(companyId, id) {
 
 async function generatePdf(companyId, id, client = null) {
     const estimate = await getEstimate(companyId, id, client);
+    const customerEstimate = stripInternalOrderList(estimate);
     // F015: resolve company-specific document template; falls back to factory descriptor.
     const documentTemplatesService = require('./documentTemplatesService');
     const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'estimate', client);
     return {
-        estimate,
-        buffer: await renderEstimatePdf(estimate, descriptor),
+        estimate: customerEstimate,
+        buffer: await renderEstimatePdf(customerEstimate, descriptor),
     };
 }
 

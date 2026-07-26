@@ -566,10 +566,12 @@ function buildPdfBuffer(pageStreams) {
  */
 async function renderEstimatePdf(estimate, descriptor) {
     const desc = descriptorOrFactory(descriptor);
+    const { stripInternalOrderList } = require('../utils/orderList');
+    const customerEstimate = stripInternalOrderList(estimate);
     // @react-pdf/renderer ships ESM only — load via dynamic import.
     const reactPdf = await import('@react-pdf/renderer');
     const { buildEstimatePdfElement } = require('./documentTemplates/estimatePdfDocument');
-    const element = buildEstimatePdfElement({ estimate, descriptor: desc }, reactPdf);
+    const element = buildEstimatePdfElement({ estimate: customerEstimate, descriptor: desc }, reactPdf);
     return await reactPdf.renderToBuffer(element);
 }
 

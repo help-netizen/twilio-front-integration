@@ -6,6 +6,7 @@
 'use strict';
 
 const React = require('react');
+const { stripInternalOrderList } = require('../../utils/orderList');
 
 let cachedReactPdf = null;
 async function getReactPdf() {
@@ -23,10 +24,13 @@ module.exports = {
     async render(invoice, descriptor) {
         const reactPdf = await getReactPdf();
         const { buildInvoicePdfElement } = require('./invoicePdfDocument');
-        const element = buildInvoicePdfElement({ invoice, descriptor }, reactPdf);
+        const element = buildInvoicePdfElement({
+            invoice: stripInternalOrderList(invoice),
+            descriptor,
+        }, reactPdf);
         return await reactPdf.renderToBuffer(element);
     },
     renderHtml(invoice, descriptor) {
-        return { invoice, descriptor };
+        return { invoice: stripInternalOrderList(invoice), descriptor };
     },
 };

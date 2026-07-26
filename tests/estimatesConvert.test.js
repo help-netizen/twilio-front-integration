@@ -82,6 +82,11 @@ function makeEstimate(overrides = {}) {
         tax_rate: '0.00',
         discount_amount: '0.00',
         currency: 'USD',
+        order_list: [{
+            part_number: 'P-42',
+            part_name: 'Roof bracket',
+            quantity: 2,
+        }],
         ...overrides,
     };
 }
@@ -125,6 +130,11 @@ describe('estimatesService.convertToInvoice', () => {
             contact_id: 7,
             estimate_id: EST_ID,
             title: 'ESTIMATE 519-1',
+            order_list: [{
+                part_number: 'P-42',
+                part_name: 'Roof bracket',
+                quantity: 2,
+            }],
         }), mockClient);
         expect(mockAddInvoiceItem).toHaveBeenCalledTimes(2);
         expect(mockRecalculateTotals).toHaveBeenCalledWith(COMPANY_ID, 99, mockClient);

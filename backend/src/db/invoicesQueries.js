@@ -207,6 +207,7 @@ async function createInvoice(companyId, data, client = null) {
         payment_terms,
         due_date,
         currency,
+        order_list,
         created_by,
     } = data;
 
@@ -218,7 +219,7 @@ async function createInvoice(companyId, data, client = null) {
              WHERE company_id = $1 AND invoice_number ~ ('^INV-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-\\d+$')),
             1
         ))::text, 3, '0')`;
-    const numberExpr = invoice_number ? '$15' : fallbackNumberExpr;
+    const numberExpr = invoice_number ? '$16' : fallbackNumberExpr;
 
     const params = [
         companyId,
@@ -234,6 +235,7 @@ async function createInvoice(companyId, data, client = null) {
         due_date || null,
         currency || 'USD',
         discount_amount != null ? discount_amount : 0,
+        JSON.stringify(order_list || []),
         created_by || null,
     ];
     if (invoice_number) params.push(invoice_number);
@@ -244,7 +246,7 @@ async function createInvoice(companyId, data, client = null) {
             invoice_number, title, notes, internal_note, status,
             tax_rate, payment_terms, due_date, currency,
             subtotal, tax_amount, discount_amount, total, amount_paid, balance_due,
-            created_by
+            order_list, created_by
         )
         VALUES (
             $1, $2, $3, $4, $5,
@@ -252,7 +254,7 @@ async function createInvoice(companyId, data, client = null) {
             $6, $7, $8, 'draft',
             COALESCE($9::numeric, 0), $10, $11, COALESCE($12, 'USD'),
             0, 0, COALESCE($13::numeric, 0), 0, 0, 0,
-            $14
+            COALESCE($14::jsonb, '[]'::jsonb), $15
         )
         RETURNING *`,
         params
@@ -269,6 +271,7 @@ async function updateInvoice(id, companyId, data, client = null) {
         'contact_id', 'lead_id', 'job_id', 'estimate_id',
         'title', 'notes', 'internal_note',
         'tax_rate', 'discount_amount', 'payment_terms', 'due_date', 'status',
+        'order_list',
     ];
 
     const sets = [];
@@ -278,8 +281,8 @@ async function updateInvoice(id, companyId, data, client = null) {
     for (const field of allowedFields) {
         if (data[field] !== undefined) {
             idx++;
-            sets.push(`${field} = $${idx}`);
-            params.push(data[field]);
+            sets.push(`${field} = $${idx}${field === 'order_list' ? '::jsonb' : ''}`);
+            params.push(field === 'order_list' ? JSON.stringify(data[field]) : data[field]);
         }
     }
 

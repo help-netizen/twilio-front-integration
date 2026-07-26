@@ -78,6 +78,11 @@ describe('getPublicEstimate — customer-safe projection', () => {
         cost: '40',
         margin: '55',
         public_token: GOOD_TOKEN,
+        order_list: [{
+            part_number: 'PUBLIC-ESTIMATE-SECRET',
+            part_name: 'Internal pump',
+            quantity: 1,
+        }],
     };
 
     it('TC-SD-004: includes doc-safe fields and EXCLUDES PII + internal ids', async () => {
@@ -122,6 +127,16 @@ describe('getPublicEstimate — customer-safe projection', () => {
         const view = await estimatesService.getPublicEstimate(GOOD_TOKEN);
         expect(view).toBeNull();
         expect(mockGetEstimateItems).not.toHaveBeenCalled();
+    });
+
+    it('ORDER-LIST-001: tokenized customer JSON excludes the internal order_list', async () => {
+        mockGetEstimateByPublicToken.mockResolvedValue(FULL_ROW);
+        mockGetEstimateItems.mockResolvedValue([]);
+
+        const view = await estimatesService.getPublicEstimate(GOOD_TOKEN);
+
+        expect(view).not.toHaveProperty('order_list');
+        expect(JSON.stringify(view)).not.toContain('PUBLIC-ESTIMATE-SECRET');
     });
 });
 
