@@ -26,7 +26,9 @@ describe('canonical Job finance rollup', () => {
         expect(sql).toContain('pt.invoice_id IS NULL');
         expect(sql).toContain("pt.transaction_type = 'payment'");
         expect(sql).toContain("pt.status = 'completed'");
+        expect(sql).toMatch(/COALESCE\(i\.total, 0\)\s*-\s*COALESCE\(i\.amount_paid, 0\)/);
         expect(sql).toContain("pt.external_source IS DISTINCT FROM 'zenbooker'");
+        expect(sql).toContain('pt.voided_at IS NULL');
         expect(sql).toContain('COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_due_offset, 0)');
         expect(sql).toContain('ir.company_id = jwm.company_id');
         expect(sql).toContain('sr.company_id = jwm.company_id');

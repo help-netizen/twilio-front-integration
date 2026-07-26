@@ -10,6 +10,29 @@ function queryFor(client) {
     return client?.query ? client.query.bind(client) : db.query;
 }
 
+function calculateBalanceDue(total, amountPaid) {
+    const totalNumber = Number(total || 0);
+    const paidNumber = Number(amountPaid || 0);
+    const totalCents = Number.isFinite(totalNumber) ? Math.round(totalNumber * 100) : 0;
+    const paidCents = Number.isFinite(paidNumber) ? Math.round(paidNumber * 100) : 0;
+    return (totalCents - paidCents) / 100;
+}
+
+/**
+ * balance_due is materialized for writes, but older/imported rows can carry a
+ * stale value. All invoice read surfaces use the invariant total - amount_paid.
+ */
+function withCalculatedBalance(invoice) {
+    if (!invoice) return null;
+    const balance = calculateBalanceDue(invoice.total, invoice.amount_paid);
+    const preservePgNumericShape = [invoice.total, invoice.amount_paid, invoice.balance_due]
+        .some(value => typeof value === 'string');
+    return {
+        ...invoice,
+        balance_due: preservePgNumericShape ? balance.toFixed(2) : balance,
+    };
+}
+
 // =============================================================================
 // Invoice CRUD
 // =============================================================================
@@ -106,7 +129,7 @@ async function listInvoices(companyId, filters = {}) {
                l.serial_id AS lead_serial_id,
                COUNT(*) OVER() AS _total
         FROM invoices i
-        LEFT JOIN contacts c ON c.id = i.contact_id
+        LEFT JOIN contacts c ON c.id = i.contact_id AND c.company_id = i.company_id
         LEFT JOIN leads l ON l.id = i.lead_id AND l.company_id = i.company_id
         WHERE ${where}
         ORDER BY i.created_at DESC
@@ -117,7 +140,7 @@ async function listInvoices(companyId, filters = {}) {
 
     const total = rows.length > 0 ? parseInt(rows[0]._total, 10) : 0;
     // Strip the _total column from each row
-    const cleaned = rows.map(({ _total, ...rest }) => rest);
+    const cleaned = rows.map(({ _total, ...rest }) => withCalculatedBalance(rest));
 
     return { rows: cleaned, total };
 }
@@ -146,7 +169,7 @@ async function getInvoiceById(companyId, id, client = null) {
          WHERE i.id = $1 AND i.company_id = $2`,
         [id, companyId]
     );
-    return rows[0] || null;
+    return withCalculatedBalance(rows[0] || null);
 }
 
 /**
@@ -259,7 +282,7 @@ async function createInvoice(companyId, data, client = null) {
         RETURNING *`,
         params
     );
-    return rows[0];
+    return withCalculatedBalance(rows[0]);
 }
 
 /**
@@ -298,7 +321,7 @@ async function updateInvoice(id, companyId, data, client = null) {
          RETURNING *`,
         params
     );
-    return rows[0] || null;
+    return withCalculatedBalance(rows[0] || null);
 }
 
 /**
@@ -326,7 +349,7 @@ async function updateInvoiceStatus(id, companyId, status, timestampField, client
                WHERE id = $1 AND company_id = $2 RETURNING *`;
     }
     const { rows } = await query(sql, [id, companyId, status]);
-    return rows[0] || null;
+    return withCalculatedBalance(rows[0] || null);
 }
 
 // =============================================================================
@@ -605,10 +628,10 @@ async function recalculateInvoiceTotals(companyId, invoiceId, client = null) {
              WHERE id = $2 AND company_id = $1 RETURNING *`,
             [companyId, invoiceId]
         );
-        return fallback[0] || null;
+        return withCalculatedBalance(fallback[0] || null);
     }
 
-    return rows[0];
+    return withCalculatedBalance(rows[0]);
 }
 
 // =============================================================================
@@ -706,7 +729,7 @@ async function recordPayment(id, companyId, amount) {
          RETURNING *`,
         [id, companyId, amount]
     );
-    return rows[0] || null;
+    return withCalculatedBalance(rows[0] || null);
 }
 
 // =============================================================================
@@ -724,14 +747,16 @@ async function getInvoiceByPublicToken(publicToken) {
                 j.job_number AS job_number,
                 l.serial_id AS lead_serial_id
          FROM invoices i
-         LEFT JOIN contacts c ON c.id = i.contact_id
+         LEFT JOIN contacts c
+           ON c.id = i.contact_id
+          AND c.company_id = i.company_id
          LEFT JOIN jobs j ON j.id = i.job_id AND j.company_id = i.company_id
          LEFT JOIN leads l ON l.id = i.lead_id AND l.company_id = i.company_id
          WHERE i.public_token = $1
          LIMIT 1`,
         [publicToken]
     );
-    return rows[0] || null;
+    return withCalculatedBalance(rows[0] || null);
 }
 
 /** Persist a public_token on the invoice (idempotent — caller checks if one already exists first). */
@@ -747,6 +772,8 @@ async function setPublicToken(invoiceId, companyId, token, client = null) {
 }
 
 module.exports = {
+    calculateBalanceDue,
+    withCalculatedBalance,
     listInvoices,
     getInvoiceById,
     getInvoiceByPublicToken,

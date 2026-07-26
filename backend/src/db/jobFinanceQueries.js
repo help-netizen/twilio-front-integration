@@ -18,7 +18,10 @@ async function listJobPaymentRollups(companyId, jobIds, client = null) {
         WITH invoice_rollup AS (
             SELECT i.company_id, i.job_id,
                    SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS invoice_paid,
-                   SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS invoice_due
+                   SUM(CASE WHEN i.status NOT IN ('void','voided','refunded')
+                       THEN COALESCE(i.total, 0) - COALESCE(i.amount_paid, 0)
+                       ELSE 0
+                   END) AS invoice_due
             FROM invoices i
             WHERE i.job_id = ANY($1) AND i.company_id = $2
             GROUP BY i.company_id, i.job_id

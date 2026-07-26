@@ -279,7 +279,7 @@ function renderSection(s, descriptor, invoice, tokens) {
         const tax = Number(invoice.tax_amount || 0);
         const total = Number(invoice.total || 0);
         const paid = Number(invoice.amount_paid || 0);
-        const balance = Number(invoice.balance_due ?? (total - paid));
+        const balance = total - paid;
         const status = paymentStatusLabel(invoice);
         const balanceColor = status.tone === 'success' ? '#059669'
             : status.tone === 'danger' ? danger

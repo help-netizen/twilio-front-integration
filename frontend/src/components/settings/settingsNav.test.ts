@@ -143,6 +143,7 @@ describe('SETTINGS-IA-001 navigation model', () => {
         expect(PHONE_SYSTEM_LINKS.map(link => [link.label, link.to])).toEqual([
             ['User Groups', '/settings/telephony/user-groups'],
             ['Phone Numbers', '/settings/telephony/phone-numbers'],
+            ['Call Masking', '/settings/telephony/call-masking'],
             ['Audio Library', '/settings/telephony/audio-library'],
             ['Blacklist', '/settings/telephony/blacklist'],
             ['Provider Settings', '/settings/telephony/provider-settings'],

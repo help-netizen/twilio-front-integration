@@ -234,8 +234,8 @@ function assertAdhocAmount(amount) {
 }
 
 function invoiceBalance(invoice) {
-    const balance = invoice.balance_due != null ? Number(invoice.balance_due) : (Number(invoice.total || 0) - Number(invoice.amount_paid || 0));
-    return balance;
+    if (invoice.total == null) return Number(invoice.balance_due || 0);
+    return Number(invoice.total || 0) - Number(invoice.amount_paid || 0);
 }
 
 async function ensurePaymentLink(companyId, actor, invoiceId, { amount } = {}) {

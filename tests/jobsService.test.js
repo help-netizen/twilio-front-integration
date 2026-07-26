@@ -91,17 +91,18 @@ describe('jobsService.getJobBalanceDue', () => {
 
     it('sums the job invoices → numeric dollars, company-scoped query + params', async () => {
         db.query.mockResolvedValueOnce({
-            rows: [{ total: '300.00', amount_paid: '100.00', balance_due: '200.00' }],
+            rows: [{ total: '100.00', amount_paid: '30.00', balance_due: '70.00' }],
         });
 
         const out = await jobsService.getJobBalanceDue(50, CO);
 
         // pg NUMERIC strings coerced to Numbers.
-        expect(out).toEqual({ balanceDue: 200, total: 300, amountPaid: 100 });
+        expect(out).toEqual({ balanceDue: 70, total: 100, amountPaid: 30 });
         // One company-scoped query, params [jobId, companyId].
         expect(db.query).toHaveBeenCalledTimes(1);
         const [sql, params] = db.query.mock.calls[0];
         expect(sql).toContain('i.job_id = $1 AND i.company_id = $2');
+        expect(sql).toMatch(/COALESCE\(i\.total, 0\)\s*-\s*COALESCE\(i\.amount_paid, 0\)/);
         expect(params).toEqual([50, CO]);
     });
 

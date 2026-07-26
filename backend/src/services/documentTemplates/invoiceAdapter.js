@@ -7,6 +7,7 @@
 
 const React = require('react');
 const { stripInternalOrderList } = require('../../utils/orderList');
+const { preparePdfDescriptor } = require('./pdfLogo');
 
 let cachedReactPdf = null;
 async function getReactPdf() {
@@ -21,12 +22,13 @@ module.exports = {
      * @param {object} descriptor - resolved template descriptor (v1)
      * @returns {Promise<Buffer>}
      */
-    async render(invoice, descriptor) {
+    async render(invoice, descriptor, logoOptions) {
         const reactPdf = await getReactPdf();
+        const renderDescriptor = await preparePdfDescriptor(descriptor, logoOptions);
         const { buildInvoicePdfElement } = require('./invoicePdfDocument');
         const element = buildInvoicePdfElement({
             invoice: stripInternalOrderList(invoice),
-            descriptor,
+            descriptor: renderDescriptor,
         }, reactPdf);
         return await reactPdf.renderToBuffer(element);
     },

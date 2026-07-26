@@ -35,7 +35,9 @@ beforeEach(() => {
         company_id: 'company-a',
         invoice_number: 'INVOICE 91',
         status: 'sent',
-        balance_due: '125',
+        total: '100',
+        amount_paid: '30',
+        balance_due: '100',
         currency: 'USD',
         order_list: [{
             part_number: SECRET_PART,
@@ -60,7 +62,7 @@ test('ORDER-LIST-001 public invoice pay-info excludes order_list', async () => {
 
     expect(result).toMatchObject({
         invoice_number: 'INVOICE 91',
-        balance_due: 125,
+        balance_due: 70,
         company_name: 'Albusto Test',
     });
     expect(result).not.toHaveProperty('order_list');

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { listTemplates } from '../services/documentTemplatesApi';
+import { listTemplates, previewTemplate } from '../services/documentTemplatesApi';
 import type { DocumentType, TemplateDescriptorV1 } from '../types/documentTemplates';
 
 /**
@@ -16,7 +16,7 @@ async function fetchDefault(documentType: DocumentType): Promise<TemplateDescrip
     try {
         const items = await listTemplates(documentType);
         const def = items.find(t => t.is_default) ?? items[0];
-        return def?.content ?? null;
+        return def ? await previewTemplate(def.id) : null;
     } catch {
         return null;
     }

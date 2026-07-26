@@ -222,6 +222,18 @@ async function resolveTemplate(companyId, documentType, client = null) {
     return overlayCompanyBrand(companyId, base);
 }
 
+/**
+ * Resolve a specific template descriptor for the HTML preview. Unlike
+ * resolveTemplate this does not select the company's default row: callers have
+ * already loaded a tenant-scoped template by id (and may be previewing an
+ * unsaved override). Empty brand fields inherit Company Profile values while
+ * non-empty per-template fields remain authoritative.
+ */
+async function resolvePreviewDescriptor(companyId, documentType, descriptor) {
+    ensureType(documentType);
+    return overlayCompanyBrandUnder(companyId, descriptor);
+}
+
 function getFactoryDescriptor(documentType) {
     ensureType(documentType);
     return {
@@ -242,6 +254,7 @@ module.exports = {
     updateTemplate,
     resetTemplate,
     resolveTemplate,
+    resolvePreviewDescriptor,
     getFactoryDescriptor,
     getRegisteredAdapter,
     listDocumentTypes: factory.listDocumentTypes,

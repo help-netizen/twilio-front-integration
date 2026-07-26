@@ -524,7 +524,9 @@ async function getFinanceSummary(companyId, entityType, entityId, client = null)
                 COALESCE(SUM(invoice.amount_paid) FILTER (
                     WHERE invoice.status NOT IN ('void','voided','refunded')
                 ), 0) AS invoice_paid,
-                COALESCE(SUM(invoice.balance_due) FILTER (
+                COALESCE(SUM(
+                    COALESCE(invoice.total, 0) - COALESCE(invoice.amount_paid, 0)
+                ) FILTER (
                     WHERE invoice.status NOT IN ('void','voided','refunded')
                 ), 0) AS invoice_due
          FROM invoices invoice

@@ -116,8 +116,13 @@ router.post('/:id/preview', async (req, res) => {
                 });
             }
         }
+        const descriptor = await documentTemplatesService.resolvePreviewDescriptor(
+            companyId,
+            template.document_type,
+            overrideContent || template.content
+        );
         res.json({
-            descriptor: overrideContent || template.content,
+            descriptor,
             template_id: template.id,
             document_type: template.document_type,
             rendered_at: new Date().toISOString(),

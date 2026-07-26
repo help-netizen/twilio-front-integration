@@ -42,6 +42,12 @@ export async function resetTemplate(id: number): Promise<DocumentTemplate> {
     return ok<DocumentTemplate>(res);
 }
 
+export async function previewTemplate(id: number): Promise<TemplateDescriptorV1> {
+    const res = await authedFetch(`${API_BASE}/${id}/preview`, { method: 'POST' });
+    const json = await ok<{ descriptor: TemplateDescriptorV1 }>(res);
+    return json.descriptor;
+}
+
 export async function getFactoryDescriptor(documentType: DocumentType): Promise<{
     document_type: DocumentType;
     schema_version: number;

@@ -1099,7 +1099,10 @@ async function getJobBalanceDue(jobId, companyId) {
         SELECT
             SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.total, 0)       ELSE 0 END) AS total,
             SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS amount_paid,
-            SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS balance_due
+            SUM(CASE WHEN i.status NOT IN ('void','voided','refunded')
+                THEN COALESCE(i.total, 0) - COALESCE(i.amount_paid, 0)
+                ELSE 0
+            END) AS balance_due
         FROM invoices i
         WHERE i.job_id = $1 AND i.company_id = $2
         GROUP BY i.job_id

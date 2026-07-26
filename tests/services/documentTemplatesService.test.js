@@ -17,13 +17,19 @@ jest.mock('../../backend/src/db/documentTemplatesQueries', () => ({
     insertSeed: jest.fn(),
 }));
 
+jest.mock('../../backend/src/services/companyProfileService', () => ({
+    buildBrand: jest.fn(),
+}));
+
 const queries = require('../../backend/src/db/documentTemplatesQueries');
+const companyProfileService = require('../../backend/src/services/companyProfileService');
 const factory = require('../../backend/src/services/documentTemplates/factory');
 const { validateDescriptor } = require('../../backend/src/services/documentTemplates/validator');
 const service = require('../../backend/src/services/documentTemplatesService');
 
 const COMPANY = '00000000-0000-0000-0000-000000000001';
 
+beforeEach(() => companyProfileService.buildBrand.mockResolvedValue({}));
 afterEach(() => jest.clearAllMocks());
 
 describe('validator (schema v1)', () => {
@@ -77,7 +83,7 @@ describe('service.resolveTemplate', () => {
         queries.getDefaultByType.mockResolvedValueOnce({ content: stored });
         const out = await service.resolveTemplate(COMPANY, 'estimate');
         expect(out.brand.name).toBe('Custom Co.');
-        expect(queries.getDefaultByType).toHaveBeenCalledWith(COMPANY, 'estimate');
+        expect(queries.getDefaultByType).toHaveBeenCalledWith(COMPANY, 'estimate', null);
     });
 
     test('falls back to factory when no row', async () => {
@@ -98,6 +104,37 @@ describe('service.resolveTemplate', () => {
         // unregistered type so this asserts the real "unknown → null" contract.
         const out = await service.resolveTemplate(COMPANY, 'not_a_real_document_type');
         expect(out).toBeNull(); // factory.getFactory returns null for unregistered types
+    });
+});
+
+describe('service.resolvePreviewDescriptor', () => {
+    test.each(['estimate', 'invoice'])(
+        'fills an empty %s preview logo from the tenant Company Profile',
+        async documentType => {
+            const stored = factory.getFactory(documentType);
+            stored.brand.logo_url = '';
+            companyProfileService.buildBrand.mockResolvedValueOnce({
+                logo_url: 'https://bucket.fly.storage.tigris.dev/company/logo.png?signature=1',
+            });
+
+            const out = await service.resolvePreviewDescriptor(COMPANY, documentType, stored);
+
+            expect(out.brand.logo_url).toContain('/company/logo.png');
+            expect(companyProfileService.buildBrand).toHaveBeenCalledWith(COMPANY);
+            expect(stored.brand.logo_url).toBe('');
+        }
+    );
+
+    test('keeps a non-empty per-document logo instead of replacing it with the profile logo', async () => {
+        const stored = factory.getFactory('invoice');
+        stored.brand.logo_url = 'https://bucket.fly.storage.tigris.dev/approved/logo.png';
+        companyProfileService.buildBrand.mockResolvedValueOnce({
+            logo_url: 'https://bucket.fly.storage.tigris.dev/current/logo.png',
+        });
+
+        const out = await service.resolvePreviewDescriptor(COMPANY, 'invoice', stored);
+
+        expect(out.brand.logo_url).toBe(stored.brand.logo_url);
     });
 });
 

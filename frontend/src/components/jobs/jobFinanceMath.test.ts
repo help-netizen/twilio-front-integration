@@ -53,6 +53,14 @@ describe('calculateJobFinanceSummary', () => {
             payments,
         )).toEqual({ estimated: 150, invoiced: 100, paid: 65, due: 35 });
     });
+
+    it('FINANCE-DUE-001: total 100 and paid 30 yields due 70 while estimates stay separate', () => {
+        expect(calculateJobFinanceSummary(
+            [{ total: '250' }],
+            [{ total: '100', amount_paid: '30' }],
+            [],
+        )).toEqual({ estimated: 250, invoiced: 100, paid: 30, due: 70 });
+    });
 });
 
 describe('formatSignedCurrency', () => {
