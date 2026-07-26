@@ -59,6 +59,10 @@ export function PulseTimeline({
     const [ioEnabled, setIoEnabled] = useState(false);
     const [nearBottom, setNearBottom] = useState(true);
     const [hasNewActivity, setHasNewActivity] = useState(false);
+    // Keep the feed hidden until the initial bottom-anchor has settled, so opening a
+    // timeline reads as one fade-in instead of a jump/re-assemble as sources paint.
+    const [revealed, setRevealed] = useState(false);
+    const revealTimerRef = useRef<number | null>(null);
 
     const hasItems = items.length > 0;
     const newestItem = items[items.length - 1];
@@ -111,6 +115,8 @@ export function PulseTimeline({
         setIoEnabled(false);
         setNearBottom(true);
         setHasNewActivity(false);
+        setRevealed(false);
+        if (revealTimerRef.current !== null) { clearTimeout(revealTimerRef.current); revealTimerRef.current = null; }
 
         if (anchorRafRef.current !== null) cancelAnimationFrame(anchorRafRef.current);
         if (compensationRafRef.current !== null) cancelAnimationFrame(compensationRafRef.current);
@@ -142,6 +148,17 @@ export function PulseTimeline({
         nearBottomRef.current = true;
         setNearBottom(true);
         setIoEnabled(true);
+
+        // Let the just-anchored rows settle (async call/email heights), do a final
+        // bottom-pin, then fade the feed in — hides the initial jump/re-assemble.
+        if (revealTimerRef.current === null) {
+            revealTimerRef.current = window.setTimeout(() => {
+                revealTimerRef.current = null;
+                const settleContainer = getScrollContainer();
+                if (settleContainer && nearBottomRef.current) settleContainer.scrollTop = settleContainer.scrollHeight;
+                setRevealed(true);
+            }, 160);
+        }
 
         if (anchorRafRef.current !== null) cancelAnimationFrame(anchorRafRef.current);
         anchorRafRef.current = requestAnimationFrame(() => {
@@ -367,7 +384,13 @@ export function PulseTimeline({
     }
 
     return (
-        <div style={{ padding: '12px 0' }}>
+        <div style={{ padding: '12px 0', position: 'relative' }}>
+            {!revealed && (
+                <div aria-hidden style={{ position: 'sticky', top: '40%', zIndex: 3, display: 'flex', justifyContent: 'center', pointerEvents: 'none', height: 0 }}>
+                    <div style={{ width: '30px', height: '30px', border: '3px solid var(--blanc-line)', borderTopColor: 'var(--blanc-info)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                </div>
+            )}
+            <div style={{ opacity: revealed ? 1 : 0, transition: 'opacity 160ms ease' }}>
             {hasOlder && (
                 <div ref={sentinelRef} className="pulse-feed-spinner-row">
                     {isFetchingOlder && (
@@ -377,6 +400,7 @@ export function PulseTimeline({
             )}
             {rendered}
             <div ref={endRef} />
+            </div>
             {(!nearBottom && items.length > 0) && (
                 <button
                     type="button"
