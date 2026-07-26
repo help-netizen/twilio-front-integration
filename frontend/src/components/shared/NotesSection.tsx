@@ -5,7 +5,7 @@
  * Usage: <NotesSection entityType="job" entityId={123} />
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, MoreVertical, Pencil, Trash2, X } from 'lucide-react';
+import { Plus, MoreVertical, Pencil, Trash2, X, ArrowUp, Loader2 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { BottomSheet } from '../ui/BottomSheet';
 import { NoteAttachmentInput, type AttachmentState } from './NoteAttachmentInput';
@@ -521,37 +521,54 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                 );
             })}
 
-            {/* OB-35: mobile note composer — a bottom-sheet with a roomy textarea and
-                big attach + Add note controls pinned to the footer, above the keyboard
-                (BottomSheet owns the keyboard-safe viewport). Desktop keeps the inline
-                composer above. */}
+            {/* OB-35 / COMPOSER-CANON-001: mobile note composer — one rounded composer
+                card (reference = the Claude iOS composer): a roomy, borderless textarea
+                on top, then an action row with a round attach button (big tap area, like
+                the close X) on the left and a round send-arrow on the right. No "Add note"
+                label — the arrow sends. BottomSheet owns the keyboard-safe viewport; the
+                desktop inline composer above is unchanged. */}
             <BottomSheet
                 open={isMobile && sheetOpen}
                 onClose={() => setSheetOpen(false)}
                 size="auto"
-                title="Add note"
-                footer={
-                    <div className="flex items-center gap-3">
-                        <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} compact />
-                        <Button className="h-12 flex-1 text-base" onClick={handleSubmit} disabled={!canSubmit}>
-                            <Plus className="size-5 mr-1.5" /> Add note
-                        </Button>
-                    </div>
-                }
+                showHeader
+                ariaLabel="Add note"
             >
-                <textarea
-                    className="w-full resize-none bg-transparent text-base leading-6 outline-none"
+                <div
                     style={{
-                        border: '1px solid var(--blanc-line)',
-                        borderRadius: 12,
-                        padding: '12px 14px',
-                        minHeight: 140,
-                        color: 'var(--blanc-ink-1)',
+                        background: 'var(--blanc-field)',
+                        borderRadius: 22,
+                        padding: '12px 12px 10px',
                     }}
-                    placeholder="Write a note..."
-                    value={text}
-                    onChange={e => setText(e.target.value)}
-                />
+                >
+                    <textarea
+                        className="w-full resize-none bg-transparent outline-none"
+                        style={{
+                            border: 'none',
+                            minHeight: 120,
+                            padding: '4px 6px',
+                            fontSize: 16,
+                            lineHeight: 1.5,
+                            color: 'var(--blanc-ink-1)',
+                        }}
+                        placeholder="Write a note…"
+                        value={text}
+                        onChange={e => setText(e.target.value)}
+                    />
+                    <div className="flex items-start justify-between gap-2" style={{ marginTop: 6 }}>
+                        <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" />
+                        <button
+                            type="button"
+                            onClick={handleSubmit}
+                            disabled={!canSubmit}
+                            aria-label="Send note"
+                            className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                            style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
+                        >
+                            {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
+                        </button>
+                    </div>
+                </div>
             </BottomSheet>
         </div>
     );

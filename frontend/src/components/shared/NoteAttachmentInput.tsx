@@ -33,6 +33,12 @@ interface NoteAttachmentInputProps {
     /** Called whenever the staged ids / busy state change. */
     onStateChange: (state: AttachmentState) => void;
     compact?: boolean;
+    /**
+     * Trigger style. 'text' (default) = the inline paperclip link. 'round' = a
+     * 44px circular icon button (composer-canon) with a big tap area — matches the
+     * sheet's close X. Used by the mobile note composer.
+     */
+    variant?: 'text' | 'round';
 }
 
 function formatSize(bytes: number): string {
@@ -41,7 +47,7 @@ function formatSize(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function NoteAttachmentInput({ entityType, entityId, onStateChange, compact }: NoteAttachmentInputProps) {
+export function NoteAttachmentInput({ entityType, entityId, onStateChange, compact, variant = 'text' }: NoteAttachmentInputProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const [items, setItems] = useState<Item[]>([]);
     const removedKeys = useRef<Set<string>>(new Set());
@@ -143,18 +149,39 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
         <div>
             <input ref={inputRef} type="file" multiple accept={ACCEPT} onChange={handleChange} className="hidden" />
 
-            <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => inputRef.current?.click()}
-                disabled={items.length >= MAX_FILES}
-                className="inline-flex items-center gap-1 text-xs transition-opacity hover:opacity-70 disabled:opacity-30"
-                style={{ color: 'var(--blanc-ink-3)' }}
-                title="Attach files"
-            >
-                <Paperclip className="size-3.5" />
-                {!compact && <span>Attach</span>}
-            </button>
+            {variant === 'round' ? (
+                <button
+                    type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => inputRef.current?.click()}
+                    disabled={items.length >= MAX_FILES}
+                    aria-label="Attach files"
+                    className="flex items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:opacity-30"
+                    style={{
+                        width: 44,
+                        height: 44,
+                        background: 'var(--blanc-surface-strong)',
+                        border: '1px solid var(--blanc-line)',
+                        color: 'var(--blanc-ink-2)',
+                    }}
+                    title="Attach files"
+                >
+                    <Paperclip className="size-5" />
+                </button>
+            ) : (
+                <button
+                    type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => inputRef.current?.click()}
+                    disabled={items.length >= MAX_FILES}
+                    className="inline-flex items-center gap-1 text-xs transition-opacity hover:opacity-70 disabled:opacity-30"
+                    style={{ color: 'var(--blanc-ink-3)' }}
+                    title="Attach files"
+                >
+                    <Paperclip className="size-3.5" />
+                    {!compact && <span>Attach</span>}
+                </button>
+            )}
 
             {items.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
