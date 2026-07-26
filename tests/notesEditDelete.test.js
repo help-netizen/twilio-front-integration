@@ -4,12 +4,15 @@
  * Covers the shared service (notesMutationService) and the read paths
  * (eventService.getEntityHistory) that the three entity routes delegate to:
  *   - soft-delete stamps deleted_at/deleted_by and keeps the array length
- *   - getEntityHistory drops soft-deleted notes but keeps their audit events
+ *   - getEntityHistory drops soft-deleted notes and all note domain events
  *   - edit returns oldText/new text + added/removed file names
  *   - edit (add + remove) calls createAttachments with note_id and
  *     deleteAttachment per removed id
  *   - jobsService.addNote stamps a stable id + created_by
  */
+
+const fs = require('fs');
+const path = require('path');
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
@@ -63,9 +66,11 @@ describe('softDeleteNote', () => {
 describe('getEntityHistory excludes soft-deleted notes', () => {
     beforeEach(() => db.query.mockReset());
 
-    it('drops the deleted note from the thread but keeps note_deleted/note_edited events', async () => {
-        db.query.mockResolvedValueOnce({
-            rows: [
+    it('drops the deleted note and all note events while retaining legacy business events', async () => {
+        db.query.mockImplementation(async sql => {
+            if (sql.includes('FROM audit_log')) return { rows: [] };
+            return {
+                rows: [
                 {
                     id: 1, event_type: 'note_deleted',
                     event_data: { note_id: 'n2', deleted_text: 'gone', actor_name: 'Alex' },
@@ -80,7 +85,13 @@ describe('getEntityHistory excludes soft-deleted notes', () => {
                     id: 3, event_type: 'note_added',
                     event_data: {}, actor_type: 'user', actor_id: OWNER, created_at: new Date('2026-02-01T00:00:00Z'),
                 },
-            ],
+                {
+                    id: 4, event_type: 'status_changed',
+                    event_data: { from: 'New', to: 'Scheduled', actor_name: 'Alex' },
+                    actor_type: 'user', actor_id: OWNER, created_at: new Date('2026-02-04T00:00:00Z'),
+                },
+                ],
+            };
         });
 
         const entityNotes = [
@@ -94,18 +105,21 @@ describe('getEntityHistory excludes soft-deleted notes', () => {
         expect(notesInThread.map(n => n.text)).toEqual(['b']); // n2 gone
         expect(notesInThread.find(n => n.text === 'gone')).toBeUndefined();
 
-        // Audit events survive (note_added stays suppressed).
         const eventTypes = history.filter(h => h.type === 'event').map(h => h.event_type);
-        expect(eventTypes).toContain('note_deleted');
-        expect(eventTypes).toContain('note_edited');
+        expect(eventTypes).toContain('status_changed');
         expect(eventTypes).not.toContain('note_added');
+        expect(eventTypes).not.toContain('note_edited');
+        expect(eventTypes).not.toContain('note_deleted');
+    });
+});
 
-        // describeEvent renders the file-count suffix for the edit.
-        const edited = history.find(h => h.event_type === 'note_edited');
-        expect(edited.description).toMatch(/Note edited/);
-        expect(edited.description).toMatch(/\+1 file/);
-        const deleted = history.find(h => h.event_type === 'note_deleted');
-        expect(deleted.description).toBe('Note deleted');
+describe('note routes do not emit domain events', () => {
+    it.each(['jobs.js', 'leads.js', 'contacts.js'])('%s has no note edit/delete event writer', file => {
+        const source = fs.readFileSync(
+            path.join(__dirname, '../backend/src/routes', file),
+            'utf8'
+        );
+        expect(source).not.toMatch(/note_(?:edited|deleted)/);
     });
 });
 

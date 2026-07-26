@@ -846,7 +846,13 @@ router.get('/:id/history', requirePermission('contacts.view'), async (req, res) 
         const contact = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!contact) return res.status(404).json({ ok: false, error: 'Contact not found' });
 
-        const history = await eventService.getEntityHistory(companyId, 'contact', contactId, contact.structured_notes || []);
+        const history = await eventService.getEntityHistory(
+            companyId,
+            'contact',
+            contactId,
+            contact.structured_notes || [],
+            { limit: req.query.limit, offset: req.query.offset }
+        );
         res.json({ ok: true, data: history });
     } catch (err) {
         console.error('[Contacts] History error:', err.message);
@@ -1019,7 +1025,7 @@ router.patch('/:id/notes/:noteId', requirePermission('contacts.edit'), upload.ar
         if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const adapter = buildContactNoteAdapter(companyId, contactId, scope);
-        const { note, oldText, addedNames, removedNames } = await notesMutationService.editNote(
+        await notesMutationService.editNote(
             adapter,
             req.params.noteId,
             {
@@ -1031,11 +1037,6 @@ router.patch('/:id/notes/:noteId', requirePermission('contacts.edit'), upload.ar
                 companyId,
             }
         );
-
-        eventService.logEvent(companyId, 'contact', contactId, 'note_edited', {
-            note_id: note.id, old_text: oldText, new_text: note.text,
-            added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
-        }, 'user', req.user?.sub);
 
         const enriched = await enrichContactNotes(companyId, contactId, await adapter.loadNotes(), buildNoteActor(req));
         res.json(successResponse({ notes: enriched }, reqId));
@@ -1056,14 +1057,10 @@ router.delete('/:id/notes/:noteId', requirePermission('contacts.edit'), async (r
         if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const adapter = buildContactNoteAdapter(companyId, contactId, scope);
-        const { note } = await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
+        await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
             actor: buildNoteActor(req),
             companyId,
         });
-
-        eventService.logEvent(companyId, 'contact', contactId, 'note_deleted', {
-            note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
-        }, 'user', req.user?.sub);
 
         const enriched = await enrichContactNotes(companyId, contactId, await adapter.loadNotes(), buildNoteActor(req));
         res.json(successResponse({ notes: enriched }, reqId));

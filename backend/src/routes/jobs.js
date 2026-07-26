@@ -358,7 +358,13 @@ router.get('/:id/history', requirePermission('jobs.view'), async (req, res) => {
         const job = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
 
-        const history = await eventService.getEntityHistory(companyId, 'job', jobId, job.notes || []);
+        const history = await eventService.getEntityHistory(
+            companyId,
+            'job',
+            jobId,
+            job.notes || [],
+            { limit: req.query.limit, offset: req.query.offset }
+        );
         res.json({ ok: true, data: history });
     } catch (err) {
         console.error('[Jobs API] History error:', err.message);
@@ -544,7 +550,7 @@ router.patch('/:id/notes/:noteId', requirePermission('jobs.edit', 'jobs.done_pen
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
 
         const adapter = buildJobNoteAdapter(companyId, jobId, scope);
-        const { note, oldText, addedNames, removedNames } = await notesMutationService.editNote(
+        await notesMutationService.editNote(
             adapter,
             req.params.noteId,
             {
@@ -556,11 +562,6 @@ router.patch('/:id/notes/:noteId', requirePermission('jobs.edit', 'jobs.done_pen
                 companyId,
             }
         );
-
-        eventService.logEvent(companyId, 'job', jobId, 'note_edited', {
-            note_id: note.id, old_text: oldText, new_text: note.text,
-            added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
-        }, 'user', req.user?.sub);
 
         const fallbackCreated = existing.updated_at || new Date().toISOString();
         const enriched = await enrichJobNotes(companyId, jobId, await adapter.loadNotes(), fallbackCreated, buildNoteActor(req));
@@ -581,14 +582,10 @@ router.delete('/:id/notes/:noteId', requirePermission('jobs.edit', 'jobs.done_pe
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
 
         const adapter = buildJobNoteAdapter(companyId, jobId, scope);
-        const { note } = await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
+        await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
             actor: buildNoteActor(req),
             companyId,
         });
-
-        eventService.logEvent(companyId, 'job', jobId, 'note_deleted', {
-            note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
-        }, 'user', req.user?.sub);
 
         const fallbackCreated = existing.updated_at || new Date().toISOString();
         const enriched = await enrichJobNotes(companyId, jobId, await adapter.loadNotes(), fallbackCreated, buildNoteActor(req));

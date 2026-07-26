@@ -831,7 +831,13 @@ router.get('/:uuid/history', requirePermission('leads.view'), async (req, res) =
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
         if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
 
-        const history = await eventService.getEntityHistory(companyId, 'lead', lead.SerialId || lead.ClientId, lead.structured_notes || []);
+        const history = await eventService.getEntityHistory(
+            companyId,
+            'lead',
+            lead.SerialId || lead.ClientId,
+            lead.structured_notes || [],
+            { limit: req.query.limit, offset: req.query.offset }
+        );
         res.json({ ok: true, data: history });
     } catch (err) {
         console.error('[Leads] History error:', err.message);
@@ -997,11 +1003,10 @@ router.patch('/:uuid/notes/:noteId', requirePermission('leads.edit'), upload.arr
     try {
         const companyId = req.companyFilter?.company_id;
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
-        const aggregateId = lead.SerialId || lead.ClientId;
         const leadId = lead.SerialId || lead.ClientId;
 
         const adapter = buildLeadNoteAdapter(companyId, req.params.uuid, lead);
-        const { note, oldText, addedNames, removedNames } = await notesMutationService.editNote(
+        await notesMutationService.editNote(
             adapter,
             req.params.noteId,
             {
@@ -1013,11 +1018,6 @@ router.patch('/:uuid/notes/:noteId', requirePermission('leads.edit'), upload.arr
                 companyId,
             }
         );
-
-        eventService.logEvent(companyId, 'lead', aggregateId, 'note_edited', {
-            note_id: note.id, old_text: oldText, new_text: note.text,
-            added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
-        }, 'user', req.user?.sub);
 
         const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes(), buildNoteActor(req));
         res.json({ ok: true, data: { notes: enriched } });
@@ -1034,18 +1034,13 @@ router.delete('/:uuid/notes/:noteId', requirePermission('leads.edit'), async (re
     try {
         const companyId = req.companyFilter?.company_id;
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
-        const aggregateId = lead.SerialId || lead.ClientId;
         const leadId = lead.SerialId || lead.ClientId;
 
         const adapter = buildLeadNoteAdapter(companyId, req.params.uuid, lead);
-        const { note } = await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
+        await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
             actor: buildNoteActor(req),
             companyId,
         });
-
-        eventService.logEvent(companyId, 'lead', aggregateId, 'note_deleted', {
-            note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
-        }, 'user', req.user?.sub);
 
         const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes(), buildNoteActor(req));
         res.json({ ok: true, data: { notes: enriched } });
