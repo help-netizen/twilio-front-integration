@@ -356,6 +356,9 @@ const platformUsersRouter = require('../backend/src/routes/platformUsers');
 const platformStatsRouter = require('../backend/src/routes/platformStats');
 app.use('/api/platform/users', authenticate, requirePlatformRole('super_admin'), platformUsersRouter);
 app.use('/api/platform/stats', authenticate, requirePlatformRole('super_admin'), platformStatsRouter);
+// MARKETPLACE-RATINGS-001: super-admin app-review moderation queue (owner-authorized mount)
+const platformAppReviewsRouter = require('../backend/src/routes/platformAppReviews');
+app.use('/api/platform/app-reviews', authenticate, requirePlatformRole('super_admin'), platformAppReviewsRouter);
 
 // User management API (§5, §6)
 app.use('/api/users', authenticate, requirePermission('tenant.users.manage'), requireCompanyAccess, usersRouter);

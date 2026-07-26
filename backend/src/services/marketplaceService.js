@@ -279,6 +279,8 @@ function mapAppRow(row) {
         provisioning_mode: row.provisioning_mode,
         status: row.status,
         metadata: row.metadata || {},
+        avg_rating: row.avg_rating == null ? null : Number(row.avg_rating),
+        rating_count: Number(row.rating_count || 0),
         installation,
     };
 }

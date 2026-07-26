@@ -95,6 +95,8 @@ describe('marketplaceService', () => {
             provisioning_mode: 'manual',
             status: 'published',
             metadata: { access_summary: ['Call metadata'] },
+            avg_rating: '4.50',
+            rating_count: 2,
             installation_id: 10,
             installation_status: 'connected',
             installed_at: '2026-05-04T12:00:00.000Z',
@@ -105,6 +107,8 @@ describe('marketplaceService', () => {
         expect(apps).toHaveLength(1);
         expect(apps[0].access_summary).toEqual(['Call metadata']);
         expect(apps[0].installation.status).toBe('connected');
+        expect(apps[0].avg_rating).toBe(4.5);
+        expect(apps[0].rating_count).toBe(2);
     });
 
     test('installApp rejects duplicate active install', async () => {

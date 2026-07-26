@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const marketplaceService = require('../services/marketplaceService');
+const marketplaceRatingsService = require('../services/marketplaceRatingsService');
 const rateMeService = require('../services/rateMeService');
 
 function companyId(req) {
@@ -13,6 +14,7 @@ function actorId(req) {
 
 function handleError(err, req, res) {
     if (err instanceof marketplaceService.MarketplaceServiceError
+        || err instanceof marketplaceRatingsService.MarketplaceRatingsError
         || err instanceof rateMeService.RateMeServiceError) {
         return res.status(err.httpStatus || 400).json({
             success: false,
@@ -34,6 +36,52 @@ router.get('/apps', async (req, res) => {
     try {
         const apps = await marketplaceService.listApps(companyId(req));
         res.json({ success: true, apps, request_id: req.requestId });
+    } catch (err) {
+        handleError(err, req, res);
+    }
+});
+
+router.post('/apps/:appKey/rating', async (req, res) => {
+    try {
+        const result = await marketplaceRatingsService.submitReview(
+            companyId(req),
+            actorId(req),
+            req.params.appKey,
+            req.body?.stars,
+            req.body?.comment
+        );
+        res.json({ success: true, ...result, request_id: req.requestId });
+    } catch (err) {
+        handleError(err, req, res);
+    }
+});
+
+router.get('/apps/:appKey/reviews', async (req, res) => {
+    try {
+        const reviews = await marketplaceRatingsService.getPublicReviews(
+            companyId(req),
+            actorId(req),
+            req.params.appKey
+        );
+        res.json({
+            success: true,
+            app_key: req.params.appKey,
+            reviews,
+            request_id: req.requestId,
+        });
+    } catch (err) {
+        handleError(err, req, res);
+    }
+});
+
+router.delete('/apps/:appKey/rating', async (req, res) => {
+    try {
+        const result = await marketplaceRatingsService.deleteMyReview(
+            companyId(req),
+            actorId(req),
+            req.params.appKey
+        );
+        res.json({ success: true, ...result, request_id: req.requestId });
     } catch (err) {
         handleError(err, req, res);
     }

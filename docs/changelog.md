@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-26 — Marketplace ratings, moderated reviews, and human app copy
+
+Added one-review-per-user Marketplace ratings with posted-only global
+aggregates, deterministic URL/prompt-injection screening, fail-closed Gemini
+policy moderation, and a self-guarded platform-superadmin moderation queue.
+Tenant Marketplace responses now include `avg_rating` and `rating_count`.
+
+Migrations 204/205 add the ratings schema and authoritative human
+names/descriptions plus approved `Free` pricing metadata for all 19 apps.
+`platformAppReviews` is ready for the separately owned `/api/admin/app-reviews`
+server bridge; `src/server.js` was not changed. **НЕ задеплоено.**
+
 ## 2026-07-25 — Yelp first reply: direct opener, early slot, Marketplace tile
 
 Yelp's first reply now opens directly with “Hi …” instead of a gratitude

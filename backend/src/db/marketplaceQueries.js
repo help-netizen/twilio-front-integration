@@ -72,9 +72,13 @@ async function ensureMarketplaceSchema(client = null) {
         // on the existing controlled-rollout env flags, matching the other
         // informational lead-generation tiles.
         await query(readMigration('203_seed_yelp_leads_marketplace_app.sql'));
+        // MARKETPLACE-RATINGS-001: ratings DDL plus the authoritative copy layer.
+        // Copy MUST replay after every older app seed and assistant repair.
+        await query(readMigration('204_create_app_ratings.sql'));
         // ASSISTANT-BOT-001: restore bot-facing descriptions after app seeds overwrite metadata.
         // MUST run AFTER every app seed above (it patches their metadata).
         await query(readMigration('173_seed_assistant_app_descriptions.sql'));
+        await query(readMigration('205_marketplace_human_copy_pricing.sql'));
         return;
     }
 
@@ -142,6 +146,8 @@ async function listPublishedAppsWithInstallation(companyId, client = null) {
             a.provisioning_mode,
             a.status,
             a.metadata,
+            ratings.avg_rating,
+            COALESCE(ratings.rating_count, 0)::INTEGER AS rating_count,
             i.id AS installation_id,
             i.status AS installation_status,
             i.installed_at,
@@ -158,6 +164,14 @@ async function listPublishedAppsWithInstallation(companyId, client = null) {
              LIMIT 1
          ) i ON true
          LEFT JOIN api_integrations ai ON ai.id = i.api_integration_id
+         LEFT JOIN LATERAL (
+             SELECT
+                 ROUND(AVG(ar.stars)::NUMERIC, 2) AS avg_rating,
+                 COUNT(*) AS rating_count
+             FROM app_ratings ar
+             WHERE ar.app_key = a.app_key
+               AND ar.status = 'posted'
+         ) ratings ON true
          WHERE a.status = 'published'
          ORDER BY a.category ASC, a.name ASC`,
         [companyId]
