@@ -40,3 +40,24 @@ An enabled resolver returns:
 Disabled or unconfigured masking returns the same shape with `enabled:false`
 and the dial fields set to `null`. Foreign or provider-invisible entities are
 reported as `404`.
+
+## Frontend
+
+- **Settings → Telephony → Call Masking** (`/settings/telephony/call-masking`,
+  `tenant.telephony.manage`). `CallMaskingPage` + `telephonyApi.get/saveMaskingSettings`.
+  A number `FloatingSelect` over the company's owned numbers + Enable; once on:
+  status pill, change-number → Save changes, Turn off. Empty-numbers state links
+  to Phone Numbers. A "How it works" section explains both dial modes. Nav link +
+  overview card added (route-completeness test green).
+- **Masked-call line on cards.** `MaskedCallLine` (job/contact) fetches the
+  resolver; for a `call_masking.use` holder with masking on, it renders a violet,
+  shielded tap-to-call under the primary phone showing `masking# · code`
+  (`tel:<number>,,<code>`). Renders nothing otherwise. Wired into
+  `JobInfoSections` and `ContactInfoSections`.
+
+## Deferred / debt
+
+- `call_masking.use` is seeded on the **provider** role only (mig 204). Admins/
+  managers must grant it in RBAC to see the card affordance.
+- Assigned-provider callback routing (customer dials the masking number → reach
+  the assigned tech) is out of scope; customers follow the normal company IVR.
