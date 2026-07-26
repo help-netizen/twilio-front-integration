@@ -195,7 +195,14 @@ describe('Rely integration ingest route', () => {
         expect(mockCreateLead).toHaveBeenCalledTimes(3);
         for (const call of mockCreateLead.mock.calls) {
             expect(call[1]).toBe(COMPANY);
-            expect(call[2]).toBeUndefined();
+            expect(call[2]).toEqual({
+                activityActor: {
+                    id: null,
+                    type: 'integration',
+                    label: 'API Integration',
+                    source: 'crm',
+                },
+            });
         }
         expect(relyLogCalls(logSpy)).toHaveLength(0);
     });
@@ -212,7 +219,14 @@ describe('Rely integration ingest route', () => {
             expect.objectContaining({ JobSource: ' RELY ' }),
             COMPANY
         );
-        expect(mockCreateLead.mock.calls[0][2]).toBeUndefined();
+        expect(mockCreateLead.mock.calls[0][2]).toEqual({
+            activityActor: {
+                id: null,
+                type: 'integration',
+                label: 'API Integration',
+                source: 'crm',
+            },
+        });
         const logs = relyLogCalls(logSpy);
         expect(logs).toHaveLength(1);
         expect(JSON.parse(logs[0][1])).toMatchObject({
@@ -244,6 +258,12 @@ describe('Rely integration ingest route', () => {
         });
         expect(mockCreateLead).toHaveBeenCalledTimes(1);
         expect(mockCreateLead.mock.calls[0][2]).toEqual({
+            activityActor: {
+                id: null,
+                type: 'integration',
+                label: 'API Integration',
+                source: 'crm',
+            },
             systemMetadata: {
                 rely_filter: {
                     rejected: true,
@@ -264,7 +284,14 @@ describe('Rely integration ingest route', () => {
         const response = await request(app).post('/leads').send(basePayload({ JobSource: 'Rely' }));
 
         expect(response.status).toBe(201);
-        expect(mockCreateLead.mock.calls[0][2]).toBeUndefined();
+        expect(mockCreateLead.mock.calls[0][2]).toEqual({
+            activityActor: {
+                id: null,
+                type: 'integration',
+                label: 'API Integration',
+                source: 'crm',
+            },
+        });
     });
 
     test('TC-D1-01 · logs exactly once after creation for reject, accept, and fail-open only', async () => {
@@ -395,7 +422,7 @@ describe('server-owned rely_filter metadata', () => {
             path.join(__dirname, '..', 'backend', 'src', 'services', 'leadsService.js'),
             'utf8'
         );
-        expect(source).toMatch(/async function updateLead\(uuid, fields, companyId = null\)/);
+        expect(source).toMatch(/async function updateLead\(uuid, fields, companyId = null, activityActor = null\)/);
     });
 
     test('TC-R5-01 · marker-bearing INSERT precedes the unchanged lead.created broadcast', async () => {

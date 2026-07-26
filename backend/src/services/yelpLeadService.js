@@ -34,6 +34,7 @@ const { parseConversationId } = require('./yelpConversationId');
 const { extractYelpReplyBody } = require('./yelpReplyExtract');
 const db = require('../db/connection');
 const marketplaceQueries = require('../db/marketplaceQueries');
+const { integrationActor } = require('./leadContactActivityService');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 const YELP_APP_KEY = 'yelp-leads';
@@ -323,7 +324,11 @@ async function maybeHandleYelpLead(companyId, msg) {
         //     (lead at-least-once), and stay committed to the Yelp branch this cycle.
         let lead = null;
         try {
-            lead = await require('./leadsService').createLead(buildLeadFields(parsed), companyId);
+            lead = await require('./leadsService').createLead(
+                buildLeadFields(parsed),
+                companyId,
+                { activityActor: integrationActor('Yelp', 'webhook') }
+            );
         } catch (e) {
             console.error('[YelpLead] createLead failed, releasing claim for retry:', e && e.message);
             try {

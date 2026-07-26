@@ -25,6 +25,7 @@
 const resultShapes = require('../resultShapes');
 const { windowPhrase, isConfirmedSlot } = require('./rescheduleAppointment');
 const { slotSpanIsPositive } = require('./confirmPartsVisit');
+const { aiActor } = require('../../leadContactActivityService');
 
 async function run(companyId, _verifiedContext, input) {
     const src = input && typeof input === 'object' ? input : {};
@@ -152,7 +153,7 @@ async function run(companyId, _verifiedContext, input) {
         };
         if (addressUpdate) Object.assign(hold, addressUpdate);
         else if (resolvedCoords) { hold.Latitude = resolvedCoords.lat; hold.Longitude = resolvedCoords.lng; }
-        await leadsService.updateLead(leadUuid, hold, cid);
+        await leadsService.updateLead(leadUuid, hold, cid, aiActor('AI Phone', 'agent'));
     } catch (err) {
         // Keep the caller-safe refusal, but retain enough PII-free context for one
         // grep to diagnose the next occurrence. Never log serviceAddress, ZIP,

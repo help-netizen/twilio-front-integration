@@ -52,7 +52,7 @@ describe('countNewLeads', () => {
 
 describe('lead.* SSE emit', () => {
     test('markLost broadcasts lead.updated with a MINIMAL, PII-free payload', async () => {
-        db.query.mockResolvedValueOnce({ rows: [{ uuid: 'AB12CD' }] });
+        db.query.mockResolvedValueOnce({ rows: [{ uuid: 'AB12CD', id: 91 }] });
 
         await leadsService.markLost('AB12CD', 'company-9');
 
@@ -70,15 +70,22 @@ describe('lead.* SSE emit', () => {
     });
 
     test('a broadcast failure never breaks the lead write (best-effort)', async () => {
-        db.query.mockResolvedValueOnce({ rows: [{ uuid: 'AB12CD' }] });
+        db.query.mockResolvedValueOnce({ rows: [{ uuid: 'AB12CD', id: 91 }] });
         realtimeService.broadcast.mockImplementationOnce(() => { throw new Error('SSE down'); });
 
-        await expect(leadsService.activateLead('AB12CD', 'company-9')).resolves.toEqual({ message: 'Lead activated' });
+        await expect(leadsService.activateLead('AB12CD', 'company-9')).resolves.toEqual({
+            UUID: 'AB12CD',
+            ClientId: '91',
+            message: 'Lead activated',
+        });
     });
 
-    test('does not broadcast when companyId is missing', async () => {
-        db.query.mockResolvedValueOnce({ rows: [{ uuid: 'AB12CD' }] });
-        await leadsService.markLost('AB12CD', null);
+    test('fails closed without companyId and does not broadcast', async () => {
+        await expect(leadsService.markLost('AB12CD', null)).rejects.toMatchObject({
+            code: 'TENANT_CONTEXT_REQUIRED',
+            httpStatus: 403,
+        });
+        expect(db.query).not.toHaveBeenCalled();
         expect(realtimeService.broadcast).not.toHaveBeenCalled();
     });
 });

@@ -15,6 +15,7 @@ const {
     clientActor,
     logFinancialActivity,
 } = require('./financialActivityService');
+const { logLeadContactActivity } = require('./leadContactActivityService');
 const { withTransaction } = require('./transactionService');
 
 // =============================================================================
@@ -386,13 +387,31 @@ async function getProfile(sessionId) {
 async function updateProfile(sessionId, { name, email, phone }) {
     const session = await getSession(sessionId);
 
-    const updated = await portalQueries.updateContactProfile(session.contact_id, { name, email, phone });
+    return withTransaction(async (client) => {
+        const updated = await portalQueries.updateContactProfile(
+            session.company_id,
+            session.contact_id,
+            { name, email, phone },
+            client
+        );
+        if (!updated) {
+            throw new PortalServiceError('CONTACT_NOT_FOUND', 'Contact not found', 404);
+        }
 
-    await portalQueries.logEvent(session.id, session.contact_id, 'profile_updated', null, null, {
-        fields: Object.keys({ name, email, phone }).filter(k => ({ name, email, phone })[k] !== undefined),
+        await logLeadContactActivity({
+            companyId: session.company_id,
+            entityType: 'contact',
+            action: 'contact.portal_profile_updated',
+            entityId: session.contact_id,
+            actor: clientActor(),
+        }, { client });
+
+        await portalQueries.logEvent(session.id, session.contact_id, 'profile_updated', null, null, {
+            fields: Object.keys({ name, email, phone }).filter(k => ({ name, email, phone })[k] !== undefined),
+        }, client);
+
+        return updated;
     });
-
-    return updated;
 }
 
 // =============================================================================

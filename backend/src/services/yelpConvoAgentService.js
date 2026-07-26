@@ -39,6 +39,7 @@ const yelpReplyFormat = require('./yelpReplyFormat');
 const yelpConvoHistory = require('./yelpConvoHistory');
 const tasksQueries = require('../db/tasksQueries');
 const yelpConversationQueries = require('../db/yelpConversationQueries');
+const { aiActor } = require('./leadContactActivityService');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -549,7 +550,12 @@ async function doBook(companyId, conv, slotKey, offeredSlots, collected, patch) 
     }
 
     // Sidestep to updateLead on the EXISTING lead (server-held lead_uuid + companyId).
-    await leadsService.updateLead(conv.lead_uuid, hold, companyId);
+    await leadsService.updateLead(
+        conv.lead_uuid,
+        hold,
+        companyId,
+        aiActor('Yelp Assistant', 'agent')
+    );
 
     // Persist the terminal book state BEFORE the confirm send so a future reply can
     // never re-drive booking (status='book' + chosen_slot are the double-book guard).

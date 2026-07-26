@@ -101,7 +101,12 @@ describe('bookOnLead — UPDATE the existing open lead (B1/B3/B4)', () => {
         leadsService.getOpenLeadsByContact.mockResolvedValue([openLead({ UUID: 'newest' }), openLead({ UUID: 'older' })]);
         const out = await runSkill('bookOnLead', CO, {}, { phone: '+16175551212', chosenSlot: SLOT });
         expect(out).toMatchObject({ ok: true, created: false, leadId: 'newest' });
-        expect(leadsService.updateLead).toHaveBeenCalledWith('newest', expect.any(Object), CO);
+        expect(leadsService.updateLead).toHaveBeenCalledWith(
+            'newest',
+            expect.any(Object),
+            CO,
+            { id: null, type: 'ai', label: 'AI Phone', source: 'agent' }
+        );
         expect(leadsService.createLead).not.toHaveBeenCalled();
     });
 

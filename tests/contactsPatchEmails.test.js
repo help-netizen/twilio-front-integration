@@ -95,10 +95,15 @@ jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async ()
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({ MAX_FILE_SIZE: 1, MAX_FILES_PER_NOTE: 1 }));
 jest.mock('../backend/src/services/notesMutationService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({}));
+jest.mock('../backend/src/services/leadContactActivityService', () => ({
+    logLeadContactActivity: jest.fn(async () => ({ ok: true, id: 1 })),
+    userActor: id => ({ id, type: 'user', label: null, source: 'crm' }),
+}));
 
 const contactsService = require('../backend/src/services/contactsService');
 const dedupe = require('../backend/src/services/contactDedupeService');
 const mergeSvc = require('../backend/src/services/contactEmailMergeService');
+const leadContactActivity = require('../backend/src/services/leadContactActivityService');
 const contactsRouter = require('../backend/src/routes/contacts');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
@@ -176,6 +181,14 @@ describe('TC-CEM-U10: emails[] persisted via enrichEmail, scalar = primary, one 
         // Committed, not rolled back.
         expect(clientSql()).toContain('COMMIT');
         expect(clientSql()).not.toContain('ROLLBACK');
+        expect(leadContactActivity.logLeadContactActivity).toHaveBeenCalledTimes(1);
+        expect(leadContactActivity.logLeadContactActivity).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            entityType: 'contact',
+            action: 'contact.updated',
+            entityId: 5,
+            actor: { id: 'crm-1', type: 'user', label: null, source: 'crm' },
+        }, { client: mockClient });
     });
 
     it('when NO entry is flagged primary, the first surviving address becomes primary', async () => {
@@ -213,6 +226,20 @@ describe('TC-CEM-U10: emails[] persisted via enrichEmail, scalar = primary, one 
         expect(res.status).toBe(200);
         expect(dedupe.enrichEmail).toHaveBeenCalledTimes(1);
         expect(dedupe.enrichEmail).toHaveBeenCalledWith(5, 'ok@acme.com', mockClient);
+    });
+
+    it('rolls back the Contact save when its canonical activity insert fails', async () => {
+        leadContactActivity.logLeadContactActivity.mockRejectedValueOnce(
+            new Error('audit insert failed')
+        );
+
+        const res = await request(makeApp())
+            .patch('/api/contacts/5')
+            .send({ first_name: 'Rolled back' });
+
+        expect(res.status).toBe(500);
+        expect(clientSql()).toContain('ROLLBACK');
+        expect(clientSql()).not.toContain('COMMIT');
     });
 });
 

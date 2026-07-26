@@ -502,7 +502,7 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
             last_name: lastName,
             phone: contactInput.phone || null,
             email: contactInput.email || null,
-        }, companyId);
+        }, companyId, { activityActor });
         contactId = resolved.contact_id || null;
     }
 

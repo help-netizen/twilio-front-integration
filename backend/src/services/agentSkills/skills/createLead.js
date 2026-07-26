@@ -32,6 +32,7 @@
 
 const leadsService = require('../../leadsService');
 const slotEngineService = require('../../slotEngineService');
+const { aiActor } = require('../../leadContactActivityService');
 // ZIP normalization (recover a dropped leading zero) — shared util.
 const { normalizeZip } = require('../../../utils/zip');
 
@@ -150,7 +151,9 @@ async function run(companyId, verifiedContext, input = {}) {
     // Attempt with 1 retry on failure
     for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-            const lead = await leadsService.createLead(body, companyId);
+            const lead = await leadsService.createLead(body, companyId, {
+                activityActor: aiActor('AI Phone', 'agent'),
+            });
             return { success: true, leadId: lead?.UUID || lead?.uuid || lead?.id || null };
         } catch (err) {
             console.error(`[vapi-tools] createLead attempt ${attempt} failed:`, err.message);

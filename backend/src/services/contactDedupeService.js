@@ -14,6 +14,8 @@
 
 const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
+const { logLeadContactActivity } = require('./leadContactActivityService');
+const { withTransaction } = require('./transactionService');
 
 // =============================================================================
 // Normalization helpers
@@ -47,7 +49,11 @@ function normalizeEmail(email) {
  * @param {string|null} companyId
  * @returns {Object} { contact_id, status, matched_by, email_enriched, warnings }
  */
-async function resolveContact({ first_name, last_name, phone, email }, companyId = null) {
+async function resolveContact(
+    { first_name, last_name, phone, email },
+    companyId = null,
+    { activityActor = null } = {}
+) {
     const fnNorm = normalizeName(first_name);
     const lnNorm = normalizeName(last_name);
     const phoneNorm = normalizePhone(phone);
@@ -60,7 +66,11 @@ async function resolveContact({ first_name, last_name, phone, email }, companyId
 
     if (candidates.length === 0) {
         // No name match → create new contact
-        const contactId = await createNewContact({ first_name, last_name, phone, email }, companyId);
+        const contactId = await createNewContact(
+            { first_name, last_name, phone, email },
+            companyId,
+            { activityActor }
+        );
         return { contact_id: contactId, status: 'created', matched_by: 'none', email_enriched: false, warnings };
     }
 
@@ -88,7 +98,11 @@ async function resolveContact({ first_name, last_name, phone, email }, companyId
         }
 
         // No phone match among candidates → create new
-        const contactId = await createNewContact({ first_name, last_name, phone, email }, companyId);
+        const contactId = await createNewContact(
+            { first_name, last_name, phone, email },
+            companyId,
+            { activityActor }
+        );
         return { contact_id: contactId, status: 'created', matched_by: 'none', email_enriched: false, warnings };
     }
 
@@ -113,7 +127,11 @@ async function resolveContact({ first_name, last_name, phone, email }, companyId
         }
 
         // No email match → create new
-        const contactId = await createNewContact({ first_name, last_name, phone, email }, companyId);
+        const contactId = await createNewContact(
+            { first_name, last_name, phone, email },
+            companyId,
+            { activityActor }
+        );
         return { contact_id: contactId, status: 'created', matched_by: 'none', email_enriched: false, warnings };
     }
 
@@ -131,7 +149,11 @@ async function resolveContact({ first_name, last_name, phone, email }, companyId
     }
 
     // Unreachable but safe fallback
-    const contactId = await createNewContact({ first_name, last_name, phone, email }, companyId);
+    const contactId = await createNewContact(
+        { first_name, last_name, phone, email },
+        companyId,
+        { activityActor }
+    );
     return { contact_id: contactId, status: 'created', matched_by: 'none', email_enriched: false, warnings };
 }
 
@@ -534,28 +556,47 @@ async function enrichEmail(contactId, emailNorm, client = db) {
     return true;
 }
 
-async function createNewContact({ first_name, last_name, phone, email }, companyId) {
-    const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+async function createNewContact(
+    { first_name, last_name, phone, email },
+    companyId,
+    { activityActor = null } = {}
+) {
+    if (!companyId) throw new Error('[ContactDedupe] companyId is required');
     const fullName = [first_name, last_name].filter(Boolean).join(' ') || null;
     const emailNorm = normalizeEmail(email);
-    const effectiveCompanyId = companyId || DEFAULT_COMPANY_ID;
-
-    const { rows } = await db.query(`
-        INSERT INTO contacts (full_name, first_name, last_name, phone_e164, email, company_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-    `, [fullName, first_name || null, last_name || null, toE164(phone), email || null, effectiveCompanyId]);
-    const contactId = rows[0].id;
-
-    // Also insert into contact_emails if email is present
-    if (emailNorm) {
-        await db.query(
-            `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
-             VALUES ($1, $2, $3, true)
-             ON CONFLICT (contact_id, email_normalized) DO NOTHING`,
-            [contactId, email, emailNorm]
+    const persist = async (client) => {
+        const { rows } = await client.query(
+            `INSERT INTO contacts (full_name, first_name, last_name, phone_e164, email, company_id)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id`,
+            [fullName, first_name || null, last_name || null, toE164(phone), email || null, companyId]
         );
-    }
+        const contactId = rows[0].id;
+
+        if (emailNorm) {
+            await client.query(
+                `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
+                 VALUES ($1, $2, $3, true)
+                 ON CONFLICT (contact_id, email_normalized) DO NOTHING`,
+                [contactId, email, emailNorm]
+            );
+        }
+
+        if (activityActor) {
+            await logLeadContactActivity({
+                companyId,
+                entityType: 'contact',
+                action: 'contact.created',
+                entityId: contactId,
+                actor: activityActor,
+            }, { client });
+        }
+        return contactId;
+    };
+
+    const contactId = activityActor
+        ? await withTransaction(persist)
+        : await persist(db);
 
     // Async: auto-create in Zenbooker if feature is enabled
     try {
@@ -575,16 +616,21 @@ async function createNewContact({ first_name, last_name, phone, email }, company
             const adopted = await db.query(
                 `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now()
                  WHERE contact_id IS NULL
-                   AND regexp_replace(phone_e164, '\\D', '', 'g') = $2`,
-                [contactId, phoneDigits]
+                   AND regexp_replace(phone_e164, '\\D', '', 'g') = $2
+                   AND company_id = $3`,
+                [contactId, phoneDigits, companyId]
             );
             if (adopted.rowCount > 0) {
                 // Also link calls on adopted timelines
                 await db.query(
                     `UPDATE calls SET contact_id = $1
-                     WHERE timeline_id IN (SELECT id FROM timelines WHERE contact_id = $1)
-                       AND contact_id IS NULL`,
-                    [contactId]
+                     WHERE timeline_id IN (
+                               SELECT id FROM timelines
+                               WHERE contact_id = $1 AND company_id = $2
+                           )
+                       AND contact_id IS NULL
+                       AND company_id = $2`,
+                    [contactId, companyId]
                 );
                 console.log(`[ContactDedupe] Adopted ${adopted.rowCount} orphan timeline(s) for new contact ${contactId} (${phoneE164})`);
             }

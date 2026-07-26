@@ -257,7 +257,11 @@ describe('POST /api/leads validation (EMAIL-LEAD-ORIGIN-001)', () => {
 
     test('accepts a selected_contact_id-only lead (no phone, no email) via the attach branch → 201', async () => {
         const createSpy = jest.spyOn(leadsService, 'createLead').mockResolvedValueOnce({ UUID: 'U2', SerialId: 2, ClientId: '78', link: null });
-        db.query.mockResolvedValue({ rows: [] });
+        db.query.mockImplementation(async sql => (
+            /SELECT id FROM contacts WHERE id = \$1 AND company_id = \$2/.test(sql)
+                ? { rows: [{ id: 900 }] }
+                : { rows: [] }
+        ));
 
         const res = await request(appAs(['leads.create']))
             .post('/')
@@ -311,7 +315,11 @@ describe('POST /api/leads update_contact phone guard', () => {
 
     test('a BLANK Phone in update_contact mode does NOT write phone_e164', async () => {
         const createSpy = jest.spyOn(leadsService, 'createLead').mockResolvedValueOnce({ UUID: 'U4', SerialId: 4, ClientId: '80', link: null });
-        db.query.mockResolvedValue({ rows: [] });
+        db.query.mockImplementation(async sql => (
+            /SELECT id FROM contacts WHERE id = \$1 AND company_id = \$2/.test(sql)
+                ? { rows: [{ id: 900 }] }
+                : { rows: [] }
+        ));
 
         const res = await request(appAs(['leads.create']))
             .post('/')
@@ -328,7 +336,11 @@ describe('POST /api/leads update_contact phone guard', () => {
 
     test('a present Phone in update_contact mode DOES write phone_e164', async () => {
         const createSpy = jest.spyOn(leadsService, 'createLead').mockResolvedValueOnce({ UUID: 'U5', SerialId: 5, ClientId: '81', link: null });
-        db.query.mockResolvedValue({ rows: [] });
+        db.query.mockImplementation(async sql => (
+            /SELECT id FROM contacts WHERE id = \$1 AND company_id = \$2/.test(sql)
+                ? { rows: [{ id: 900 }] }
+                : { rows: [] }
+        ));
 
         const res = await request(appAs(['leads.create']))
             .post('/')

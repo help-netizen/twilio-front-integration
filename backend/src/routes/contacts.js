@@ -12,6 +12,11 @@ const eventService = require('../services/eventService');
 const callMaskingService = require('../services/callMaskingService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
+const {
+    logLeadContactActivity,
+    userActor,
+} = require('../services/leadContactActivityService');
+const { withTransaction } = require('../services/transactionService');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -332,6 +337,7 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
         }
 
         const companyId = req.companyFilter?.company_id;
+        const activityActor = userActor(req.user?.crmUser?.id || null);
         const existing = await contactsService.getById(id, companyId, getProviderScope(req));
         if (!existing) {
             return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
@@ -414,11 +420,13 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
         //    resolution execution + the per-new-address merge are atomic
         //    (Decisions A/C). Round 1 with an unresolved conflict ROLLBACKs
         //    having written NOTHING → 409 with the full dialog payload. The
-        //    async legs (leads cascade, phone orphan-merge, ZB push, the
-        //    contact_merged event) run AFTER commit, outside the tx.
+        //    async legs (leads cascade, phone orphan-merge, ZB push, and the
+        //    compatibility contact_merged event) run AFTER commit, outside the tx.
         const client = await db.pool.connect();
         let scalarNewlyAdded = false;
-        const mergedEvents = []; // contact_merged payloads, emitted post-COMMIT (review fix c)
+        const mergedEvents = [];
+        let movedPhoneCount = 0;
+        let movedEmailCount = 0;
         try {
             await client.query('BEGIN');
 
@@ -603,10 +611,12 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
                             await contactEmailMergeService.transferPhone(
                                 id, ownerId, attr.normalized || attr.value, companyId, client
                             );
+                            movedPhoneCount++;
                         } else {
                             await contactEmailMergeService.transferEmail(
                                 id, ownerId, attr.normalized || attr.value, companyId, client
                             );
+                            movedEmailCount++;
                         }
                     }
                 }
@@ -639,6 +649,47 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
                 }
             }
 
+            await logLeadContactActivity({
+                companyId,
+                entityType: 'contact',
+                action: 'contact.updated',
+                entityId: id,
+                actor: activityActor,
+            }, { client });
+            for (const mergedEvent of mergedEvents) {
+                await logLeadContactActivity({
+                    companyId,
+                    entityType: 'contact',
+                    action: 'contact.merged',
+                    entityId: id,
+                    actor: activityActor,
+                    summary: {
+                        contact_id: mergedEvent.merged_contact_id,
+                        dropped_count: mergedEvent.dropped_phones?.length || 0,
+                    },
+                }, { client });
+            }
+            if (movedPhoneCount > 0) {
+                await logLeadContactActivity({
+                    companyId,
+                    entityType: 'contact',
+                    action: 'contact.phone_moved',
+                    entityId: id,
+                    actor: activityActor,
+                    summary: { count: movedPhoneCount },
+                }, { client });
+            }
+            if (movedEmailCount > 0) {
+                await logLeadContactActivity({
+                    companyId,
+                    entityType: 'contact',
+                    action: 'contact.email_moved',
+                    entityId: id,
+                    actor: activityActor,
+                    summary: { count: movedEmailCount },
+                }, { client });
+            }
+
             await client.query('COMMIT');
         } catch (txErr) {
             await client.query('ROLLBACK').catch(() => {});
@@ -665,10 +716,21 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
             client.release();
         }
 
-        // CONTACT-MERGE-001 (review fix c): the contact_merged audit event is
-        // emitted strictly AFTER COMMIT, so it can never survive a ROLLBACK.
+        // Compatibility domain event remains post-commit. Attribute the human
+        // chooser instead of falling through eventService's system default.
         for (const mergedEvent of mergedEvents) {
-            eventService.logEvent(companyId, 'contact', id, 'contact_merged', mergedEvent);
+            eventService.logEvent(
+                companyId,
+                'contact',
+                id,
+                'contact_merged',
+                {
+                    ...mergedEvent,
+                    actor_name: eventService.actorName(req),
+                },
+                'user',
+                req.user?.sub
+            );
         }
 
         // Cascade contact fields to linked leads (post-commit, on the pool — an
@@ -747,14 +809,18 @@ router.patch('/:id/addresses/:addressId', requirePermission('contacts.edit'), as
             return res.status(400).json(errorResponse('INVALID_ID', 'IDs must be numbers', reqId));
         }
 
-        const ownedContact = await contactsService.getById(contactId, req.companyFilter?.company_id, getProviderScope(req));
+        const companyId = req.companyFilter?.company_id;
+        const ownedContact = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!ownedContact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const contactAddressService = require('../services/contactAddressService');
-        const db = require('../db/connection');
 
         // Verify address belongs to contact
-        const valid = await contactAddressService.validateAddressBelongsToContact(addressId, contactId);
+        const valid = await contactAddressService.validateAddressBelongsToContact(
+            addressId,
+            contactId,
+            companyId
+        );
         if (!valid) {
             return res.status(404).json(errorResponse('NOT_FOUND', 'Address not found for this contact', reqId));
         }
@@ -762,30 +828,49 @@ router.patch('/:id/addresses/:addressId', requirePermission('contacts.edit'), as
         const { street, apt, city, state, zip, lat, lng, placeId } = req.body;
         const hash = contactAddressService.computeNormalizedHash({ street, city, state, zip });
 
-        await db.query(
-            `UPDATE contact_addresses
-             SET street_line1 = $1, street_line2 = $2, city = $3, state = $4, postal_code = $5,
-                 lat = $6, lng = $7, google_place_id = $8, address_normalized_hash = $9, updated_at = NOW()
-             WHERE id = $10`,
-            [street || '', apt || null, city || '', state || '', zip || '',
-            lat || null, lng || null, placeId || null, hash, addressId]
-        );
+        await withTransaction(async (client) => {
+            const { rowCount } = await client.query(
+                `UPDATE contact_addresses ca
+                 SET street_line1 = $1, street_line2 = $2, city = $3, state = $4, postal_code = $5,
+                     lat = $6, lng = $7, google_place_id = $8, address_normalized_hash = $9, updated_at = NOW()
+                 WHERE ca.id = $10
+                   AND ca.contact_id = $11
+                   AND EXISTS (
+                       SELECT 1 FROM contacts c
+                       WHERE c.id = ca.contact_id AND c.company_id = $12
+                   )`,
+                [street || '', apt || null, city || '', state || '', zip || '',
+                lat || null, lng || null, placeId || null, hash, addressId, contactId, companyId]
+            );
+            if (rowCount === 0) {
+                throw Object.assign(new Error('Address not found for this contact'), {
+                    code: 'NOT_FOUND',
+                });
+            }
 
-        // Cascade address fields to linked leads
-        await db.query(
-            `UPDATE leads
-             SET address = $1, unit = $2, city = $3, state = $4, postal_code = $5, updated_at = NOW()
-             WHERE contact_address_id = $6 AND company_id = $7`,
-            [
-                street || '',
-                apt || '',
-                city || '',
-                state || '',
-                zip || '',
-                addressId,
-                req.companyFilter?.company_id,
-            ]
-        );
+            // Cascade address fields to linked leads
+            await client.query(
+                `UPDATE leads
+                 SET address = $1, unit = $2, city = $3, state = $4, postal_code = $5, updated_at = NOW()
+                 WHERE contact_address_id = $6 AND company_id = $7`,
+                [
+                    street || '',
+                    apt || '',
+                    city || '',
+                    state || '',
+                    zip || '',
+                    addressId,
+                    companyId,
+                ]
+            );
+            await logLeadContactActivity({
+                companyId,
+                entityType: 'contact',
+                action: 'contact.updated',
+                entityId: contactId,
+                actor: userActor(req.user?.crmUser?.id || null),
+            }, { client });
+        });
         console.log(`[ContactsAPI][${reqId}] Cascaded address fields to leads with contact_address_id ${addressId}`);
 
         const addresses = await contactAddressService.getAddressesForContact(contactId);
@@ -798,6 +883,9 @@ router.patch('/:id/addresses/:addressId', requirePermission('contacts.edit'), as
             );
         }
     } catch (err) {
+        if (err.code === 'NOT_FOUND') {
+            return res.status(404).json(errorResponse('NOT_FOUND', err.message, reqId));
+        }
         console.error(`[ContactsAPI][${reqId}] Error:`, err);
         res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));
     }
@@ -815,21 +903,49 @@ router.put('/:id/addresses/:addressId/default', requirePermission('contacts.edit
             return res.status(400).json(errorResponse('INVALID_ID', 'IDs must be numbers', reqId));
         }
 
-        const ownedContact2 = await contactsService.getById(contactId, req.companyFilter?.company_id, getProviderScope(req));
+        const companyId = req.companyFilter?.company_id;
+        const ownedContact2 = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!ownedContact2) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const contactAddressService = require('../services/contactAddressService');
 
         // Verify address belongs to contact
-        const valid = await contactAddressService.validateAddressBelongsToContact(addressId, contactId);
+        const valid = await contactAddressService.validateAddressBelongsToContact(
+            addressId,
+            contactId,
+            companyId
+        );
         if (!valid) {
             return res.status(404).json(errorResponse('NOT_FOUND', 'Address not found for this contact', reqId));
         }
 
-        await contactAddressService.setDefaultAddress(contactId, addressId);
+        await withTransaction(async (client) => {
+            const result = await contactAddressService.setDefaultAddress(
+                contactId,
+                addressId,
+                companyId,
+                client
+            );
+            if (result.rowCount === 0) {
+                throw Object.assign(new Error('Address not found for this contact'), {
+                    code: 'NOT_FOUND',
+                });
+            }
+            await logLeadContactActivity({
+                companyId,
+                entityType: 'contact',
+                action: 'contact.address_set',
+                entityId: contactId,
+                actor: userActor(req.user?.crmUser?.id || null),
+                summary: { contact_address_id: addressId },
+            }, { client });
+        });
         const addresses = await contactAddressService.getAddressesForContact(contactId);
         res.json(successResponse({ addresses }, reqId));
     } catch (err) {
+        if (err.code === 'NOT_FOUND') {
+            return res.status(404).json(errorResponse('NOT_FOUND', err.message, reqId));
+        }
         console.error(`[ContactsAPI][${reqId}] Error:`, err);
         res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));
     }

@@ -12,6 +12,7 @@ const express = require('express');
 const router = express.Router();
 const leadsService = require('../services/leadsService');
 const relyLeadFilterService = require('../services/relyLeadFilterService');
+const { integrationActor } = require('../services/leadContactActivityService');
 const {
     rejectLegacyAuth,
     validateHeaders,
@@ -46,6 +47,7 @@ router.post('/leads', requireIntegrationScope('leads:create'), async (req, res) 
 
         // Contact deduplication: resolve or create contact (non-blocking — if it fails, lead still gets created)
         let contactResolution = { contact_id: null, status: 'skipped' };
+        const activityActor = integrationActor('API Integration');
         try {
             if (payload.FirstName && payload.LastName && payload.Phone) {
                 const contactDedupeService = require('../services/contactDedupeService');
@@ -54,7 +56,7 @@ router.post('/leads', requireIntegrationScope('leads:create'), async (req, res) 
                     last_name: payload.LastName,
                     phone: payload.Phone,
                     email: payload.Email,
-                }, req.integrationCompanyId);
+                }, req.integrationCompanyId, { activityActor });
 
                 if (contactResolution.contact_id) {
                     payload.contact_id = contactResolution.contact_id;
@@ -74,9 +76,12 @@ router.post('/leads', requireIntegrationScope('leads:create'), async (req, res) 
         const result = await leadsService.createLead(
             payload,
             req.integrationCompanyId,
-            relyVerdict && !relyVerdict.accepted
-                ? { systemMetadata: { rely_filter: relyLeadFilterService.buildMarker(relyVerdict) } }
-                : undefined
+            {
+                activityActor,
+                ...(relyVerdict && !relyVerdict.accepted
+                    ? { systemMetadata: { rely_filter: relyLeadFilterService.buildMarker(relyVerdict) } }
+                    : {}),
+            }
         );
 
         if (relyVerdict) {
@@ -98,8 +103,9 @@ router.post('/leads', requireIntegrationScope('leads:create'), async (req, res) 
             try {
                 const db = require('../db/connection');
                 await db.query(
-                    'UPDATE leads SET contact_id = $1 WHERE id = $2 AND contact_id IS NULL',
-                    [contactResolution.contact_id, result.ClientId]
+                    `UPDATE leads SET contact_id = $1
+                     WHERE id = $2 AND company_id = $3 AND contact_id IS NULL`,
+                    [contactResolution.contact_id, result.ClientId, req.integrationCompanyId]
                 );
             } catch { /* ignore */ }
         }
@@ -118,13 +124,15 @@ router.post('/leads', requireIntegrationScope('leads:create'), async (req, res) 
                         zip: payload.PostalCode || '',
                         lat: payload.Latitude || null,
                         lng: payload.Longitude || null,
-                    }
+                    },
+                    req.integrationCompanyId
                 );
                 if (addrResult.contact_address_id && result.ClientId) {
                     const db = require('../db/connection');
                     await db.query(
-                        'UPDATE leads SET contact_address_id = $1 WHERE id = $2',
-                        [addrResult.contact_address_id, result.ClientId]
+                        `UPDATE leads SET contact_address_id = $1
+                         WHERE id = $2 AND company_id = $3`,
+                        [addrResult.contact_address_id, result.ClientId, req.integrationCompanyId]
                     );
                 }
             } catch (addrErr) {

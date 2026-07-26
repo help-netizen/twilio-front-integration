@@ -17,6 +17,10 @@ const {
     aiActor: jobAiActor,
     logJobActivity,
 } = require('./jobActivityService');
+const {
+    aiActor: leadContactAiActor,
+    logLeadContactActivity,
+} = require('./leadContactActivityService');
 
 class ChatgptMcpWriteError extends CrmServiceError {
     constructor(code, message, httpStatus = 400) {
@@ -117,7 +121,7 @@ async function completeCreate(claim, result, client) {
     );
 }
 
-async function findOrCreateContact(companyId, input, client) {
+async function findOrCreateContact(companyId, input, client, activityActor = null) {
     if (input.contact_id != null) {
         const owned = await client.query(
             `SELECT id, full_name, first_name, last_name, phone_e164, email
@@ -230,6 +234,15 @@ async function findOrCreateContact(companyId, input, client) {
             [created.rows[0].id, companyId, email]
         );
     }
+    if (activityActor) {
+        await logLeadContactActivity({
+            companyId,
+            entityType: 'contact',
+            action: 'contact.created',
+            entityId: created.rows[0].id,
+            actor: activityActor,
+        }, { client });
+    }
     return created.rows[0];
 }
 
@@ -255,13 +268,14 @@ function noteObject(textValue, actorId, actorName) {
 }
 
 async function createLead(context, args, client) {
+    const activityActor = leadContactAiActor(context.actorName || 'Avatar');
     const contact = await findOrCreateContact(context.companyId, {
         contact_id: args.contact_id,
         first_name: args.first_name,
         last_name: args.last_name,
         phone: args.phone,
         email: args.email,
-    }, client);
+    }, client, activityActor);
     const uuid = await nextLeadUuid(client);
     const note = noteObject(args.note, context.actorId, context.actorName);
     const inserted = await client.query(
@@ -293,6 +307,14 @@ async function createLead(context, args, client) {
             JSON.stringify(note ? [note] : []),
         ]
     );
+    await logLeadContactActivity({
+        companyId: context.companyId,
+        entityType: 'lead',
+        action: 'lead.created',
+        entityId: inserted.rows[0].id,
+        actor: activityActor,
+        summary: { status: inserted.rows[0].status || 'Submitted' },
+    }, { client });
     return {
         lead_id: inserted.rows[0].id,
         lead_uuid: inserted.rows[0].uuid,
@@ -330,7 +352,12 @@ async function updateLead(context, args, client) {
     );
     if (current.rows.length !== 1) notFound('Lead');
     if (args.contact_id !== undefined) {
-        await findOrCreateContact(context.companyId, { contact_id: args.contact_id }, client);
+        await findOrCreateContact(
+            context.companyId,
+            { contact_id: args.contact_id },
+            client,
+            leadContactAiActor(context.actorName || 'Avatar')
+        );
     }
     const updates = [];
     const values = [];
@@ -367,6 +394,13 @@ async function updateLead(context, args, client) {
             }
         );
     }
+    await logLeadContactActivity({
+        companyId: context.companyId,
+        entityType: 'lead',
+        action: 'lead.updated',
+        entityId: updated.rows[0].id,
+        actor: leadContactAiActor(context.actorName || 'Avatar'),
+    }, { client });
     return {
         lead_id: updated.rows[0].id,
         lead_uuid: updated.rows[0].uuid,
@@ -448,7 +482,7 @@ async function transitionEntity(context, {
 }
 
 async function transitionLead(context, args, client) {
-    return transitionEntity(context, {
+    const result = await transitionEntity(context, {
         table: 'leads',
         keyColumn: 'uuid',
         keyValue: args.lead_uuid,
@@ -457,6 +491,15 @@ async function transitionLead(context, args, client) {
         entityName: 'Lead',
         action: args.action,
     }, client);
+    await logLeadContactActivity({
+        companyId: context.companyId,
+        entityType: 'lead',
+        action: 'lead.status_changed',
+        entityId: result.id,
+        actor: leadContactAiActor(context.actorName || 'Avatar'),
+        summary: { status: result.status },
+    }, { client });
+    return result;
 }
 
 function nameParts(fullName) {
@@ -472,7 +515,7 @@ async function createJob(context, args, client) {
         ...parts,
         phone: args.customer_phone,
         email: args.customer_email,
-    }, client);
+    }, client, leadContactAiActor(context.actorName || 'Avatar'));
     const note = noteObject(args.note, context.actorId, context.actorName);
     const inserted = await client.query(
         `INSERT INTO jobs
@@ -539,7 +582,12 @@ async function updateJob(context, args, client) {
     );
     if (current.rows.length !== 1) notFound('Job');
     if (args.contact_id !== undefined) {
-        await findOrCreateContact(context.companyId, { contact_id: args.contact_id }, client);
+        await findOrCreateContact(
+            context.companyId,
+            { contact_id: args.contact_id },
+            client,
+            leadContactAiActor(context.actorName || 'Avatar')
+        );
     }
     const updates = [];
     const values = [];

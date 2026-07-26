@@ -82,16 +82,31 @@ function formatAddressOneLine(row) {
  * @param {number} contactId
  * @param {number} addressId
  */
-async function setDefaultAddress(contactId, addressId) {
+async function setDefaultAddress(contactId, addressId, companyId, client = db) {
+    if (!companyId) throw new Error('[ContactAddress] companyId is required');
     // Clear all existing defaults for this contact
-    await db.query(
-        `UPDATE contact_addresses SET is_primary = false WHERE contact_id = $1 AND is_primary = true`,
-        [contactId]
+    await client.query(
+        `UPDATE contact_addresses ca
+         SET is_primary = false
+         WHERE ca.contact_id = $1
+           AND ca.is_primary = true
+           AND EXISTS (
+               SELECT 1 FROM contacts c
+               WHERE c.id = ca.contact_id AND c.company_id = $2
+           )`,
+        [contactId, companyId]
     );
     // Set the chosen one
-    await db.query(
-        `UPDATE contact_addresses SET is_primary = true WHERE id = $1 AND contact_id = $2`,
-        [addressId, contactId]
+    return client.query(
+        `UPDATE contact_addresses ca
+         SET is_primary = true
+         WHERE ca.id = $1
+           AND ca.contact_id = $2
+           AND EXISTS (
+               SELECT 1 FROM contacts c
+               WHERE c.id = ca.contact_id AND c.company_id = $3
+           )`,
+        [addressId, contactId, companyId]
     );
 }
 
@@ -106,13 +121,27 @@ async function setDefaultAddress(contactId, addressId) {
  * @param {Object} address - { street, apt, city, state, zip, lat, lng, placeId }
  * @returns {Object} { contact_address_id, status: 'linked_existing' | 'created_new' | 'none' }
  */
-async function resolveAddress(contactId, { street, apt, city, state, zip, lat, lng, placeId }) {
+async function resolveAddress(
+    contactId,
+    { street, apt, city, state, zip, lat, lng, placeId },
+    companyId,
+    client = db
+) {
     if (!contactId) return { contact_address_id: null, status: 'none' };
     if (!street || !street.trim()) return { contact_address_id: null, status: 'none' };
+    if (!companyId) throw new Error('[ContactAddress] companyId is required');
+
+    const { rows: ownedContacts } = await client.query(
+        'SELECT id FROM contacts WHERE id = $1 AND company_id = $2',
+        [contactId, companyId]
+    );
+    if (ownedContacts.length === 0) {
+        return { contact_address_id: null, status: 'none' };
+    }
 
     // 1. Try matching by place_id first (most reliable)
     if (placeId) {
-        const { rows: byPlace } = await db.query(
+        const { rows: byPlace } = await client.query(
             `SELECT id FROM contact_addresses
              WHERE contact_id = $1 AND google_place_id = $2`,
             [contactId, placeId]
@@ -120,11 +149,16 @@ async function resolveAddress(contactId, { street, apt, city, state, zip, lat, l
         if (byPlace.length > 0) {
             const addrId = Number(byPlace[0].id);
             // Update mutable fields (apt/unit, coords)
-            await db.query(
-                `UPDATE contact_addresses SET street_line2 = COALESCE($1, street_line2),
+            await client.query(
+                `UPDATE contact_addresses ca SET street_line2 = COALESCE($1, street_line2),
                     lat = COALESCE($2, lat), lng = COALESCE($3, lng), updated_at = NOW()
-                 WHERE id = $4`,
-                [apt || null, lat || null, lng || null, addrId]
+                 WHERE ca.id = $4
+                   AND ca.contact_id = $5
+                   AND EXISTS (
+                       SELECT 1 FROM contacts c
+                       WHERE c.id = ca.contact_id AND c.company_id = $6
+                   )`,
+                [apt || null, lat || null, lng || null, addrId, contactId, companyId]
             );
             return { contact_address_id: addrId, status: 'linked_existing' };
         }
@@ -132,7 +166,7 @@ async function resolveAddress(contactId, { street, apt, city, state, zip, lat, l
 
     // 2. Try matching by normalized hash
     const hash = computeNormalizedHash({ street, city, state, zip });
-    const { rows: byHash } = await db.query(
+    const { rows: byHash } = await client.query(
         `SELECT id FROM contact_addresses
          WHERE contact_id = $1 AND address_normalized_hash = $2`,
         [contactId, hash]
@@ -140,45 +174,52 @@ async function resolveAddress(contactId, { street, apt, city, state, zip, lat, l
     if (byHash.length > 0) {
         const addrId = Number(byHash[0].id);
         // Update mutable fields (apt/unit, coords)
-        await db.query(
-            `UPDATE contact_addresses SET street_line2 = COALESCE($1, street_line2),
+        await client.query(
+            `UPDATE contact_addresses ca SET street_line2 = COALESCE($1, street_line2),
                 lat = COALESCE($2, lat), lng = COALESCE($3, lng), updated_at = NOW()
-             WHERE id = $4`,
-            [apt || null, lat || null, lng || null, addrId]
+             WHERE ca.id = $4
+               AND ca.contact_id = $5
+               AND EXISTS (
+                   SELECT 1 FROM contacts c
+                   WHERE c.id = ca.contact_id AND c.company_id = $6
+               )`,
+            [apt || null, lat || null, lng || null, addrId, contactId, companyId]
         );
         return { contact_address_id: addrId, status: 'linked_existing' };
     }
 
     // 3. No match → create new additional address
     // Auto-set is_primary if this is the contact's first address
-    const { rows: existing } = await db.query(
+    const { rows: existing } = await client.query(
         'SELECT COUNT(*)::int as cnt FROM contact_addresses WHERE contact_id = $1',
         [contactId]
     );
     const isPrimary = existing[0].cnt === 0;
 
-    const { rows } = await db.query(
+    const { rows } = await client.query(
         `INSERT INTO contact_addresses
             (contact_id, street_line1, street_line2, city, state, postal_code,
              google_place_id, lat, lng, address_normalized_hash, is_primary)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+         FROM contacts c
+         WHERE c.id = $1 AND c.company_id = $12
          ON CONFLICT DO NOTHING
          RETURNING id`,
         [contactId, street || '', apt || null, city || '', state || '', zip || '',
-            placeId || null, lat || null, lng || null, hash, isPrimary]
+            placeId || null, lat || null, lng || null, hash, isPrimary, companyId]
     );
 
     if (rows.length > 0) {
         const newId = Number(rows[0].id);
         // If this became primary, ensure no other address is also primary
         if (isPrimary) {
-            await setDefaultAddress(contactId, newId);
+            await setDefaultAddress(contactId, newId, companyId, client);
         }
         return { contact_address_id: newId, status: 'created_new' };
     }
 
     // ON CONFLICT hit — race condition, re-fetch
-    const { rows: retry } = await db.query(
+    const { rows: retry } = await client.query(
         `SELECT id FROM contact_addresses
          WHERE contact_id = $1 AND address_normalized_hash = $2`,
         [contactId, hash]
@@ -194,10 +235,18 @@ async function resolveAddress(contactId, { street, apt, city, state, zip, lat, l
 // Validate contact_address_id belongs to contact
 // =============================================================================
 
-async function validateAddressBelongsToContact(contactAddressId, contactId) {
-    const { rows } = await db.query(
-        'SELECT 1 FROM contact_addresses WHERE id = $1 AND contact_id = $2',
-        [contactAddressId, contactId]
+async function validateAddressBelongsToContact(
+    contactAddressId,
+    contactId,
+    companyId,
+    client = db
+) {
+    const { rows } = await client.query(
+        `SELECT 1
+         FROM contact_addresses ca
+         JOIN contacts c ON c.id = ca.contact_id
+         WHERE ca.id = $1 AND ca.contact_id = $2 AND c.company_id = $3`,
+        [contactAddressId, contactId, companyId]
     );
     return rows.length > 0;
 }

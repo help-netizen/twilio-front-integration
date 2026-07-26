@@ -36,4 +36,26 @@ describe('portal document scope fails closed', () => {
         expect(sql).toContain('WHERE id = $1 AND company_id = $2 AND contact_id = $3');
         expect(params).toEqual([7, COMPANY, CONTACT]);
     });
+
+    test('portal profile UPDATE carries company_id through the final write', async () => {
+        mockQuery.mockResolvedValueOnce({
+            rows: [{
+                id: CONTACT,
+                company_id: COMPANY,
+                name: 'Client',
+                email: null,
+                phone: null,
+            }],
+        });
+
+        await portalQueries.updateContactProfile(
+            COMPANY,
+            CONTACT,
+            { name: 'Client' }
+        );
+
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toContain('WHERE id = $1 AND company_id = $2');
+        expect(params).toEqual([CONTACT, COMPANY, 'Client']);
+    });
 });

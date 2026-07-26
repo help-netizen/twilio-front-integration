@@ -176,7 +176,18 @@ describe('B-04 · gate + tenant scope', () => {
 
         expect(r).toMatchObject({ handled: true, skipped: 'yelp_lead' });
         expect(mockIsLeadAppInstalled).toHaveBeenCalledWith(companyId, 'yelp-leads');
-        expect(mockCreateLead).toHaveBeenCalledWith(expect.any(Object), companyId);
+        expect(mockCreateLead).toHaveBeenCalledWith(
+            expect.any(Object),
+            companyId,
+            {
+                activityActor: {
+                    id: null,
+                    type: 'integration',
+                    label: 'Yelp',
+                    source: 'webhook',
+                },
+            }
+        );
     });
 });
 

@@ -110,7 +110,7 @@ describe('TC-OLC-042: slotKey match — hold on THE lead without engine call', (
             Status: 'Review',
             Latitude: 42.31,
             Longitude: -71.16,
-        }, CO);
+        }, CO, { id: null, type: 'ai', label: 'AI Phone', source: 'agent' });
 
         const flip = mockQuery.mock.calls.find(([sql]) => /SET status = 'booked'/.test(sql));
         expect(flip).toBeTruthy();

@@ -24,7 +24,7 @@ const upload = multer({
 const contactDedupeService = require('../services/contactDedupeService');
 const contactAddressService = require('../services/contactAddressService');
 const eventService = require('../services/eventService');
-const { userActor } = require('../services/jobActivityService');
+const { userActor } = require('../services/leadContactActivityService');
 
 // =============================================================================
 // Helpers
@@ -285,8 +285,15 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', errors.join('; '), reqId));
         }
 
-        const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-        const companyId = req.companyFilter?.company_id || DEFAULT_COMPANY_ID;
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) {
+            return res.status(403).json(errorResponse(
+                'TENANT_CONTEXT_REQUIRED',
+                'Company context is required',
+                reqId
+            ));
+        }
+        const activityActor = userActor(req.user?.crmUser?.id || null);
 
         // Extract contact resolution params
         const selectedContactId = body.selected_contact_id || null;
@@ -296,6 +303,20 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
         delete body.contact_update_mode;
 
         let contactResolution = { contact_id: null, status: 'created', matched_by: 'none', email_enriched: false, warnings: [] };
+
+        if (selectedContactId) {
+            const { rows: ownedContacts } = await db.query(
+                'SELECT id FROM contacts WHERE id = $1 AND company_id = $2',
+                [selectedContactId, companyId]
+            );
+            if (ownedContacts.length === 0) {
+                return res.status(404).json(errorResponse(
+                    'CONTACT_NOT_FOUND',
+                    'Contact not found',
+                    reqId
+                ));
+            }
+        }
 
         if (selectedContactId && contactUpdateMode === 'update_contact') {
             // Mode: attach to existing contact AND update its fields
@@ -321,9 +342,10 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                 if (body.Company !== undefined) { updates.push(`company_name = $${idx++}`); params.push(body.Company || null); }
                 updates.push(`updated_at = NOW()`);
 
-                params.push(selectedContactId);
+                params.push(selectedContactId, companyId);
                 await db.query(
-                    `UPDATE contacts SET ${updates.join(', ')} WHERE id = $${idx}`,
+                    `UPDATE contacts SET ${updates.join(', ')}
+                     WHERE id = $${idx} AND company_id = $${idx + 1}`,
                     params
                 );
 
@@ -340,7 +362,8 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                             lat: body.Latitude || null,
                             lng: body.Longitude || null,
                             placeId: body.google_place_id || null,
-                        }
+                        },
+                        companyId
                     );
                 }
 
@@ -361,8 +384,10 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
             if (body.Company) {
                 try {
                     await require('../db/connection').query(
-                        'UPDATE contacts SET company_name = COALESCE(NULLIF(company_name, \'\'), $1), updated_at = NOW() WHERE id = $2',
-                        [body.Company, selectedContactId]
+                        `UPDATE contacts
+                         SET company_name = COALESCE(NULLIF(company_name, ''), $1), updated_at = NOW()
+                         WHERE id = $2 AND company_id = $3`,
+                        [body.Company, selectedContactId, companyId]
                     );
                 } catch { /* non-blocking */ }
             }
@@ -388,7 +413,7 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                 last_name: body.LastName,
                 phone: body.Phone,
                 email: body.Email,
-            }, companyId);
+            }, companyId, { activityActor });
 
             // Force create new contact even if resolveContact matched
             if (contactResolution.status === 'matched' || contactResolution.status === 'ambiguous') {
@@ -397,7 +422,7 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                     last_name: body.LastName,
                     phone: body.Phone,
                     email: body.Email,
-                }, companyId);
+                }, companyId, { activityActor });
                 contactResolution = { contact_id: newContactId, status: 'created', matched_by: 'none', email_enriched: false, warnings: [] };
             }
 
@@ -425,9 +450,10 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                     }
                     if (enrichUpdates.length > 0) {
                         enrichUpdates.push('updated_at = NOW()');
-                        enrichParams.push(contactResolution.contact_id);
+                        enrichParams.push(contactResolution.contact_id, companyId);
                         await db.query(
-                            `UPDATE contacts SET ${enrichUpdates.join(', ')} WHERE id = $${eIdx}`,
+                            `UPDATE contacts SET ${enrichUpdates.join(', ')}
+                             WHERE id = $${eIdx} AND company_id = $${eIdx + 1}`,
                             enrichParams
                         );
                     }
@@ -445,7 +471,8 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                                 lat: body.Latitude || null,
                                 lng: body.Longitude || null,
                                 placeId: body.google_place_id || null,
-                            }
+                            },
+                            companyId
                         );
                     }
                     console.log(`[LeadsAPI][${reqId}] Enriched new contact ${contactResolution.contact_id} (only_lead mode)`);
@@ -461,7 +488,7 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                 last_name: body.LastName,
                 phone: body.Phone,
                 email: body.Email,
-            }, companyId);
+            }, companyId, { activityActor });
 
             // If ambiguous, return 409 with candidates for UI/API to resolve
             if (contactResolution.status === 'ambiguous') {
@@ -482,7 +509,7 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
             }
         }
 
-        const result = await leadsService.createLead(body, companyId);
+        const result = await leadsService.createLead(body, companyId, { activityActor });
         eventService.logEvent(companyId, 'lead', result.SerialId || result.ClientId, 'created',
             { actor_name: eventService.actorName(req), description: `Lead created: ${body.FirstName || ''} ${body.LastName || ''}`.trim() }, 'user', req.user?.sub);
 
@@ -490,8 +517,9 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
         if (contactResolution.contact_id && result.ClientId) {
             try {
                 await require('../db/connection').query(
-                    'UPDATE leads SET contact_id = $1 WHERE id = $2 AND contact_id IS NULL',
-                    [contactResolution.contact_id, result.ClientId]
+                    `UPDATE leads SET contact_id = $1
+                     WHERE id = $2 AND company_id = $3 AND contact_id IS NULL`,
+                    [contactResolution.contact_id, result.ClientId, companyId]
                 );
             } catch { /* ignore if already linked */ }
         }
@@ -511,13 +539,15 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                         lat: body.Latitude || null,
                         lng: body.Longitude || null,
                         placeId: body.google_place_id || null,
-                    }
+                    },
+                    companyId
                 );
                 // Link lead to address
                 if (addressResolution.contact_address_id && result.ClientId) {
                     await require('../db/connection').query(
-                        'UPDATE leads SET contact_address_id = $1 WHERE id = $2',
-                        [addressResolution.contact_address_id, result.ClientId]
+                        `UPDATE leads SET contact_address_id = $1
+                         WHERE id = $2 AND company_id = $3`,
+                        [addressResolution.contact_address_id, result.ClientId, companyId]
                     );
                 }
             } catch (addrErr) {
@@ -582,11 +612,13 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', 'At least one field must be provided', reqId));
         }
 
-        const result = await leadsService.updateLead(uuid, fields, req.companyFilter?.company_id);
+        const companyId = req.companyFilter?.company_id;
+        const activityActor = userActor(req.user?.crmUser?.id || null);
+        const result = await leadsService.updateLead(uuid, fields, companyId, activityActor);
 
         // Log status change event
         if (fields.Status) {
-            eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'status_changed',
+            eventService.logEvent(companyId, 'lead', result.SerialId || result.ClientId, 'status_changed',
                 { from: body._prevStatus || '?', to: fields.Status, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         }
 
@@ -597,7 +629,7 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
             try {
                 const db = require('../db/connection');
                 // Get the updated lead to read its contact_id and current data
-                const lead = await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id);
+                const lead = await leadsService.getLeadByUUID(uuid, companyId);
                 if (lead && lead.ContactId) {
                     const updates = [];
                     const params = [];
@@ -634,9 +666,10 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
                     }
 
                     if (updates.length > 0) {
-                        params.push(lead.ContactId);
+                        params.push(lead.ContactId, companyId);
                         await db.query(
-                            `UPDATE contacts SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${idx}`,
+                            `UPDATE contacts SET ${updates.join(', ')}, updated_at = NOW()
+                             WHERE id = $${idx} AND company_id = $${idx + 1}`,
                             params
                         );
                     }
@@ -649,7 +682,7 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
             if ('Phone' in fields || 'SecondPhone' in fields) {
                 (async () => {
                     try {
-                        const lead = await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id);
+                        const lead = await leadsService.getLeadByUUID(uuid, companyId);
                         if (!lead || !lead.ContactId) return;
                         const { mergeOrphanTimelines } = require('../services/timelineMergeService');
                         await mergeOrphanTimelines(
@@ -671,8 +704,8 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
             try {
                 const db = require('../db/connection');
                 const lead = hasContactChange
-                    ? await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id)
-                    : await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id);
+                    ? await leadsService.getLeadByUUID(uuid, companyId)
+                    : await leadsService.getLeadByUUID(uuid, companyId);
                 if (lead && lead.ContactId && lead.Address) {
                     const addrResult = await contactAddressService.resolveAddress(
                         lead.ContactId,
@@ -685,12 +718,14 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
                             lat: lead.Latitude || null,
                             lng: lead.Longitude || null,
                             placeId: fields.google_place_id || null,
-                        }
+                        },
+                        companyId
                     );
                     if (addrResult.contact_address_id) {
                         await db.query(
-                            'UPDATE leads SET contact_address_id = $1 WHERE uuid = $2',
-                            [addrResult.contact_address_id, uuid]
+                            `UPDATE leads SET contact_address_id = $1
+                             WHERE uuid = $2 AND company_id = $3`,
+                            [addrResult.contact_address_id, uuid, companyId]
                         );
                     }
                 }
@@ -704,8 +739,10 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
             try {
                 const db = require('../db/connection');
                 const { rows: jobRows } = await db.query(
-                    `SELECT converted_to_job, zenbooker_job_id FROM leads WHERE uuid = $1`,
-                    [uuid]
+                    `SELECT converted_to_job, zenbooker_job_id
+                     FROM leads
+                     WHERE uuid = $1 AND company_id = $2`,
+                    [uuid, companyId]
                 );
                 if (jobRows.length > 0 && jobRows[0].converted_to_job && jobRows[0].zenbooker_job_id) {
                     const jobSyncService = require('../services/jobSyncService');
@@ -730,7 +767,11 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
 router.post('/:uuid/mark-lost', requirePermission('leads.edit'), async (req, res) => {
     const reqId = requestId();
     try {
-        const result = await leadsService.markLost(req.params.uuid, req.companyFilter?.company_id);
+        const result = await leadsService.markLost(
+            req.params.uuid,
+            req.companyFilter?.company_id,
+            userActor(req.user?.crmUser?.id || null)
+        );
         eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'marked_lost',
             { actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
@@ -745,7 +786,11 @@ router.post('/:uuid/mark-lost', requirePermission('leads.edit'), async (req, res
 router.post('/:uuid/activate', requirePermission('leads.edit'), async (req, res) => {
     const reqId = requestId();
     try {
-        const result = await leadsService.activateLead(req.params.uuid, req.companyFilter?.company_id);
+        const result = await leadsService.activateLead(
+            req.params.uuid,
+            req.companyFilter?.company_id,
+            userActor(req.user?.crmUser?.id || null)
+        );
         eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'reactivated',
             { actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
@@ -764,7 +809,12 @@ router.post('/:uuid/assign', requirePermission('leads.edit'), async (req, res) =
         if (!User) {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', 'User is required', reqId));
         }
-        const result = await leadsService.assignUser(req.params.uuid, User);
+        const result = await leadsService.assignUser(
+            req.params.uuid,
+            User,
+            req.companyFilter?.company_id,
+            userActor(req.user?.crmUser?.id || null)
+        );
         eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'team_assigned',
             { user_name: User, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
@@ -783,7 +833,12 @@ router.post('/:uuid/unassign', requirePermission('leads.edit'), async (req, res)
         if (!User) {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', 'User is required', reqId));
         }
-        const result = await leadsService.unassignUser(req.params.uuid, User, req.companyFilter?.company_id);
+        const result = await leadsService.unassignUser(
+            req.params.uuid,
+            User,
+            req.companyFilter?.company_id,
+            userActor(req.user?.crmUser?.id || null)
+        );
         eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'team_unassigned',
             { user_name: User, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));

@@ -222,7 +222,12 @@ describe('classification (REAL handleLeadEndOfCall)', () => {
         expect(updates(/SET status = 'booked'/).length).toBeGreaterThanOrEqual(1);
         expect(ladderInserts()).toHaveLength(0);
         // lead → Review (a human must confirm the tentative AI booking)
-        expect(updateSpy).toHaveBeenCalledWith('LD-1', { Status: 'Review' }, COMPANY);
+        expect(updateSpy).toHaveBeenCalledWith(
+            'LD-1',
+            { Status: 'Review' },
+            COMPANY,
+            { id: null, type: 'ai', label: 'AI Phone', source: 'agent' }
+        );
         // exactly one Action-Required confirm task, carrying the call summary
         expect(timelinesQueries.createTask).toHaveBeenCalledTimes(1);
         expect(timelinesQueries.createTask.mock.calls[0][0].title).toMatch(/Confirm the AI-booked appointment/);

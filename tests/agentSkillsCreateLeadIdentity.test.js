@@ -82,6 +82,7 @@ test('known caller: unique server-resolved contact links the lead and overrides 
             contact_id: 4093,
         }),
         CO_A,
+        { activityActor: { id: null, type: 'ai', label: 'AI Phone', source: 'agent' } },
     );
 });
 
@@ -152,5 +153,6 @@ test('tenant scoping: resolver and lead insert use the dispatcher company, never
             contact_id: 84093,
         }),
         CO_B,
+        { activityActor: { id: null, type: 'ai', label: 'AI Phone', source: 'agent' } },
     );
 });

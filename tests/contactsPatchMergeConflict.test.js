@@ -99,7 +99,14 @@ jest.mock('../backend/src/services/zenbookerSyncService', () => ({
     syncContactToZenbooker: jest.fn(async () => {}),
 }));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
-jest.mock('../backend/src/services/eventService', () => ({ logEvent: jest.fn() }));
+jest.mock('../backend/src/services/eventService', () => ({
+    actorName: jest.fn(() => 'Test User'),
+    logEvent: jest.fn(),
+}));
+jest.mock('../backend/src/services/leadContactActivityService', () => ({
+    logLeadContactActivity: jest.fn(async () => ({ ok: true, id: 1 })),
+    userActor: id => ({ id, type: 'user', label: null, source: 'crm' }),
+}));
 // Unused-by-PATCH collaborators the router requires at module load.
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({ MAX_FILE_SIZE: 1, MAX_FILES_PER_NOTE: 1 }));
 jest.mock('../backend/src/services/notesMutationService', () => ({}));
@@ -107,6 +114,7 @@ jest.mock('../backend/src/services/notesMutationService', () => ({}));
 const contactsService = require('../backend/src/services/contactsService');
 const dedupe = require('../backend/src/services/contactDedupeService');
 const mergeSvc = require('../backend/src/services/contactEmailMergeService');
+const leadContactActivity = require('../backend/src/services/leadContactActivityService');
 const timelineMerge = require('../backend/src/services/timelineMergeService');
 const eventService = require('../backend/src/services/eventService');
 const contactsRouter = require('../backend/src/routes/contacts');
@@ -453,6 +461,14 @@ describe('TC-CM-U14: execution order (Decision C) + FR-3 re-check at transfer ex
         expect(mergeSvc.assertTransferAllowed).toHaveBeenCalledWith(88, conflict.attributes, COMPANY_A, mockClient);
         expect(mergeSvc.transferEmail).toHaveBeenCalledWith(5, 88, 'x@cm1.test', COMPANY_A, mockClient);
         expect(mergeSvc.transferPhone).not.toHaveBeenCalled();
+        expect(leadContactActivity.logLeadContactActivity).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            entityType: 'contact',
+            action: 'contact.email_moved',
+            entityId: 5,
+            actor: { id: 'crm-1', type: 'user', label: null, source: 'crm' },
+            summary: { count: 1 },
+        }, { client: mockClient });
 
         // Step 5 runs ONLY for the non-conflicted new address.
         expect(mergeSvc.resolveAddedEmail).toHaveBeenCalledTimes(1);
@@ -460,6 +476,38 @@ describe('TC-CM-U14: execution order (Decision C) + FR-3 re-check at transfer ex
 
         // Async orphan-merge leg fired (post-commit).
         expect(timelineMerge.mergeOrphanTimelines).toHaveBeenCalled();
+    });
+
+    it('a phone transfer emits contact.phone_moved with the human actor', async () => {
+        mergeSvc.detectAttributeConflicts.mockResolvedValue([phoneConflict()]);
+
+        const res = await request(makeApp())
+            .patch('/api/contacts/5')
+            .send({
+                phone_e164: P22,
+                resolutions: [{
+                    owner_contact_id: 77,
+                    action: 'transfer',
+                    attributes: [{ kind: 'phone', value: P22 }],
+                }],
+            });
+
+        expect(res.status).toBe(200);
+        expect(mergeSvc.transferPhone).toHaveBeenCalledWith(
+            5,
+            77,
+            P22.replace(/\D/g, ''),
+            COMPANY_A,
+            mockClient
+        );
+        expect(leadContactActivity.logLeadContactActivity).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            entityType: 'contact',
+            action: 'contact.phone_moved',
+            entityId: 5,
+            actor: { id: 'crm-1', type: 'user', label: null, source: 'crm' },
+            summary: { count: 1 },
+        }, { client: mockClient });
     });
 
     it('(ii) stale FR-3 gate at execution → sentinel → ROLLBACK → fresh 409; transfer never half-run; async legs silent', async () => {
@@ -509,7 +557,23 @@ describe('TC-CM-U14: execution order (Decision C) + FR-3 re-check at transfer ex
             });
 
         expect(res.status).toBe(200);
-        expect(eventService.logEvent).toHaveBeenCalledWith(COMPANY_A, 'contact', 5, 'contact_merged', payload);
+        expect(eventService.logEvent).toHaveBeenCalledWith(
+            COMPANY_A,
+            'contact',
+            5,
+            'contact_merged',
+            { ...payload, actor_name: 'Test User' },
+            'user',
+            'kc-sub'
+        );
+        expect(leadContactActivity.logLeadContactActivity).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            entityType: 'contact',
+            action: 'contact.merged',
+            entityId: 5,
+            actor: { id: 'crm-1', type: 'user', label: null, source: 'crm' },
+            summary: { contact_id: 77, dropped_count: 1 },
+        }, { client: mockClient });
         const iCommit = traceIdx('sql:COMMIT');
         const iEvent = traceIdx('svc:event');
         expect(iCommit).toBeGreaterThan(-1);

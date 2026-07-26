@@ -3,6 +3,7 @@ const mockClient = {
     release: jest.fn(),
 };
 const mockLogJobActivity = jest.fn();
+const mockLogLeadContactActivity = jest.fn();
 
 jest.mock('../backend/src/db/connection', () => ({
     query: jest.fn(),
@@ -19,6 +20,9 @@ jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
 jest.mock('../backend/src/services/jobActivityService', () => ({
     logJobActivity: (...args) => mockLogJobActivity(...args),
+}));
+jest.mock('../backend/src/services/leadContactActivityService', () => ({
+    logLeadContactActivity: (...args) => mockLogLeadContactActivity(...args),
 }));
 
 const db = require('../backend/src/db/connection');
@@ -114,6 +118,7 @@ describe('leadsService.convertLead idempotency', () => {
             invoice: {},
         });
         mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
+        mockLogLeadContactActivity.mockResolvedValue({ ok: true, id: 2 });
     });
 
     it('uses the custom Zenbooker service description for the local job', async () => {
@@ -188,6 +193,14 @@ describe('leadsService.convertLead idempotency', () => {
             jobId: 1131,
             actor,
             summary: { status: 'Submitted' },
+        }, { client: mockClient });
+        expect(mockLogLeadContactActivity).toHaveBeenCalledWith({
+            companyId: 'company-1',
+            entityType: 'lead',
+            action: 'lead.converted',
+            entityId: 42,
+            actor,
+            summary: { job_id: 1131, status: 'Converted' },
         }, { client: mockClient });
     });
 

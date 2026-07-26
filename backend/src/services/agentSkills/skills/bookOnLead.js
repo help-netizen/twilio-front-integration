@@ -45,6 +45,7 @@ const resultShapes = require('../resultShapes');
 // reschedule skill — identical validation (`/^\d{4}-\d{2}-\d{2}$/`, `/^\d{1,2}:\d{2}$/`)
 // so a bookOnLead slot and a reschedule/createLead slot are validated the same way.
 const { isConfirmedSlot, windowPhrase } = require('./rescheduleAppointment');
+const { aiActor } = require('../../leadContactActivityService');
 
 /**
  * @param {string} companyId Tenant scope (DEFAULT_COMPANY_ID on voice/public-MCP).
@@ -140,7 +141,12 @@ async function run(companyId, verifiedContext, input) {
             );
         }
         try {
-            await leadsService.updateLead(lead.UUID, hold, companyId);
+            await leadsService.updateLead(
+                lead.UUID,
+                hold,
+                companyId,
+                aiActor('AI Phone', 'agent')
+            );
         } catch (err) {
             // updateLead throws LEAD_NOT_FOUND / DB error → graceful refusal (the
             // choke-point also backstops any throw to SAFE_FALLBACK). No false success.

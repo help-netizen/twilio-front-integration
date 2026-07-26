@@ -10,6 +10,8 @@ const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventBus = require('./eventBus');
 const { logJobActivity } = require('./jobActivityService');
+const { logLeadContactActivity } = require('./leadContactActivityService');
+const { withTransaction } = require('./transactionService');
 const {
     createCursorFingerprint,
     encodeCursor,
@@ -34,10 +36,10 @@ function generateUUID() {
     return result;
 }
 
-async function generateUniqueUUID() {
+async function generateUniqueUUID(client = db) {
     for (let attempt = 0; attempt < 10; attempt++) {
         const uuid = generateUUID();
-        const { rows } = await db.query('SELECT 1 FROM leads WHERE uuid = $1', [uuid]);
+        const { rows } = await client.query('SELECT 1 FROM leads WHERE uuid = $1', [uuid]);
         if (rows.length === 0) return uuid;
     }
     throw new LeadsServiceError('UUID_GENERATION_FAILED', 'Could not generate unique UUID after 10 attempts', 500);
@@ -117,8 +119,8 @@ function rowToLead(row) {
 // =============================================================================
 const RESERVED_METADATA_KEYS = ['rely_filter'];
 
-async function extractCustomMetadata(fields) {
-    const { rows: registeredFields } = await db.query(
+async function extractCustomMetadata(fields, client = db) {
+    const { rows: registeredFields } = await client.query(
         `SELECT api_name FROM lead_custom_fields WHERE is_system = false`
     );
     const apiNames = new Set(registeredFields.map(r => r.api_name));
@@ -491,15 +493,33 @@ async function getLeadById(id, companyId = null) {
 // =============================================================================
 // Create Lead
 // =============================================================================
-async function createLead(fields, companyId, { systemMetadata = null } = {}) {
+async function mutateLeadWithActivity(activityActor, work, buildActivities) {
+    if (!activityActor) return work(db);
+    return withTransaction(async (client) => {
+        const result = await work(client);
+        const activities = buildActivities(result).filter(Boolean);
+        for (const activity of activities) {
+            await logLeadContactActivity({
+                companyId: activity.companyId,
+                entityType: 'lead',
+                action: activity.action,
+                entityId: activity.entityId,
+                actor: activityActor,
+                ...(activity.summary ? { summary: activity.summary } : {}),
+            }, { client });
+        }
+        return result;
+    });
+}
+
+async function createLead(fields, companyId, {
+    systemMetadata = null,
+    activityActor = null,
+} = {}) {
     if (!companyId) {
         throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
-    const uuid = await generateUniqueUUID();
     const columns = mapFieldsToColumns(fields);
-
-    // Always set uuid
-    columns.uuid = uuid;
 
     // Normalize phone to E.164 format (+1XXXXXXXXXX for US)
     if (columns.phone) {
@@ -521,25 +541,46 @@ async function createLead(fields, companyId, { systemMetadata = null } = {}) {
     // Every write has an explicit tenant; workers do not have req/companyFilter.
     columns.company_id = companyId;
 
-    // Handle custom metadata fields (flat api_name keys + Metadata object)
-    const meta = await extractCustomMetadata(fields);
-    const merged = { ...(meta || {}), ...(systemMetadata || {}) };
-    if (Object.keys(merged).length > 0) {
-        columns.metadata = JSON.stringify(merged);
-    }
+    let insertedLeadId;
+    const result = await mutateLeadWithActivity(
+        activityActor,
+        async (client) => {
+            columns.uuid = await generateUniqueUUID(client);
 
-    const colNames = Object.keys(columns);
-    const values = Object.values(columns);
-    const placeholders = values.map((_, i) => `$${i + 1}`);
+            // Handle custom metadata fields (flat api_name keys + Metadata object)
+            const meta = await extractCustomMetadata(fields, client);
+            const merged = { ...(meta || {}), ...(systemMetadata || {}) };
+            if (Object.keys(merged).length > 0) {
+                columns.metadata = JSON.stringify(merged);
+            }
 
-    const sql = `
-        INSERT INTO leads (${colNames.join(', ')})
-        VALUES (${placeholders.join(', ')})
-        RETURNING uuid, serial_id, id
-    `;
+            const colNames = Object.keys(columns);
+            const values = Object.values(columns);
+            const placeholders = values.map((_, i) => `$${i + 1}`);
 
-    const { rows } = await db.query(sql, values);
-    emitLeadChange('lead.created', columns.company_id, columns.status || 'Submitted', rows[0].id);
+            const { rows } = await client.query(
+                `INSERT INTO leads (${colNames.join(', ')})
+                 VALUES (${placeholders.join(', ')})
+                 RETURNING uuid, serial_id, id`,
+                values
+            );
+            insertedLeadId = rows[0].id;
+            return {
+                UUID: rows[0].uuid,
+                SerialId: rows[0].serial_id,
+                ClientId: String(rows[0].id),
+                link: null,
+            };
+        },
+        inserted => [{
+            companyId,
+            action: 'lead.created',
+            entityId: inserted.ClientId,
+            summary: { status: columns.status || 'Submitted' },
+        }]
+    );
+
+    emitLeadChange('lead.created', columns.company_id, columns.status || 'Submitted', result.ClientId);
     // OUTBOUND-LEAD-CALL-001: post-insert domain event (REPAIR-ADVISOR pattern,
     // convertLead precedent). Fire-and-forget: a failing bus never breaks the
     // create. This single emit site covers ALL ingestion paths — UI routes,
@@ -549,8 +590,8 @@ async function createLead(fields, companyId, { systemMetadata = null } = {}) {
         columns.company_id,
         'lead.created',
         {
-            id: rows[0].id,
-            uuid: rows[0].uuid,
+            id: insertedLeadId,
+            uuid: result.UUID,
             first_name: columns.first_name || null,
             last_name: columns.last_name || null,
             phone: columns.phone || null,
@@ -558,201 +599,267 @@ async function createLead(fields, companyId, { systemMetadata = null } = {}) {
             job_source: columns.job_source || null,
             status: columns.status || 'Submitted',
         },
-        { actorType: 'system', aggregateType: 'lead', aggregateId: rows[0].id }
+        { actorType: 'system', aggregateType: 'lead', aggregateId: insertedLeadId }
     ).catch(() => {});
-    return {
-        UUID: rows[0].uuid,
-        SerialId: rows[0].serial_id,
-        ClientId: String(rows[0].id),
-        link: null,
-    };
+    return result;
 }
 
 // =============================================================================
 // Update Lead
 // =============================================================================
-async function updateLead(uuid, fields, companyId = null) {
+async function updateLead(uuid, fields, companyId = null, activityActor = null) {
     if (!companyId) {
         throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
     const columns = mapFieldsToColumns(fields);
+    let statusChanged = false;
 
-    // Handle custom metadata fields (flat api_name keys + Metadata object)
-    // For updates, merge with existing metadata to avoid overwriting unset fields
-    const meta = await extractCustomMetadata(fields);
-    if (meta) {
-        // Merge with existing metadata
-        const { rows: existing } = await db.query(
-            'SELECT metadata FROM leads WHERE uuid = $1 AND company_id = $2', [uuid, companyId]
-        );
-        const existingMeta = existing.length > 0 ? (existing[0].metadata || {}) : {};
-        columns.metadata = JSON.stringify({ ...existingMeta, ...meta });
-    }
-
-    if (Object.keys(columns).length === 0) {
-        throw new LeadsServiceError('VALIDATION_ERROR', 'At least one field must be provided', 400);
-    }
-
-    // FSM status transition validation (additive — no published FSM = no restriction)
-    if (columns.status && companyId) {
-        const { rows: currentRows } = await db.query(
-            'SELECT status FROM leads WHERE uuid = $1 AND company_id = $2', [uuid, companyId]
-        );
-        const currentStatus = currentRows.length > 0 ? currentRows[0].status : null;
-        if (currentStatus && columns.status !== currentStatus) {
-            const result = await fsmService.resolveTransition(companyId, 'lead', currentStatus, columns.status);
-            if (result.valid === false) {
-                throw new LeadsServiceError(
-                    'FSM_TRANSITION_DENIED',
-                    result.error || `Lead status transition ${currentStatus} → ${columns.status} is not allowed`,
-                    403
+    const result = await mutateLeadWithActivity(
+        activityActor,
+        async (client) => {
+            // Handle custom metadata fields (flat api_name keys + Metadata object)
+            // For updates, merge with existing metadata to avoid overwriting unset fields.
+            const meta = await extractCustomMetadata(fields, client);
+            if (meta) {
+                const { rows: existing } = await client.query(
+                    'SELECT metadata FROM leads WHERE uuid = $1 AND company_id = $2',
+                    [uuid, companyId]
                 );
+                const existingMeta = existing.length > 0 ? (existing[0].metadata || {}) : {};
+                columns.metadata = JSON.stringify({ ...existingMeta, ...meta });
             }
-            // If valid or fallback (no published FSM), proceed with update
-        }
-    }
 
-    const setClauses = [];
-    const values = [];
-    let idx = 0;
+            if (Object.keys(columns).length === 0) {
+                throw new LeadsServiceError('VALIDATION_ERROR', 'At least one field must be provided', 400);
+            }
 
-    for (const [col, val] of Object.entries(columns)) {
-        idx++;
-        setClauses.push(`${col} = $${idx}`);
-        values.push(val);
-    }
+            if (columns.status) {
+                const { rows: currentRows } = await client.query(
+                    'SELECT status FROM leads WHERE uuid = $1 AND company_id = $2',
+                    [uuid, companyId]
+                );
+                if (currentRows.length === 0) {
+                    throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+                }
+                const currentStatus = currentRows[0].status;
+                statusChanged = columns.status !== currentStatus;
+                if (statusChanged) {
+                    const transition = await fsmService.resolveTransition(
+                        companyId,
+                        'lead',
+                        currentStatus,
+                        columns.status
+                    );
+                    if (transition.valid === false) {
+                        throw new LeadsServiceError(
+                            'FSM_TRANSITION_DENIED',
+                            transition.error || `Lead status transition ${currentStatus} → ${columns.status} is not allowed`,
+                            403
+                        );
+                    }
+                }
+            }
 
-    idx++;
-    values.push(uuid);
-    const conditions = [`uuid = $${idx}`];
-    idx++;
-    conditions.push(`company_id = $${idx}`);
-    values.push(companyId);
+            const setClauses = [];
+            const values = [];
+            let idx = 0;
 
-    const sql = `
-        UPDATE leads SET ${setClauses.join(', ')}
-        WHERE ${conditions.join(' AND ')}
-        RETURNING uuid, id
-    `;
+            for (const [col, val] of Object.entries(columns)) {
+                idx++;
+                setClauses.push(`${col} = $${idx}`);
+                values.push(val);
+            }
 
-    const { rows } = await db.query(sql, values);
-    if (rows.length === 0) {
-        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
-    }
+            idx++;
+            values.push(uuid);
+            const conditions = [`uuid = $${idx}`];
+            idx++;
+            conditions.push(`company_id = $${idx}`);
+            values.push(companyId);
+
+            const { rows } = await client.query(
+                `UPDATE leads SET ${setClauses.join(', ')}
+                 WHERE ${conditions.join(' AND ')}
+                 RETURNING uuid, id`,
+                values
+            );
+            if (rows.length === 0) {
+                throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+            }
+
+            return {
+                UUID: rows[0].uuid,
+                ClientId: String(rows[0].id),
+                link: null,
+            };
+        },
+        updated => [
+            Object.keys(columns).some(column => column !== 'status') && {
+                companyId,
+                action: 'lead.updated',
+                entityId: updated.ClientId,
+            },
+            statusChanged && {
+                companyId,
+                action: 'lead.status_changed',
+                entityId: updated.ClientId,
+                summary: { status: columns.status },
+            },
+        ]
+    );
 
     // Only a status change can move a lead in/out of the "new" set → refresh badge.
-    if (columns.status) emitLeadChange('lead.updated', companyId, columns.status, rows[0].id);
+    if (columns.status) emitLeadChange('lead.updated', companyId, columns.status, result.ClientId);
 
-    return {
-        UUID: rows[0].uuid,
-        ClientId: String(rows[0].id),
-        link: null,
-    };
+    return result;
 }
 
 // =============================================================================
 // Mark Lost
 // =============================================================================
-async function markLost(uuid, companyId = null) {
-    const conditions = ['uuid = $1'];
-    const params = [uuid];
-    if (companyId) {
-        conditions.push(`company_id = $2`);
-        params.push(companyId);
+async function markLost(uuid, companyId = null, activityActor = null) {
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
-    const sql = `
-        UPDATE leads SET lead_lost = true, status = 'Lost'
-        WHERE ${conditions.join(' AND ')}
-        RETURNING uuid
-    `;
-    const { rows } = await db.query(sql, params);
-    if (rows.length === 0) {
-        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
-    }
-    emitLeadChange('lead.updated', companyId, 'Lost', rows[0].id);
-    return { message: 'Lead marked as lost' };
+    const result = await mutateLeadWithActivity(
+        activityActor,
+        async (client) => {
+            const { rows } = await client.query(
+                `UPDATE leads SET lead_lost = true, status = 'Lost'
+                 WHERE uuid = $1 AND company_id = $2
+                 RETURNING uuid, id`,
+                [uuid, companyId]
+            );
+            if (rows.length === 0) {
+                throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+            }
+            return {
+                UUID: rows[0].uuid,
+                ClientId: String(rows[0].id),
+                message: 'Lead marked as lost',
+            };
+        },
+        updated => [{
+            companyId,
+            action: 'lead.lost',
+            entityId: updated.ClientId,
+            summary: { status: 'Lost' },
+        }]
+    );
+    emitLeadChange('lead.updated', companyId, 'Lost', result.ClientId);
+    return result;
 }
 
 // =============================================================================
 // Activate Lead
 // =============================================================================
-async function activateLead(uuid, companyId = null) {
-    const conditions = ['uuid = $1'];
-    const params = [uuid];
-    if (companyId) {
-        conditions.push(`company_id = $2`);
-        params.push(companyId);
+async function activateLead(uuid, companyId = null, activityActor = null) {
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
-    const sql = `
-        UPDATE leads SET lead_lost = false, status = 'Submitted'
-        WHERE ${conditions.join(' AND ')}
-        RETURNING uuid
-    `;
-    const { rows } = await db.query(sql, params);
-    if (rows.length === 0) {
-        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
-    }
-    emitLeadChange('lead.updated', companyId, 'Submitted', rows[0].id);
-    return { message: 'Lead activated' };
+    const result = await mutateLeadWithActivity(
+        activityActor,
+        async (client) => {
+            const { rows } = await client.query(
+                `UPDATE leads SET lead_lost = false, status = 'Submitted'
+                 WHERE uuid = $1 AND company_id = $2
+                 RETURNING uuid, id`,
+                [uuid, companyId]
+            );
+            if (rows.length === 0) {
+                throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+            }
+            return {
+                UUID: rows[0].uuid,
+                ClientId: String(rows[0].id),
+                message: 'Lead activated',
+            };
+        },
+        updated => [{
+            companyId,
+            action: 'lead.reactivated',
+            entityId: updated.ClientId,
+            summary: { status: 'Submitted' },
+        }]
+    );
+    emitLeadChange('lead.updated', companyId, 'Submitted', result.ClientId);
+    return result;
 }
 
 // =============================================================================
 // Assign User
 // =============================================================================
-async function assignUser(uuid, userName, companyId = null) {
-    // Get lead ID
-    const conditions = ['uuid = $1'];
-    const params = [uuid];
-    if (companyId) {
-        conditions.push(`company_id = $2`);
-        params.push(companyId);
+async function assignUser(uuid, userName, companyId = null, activityActor = null) {
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
-    const { rows: leadRows } = await db.query(
-        `SELECT id FROM leads WHERE ${conditions.join(' AND ')}`, params
-    );
-    if (leadRows.length === 0) {
-        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
-    }
+    return mutateLeadWithActivity(
+        activityActor,
+        async (client) => {
+            const { rows: leadRows } = await client.query(
+                'SELECT id FROM leads WHERE uuid = $1 AND company_id = $2',
+                [uuid, companyId]
+            );
+            if (leadRows.length === 0) {
+                throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+            }
 
-    await db.query(
-        'INSERT INTO lead_team_assignments (lead_id, user_name) VALUES ($1, $2) ON CONFLICT (lead_id, user_name) DO NOTHING',
-        [leadRows[0].id, userName]
-    );
+            await client.query(
+                'INSERT INTO lead_team_assignments (lead_id, user_name) VALUES ($1, $2) ON CONFLICT (lead_id, user_name) DO NOTHING',
+                [leadRows[0].id, userName]
+            );
 
-    return {
-        UUID: uuid,
-        LeadId: String(leadRows[0].id),
-        link: null,
-    };
+            return {
+                UUID: uuid,
+                LeadId: String(leadRows[0].id),
+                ClientId: String(leadRows[0].id),
+                link: null,
+            };
+        },
+        updated => [{
+            companyId,
+            action: 'lead.assigned',
+            entityId: updated.ClientId,
+        }]
+    );
 }
 
 // =============================================================================
 // Unassign User
 // =============================================================================
-async function unassignUser(uuid, userName, companyId = null) {
-    const conditions = ['uuid = $1'];
-    const params = [uuid];
-    if (companyId) {
-        conditions.push(`company_id = $2`);
-        params.push(companyId);
+async function unassignUser(uuid, userName, companyId = null, activityActor = null) {
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
-    const { rows: leadRows } = await db.query(
-        `SELECT id FROM leads WHERE ${conditions.join(' AND ')}`, params
-    );
-    if (leadRows.length === 0) {
-        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
-    }
+    return mutateLeadWithActivity(
+        activityActor,
+        async (client) => {
+            const { rows: leadRows } = await client.query(
+                'SELECT id FROM leads WHERE uuid = $1 AND company_id = $2',
+                [uuid, companyId]
+            );
+            if (leadRows.length === 0) {
+                throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+            }
 
-    await db.query(
-        'DELETE FROM lead_team_assignments WHERE lead_id = $1 AND user_name = $2',
-        [leadRows[0].id, userName]
-    );
+            await client.query(
+                'DELETE FROM lead_team_assignments WHERE lead_id = $1 AND user_name = $2',
+                [leadRows[0].id, userName]
+            );
 
-    return {
-        UUID: uuid,
-        LeadId: String(leadRows[0].id),
-        link: null,
-    };
+            return {
+                UUID: uuid,
+                LeadId: String(leadRows[0].id),
+                ClientId: String(leadRows[0].id),
+                link: null,
+            };
+        },
+        updated => [{
+            companyId,
+            action: 'lead.unassigned',
+            entityId: updated.ClientId,
+        }]
+    );
 }
 
 // =============================================================================
@@ -817,8 +924,11 @@ async function claimLocalJobForConversion({
             if (updates.length > 0) {
                 idx++;
                 updateParams.push(localJobId);
+                idx++;
+                updateParams.push(companyId);
                 await client.query(
-                    `UPDATE jobs SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${idx}`,
+                    `UPDATE jobs SET ${updates.join(', ')}, updated_at = NOW()
+                     WHERE id = $${idx - 1} AND company_id = $${idx}`,
                     updateParams
                 );
             }
@@ -854,12 +964,7 @@ async function claimLocalJobForConversion({
             localJobCreated = true;
         }
 
-        const leadUpdateConditions = ['id = $1'];
-        const leadUpdateParams = [leadRow.id, contactId, activeZenbookerJobId];
-        if (companyId) {
-            leadUpdateParams.push(companyId);
-            leadUpdateConditions.push(`company_id = $${leadUpdateParams.length}`);
-        }
+        const leadUpdateParams = [leadRow.id, contactId, activeZenbookerJobId, companyId];
 
         await client.query(
             `UPDATE leads SET
@@ -867,9 +972,20 @@ async function claimLocalJobForConversion({
                 status = 'Converted',
                 contact_id = COALESCE(contact_id, $2),
                 zenbooker_job_id = COALESCE($3, zenbooker_job_id)
-             WHERE ${leadUpdateConditions.join(' AND ')}`,
+             WHERE id = $1 AND company_id = $4`,
             leadUpdateParams
         );
+
+        if (activityActor) {
+            await logLeadContactActivity({
+                companyId: leadRow.company_id,
+                entityType: 'lead',
+                action: 'lead.converted',
+                entityId: leadRow.id,
+                actor: activityActor,
+                summary: { job_id: localJobId, status: 'Converted' },
+            }, { client });
+        }
 
         if (localJobCreated && activityActor) {
             await logJobActivity({
@@ -897,42 +1013,28 @@ async function claimLocalJobForConversion({
     }
 }
 
-async function persistZenbookerJobLink(localJobId, leadId, zenbookerJobId, companyId = null) {
-    const jobParams = [zenbookerJobId, localJobId];
-    const jobConditions = ['id = $2'];
-    if (companyId) {
-        jobParams.push(companyId);
-        jobConditions.push(`company_id = $${jobParams.length}`);
-    }
+async function persistZenbookerJobLink(localJobId, leadId, zenbookerJobId, companyId) {
     await db.query(
         `UPDATE jobs SET zenbooker_job_id = $1, updated_at = NOW()
-         WHERE ${jobConditions.join(' AND ')}`,
-        jobParams
+         WHERE id = $2 AND company_id = $3`,
+        [zenbookerJobId, localJobId, companyId]
     );
 
-    const leadParams = [zenbookerJobId, leadId];
-    const leadConditions = ['id = $2'];
-    if (companyId) {
-        leadParams.push(companyId);
-        leadConditions.push(`company_id = $${leadParams.length}`);
-    }
     await db.query(
         `UPDATE leads SET zenbooker_job_id = $1, converted_to_job = true, status = 'Converted'
-         WHERE ${leadConditions.join(' AND ')}`,
-        leadParams
+         WHERE id = $2 AND company_id = $3`,
+        [zenbookerJobId, leadId, companyId]
     );
 }
 
 async function convertLead(uuid, overrides = {}, companyId = null, activityActor = null) {
-    // 1. Fetch full lead
-    const conditions = ['uuid = $1'];
-    const params = [uuid];
-    if (companyId) {
-        conditions.push(`company_id = $2`);
-        params.push(companyId);
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
+    // 1. Fetch full lead
     const { rows: leadRows } = await db.query(
-        `SELECT * FROM leads WHERE ${conditions.join(' AND ')}`, params
+        'SELECT * FROM leads WHERE uuid = $1 AND company_id = $2',
+        [uuid, companyId]
     );
     if (leadRows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
@@ -952,11 +1054,14 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
                     last_name: leadRow.last_name || null,
                     phone,
                     email: overrides.customer?.email || leadRow.email || null,
-                }, leadRow.company_id);
+                }, leadRow.company_id, { activityActor });
                 if (resolved.contact_id) {
                     contactId = resolved.contact_id;
                     // Link contact back to the lead
-                    await db.query('UPDATE leads SET contact_id = $1 WHERE id = $2', [contactId, leadRow.id]);
+                    await db.query(
+                        'UPDATE leads SET contact_id = $1 WHERE id = $2 AND company_id = $3',
+                        [contactId, leadRow.id, companyId]
+                    );
                     console.log(`[ConvertLead] ${resolved.status === 'created' ? 'Created' : 'Found'} contact ${contactId} for lead ${leadRow.id}`);
                 }
             } catch (err) {
@@ -1032,13 +1137,23 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
     // prevents cross-contamination when user changes phone in the wizard
     if (localJobCreated && overrides.timeline_id && contactId) {
         try {
-            const contactRow = await db.query('SELECT phone_e164, secondary_phone FROM contacts WHERE id = $1', [contactId]);
+            const contactRow = await db.query(
+                `SELECT phone_e164, secondary_phone
+                 FROM contacts
+                 WHERE id = $1 AND company_id = $2`,
+                [contactId, companyId]
+            );
             const c = contactRow.rows[0];
             const contactDigits = [];
             if (c?.phone_e164) contactDigits.push(c.phone_e164.replace(/\D/g, '').slice(-10));
             if (c?.secondary_phone) contactDigits.push(c.secondary_phone.replace(/\D/g, '').slice(-10));
 
-            const tlRow = await db.query('SELECT phone_e164 FROM timelines WHERE id = $1 AND contact_id IS NULL', [overrides.timeline_id]);
+            const tlRow = await db.query(
+                `SELECT phone_e164
+                 FROM timelines
+                 WHERE id = $1 AND company_id = $2 AND contact_id IS NULL`,
+                [overrides.timeline_id, companyId]
+            );
             const tl = tlRow.rows[0];
 
             if (tl) {
@@ -1048,12 +1163,13 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
                 if (phoneMatches) {
                     await db.query(
                         `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now()
-                         WHERE id = $2 AND contact_id IS NULL`,
-                        [contactId, overrides.timeline_id]
+                         WHERE id = $2 AND company_id = $3 AND contact_id IS NULL`,
+                        [contactId, overrides.timeline_id, companyId]
                     );
                     await db.query(
-                        `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
-                        [contactId, overrides.timeline_id]
+                        `UPDATE calls SET contact_id = $1
+                         WHERE timeline_id = $2 AND company_id = $3 AND contact_id IS NULL`,
+                        [contactId, overrides.timeline_id, companyId]
                     );
                     console.log(`[ConvertLead] Linked timeline ${overrides.timeline_id} to contact ${contactId}`);
                 } else {
@@ -1148,7 +1264,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
                     zb_rescheduled = COALESCE($13, zb_rescheduled),
                     zb_raw = $14::jsonb,
                     updated_at = NOW()
-                WHERE id = $2
+                WHERE id = $2 AND company_id = $15
             `, [
                 zenbookerJobId,
                 localJobId,
@@ -1167,6 +1283,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
                 !!jobDetail?.canceled,
                 !!jobDetail?.rescheduled,
                 JSON.stringify(jobDetail || {}),
+                companyId,
             ]);
 
             // Link ZB customer to Albusto contact
@@ -1179,8 +1296,8 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
                              zenbooker_data = COALESCE(zenbooker_data, '{}'::jsonb) || jsonb_build_object('id', $1::text),
                              zenbooker_sync_status = 'linked',
                              zenbooker_synced_at = NOW()
-                         WHERE id = $2`,
-                        [zbCustomerId, contactId]
+                         WHERE id = $2 AND company_id = $3`,
+                        [zbCustomerId, contactId, companyId]
                     );
                     console.log(`[ConvertLead] Linked contact ${contactId} to ZB customer ${zbCustomerId}`);
                 }
@@ -1189,8 +1306,9 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
             // Fallback: at minimum save the zenbooker_job_id
             console.warn(`[ConvertLead] Could not sync ZB job detail:`, syncErr.message);
             await db.query(
-                `UPDATE jobs SET zenbooker_job_id = $1 WHERE id = $2`,
-                [zenbookerJobId, localJobId]
+                `UPDATE jobs SET zenbooker_job_id = $1
+                 WHERE id = $2 AND company_id = $3`,
+                [zenbookerJobId, localJobId, companyId]
             );
         }
     }
@@ -1228,13 +1346,11 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         pIdx++; setClauses.push(`email = $${pIdx}`); updateParams.push(overrides.customer.email);
     }
 
-    const updateConditions = ['uuid = $1'];
-    if (companyId) {
-        pIdx++; updateConditions.push(`company_id = $${pIdx}`); updateParams.push(companyId);
-    }
+    pIdx++;
+    updateParams.push(companyId);
     await db.query(`
         UPDATE leads SET ${setClauses.join(', ')}
-        WHERE ${updateConditions.join(' AND ')}
+        WHERE uuid = $1 AND company_id = $${pIdx}
     `, updateParams);
 
     // 6. Add lead comments as job notes (syncs to Zenbooker)

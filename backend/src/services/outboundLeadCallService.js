@@ -25,6 +25,7 @@ const marketplaceService = require('./marketplaceService');
 const outboundLeadCallSettingsService = require('./outboundLeadCallSettingsService');
 const agentCallWindowService = require('./agentCallWindowService');
 const outboundCallCancellationService = require('./outboundCallCancellationService');
+const { aiActor } = require('./leadContactActivityService');
 
 const APP_KEY = 'outbound-lead-caller';
 const CONTACT_CANCEL_CAUSES = outboundCallCancellationService.CAUSES;
@@ -497,7 +498,12 @@ async function handleLeadEndOfCall(attempt, klass, endedReason, message) {
             );
             if (String(lead.Status || '').toLowerCase() !== 'review') {
                 try {
-                    await leadsService.updateLead(attempt.lead_uuid, { Status: 'Review' }, companyId);
+                    await leadsService.updateLead(
+                        attempt.lead_uuid,
+                        { Status: 'Review' },
+                        companyId,
+                        aiActor('AI Phone', 'agent')
+                    );
                 } catch (sErr) {
                     console.warn('[outboundLeadCall] set Review failed (non-fatal):', sErr && sErr.message);
                 }

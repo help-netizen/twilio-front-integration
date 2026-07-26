@@ -18,6 +18,12 @@ jest.mock('../backend/src/services/jobActivityService', () => ({
     }),
     logJobActivity: (...args) => mockLogJobActivity(...args),
 }));
+jest.mock('../backend/src/services/leadContactActivityService', () => ({
+    aiActor: (label, source = 'mcp') => ({
+        id: null, type: 'ai', label, source,
+    }),
+    logLeadContactActivity: jest.fn(async () => ({ ok: true, id: 2 })),
+}));
 
 const fsmService = require('../backend/src/services/fsmService');
 const writeService = require('../backend/src/services/chatgptMcpWriteService');

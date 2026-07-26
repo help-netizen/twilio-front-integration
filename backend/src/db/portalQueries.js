@@ -148,8 +148,16 @@ async function endSession(sessionId) {
 /**
  * Log a portal event.
  */
-async function logEvent(sessionId, contactId, eventType, documentType = null, documentId = null, metadata = null) {
-    const { rows } = await db.query(
+async function logEvent(
+    sessionId,
+    contactId,
+    eventType,
+    documentType = null,
+    documentId = null,
+    metadata = null,
+    client = db
+) {
+    const { rows } = await client.query(
         `INSERT INTO portal_events (session_id, contact_id, event_type, document_type, document_id, metadata)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
@@ -235,10 +243,10 @@ async function getContactById(contactId) {
 /**
  * Update contact basic info (for portal profile update).
  */
-async function updateContactProfile(contactId, { name, email, phone }) {
+async function updateContactProfile(companyId, contactId, { name, email, phone }, client = db) {
     const sets = [];
-    const params = [contactId];
-    let idx = 1;
+    const params = [contactId, companyId];
+    let idx = 2;
 
     if (name !== undefined) {
         idx++;
@@ -256,12 +264,21 @@ async function updateContactProfile(contactId, { name, email, phone }) {
         params.push(phone);
     }
 
-    if (sets.length === 0) return getContactById(contactId);
+    if (sets.length === 0) {
+        const { rows } = await client.query(
+            `SELECT id, company_id, full_name AS name, email, phone_e164 AS phone
+             FROM contacts
+             WHERE id = $1 AND company_id = $2`,
+            [contactId, companyId]
+        );
+        return rows[0] || null;
+    }
 
     sets.push('updated_at = NOW()');
 
-    const { rows } = await db.query(
-        `UPDATE contacts SET ${sets.join(', ')} WHERE id = $1 RETURNING
+    const { rows } = await client.query(
+        `UPDATE contacts SET ${sets.join(', ')}
+         WHERE id = $1 AND company_id = $2 RETURNING
          id, company_id, full_name AS name, email, phone_e164 AS phone`,
         params
     );
