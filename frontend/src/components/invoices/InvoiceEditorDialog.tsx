@@ -164,7 +164,7 @@ export function InvoiceEditorDialog({
                     ...draft.line_items.map(li => ({
                         key: newKey(),
                         name: li.title,
-                        description: '',
+                        description: li.description || '',
                         quantity: String(li.qty || 1),
                         unit_price: String(li.unit_price ?? 0),
                         taxable: true,

@@ -222,6 +222,49 @@ describe('AI-ESTIMATE-001 service', () => {
         expect(h.itemsService.create).not.toHaveBeenCalled();
     });
 
+    test('a matched Price Book item carries its catalog description onto the line (OB-39)', async () => {
+        const h = harness({
+            extracted: {
+                summary: 'Service call and a diagnostic.',
+                items: [
+                    { description: 'service call fee' }, // matches "Service Call" by name
+                    { description: 'Diagnostic only' },  // matches an item with no description
+                ],
+            },
+            items: [
+                item(21, COMPANY_A, 'Service Call', {
+                    default_unit_price: '95.00',
+                    description: 'Standard trip charge plus the first 30 minutes of diagnosis.',
+                }),
+                item(22, COMPANY_A, 'Diagnostic only', { default_unit_price: '60.00' }),
+            ],
+        });
+
+        const result = await h.service.generateDraft({
+            companyId: COMPANY_A,
+            actorId: ACTOR_A,
+            reportText: 'Service call fee and a diagnostic.',
+            canManagePriceBook: false,
+        });
+
+        // Matched item WITH a catalog description → description flows onto the line,
+        // exactly like a manual Price Book pick (this is the OB-39 regression).
+        expect(result.line_items[0]).toEqual(expect.objectContaining({
+            title: 'Service Call',
+            unit_price: 95,
+            price_source: 'price_book',
+            price_book_item_id: 21,
+            description: 'Standard trip charge plus the first 30 minutes of diagnosis.',
+        }));
+        // Matched item WITHOUT a description → no description key (prior shape preserved).
+        expect(result.line_items[1]).toEqual(expect.objectContaining({
+            title: 'Diagnostic only',
+            price_book_item_id: 22,
+        }));
+        expect(result.line_items[1]).not.toHaveProperty('description');
+        expect(h.itemsService.create).not.toHaveBeenCalled();
+    });
+
     test('an unmatched line creates through the existing Price Book path in the best-fit category', async () => {
         const h = harness({
             extracted: {

@@ -326,7 +326,15 @@ function isOwned(row, companyId) {
     return !!row && String(row.company_id) === String(companyId);
 }
 
-function responseLine({ title, qty, unitPrice, priceSource, priceBookItemId, created, path }) {
+// A price-book item carries both a name (→ line title) and a longer description.
+// The line MUST surface that description so the editor fills it, exactly like a
+// manual price-book pick does (ItemPresetSearchCombobox maps name + description).
+// Bounded like the summary; raw (newlines preserved) rather than whitespace-collapsed.
+function lineDescription(value) {
+    return typeof value === 'string' ? value.slice(0, 2000) : '';
+}
+
+function responseLine({ title, qty, unitPrice, priceSource, priceBookItemId, created, path, description }) {
     const line = {
         title,
         qty,
@@ -335,6 +343,10 @@ function responseLine({ title, qty, unitPrice, priceSource, priceBookItemId, cre
         price_book_item_id: priceBookItemId == null ? null : Number(priceBookItemId),
         created,
     };
+    // Only surface a description when there is one — same conditional idiom as
+    // category_path — so lines without a catalog description keep their prior shape.
+    const cleaned = lineDescription(description);
+    if (cleaned) line.description = cleaned;
     if (path?.length) line.category_path = path;
     return line;
 }
@@ -402,6 +414,7 @@ function createAiEstimateService({
                 const matchedPrice = reportPrice(match.default_unit_price) ?? 0;
                 lineItems.push(responseLine({
                     title: cleanText(match.name, MAX_TITLE_CHARS) || item.description,
+                    description: match.description,
                     qty: item.qty,
                     unitPrice: item.unitPrice ?? matchedPrice,
                     priceSource: item.unitPrice == null ? 'price_book' : 'report',

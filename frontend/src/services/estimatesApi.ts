@@ -177,6 +177,8 @@ async function estimatesRequest<T>(url: string, options?: RequestInit): Promise<
 
 export interface AiDraftLineItem {
     title: string;
+    /** Catalog description when the line matched a Price Book item; absent otherwise. */
+    description?: string;
     qty: number;
     unit_price: number;
     price_source: 'report' | 'price_book';

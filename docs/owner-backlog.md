@@ -5,7 +5,11 @@
 
 ---
 
-## OB-39 (2026-07-26) — Генератор эстимейта «Generate from a report»: подтягивает позицию из Price Book, но НЕ description — **В БЕКЛОГЕ (баг)**
+## OB-39 (2026-07-26) — Генератор эстимейта «Generate from a report»: подтягивает позицию из Price Book, но НЕ description — **ИСПРАВЛЕН (AI-ESTIMATE-001; master, НЕ задеплоен)**
+
+**Исправлено:** фича — `AI-ESTIMATE-001` (кнопка «Generate from a report» в `EstimateEditorDialog`/`InvoiceEditorDialog` → POST `/api/estimates/ai-draft` → `backend/src/services/aiEstimateService.js`). Баг был **на обоих концах**: (1) бэкенд `responseLine()` вообще не отдавал `description` — при матче с Price Book `match.description` терялся; (2) фронт `handleAiGenerate` хардкодил `description: ''`, выкидывая даже то, что пришло. Фикс: бэкенд теперь кладёт `description: match.description` в строку матча (условно, как `category_path` — только когда непусто, bound 2000, newlines сохранены); фронт-маппинг → `li.description || ''` в ОБОИХ редакторах (зеркалка OB-25); тип `AiDraftLineItem.description?`. Поведение теперь 1-в-1 с ручным пиком из прайс-бука (`ItemPresetSearchCombobox` кладёт `name`+`description`). Тест `tests/aiEstimateService.test.js` (OB-39): матч С описанием → строка несёт его; матч БЕЗ описания → ключа нет. Прочие поля (unit/code/taxable) генератор и так не переносит по дизайну (строка = title+qty+price+match-id); отдельного запроса на них не было.
+
+
 
 Владелец: в форме создания эстимейта, генератор «Generate from a report», ввёл фразу **«service call fee»**. Система **правильно** распознала это как Service Call и подтянула **именно позицию из Price Book** — с корректной ценой **$95**. НО у сгенерированной строки **не заполнилось `description`**, хотя у позиции Price Book описание есть.
 
