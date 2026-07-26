@@ -160,8 +160,8 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                     style={{
                         width: 44,
                         height: 44,
-                        background: 'var(--blanc-surface-strong)',
-                        border: '1px solid var(--blanc-line)',
+                        background: 'var(--blanc-field)',
+                        border: 'none',
                         color: 'var(--blanc-ink-2)',
                     }}
                     title="Attach files"

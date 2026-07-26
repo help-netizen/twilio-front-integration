@@ -521,32 +521,35 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                 );
             })}
 
-            {/* OB-35 / COMPOSER-CANON-001: mobile note composer — one rounded composer
-                card (reference = the Claude iOS composer): a roomy, borderless textarea
-                on top, then an action row with a round attach button (big tap area, like
-                the close X) on the left and a round send-arrow on the right. No "Add note"
+            {/* OB-35 / COMPOSER-CANON-001: mobile note composer — you write directly on
+                the sheet (no card fill, no border), like a blank form. The close X sits
+                INSIDE, top-right, on the first text line; a round attach button (big tap
+                area, like the X) and a round send-arrow pin the action row. No "Add note"
                 label — the arrow sends. BottomSheet owns the keyboard-safe viewport; the
                 desktop inline composer above is unchanged. */}
             <BottomSheet
                 open={isMobile && sheetOpen}
                 onClose={() => setSheetOpen(false)}
                 size="auto"
-                showHeader
+                showHeader={false}
                 ariaLabel="Add note"
             >
-                <div
-                    style={{
-                        background: 'var(--blanc-field)',
-                        borderRadius: 22,
-                        padding: '12px 12px 10px',
-                    }}
-                >
+                <div className="relative">
+                    <button
+                        type="button"
+                        onClick={() => setSheetOpen(false)}
+                        aria-label="Close"
+                        className="absolute right-0 top-0 z-10 flex items-center justify-center rounded-full transition-opacity hover:opacity-80"
+                        style={{ width: 32, height: 32, background: 'var(--blanc-field)', color: 'var(--blanc-ink-2)' }}
+                    >
+                        <X className="size-4" />
+                    </button>
                     <textarea
                         className="w-full resize-none bg-transparent outline-none"
                         style={{
                             border: 'none',
-                            minHeight: 120,
-                            padding: '4px 6px',
+                            minHeight: 150,
+                            padding: '4px 44px 0 2px',
                             fontSize: 16,
                             lineHeight: 1.5,
                             color: 'var(--blanc-ink-1)',
@@ -555,7 +558,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         value={text}
                         onChange={e => setText(e.target.value)}
                     />
-                    <div className="flex items-start justify-between gap-2" style={{ marginTop: 6 }}>
+                    <div className="flex items-start justify-between gap-2" style={{ marginTop: 8 }}>
                         <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" />
                         <button
                             type="button"
