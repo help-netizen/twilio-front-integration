@@ -8,6 +8,9 @@ const {
     handleDialAction,
     handleVoicemailComplete,
     handleVoiceFallback,
+    handleMaskingCode,
+    handleMaskingConsent,
+    handleMaskingDialAction,
 } = require('../webhooks/twilioWebhooks');
 
 // POST /webhooks/twilio/voice-status — call status changes
@@ -21,6 +24,15 @@ router.post('/twilio/transcription-status', handleTranscriptionStatus);
 
 // POST /webhooks/twilio/voice-inbound — new call TwiML
 router.post('/twilio/voice-inbound', handleVoiceInbound);
+
+// POST /webhooks/twilio/voice-mask-code — masking IVR/direct DTMF action
+router.post('/twilio/voice-mask-code', handleMaskingCode);
+
+// POST /webhooks/twilio/voice-mask-consent — called-party recording notice
+router.post('/twilio/voice-mask-consent', handleMaskingConsent);
+
+// POST /webhooks/twilio/voice-mask-dial-action — masked Dial result
+router.post('/twilio/voice-mask-dial-action', handleMaskingDialAction);
 
 // POST /webhooks/twilio/voice-dial-action — Dial result + voicemail
 router.post('/twilio/voice-dial-action', handleDialAction);

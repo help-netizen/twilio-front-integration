@@ -5,6 +5,7 @@ const callFlowRuntime = require('../services/callFlowRuntime');
 const walletService = require('../services/walletService');
 const telephonyTenantService = require('../services/telephonyTenantService');
 const callBlacklistService = require('../services/callBlacklistService');
+const callMaskingService = require('../services/callMaskingService');
 const db = require('../db/connection');
 
 /** Resolve the owning company for one of our Twilio numbers (inbound `To`). */
@@ -15,6 +16,11 @@ async function companyIdForNumber(toNumber) {
         [toNumber]
     );
     return rows[0]?.company_id || null;
+}
+
+async function resolveWebhookCompanyId(payload) {
+    return await telephonyTenantService.resolveCompanyByAccountSid(payload?.AccountSid).catch(() => null)
+        || await companyIdForNumber(payload?.To).catch(() => null);
 }
 
 /**
@@ -160,6 +166,54 @@ function buildHangupTwiml() {
 
 function buildBlacklistRejectTwiml() {
     return '<Response><Reject reason="busy"/></Response>';
+}
+
+function webhookBaseUrl() {
+    return process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
+}
+
+function buildMaskingGatherTwiml(baseUrl, attempt = 1, invalid = false) {
+    const actionUrl = `${baseUrl}/webhooks/twilio/voice-mask-code?attempt=${attempt}`;
+    const invalidXml = invalid
+        ? '\n        <Say language="en-US">That customer code was not recognized.</Say>'
+        : '';
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Gather input="dtmf"
+            numDigits="${callMaskingService.CODE_DIGITS}"
+            timeout="10"
+            actionOnEmptyResult="true"
+            action="${actionUrl}"
+            method="POST">${invalidXml}
+        <Say language="en-US">This call may be recorded. Enter the six digit customer code.</Say>
+    </Gather>
+    <Hangup />
+</Response>`;
+}
+
+function buildMaskingDialTwiml({ baseUrl, maskingNumber, customerPhone }) {
+    const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
+    const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
+    const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-mask-dial-action`;
+    const consentUrl = `${baseUrl}/webhooks/twilio/voice-mask-consent`;
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="en-US">This call may be recorded.</Say>
+    <Dial answerOnBridge="true"
+          callerId="${maskingNumber}"
+          action="${dialActionUrl}"
+          method="POST"
+          record="record-from-answer-dual"
+          recordingStatusCallback="${recordingStatusUrl}"
+          recordingStatusCallbackMethod="POST"
+          recordingStatusCallbackEvent="completed">
+        <Number url="${consentUrl}"
+                method="POST"
+                statusCallback="${statusCallbackUrl}"
+                statusCallbackEvent="initiated ringing answered completed"
+                statusCallbackMethod="POST">${customerPhone}</Number>
+    </Dial>
+</Response>`;
 }
 
 /**
@@ -314,7 +368,7 @@ async function handleVoiceInbound(req, res) {
         }
 
         // Determine direction and return TwiML
-        const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
+        const baseUrl = webhookBaseUrl();
         const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
         const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
         const voicemailCompleteUrl = `${baseUrl}/webhooks/twilio/voicemail-complete`;
@@ -378,9 +432,7 @@ async function handleVoiceInbound(req, res) {
             // number (ALB-107 "AccountSid → To" canon). The short-circuit `||`
             // means a SID hit skips the To lookup entirely; a DB error in
             // either lookup counts as null for that lookup only.
-            const companyId =
-                await telephonyTenantService.resolveCompanyByAccountSid(req.body.AccountSid).catch(() => null)
-                || await companyIdForNumber(To).catch(() => null);
+            const companyId = await resolveWebhookCompanyId(req.body);
 
             if (companyId === null) {
                 // Unknown account AND unknown number → fail-closed Reject: a
@@ -423,6 +475,27 @@ async function handleVoiceInbound(req, res) {
                 } catch (err) {
                     console.warn(`[${traceId}] Blocked-call persistence failed; continuing inbound route:`, err.message);
                 }
+            }
+
+            // CALL-MASKING-001: only an enabled company masking number called
+            // from exactly one active registered provider enters the code
+            // gather. Customers and unknown callers continue through the
+            // existing company IVR/group route below.
+            const maskingContext = await callMaskingService.getInboundMaskingContext(
+                companyId,
+                To,
+                From
+            ).catch((err) => {
+                console.warn(`[${traceId}] Call masking lookup failed; using normal inbound route:`, err.message);
+                return null;
+            });
+            if (maskingContext) {
+                if (await walletService.isServiceBlocked(companyId).catch(() => false)) {
+                    res.type('text/xml');
+                    return res.send('<Response><Reject reason="busy"/></Response>');
+                }
+                res.type('text/xml');
+                return res.send(buildMaskingGatherTwiml(baseUrl));
             }
 
             // Normal inbound processing starts only after the blacklist hook.
@@ -475,6 +548,123 @@ async function handleVoiceInbound(req, res) {
     } catch (error) {
         console.error(`[${traceId}] Error:`, error);
         res.status(500).send('<Response><Reject/></Response>');
+    }
+}
+
+// =============================================================================
+// POST /webhooks/twilio/voice-mask-code
+// <Gather> target shared by manual IVR entry and direct post-dial DTMF.
+// =============================================================================
+async function handleMaskingCode(req, res) {
+    const traceId = generateTraceId();
+    try {
+        if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
+            return res.status(403).send('<Response><Reject/></Response>');
+        }
+
+        const { CallSid, From, To, Digits } = req.body || {};
+        if (!CallSid || !From || !To) {
+            return res.status(400).send(buildHangupTwiml());
+        }
+
+        const companyId = await resolveWebhookCompanyId(req.body);
+        const resolved = companyId
+            ? await callMaskingService.resolveCustomerForProviderCode(companyId, {
+                maskingNumber: To,
+                providerPhone: From,
+                code: Digits,
+            })
+            : null;
+
+        if (!resolved) {
+            const attempt = Number(req.query?.attempt || 1);
+            res.type('text/xml');
+            return res.send(
+                attempt < 2
+                    ? buildMaskingGatherTwiml(webhookBaseUrl(), 2, true)
+                    : `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="en-US">We could not complete this masked call.</Say>
+    <Hangup />
+</Response>`
+            );
+        }
+
+        // Persist the privacy-safe mapping before any Dial child/status event
+        // can reach the inbox worker. The session stores contact_id, never the
+        // customer's phone alongside the keyed code.
+        await callMaskingService.createSession(companyId, CallSid, resolved);
+        const privacySafePayload = { ...req.body };
+        delete privacySafePayload.Digits;
+        await ingestToInbox({
+            source: 'voice',
+            eventType: 'call.inbound',
+            payload: privacySafePayload,
+            req,
+            traceId,
+        });
+
+        res.type('text/xml');
+        res.send(buildMaskingDialTwiml({
+            baseUrl: webhookBaseUrl(),
+            maskingNumber: resolved.masking_number,
+            customerPhone: resolved.customer_phone,
+        }));
+    } catch (error) {
+        console.error(`[${traceId}] Masked call code handler failed:`, error.message);
+        res.type('text/xml').send(buildHangupTwiml());
+    }
+}
+
+// =============================================================================
+// POST /webhooks/twilio/voice-mask-consent
+// Called-party screening TwiML, executed after answer and before connection.
+// =============================================================================
+async function handleMaskingConsent(req, res) {
+    if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
+        return res.status(403).send('<Response><Reject/></Response>');
+    }
+    res.type('text/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="en-US">This call may be recorded.</Say>
+</Response>`);
+}
+
+// =============================================================================
+// POST /webhooks/twilio/voice-mask-dial-action
+// Finalize the normal call timeline without falling into inbound voicemail.
+// =============================================================================
+async function handleMaskingDialAction(req, res) {
+    const traceId = generateTraceId();
+    try {
+        if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
+            return res.status(403).send('<Response></Response>');
+        }
+        if (!req.body?.CallSid) {
+            return res.status(400).send('<Response></Response>');
+        }
+        await ingestToInbox({
+            source: 'dial',
+            eventType: 'dial.action',
+            payload: { ...req.body, MaskedCall: '1' },
+            req,
+            traceId,
+        });
+        const reached = ['completed', 'answered'].includes(
+            String(req.body.DialCallStatus || '').toLowerCase()
+        );
+        res.type('text/xml');
+        res.send(reached
+            ? buildHangupTwiml()
+            : `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="en-US">The customer could not be reached.</Say>
+    <Hangup />
+</Response>`);
+    } catch (error) {
+        console.error(`[${traceId}] Masked call dial action failed:`, error.message);
+        res.type('text/xml').send(buildHangupTwiml());
     }
 }
 
@@ -669,6 +859,11 @@ module.exports = {
     handleDialAction,
     handleVoicemailComplete,
     handleVoiceFallback,
+    handleMaskingCode,
+    handleMaskingConsent,
+    handleMaskingDialAction,
     validateTwilioSignature,
     buildBlacklistRejectTwiml,
+    buildMaskingGatherTwiml,
+    buildMaskingDialTwiml,
 };

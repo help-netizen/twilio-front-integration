@@ -1147,4 +1147,31 @@ router.post('/:id/record-payment', requirePermission('payments.collect_offline')
     } catch (err) { jobPaymentError(err, res); }
 });
 
+// ─── Resolve a masked dial number for this job's contact ─────────────────────
+
+router.get('/:id/call-masking', requirePermission('call_masking.use'), async (req, res) => {
+    try {
+        if (!/^\d+$/.test(req.params.id)) {
+            return res.status(404).json({ ok: false, error: 'Job not found', code: 'NOT_FOUND' });
+        }
+        const result = await require('../services/callMaskingService').getMaskedDialForJob(
+            req.companyFilter?.company_id,
+            req.params.id,
+            getProviderScope(req)
+        );
+        if (!result) {
+            return res.status(404).json({ ok: false, error: 'Job not found', code: 'NOT_FOUND' });
+        }
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        if (status >= 500) console.error('[Jobs API] Call masking error:', err.message);
+        res.status(status).json({
+            ok: false,
+            error: status >= 500 ? 'Failed to resolve call masking number' : err.message,
+            code: err.code || 'INTERNAL_ERROR',
+        });
+    }
+});
+
 module.exports = router;

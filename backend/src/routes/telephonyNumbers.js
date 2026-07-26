@@ -9,6 +9,8 @@ const db = require('../db/connection');
 const svc = require('../services/telephonyTenantService');
 const territoryGeoService = require('../services/territoryGeoService');
 const callBlacklistService = require('../services/callBlacklistService');
+const callMaskingService = require('../services/callMaskingService');
+const { requirePermission } = require('../middleware/authorization');
 
 function companyId(req) {
     return req.companyFilter?.company_id;
@@ -181,6 +183,26 @@ router.get('/blacklist', async (req, res) => {
         const numbers = await callBlacklistService.listNumbers(companyId(req));
         res.json({ ok: true, numbers });
     } catch (err) { fail(res, err, 'Failed to load the blacklist'); }
+});
+
+// GET /api/telephony/numbers/masking-settings — company call-masking config
+router.get('/masking-settings', requirePermission('tenant.telephony.manage'), async (req, res) => {
+    try {
+        const settings = await callMaskingService.getSettings(companyId(req));
+        res.json({ ok: true, data: settings });
+    } catch (err) { fail(res, err, 'Failed to load call masking settings'); }
+});
+
+// PUT /api/telephony/numbers/masking-settings — replace company config
+router.put('/masking-settings', requirePermission('tenant.telephony.manage'), async (req, res) => {
+    try {
+        const settings = await callMaskingService.saveSettings(
+            companyId(req),
+            req.body,
+            req.user?.crmUser?.id
+        );
+        res.json({ ok: true, data: settings });
+    } catch (err) { fail(res, err, 'Failed to save call masking settings'); }
 });
 
 // POST /api/telephony/numbers/blacklist — add a blocked inbound caller

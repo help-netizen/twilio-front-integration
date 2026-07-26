@@ -118,6 +118,7 @@ CROSS JOIN (VALUES
     ('payments.collect_keyed'), ('payments.collect_terminal'),
     ('provider.enabled'),
     ('phone_calls.use'),
+    ('call_masking.use'),
     ('tasks.view'), ('tasks.create'),
     ('price_book.view')
 ) AS p(key)

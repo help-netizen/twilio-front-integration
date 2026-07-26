@@ -9,6 +9,7 @@ const noteAttachmentsService = require('../services/noteAttachmentsService');
 const notesMutationService = require('../services/notesMutationService');
 const { toE164 } = require('../utils/phoneUtils');
 const eventService = require('../services/eventService');
+const callMaskingService = require('../services/callMaskingService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -217,6 +218,35 @@ router.get('/search-candidates', requirePermission('contacts.view'), async (req,
     } catch (err) {
         console.error(`[ContactsAPI][${reqId}] search-candidates error:`, err);
         res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));
+    }
+});
+
+// =============================================================================
+// GET /api/contacts/:id/call-masking — masked dial number + stable contact code
+// =============================================================================
+router.get('/:id/call-masking', requirePermission('call_masking.use'), async (req, res) => {
+    const reqId = requestId();
+    try {
+        if (!/^\d+$/.test(req.params.id)) {
+            return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+        }
+        const result = await callMaskingService.getMaskedDialForContact(
+            req.companyFilter?.company_id,
+            req.params.id,
+            getProviderScope(req)
+        );
+        if (!result) {
+            return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+        }
+        res.json(successResponse(result, reqId));
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        if (status >= 500) console.error(`[ContactsAPI][${reqId}] call-masking error:`, err);
+        res.status(status).json(errorResponse(
+            err.code || 'INTERNAL_ERROR',
+            status >= 500 ? 'An unexpected error occurred' : err.message,
+            reqId
+        ));
     }
 });
 

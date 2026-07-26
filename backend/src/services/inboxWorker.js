@@ -5,6 +5,7 @@ const CallProcessor = require('./callProcessor');
 const { extractPhoneFromSIP } = require('./callProcessor');
 const { reconcileStaleCalls } = require('./reconcileStale');
 const { getTwilioClient } = require('./twilioClient');
+const callMaskingService = require('./callMaskingService');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 const AI_ANSWERED_BY = 'ai';
@@ -167,6 +168,11 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     // (subaccount per company). Unknown/legacy accounts stay inside the legacy
     // default tenant instead of falling through to unscoped worker SQL.
     const eventCompanyId = await resolveEventCompanyId(payload.AccountSid);
+    const maskedSession = await callMaskingService.getSessionForCallEvent(
+        eventCompanyId,
+        normalized.callSid,
+        normalized.parentCallSid
+    ).catch(() => null);
 
     // CALL-BLACKLIST-001: the initial TwiML webhook persists blocked calls
     // directly so it can bypass this worker's unread/AR/task behavior. Ignore
@@ -191,7 +197,15 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
         duration: normalized.durationSec,
         parentCallSid: normalized.parentCallSid,
     };
-    const processed = CallProcessor.processCall(callData);
+    const processed = maskedSession
+        ? {
+            direction: 'outbound',
+            externalParty: {
+                number: maskedSession.customer_phone,
+                formatted: maskedSession.customer_phone,
+            },
+        }
+        : CallProcessor.processCall(callData);
     const externalParty = processed.externalParty;
     const isAnonymous = !!externalParty?.isAnonymous;
 
@@ -203,7 +217,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
             ? await queries.findOrCreateAnonymousTimeline(eventCompanyId)
             : await queries.findOrCreateTimeline(externalParty.formatted, eventCompanyId);
         timelineId = timeline.id;
-        contactId = timeline.contact_id || null;
+        contactId = maskedSession?.contact_id || timeline.contact_id || null;
 
         // Mark timeline + contact unread for MISSED inbound calls only.
         // For ANSWERED inbound calls, actively CLEAR unread — an operator (any
@@ -382,7 +396,9 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
             companyId: eventCompanyId,
             direction: processed.direction,   // Use CallProcessor's direction
             fromNumber: (() => {
-                const extracted = extractPhoneFromSIP(normalized.fromNumber);
+                const extracted = extractPhoneFromSIP(
+                    maskedSession?.masking_number || normalized.fromNumber
+                );
                 // Replace SIP username URIs (sip:dana@...) with owned caller ID for clean display
                 if (extracted && extracted.startsWith('sip:')) {
                     return process.env.OUTBOUND_CALLER_ID || '+16175006181';
@@ -395,7 +411,9 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
                 }
                 return extracted;
             })(),
-            toNumber: extractPhoneFromSIP(normalized.toNumber),
+            toNumber: extractPhoneFromSIP(
+                maskedSession?.masking_number || normalized.toNumber
+            ),
             status: effectiveStatus,
             isFinal: effectiveIsFinal,
             startedAt: normalized.eventTime,
@@ -546,6 +564,12 @@ async function processDialEvent(payload, traceId) {
     const dialDuration = parseInt(payload.DialCallDuration || 0) || null;
     const isAnswered = dialStatus === 'completed' || dialStatus === 'answered';
     const companyId = await resolveEventCompanyId(payload.AccountSid);
+    const isMaskedCall = payload.MaskedCall === '1'
+        || !!(await callMaskingService.getSessionForCallEvent(
+            companyId,
+            CallSid,
+            null
+        ).catch(() => null));
 
     console.log(`[${traceId}] processDialEvent`, { CallSid, dialStatus, dialDuration });
 
@@ -596,12 +620,14 @@ async function processDialEvent(payload, traceId) {
         );
         console.log(`[${traceId}] dial.action: parent ${CallSid} → completed`);
     } else {
+        const missedStatus = isMaskedCall ? 'no-answer' : 'voicemail_recording';
         await db.query(
-            `UPDATE calls SET status = 'voicemail_recording', is_final = false
+            `UPDATE calls SET status = $3, is_final = $4,
+             ended_at = CASE WHEN $4 THEN COALESCE(ended_at, NOW()) ELSE ended_at END
              WHERE call_sid = $1 AND company_id = $2`,
-            [CallSid, companyId]
+            [CallSid, companyId, missedStatus, isMaskedCall]
         );
-        console.log(`[${traceId}] dial.action: parent ${CallSid} → voicemail_recording`);
+        console.log(`[${traceId}] dial.action: parent ${CallSid} → ${missedStatus}`);
     }
 
     // 4. SSE broadcast so frontend updates
@@ -765,6 +791,7 @@ async function reconcileParentCall(parentCallSid, traceId, companyId = DEFAULT_C
 
 async function processRecordingEvent(payload, traceId, source = 'webhook') {
     const normalized = normalizeRecordingEvent(payload);
+    const eventCompanyId = await resolveEventCompanyId(payload.AccountSid);
 
     const recording = await queries.upsertRecording({
         recordingSid: normalized.recordingSid,
@@ -778,6 +805,7 @@ async function processRecordingEvent(payload, traceId, source = 'webhook') {
         startedAt: normalized.status === 'in-progress' ? normalized.eventTime : null,
         completedAt: normalized.status === 'completed' ? normalized.eventTime : null,
         rawPayload: payload,
+        companyId: eventCompanyId,
     });
 
     console.log(`[${traceId}] Recording upserted`, {
@@ -791,7 +819,8 @@ async function processRecordingEvent(payload, traceId, source = 'webhook') {
         'recording.updated',
         normalized.eventTime,
         { ...normalized, raw: payload },
-        source
+        source,
+        eventCompanyId
     );
 
     // Publish realtime event
@@ -800,16 +829,16 @@ async function processRecordingEvent(payload, traceId, source = 'webhook') {
 
         // Transition voicemail_recording → voicemail_left
         try {
-            const call = await queries.getCallByCallSid(normalized.callSid);
+            const call = await queries.getCallByCallSid(normalized.callSid, eventCompanyId);
             if (call && call.status === 'voicemail_recording') {
                 await db.query(
                     `UPDATE calls SET status = 'voicemail_left', is_final = true,
                      duration_sec = COALESCE($2, duration_sec),
                      ended_at = COALESCE($3, ended_at)
-                     WHERE call_sid = $1`,
-                    [normalized.callSid, normalized.durationSec, normalized.eventTime]
+                     WHERE call_sid = $1 AND company_id = $4`,
+                    [normalized.callSid, normalized.durationSec, normalized.eventTime, eventCompanyId]
                 );
-                const updatedCall = await queries.getCallByCallSid(normalized.callSid);
+                const updatedCall = await queries.getCallByCallSid(normalized.callSid, eventCompanyId);
                 if (updatedCall) {
                     publishRealtimeEvent('call.updated', updatedCall, traceId);
                 }
