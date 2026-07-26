@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
+import { Search, X } from 'lucide-react';
 import { formatTimeInTZ } from '../../utils/companyTime';
 import { loadGoogleMaps } from '../../utils/loadGoogleMaps';
 import { makeSchedulePinSvg } from '../../utils/mapPins';
@@ -52,7 +53,12 @@ export const ScheduleMapCanvas = memo(function ScheduleMapCanvas({
     const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
     const onSelectRef = useRef(onSelectJob);
     const onHoverRef = useRef(onHoverJob);
+    const searchMarkerRef = useRef<google.maps.Marker | null>(null);
+    const geocoderRef = useRef<google.maps.Geocoder | null>(null);
     const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+    const [zip, setZip] = useState('');
+    const [zipError, setZipError] = useState<string | null>(null);
+    const [zipActive, setZipActive] = useState(false);
     const showInitialsNotice = model.pins.some(pin => Boolean(pin.initials));
     const singleStopRoute = model.totalJobs === 1
         ? model.routes.find(route => route.stops.length === 1)
@@ -217,7 +223,57 @@ export const ScheduleMapCanvas = memo(function ScheduleMapCanvas({
         listenersRef.current = [];
         infoWindowRef.current?.close();
         infoWindowRef.current = null;
+        searchMarkerRef.current?.setMap(null);
+        searchMarkerRef.current = null;
     }, []);
+
+    // ZIP lookup — geocode a ZIP with Google's own geocoder, pan there, drop a
+    // distinct violet marker. Separate from the job markers (never rebuilt by the
+    // model effect). Owner: "type a ZIP, see it on the map".
+    const runZipSearch = (e: FormEvent) => {
+        e.preventDefault();
+        const q = zip.trim();
+        const map = mapRef.current;
+        if (!q || !map) return;
+        setZipError(null);
+        if (!geocoderRef.current) geocoderRef.current = new google.maps.Geocoder();
+        geocoderRef.current.geocode(
+            { componentRestrictions: { postalCode: q, country: 'US' } },
+            (results, gstatus) => {
+                const loc = results?.[0]?.geometry?.location;
+                if (gstatus === 'OK' && loc) {
+                    map.panTo(loc);
+                    map.setZoom(12);
+                    if (!searchMarkerRef.current) {
+                        searchMarkerRef.current = new google.maps.Marker({
+                            map,
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 9,
+                                fillColor: '#7F42E1',
+                                fillOpacity: 1,
+                                strokeColor: '#FFFFFF',
+                                strokeWeight: 2,
+                            },
+                            zIndex: 2000,
+                        });
+                    }
+                    searchMarkerRef.current.setPosition(loc);
+                    setZipActive(true);
+                } else {
+                    setZipError('ZIP not found');
+                }
+            },
+        );
+    };
+
+    const clearZipSearch = () => {
+        setZip('');
+        setZipError(null);
+        setZipActive(false);
+        searchMarkerRef.current?.setMap(null);
+        searchMarkerRef.current = null;
+    };
 
     if (status === 'error') {
         return (
@@ -230,6 +286,37 @@ export const ScheduleMapCanvas = memo(function ScheduleMapCanvas({
     return (
         <div className={`relative overflow-hidden ${className || ''}`} style={style}>
             <div ref={mapDivRef} className="h-full w-full" />
+
+            {status === 'ready' && (
+                <div className="absolute right-2 top-2 flex flex-col items-end gap-1">
+                    <form
+                        onSubmit={runZipSearch}
+                        className="flex items-center gap-1.5 rounded-xl px-2 py-1.5"
+                        style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', boxShadow: 'var(--blanc-shadow-sm)' }}
+                    >
+                        <Search className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
+                        <input
+                            value={zip}
+                            onChange={e => { setZip(e.target.value); setZipError(null); }}
+                            placeholder="Find a ZIP on the map"
+                            inputMode="numeric"
+                            aria-label="Find a ZIP on the map"
+                            className="w-[128px] bg-transparent text-[12px] outline-none placeholder:text-[var(--blanc-ink-3)]"
+                            style={{ color: 'var(--blanc-ink-1)' }}
+                        />
+                        {zipActive && (
+                            <button type="button" onClick={clearZipSearch} aria-label="Clear ZIP" className="shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
+                                <X className="size-3.5" />
+                            </button>
+                        )}
+                    </form>
+                    {zipError && (
+                        <span className="rounded-lg px-2 py-1 text-[11px] font-medium" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-danger)' }}>
+                            {zipError}
+                        </span>
+                    )}
+                </div>
+            )}
 
             {status === 'ready' && model.pins.length === 0 && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-sm" style={{ color: 'var(--blanc-ink-3)' }}>

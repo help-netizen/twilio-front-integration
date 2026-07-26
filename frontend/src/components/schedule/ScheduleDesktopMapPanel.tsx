@@ -41,11 +41,6 @@ export const ScheduleDesktopMapPanel = memo(function ScheduleDesktopMapPanel({
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [filteredJobs, providerFilterKey, registry],
     );
-    const panelVisible = showNotOnMapPanel(model);
-    const arithmetic = panelVisible
-        ? `+ ${model.notOnMap.length} not on map = ${model.totalJobs} filtered jobs`
-        : `= ${model.totalJobs} filtered ${model.totalJobs === 1 ? 'job' : 'jobs'}`;
-
     return (
         <section
             aria-label="Filtered technician routes"
@@ -56,28 +51,6 @@ export const ScheduleDesktopMapPanel = memo(function ScheduleDesktopMapPanel({
                 borderRadius: 'var(--sched-radius-md)',
             }}
         >
-            <header className="flex shrink-0 items-start justify-between gap-3 px-4 py-3.5" style={{ borderBottom: '1px solid var(--sched-line)' }}>
-                <div className="min-w-0">
-                    <h2 className="truncate text-[15px] font-semibold" style={{ color: 'var(--sched-ink-1)' }}>
-                        Filtered technician routes
-                    </h2>
-                    <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sched-ink-3)' }}>
-                        Visible toolbar chips · straight visit order
-                    </p>
-                </div>
-                <div
-                    className="shrink-0 rounded-xl px-2.5 py-1.5 text-right"
-                    style={{ background: 'var(--blanc-bg-deep)' }}
-                >
-                    <strong className="block text-[11px]" style={{ color: 'var(--sched-ink-1)' }}>
-                        {model.pins.length} {model.pins.length === 1 ? 'pin' : 'pins'}
-                    </strong>
-                    <span className="block whitespace-nowrap text-[9px]" style={{ color: 'var(--sched-ink-2)' }}>
-                        {arithmetic}
-                    </span>
-                </div>
-            </header>
-
             <ScheduleMapCanvas
                 model={model}
                 companyTz={companyTz}
