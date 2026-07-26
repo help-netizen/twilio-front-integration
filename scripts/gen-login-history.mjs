@@ -106,6 +106,10 @@ for (const rec of raw.split(RS)) {
     if (ov.text) c.text = ov.text;
     if (ov.tag) { c.tag = ov.tag; c.cat = tagToCat(ov.tag); }
   }
+  // MAJOR-ONLY feed (owner directive): the public login "Shipped recently"
+  // list shows only feature-tagged innovations — no minor fixes/polish. To
+  // surface a meaningful fix, retag it "Feature" in login-history-overrides.json.
+  if (c.cat !== 'feature') continue;
   items.push({ sha, iso, ...c });
   if (items.length >= MAX_ITEMS) break;
 }
