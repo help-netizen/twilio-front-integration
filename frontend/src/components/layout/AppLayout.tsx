@@ -249,7 +249,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                         <SettingsMenu activeTab={activeTab} hasRole={hasRole} logout={logout} />
                     </div>
                 </div></header>
-                <BottomNavBar activeTab={activeTab} pulseUnreadCount={pulseUnreadCount ?? 0} leadsNewCount={leadsNewCount ?? 0} openTasksCount={openTasksCount ?? 0} />
+                <BottomNavBar activeTab={activeTab} pulseUnreadCount={pulseUnreadCount ?? 0} leadsNewCount={leadsNewCount ?? 0} openTasksCount={openTasksCount ?? 0} logout={logout} />
                 <main className="app-main">
                     {accessDeniedMessage && <div style={{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 9999, background: '#dc2626', color: '#fff', padding: '12px 24px', borderRadius: '8px', fontWeight: 500, fontSize: '14px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', gap: '12px' }}><span>🚫 {accessDeniedMessage}</span><button onClick={clearAccessDenied} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px', padding: 0 }}>×</button></div>}
                     {children}

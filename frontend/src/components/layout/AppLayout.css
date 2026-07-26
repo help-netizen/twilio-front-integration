@@ -263,12 +263,17 @@
 }
 
 @media (max-width: 767px) {
+  /* MOBILE-NAV-001: reclaim the top chrome. The brand + settings header is gone
+     on mobile — its settings/overflow moved into the bottom-nav "More" sheet.
+     With the header no longer pushing content down, the layout itself carries the
+     status-bar (notch) inset so pages start just below it in standalone PWA. */
   .app-header {
-    height: 52px;
+    display: none;
   }
 
-  .header-content {
-    padding: 0 16px;
+  .app-layout {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top);
   }
 
   .app-main {
@@ -389,8 +394,9 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  /* Header (52) + bottom nav (60) + bar (~48) ≈ 160px of chrome. */
-  min-height: calc(100dvh - 200px);
+  /* No mobile header anymore (MOBILE-NAV-001): bottom nav (60) + sticky bar (~48)
+     ≈ 108px of chrome. */
+  min-height: calc(100dvh - 150px);
   color: var(--blanc-ink-3);
 }
 

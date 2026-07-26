@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
+import { BottomSheet } from '../ui/BottomSheet';
 import { Users, Settings, LogOut, Activity, MessageSquareText, DollarSign, Contact2, Briefcase, CalendarDays, ListChecks, ChevronRight } from 'lucide-react';
 import { useAuthz } from '../../hooks/useAuthz';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -66,50 +67,127 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount,
 };
 
 // ─── Bottom Navigation Bar (mobile) ─────────────────────────────────────────
+// MOBILE-NAV-001: the top header (brand + settings gear) is hidden on mobile to
+// reclaim vertical space. The bottom bar carries the four primary workspaces and
+// a "More" gear that opens a sheet with the remaining workspaces, every settings
+// group, feedback and Log out — so the whole app stays reachable from one bar.
 
-export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: number; leadsNewCount: number; openTasksCount: number }> = ({ activeTab, pulseUnreadCount, leadsNewCount, openTasksCount }) => {
+const PRIMARY_KEYS: readonly string[] = ['pulse', 'leads', 'jobs', 'tasks'];
+
+export const MobileMoreSheet: React.FC<{ open: boolean; onClose: () => void; logout: () => void; activeTab: string }> = ({ open, onClose, logout, activeTab }) => {
     const navigate = useNavigate();
-    const tabs = useVisibleTabs();
+    const location = useLocation();
+    const { permissions, platformRole } = useAuthz();
+    const overflowTabs = useVisibleTabs().filter(t => !PRIMARY_KEYS.includes(t.key));
+    const groups = getVisibleSettingsGroups({ permissions, platformRole });
+    const activeGroup = findActiveSettingsGroup(groups, location);
+    // Feedback is offered ONLY on the exact /pulse inbox (matches the FAB gating
+    // in AppLayout), so the sheet never dispatches into a widget that isn't mounted.
+    const isFeedbackEnabled = isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET)
+        && location.pathname === '/pulse';
+    const go = (path: string) => { onClose(); navigate(path); };
+
     return (
-        <nav className="app-bottom-nav">
-            {tabs.map(t => {
-                const Icon = t.icon;
-                return (
+        <BottomSheet open={open} onClose={onClose} title="Menu">
+            <div className="flex flex-col pb-1">
+                {overflowTabs.map(t => {
+                    const Icon = t.icon;
+                    const isActive = activeTab === t.key;
+                    return (
+                        <button
+                            key={t.key}
+                            onClick={() => go(t.path)}
+                            className={`flex items-center gap-3 px-1 py-3 text-left text-[15px] ${isActive ? 'font-semibold text-[var(--blanc-accent)]' : 'text-[var(--blanc-ink-1)]'}`}
+                        >
+                            <Icon className="size-5 text-[var(--blanc-ink-3)]" />{t.label}
+                        </button>
+                    );
+                })}
+
+                {groups.length > 0 && (
+                    <>
+                        <div className="blanc-eyebrow mt-4 mb-1 px-1">Settings</div>
+                        {groups.map(group => {
+                            const isActive = activeGroup?.id === group.id;
+                            return (
+                                <button
+                                    key={group.id}
+                                    onClick={() => go(group.links[0].to)}
+                                    className={`flex items-center justify-between gap-3 px-1 py-3 text-left text-[15px] ${isActive ? 'font-semibold text-[var(--blanc-accent)]' : 'text-[var(--blanc-ink-1)]'}`}
+                                >
+                                    {group.title}<ChevronRight className="size-4 text-[var(--blanc-ink-3)]" />
+                                </button>
+                            );
+                        })}
+                    </>
+                )}
+
+                <div className="mt-4 flex flex-col">
+                    {isFeedbackEnabled && (
+                        <button
+                            onClick={() => { onClose(); openFeedbackWidget(); }}
+                            className="flex items-center gap-3 px-1 py-3 text-left text-[15px] text-[var(--blanc-ink-1)]"
+                        >
+                            <MessageSquareText className="size-5 text-[var(--blanc-ink-3)]" />Send feedback
+                        </button>
+                    )}
                     <button
-                        key={t.key}
-                        className={`app-bottom-nav-item ${activeTab === t.key ? 'active' : ''}`}
-                        onClick={() => navigate(t.path)}
+                        onClick={() => { onClose(); logout(); }}
+                        className="flex items-center gap-3 px-1 py-3 text-left text-[15px] text-red-600"
                     >
-                        <Icon className="size-5" />
-                        <span>{t.label}</span>
-                        {t.key === 'pulse' && pulseUnreadCount > 0 && (
-                            <span
-                                className="pulse-unread-badge"
-                                style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, transform: 'scale(0.85)' }}
-                            >
-                                {pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}
-                            </span>
-                        )}
-                        {t.key === 'leads' && leadsNewCount > 0 && (
-                            <span
-                                className="pulse-unread-badge"
-                                style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, transform: 'scale(0.85)' }}
-                            >
-                                {leadsNewCount > 9 ? '9+' : leadsNewCount}
-                            </span>
-                        )}
-                        {t.key === 'tasks' && openTasksCount > 0 && (
-                            <span
-                                className="pulse-unread-badge"
-                                style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, transform: 'scale(0.85)' }}
-                            >
-                                {openTasksCount > 9 ? '9+' : openTasksCount}
-                            </span>
-                        )}
+                        <LogOut className="size-5" />Log out
                     </button>
-                );
-            })}
-        </nav>
+                </div>
+            </div>
+        </BottomSheet>
+    );
+};
+
+export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: number; leadsNewCount: number; openTasksCount: number; logout: () => void }> = ({ activeTab, pulseUnreadCount, leadsNewCount, openTasksCount, logout }) => {
+    const navigate = useNavigate();
+    const primary = useVisibleTabs().filter(t => PRIMARY_KEYS.includes(t.key));
+    const [moreOpen, setMoreOpen] = useState(false);
+    // "More" lights up whenever the active surface isn't one of the four primary
+    // workspaces (i.e. it lives in the sheet: schedule/contacts/payments/settings).
+    const moreActive = !PRIMARY_KEYS.includes(activeTab);
+    const badgeFor = (key: string) =>
+        key === 'pulse' ? pulseUnreadCount : key === 'leads' ? leadsNewCount : key === 'tasks' ? openTasksCount : 0;
+    return (
+        <>
+            <nav className="app-bottom-nav">
+                {primary.map(t => {
+                    const Icon = t.icon;
+                    const badge = badgeFor(t.key);
+                    return (
+                        <button
+                            key={t.key}
+                            className={`app-bottom-nav-item ${activeTab === t.key ? 'active' : ''}`}
+                            onClick={() => navigate(t.path)}
+                        >
+                            <Icon className="size-5" />
+                            <span>{t.label}</span>
+                            {badge > 0 && (
+                                <span
+                                    className="pulse-unread-badge"
+                                    style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, transform: 'scale(0.85)' }}
+                                >
+                                    {badge > 9 ? '9+' : badge}
+                                </span>
+                            )}
+                        </button>
+                    );
+                })}
+                <button
+                    className={`app-bottom-nav-item ${moreActive ? 'active' : ''}`}
+                    onClick={() => setMoreOpen(true)}
+                    aria-label="More"
+                >
+                    <Settings className="size-5" />
+                    <span>More</span>
+                </button>
+            </nav>
+            <MobileMoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} logout={logout} activeTab={activeTab} />
+        </>
     );
 };
 
