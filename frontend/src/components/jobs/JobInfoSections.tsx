@@ -8,6 +8,7 @@ import { EMPTY_ADDRESS, type AddressFields } from '../addressAutoHelpers';
 import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
+import { MaskedCallLine } from '../shared/MaskedCallLine';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
@@ -198,12 +199,15 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                     {phone && (
                         <div style={infoRow}>
                             <span style={infoLabel}>Phone</span>
-                            <div className="flex items-center gap-2">
-                                <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
-                                    {formatPhone(phone)}
-                                </a>
-                                <ClickToCallButton phone={phone} contactName={customerName || undefined} />
-                                <OpenTimelineButton phone={phone} contactId={contactInfo?.id} />
+                            <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                    <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                        {formatPhone(phone)}
+                                    </a>
+                                    <ClickToCallButton phone={phone} contactName={customerName || undefined} />
+                                    <OpenTimelineButton phone={phone} contactId={contactInfo?.id} />
+                                </div>
+                                <MaskedCallLine entityType="job" entityId={job.id} />
                             </div>
                         </div>
                     )}

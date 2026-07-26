@@ -6,6 +6,7 @@ import type { Contact, ContactAddress } from '../../types/contact';
 import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
+import { MaskedCallLine } from '../shared/MaskedCallLine';
 import { AddressAutocomplete } from '../AddressAutocomplete';
 import * as contactsApi from '../../services/contactsApi';
 import { Check, X } from 'lucide-react';
@@ -69,12 +70,15 @@ export function ContactInfoSections({ contact, onAddressesChanged }: ContactInfo
                     {phone && (
                         <div style={infoRow}>
                             <span style={infoLabel}>Phone</span>
-                            <div className="flex items-center gap-2">
-                                <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
-                                    {formatPhone(phone)}
-                                </a>
-                                <ClickToCallButton phone={phone} contactName={name || undefined} />
-                                <OpenTimelineButton phone={phone} contactId={contact.id} />
+                            <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                    <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                        {formatPhone(phone)}
+                                    </a>
+                                    <ClickToCallButton phone={phone} contactName={name || undefined} />
+                                    <OpenTimelineButton phone={phone} contactId={contact.id} />
+                                </div>
+                                <MaskedCallLine entityType="contact" entityId={contact.id} />
                             </div>
                         </div>
                     )}
