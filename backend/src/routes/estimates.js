@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const estimatesService = require('../services/estimatesService');
+const aiEstimateService = require('../services/aiEstimateService');
 const { requirePermission } = require('../middleware/authorization');
 const { actorFromRequest } = require('../services/documentSendNoteService');
 
@@ -82,6 +83,36 @@ router.post('/', requirePermission('estimates.create'), async (req, res) => {
         console.error('[Estimates] POST / error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/estimates/ai-draft — Generate an unsaved estimate/invoice editor draft.
+// Literal route must stay above /:id.
+router.post('/ai-draft', requirePermission('estimates.create'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        if (!companyId) {
+            return res.status(403).json({
+                ok: false,
+                error: { code: 'FORBIDDEN', message: 'Company context is required' },
+            });
+        }
+        const permissions = req.authz?.permissions || [];
+        const result = await aiEstimateService.generateDraft({
+            companyId,
+            actorId: req.user?.crmUser?.id || null,
+            reportText: req.body?.report_text,
+            jobId: req.body?.job_id,
+            canManagePriceBook: !!req.user?._devMode || permissions.includes('price_book.manage'),
+        });
+        res.json(result);
+    } catch (err) {
+        console.error('[Estimates] POST /ai-draft error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({
+            ok: false,
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
     }
 });
 
