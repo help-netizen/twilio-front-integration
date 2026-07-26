@@ -308,6 +308,28 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
         if (jobId && !Number.isNaN(Number(jobId))) onLinkJob(Number(jobId));
     };
 
+    // ESTIMATE-FOOTER-001: exactly ONE primary CTA per state; everything else → "More".
+    const previewPdf = () => openAuthedPdf(`/api/estimates/${estimate.id}/pdf`, `${estimate.estimate_number || `Estimate-${estimate.id}`}.pdf`)
+        .catch(() => toast.error('Could not open the PDF'));
+    const doSend = () => { if (requireItems()) setSendOpen(true); };
+    const doApprove = () => { if (requireItems()) onApprove(); };
+    const openLinkedInvoice = () => navigate(`/invoices?openId=${estimate.invoice_id}`);
+
+    const primaryKey: 'restore' | 'open-invoice' | 'create-invoice' | 'approve' | 'send' | null =
+        archived ? 'restore'
+        : estimate.status === 'approved' && estimate.invoice_id ? 'open-invoice'
+        : estimate.status === 'approved' ? 'create-invoice'
+        : (estimate.status === 'sent' || estimate.status === 'viewed') ? 'approve'
+        : canSend ? 'send'
+        : 'approve';
+    const primaryAction =
+        primaryKey === 'restore' ? { label: 'Restore to draft', icon: <RotateCcw className="mr-1.5 size-4" />, onClick: onRestore, disabled: false }
+        : primaryKey === 'open-invoice' ? { label: 'Open invoice', icon: <FileText className="mr-1.5 size-4" />, onClick: openLinkedInvoice, disabled: false }
+        : primaryKey === 'create-invoice' ? { label: converting ? 'Creating…' : 'Create Invoice', icon: <FileText className="mr-1.5 size-4" />, onClick: handleConvertToInvoice, disabled: converting }
+        : primaryKey === 'approve' ? { label: 'Approve', icon: <Check className="mr-1.5 size-4" />, onClick: doApprove, disabled: false }
+        : primaryKey === 'send' ? { label: 'Send', icon: <Send className="mr-1.5 size-4" />, onClick: doSend, disabled: false }
+        : null;
+
     return (
         <div className={`flex h-full min-h-0 flex-col bg-[var(--blanc-panel-surface,#fffdf9)] text-[var(--blanc-ink-1)] ${archived ? 'grayscale opacity-60' : ''}`}>
             <div className="shrink-0 border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-4 pr-14">
@@ -595,81 +617,44 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
             </div>
 
             <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="grid grid-cols-2 gap-2 md:flex">
-                        <Button variant="outline" size="sm" onClick={() => {
-                            openAuthedPdf(`/api/estimates/${estimate.id}/pdf`, `${estimate.estimate_number || `Estimate-${estimate.id}`}.pdf`)
-                                .catch(() => toast.error('Could not open the PDF'));
-                        }}>
-                            <Eye className="mr-1 size-3.5" />Preview PDF
-                        </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2 md:justify-end">
-                        {!archived ? (
-                            <>
-                                {canSend && (
-                                    <Button
-                                        variant={estimate.status === 'draft' || estimate.status === 'sent' || estimate.status === 'viewed' ? 'default' : 'outline'}
-                                        size="sm"
-                                        onClick={() => { if (requireItems()) setSendOpen(true); }}
-                                    >
-                                        <Send className="mr-1 size-3.5" />Send
-                                    </Button>
-                                )}
-                                {estimate.status !== 'approved' && (
-                                    <Button
-                                        variant={estimate.status === 'sent' || estimate.status === 'viewed' ? 'default' : 'outline'}
-                                        size="sm"
-                                        onClick={() => { if (requireItems()) onApprove(); }}
-                                    >
-                                        <Check className="mr-1 size-3.5" />Approved
-                                    </Button>
-                                )}
-                                {estimate.status === 'approved' && !estimate.invoice_id && (
-                                    <Button size="sm" onClick={handleConvertToInvoice} disabled={converting}>
-                                        <FileText className="mr-1 size-3.5" />{converting ? 'Creating...' : 'Create Invoice'}
-                                    </Button>
-                                )}
-                                {estimate.invoice_id && (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => navigate(`/invoices?openId=${estimate.invoice_id}`)}
-                                        title={`Open ${estimate.invoice_number || 'invoice'}`}
-                                    >
-                                        <FileText className="mr-1 size-3.5" />Open invoice
-                                    </Button>
-                                )}
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <Button variant="outline" size="sm">
-                                            <MoreHorizontal className="mr-1 size-3.5" />More
-                                        </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end" className="w-44">
-                                        {estimate.status !== 'declined' && (
-                                            <DropdownMenuItem onSelect={() => setDeclineOpen(true)}>
-                                                <XCircle className="size-4" />Decline
-                                            </DropdownMenuItem>
-                                        )}
-                                        {!estimate.job_id && (
-                                            <DropdownMenuItem onSelect={openLinkJobPrompt}>
-                                                <Link2 className="size-4" />Link Job
-                                            </DropdownMenuItem>
-                                        )}
-                                        <DropdownMenuSeparator />
-                                        <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={onArchive}>
-                                            <Archive className="size-4" />Archive
-                                        </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </>
-                        ) : (
-                            <Button variant="outline" size="sm" onClick={onRestore}>
-                                <RotateCcw className="mr-1 size-3.5" />Restore to draft
+                <div className="flex items-center justify-end gap-2">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm" aria-label="More actions">
+                                <MoreHorizontal className="size-4" />
+                                <span className="ml-1 hidden sm:inline">More</span>
                             </Button>
-                        )}
-                    </div>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52">
+                            <DropdownMenuItem onSelect={previewPdf}><Eye className="size-4" />Preview PDF</DropdownMenuItem>
+                            {!archived && (
+                                <>
+                                    {canSend && primaryKey !== 'send' && (
+                                        <DropdownMenuItem onSelect={doSend}><Send className="size-4" />{estimate.status === 'draft' ? 'Send' : 'Resend'}</DropdownMenuItem>
+                                    )}
+                                    {estimate.status !== 'approved' && primaryKey !== 'approve' && (
+                                        <DropdownMenuItem onSelect={doApprove}><Check className="size-4" />Approve</DropdownMenuItem>
+                                    )}
+                                    {estimate.invoice_id && primaryKey !== 'open-invoice' && (
+                                        <DropdownMenuItem onSelect={openLinkedInvoice}><FileText className="size-4" />Open invoice</DropdownMenuItem>
+                                    )}
+                                    {estimate.status !== 'declined' && (
+                                        <DropdownMenuItem onSelect={() => setDeclineOpen(true)}><XCircle className="size-4" />Decline</DropdownMenuItem>
+                                    )}
+                                    {!estimate.job_id && (
+                                        <DropdownMenuItem onSelect={openLinkJobPrompt}><Link2 className="size-4" />Link Job</DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={onArchive}><Archive className="size-4" />Archive</DropdownMenuItem>
+                                </>
+                            )}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                    {primaryAction && (
+                        <Button onClick={primaryAction.onClick} disabled={primaryAction.disabled}>
+                            {primaryAction.icon}{primaryAction.label}
+                        </Button>
+                    )}
                 </div>
             </div>
 
