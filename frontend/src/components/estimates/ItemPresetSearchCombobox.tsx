@@ -171,7 +171,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
     return (
         <div ref={boxRef} className="relative w-full max-w-md">
             <div className="relative">
-                <Plus className="absolute left-3 top-1/2 -translate-y-1/2 size-4 pointer-events-none" style={{ color: 'var(--blanc-ink-3)' }} />
+                <Plus className="absolute left-3 top-1/2 -translate-y-1/2 size-4 pointer-events-none" style={{ color: 'var(--blanc-accent)' }} />
                 <input
                     type="text"
                     value={query}
@@ -197,7 +197,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                             else browseCategory(currentCategory.parent_id);
                         } else if (event.key === 'Escape') setOpen(false);
                     }}
-                    className="h-9 w-full rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent pl-9 pr-3 text-sm text-[var(--blanc-ink-1)] outline-none focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
+                    className="h-9 w-full rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-accent-soft)] pl-9 pr-3 text-sm text-[var(--blanc-ink-1)] outline-none placeholder:text-[var(--blanc-accent)] focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
                 />
             </div>
 
