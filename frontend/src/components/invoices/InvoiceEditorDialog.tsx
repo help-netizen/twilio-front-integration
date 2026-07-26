@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { ChevronDown, Loader2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { aiDraftEstimate } from '../../services/estimatesApi';
 import {
     Dialog,
     DialogContent,
@@ -100,6 +102,8 @@ export function InvoiceEditorDialog({
     const [paymentTerms, setPaymentTerms] = useState<string>('');
 
     const [saving, setSaving] = useState(false);
+    const [aiReport, setAiReport] = useState('');
+    const [aiGenerating, setAiGenerating] = useState(false);
 
     // Item dialog (for "Create new" path from combobox)
     const [itemDialogOpen, setItemDialogOpen] = useState(false);
@@ -143,6 +147,38 @@ export function InvoiceEditorDialog({
         setSummaryDraft(summary);
         setSummaryDialogOpen(true);
     };
+    const handleAiGenerate = async () => {
+        const text = aiReport.trim();
+        if (!text || aiGenerating) return;
+        setAiGenerating(true);
+        try {
+            const draft = await aiDraftEstimate(text, defaultJobId);
+            if (draft.summary) { setSummary(draft.summary); setSummaryOpen(true); }
+            if (draft.line_items?.length) {
+                setItems(prev => [
+                    ...prev,
+                    ...draft.line_items.map(li => ({
+                        key: newKey(),
+                        name: li.title,
+                        description: '',
+                        quantity: String(li.qty || 1),
+                        unit_price: String(li.unit_price ?? 0),
+                        taxable: true,
+                    })),
+                ]);
+            }
+            const created = draft.line_items.filter(li => li.created).length;
+            toast.success(
+                `Draft generated${created ? ` · ${created} new price-book item${created > 1 ? 's' : ''}` : ''} — review and Save`,
+            );
+            setAiReport('');
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not generate the draft');
+        } finally {
+            setAiGenerating(false);
+        }
+    };
+
     const saveSummary = () => {
         setSummary(summaryDraft.trim());
         setSummaryOpen(false);
@@ -259,6 +295,33 @@ export function InvoiceEditorDialog({
                     <DialogBody className="md:px-8 md:py-7">
                         {/* Wide document — line-item grid uses the full panel width (no max-w cap). */}
                         <div className="w-full space-y-6">
+                            {/* AI-ESTIMATE-001 — paste a report, AI fills summary + items (nothing saves until Save). */}
+                            <div className="rounded-xl px-4 py-4" style={{ background: 'var(--blanc-accent-soft)' }}>
+                                <div className="flex items-center gap-2">
+                                    <Sparkles className="size-4" style={{ color: 'var(--blanc-accent)' }} />
+                                    <p className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Generate from a report</p>
+                                </div>
+                                <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
+                                    Paste a repair report or a short description — AI fills the summary and line items, matching your Price Book. Review before you save.
+                                </p>
+                                <textarea
+                                    value={aiReport}
+                                    onChange={event => setAiReport(event.target.value)}
+                                    placeholder="Paste the report here…"
+                                    rows={3}
+                                    disabled={aiGenerating}
+                                    className="mt-3 w-full resize-none rounded-lg border-[1.5px] border-transparent px-3 py-2 text-sm outline-none focus:border-[var(--blanc-ink-2)] disabled:opacity-60"
+                                    style={{ background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-1)' }}
+                                />
+                                <div className="mt-3 flex justify-end">
+                                    <Button type="button" onClick={handleAiGenerate} disabled={aiGenerating || !aiReport.trim()}>
+                                        {aiGenerating
+                                            ? <><Loader2 className="mr-1.5 size-4 animate-spin" /> Generating…</>
+                                            : <><Sparkles className="mr-1.5 size-4" /> Generate</>}
+                                    </Button>
+                                </div>
+                            </div>
+
                             {/* Summary */}
                             {summary ? (
                                 <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
