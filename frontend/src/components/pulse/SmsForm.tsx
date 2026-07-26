@@ -124,20 +124,24 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
             {attachedFiles.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">{attachedFiles.map((file, index) => <div key={index} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm" style={{ background: 'var(--blanc-surface-muted)', border: '1px solid var(--blanc-line)' }}><Paperclip className="w-3.5 h-3.5" style={{ color: 'var(--blanc-ink-3)' }} /><span className="max-w-[150px] truncate" style={{ color: 'var(--blanc-ink-1)' }}>{file.name}</span><span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>({formatFileSize(file.size)})</span><button onClick={() => handleRemoveFile(index)} className="ml-1 hover:text-red-600 transition-colors" style={{ color: 'var(--blanc-ink-3)' }}><X className="w-3.5 h-3.5" /></button></div>)}</div>
             )}
-            <div className="relative mb-3">
-                <div aria-hidden className="absolute inset-0 px-3 py-2 pr-20 text-sm pointer-events-none overflow-hidden rounded-lg border border-transparent" style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', color: 'transparent', lineHeight: textareaRef.current ? getComputedStyle(textareaRef.current).lineHeight : '1.5', fontFamily: textareaRef.current ? getComputedStyle(textareaRef.current).fontFamily : 'inherit' }} dangerouslySetInnerHTML={{ __html: message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\{([^}]+)\}/g, '<mark style="background:#fef3c7;color:transparent;border-radius:3px;padding:1px 0">$&</mark>') + '\n' }} />
-                <textarea ref={textareaRef} value={message} onChange={e => setMessage(e.target.value)} onKeyDown={handleKeyDown} placeholder={isEmail ? 'Write an email... (Cmd/Ctrl + Enter to send)' : 'Type your message... (Cmd/Ctrl + Enter to send)'} className="w-full px-3 py-2 pr-20 rounded-lg resize-none focus:outline-none focus:ring-2 focus:border-transparent text-sm" style={{ overflow: 'auto', background: 'transparent', position: 'relative', border: '1px solid var(--blanc-line-strong)', '--tw-ring-color': 'rgba(47,99,216,0.25)' } as React.CSSProperties} rows={3} disabled={disabled} />
-                {/* SMS char count only (emails have no segment limit) */}
-                {!isEmail && message.length > 0 && (
-                    <div
-                        className="absolute top-2 right-3 text-[11px] font-mono"
-                        style={{ color: message.length > 300 ? 'var(--blanc-danger)' : 'var(--blanc-ink-3)' }}
-                    >
-                        {message.length}
-                    </div>
-                )}
-            </div>
-            <div className="flex items-center justify-between gap-2 max-md:flex-wrap">
+            {/* COMPOSER-CANON-001 (OB-38): one filled --blanc-field card holds the borderless
+                textarea (its {variable}-highlight underlay is kept pixel-aligned — same box
+                metrics, only the border colour goes transparent) over a round action row. */}
+            <div style={{ background: 'var(--blanc-field)', borderRadius: 16, padding: '6px 8px' }}>
+                <div className="relative">
+                    <div aria-hidden className="absolute inset-0 px-3 py-2 pr-20 text-sm pointer-events-none overflow-hidden rounded-lg border border-transparent" style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', color: 'transparent', lineHeight: textareaRef.current ? getComputedStyle(textareaRef.current).lineHeight : '1.5', fontFamily: textareaRef.current ? getComputedStyle(textareaRef.current).fontFamily : 'inherit' }} dangerouslySetInnerHTML={{ __html: message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\{([^}]+)\}/g, '<mark style="background:#fef3c7;color:transparent;border-radius:3px;padding:1px 0">$&</mark>') + '\n' }} />
+                    <textarea ref={textareaRef} value={message} onChange={e => setMessage(e.target.value)} onKeyDown={handleKeyDown} placeholder={isEmail ? 'Write an email... (Cmd/Ctrl + Enter to send)' : 'Type your message... (Cmd/Ctrl + Enter to send)'} className="w-full px-3 py-2 pr-20 resize-none focus:outline-none text-sm" style={{ overflow: 'auto', background: 'transparent', position: 'relative', border: '1px solid transparent' } as React.CSSProperties} rows={3} disabled={disabled} />
+                    {/* SMS char count only (emails have no segment limit) */}
+                    {!isEmail && message.length > 0 && (
+                        <div
+                            className="absolute top-2 right-3 text-[11px] font-mono"
+                            style={{ color: message.length > 300 ? 'var(--blanc-danger)' : 'var(--blanc-ink-3)' }}
+                        >
+                            {message.length}
+                        </div>
+                    )}
+                </div>
+                <div className="flex items-center justify-between gap-2 max-md:flex-wrap" style={{ marginTop: 6 }}>
                 <div className="flex items-center gap-2">
                     {(() => {
                         const isMobile = isMobileViewport();
@@ -166,7 +170,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                                     <PopoverTrigger asChild>
                                         <button
                                             className="flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
-                                            style={{ color: 'var(--blanc-ink-1)', borderColor: 'rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', border: '1px solid rgba(104, 95, 80, 0.14)', borderRadius: 14, minHeight: 42, boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                                            style={{ color: 'var(--blanc-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', borderRadius: 999, minHeight: 44 }}
                                             title="Quick Messages"
                                         >
                                             <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPresetsOpen ? 'rotate-180' : ''}`} />
@@ -187,22 +191,24 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                     })()}
                     {!isEmail && (
                         <>
-                            <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center transition-opacity hover:opacity-70" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>
+                            <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center rounded-full transition-opacity hover:opacity-70" style={{ width: 44, height: 44, border: 'none', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>
                             <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
                         </>
                     )}
                 </div>
                 <div className="flex items-center gap-2">
-                    <button onClick={handleAiFormat} disabled={!message.trim() || isAiFormatting || !onAiFormat} className="flex items-center justify-center transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Format with AI"><Wand2 className={`w-4 h-4 ${isAiFormatting ? 'animate-spin' : ''}`} /></button>
+                    <button onClick={handleAiFormat} disabled={!message.trim() || isAiFormatting || !onAiFormat} className="flex items-center justify-center rounded-full transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed" style={{ width: 44, height: 44, border: 'none', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)' }} title="Format with AI"><Wand2 className={`w-4 h-4 ${isAiFormatting ? 'animate-spin' : ''}`} /></button>
                     <button
                         onClick={handleSend}
                         disabled={(!message.trim() && (isEmail || attachedFiles.length === 0)) || disabled || !activeTarget}
-                        className="flex items-center gap-1.5 px-5 text-sm font-semibold transition-opacity hover:opacity-85 disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{ background: 'var(--blanc-info)', color: '#fff', minHeight: 42, borderRadius: 14, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                        aria-label={isEmail ? 'Send email' : 'Send message'}
+                        title={isEmail ? 'Send email' : 'Send message'}
+                        className="flex shrink-0 items-center justify-center rounded-full transition-opacity hover:opacity-85 disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff', border: 'none' }}
                     >
-                        <Send className="w-3.5 h-3.5" />
-                        {isEmail ? 'Email' : 'Send'}
+                        <Send className="w-4 h-4" />
                     </button>
+                </div>
                 </div>
             </div>
         </div>
