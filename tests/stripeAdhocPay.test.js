@@ -321,6 +321,26 @@ describe('sendJobPaymentLink', () => {
         expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'stripe_payments.payment_link_sent', target_type: 'job' }));
     });
 
+    it('TC-SEND-1b email recipient override is trimmed and replaces the contact email', async () => {
+        jobsService.getJobById.mockResolvedValue({ id: 'job-1', contact_id: 5, customer_email: 'contact@x.com', customer_phone: null });
+        emailMailboxService.getMailboxStatus.mockResolvedValue({ status: 'connected' });
+        emailService.sendEmail.mockResolvedValue({});
+        primeLink();
+        await svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', {
+            channel: 'email',
+            recipient: '  override@x.com  ',
+            amount: 180,
+        });
+        expect(emailService.sendEmail).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({ to: 'override@x.com' })
+        );
+        expect(emailService.sendEmail.mock.calls[0][1].to).not.toBe('contact@x.com');
+        expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
+            details: { channel: 'email', recipient: 'override@x.com' },
+        }));
+    });
+
     it('TC-SEND-2 SMS path dispatches via conversationsService.sendMessage', async () => {
         jobsService.getJobById.mockResolvedValue({ id: 'job-1', contact_id: 5, customer_email: null, customer_phone: '+16175551212' });
         resolveCompanyProxyE164.mockResolvedValue('+16175550000');
@@ -334,13 +354,40 @@ describe('sendJobPaymentLink', () => {
         expect(emailService.sendEmail).not.toHaveBeenCalled();
     });
 
-    it('TC-SEND-3a fallback: default email when present', async () => {
+    it('TC-SEND-2b SMS recipient override is normalized and replaces the contact phone', async () => {
+        jobsService.getJobById.mockResolvedValue({ id: 'job-1', contact_id: 5, customer_email: null, customer_phone: '+16175551212' });
+        resolveCompanyProxyE164.mockResolvedValue('+16175550000');
+        toE164.mockImplementation(value => value === '(617) 555-3434' ? '+16175553434' : null);
+        conversationsService.getOrCreateConversation.mockResolvedValue({ id: 99 });
+        conversationsService.sendMessage.mockResolvedValue({});
+        primeLink();
+        await svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', {
+            channel: 'sms',
+            recipient: '  (617) 555-3434  ',
+            amount: 180,
+        });
+        expect(toE164).toHaveBeenCalledWith('(617) 555-3434');
+        expect(toE164).not.toHaveBeenCalledWith('+16175551212');
+        expect(conversationsService.getOrCreateConversation).toHaveBeenCalledWith(
+            '+16175553434',
+            '+16175550000',
+            COMPANY
+        );
+        expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
+            details: { channel: 'sms', recipient: '+16175553434' },
+        }));
+    });
+
+    it('TC-SEND-3a recipient absent preserves contact email fallback', async () => {
         jobsService.getJobById.mockResolvedValue({ id: 'job-1', customer_email: 'c@x.com', customer_phone: '+16175551212' });
         emailMailboxService.getMailboxStatus.mockResolvedValue({ status: 'connected' });
         emailService.sendEmail.mockResolvedValue({});
         primeLink();
         const res = await svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', { amount: 180 });
-        expect(emailService.sendEmail).toHaveBeenCalled();
+        expect(emailService.sendEmail).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({ to: 'c@x.com' })
+        );
         expect(conversationsService.sendMessage).not.toHaveBeenCalled();
         expect(res.channel).toBe('email');
     });
@@ -374,6 +421,55 @@ describe('sendJobPaymentLink', () => {
         expect(conversationsService.sendMessage).not.toHaveBeenCalled();
     });
 
+    it('TC-SEND-5b recipient override requires an explicit valid channel', async () => {
+        jobsService.getJobById.mockResolvedValue({ id: 'job-1', customer_email: 'c@x.com', customer_phone: '+16175551212' });
+        await expect(svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', {
+            recipient: 'override@x.com',
+            amount: 180,
+        })).rejects.toMatchObject({ code: 'INVALID_CHANNEL', httpStatus: 422 });
+        expect(provider.createCheckoutSession).not.toHaveBeenCalled();
+        expect(emailService.sendEmail).not.toHaveBeenCalled();
+        expect(conversationsService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('TC-SEND-5c blank recipient preserves the stored-contact path', async () => {
+        jobsService.getJobById.mockResolvedValue({ id: 'job-1', customer_email: 'c@x.com', customer_phone: null });
+        emailMailboxService.getMailboxStatus.mockResolvedValue({ status: 'connected' });
+        emailService.sendEmail.mockResolvedValue({});
+        primeLink();
+        await svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', {
+            channel: 'email',
+            recipient: '   ',
+            amount: 180,
+        });
+        expect(emailService.sendEmail).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({ to: 'c@x.com' })
+        );
+    });
+
+    it('TC-SEND-5d recipient longer than 254 characters is rejected', async () => {
+        jobsService.getJobById.mockResolvedValue({ id: 'job-1', customer_email: 'c@x.com', customer_phone: null });
+        await expect(svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', {
+            channel: 'email',
+            recipient: `${'a'.repeat(243)}@example.com`,
+            amount: 180,
+        })).rejects.toMatchObject({ code: 'INVALID_EMAIL', httpStatus: 422 });
+        expect(provider.createCheckoutSession).not.toHaveBeenCalled();
+        expect(emailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('TC-SEND-5e invalid email override → INVALID_EMAIL 422', async () => {
+        jobsService.getJobById.mockResolvedValue({ id: 'job-1', customer_email: 'contact@x.com', customer_phone: null });
+        await expect(svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', {
+            channel: 'email',
+            recipient: 'not-an-email',
+            amount: 180,
+        })).rejects.toMatchObject({ code: 'INVALID_EMAIL', httpStatus: 422 });
+        expect(provider.createCheckoutSession).not.toHaveBeenCalled();
+        expect(emailService.sendEmail).not.toHaveBeenCalled();
+    });
+
     it('TC-SEND-6 email path propagates MAILBOX_NOT_CONNECTED 409', async () => {
         jobsService.getJobById.mockResolvedValue({ id: 'job-1', customer_email: 'c@x.com', customer_phone: null });
         emailMailboxService.getMailboxStatus.mockResolvedValue({ status: 'disconnected' });
@@ -401,6 +497,21 @@ describe('sendJobPaymentLink', () => {
             .rejects.toMatchObject({ code: 'NO_PHONE', httpStatus: 422 });
     });
 
+    it('TC-SEND-8b invalid phone override → NO_PHONE 422', async () => {
+        jobsService.getJobById.mockResolvedValue({ id: 'job-1', customer_email: null, customer_phone: '+16175551212' });
+        resolveCompanyProxyE164.mockResolvedValue('+16175550000');
+        toE164.mockReturnValue(null);
+        primeLink();
+        await expect(svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', {
+            channel: 'sms',
+            recipient: 'not-a-phone',
+            amount: 180,
+        })).rejects.toMatchObject({ code: 'NO_PHONE', httpStatus: 422 });
+        expect(toE164).toHaveBeenCalledWith('not-a-phone');
+        expect(toE164).not.toHaveBeenCalledWith('+16175551212');
+        expect(conversationsService.getOrCreateConversation).not.toHaveBeenCalled();
+    });
+
     it('TC-SEND-9 SMS wallet gate propagates WALLET_BLOCKED 402', async () => {
         jobsService.getJobById.mockResolvedValue({ id: 'job-1', customer_email: null, customer_phone: '+16175551212' });
         resolveCompanyProxyE164.mockResolvedValue('+16175550000');
@@ -418,7 +529,7 @@ describe('sendJobPaymentLink', () => {
         emailService.sendEmail.mockResolvedValue({});
         primeLink();
         await svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', { channel: 'email', amount: 180 });
-        expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'stripe_payments.payment_link_sent', target_type: 'job', details: { channel: 'email' } }));
+        expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'stripe_payments.payment_link_sent', target_type: 'job', details: { channel: 'email', recipient: 'c@x.com' } }));
         expect(invoicesQueries.createEvent).not.toHaveBeenCalled();
     });
 
@@ -444,6 +555,28 @@ describe('sendJobPaymentLink', () => {
         await expect(svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', { channel: 'email' }))
             .rejects.toMatchObject({ code: 'INVALID_AMOUNT', httpStatus: 400 });
         expect(emailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('TC-SEND-13 recipient override cannot bypass foreign-job tenant scope', async () => {
+        jobsService.getJobById.mockResolvedValue(null);
+        await expect(svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'foreign-job', {
+            channel: 'email',
+            recipient: 'override@x.com',
+            amount: 180,
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(jobsService.getJobById).toHaveBeenCalledWith('foreign-job', COMPANY);
+        expect(provider.createCheckoutSession).not.toHaveBeenCalled();
+        expect(emailService.sendEmail).not.toHaveBeenCalled();
+    });
+});
+
+describe('send-payment-link route plumbing', () => {
+    const jobsRouteSource = fs.readFileSync(path.join(__dirname, '../backend/src/routes/jobs.js'), 'utf8');
+
+    it('threads the operator-supplied recipient to sendJobPaymentLink', () => {
+        const routeStart = jobsRouteSource.indexOf("router.post('/:id/send-payment-link'");
+        const routeEnd = jobsRouteSource.indexOf('function jobPaymentError', routeStart);
+        expect(jobsRouteSource.slice(routeStart, routeEnd)).toContain('recipient: req.body?.recipient');
     });
 });
 

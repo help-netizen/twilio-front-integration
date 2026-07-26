@@ -73,12 +73,13 @@ interface Props {
     jobId: number;
     leadSerialId?: number | null;
     contactEmail?: string | null;
+    contactPhone?: string | null;
     hasContact?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact }: Props) {
+export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPhone, hasContact }: Props) {
     const {
         estimates, invoices, jobPayments, loading,
         selectedEstimate, selectedInvoice,
@@ -599,6 +600,7 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
                 outstanding={totalDue}
                 hasInvoices={invoices.length > 0}
                 contactEmail={contactEmail}
+                contactPhone={contactPhone}
                 hasContact={hasContact}
                 onSuccess={() => refresh()}
                 onPaymentConfirmed={revalidateAfterPayment}

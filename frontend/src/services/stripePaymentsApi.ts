@@ -177,7 +177,7 @@ export const jobStripeApi = {
         if (!res.ok || json.ok === false) throw new Error(json.error?.message || `Request failed: ${res.status}`);
         return json.data;
     },
-    sendLink: async (jobId: number | string, body: { channel?: string; amount?: number; message?: string }): Promise<{ sent: boolean; url: string; channel?: string }> => {
+    sendLink: async (jobId: number | string, body: { channel?: string; amount?: number; message?: string; recipient?: string }): Promise<{ sent: boolean; url: string; channel?: string }> => {
         const res = await authedFetch(`/api/jobs/${jobId}/send-payment-link`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });

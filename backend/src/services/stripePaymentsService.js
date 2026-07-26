@@ -35,6 +35,7 @@ const APP_KEY = 'stripe-payments';
 // under the old param shape don't collide with the new ones. Bump on any future
 // change to the checkout-link request params.
 const CHECKOUT_KEY_VERSION = 'v2';
+const PAYMENT_LINK_RECIPIENT_MAX_LENGTH = 254;
 
 class StripePaymentsError extends Error {
     constructor(code, message, httpStatus = 400) {
@@ -383,7 +384,7 @@ async function getJobPaymentLink(companyId, jobId) {
  * the invoice sendPaymentLink (which only event-logs). Jobs have no invoice event
  * stream, so the audit row is the record.
  */
-async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, message } = {}) {
+async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, message, recipient } = {}) {
     // Resolve the recipient contact directly (company-scoped → foreign 404) BEFORE
     // any amount validation, so NO_CONTACT surfaces regardless of the amount.
     const jobsService = require('./jobsService');
@@ -391,23 +392,43 @@ async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, me
     if (!job) throw new StripePaymentsError('NOT_FOUND', `Job ${jobId} not found`, 404);
     const email = job.customer_email || null;
     const phone = job.customer_phone || null;
-    if (!email && !phone) {
+    if (recipient != null && typeof recipient !== 'string') {
+        throw new StripePaymentsError('INVALID_RECIPIENT', 'Recipient must be a string.', 422);
+    }
+    const recipientOverride = typeof recipient === 'string' ? recipient.trim() : '';
+    if (recipientOverride && channel !== 'email' && channel !== 'sms') {
+        throw new StripePaymentsError('INVALID_CHANNEL', 'Choose email or sms when providing a recipient.', 422);
+    }
+    if (recipientOverride && recipientOverride.length > PAYMENT_LINK_RECIPIENT_MAX_LENGTH) {
+        const code = channel === 'email' ? 'INVALID_EMAIL' : 'NO_PHONE';
+        const message = channel === 'email' ? 'Enter a valid customer email' : 'A valid phone number is required.';
+        throw new StripePaymentsError(code, message, 422);
+    }
+    if (!recipientOverride && !email && !phone) {
         throw new StripePaymentsError('NO_CONTACT', 'Job has no email or phone to send to', 422);
     }
 
     // Channel select: forced channel honored (422 if that channel's contact missing);
     // no forced channel → default email if present, else SMS.
     let chosen = channel;
+    let sendTo;
     if (chosen === 'email') {
-        if (!email) throw new StripePaymentsError('NO_CONTACT', 'No email on file', 422);
+        sendTo = recipientOverride || email;
+        if (!sendTo) throw new StripePaymentsError('NO_CONTACT', 'No email on file', 422);
+        if (recipientOverride && !RECEIPT_EMAIL_SHAPE.test(sendTo)) {
+            throw new StripePaymentsError('INVALID_EMAIL', 'Enter a valid customer email', 422);
+        }
     } else if (chosen === 'sms') {
-        if (!phone) throw new StripePaymentsError('NO_CONTACT', 'No phone on file', 422);
+        sendTo = recipientOverride || phone;
+        if (!sendTo) throw new StripePaymentsError('NO_CONTACT', 'No phone on file', 422);
     } else {
         chosen = email ? 'email' : 'sms';
+        sendTo = chosen === 'email' ? email : phone;
     }
 
     const link = await ensureJobPaymentLink(companyId, actor, jobId, { amount });
     const body = message ? `${message}\n\n${link.url}` : link.url;
+    let sentRecipient;
 
     if (chosen === 'email') {
         const emailMailboxService = require('./emailMailboxService');
@@ -423,27 +444,29 @@ async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, me
         const subject = companyName ? `Payment request from ${companyName}` : 'Payment request';
         const emailService = require('./emailService');
         await emailService.sendEmail(companyId, {
-            to: email,
+            to: sendTo,
             subject,
             body,
             files: [],
             userId: actor?.id || null,
             userEmail: actor?.email || null,
         });
+        sentRecipient = sendTo;
     } else {
         const { resolveCompanyProxyE164 } = require('./messagingHelper');
         const { toE164 } = require('../utils/phoneUtils');
         const proxy = await resolveCompanyProxyE164(companyId);
         if (!proxy) throw new StripePaymentsError('NO_PROXY', 'No company sending number is configured.', 422);
-        const customerE164 = toE164(phone);
+        const customerE164 = toE164(sendTo);
         if (!customerE164) throw new StripePaymentsError('NO_PHONE', 'A valid phone number is required.', 422);
         const conversationsService = require('./conversationsService');
         const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
         // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
         await conversationsService.sendMessage(conv.id, { body });
+        sentRecipient = customerE164;
     }
 
-    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_sent', target_type: 'job', target_id: String(jobId), company_id: companyId, details: { channel: chosen } });
+    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_sent', target_type: 'job', target_id: String(jobId), company_id: companyId, details: { channel: chosen, recipient: sentRecipient } });
     return { sent: true, url: link.url, channel: chosen };
 }
 

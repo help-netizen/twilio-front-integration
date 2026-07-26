@@ -115,6 +115,7 @@ export function JobDetailPanel({
                                     jobId={job.id}
                                     leadSerialId={job.lead_serial_id}
                                     contactEmail={contactInfo?.email}
+                                    contactPhone={contactInfo?.phone}
                                     hasContact={Boolean(contactInfo?.id || job.contact_id)}
                                 />
                             )}
@@ -140,6 +141,7 @@ export function JobDetailPanel({
                             jobId={job.id}
                             leadSerialId={job.lead_serial_id}
                             contactEmail={contactInfo?.email}
+                            contactPhone={contactInfo?.phone}
                             hasContact={Boolean(contactInfo?.id || job.contact_id)}
                         />
                     )}

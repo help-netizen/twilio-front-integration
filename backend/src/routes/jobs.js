@@ -1120,7 +1120,7 @@ router.get('/:id/stripe-payment-link', requirePermission('payments.view'), async
 router.post('/:id/send-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const data = await stripePaymentsService.sendJobPaymentLink(companyId, { id: req.user?.crmUser?.id || null }, req.params.id, { channel: req.body?.channel, amount: req.body?.amount, message: req.body?.message });
+        const data = await stripePaymentsService.sendJobPaymentLink(companyId, { id: req.user?.crmUser?.id || null }, req.params.id, { channel: req.body?.channel, amount: req.body?.amount, message: req.body?.message, recipient: req.body?.recipient });
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
 });
