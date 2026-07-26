@@ -247,6 +247,13 @@ export async function cancelJob(id: number, reason: string): Promise<void> {
     });
 }
 
+export async function updateJobDescription(id: number, description: string): Promise<LocalJob> {
+    return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/description`, {
+        method: 'PATCH',
+        body: JSON.stringify({ description }),
+    });
+}
+
 // ─── ONWAY-001: "On the way" ETA estimate + notify ─────────────────────────────
 
 /** Error carrying the backend `code` so the modal can map it to a friendly toast. */

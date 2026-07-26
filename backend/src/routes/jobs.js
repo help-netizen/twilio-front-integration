@@ -284,6 +284,24 @@ router.patch('/:id/tags', requirePermission('jobs.edit'), async (req, res) => {
     }
 });
 
+// ─── Update Description (inline edit) ─────────────────────────────────────────
+
+router.patch('/:id/description', requirePermission('jobs.edit'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
+        const { description } = req.body;
+        if (typeof description !== 'string') return res.status(400).json({ ok: false, error: 'description string required' });
+        if (description.length > 5000) return res.status(400).json({ ok: false, error: 'description too long' });
+        const result = await jobsService.updateJobDescription(parseInt(req.params.id, 10), description, companyId);
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Jobs API] Update description error:', err.message);
+        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
+    }
+});
+
 // ─── Update Albusto Status (manual FSM transition) ────────────────────────────
 
 router.patch('/:id/status', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {

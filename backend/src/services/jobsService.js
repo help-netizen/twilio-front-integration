@@ -1862,6 +1862,23 @@ async function updateJobLocation(companyId, jobId, { address, lat, lng, normaliz
     return job;
 }
 
+/**
+ * Update a job's free-text description (inline edit on the job panel). Tenant-scoped;
+ * the updated_at trigger stamps the change. Returns the reshaped job.
+ */
+async function updateJobDescription(jobId, description, companyId) {
+    if (!companyId) throw new Error('updateJobDescription requires companyId');
+    const text = typeof description === 'string' ? description : '';
+    const { rows } = await db.pool.query(
+        `UPDATE jobs SET description = $1 WHERE id = $2 AND company_id = $3 RETURNING id`,
+        [text, jobId, companyId]
+    );
+    if (!rows[0]) {
+        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
+    }
+    return getJobById(jobId, companyId);
+}
+
 module.exports = {
     createJob,
     createManualJob,
@@ -1883,6 +1900,7 @@ module.exports = {
     zbJobToColumns,
     computeBlancStatusFromZb,
     updateJobTags,
+    updateJobDescription,
     getTagsForJob,
     updateCoords,
     updateJobLocation,

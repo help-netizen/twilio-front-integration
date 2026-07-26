@@ -107,7 +107,7 @@ export function JobDetailPanel({
 
                         {/* Mobile-only: description, notes, metadata, financials */}
                         <div className="md:hidden px-5 pb-6 space-y-5">
-                            <JobDescription job={job} />
+                            <JobDescription job={job} onJobUpdated={onJobUpdated} />
                             <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
                             <JobMetadataSection job={job} />
                             {canViewFinancials && (
@@ -132,7 +132,7 @@ export function JobDetailPanel({
                     content and Finance now share ONE scroller — Description, notes,
                     metadata, then the Finance section (its own heading divides it). */}
                 <div className="flex-1 flex flex-col min-h-0 p-4 space-y-5">
-                    <JobDescription job={job} />
+                    <JobDescription job={job} onJobUpdated={onJobUpdated} />
                     <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
                     <JobMetadataSection job={job} />
                     {canViewFinancials && (
