@@ -84,6 +84,7 @@ describe('call masking settings routes', () => {
         mockGetSettings.mockResolvedValue({
             call_masking_enabled: false,
             call_masking_number: '+16174044425',
+            roles: ['provider'],
         });
         const res = await invokeRoute(
             telephonyNumbersRouter,
@@ -93,6 +94,7 @@ describe('call masking settings routes', () => {
         );
         expect(res.statusCode).toBe(200);
         expect(res.body.data.call_masking_number).toBe('+16174044425');
+        expect(res.body.data.roles).toEqual(['provider']);
         expect(mockGetSettings).toHaveBeenCalledWith(COMPANY_A);
     });
 
@@ -100,6 +102,7 @@ describe('call masking settings routes', () => {
         const saved = {
             call_masking_enabled: true,
             call_masking_number: '+16174044425',
+            roles: ['provider', 'manager'],
         };
         mockSaveSettings.mockResolvedValue(saved);
         const req = routeRequest(['tenant.telephony.manage']);
@@ -117,6 +120,31 @@ describe('call masking settings routes', () => {
             expect.objectContaining({ company_id: COMPANY_B }),
             ACTOR
         );
+    });
+
+    test('PUT returns 422 INVALID_ROLES from scoped role validation', async () => {
+        mockSaveSettings.mockRejectedValue(Object.assign(
+            new Error('One or more roles do not belong to this company'),
+            { httpStatus: 422, code: 'INVALID_ROLES' }
+        ));
+        const req = routeRequest(['tenant.telephony.manage']);
+        req.method = 'PUT';
+        req.body = {
+            call_masking_enabled: false,
+            call_masking_number: '+16174044425',
+            roles: ['unknown'],
+        };
+
+        const res = await invokeRoute(
+            telephonyNumbersRouter,
+            '/masking-settings',
+            'PUT',
+            req
+        );
+
+        expect(res.statusCode).toBe(422);
+        expect(res.body).toMatchObject({ ok: false, code: 'INVALID_ROLES' });
+        expect(mockSaveSettings).toHaveBeenCalledWith(COMPANY_A, req.body, ACTOR);
     });
 
     test('R-matrix deny: missing tenant.telephony.manage returns 403 before service access', async () => {

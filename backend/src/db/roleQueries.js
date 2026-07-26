@@ -14,8 +14,8 @@ function queryFor(client) {
 /**
  * Get all role configs for a company.
  */
-async function listRoleConfigs(companyId) {
-    const { rows } = await db.query(
+async function listRoleConfigs(companyId, client = null) {
+    const { rows } = await queryFor(client)(
         `SELECT id, company_id, role_key, display_name, description, is_locked,
                 created_at, updated_at
          FROM company_role_configs
@@ -88,13 +88,25 @@ async function getRoleScopes(roleConfigId) {
  * Get allowed permission keys for a role config.
  * Returns flat array of permission_key strings.
  */
-async function getAllowedPermissionKeys(roleConfigId, client = null) {
-    const { rows } = await queryFor(client)(
-        `SELECT permission_key FROM company_role_permissions
-         WHERE role_config_id = $1 AND is_allowed = true
-         ORDER BY permission_key`,
-        [roleConfigId]
-    );
+async function getAllowedPermissionKeys(roleConfigId, client = null, companyId = null) {
+    const { rows } = companyId
+        ? await queryFor(client)(
+            `SELECT p.permission_key
+             FROM company_role_permissions p
+             JOIN company_role_configs rc
+               ON rc.id = p.role_config_id
+              AND rc.company_id = $2
+             WHERE p.role_config_id = $1
+               AND p.is_allowed = true
+             ORDER BY p.permission_key`,
+            [roleConfigId, companyId]
+        )
+        : await queryFor(client)(
+            `SELECT permission_key FROM company_role_permissions
+             WHERE role_config_id = $1 AND is_allowed = true
+             ORDER BY permission_key`,
+            [roleConfigId]
+        );
     return rows.map(r => r.permission_key);
 }
 
@@ -120,15 +132,33 @@ async function getScopeMap(roleConfigId, client = null) {
  * Sets is_allowed for (role_config_id, permission_key), inserting the row if
  * absent. Returns the upserted row.
  */
-async function setRolePermission(roleConfigId, permissionKey, isAllowed) {
-    const { rows } = await db.query(
-        `INSERT INTO company_role_permissions (role_config_id, permission_key, is_allowed)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (role_config_id, permission_key)
-         DO UPDATE SET is_allowed = EXCLUDED.is_allowed, updated_at = NOW()
-         RETURNING id, permission_key, is_allowed`,
-        [roleConfigId, permissionKey, isAllowed]
-    );
+async function setRolePermission(
+    roleConfigId,
+    permissionKey,
+    isAllowed,
+    companyId = null,
+    client = null
+) {
+    const { rows } = companyId
+        ? await queryFor(client)(
+            `INSERT INTO company_role_permissions (role_config_id, permission_key, is_allowed)
+             SELECT rc.id, $2, $3
+             FROM company_role_configs rc
+             WHERE rc.id = $1
+               AND rc.company_id = $4
+             ON CONFLICT (role_config_id, permission_key)
+             DO UPDATE SET is_allowed = EXCLUDED.is_allowed, updated_at = NOW()
+             RETURNING id, permission_key, is_allowed`,
+            [roleConfigId, permissionKey, isAllowed, companyId]
+        )
+        : await queryFor(client)(
+            `INSERT INTO company_role_permissions (role_config_id, permission_key, is_allowed)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (role_config_id, permission_key)
+             DO UPDATE SET is_allowed = EXCLUDED.is_allowed, updated_at = NOW()
+             RETURNING id, permission_key, is_allowed`,
+            [roleConfigId, permissionKey, isAllowed]
+        );
     return rows[0];
 }
 

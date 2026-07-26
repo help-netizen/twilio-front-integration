@@ -185,7 +185,7 @@ router.get('/blacklist', async (req, res) => {
     } catch (err) { fail(res, err, 'Failed to load the blacklist'); }
 });
 
-// GET /api/telephony/numbers/masking-settings — company call-masking config
+// GET /api/telephony/numbers/masking-settings — company config + allowed roles
 router.get('/masking-settings', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const settings = await callMaskingService.getSettings(companyId(req));
@@ -193,7 +193,7 @@ router.get('/masking-settings', requirePermission('tenant.telephony.manage'), as
     } catch (err) { fail(res, err, 'Failed to load call masking settings'); }
 });
 
-// PUT /api/telephony/numbers/masking-settings — replace company config
+// PUT /api/telephony/numbers/masking-settings — replace config + optional roles
 router.put('/masking-settings', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const settings = await callMaskingService.saveSettings(

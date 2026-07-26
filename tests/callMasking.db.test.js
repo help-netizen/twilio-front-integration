@@ -52,6 +52,187 @@ afterAll(async () => {
 });
 
 describe('CALL-MASKING real PostgreSQL code isolation', () => {
+    databaseTest('role settings round-trip without cross-tenant or sibling-permission changes', async () => {
+        const client = await db.pool.connect();
+        const schema = `call_masking_roles_${randomUUID().replaceAll('-', '')}`;
+        const companyA = randomUUID();
+        const companyB = randomUUID();
+        try {
+            await client.query('BEGIN');
+            await client.query(`CREATE SCHEMA "${schema}"`);
+            await client.query(`SET LOCAL search_path TO "${schema}", public`);
+            await client.query(`
+                CREATE TABLE companies (id UUID PRIMARY KEY);
+                CREATE TABLE crm_users (id UUID PRIMARY KEY);
+                CREATE TABLE contacts (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_id UUID NOT NULL REFERENCES companies(id),
+                    phone_e164 TEXT,
+                    secondary_phone TEXT
+                );
+                CREATE TABLE company_telephony (
+                    company_id UUID PRIMARY KEY REFERENCES companies(id),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                CREATE TABLE phone_number_settings (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_id UUID NOT NULL REFERENCES companies(id),
+                    phone_number TEXT NOT NULL
+                );
+                CREATE TABLE company_role_configs (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    company_id UUID NOT NULL REFERENCES companies(id),
+                    role_key TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    description TEXT,
+                    is_locked BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    UNIQUE (company_id, role_key)
+                );
+                CREATE TABLE company_role_permissions (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    role_config_id UUID NOT NULL REFERENCES company_role_configs(id),
+                    permission_key TEXT NOT NULL,
+                    is_allowed BOOLEAN NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    UNIQUE (role_config_id, permission_key)
+                );
+            `);
+            await client.query(
+                `INSERT INTO companies (id) VALUES ($1), ($2)`,
+                [companyA, companyB]
+            );
+            await client.query(
+                `INSERT INTO company_role_configs
+                    (company_id, role_key, display_name, is_locked)
+                 SELECT company_id, role_key, role_key, role_key = 'tenant_admin'
+                 FROM unnest($1::uuid[]) AS companies(company_id)
+                 CROSS JOIN unnest($2::text[]) AS roles(role_key)`,
+                [
+                    [companyA, companyB],
+                    ['tenant_admin', 'manager', 'dispatcher', 'provider'],
+                ]
+            );
+            await client.query(
+                `INSERT INTO company_role_permissions
+                    (role_config_id, permission_key, is_allowed)
+                 SELECT id, 'jobs.view', true
+                 FROM company_role_configs
+                 WHERE role_key = 'manager'`
+            );
+            await client.query(MIGRATION);
+
+            await expect(callMaskingService.getSettings(companyA, client)).resolves.toEqual({
+                call_masking_enabled: false,
+                call_masking_number: '+16174044425',
+                roles: ['provider'],
+            });
+
+            const beforeB = await client.query(
+                `SELECT COALESCE(
+                    jsonb_agg(to_jsonb(p.*) ORDER BY rc.role_key, p.permission_key),
+                    '[]'::jsonb
+                 ) AS permissions
+                 FROM company_role_configs rc
+                 LEFT JOIN company_role_permissions p ON p.role_config_id = rc.id
+                 WHERE rc.company_id = $1`,
+                [companyB]
+            );
+            const siblingBefore = await client.query(
+                `SELECT to_jsonb(p.*) AS permission
+                 FROM company_role_permissions p
+                 JOIN company_role_configs rc ON rc.id = p.role_config_id
+                 WHERE rc.company_id = $1
+                   AND rc.role_key = 'manager'
+                   AND p.permission_key = 'jobs.view'`,
+                [companyA]
+            );
+
+            const managerAndProvider = await callMaskingService.saveSettings(
+                companyA,
+                {
+                    call_masking_enabled: false,
+                    call_masking_number: '+16174044425',
+                    roles: ['provider', 'manager'],
+                },
+                null,
+                client
+            );
+            expect(managerAndProvider.roles).toEqual(['manager', 'provider']);
+            const firstRoundTrip = await callMaskingService.getSettings(companyA, client);
+            expect(firstRoundTrip.roles).toHaveLength(2);
+            expect(firstRoundTrip.roles).toEqual(expect.arrayContaining(['provider', 'manager']));
+
+            await callMaskingService.saveSettings(
+                companyA,
+                {
+                    call_masking_enabled: false,
+                    call_masking_number: '+16174044425',
+                    roles: ['provider'],
+                },
+                null,
+                client
+            );
+            await expect(callMaskingService.getSettings(companyA, client))
+                .resolves.toMatchObject({ roles: ['provider'] });
+
+            await callMaskingService.saveSettings(
+                companyA,
+                {
+                    call_masking_enabled: false,
+                    call_masking_number: '+16174044425',
+                    roles: [],
+                },
+                null,
+                client
+            );
+            await expect(callMaskingService.getSettings(companyA, client))
+                .resolves.toMatchObject({ roles: [] });
+
+            await expect(callMaskingService.saveSettings(
+                companyA,
+                {
+                    call_masking_enabled: false,
+                    call_masking_number: '+16174044425',
+                    roles: ['provider', 'unknown'],
+                },
+                null,
+                client
+            )).rejects.toMatchObject({
+                httpStatus: 422,
+                code: 'INVALID_ROLES',
+            });
+
+            const siblingAfter = await client.query(
+                `SELECT to_jsonb(p.*) AS permission
+                 FROM company_role_permissions p
+                 JOIN company_role_configs rc ON rc.id = p.role_config_id
+                 WHERE rc.company_id = $1
+                   AND rc.role_key = 'manager'
+                   AND p.permission_key = 'jobs.view'`,
+                [companyA]
+            );
+            expect(siblingAfter.rows[0]).toStrictEqual(siblingBefore.rows[0]);
+
+            const afterB = await client.query(
+                `SELECT COALESCE(
+                    jsonb_agg(to_jsonb(p.*) ORDER BY rc.role_key, p.permission_key),
+                    '[]'::jsonb
+                 ) AS permissions
+                 FROM company_role_configs rc
+                 LEFT JOIN company_role_permissions p ON p.role_config_id = rc.id
+                 WHERE rc.company_id = $1`,
+                [companyB]
+            );
+            expect(afterB.rows[0]).toStrictEqual(beforeB.rows[0]);
+        } finally {
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
     databaseTest('stable allocation is collision-free per company and T-foreign/T-blast safe', async () => {
         const client = await db.pool.connect();
         const schema = `call_masking_${randomUUID().replaceAll('-', '')}`;
@@ -86,7 +267,12 @@ describe('CALL-MASKING real PostgreSQL code isolation', () => {
                 CREATE TABLE company_role_configs (
                     id UUID PRIMARY KEY,
                     company_id UUID NOT NULL REFERENCES companies(id),
-                    role_key TEXT NOT NULL
+                    role_key TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    description TEXT,
+                    is_locked BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
                 CREATE TABLE company_role_permissions (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -147,7 +333,10 @@ describe('CALL-MASKING real PostgreSQL code isolation', () => {
                 call_masking_enabled: false,
                 call_masking_number: '+16174044425',
             });
-            await expect(callMaskingService.getSettings(companyA, client)).resolves.toEqual(disabled);
+            await expect(callMaskingService.getSettings(companyA, client)).resolves.toEqual({
+                ...disabled,
+                roles: [],
+            });
 
             await callMaskingService.saveSettings(
                 companyA,

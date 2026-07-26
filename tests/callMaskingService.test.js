@@ -1,10 +1,12 @@
 'use strict';
 
 const mockQuery = jest.fn();
+const mockGetClient = jest.fn();
 const mockAuditLog = jest.fn(() => Promise.resolve());
 
 jest.mock('../backend/src/db/connection', () => ({
     query: (...args) => mockQuery(...args),
+    getClient: (...args) => mockGetClient(...args),
 }));
 jest.mock('../backend/src/services/auditService', () => ({
     log: (...args) => mockAuditLog(...args),
@@ -21,16 +23,28 @@ beforeEach(() => {
 });
 
 describe('callMaskingService settings', () => {
-    test('returns disabled defaults when no company_telephony row exists', async () => {
-        mockQuery.mockResolvedValue({ rows: [] });
+    test('returns disabled defaults and the seeded provider role', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({
+                rows: [{ id: 'role-provider', role_key: 'provider' }],
+            })
+            .mockResolvedValueOnce({
+                rows: [{ permission_key: 'call_masking.use' }],
+            });
         await expect(service.getSettings(COMPANY_A)).resolves.toEqual({
             call_masking_enabled: false,
             call_masking_number: '+16174044425',
+            roles: ['provider'],
         });
-        expect(mockQuery).toHaveBeenCalledWith(
+        expect(mockQuery.mock.calls[0]).toEqual([
             expect.stringContaining('WHERE company_id = $1'),
             [COMPANY_A]
-        );
+        ]);
+        expect(mockQuery.mock.calls[1][0]).toContain('WHERE company_id = $1');
+        expect(mockQuery.mock.calls[1][1]).toEqual([COMPANY_A]);
+        expect(mockQuery.mock.calls[2][0]).toContain('rc.company_id = $2');
+        expect(mockQuery.mock.calls[2][1]).toEqual(['role-provider', COMPANY_A]);
     });
 
     test('save validates ownership in the same company and uses crmUser actor', async () => {
@@ -61,6 +75,86 @@ describe('callMaskingService settings', () => {
         }));
     });
 
+    test('updates call_masking.use for every owned role in one transaction', async () => {
+        const clientQuery = jest.fn();
+        const release = jest.fn();
+        const roleConfigs = [
+            { id: 'role-admin', role_key: 'tenant_admin' },
+            { id: 'role-manager', role_key: 'manager' },
+            { id: 'role-dispatcher', role_key: 'dispatcher' },
+            { id: 'role-provider', role_key: 'provider' },
+        ];
+        clientQuery
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: roleConfigs })
+            .mockResolvedValueOnce({
+                rows: [{
+                    call_masking_enabled: false,
+                    call_masking_number: '+16174044425',
+                }],
+            })
+            .mockResolvedValueOnce({ rows: [{ permission_key: 'call_masking.use', is_allowed: false }] })
+            .mockResolvedValueOnce({ rows: [{ permission_key: 'call_masking.use', is_allowed: true }] })
+            .mockResolvedValueOnce({ rows: [{ permission_key: 'call_masking.use', is_allowed: false }] })
+            .mockResolvedValueOnce({ rows: [{ permission_key: 'call_masking.use', is_allowed: true }] })
+            .mockResolvedValueOnce({ rows: [] });
+        mockGetClient.mockResolvedValue({ query: clientQuery, release });
+
+        await expect(service.saveSettings(COMPANY_A, {
+            call_masking_enabled: false,
+            call_masking_number: '+16174044425',
+            roles: ['provider', 'manager'],
+        }, PROVIDER)).resolves.toEqual({
+            call_masking_enabled: false,
+            call_masking_number: '+16174044425',
+            roles: ['manager', 'provider'],
+        });
+
+        expect(clientQuery.mock.calls[0]).toEqual(['BEGIN']);
+        expect(clientQuery.mock.calls.at(-1)).toEqual(['COMMIT']);
+        const permissionWrites = clientQuery.mock.calls.filter(
+            call => call[0].includes('INSERT INTO company_role_permissions')
+        );
+        expect(permissionWrites).toHaveLength(4);
+        expect(permissionWrites.map(call => call[1])).toEqual([
+            ['role-admin', 'call_masking.use', false, COMPANY_A],
+            ['role-manager', 'call_masking.use', true, COMPANY_A],
+            ['role-dispatcher', 'call_masking.use', false, COMPANY_A],
+            ['role-provider', 'call_masking.use', true, COMPANY_A],
+        ]);
+        for (const [sql] of permissionWrites) {
+            expect(sql).toContain('rc.company_id = $4');
+        }
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(mockQuery).not.toHaveBeenCalled();
+        expect(mockAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+            actor_id: PROVIDER,
+            company_id: COMPANY_A,
+            details: expect.objectContaining({ roles: ['manager', 'provider'] }),
+        }));
+    });
+
+    test('rejects a role key outside the scoped company before writing settings', async () => {
+        const queryable = { query: (...args) => mockQuery(...args) };
+        mockQuery.mockResolvedValueOnce({
+            rows: [{ id: 'role-provider', role_key: 'provider' }],
+        });
+
+        await expect(service.saveSettings(COMPANY_A, {
+            call_masking_enabled: false,
+            call_masking_number: '+16174044425',
+            roles: ['provider', 'foreign-role'],
+        }, PROVIDER, queryable)).rejects.toMatchObject({
+            httpStatus: 422,
+            code: 'INVALID_ROLES',
+        });
+
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(mockQuery.mock.calls[0][0]).toContain('WHERE company_id = $1');
+        expect(mockQuery.mock.calls[0][1]).toEqual([COMPANY_A]);
+        expect(mockAuditLog).not.toHaveBeenCalled();
+    });
+
     test('rejects enabling with a number not owned by the scoped company', async () => {
         mockQuery.mockResolvedValueOnce({ rows: [] });
         await expect(service.saveSettings(COMPANY_A, {
@@ -80,6 +174,7 @@ describe('callMaskingService settings', () => {
     test.each([
         [{ call_masking_enabled: 'true', call_masking_number: '+16174044425' }],
         [{ call_masking_enabled: true, call_masking_number: '6174044425' }],
+        [{ call_masking_enabled: true, call_masking_number: '+16174044425', roles: 'provider' }],
     ])('rejects invalid settings without touching the database', async (payload) => {
         await expect(service.saveSettings(COMPANY_A, payload, PROVIDER))
             .rejects.toMatchObject({ httpStatus: 422, code: 'INVALID_SETTINGS' });

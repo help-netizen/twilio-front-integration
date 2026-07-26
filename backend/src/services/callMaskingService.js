@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../db/connection');
+const roleQueries = require('../db/roleQueries');
 const auditService = require('./auditService');
 const { toE164 } = require('../utils/phoneUtils');
 
@@ -49,6 +50,15 @@ function validateSettings(payload) {
     };
 }
 
+function validateRequestedRoles(payload) {
+    const input = payload || {};
+    if (!Object.prototype.hasOwnProperty.call(input, 'roles')) return null;
+    if (!Array.isArray(input.roles) || input.roles.some(role => typeof role !== 'string')) {
+        throw serviceError(422, 'INVALID_SETTINGS', 'roles must be an array of role keys');
+    }
+    return input.roles;
+}
+
 async function getSettings(companyId, queryable = db) {
     requireCompanyId(companyId);
     const { rows } = await queryFor(queryable).query(
@@ -57,9 +67,20 @@ async function getSettings(companyId, queryable = db) {
          WHERE company_id = $1`,
         [companyId]
     );
+    const roleConfigs = await roleQueries.listRoleConfigs(companyId, queryable);
+    const roles = [];
+    for (const roleConfig of roleConfigs) {
+        const allowedKeys = await roleQueries.getAllowedPermissionKeys(
+            roleConfig.id,
+            queryable,
+            companyId
+        );
+        if (allowedKeys.includes('call_masking.use')) roles.push(roleConfig.role_key);
+    }
     return {
         call_masking_enabled: rows[0]?.call_masking_enabled === true,
         call_masking_number: rows[0]?.call_masking_number || DEFAULT_MASKING_NUMBER,
+        roles,
     };
 }
 
@@ -88,10 +109,24 @@ async function getActiveSettings(companyId, maskingNumber = null, queryable = db
         : null;
 }
 
-async function saveSettings(companyId, payload, actorId, queryable = db) {
-    requireCompanyId(companyId);
-    const settings = validateSettings(payload);
+async function persistSettings(companyId, settings, requestedRoles, queryable) {
     const query = queryFor(queryable);
+    let roleConfigs = null;
+    let roles = null;
+
+    if (requestedRoles !== null) {
+        roleConfigs = await roleQueries.listRoleConfigs(companyId, queryable);
+        const validRoleKeys = new Set(roleConfigs.map(role => role.role_key));
+        const unknownRoles = [...new Set(requestedRoles)]
+            .filter(roleKey => !validRoleKeys.has(roleKey));
+        if (unknownRoles.length > 0) {
+            throw serviceError(422, 'INVALID_ROLES', 'One or more roles do not belong to this company');
+        }
+        const requestedRoleKeys = new Set(requestedRoles);
+        roles = roleConfigs
+            .filter(role => requestedRoleKeys.has(role.role_key))
+            .map(role => role.role_key);
+    }
 
     if (settings.call_masking_enabled) {
         const owned = await query.query(
@@ -118,6 +153,44 @@ async function saveSettings(companyId, payload, actorId, queryable = db) {
         [companyId, settings.call_masking_enabled, settings.call_masking_number]
     );
 
+    if (roleConfigs) {
+        const requestedRoleKeys = new Set(requestedRoles);
+        for (const roleConfig of roleConfigs) {
+            await roleQueries.setRolePermission(
+                roleConfig.id,
+                'call_masking.use',
+                requestedRoleKeys.has(roleConfig.role_key),
+                companyId,
+                queryable
+            );
+        }
+    }
+
+    return roles === null ? rows[0] : { ...rows[0], roles };
+}
+
+async function saveSettings(companyId, payload, actorId, queryable = db) {
+    requireCompanyId(companyId);
+    const settings = validateSettings(payload);
+    const requestedRoles = validateRequestedRoles(payload);
+    let saved;
+
+    if (queryable === db && requestedRoles !== null) {
+        const client = await db.getClient();
+        try {
+            await client.query('BEGIN');
+            saved = await persistSettings(companyId, settings, requestedRoles, client);
+            await client.query('COMMIT');
+        } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
+        } finally {
+            client.release();
+        }
+    } else {
+        saved = await persistSettings(companyId, settings, requestedRoles, queryable);
+    }
+
     if (queryable === db) {
         auditService.log({
             actor_id: actorId || null,
@@ -125,11 +198,11 @@ async function saveSettings(companyId, payload, actorId, queryable = db) {
             target_type: 'company',
             target_id: companyId,
             company_id: companyId,
-            details: rows[0],
+            details: saved,
         }).catch(() => {});
     }
 
-    return rows[0];
+    return saved;
 }
 
 function providerVisibility(providerScope, params, alias) {
