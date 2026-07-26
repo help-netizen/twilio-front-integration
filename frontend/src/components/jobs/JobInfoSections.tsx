@@ -199,7 +199,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                     {phone && (
                         <div style={infoRow}>
                             <span style={infoLabel}>Phone</span>
-                            <div className="flex flex-col gap-1">
+                            <MaskedCallLine entityType="job" entityId={job.id}>
                                 <div className="flex items-center gap-2">
                                     <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
                                         {formatPhone(phone)}
@@ -207,8 +207,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                                     <ClickToCallButton phone={phone} contactName={customerName || undefined} />
                                     <OpenTimelineButton phone={phone} contactId={contactInfo?.id} />
                                 </div>
-                                <MaskedCallLine entityType="job" entityId={job.id} />
-                            </div>
+                            </MaskedCallLine>
                         </div>
                     )}
                     {email && (

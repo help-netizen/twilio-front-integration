@@ -70,7 +70,7 @@ export function ContactInfoSections({ contact, onAddressesChanged }: ContactInfo
                     {phone && (
                         <div style={infoRow}>
                             <span style={infoLabel}>Phone</span>
-                            <div className="flex flex-col gap-1">
+                            <MaskedCallLine entityType="contact" entityId={contact.id}>
                                 <div className="flex items-center gap-2">
                                     <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
                                         {formatPhone(phone)}
@@ -78,8 +78,7 @@ export function ContactInfoSections({ contact, onAddressesChanged }: ContactInfo
                                     <ClickToCallButton phone={phone} contactName={name || undefined} />
                                     <OpenTimelineButton phone={phone} contactId={contact.id} />
                                 </div>
-                                <MaskedCallLine entityType="contact" entityId={contact.id} />
-                            </div>
+                            </MaskedCallLine>
                         </div>
                     )}
                     {secondaryPhone && (

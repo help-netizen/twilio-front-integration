@@ -139,31 +139,38 @@ export default function CallMaskingPage() {
                 )}
             </SettingsSection>
 
-            <SettingsSection title="How it works" description="Two ways your tech places a masked call.">
-                <div className="space-y-4">
-                    <div className="flex items-start gap-3">
-                        <PhoneForwarded size={16} style={{ color: INK3, marginTop: 2, flexShrink: 0 }} />
-                        <div>
-                            <div className="text-sm font-medium" style={{ color: INK1 }}>Direct dial</div>
-                            <p className="text-[13px]" style={{ color: INK2, marginTop: 2, lineHeight: 1.5 }}>
-                                The tech dials <code style={codeStyle}>{activeNumber || 'your number'},,CODE</code> — the six-digit
-                                customer code shown on the job and contact.
-                            </p>
+            {/* One self-contained, on-brand lavender badge — heading lives inside it. */}
+            <section>
+                <div style={{ background: 'var(--blanc-accent-soft)', borderRadius: 16, padding: '20px 22px' }}>
+                    <div className="blanc-eyebrow" style={{ color: ACCENT }}>How it works</div>
+                    <p className="text-[13px]" style={{ color: INK2, marginTop: 3, marginBottom: 16 }}>
+                        Two ways your tech places a masked call.
+                    </p>
+                    <div className="space-y-4">
+                        <div className="flex items-start gap-3">
+                            <PhoneForwarded size={16} style={{ color: ACCENT, marginTop: 2, flexShrink: 0 }} />
+                            <div>
+                                <div className="text-sm font-semibold" style={{ color: INK1 }}>Direct dial</div>
+                                <p className="text-[13px]" style={{ color: INK2, marginTop: 2, lineHeight: 1.5 }}>
+                                    The tech dials <code style={codeStyle}>{activeNumber || 'your number'},,CODE</code> — the six-digit
+                                    customer code shown on the job and contact.
+                                </p>
+                            </div>
                         </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                        <ShieldCheck size={16} style={{ color: INK3, marginTop: 2, flexShrink: 0 }} />
-                        <div>
-                            <div className="text-sm font-medium" style={{ color: INK1 }}>IVR entry</div>
-                            <p className="text-[13px]" style={{ color: INK2, marginTop: 2, lineHeight: 1.5 }}>
-                                Or the tech calls <code style={codeStyle}>{activeNumber || 'your number'}</code> from their
-                                registered phone and enters the code when prompted. The customer is called from your number and
-                                the call is recorded.
-                            </p>
+                        <div className="flex items-start gap-3">
+                            <ShieldCheck size={16} style={{ color: ACCENT, marginTop: 2, flexShrink: 0 }} />
+                            <div>
+                                <div className="text-sm font-semibold" style={{ color: INK1 }}>IVR entry</div>
+                                <p className="text-[13px]" style={{ color: INK2, marginTop: 2, lineHeight: 1.5 }}>
+                                    Or the tech calls <code style={codeStyle}>{activeNumber || 'your number'}</code> from their
+                                    registered phone and enters the code when prompted. The customer is called from your number and
+                                    the call is recorded.
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </SettingsSection>
+            </section>
         </SettingsPageShell>
     );
 }
