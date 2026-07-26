@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -11,12 +11,13 @@ import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { Plus, Copy, ShieldOff, Key, Webhook, RefreshCw, Check, Settings2, Save, Trash2, Store, AlertCircle, ExternalLink } from 'lucide-react';
+import { Plus, Copy, ShieldOff, Key, Webhook, RefreshCw, Check, Settings2, Save, Trash2, Store, ExternalLink } from 'lucide-react';
 import { CreateDialog, SecretDialog, RevokeDialog, RegenerateDialog } from './IntegrationDialogs';
 import { RelyLeadsSettingsDialog } from './RelyLeadsSettingsDialog';
 import { RateMeSettingsDialog } from './RateMeSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
-import { MarketplaceBrowser } from '../components/settings/MarketplaceBrowser';
+import { MarketplaceGrid } from '../components/settings/marketplace/MarketplaceGrid';
+import { MarketplaceAppDetail } from '../components/settings/marketplace/MarketplaceAppDetail';
 import { InspectorSettingsPanel } from '../components/settings/InspectorSettingsPanel';
 import { AvatarsPanel } from '../components/settings/AvatarsPanel';
 import { useAuth } from '../auth/AuthProvider';
@@ -31,41 +32,6 @@ function formatDate(dateStr: string | null | undefined) {
         hour: '2-digit',
         minute: '2-digit',
     });
-}
-
-function marketplaceStatusBadge(app: MarketplaceApp) {
-    const status = app.installation?.status;
-    if (status === 'connected') return <Badge className="bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)] hover:bg-[rgba(27,139,99,0.12)]">Connected</Badge>;
-    if (status === 'provisioning_failed') return <Badge className="bg-[rgba(178,106,29,0.12)] text-[var(--blanc-warning)] hover:bg-[rgba(178,106,29,0.12)]">Needs attention</Badge>;
-    if (status === 'disconnected' || status === 'revoked') return <Badge variant="secondary">Disconnected</Badge>;
-    return <Badge variant="outline">Available</Badge>;
-}
-
-// App icon: the uploaded logo when present, otherwise a monogram of the app's
-// first letter. A broken/absent image falls back to the same monogram so a card
-// never shows a blank tile.
-function MarketplaceAppLogo({ app }: { app: MarketplaceApp }) {
-    const [imgOk, setImgOk] = useState(true);
-    const letter = (app.name?.trim()?.[0] ?? '?').toUpperCase();
-    if (app.logo_url && imgOk) {
-        return (
-            <img
-                src={app.logo_url}
-                alt=""
-                className="h-11 w-11 shrink-0 rounded-xl object-contain bg-[var(--blanc-surface-muted)]"
-                onError={() => setImgOk(false)}
-            />
-        );
-    }
-    return (
-        <div
-            aria-hidden
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--blanc-field)] text-lg font-bold text-[var(--blanc-ink-2)]"
-            style={{ fontFamily: 'var(--blanc-font-heading)' }}
-        >
-            {letter}
-        </div>
-    );
 }
 
 function MarketplaceConnectDialog({
@@ -216,6 +182,10 @@ export function IntegrationsPage() {
     };
 
     const { data: apps = [], isLoading: marketplaceLoading } = useQuery({ queryKey: ['marketplace-apps'], queryFn: fetchMarketplaceApps });
+    // The app whose detail panel is open — resolved from the live list so it stays
+    // fresh across install/disconnect refetches.
+    const [detailAppKey, setDetailAppKey] = useState<string | null>(null);
+    const detailApp = detailAppKey ? apps.find(a => a.app_key === detailAppKey) ?? null : null;
     const { data: mailbox } = useQuery({ queryKey: ['email-mailbox-settings'], queryFn: getMailboxSettings });
     const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: fetchIntegrations });
     const { data: webhookData, isLoading: webhookLoading } = useQuery({ queryKey: ['zenbooker-webhook-url'], queryFn: fetchWebhookUrl });
@@ -256,6 +226,61 @@ export function IntegrationsPage() {
     function getStatusBadge(integration: Integration) { if (integration.revoked_at) return <Badge variant="destructive">Revoked</Badge>; if (integration.expires_at && new Date(integration.expires_at) < new Date()) return <Badge variant="secondary">Expired</Badge>; return <Badge className="bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)] hover:bg-[rgba(27,139,99,0.12)]">Active</Badge>; }
     const gmailConnected = mailbox?.provider === 'gmail' && mailbox.status === 'connected';
 
+    // Per-app primary actions, hosted inside the app detail panel (the card just
+    // opens the panel, so no install branching lives on the card itself).
+    const renderAppActions = (app: MarketplaceApp): ReactNode => (
+        <div className="w-full">
+            {app.metadata?.requires_connected_gmail && !gmailConnected && !app.installation && (
+                <p className="mb-2.5 text-sm text-[var(--blanc-ink-2)]">Connect Gmail before enabling this app.</p>
+            )}
+            {app.installation?.provisioning_error && (
+                <p className="mb-2.5 text-sm text-[var(--blanc-warning)]">{app.installation.provisioning_error}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+                {app.app_key === 'vapi-ai' ? (
+                    <Button size="sm" variant={app.installation?.status === 'connected' ? 'outline' : 'default'} onClick={() => navigate('/settings/integrations/vapi-ai')}>
+                        {app.installation?.status === 'connected' ? 'Manage' : 'Configure'}
+                    </Button>
+                ) : app.app_key === 'stripe-payments' ? (
+                    <Button size="sm" variant={app.installation?.status === 'connected' ? 'outline' : 'default'} onClick={() => navigate('/settings/integrations/stripe-payments')}>
+                        {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? 'Manage' : 'Configure'}
+                    </Button>
+                ) : app.app_key === 'google-email' ? (
+                    <Button size="sm" variant={gmailConnected ? 'outline' : 'default'} onClick={() => navigate(String(app.metadata?.setup_path || '/settings/integrations/google-email'))}>
+                        {gmailConnected ? 'Manage' : 'Connect'}
+                    </Button>
+                ) : app.app_key === 'telephony-twilio' ? (
+                    <Button size="sm" variant={app.installation?.status === 'connected' ? 'outline' : 'default'} onClick={() => navigate(app.installation?.status === 'connected' ? '/settings/telephony' : String(app.metadata?.setup_path || '/settings/integrations/telephony-twilio'))}>
+                        {app.installation?.status === 'connected' ? 'Manage' : 'Configure'}
+                    </Button>
+                ) : (
+                    <>
+                        {app.installation?.status === 'provisioning_failed' && (
+                            <Button variant="outline" size="sm" onClick={() => retryMutation.mutate(app.installation!.id)} disabled={retryMutation.isPending}>Retry</Button>
+                        )}
+                        {app.installation?.status === 'connected' && app.metadata?.setup_path && (
+                            <Button size="sm" onClick={() => navigate(String(app.metadata!.setup_path))}>{app.app_key === 'inspector' ? 'Settings' : 'Setup'}</Button>
+                        )}
+                        {app.app_key === 'rely-leads' && app.installation?.status === 'connected' && (
+                            <Button variant="outline" size="sm" onClick={() => setRelySettingsOpen(true)}>Settings</Button>
+                        )}
+                        {app.app_key === 'rate-me' && app.installation?.status === 'connected' && (
+                            <Button variant="outline" size="sm" onClick={() => setRateMeSettingsOpen(true)}>Settings</Button>
+                        )}
+                        {app.app_key === 'chatgpt-crm-mcp' && app.installation?.status === 'connected' && (
+                            <Button variant="outline" size="sm" onClick={() => setChatgptMcpPanelOpen(true)}>Setup</Button>
+                        )}
+                        {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? (
+                            <Button variant="outline" size="sm" onClick={() => setDisconnectTarget(app)}>Disconnect</Button>
+                        ) : (
+                            <Button size="sm" onClick={() => setConnectTarget(app)}>Enable</Button>
+                        )}
+                    </>
+                )}
+            </div>
+        </div>
+    );
+
     return (
         <SettingsPageShell
             title={tabCopy.title}
@@ -285,130 +310,9 @@ export function IntegrationsPage() {
                             <p className="text-[var(--blanc-ink-2)]">No marketplace apps are published yet</p>
                         </div>
                     ) : (
-                        <MarketplaceBrowser
+                        <MarketplaceGrid
                             apps={apps}
-                            renderApp={app => (
-                                <div className="flex min-h-[230px] flex-col rounded-xl border border-[var(--blanc-line)] bg-[var(--blanc-surface-strong)] p-5">
-                                    <div className="flex items-start justify-between gap-4">
-                                        <div className="flex min-w-0 items-start gap-3">
-                                            <MarketplaceAppLogo app={app} />
-                                            <div className="min-w-0">
-                                                <h3 className="text-lg font-semibold truncate text-[var(--blanc-ink-1)]">{app.name}</h3>
-                                                <p className="text-sm text-[var(--blanc-ink-2)] mt-1">{app.provider_name} · {app.category.replace(/_/g, ' ')}</p>
-                                            </div>
-                                        </div>
-                                        {marketplaceStatusBadge(app)}
-                                    </div>
-
-                                    <p className="mt-4 text-sm text-[var(--blanc-ink-1)]">{app.short_description}</p>
-
-                                    <div className="mt-4">
-                                        <div className="text-xs font-medium text-[var(--blanc-ink-3)] mb-2">Access</div>
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {(app.access_summary.length ? app.access_summary : app.requested_scopes).map(item => (
-                                                <Badge key={item} variant="outline" className="h-auto max-w-full whitespace-normal text-left text-xs leading-5">{item}</Badge>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    {app.metadata?.requires_connected_gmail && !gmailConnected && !app.installation && (
-                                        <p className="mt-4 text-sm text-[var(--blanc-ink-2)]">
-                                            Connect Gmail before enabling this app.
-                                        </p>
-                                    )}
-
-                                    {app.installation?.provisioning_error && (
-                                        <p className="mt-4 flex items-start gap-2 text-sm text-[var(--blanc-warning)]">
-                                            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                                            <span>{app.installation.provisioning_error}</span>
-                                        </p>
-                                    )}
-
-                                    <div className="mt-auto flex items-center justify-between gap-3 pt-5">
-                                        <div className="text-xs text-[var(--blanc-ink-3)]">
-                                            {app.installation?.status === 'connected' ? `Last used ${formatDate(app.installation.last_used_at)}` : `Mode: ${app.provisioning_mode.replace(/_/g, ' ')}`}
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            {app.app_key === 'vapi-ai' ? (
-                                                <Button
-                                                    size="sm"
-                                                    variant={app.installation?.status === 'connected' ? 'outline' : 'default'}
-                                                    onClick={() => navigate('/settings/integrations/vapi-ai')}
-                                                >
-                                                    {app.installation?.status === 'connected' ? 'Manage' : 'Configure'}
-                                                </Button>
-                                            ) : app.app_key === 'stripe-payments' ? (
-                                                <Button
-                                                    size="sm"
-                                                    variant={app.installation?.status === 'connected' ? 'outline' : 'default'}
-                                                    onClick={() => navigate('/settings/integrations/stripe-payments')}
-                                                >
-                                                    {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? 'Manage' : 'Configure'}
-                                                </Button>
-                                            ) : app.app_key === 'google-email' ? (
-                                                <Button
-                                                    size="sm"
-                                                    variant={gmailConnected ? 'outline' : 'default'}
-                                                    onClick={() => navigate(String(app.metadata?.setup_path || '/settings/integrations/google-email'))}
-                                                >
-                                                    {gmailConnected ? 'Manage' : 'Connect'}
-                                                </Button>
-                                            ) : app.app_key === 'telephony-twilio' ? (
-                                                // ONBTEL-001 §2.2: derived connection state — the generic
-                                                // Enable/MarketplaceConnectDialog path is unreachable here.
-                                                <Button
-                                                    size="sm"
-                                                    variant={app.installation?.status === 'connected' ? 'outline' : 'default'}
-                                                    onClick={() => navigate(
-                                                        app.installation?.status === 'connected'
-                                                            ? '/settings/telephony'
-                                                            : String(app.metadata?.setup_path || '/settings/integrations/telephony-twilio')
-                                                    )}
-                                                >
-                                                    {app.installation?.status === 'connected' ? 'Manage' : 'Configure'}
-                                                </Button>
-                                            ) : (
-                                                <>
-                                                    {app.installation?.status === 'provisioning_failed' && (
-                                                        <Button variant="outline" size="sm" onClick={() => retryMutation.mutate(app.installation!.id)} disabled={retryMutation.isPending}>
-                                                            Retry
-                                                        </Button>
-                                                    )}
-                                                    {app.installation?.status === 'connected' && app.metadata?.setup_path && (
-                                                        <Button size="sm" onClick={() => navigate(String(app.metadata!.setup_path))}>
-                                                            {app.app_key === 'inspector' ? 'Settings' : 'Setup'}
-                                                        </Button>
-                                                    )}
-                                                    {app.app_key === 'rely-leads' && app.installation?.status === 'connected' && (
-                                                        <Button variant="outline" size="sm" onClick={() => setRelySettingsOpen(true)}>
-                                                            Settings
-                                                        </Button>
-                                                    )}
-                                                    {app.app_key === 'rate-me' && app.installation?.status === 'connected' && (
-                                                        <Button variant="outline" size="sm" onClick={() => setRateMeSettingsOpen(true)}>
-                                                            Settings
-                                                        </Button>
-                                                    )}
-                                                    {app.app_key === 'chatgpt-crm-mcp' && app.installation?.status === 'connected' && (
-                                                        <Button variant="outline" size="sm" onClick={() => setChatgptMcpPanelOpen(true)}>
-                                                            Setup
-                                                        </Button>
-                                                    )}
-                                                    {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? (
-                                                        <Button variant="outline" size="sm" onClick={() => setDisconnectTarget(app)}>
-                                                            Disconnect
-                                                        </Button>
-                                                    ) : (
-                                                        <Button size="sm" onClick={() => setConnectTarget(app)}>
-                                                            Enable
-                                                        </Button>
-                                                    )}
-                                                </>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
+                            onOpen={app => setDetailAppKey(app.app_key)}
                         />
                     )}
                 </TabsContent>
@@ -493,6 +397,13 @@ export function IntegrationsPage() {
             <RelyLeadsSettingsDialog open={relySettingsOpen} onOpenChange={setRelySettingsOpen} />
             <RateMeSettingsDialog open={rateMeSettingsOpen} onOpenChange={setRateMeSettingsOpen} />
             <InspectorSettingsPanel open={inspectorSettingsOpen} onOpenChange={setInspectorSettingsOpen} />
+
+            <MarketplaceAppDetail
+                app={detailApp}
+                open={!!detailApp}
+                onClose={() => setDetailAppKey(null)}
+                actions={detailApp ? renderAppActions(detailApp) : null}
+            />
             <AvatarsPanel
                 open={chatgptMcpPanelOpen}
                 onOpenChange={setChatgptMcpPanelOpen}
