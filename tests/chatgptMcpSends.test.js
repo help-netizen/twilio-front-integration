@@ -10,6 +10,12 @@ const mockInvoices = {
 jest.mock('../backend/src/services/estimatesService', () => mockEstimates);
 jest.mock('../backend/src/services/invoicesService', () => mockInvoices);
 jest.mock('../backend/src/db/chatgptMcpQueries', () => ({}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    aiActor: jest.fn((label = 'Avatar') => ({
+        id: null, type: 'ai', label, source: 'mcp',
+    })),
+    logFinancialActivity: jest.fn(),
+}));
 
 const permissions = require('../backend/src/services/chatgptMcpPermissions');
 const registry = require('../backend/src/services/agentSkillsMcpRegistry');
@@ -179,7 +185,13 @@ describe('CHATGPT-CRM-MCP S3 canonical dispatch and recipient invariant', () => 
                     name: CONTEXT.actorName,
                 },
             },
-            tx
+            tx,
+            {
+                id: null,
+                type: 'ai',
+                label: CONTEXT.actorName,
+                source: 'mcp',
+            }
         );
         expect(result).toEqual({
             sent: true,
@@ -221,7 +233,13 @@ describe('CHATGPT-CRM-MCP S3 canonical dispatch and recipient invariant', () => 
                 includePaymentLink: true,
                 noteActor: { id: ACTOR, name: CONTEXT.actorName },
             }),
-            tx
+            tx,
+            {
+                id: null,
+                type: 'ai',
+                label: CONTEXT.actorName,
+                source: 'mcp',
+            }
         );
         expect(result).toMatchObject({
             sent: true,

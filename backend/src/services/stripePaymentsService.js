@@ -17,11 +17,19 @@ const paymentsQueries = require('../db/paymentsQueries');
 const paymentsService = require('./paymentsService');
 const invoicesService = require('./invoicesService');
 const invoicesQueries = require('../db/invoicesQueries');
+const estimatesQueries = require('../db/estimatesQueries');
 const marketplaceService = require('./marketplaceService');
 const marketplaceQueries = require('../db/marketplaceQueries');
 const auditService = require('./auditService');
 const companyQueries = require('../db/companyQueries');
 const technicianProfilesService = require('./technicianProfilesService');
+const {
+    clientActor,
+    logFinancialActivity,
+    stripeActor,
+    userActor,
+} = require('./financialActivityService');
+const { withTransaction } = require('./transactionService');
 
 const APP_KEY = 'stripe-payments';
 
@@ -239,9 +247,16 @@ function invoiceBalance(invoice) {
     return Number(invoice.total || 0) - Number(invoice.amount_paid || 0);
 }
 
-async function ensurePaymentLink(companyId, actor, invoiceId, { amount } = {}) {
+async function ensurePaymentLink(
+    companyId,
+    actor,
+    invoiceId,
+    { amount } = {},
+    client = null,
+    activityActor = null
+) {
     const account = await assertCollectable(companyId);
-    const invoice = await invoicesService.getInvoice(companyId, invoiceId); // 404 if foreign
+    const invoice = await invoicesService.getInvoice(companyId, invoiceId, client); // 404 if foreign
     if (!invoice) throw new StripePaymentsError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     if (['void', 'refunded', 'paid'].includes(invoice.status)) {
         throw new StripePaymentsError('INVALID_STATUS', `Cannot collect on invoice with status '${invoice.status}'`, 400);
@@ -253,7 +268,7 @@ async function ensurePaymentLink(companyId, actor, invoiceId, { amount } = {}) {
     }
 
     // Reuse a valid open session for same invoice + amount (FR-004).
-    const existing = await q.findOpenSession(companyId, invoiceId, payAmount);
+    const existing = await q.findOpenSession(companyId, invoiceId, payAmount, client);
     if (existing) return { url: existing.url, expires_at: existing.expires_at, reused: true, session_id: existing.id };
 
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h expiry policy
@@ -290,8 +305,17 @@ async function ensurePaymentLink(companyId, actor, invoiceId, { amount } = {}) {
         url: session.url,
         expires_at: expiresAt,
         metadata: {},
-    });
-    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_created', target_type: 'invoice', target_id: String(invoiceId), company_id: companyId, details: { amount: payAmount } });
+    }, client);
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.link_created',
+            entity: invoice,
+            actor: activityActor,
+            summary: { amount: payAmount, currency: row.currency },
+        }, { client });
+    }
     return { url: row.url, expires_at: row.expires_at, reused: false, session_id: row.id };
 }
 
@@ -304,14 +328,38 @@ async function getPaymentLink(companyId, invoiceId) {
     };
 }
 
-async function sendPaymentLink(companyId, actor, invoiceId, { channel = 'email', message } = {}) {
-    const link = await ensurePaymentLink(companyId, actor, invoiceId);
+async function sendPaymentLink(
+    companyId,
+    actor,
+    invoiceId,
+    { channel = 'email', message } = {},
+    client = null,
+    activityActor = null
+) {
+    const link = await ensurePaymentLink(
+        companyId,
+        actor,
+        invoiceId,
+        {},
+        client,
+        activityActor
+    );
     // Delivery follows the existing invoice send pattern (event-logged). Actual
     // email/SMS dispatch is handled by the shared messaging path / invoice send.
     await invoicesQueries.createEvent(companyId, invoiceId, 'payment_link_sent', 'user', actor?.id || null, {
         channel, message: message || null, url: link.url,
-    });
-    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.payment_link_sent', target_type: 'invoice', target_id: String(invoiceId), company_id: companyId, details: { channel } });
+    }, client);
+    if (activityActor) {
+        const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.link_sent',
+            entity: invoice,
+            actor: activityActor,
+            summary: { channel },
+        }, { client });
+    }
     return { sent: true, url: link.url, channel };
 }
 
@@ -477,10 +525,30 @@ async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, me
  * surface. Invoice context defaults to the current balance; job context needs an
  * explicit amount.
  */
-async function resolveSurfaceContext(companyId, { invoiceId, jobId, amount }) {
-    let ctx = { invoiceId: invoiceId || null, jobId: jobId || null, contactId: null, amount: amount != null ? Number(amount) : null, invoiceNumber: null };
+async function resolveSurfaceContext(
+    companyId,
+    { invoiceId, jobId, contactId, amount },
+    client = null
+) {
+    let ctx = {
+        invoiceId: invoiceId || null,
+        jobId: jobId || null,
+        contactId: contactId || null,
+        amount: amount != null ? Number(amount) : null,
+        invoiceNumber: null,
+    };
+    if (contactId) {
+        const contact = await estimatesQueries.getContactContext(
+            companyId,
+            contactId,
+            client
+        );
+        if (!contact) {
+            throw new StripePaymentsError('NOT_FOUND', `Contact ${contactId} not found`, 404);
+        }
+    }
     if (invoiceId) {
-        const invoice = await invoicesService.getInvoice(companyId, invoiceId);
+        const invoice = await invoicesService.getInvoice(companyId, invoiceId, client);
         if (!invoice) throw new StripePaymentsError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
         if (['void', 'refunded', 'paid'].includes(invoice.status)) {
             throw new StripePaymentsError('INVALID_STATUS', `Cannot collect on invoice with status '${invoice.status}'`, 400);
@@ -511,9 +579,16 @@ async function resolveSurfaceContext(companyId, { invoiceId, jobId, amount }) {
     return ctx;
 }
 
-async function createCardSession(companyId, actor, surface, params) {
+async function createCardSession(
+    companyId,
+    actor,
+    surface,
+    params,
+    client = null,
+    activityActor = null
+) {
     const account = await assertCollectable(companyId);
-    const ctx = await resolveSurfaceContext(companyId, params);
+    const ctx = await resolveSurfaceContext(companyId, params, client);
     const metadata = {
         company_id: companyId,
         invoice_id: ctx.invoiceId != null ? String(ctx.invoiceId) : '',
@@ -530,8 +605,36 @@ async function createCardSession(companyId, actor, surface, params) {
         invoice_id: ctx.invoiceId, job_id: ctx.jobId, contact_id: ctx.contactId,
         created_by: actor?.id || null, surface, amount: ctx.amount, status: 'open',
         stripe_payment_intent_id: pi.id, stripe_account_id: account.stripe_account_id, metadata: {},
-    });
-    await auditService.log({ actor_id: actor?.id || null, action: `stripe_payments.${surface === 'tap_to_pay' ? 'tap_to_pay' : 'manual_card'}_started`, target_type: 'invoice', target_id: ctx.invoiceId ? String(ctx.invoiceId) : null, company_id: companyId, details: { amount: ctx.amount } });
+    }, client);
+    if (activityActor) {
+        const paymentTarget = {
+            ...row,
+            estimate_id: null,
+        };
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.session_started',
+            entity: paymentTarget,
+            actor: activityActor,
+            summary: { amount: ctx.amount, currency: row.currency },
+        }, { client });
+        if (ctx.invoiceId) {
+            const invoice = await invoicesQueries.getInvoiceById(
+                companyId,
+                ctx.invoiceId,
+                client
+            );
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: 'invoice.card_session_started',
+                entity: invoice,
+                actor: activityActor,
+                summary: { amount: ctx.amount, currency: row.currency },
+            }, { client });
+        }
+    }
     return {
         session_id: row.id,
         client_secret: pi.client_secret,
@@ -541,19 +644,32 @@ async function createCardSession(companyId, actor, surface, params) {
     };
 }
 
-const createManualCardSession = (companyId, actor, params) => createCardSession(companyId, actor, 'manual_card', params);
+const createManualCardSession = (
+    companyId,
+    actor,
+    params,
+    client = null,
+    activityActor = null
+) => createCardSession(
+    companyId,
+    actor,
+    'manual_card',
+    params,
+    client,
+    activityActor
+);
 
 function parseSessionMetadata(value) {
     if (!value || typeof value === 'object') return value || {};
     try { return JSON.parse(value); } catch { return {}; }
 }
 
-async function getMerchantManualCardSession(companyId, sessionId) {
+async function getMerchantManualCardSession(companyId, sessionId, client = null) {
     if (!/^\d+$/.test(String(sessionId || ''))) {
         throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
     }
 
-    const session = await q.getSessionById(companyId, sessionId);
+    const session = await q.getSessionById(companyId, sessionId, client);
     const metadata = parseSessionMetadata(session?.metadata);
     const isMerchantManual = session?.surface === 'manual_card'
         && metadata.public !== true
@@ -609,10 +725,17 @@ function normalizeReceiptEmail(value) {
  * Send Stripe's native receipt for a successful merchant keyed-card charge.
  * The contact lookup and optional fill-empty write are both resolved server-side.
  */
-async function sendManualCardReceipt(companyId, sessionId, rawEmail, noteActor = null) {
+async function sendManualCardReceipt(
+    companyId,
+    sessionId,
+    rawEmail,
+    noteActor = null,
+    client = null,
+    activityActor = null
+) {
     // Resolve tenant ownership + merchant/public classification before validation
     // or any Stripe request so foreign/public session ids retain a uniform 404.
-    const session = await getMerchantManualCardSession(companyId, sessionId);
+    const session = await getMerchantManualCardSession(companyId, sessionId, client);
     const email = normalizeReceiptEmail(rawEmail);
 
     const pi = await provider.retrievePaymentIntent(
@@ -630,7 +753,7 @@ async function sendManualCardReceipt(companyId, sessionId, rawEmail, noteActor =
     }
 
     let contactEmailSaved = false;
-    const contact = await q.getSessionReceiptContact(companyId, session.id);
+    const contact = await q.getSessionReceiptContact(companyId, session.id, client);
     if (contact && !String(contact.email || '').trim()) {
         const { propagateContactDetails } = require('./contactPropagationService');
         const outcome = await propagateContactDetails(
@@ -645,11 +768,26 @@ async function sendManualCardReceipt(companyId, sessionId, rawEmail, noteActor =
     // Complete the local fill-empty write before the external send. If the local
     // write fails, Stripe has not emailed yet; if Stripe then fails, retrying is
     // safe for the contact because the same fill-empty guard becomes a no-op.
-    const charge = await provider.updateChargeReceiptEmail(
-        session.stripe_account_id,
-        chargeId,
-        email
-    );
+    let charge;
+    try {
+        charge = await provider.updateChargeReceiptEmail(
+            session.stripe_account_id,
+            chargeId,
+            email
+        );
+    } catch (err) {
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'payment',
+                action: 'payment.receipt_send_failed',
+                entity: session,
+                actor: activityActor,
+                summary: { channel: 'email' },
+            });
+        }
+        throw err;
+    }
 
     let receiptJobId = session.job_id || null;
     if (!receiptJobId && session.invoice_id) {
@@ -674,6 +812,22 @@ async function sendManualCardReceipt(companyId, sessionId, rawEmail, noteActor =
         channel: 'email',
         recipient: email,
     });
+    if (activityActor) {
+        const payment = await paymentsQueries.findByExternalSourceId(
+            companyId,
+            'stripe',
+            session.stripe_payment_intent_id,
+            client
+        );
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.receipt_sent',
+            entity: payment || session,
+            actor: activityActor,
+            summary: { channel: 'email' },
+        }, { client });
+    }
 
     return {
         sent: true,
@@ -691,24 +845,54 @@ async function getConnectionToken(companyId) {
     return { secret: token.secret, location_id: locations[0]?.stripe_location_id || null };
 }
 
-const createTapToPayIntent = (companyId, actor, params) => createCardSession(companyId, actor, 'tap_to_pay', params);
+const createTapToPayIntent = (
+    companyId,
+    actor,
+    params,
+    client = null,
+    activityActor = null
+) => createCardSession(
+    companyId,
+    actor,
+    'tap_to_pay',
+    params,
+    client,
+    activityActor
+);
 
 async function cancelTerminalIntent(companyId, actor, paymentIntentId) {
     const account = await q.getAccountByCompany(companyId);
     if (!account) throw new StripePaymentsError('NOT_CONNECTED', 'Stripe account not connected', 400);
     await provider.cancelPaymentIntent(account.stripe_account_id, paymentIntentId);
-    const session = await q.getSessionByPaymentIntent(paymentIntentId);
-    if (session && session.company_id === companyId) await q.updateSession(session.id, { status: 'canceled' });
+    const session = await q.getSessionByPaymentIntent(companyId, paymentIntentId);
+    if (session) await q.updateSession(companyId, session.id, { status: 'canceled' });
     return { canceled: true };
 }
 
 // ---- refunds — Phase 5 ------------------------------------------------------
 
 /** Idempotent refund recording keyed on the Stripe refund id. */
-async function applyStripeRefund(companyId, { refundId, paymentIntentId, amount, reason }) {
-    const existing = await paymentsQueries.findByExternalSourceId(companyId, 'stripe', refundId);
+async function applyStripeRefund(
+    companyId,
+    { refundId, paymentIntentId, amount, reason },
+    client = null,
+    activityActor = null
+) {
+    const existing = await paymentsQueries.findByExternalSourceId(
+        companyId,
+        'stripe',
+        refundId,
+        client
+    );
     if (existing) return { tx: existing, deduped: true };
-    const original = paymentIntentId ? await paymentsQueries.findByExternalSourceId(companyId, 'stripe', paymentIntentId) : null;
+    const original = paymentIntentId
+        ? await paymentsQueries.findByExternalSourceId(
+            companyId,
+            'stripe',
+            paymentIntentId,
+            client
+        )
+        : null;
 
     let tx;
     try {
@@ -726,36 +910,109 @@ async function applyStripeRefund(companyId, { refundId, paymentIntentId, amount,
             memo: reason ? `Stripe refund: ${reason}` : 'Stripe refund',
             metadata: { original_external_id: paymentIntentId || null },
             processed_at: new Date().toISOString(),
-        });
+        }, client);
     } catch (err) {
         if (err.code === '23505') {
-            const row = await paymentsQueries.findByExternalSourceId(companyId, 'stripe', refundId);
+            const row = await paymentsQueries.findByExternalSourceId(
+                companyId,
+                'stripe',
+                refundId,
+                client
+            );
             return { tx: row, deduped: true };
         }
         throw err;
     }
 
     if (original) {
-        await paymentsQueries.updateTransactionStatus(original.id, companyId, 'refunded').catch(() => {});
+        await paymentsQueries.updateTransactionStatus(
+            original.id,
+            companyId,
+            'refunded',
+            {},
+            client
+        );
         if (original.invoice_id) {
-            try {
-                // Only the invoice-balance portion of the original payment was applied to
-                // the invoice (the tip never touched it). Reverse that proportion of the
-                // refund so amount_paid can't go negative on a tipped payment.
-                const refundAmt = Math.abs(Number(amount));
-                const origTotal = Math.abs(Number(original.amount)) || refundAmt;
-                const origTip = Math.max(0, Number(original.metadata?.tip || 0) || 0);
-                const origBalancePortion = Math.max(0, origTotal - origTip);
-                const invoiceReversal = origTip > 0 && origTotal > 0
-                    ? Number((refundAmt * (origBalancePortion / origTotal)).toFixed(2))
-                    : refundAmt;
-                await invoicesQueries.recordPayment(original.invoice_id, companyId, -invoiceReversal);
-                const inv = await invoicesService.getInvoice(companyId, original.invoice_id);
-                if (inv && Number(inv.balance_due) > 0) {
-                    await invoicesQueries.updateInvoiceStatus(original.invoice_id, companyId, Number(inv.amount_paid) > 0 ? 'partial' : 'sent', null);
-                }
-                await invoicesQueries.createEvent(companyId, original.invoice_id, 'payment_recorded', 'system', null, { amount: -invoiceReversal, tip_refunded: Number((refundAmt - invoiceReversal).toFixed(2)), payment_method: 'credit_card', source: 'stripe', refund: true, external_id: refundId });
-            } catch (e) { console.warn('[StripePayments] refund invoice adjust failed:', e.message); }
+            // Only the invoice-balance portion of the original payment was applied to
+            // the invoice (the tip never touched it). Reverse that proportion of the
+            // refund so amount_paid can't go negative on a tipped payment.
+            const refundAmt = Math.abs(Number(amount));
+            const origTotal = Math.abs(Number(original.amount)) || refundAmt;
+            const origTip = Math.max(0, Number(original.metadata?.tip || 0) || 0);
+            const origBalancePortion = Math.max(0, origTotal - origTip);
+            const invoiceReversal = origTip > 0 && origTotal > 0
+                ? Number((refundAmt * (origBalancePortion / origTotal)).toFixed(2))
+                : refundAmt;
+            await invoicesQueries.recordPayment(
+                original.invoice_id,
+                companyId,
+                -invoiceReversal,
+                client
+            );
+            const inv = await invoicesService.getInvoice(
+                companyId,
+                original.invoice_id,
+                client
+            );
+            if (Number(inv.balance_due) > 0) {
+                await invoicesQueries.updateInvoiceStatus(
+                    original.invoice_id,
+                    companyId,
+                    Number(inv.amount_paid) > 0 ? 'partial' : 'sent',
+                    null,
+                    client
+                );
+            }
+            await invoicesQueries.createEvent(
+                companyId,
+                original.invoice_id,
+                'payment_recorded',
+                'system',
+                null,
+                {
+                    amount: -invoiceReversal,
+                    tip_refunded: Number((refundAmt - invoiceReversal).toFixed(2)),
+                    payment_method: 'credit_card',
+                    source: 'stripe',
+                    refund: true,
+                    external_id: refundId,
+                },
+                client
+            );
+        }
+    }
+    if (activityActor) {
+        const paymentTarget = original || tx;
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.refunded',
+            entity: paymentTarget,
+            actor: activityActor,
+            summary: {
+                amount: Math.abs(Number(amount)),
+                currency: tx.currency,
+                payment_id: tx.id,
+            },
+        }, { client });
+        if (original?.invoice_id) {
+            const invoice = await invoicesQueries.getInvoiceById(
+                companyId,
+                original.invoice_id,
+                client
+            );
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: 'invoice.refunded',
+                entity: invoice,
+                actor: activityActor,
+                summary: {
+                    amount: Math.abs(Number(amount)),
+                    currency: tx.currency,
+                    payment_id: original.id,
+                },
+            }, { client });
         }
     }
     return { tx, deduped: false };
@@ -773,20 +1030,53 @@ async function refundStripePayment(companyId, actor, transactionId, { amount, re
     const account = await q.getAccountByCompany(companyId);
     if (!account) throw new StripePaymentsError('NOT_CONNECTED', 'Stripe account not connected', 400);
 
-    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.refund_requested', target_type: 'payment', target_id: String(transactionId), company_id: companyId, details: { amount: refundAmount } });
-    const refund = await provider.createRefund(account.stripe_account_id, {
-        paymentIntent: original.external_id, amount: refundAmount, reason: reason ? 'requested_by_customer' : undefined,
-    }, { idempotencyKey: `refund-${companyId}-${transactionId}-${refundAmount}` });
-    const res = await applyStripeRefund(companyId, { refundId: refund.id, paymentIntentId: original.external_id, amount: refundAmount, reason });
-    await auditService.log({ action: 'stripe_payments.refund_succeeded', target_type: 'payment', target_id: String(transactionId), company_id: companyId, details: { refund_id: refund.id, amount: refundAmount } });
+    const activityActor = userActor(actor?.id || null);
+    let refund;
+    try {
+        refund = await provider.createRefund(account.stripe_account_id, {
+            paymentIntent: original.external_id,
+            amount: refundAmount,
+            reason: reason ? 'requested_by_customer' : undefined,
+        }, { idempotencyKey: `refund-${companyId}-${transactionId}-${refundAmount}` });
+    } catch (err) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'refund.failed',
+            entity: original,
+            actor: activityActor,
+            summary: { amount: refundAmount, currency: original.currency },
+        });
+        throw err;
+    }
+    const res = await withTransaction(client => applyStripeRefund(
+        companyId,
+        {
+            refundId: refund.id,
+            paymentIntentId: original.external_id,
+            amount: refundAmount,
+            reason,
+        },
+        client,
+        activityActor
+    ));
     return { refund_id: refund.id, transaction: res.tx };
 }
 
 // ---- public Pay now ---------------------------------------------------------
 
-async function getPublicPayInfo(token) {
+async function getPublicPayInfo(token, { recordView = false } = {}) {
     const invoice = await invoicesQueries.getInvoiceByPublicToken(token);
     if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+    if (recordView) {
+        await logFinancialActivity({
+            companyId: invoice.company_id,
+            entityType: 'invoice',
+            action: 'invoice.viewed',
+            entity: invoice,
+            actor: clientActor(),
+        });
+    }
     const account = await q.getAccountByCompany(invoice.company_id);
     const readiness = computeReadiness(account);
     const balance = invoiceBalance(invoice);
@@ -811,10 +1101,36 @@ async function getPublicPayInfo(token) {
     };
 }
 
-async function createPublicPaySession(token) {
-    const invoice = await invoicesQueries.getInvoiceByPublicToken(token);
+async function createPublicPaySession(
+    token,
+    client = null,
+    { recordActivity = false } = {}
+) {
+    const invoice = await invoicesQueries.getInvoiceByPublicToken(token, client);
     if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
-    const link = await ensurePaymentLink(invoice.company_id, null, invoice.id);
+    const actor = clientActor();
+    const link = await ensurePaymentLink(
+        invoice.company_id,
+        null,
+        invoice.id,
+        {},
+        client,
+        recordActivity ? actor : null
+    );
+    if (recordActivity) {
+        await logFinancialActivity({
+            companyId: invoice.company_id,
+            entityType: 'payment',
+            action: 'payment.session_started',
+            entity: {
+                id: link.session_id,
+                invoice_id: invoice.id,
+                job_id: invoice.job_id,
+                contact_id: invoice.contact_id,
+            },
+            actor,
+        }, { client });
+    }
     return { url: link.url };
 }
 
@@ -822,8 +1138,13 @@ async function createPublicPaySession(token) {
  * Public embedded-pay flow: create a PaymentIntent on the connected account for the
  * invoice balance + optional tip, returning the client_secret for the Payment Element.
  */
-async function createPublicPayIntent(token, { tip = 0 } = {}) {
-    const invoice = await invoicesQueries.getInvoiceByPublicToken(token);
+async function createPublicPayIntent(
+    token,
+    { tip = 0 } = {},
+    client = null,
+    { recordActivity = false } = {}
+) {
+    const invoice = await invoicesQueries.getInvoiceByPublicToken(token, client);
     if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
     const companyId = invoice.company_id;
     const account = await assertCollectable(companyId);
@@ -847,21 +1168,63 @@ async function createPublicPayIntent(token, { tip = 0 } = {}) {
         { amount: total, currency: invoice.currency || 'usd', metadata },
         { idempotencyKey: `public-${companyId}-${invoice.id}-${total}` });
 
-    await q.insertSession(companyId, {
+    const session = await q.insertSession(companyId, {
         invoice_id: invoice.id, job_id: invoice.job_id || null, contact_id: invoice.contact_id || null,
         surface: 'manual_card', amount: total, status: 'open',
         stripe_payment_intent_id: pi.id, stripe_account_id: account.stripe_account_id,
         metadata: { tip: tipAmount, public: true },
-    });
+    }, client);
+    if (recordActivity) {
+        const actor = clientActor();
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.session_started',
+            entity: session,
+            actor,
+            summary: { amount: total, currency: invoice.currency || 'USD' },
+        }, { client });
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.card_session_started',
+            entity: invoice,
+            actor,
+            summary: { amount: total, currency: invoice.currency || 'USD' },
+        }, { client });
+    }
     return { client_secret: pi.client_secret, account_id: account.stripe_account_id, amount: total, tip: tipAmount, balance_due: balance, currency: (invoice.currency || 'USD') };
 }
 
 // ---- webhook → ledger sync --------------------------------------------------
 
-async function applyStripePayment(companyId, { externalId, invoiceId, contactId, jobId, amount, currency, metadata }) {
+async function applyStripePayment(
+    companyId,
+    { externalId, invoiceId, contactId, jobId, amount, currency, metadata },
+    client = null,
+    activityActor = null
+) {
     // Idempotency: a ledger row already exists for this external id?
-    const existing = await paymentsQueries.findByExternalSourceId(companyId, 'stripe', externalId);
+    const existing = await paymentsQueries.findByExternalSourceId(
+        companyId,
+        'stripe',
+        externalId,
+        client
+    );
     if (existing) return { tx: existing, deduped: true };
+    let invoice = null;
+    if (invoiceId) {
+        invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
+        if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+    }
+    if (contactId) {
+        const contact = await estimatesQueries.getContactContext(companyId, contactId, client);
+        if (!contact) throw new StripePaymentsError('NOT_FOUND', 'Contact not found', 404);
+    }
+    if (jobId) {
+        const job = await estimatesQueries.getJobContext(companyId, jobId, client);
+        if (!job) throw new StripePaymentsError('NOT_FOUND', 'Job not found', 404);
+    }
 
     // Tip (from PaymentIntent/Checkout metadata) is part of the charge but is NOT
     // applied to the invoice balance — only the (amount - tip) portion settles the
@@ -886,32 +1249,84 @@ async function applyStripePayment(companyId, { externalId, invoiceId, contactId,
             external_source: 'stripe',
             metadata: { ...(metadata || {}), tip },
             processed_at: new Date().toISOString(),
-        });
+        }, client);
     } catch (err) {
         // Unique-violation race → another delivery won; treat as deduped.
         if (err.code === '23505') {
-            const row = await paymentsQueries.findByExternalSourceId(companyId, 'stripe', externalId);
+            const row = await paymentsQueries.findByExternalSourceId(
+                companyId,
+                'stripe',
+                externalId,
+                client
+            );
             return { tx: row, deduped: true };
         }
         throw err;
     }
 
     if (invoiceId) {
-        try {
-            await invoicesQueries.recordPayment(invoiceId, companyId, balancePortion);
-            const inv = await invoicesService.getInvoice(companyId, invoiceId);
-            if (inv) {
-                if (Number(inv.balance_due) <= 0) {
-                    await invoicesQueries.updateInvoiceStatus(invoiceId, companyId, 'paid', 'paid_at');
-                } else if (Number(inv.amount_paid) > 0) {
-                    await invoicesQueries.updateInvoiceStatus(invoiceId, companyId, 'partial', null);
-                }
-                await invoicesQueries.createEvent(companyId, invoiceId, 'payment_recorded', 'system', null, {
-                    amount: balancePortion, tip, payment_method: 'credit_card', source: 'stripe', external_id: externalId,
-                });
-            }
-        } catch (err) {
-            console.warn('[StripePayments] invoice status update failed:', err.message);
+        await invoicesQueries.recordPayment(invoiceId, companyId, balancePortion, client);
+        invoice = await invoicesService.getInvoice(companyId, invoiceId, client);
+        if (Number(invoice.balance_due) <= 0) {
+            await invoicesQueries.updateInvoiceStatus(
+                invoiceId,
+                companyId,
+                'paid',
+                'paid_at',
+                client
+            );
+        } else if (Number(invoice.amount_paid) > 0) {
+            await invoicesQueries.updateInvoiceStatus(
+                invoiceId,
+                companyId,
+                'partial',
+                null,
+                client
+            );
+        }
+        await invoicesQueries.createEvent(
+            companyId,
+            invoiceId,
+            'payment_recorded',
+            'system',
+            null,
+            {
+                amount: balancePortion,
+                tip,
+                payment_method: 'credit_card',
+                source: 'stripe',
+                external_id: externalId,
+            },
+            client
+        );
+    }
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.succeeded',
+            entity: tx,
+            actor: activityActor,
+            summary: {
+                amount: Number(amount),
+                currency: tx.currency,
+                status: 'completed',
+            },
+        }, { client });
+        if (invoiceId) {
+            invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: 'invoice.payment_succeeded',
+                entity: invoice,
+                actor: activityActor,
+                summary: {
+                    amount: balancePortion,
+                    currency: tx.currency,
+                    payment_id: tx.id,
+                },
+            }, { client });
         }
     }
     return { tx, deduped: false };
@@ -954,43 +1369,143 @@ async function handleWebhook(rawBody, signature) {
         switch (event.type) {
             case 'checkout.session.completed': {
                 const obj = event.data;
-                const session = await q.getSessionByCheckoutId(obj.id);
-                const meta = obj.metadata || {};
-                const invId = session?.invoice_id || (meta.invoice_id ? Number(meta.invoice_id) : null);
-                const externalId = obj.payment_intent || obj.id;
-                const amount = (obj.amount_total != null ? obj.amount_total / 100 : session?.amount);
-                if (session) await q.updateSession(session.id, { status: 'complete', stripe_payment_intent_id: obj.payment_intent || null });
-                await applyStripePayment(companyId, {
-                    externalId, invoiceId: invId,
-                    contactId: session?.contact_id || (meta.contact_id ? Number(meta.contact_id) : null),
-                    jobId: session?.job_id || (meta.job_id ? Number(meta.job_id) : null),
-                    amount, currency: obj.currency, metadata: { surface: meta.surface || 'checkout_link', checkout_session_id: obj.id, tip: meta.tip || 0 },
+                await withTransaction(async (client) => {
+                    const session = await q.getSessionByCheckoutId(
+                        companyId,
+                        obj.id,
+                        client
+                    );
+                    const meta = obj.metadata || {};
+                    const invId = session?.invoice_id
+                        || (meta.invoice_id ? Number(meta.invoice_id) : null);
+                    const externalId = obj.payment_intent || obj.id;
+                    const amount = obj.amount_total != null
+                        ? obj.amount_total / 100
+                        : session?.amount;
+                    if (session) {
+                        await q.updateSession(companyId, session.id, {
+                            status: 'complete',
+                            stripe_payment_intent_id: obj.payment_intent || null,
+                        }, client);
+                    }
+                    await applyStripePayment(companyId, {
+                        externalId,
+                        invoiceId: invId,
+                        contactId: session?.contact_id
+                            || (meta.contact_id ? Number(meta.contact_id) : null),
+                        jobId: session?.job_id
+                            || (meta.job_id ? Number(meta.job_id) : null),
+                        amount,
+                        currency: obj.currency,
+                        metadata: {
+                            surface: meta.surface || 'checkout_link',
+                            checkout_session_id: obj.id,
+                            tip: meta.tip || 0,
+                        },
+                    }, client, stripeActor());
                 });
-                await auditService.log({ action: 'stripe_payments.payment_succeeded', target_type: 'invoice', target_id: invId ? String(invId) : null, company_id: companyId, details: { external_id: externalId } });
                 break;
             }
             case 'payment_intent.succeeded': {
                 const obj = event.data;
-                const session = await q.getSessionByPaymentIntent(obj.id) || (obj.metadata?.checkout_session_id ? await q.getSessionByCheckoutId(obj.metadata.checkout_session_id) : null);
-                const meta = obj.metadata || {};
-                const invId = session?.invoice_id || (meta.invoice_id ? Number(meta.invoice_id) : null);
-                const charge = obj.latest_charge || obj.id;
-                if (session) await q.updateSession(session.id, { status: 'complete', stripe_charge_id: typeof charge === 'string' ? charge : null });
-                await applyStripePayment(companyId, {
-                    externalId: obj.id, invoiceId: invId,
-                    contactId: session?.contact_id || null, jobId: session?.job_id || null,
-                    amount: obj.amount_received != null ? obj.amount_received / 100 : (obj.amount / 100),
-                    currency: obj.currency, metadata: { surface: meta.surface || 'checkout_link', payment_intent_id: obj.id, tip: meta.tip || 0 },
+                await withTransaction(async (client) => {
+                    const byIntent = await q.getSessionByPaymentIntent(
+                        companyId,
+                        obj.id,
+                        client
+                    );
+                    const session = byIntent || (
+                        obj.metadata?.checkout_session_id
+                            ? await q.getSessionByCheckoutId(
+                                companyId,
+                                obj.metadata.checkout_session_id,
+                                client
+                            )
+                            : null
+                    );
+                    const meta = obj.metadata || {};
+                    const invId = session?.invoice_id
+                        || (meta.invoice_id ? Number(meta.invoice_id) : null);
+                    const charge = obj.latest_charge || obj.id;
+                    if (session) {
+                        await q.updateSession(companyId, session.id, {
+                            status: 'complete',
+                            stripe_charge_id: typeof charge === 'string' ? charge : null,
+                        }, client);
+                    }
+                    await applyStripePayment(companyId, {
+                        externalId: obj.id,
+                        invoiceId: invId,
+                        contactId: session?.contact_id || null,
+                        jobId: session?.job_id || null,
+                        amount: obj.amount_received != null
+                            ? obj.amount_received / 100
+                            : obj.amount / 100,
+                        currency: obj.currency,
+                        metadata: {
+                            surface: meta.surface || 'checkout_link',
+                            payment_intent_id: obj.id,
+                            tip: meta.tip || 0,
+                        },
+                    }, client, stripeActor());
                 });
-                await auditService.log({ action: 'stripe_payments.payment_succeeded', target_type: 'invoice', target_id: invId ? String(invId) : null, company_id: companyId, details: { external_id: obj.id } });
                 break;
             }
             case 'payment_intent.payment_failed': {
                 const obj = event.data;
-                const session = await q.getSessionByPaymentIntent(obj.id);
-                const reason = obj.last_payment_error?.message || 'Payment failed';
-                if (session) await q.updateSession(session.id, { status: 'failed', failure_reason: reason });
-                await auditService.log({ action: 'stripe_payments.payment_failed', target_type: 'invoice', target_id: session?.invoice_id ? String(session.invoice_id) : null, company_id: companyId, details: { reason } });
+                await withTransaction(async (client) => {
+                    const session = await q.getSessionByPaymentIntent(
+                        companyId,
+                        obj.id,
+                        client
+                    );
+                    const meta = obj.metadata || {};
+                    const invoiceId = session?.invoice_id
+                        || (meta.invoice_id ? Number(meta.invoice_id) : null);
+                    const reason = obj.last_payment_error?.message || 'Payment failed';
+                    if (session) {
+                        await q.updateSession(companyId, session.id, {
+                            status: 'failed',
+                            failure_reason: reason,
+                        }, client);
+                    }
+                    const paymentTarget = session || {
+                        id: obj.id,
+                        invoice_id: invoiceId,
+                        job_id: meta.job_id ? Number(meta.job_id) : null,
+                        contact_id: meta.contact_id ? Number(meta.contact_id) : null,
+                    };
+                    await logFinancialActivity({
+                        companyId,
+                        entityType: 'payment',
+                        action: 'payment.failed',
+                        entity: paymentTarget,
+                        actor: stripeActor(),
+                        summary: { status: 'failed' },
+                    }, { client });
+                    if (invoiceId) {
+                        const invoice = await invoicesQueries.getInvoiceById(
+                            companyId,
+                            invoiceId,
+                            client
+                        );
+                        if (!invoice) {
+                            throw new StripePaymentsError(
+                                'NOT_FOUND',
+                                'Invoice not found',
+                                404
+                            );
+                        }
+                        await logFinancialActivity({
+                            companyId,
+                            entityType: 'invoice',
+                            action: 'invoice.payment_failed',
+                            entity: invoice,
+                            actor: stripeActor(),
+                            summary: { status: 'failed' },
+                        }, { client });
+                    }
+                });
                 break;
             }
             case 'account.updated': {
@@ -1006,16 +1521,58 @@ async function handleWebhook(rawBody, signature) {
                 const refundId = latest?.id || `${obj.id}_refund`;
                 const refundAmount = (latest?.amount != null ? latest.amount / 100 : (obj.amount_refunded || 0) / 100);
                 if (refundAmount > 0) {
-                    await applyStripeRefund(companyId, { refundId, paymentIntentId: obj.payment_intent || null, amount: refundAmount, reason: latest?.reason });
-                    await auditService.log({ action: 'stripe_payments.refund_succeeded', target_type: 'charge', target_id: obj.id, company_id: companyId, details: { refund_id: refundId, amount: refundAmount, source: 'webhook' } });
+                    await withTransaction(client => applyStripeRefund(
+                        companyId,
+                        {
+                            refundId,
+                            paymentIntentId: obj.payment_intent || null,
+                            amount: refundAmount,
+                            reason: latest?.reason,
+                        },
+                        client,
+                        stripeActor()
+                    ));
                 }
                 break;
             }
             case 'charge.dispute.created': {
                 const obj = event.data;
-                const original = obj.payment_intent ? await paymentsQueries.findByExternalSourceId(companyId, 'stripe', obj.payment_intent) : null;
-                if (original) await paymentsQueries.updateTransactionStatus(original.id, companyId, 'processing', {}).catch(() => {});
-                await auditService.log({ action: 'stripe_payments.dispute_opened', target_type: 'charge', target_id: obj.charge || obj.id, company_id: companyId, details: { amount: (obj.amount || 0) / 100 } });
+                await withTransaction(async (client) => {
+                    const meta = obj.metadata || {};
+                    const original = obj.payment_intent
+                        ? await paymentsQueries.findByExternalSourceId(
+                            companyId,
+                            'stripe',
+                            obj.payment_intent,
+                            client
+                        )
+                        : null;
+                    if (original) {
+                        await paymentsQueries.updateTransactionStatus(
+                            original.id,
+                            companyId,
+                            'processing',
+                            {},
+                            client
+                        );
+                    }
+                    await logFinancialActivity({
+                        companyId,
+                        entityType: 'payment',
+                        action: 'payment.disputed',
+                        entity: original || {
+                            id: obj.id,
+                            invoice_id: meta.invoice_id ? Number(meta.invoice_id) : null,
+                            job_id: meta.job_id ? Number(meta.job_id) : null,
+                            contact_id: meta.contact_id ? Number(meta.contact_id) : null,
+                        },
+                        actor: stripeActor(),
+                        summary: {
+                            amount: (obj.amount || 0) / 100,
+                            status: 'disputed',
+                        },
+                    }, { client });
+                });
                 break;
             }
             default:
@@ -1025,6 +1582,36 @@ async function handleWebhook(rawBody, signature) {
         await q.markWebhookEvent(event.id, 'processed', { companyId });
         return { ok: true };
     } catch (err) {
+        if (event.type === 'charge.refunded') {
+            const paymentIntentId = event.data?.payment_intent || null;
+            const original = paymentIntentId
+                ? await paymentsQueries.findByExternalSourceId(
+                    companyId,
+                    'stripe',
+                    paymentIntentId
+                )
+                : null;
+            const metadata = event.data?.metadata || {};
+            await logFinancialActivity({
+                companyId,
+                entityType: 'payment',
+                action: 'refund.failed',
+                entity: original || {
+                    id: paymentIntentId || event.data?.id,
+                    invoice_id: metadata.invoice_id
+                        ? Number(metadata.invoice_id)
+                        : null,
+                    job_id: metadata.job_id ? Number(metadata.job_id) : null,
+                    contact_id: metadata.contact_id
+                        ? Number(metadata.contact_id)
+                        : null,
+                },
+                actor: stripeActor(),
+                summary: {
+                    ...(original?.currency ? { currency: original.currency } : {}),
+                },
+            });
+        }
         await q.markWebhookEvent(event.id, 'failed', { error: err.message, companyId });
         // Ack with ok:false detail but HTTP 200 so Stripe doesn't hammer retries on
         // a deterministic bug; surfaced via the event row + logs/alerts.

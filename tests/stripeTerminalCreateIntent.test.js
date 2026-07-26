@@ -33,6 +33,15 @@ const mockService = {
 };
 jest.mock('../backend/src/services/stripePaymentsService', () => mockService);
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+const mockTransactionClient = { query: jest.fn() };
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(mockTransactionClient)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    userActor: jest.fn(id => ({
+        id: id || null, type: 'user', label: null, source: 'crm',
+    })),
+}));
 
 const express = require('express');
 const http = require('http');
@@ -115,10 +124,23 @@ describe('POST /api/stripe-terminal/payment-intents (MTECH-T4)', () => {
         await request(makeApp(), 'POST', '/payment-intents', { amount: 5000, invoice_id: 42, job_id: 7, contact_id: 9 });
 
         expect(mockService.createTapToPayIntent).toHaveBeenCalledTimes(1);
-        const [companyArg, actorArg, paramsArg] = mockService.createTapToPayIntent.mock.calls[0];
+        const [
+            companyArg,
+            actorArg,
+            paramsArg,
+            clientArg,
+            activityActorArg,
+        ] = mockService.createTapToPayIntent.mock.calls[0];
         expect(companyArg).toBe(COMPANY_A);
         expect(actorArg).toEqual({ id: CRM_USER });
         expect(paramsArg).toEqual({ amount: 5000, invoiceId: 42, jobId: 7, contactId: 9 });
+        expect(clientArg).toBe(mockTransactionClient);
+        expect(activityActorArg).toEqual({
+            id: CRM_USER,
+            type: 'user',
+            label: null,
+            source: 'crm',
+        });
     });
 
     it('works for a job-only linkage (no invoice)', async () => {

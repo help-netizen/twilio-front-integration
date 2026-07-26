@@ -10,6 +10,10 @@
 const db = require('./connection');
 const { ensureMarketplaceSchema } = require('./marketplaceQueries');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 // ---- connected accounts -----------------------------------------------------
 
 async function getAccountByCompany(companyId) {
@@ -106,9 +110,10 @@ async function setAccountStatus(companyId, status) {
 // ---- payment sessions -------------------------------------------------------
 
 /** Find a reusable OPEN, non-expired checkout session for an invoice+amount. */
-async function findOpenSession(companyId, invoiceId, amount) {
+async function findOpenSession(companyId, invoiceId, amount, client = null) {
     await ensureMarketplaceSchema();
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT * FROM stripe_payment_sessions
          WHERE company_id = $1 AND invoice_id = $2 AND surface = 'checkout_link'
            AND status = 'open' AND amount = $3
@@ -124,9 +129,10 @@ async function findOpenSession(companyId, invoiceId, amount) {
  * `invoice_id IS NULL` is load-bearing: keeps job-link sessions distinct from an
  * invoice's sessions that merely carry a job_id.
  */
-async function findOpenJobSession(companyId, jobId, amount) {
+async function findOpenJobSession(companyId, jobId, amount, client = null) {
     await ensureMarketplaceSchema();
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT * FROM stripe_payment_sessions
          WHERE company_id = $1 AND job_id = $2 AND invoice_id IS NULL
            AND surface = 'checkout_link' AND status = 'open' AND amount = $3
@@ -137,8 +143,9 @@ async function findOpenJobSession(companyId, jobId, amount) {
     return rows[0] || null;
 }
 
-async function insertSession(companyId, data) {
+async function insertSession(companyId, data, client = null) {
     await ensureMarketplaceSchema();
+    const query = queryFor(client);
     const {
         invoice_id = null, job_id = null, contact_id = null, created_by = null,
         surface = 'checkout_link', amount, currency = 'USD', status = 'open',
@@ -146,7 +153,7 @@ async function insertSession(companyId, data) {
         stripe_charge_id = null, stripe_account_id = null, url = null,
         expires_at = null, metadata = {},
     } = data;
-    const { rows } = await db.query(
+    const { rows } = await query(
         `INSERT INTO stripe_payment_sessions
             (company_id, invoice_id, job_id, contact_id, created_by, surface, amount,
              currency, status, stripe_checkout_session_id, stripe_payment_intent_id,
@@ -162,38 +169,52 @@ async function insertSession(companyId, data) {
     return rows[0];
 }
 
-async function getSessionByCheckoutId(checkoutSessionId) {
+async function getSessionByCheckoutId(companyId, checkoutSessionId, client = null) {
     await ensureMarketplaceSchema();
-    const { rows } = await db.query(
-        `SELECT * FROM stripe_payment_sessions WHERE stripe_checkout_session_id = $1`,
-        [checkoutSessionId]
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT *
+         FROM stripe_payment_sessions
+         WHERE company_id = $1 AND stripe_checkout_session_id = $2`,
+        [companyId, checkoutSessionId]
     );
     return rows[0] || null;
 }
 
-async function getSessionByPaymentIntent(paymentIntentId) {
+async function getSessionByPaymentIntent(companyId, paymentIntentId, client = null) {
     await ensureMarketplaceSchema();
-    const { rows } = await db.query(
-        `SELECT * FROM stripe_payment_sessions WHERE stripe_payment_intent_id = $1`,
-        [paymentIntentId]
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT *
+         FROM stripe_payment_sessions
+         WHERE company_id = $1 AND stripe_payment_intent_id = $2`,
+        [companyId, paymentIntentId]
     );
     return rows[0] || null;
 }
 
-async function updateSession(id, fields) {
+async function updateSession(companyId, id, fields, client = null) {
     await ensureMarketplaceSchema();
+    const query = queryFor(client);
     const {
         status, stripe_payment_intent_id, stripe_charge_id, failure_reason,
     } = fields;
-    const { rows } = await db.query(
+    const { rows } = await query(
         `UPDATE stripe_payment_sessions SET
-            status = COALESCE($2, status),
-            stripe_payment_intent_id = COALESCE($3, stripe_payment_intent_id),
-            stripe_charge_id = COALESCE($4, stripe_charge_id),
-            failure_reason = COALESCE($5, failure_reason),
+            status = COALESCE($3, status),
+            stripe_payment_intent_id = COALESCE($4, stripe_payment_intent_id),
+            stripe_charge_id = COALESCE($5, stripe_charge_id),
+            failure_reason = COALESCE($6, failure_reason),
             updated_at = NOW()
-         WHERE id = $1 RETURNING *`,
-        [id, status ?? null, stripe_payment_intent_id ?? null, stripe_charge_id ?? null, failure_reason ?? null]
+         WHERE company_id = $1 AND id = $2 RETURNING *`,
+        [
+            companyId,
+            id,
+            status ?? null,
+            stripe_payment_intent_id ?? null,
+            stripe_charge_id ?? null,
+            failure_reason ?? null,
+        ]
     );
     return rows[0] || null;
 }
@@ -224,9 +245,10 @@ async function listSessionsForJob(companyId, jobId) {
     return rows;
 }
 
-async function getSessionById(companyId, id) {
+async function getSessionById(companyId, id, client = null) {
     await ensureMarketplaceSchema();
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT * FROM stripe_payment_sessions WHERE company_id = $1 AND id = $2`,
         [companyId, id]
     );
@@ -238,9 +260,10 @@ async function getSessionById(companyId, id) {
  * wins; invoice/job linkage is a fallback for older or initially unbound rows.
  * Every join is pinned to the session's tenant.
  */
-async function getSessionReceiptContact(companyId, sessionId) {
+async function getSessionReceiptContact(companyId, sessionId, client = null) {
     await ensureMarketplaceSchema();
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT c.id, c.email
            FROM stripe_payment_sessions s
            LEFT JOIN invoices i
@@ -285,9 +308,13 @@ async function insertTerminalLocation(companyId, { stripeAccountId, stripeLocati
  * Insert an incoming event. Returns { inserted: boolean, row }. inserted=false means
  * the event id was already processed (dedup) → caller should ack without reprocessing.
  */
-async function insertWebhookEvent({ stripeEventId, livemode, eventType, stripeAccountId, companyId, payload }) {
+async function insertWebhookEvent(
+    { stripeEventId, livemode, eventType, stripeAccountId, companyId, payload },
+    client = null
+) {
     await ensureMarketplaceSchema();
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `INSERT INTO stripe_webhook_events
             (stripe_event_id, livemode, event_type, stripe_account_id, company_id, payload, processing_status)
          VALUES ($1,$2,$3,$4,$5,$6,'received')
@@ -298,9 +325,15 @@ async function insertWebhookEvent({ stripeEventId, livemode, eventType, stripeAc
     return { inserted: rows.length > 0, row: rows[0] || null };
 }
 
-async function markWebhookEvent(stripeEventId, processingStatus, { error = null, companyId = null } = {}) {
+async function markWebhookEvent(
+    stripeEventId,
+    processingStatus,
+    { error = null, companyId = null } = {},
+    client = null
+) {
     await ensureMarketplaceSchema();
-    await db.query(
+    const query = queryFor(client);
+    await query(
         `UPDATE stripe_webhook_events SET
             processing_status = $2,
             error = $3,

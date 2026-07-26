@@ -9,9 +9,13 @@
 const portalQueries = require('../db/portalQueries');
 const estimatesQueries = require('../db/estimatesQueries');
 const invoicesQueries = require('../db/invoicesQueries');
-const paymentsQueries = require('../db/paymentsQueries');
 const estimatesService = require('./estimatesService');
 const { stripInternalOrderList } = require('../utils/orderList');
+const {
+    clientActor,
+    logFinancialActivity,
+} = require('./financialActivityService');
+const { withTransaction } = require('./transactionService');
 
 // =============================================================================
 // Error class
@@ -162,6 +166,13 @@ async function getDocument(sessionId, documentType, documentId) {
     }
 
     await portalQueries.logEvent(session.id, session.contact_id, 'document_viewed', documentType, documentId);
+    await logFinancialActivity({
+        companyId: session.company_id,
+        entityType: documentType,
+        action: `${documentType}.viewed`,
+        entity: document,
+        actor: clientActor(),
+    });
 
     return document;
 }
@@ -197,7 +208,7 @@ async function acceptDocument(sessionId, documentType, documentId, options = {})
         throw new PortalServiceError('NOT_FOUND', 'Estimate not found', 404);
     }
 
-    const updated = await estimatesService.approveEstimate(
+    const updated = await withTransaction(client => estimatesService.approveEstimate(
         session.company_id,
         documentId,
         'client',
@@ -205,8 +216,10 @@ async function acceptDocument(sessionId, documentType, documentId, options = {})
         {
             signature_name: options.signature_name,
             signature_consent: options.signature_consent === true,
-        }
-    );
+        },
+        client,
+        clientActor()
+    ));
 
     await portalQueries.logEvent(session.id, session.contact_id, 'document_accepted', 'estimate', documentId);
 
@@ -239,13 +252,15 @@ async function declineDocument(sessionId, documentType, documentId, options = {}
         throw new PortalServiceError('NOT_FOUND', 'Estimate not found', 404);
     }
 
-    const updated = await estimatesService.declineEstimate(
+    const updated = await withTransaction(client => estimatesService.declineEstimate(
         session.company_id,
         documentId,
         'client',
         session.contact_id,
-        { reason: options.reason }
-    );
+        { reason: options.reason },
+        client,
+        clientActor()
+    ));
 
     await portalQueries.logEvent(session.id, session.contact_id, 'document_declined', 'estimate', documentId);
 
@@ -286,25 +301,28 @@ async function submitPayment(sessionId, { invoiceId, amount, paymentMethod }) {
         throw new PortalServiceError('NOT_FOUND', 'Invoice not found', 404);
     }
 
-    // Create payment transaction via paymentsQueries
-    const tx = await paymentsQueries.createTransaction(session.company_id, {
-        contact_id: session.contact_id,
-        invoice_id: invoiceId,
-        transaction_type: 'payment',
-        payment_method: paymentMethod,
-        status: 'completed',
-        amount: parseFloat(amount),
-        memo: 'Portal payment',
-        processed_at: new Date().toISOString(),
-        recorded_by: null,
-    });
-
-    // Update invoice amount_paid
-    try {
-        await invoicesQueries.recordPayment(invoiceId, session.company_id, parseFloat(amount));
-    } catch (err) {
-        console.warn(`[PortalService] Could not update invoice ${invoiceId} amount_paid:`, err.message);
-    }
+    const paymentsService = require('./paymentsService');
+    const tx = await withTransaction(client => paymentsService.createTransaction(
+        session.company_id,
+        null,
+        {
+            contact_id: session.contact_id,
+            invoice_id: invoiceId,
+            transaction_type: 'payment',
+            payment_method: paymentMethod,
+            status: 'completed',
+            amount: parseFloat(amount),
+            memo: 'Portal payment',
+            processed_at: new Date().toISOString(),
+            recorded_by: null,
+        },
+        client,
+        clientActor(),
+        {
+            action: 'payment.portal_submitted',
+            invoiceAction: 'invoice.payment_recorded',
+        }
+    ));
 
     await portalQueries.logEvent(session.id, session.contact_id, 'payment_submitted', 'invoice', invoiceId, {
         amount: parseFloat(amount),

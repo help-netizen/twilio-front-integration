@@ -11,7 +11,10 @@ const invoicesService = require('../services/invoicesService');
 router.get('/invoices/:token/pdf', async (req, res) => {
     try {
         const { token } = req.params;
-        const { invoice, buffer } = await invoicesService.generatePdfByPublicToken(token);
+        const { invoice, buffer } = await invoicesService.generatePdfByPublicToken(
+            token,
+            { recordView: true }
+        );
         const safeNumber = String(invoice.invoice_number || `invoice-${invoice.id}`).replace(/[^a-z0-9_-]+/gi, '_');
 
         res.setHeader('Content-Type', 'application/pdf');
@@ -29,13 +32,17 @@ router.get('/invoices/:token/pdf', async (req, res) => {
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{6,64}$/;
 const stripePaymentsService = require('../services/stripePaymentsService');
+const { withTransaction } = require('../services/transactionService');
 
 // GET /api/public/invoices/:token/pay-info — opaque summary + balance for Pay now.
 router.get('/invoices/:token/pay-info', async (req, res) => {
     try {
         const { token } = req.params;
         if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
-        const info = await stripePaymentsService.getPublicPayInfo(token);
+        const info = await stripePaymentsService.getPublicPayInfo(
+            token,
+            { recordView: true }
+        );
         res.json({ ok: true, data: info });
     } catch (err) {
         const status = err.httpStatus || 500;
@@ -48,7 +55,13 @@ router.post('/invoices/:token/pay', async (req, res) => {
     try {
         const { token } = req.params;
         if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
-        const { url } = await stripePaymentsService.createPublicPaySession(token);
+        const { url } = await withTransaction(client => (
+            stripePaymentsService.createPublicPaySession(
+                token,
+                client,
+                { recordActivity: true }
+            )
+        ));
         res.json({ ok: true, data: { url } });
     } catch (err) {
         const status = err.httpStatus || 500;
@@ -61,7 +74,12 @@ router.post('/invoices/:token/pay-intent', async (req, res) => {
     try {
         const { token } = req.params;
         if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
-        const data = await stripePaymentsService.createPublicPayIntent(token, { tip: req.body?.tip });
+        const data = await withTransaction(client => stripePaymentsService.createPublicPayIntent(
+            token,
+            { tip: req.body?.tip },
+            client,
+            { recordActivity: true }
+        ));
         res.json({ ok: true, data });
     } catch (err) {
         const status = err.httpStatus || 500;

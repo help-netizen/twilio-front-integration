@@ -11,6 +11,7 @@ const estimatesQueries = require('../db/estimatesQueries');
 const paymentsService = require('./paymentsService');
 const { toE164 } = require('../utils/phoneUtils');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
+const { logFinancialActivity } = require('./financialActivityService');
 const {
     normalizeOrderList,
     stripInternalOrderList,
@@ -79,7 +80,7 @@ async function validateLinkedEntities(companyId, data = {}, client = null) {
  * Create a new invoice with optional line items.
  * Resolves contact_id from the linked job/lead/estimate when not explicitly provided.
  */
-async function createInvoice(companyId, userId, data, client = null) {
+async function createInvoice(companyId, userId, data, client = null, activityActor = null) {
     const resolved = { ...data };
     resolved.order_list = normalizeOrderList(data.order_list ?? []);
     await validateLinkedEntities(companyId, resolved, client);
@@ -212,6 +213,15 @@ async function createInvoice(companyId, userId, data, client = null) {
         null,
         client
     );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.created',
+            entity: invoice,
+            actor: activityActor,
+        }, { client });
+    }
 
     // Return full invoice with items
     return getInvoice(companyId, invoice.id, client);
@@ -220,7 +230,7 @@ async function createInvoice(companyId, userId, data, client = null) {
 /**
  * Update an invoice. If status is not 'draft', create a revision snapshot first.
  */
-async function updateInvoice(companyId, userId, id, data, client = null) {
+async function updateInvoice(companyId, userId, id, data, client = null, activityActor = null) {
     const existing = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!existing) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
@@ -274,6 +284,16 @@ async function updateInvoice(companyId, userId, id, data, client = null) {
         { fields: Object.keys(data) },
         client
     );
+    if (activityActor) {
+        const current = await invoicesQueries.getInvoiceById(companyId, id, client);
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.updated',
+            entity: current,
+            actor: activityActor,
+        }, { client });
+    }
 
     return getInvoice(companyId, id, client);
 }
@@ -281,17 +301,51 @@ async function updateInvoice(companyId, userId, id, data, client = null) {
 /**
  * Delete an invoice. Hard delete if draft; void if not draft.
  */
-async function deleteInvoice(companyId, id) {
-    const existing = await invoicesQueries.getInvoiceById(companyId, id);
+async function deleteInvoice(companyId, id, userId, client = null, activityActor = null) {
+    const existing = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!existing) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
     if (existing.status === 'draft') {
-        await invoicesQueries.deleteInvoice(id, companyId);
+        await invoicesQueries.deleteInvoice(id, companyId, client);
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: 'invoice.deleted',
+                entity: existing,
+                actor: activityActor,
+            }, { client });
+        }
         return { deleted: true };
     } else {
-        const updated = await invoicesQueries.updateInvoiceStatus(id, companyId, 'void', 'voided_at');
+        const updated = await invoicesQueries.updateInvoiceStatus(
+            id,
+            companyId,
+            'void',
+            'voided_at',
+            client
+        );
+        await invoicesQueries.createEvent(
+            companyId,
+            id,
+            'voided',
+            'user',
+            userId,
+            null,
+            client
+        );
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: 'invoice.voided',
+                entity: updated,
+                actor: activityActor,
+                summary: { status: 'void' },
+            }, { client });
+        }
         return { voided: true, invoice: updated };
     }
 }
@@ -493,7 +547,8 @@ async function sendInvoice(
     userId,
     id,
     { channel, recipient, message, includePaymentLink, userEmail, noteActor } = {},
-    client = null
+    client = null,
+    activityActor = null
 ) {
     const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!invoice) {
@@ -511,15 +566,16 @@ async function sendInvoice(
     const number = invoice.invoice_number || `invoice-${id}`;
     let noteRecipient = to;
 
-    // Branded pay page link, derived from the token ensurePublicLink mints
-    // (ensurePublicLink itself returns the /i/<token> PDF redirect — we want /pay).
-    // Idempotent: ensurePublicLink never re-mints. Omitted when includePaymentLink === false.
-    const { token } = await ensurePublicLink(companyId, id, client);
-    const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
-    const payPath = `/pay/${token}`;
-    const link = includePaymentLink === false ? '' : (base ? `${base}${payPath}` : payPath);
+    try {
+        // Branded pay page link, derived from the token ensurePublicLink mints
+        // (ensurePublicLink itself returns the /i/<token> PDF redirect — we want /pay).
+        // Idempotent: ensurePublicLink never re-mints. Omitted when includePaymentLink === false.
+        const { token } = await ensurePublicLink(companyId, id, client, activityActor);
+        const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
+        const payPath = `/pay/${token}`;
+        const link = includePaymentLink === false ? '' : (base ? `${base}${payPath}` : payPath);
 
-    if (normalizedChannel === 'email') {
+        if (normalizedChannel === 'email') {
         // Pre-check: a mailbox that is missing / disconnected / reconnect_required
         // must surface as 409, never reach Gmail, and never flip status.
         const emailMailboxService = require('./emailMailboxService');
@@ -568,7 +624,7 @@ async function sendInvoice(
         // NOTE: the outbound contact-timeline stamp (emailQueries.linkMessageToContact)
         // is intentionally skipped here — same as sendEstimate; the EMAIL-TIMELINE-001
         // sent-mail projection self-heals the stamp.
-    } else {
+        } else {
         // SMS — resolve the company sending number BEFORE any side effects.
         const { resolveCompanyProxyE164 } = require('./messagingHelper');
         const proxy = await resolveCompanyProxyE164(companyId);
@@ -584,7 +640,20 @@ async function sendInvoice(
         const conversationsService = require('./conversationsService');
         const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
         // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
-        await conversationsService.sendMessage(conv.id, { body: buildSmsBody(message, link) });
+            await conversationsService.sendMessage(conv.id, { body: buildSmsBody(message, link) });
+        }
+    } catch (err) {
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: 'invoice.send_failed',
+                entity: invoice,
+                actor: activityActor,
+                summary: { channel: normalizedChannel },
+            });
+        }
+        throw err;
     }
 
     // Dispatch resolved → NOW flip status and record the send (never before).
@@ -610,6 +679,16 @@ async function sendInvoice(
             message: message || null,
         });
     }
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.sent',
+            entity: updated,
+            actor: activityActor,
+            summary: { channel: normalizedChannel, status: 'sent' },
+        }, { client });
+    }
 
     await recordDocumentSendNote({
         companyId,
@@ -627,8 +706,14 @@ async function sendInvoice(
 /**
  * Void an invoice.
  */
-async function voidInvoice(companyId, id, userId) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, id);
+async function voidInvoice(
+    companyId,
+    id,
+    userId,
+    client = null,
+    activityActor = null
+) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
@@ -641,9 +726,33 @@ async function voidInvoice(companyId, id, userId) {
         );
     }
 
-    const updated = await invoicesQueries.updateInvoiceStatus(id, companyId, 'void', 'voided_at');
+    const updated = await invoicesQueries.updateInvoiceStatus(
+        id,
+        companyId,
+        'void',
+        'voided_at',
+        client
+    );
 
-    await invoicesQueries.createEvent(companyId, id, 'voided', 'user', userId, null);
+    await invoicesQueries.createEvent(
+        companyId,
+        id,
+        'voided',
+        'user',
+        userId,
+        null,
+        client
+    );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.voided',
+            entity: updated,
+            actor: activityActor,
+            summary: { status: 'void' },
+        }, { client });
+    }
 
     return updated;
 }
@@ -651,8 +760,15 @@ async function voidInvoice(companyId, id, userId) {
 /**
  * Record a payment against an invoice.
  */
-async function recordPayment(companyId, userId, id, { amount, payment_method, reference }) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, id);
+async function recordPayment(
+    companyId,
+    userId,
+    id,
+    { amount, payment_method, reference },
+    client = null,
+    activityActor = null
+) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
@@ -669,26 +785,32 @@ async function recordPayment(companyId, userId, id, { amount, payment_method, re
         throw new InvoicesServiceError('VALIDATION', 'amount must be greater than 0', 400);
     }
 
-    const transaction = await paymentsService.recordManualPayment(companyId, userId, {
-        invoice_id: id,
-        contact_id: invoice.contact_id,
-        job_id: invoice.job_id,
-        amount,
-        currency: invoice.currency,
-        payment_method,
-        reference_number: reference,
-    });
+    const transaction = await paymentsService.recordManualPayment(
+        companyId,
+        userId,
+        {
+            invoice_id: id,
+            contact_id: invoice.contact_id,
+            job_id: invoice.job_id,
+            amount,
+            currency: invoice.currency,
+            payment_method,
+            reference_number: reference,
+        },
+        client,
+        activityActor
+    );
 
-    const updated = await invoicesQueries.getInvoiceById(companyId, id);
+    const updated = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!updated) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
     // Update status based on balance
     if (updated.balance_due <= 0) {
-        await invoicesQueries.updateInvoiceStatus(id, companyId, 'paid', null);
+        await invoicesQueries.updateInvoiceStatus(id, companyId, 'paid', null, client);
     } else if (updated.amount_paid > 0) {
-        await invoicesQueries.updateInvoiceStatus(id, companyId, 'partial', null);
+        await invoicesQueries.updateInvoiceStatus(id, companyId, 'partial', null, client);
     }
 
     // Log event
@@ -698,32 +820,53 @@ async function recordPayment(companyId, userId, id, { amount, payment_method, re
         reference: reference || null,
         payment_id: String(transaction.id),
         source: 'manual',
-    });
+    }, client);
 
-    return getInvoice(companyId, id);
+    return getInvoice(companyId, id, client);
 }
 
 /**
  * Void a manual/offline payment while preserving its canonical ledger row.
  */
-async function voidPayment(companyId, userId, invoiceId, paymentId) {
-    return paymentsService.voidInvoicePayment(companyId, userId, invoiceId, paymentId);
+async function voidPayment(
+    companyId,
+    userId,
+    invoiceId,
+    paymentId,
+    client = null,
+    activityActor = null
+) {
+    return paymentsService.voidInvoicePayment(
+        companyId,
+        userId,
+        invoiceId,
+        paymentId,
+        client,
+        activityActor
+    );
 }
 
 /**
  * Sync line items from an estimate to this invoice.
  */
-async function syncItemsFromEstimate(companyId, userId, invoiceId, estimateId) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+async function syncItemsFromEstimate(
+    companyId,
+    userId,
+    invoiceId,
+    estimateId,
+    client = null,
+    activityActor = null
+) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
 
-    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
+    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId, client);
     if (!estimate) {
         throw new InvoicesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
     }
-    const estimateItems = await estimatesQueries.getEstimateItems(companyId, estimateId);
+    const estimateItems = await estimatesQueries.getEstimateItems(companyId, estimateId, client);
     if (!estimateItems || estimateItems.length === 0) {
         throw new InvoicesServiceError('VALIDATION', `No items found on estimate ${estimateId}`, 400);
     }
@@ -736,17 +879,31 @@ async function syncItemsFromEstimate(companyId, userId, invoiceId, estimateId) {
             unit_price: item.unit_price,
             unit: item.unit,
             sort_order: item.sort_order,
-        });
+        }, client);
     }
 
-    await invoicesQueries.recalculateInvoiceTotals(companyId, invoiceId);
+    await invoicesQueries.recalculateInvoiceTotals(companyId, invoiceId, client);
 
     await invoicesQueries.createEvent(companyId, invoiceId, 'items_synced_from_estimate', 'user', userId, {
         estimate_id: estimateId,
         items_count: estimateItems.length,
-    });
+    }, client);
+    if (activityActor) {
+        const current = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.items_synced',
+            entity: current,
+            actor: activityActor,
+            summary: {
+                estimate_id: estimateId,
+                count: estimateItems.length,
+            },
+        }, { client });
+    }
 
-    return getInvoice(companyId, invoiceId);
+    return getInvoice(companyId, invoiceId, client);
 }
 
 // =============================================================================
@@ -837,7 +994,7 @@ module.exports = {
  * Return (creating if necessary) a public link for the invoice. Idempotent —
  * subsequent calls return the same token + URL.
  */
-async function ensurePublicLink(companyId, id, client = null) {
+async function ensurePublicLink(companyId, id, client = null, activityActor = null) {
     const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!invoice) throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
 
@@ -849,6 +1006,15 @@ async function ensurePublicLink(companyId, id, client = null) {
             await invoicesQueries.setPublicToken(invoice.id, companyId, token, client);
         } else {
             await invoicesQueries.setPublicToken(invoice.id, companyId, token);
+        }
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: 'invoice.link_created',
+                entity: invoice,
+                actor: activityActor,
+            }, { client });
         }
     }
 
@@ -862,9 +1028,19 @@ async function ensurePublicLink(companyId, id, client = null) {
  * Render the PDF for an invoice resolved by its `public_token`.
  * No auth/scoping — the token is the credential.
  */
-async function generatePdfByPublicToken(publicToken) {
+async function generatePdfByPublicToken(publicToken, { recordView = false } = {}) {
     const invoice = await invoicesQueries.getInvoiceByPublicToken(publicToken);
     if (!invoice) throw new InvoicesServiceError('NOT_FOUND', 'Invoice not found', 404);
+    if (recordView) {
+        const { clientActor } = require('./financialActivityService');
+        await logFinancialActivity({
+            companyId: invoice.company_id,
+            entityType: 'invoice',
+            action: 'invoice.viewed',
+            entity: invoice,
+            actor: clientActor('Client', 'portal'),
+        });
+    }
     const items = await invoicesQueries.getInvoiceItems(invoice.company_id, invoice.id);
     const fullInvoice = stripInternalOrderList({ ...invoice, items });
 

@@ -6,6 +6,10 @@
  */
 const db = require('./connection');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 const STRIPE_TRANSACTION_JOINS = `
         LEFT JOIN LATERAL (
             SELECT s.id, s.contact_id, s.invoice_id, s.job_id,
@@ -181,8 +185,9 @@ async function listTransactions(companyId, filters = {}) {
 /**
  * Get a single transaction by ID (scoped to company).
  */
-async function getTransactionById(companyId, id) {
-    const { rows } = await db.query(
+async function getTransactionById(companyId, id, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT t.*, ${STRIPE_TRANSACTION_COLUMNS}
          FROM payment_transactions t
          ${STRIPE_TRANSACTION_JOINS}
@@ -197,8 +202,9 @@ async function getTransactionById(companyId, id) {
  * and customer/job fallbacks. The transaction company predicate is the security
  * boundary; every joined tenant table is pinned back to that owned row.
  */
-async function getTransactionReceiptContext(companyId, id) {
-    const { rows } = await db.query(
+async function getTransactionReceiptContext(companyId, id, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT t.*,
                 stripe_session.id AS stripe_session_id,
                 stripe_session.stripe_payment_intent_id,
@@ -235,7 +241,8 @@ async function getTransactionReceiptContext(companyId, id) {
 /**
  * Create a new payment transaction.
  */
-async function createTransaction(companyId, data) {
+async function createTransaction(companyId, data, client = null) {
+    const query = queryFor(client);
     const {
         contact_id,
         estimate_id,
@@ -255,7 +262,7 @@ async function createTransaction(companyId, data) {
         recorded_by,
     } = data;
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `INSERT INTO payment_transactions (
             company_id, contact_id, estimate_id, invoice_id, job_id,
             transaction_type, payment_method, status,
@@ -285,9 +292,10 @@ async function createTransaction(companyId, data) {
  * Idempotency lookup: find an existing transaction by external source + id, scoped
  * to the company. Used by the Stripe webhook sync to avoid duplicate ledger rows.
  */
-async function findByExternalSourceId(companyId, externalSource, externalId) {
+async function findByExternalSourceId(companyId, externalSource, externalId, client = null) {
     if (!externalId) return null;
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT * FROM payment_transactions
          WHERE company_id = $1 AND external_source = $2 AND external_id = $3
          LIMIT 1`,
@@ -299,7 +307,8 @@ async function findByExternalSourceId(companyId, externalSource, externalId) {
 /**
  * Update transaction status with optional extra sets (e.g. processed_at=NOW()).
  */
-async function updateTransactionStatus(id, companyId, status, extraSets = {}) {
+async function updateTransactionStatus(id, companyId, status, extraSets = {}, client = null) {
+    const query = queryFor(client);
     const setClauses = ['status = $3'];
     const params = [id, companyId, status];
     let idx = 3;
@@ -320,15 +329,16 @@ async function updateTransactionStatus(id, companyId, status, extraSets = {}) {
         RETURNING *
     `;
 
-    const { rows } = await db.query(sql, params);
+    const { rows } = await query(sql, params);
     return rows[0] || null;
 }
 
 /**
  * Void a transaction (only if not already voided/refunded).
  */
-async function voidTransaction(id, companyId, voidedBy) {
-    const { rows } = await db.query(
+async function voidTransaction(id, companyId, voidedBy, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `UPDATE payment_transactions
          SET status = 'voided',
              voided_at = NOW(),
@@ -345,9 +355,10 @@ async function voidTransaction(id, companyId, voidedBy) {
  * Create a refund transaction linked to the original.
  * Also updates the original transaction status to 'refunded'.
  */
-async function createRefundTransaction(companyId, originalTxId, amount, recordedBy) {
+async function createRefundTransaction(companyId, originalTxId, amount, recordedBy, client = null) {
+    const query = queryFor(client);
     // Fetch original
-    const { rows: origRows } = await db.query(
+    const { rows: origRows } = await query(
         `SELECT * FROM payment_transactions WHERE id = $1 AND company_id = $2`,
         [originalTxId, companyId]
     );
@@ -355,7 +366,7 @@ async function createRefundTransaction(companyId, originalTxId, amount, recorded
     if (!original) return null;
 
     // Insert refund transaction
-    const { rows: refundRows } = await db.query(
+    const { rows: refundRows } = await query(
         `INSERT INTO payment_transactions (
             company_id, contact_id, estimate_id, invoice_id, job_id,
             transaction_type, payment_method, status,
@@ -378,9 +389,11 @@ async function createRefundTransaction(companyId, originalTxId, amount, recorded
     );
 
     // Update original status to 'refunded'
-    await db.query(
-        `UPDATE payment_transactions SET status = 'refunded', updated_at = NOW() WHERE id = $1`,
-        [originalTxId]
+    await query(
+        `UPDATE payment_transactions
+         SET status = 'refunded', updated_at = NOW()
+         WHERE id = $1 AND company_id = $2`,
+        [originalTxId, companyId]
     );
 
     return refundRows[0];
@@ -393,10 +406,16 @@ async function createRefundTransaction(companyId, originalTxId, amount, recorded
 /**
  * Get receipt for a transaction.
  */
-async function getReceipt(transactionId) {
-    const { rows } = await db.query(
-        `SELECT * FROM payment_receipts WHERE transaction_id = $1`,
-        [transactionId]
+async function getReceipt(companyId, transactionId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT pr.*
+         FROM payment_receipts pr
+         JOIN payment_transactions pt
+           ON pt.id = pr.transaction_id
+          AND pt.company_id = $1
+         WHERE pr.transaction_id = $2`,
+        [companyId, transactionId]
     );
     return rows[0] || null;
 }
@@ -404,28 +423,37 @@ async function getReceipt(transactionId) {
 /**
  * Create a receipt with auto-generated receipt_number (REC-YYYYMMDD-NNN).
  */
-async function createReceipt(transactionId, data) {
+async function createReceipt(companyId, transactionId, data, client = null) {
+    const query = queryFor(client);
     const { sent_to_email, sent_to_phone, sent_via } = data;
 
     // Generate receipt number: REC-YYYYMMDD-NNN
     const today = new Date();
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
 
-    const { rows: countRows } = await db.query(
-        `SELECT COUNT(*) AS cnt FROM payment_receipts
-         WHERE receipt_number LIKE $1`,
-        [`REC-${dateStr}-%`]
+    const { rows: countRows } = await query(
+        `SELECT COUNT(*) AS cnt
+         FROM payment_receipts pr
+         JOIN payment_transactions pt
+           ON pt.id = pr.transaction_id
+          AND pt.company_id = $1
+         WHERE pr.receipt_number LIKE $2`,
+        [companyId, `REC-${dateStr}-%`]
     );
     const seq = parseInt(countRows[0].cnt, 10) + 1;
     const receiptNumber = `REC-${dateStr}-${String(seq).padStart(3, '0')}`;
 
-    const { rows } = await db.query(
+    const { rows } = await query(
         `INSERT INTO payment_receipts (
             transaction_id, receipt_number,
             sent_to_email, sent_to_phone, sent_via, sent_at
-        ) VALUES ($1, $2, $3, $4, $5, NOW())
+        )
+        SELECT pt.id, $3, $4, $5, $6, NOW()
+        FROM payment_transactions pt
+        WHERE pt.company_id = $1 AND pt.id = $2
         RETURNING *`,
         [
+            companyId,
             transactionId, receiptNumber,
             sent_to_email || null, sent_to_phone || null, sent_via || null,
         ]
@@ -441,8 +469,9 @@ async function createReceipt(transactionId, data) {
 /**
  * Get one transaction linked to an invoice, with both IDs scoped to company.
  */
-async function getTransactionForInvoice(companyId, invoiceId, paymentId) {
-    const { rows } = await db.query(
+async function getTransactionForInvoice(companyId, invoiceId, paymentId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT *
          FROM payment_transactions
          WHERE company_id = $1
@@ -457,8 +486,9 @@ async function getTransactionForInvoice(companyId, invoiceId, paymentId) {
  * Atomically void a completed invoice payment and reverse only that payment's
  * contribution to the materialized invoice totals.
  */
-async function voidInvoicePayment(companyId, invoiceId, paymentId, voidedBy) {
-    const { rows } = await db.query(
+async function voidInvoicePayment(companyId, invoiceId, paymentId, voidedBy, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `WITH candidate AS MATERIALIZED (
             SELECT pt.*
             FROM payment_transactions pt
@@ -530,8 +560,9 @@ async function voidInvoicePayment(companyId, invoiceId, paymentId, voidedBy) {
  * Get all transactions linked to an invoice, scoped to company. Voided rows
  * remain visible but sort after active payments.
  */
-async function getTransactionsForInvoice(companyId, invoiceId) {
-    const { rows } = await db.query(
+async function getTransactionsForInvoice(companyId, invoiceId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT pt.*,
                 COALESCE(pt.processed_at, pt.created_at) AS transaction_date
          FROM payment_transactions pt

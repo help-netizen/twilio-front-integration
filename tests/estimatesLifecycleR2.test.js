@@ -5,6 +5,14 @@
 const COMPANY_ID = 'company-uuid-001';
 const USER_ID = 'user-sub-001';
 const EST_ID = 42;
+const TX_CLIENT = { query: jest.fn() };
+const HUMAN_ACTOR = {
+    id: '11111111-1111-4111-8111-111111111111',
+    type: 'user',
+    label: null,
+    source: 'crm',
+};
+const mockLogFinancialActivity = jest.fn();
 
 const mockQueries = {
     listEstimates: jest.fn(),
@@ -32,6 +40,13 @@ const mockQueries = {
 };
 
 jest.mock('../backend/src/db/estimatesQueries', () => mockQueries);
+jest.mock('../backend/src/db/connection', () => ({
+    getClient: jest.fn(),
+    query: jest.fn(),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+}));
 
 const service = require('../backend/src/services/estimatesService');
 
@@ -71,6 +86,10 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         mockQueries.createRevision.mockResolvedValue({});
         mockQueries.replaceEstimateItems.mockResolvedValue([]);
         mockQueries.recalculateEstimateTotals.mockResolvedValue({});
+        mockQueries.addEstimateItem.mockResolvedValue(item());
+        mockQueries.updateEstimateItem.mockResolvedValue(item());
+        mockQueries.deleteEstimateItem.mockResolvedValue(true);
+        mockLogFinancialActivity.mockResolvedValue({ ok: true });
     });
 
     it('creates a job estimate with ESTIMATE L-{leadNumber}-1 and default item rules', async () => {
@@ -129,11 +148,11 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         expect(mockQueries.createRevision).toHaveBeenCalledWith(COMPANY_ID, EST_ID, expect.objectContaining({
             status: 'approved',
             items: [expect.objectContaining({ name: 'Labor' })],
-        }), USER_ID);
+        }), USER_ID, null);
         expect(mockQueries.updateEstimate).toHaveBeenCalledWith(EST_ID, COMPANY_ID, expect.objectContaining({
             status: 'approved',
             approved_snapshot: expect.objectContaining({ items: expect.any(Array) }),
-        }));
+        }), null);
     });
 
     it('editing an approved estimate preserves approved version and resets to draft', async () => {
@@ -160,6 +179,57 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         }), null);
     });
 
+    it('emits one coarse updated event for the whole-document Save and none for item sub-endpoints', async () => {
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ job_id: 519, contact_id: 9 }));
+        mockQueries.getEstimateItems.mockResolvedValue([item()]);
+        mockQueries.updateEstimate.mockResolvedValue(estimate({ job_id: 519, contact_id: 9 }));
+
+        await service.updateEstimate(
+            COMPANY_ID,
+            USER_ID,
+            EST_ID,
+            { summary: 'Saved once', items: [item()] },
+            TX_CLIENT,
+            HUMAN_ACTOR
+        );
+
+        expect(mockLogFinancialActivity).toHaveBeenCalledTimes(1);
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'estimate.updated',
+                entityType: 'estimate',
+                actor: HUMAN_ACTOR,
+            }),
+            { client: TX_CLIENT }
+        );
+
+        mockLogFinancialActivity.mockClear();
+        await service.addItem(
+            COMPANY_ID,
+            EST_ID,
+            USER_ID,
+            { name: 'Added', quantity: 1, unit_price: 10 },
+            TX_CLIENT
+        );
+        await service.updateItem(
+            COMPANY_ID,
+            EST_ID,
+            USER_ID,
+            item().id,
+            { unit_price: 11 },
+            TX_CLIENT
+        );
+        await service.removeItem(
+            COMPANY_ID,
+            EST_ID,
+            USER_ID,
+            item().id,
+            TX_CLIENT
+        );
+
+        expect(mockLogFinancialActivity).not.toHaveBeenCalled();
+    });
+
     it('archives without changing status and restore delegates draft reset to query', async () => {
         mockQueries.getEstimateById
             .mockResolvedValueOnce(estimate({ status: 'approved' }))
@@ -173,7 +243,17 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         await service.archiveEstimate(COMPANY_ID, USER_ID, EST_ID);
         await service.restoreEstimate(COMPANY_ID, USER_ID, EST_ID);
 
-        expect(mockQueries.archiveEstimate).toHaveBeenCalledWith(EST_ID, COMPANY_ID, USER_ID);
-        expect(mockQueries.restoreEstimate).toHaveBeenCalledWith(EST_ID, COMPANY_ID, USER_ID);
+        expect(mockQueries.archiveEstimate).toHaveBeenCalledWith(
+            EST_ID,
+            COMPANY_ID,
+            USER_ID,
+            null
+        );
+        expect(mockQueries.restoreEstimate).toHaveBeenCalledWith(
+            EST_ID,
+            COMPANY_ID,
+            USER_ID,
+            null
+        );
     });
 });

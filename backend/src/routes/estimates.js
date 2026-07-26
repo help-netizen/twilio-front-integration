@@ -8,6 +8,8 @@ const estimatesService = require('../services/estimatesService');
 const aiEstimateService = require('../services/aiEstimateService');
 const { requirePermission } = require('../middleware/authorization');
 const { actorFromRequest } = require('../services/documentSendNoteService');
+const { userActor } = require('../services/financialActivityService');
+const { withTransaction } = require('../services/transactionService');
 
 // Tenant context comes ONLY from requireCompanyAccess (PF007-HARDENING-001)
 function getCompanyId(req) {
@@ -15,14 +17,7 @@ function getCompanyId(req) {
 }
 
 function getUserId(req) {
-    // created_by/updated_by FK → crm_users(id). Use the resolved CRM user id, NOT the
-    // Keycloak sub — they DIFFER (crm_users.id ≠ keycloak_sub), so writing the sub
-    // violates estimates_created_by_fkey. Falls back to sub only outside normal auth
-    // (dev); null for a non-UUID (dev 'dev-user').
-    const userId = req.user?.crmUser?.id || req.user?.sub || req.user?.id || req.userId || null;
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId || '')
-        ? userId
-        : null;
+    return req.user?.crmUser?.id || null;
 }
 
 function getUserEmail(req) {
@@ -77,7 +72,13 @@ router.post('/', requirePermission('estimates.create'), async (req, res) => {
         const userId = getUserId(req);
         const data = req.body;
 
-        const result = await estimatesService.createEstimate(companyId, userId, data);
+        const result = await withTransaction(client => estimatesService.createEstimate(
+            companyId,
+            userId,
+            data,
+            client,
+            userActor(userId)
+        ));
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST / error:', err.message);
@@ -139,7 +140,14 @@ router.put('/:id', requirePermission('estimates.create'), async (req, res) => {
         const { id } = req.params;
         const data = req.body;
 
-        const result = await estimatesService.updateEstimate(companyId, userId, id, data);
+        const result = await withTransaction(client => estimatesService.updateEstimate(
+            companyId,
+            userId,
+            id,
+            data,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] PUT /:id error:', err.message);
@@ -155,7 +163,13 @@ router.post('/:id/archive', requirePermission('estimates.create'), async (req, r
         const userId = getUserId(req);
         const { id } = req.params;
 
-        const result = await estimatesService.archiveEstimate(companyId, userId, id);
+        const result = await withTransaction(client => estimatesService.archiveEstimate(
+            companyId,
+            userId,
+            id,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/archive error:', err.message);
@@ -171,7 +185,13 @@ router.post('/:id/restore', requirePermission('estimates.create'), async (req, r
         const userId = getUserId(req);
         const { id } = req.params;
 
-        const result = await estimatesService.restoreEstimate(companyId, userId, id);
+        const result = await withTransaction(client => estimatesService.restoreEstimate(
+            companyId,
+            userId,
+            id,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/restore error:', err.message);
@@ -187,7 +207,13 @@ router.delete('/:id', requirePermission('estimates.create'), async (req, res) =>
         const userId = getUserId(req);
         const { id } = req.params;
 
-        const result = await estimatesService.archiveEstimate(companyId, userId, id);
+        const result = await withTransaction(client => estimatesService.archiveEstimate(
+            companyId,
+            userId,
+            id,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] DELETE /:id error:', err.message);
@@ -209,13 +235,20 @@ router.post('/:id/send', requirePermission('estimates.send'), async (req, res) =
         const { channel, recipient, message } = req.body || {};
         const userEmail = getUserEmail(req);
 
-        const result = await estimatesService.sendEstimate(companyId, userId, id, {
-            channel,
-            recipient,
-            message,
-            userEmail,
-            noteActor: actorFromRequest(req),
-        });
+        const result = await withTransaction(client => estimatesService.sendEstimate(
+            companyId,
+            userId,
+            id,
+            {
+                channel,
+                recipient,
+                message,
+                userEmail,
+                noteActor: actorFromRequest(req),
+            },
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/send error:', err.message);
@@ -244,14 +277,21 @@ router.post('/:id/approve', requirePermission('estimates.send'), async (req, res
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
-        const { actor_type, actor_id, signature_name, signature_consent } = req.body || {};
-        const actorType = actor_type || 'user';
-        const actorId = actor_id || getUserId(req);
+        const { signature_name, signature_consent } = req.body || {};
+        const actorId = getUserId(req);
 
-        const result = await estimatesService.approveEstimate(companyId, id, actorType, actorId, {
-            signature_name,
-            signature_consent,
-        });
+        const result = await withTransaction(client => estimatesService.approveEstimate(
+            companyId,
+            id,
+            'user',
+            actorId,
+            {
+                signature_name,
+                signature_consent,
+            },
+            client,
+            userActor(actorId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/approve error:', err.message);
@@ -265,11 +305,18 @@ router.post('/:id/decline', requirePermission('estimates.send'), async (req, res
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
-        const { actor_type, actor_id, reason } = req.body || {};
-        const actorType = actor_type || 'user';
-        const actorId = actor_id || getUserId(req);
+        const { reason } = req.body || {};
+        const actorId = getUserId(req);
 
-        const result = await estimatesService.declineEstimate(companyId, id, actorType, actorId, { reason });
+        const result = await withTransaction(client => estimatesService.declineEstimate(
+            companyId,
+            id,
+            'user',
+            actorId,
+            { reason },
+            client,
+            userActor(actorId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/decline error:', err.message);
@@ -285,7 +332,13 @@ router.post('/:id/convert', requirePermission('invoices.create'), async (req, re
         const userId = getUserId(req);
         const { id } = req.params;
 
-        const result = await estimatesService.convertToInvoice(companyId, userId, id);
+        const result = await withTransaction(client => estimatesService.convertToInvoice(
+            companyId,
+            userId,
+            id,
+            client,
+            userActor(userId)
+        ));
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/convert error:', err.message);
@@ -306,7 +359,14 @@ router.post('/:id/link-job', requirePermission('estimates.create'), async (req, 
             return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'job_id is required' } });
         }
 
-        const result = await estimatesService.linkJob(companyId, userId, id, job_id);
+        const result = await withTransaction(client => estimatesService.linkJob(
+            companyId,
+            userId,
+            id,
+            job_id,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/link-job error:', err.message);

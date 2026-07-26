@@ -20,10 +20,17 @@ const mockInvoices = {
 const mockMcpQueries = {
     getInvoice: jest.fn(),
 };
+const mockLogFinancialActivity = jest.fn();
 
 jest.mock('../backend/src/services/estimatesService', () => mockEstimates);
 jest.mock('../backend/src/services/invoicesService', () => mockInvoices);
 jest.mock('../backend/src/db/chatgptMcpQueries', () => mockMcpQueries);
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    aiActor: jest.fn((label = 'Avatar') => ({
+        id: null, type: 'ai', label, source: 'mcp',
+    })),
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+}));
 
 const permissions = require('../backend/src/services/chatgptMcpPermissions');
 const registry = require('../backend/src/services/agentSkillsMcpRegistry');
@@ -57,6 +64,7 @@ const ITEM = Object.freeze({
 
 beforeEach(() => {
     jest.clearAllMocks();
+    mockLogFinancialActivity.mockResolvedValue({ ok: true });
     mockEstimates.createEstimate.mockResolvedValue({ id: 11, total: '201.40' });
     mockEstimates.updateEstimate.mockResolvedValue({ id: 11 });
     mockEstimates.addItems.mockResolvedValue({ added: 1 });
@@ -186,7 +194,8 @@ describe('CHATGPT-CRM-MCP S2b canonical service dispatch', () => {
             CONTEXT.companyId,
             CONTEXT.actorId,
             { job_id: 9, items: [ITEM] },
-            tx
+            tx,
+            { id: null, type: 'ai', label: 'Avatar', source: 'mcp' }
         );
 
         await expect(writeService.execute(
@@ -200,7 +209,8 @@ describe('CHATGPT-CRM-MCP S2b canonical service dispatch', () => {
             CONTEXT.companyId,
             CONTEXT.actorId,
             { contact_id: 5, items: [ITEM] },
-            tx
+            tx,
+            { id: null, type: 'ai', label: 'Avatar', source: 'mcp' }
         );
         expect(tx.query.mock.calls.filter(([sql]) => (
             /INSERT INTO mcp_tool_idempotency/i.test(sql)
@@ -278,6 +288,9 @@ describe('CHATGPT-CRM-MCP S2b canonical service dispatch', () => {
             { quantity: 3 },
             tx
         );
+        expect(mockLogFinancialActivity).toHaveBeenCalledTimes(2);
+        expect(mockLogFinancialActivity.mock.calls.map(([event]) => event.action))
+            .toEqual(['estimate.updated', 'invoice.updated']);
     });
 });
 
@@ -335,7 +348,8 @@ describe('CHATGPT-CRM-MCP S2c-b Estimate conversion', () => {
             CONTEXT.companyId,
             CONTEXT.actorId,
             11,
-            tx
+            tx,
+            { id: null, type: 'ai', label: 'Avatar', source: 'mcp' }
         );
         expect(mockMcpQueries.getInvoice).toHaveBeenCalledWith(
             CONTEXT.companyId,

@@ -12,6 +12,7 @@ jest.mock('../backend/src/db/paymentsQueries');
 jest.mock('../backend/src/services/paymentsService');
 jest.mock('../backend/src/services/invoicesService');
 jest.mock('../backend/src/db/invoicesQueries');
+jest.mock('../backend/src/db/estimatesQueries');
 jest.mock('../backend/src/services/contactPropagationService', () => ({
     propagateContactDetails: jest.fn(),
 }));
@@ -21,6 +22,27 @@ jest.mock('../backend/src/db/marketplaceQueries', () => ({
     listInstallations: jest.fn().mockResolvedValue([]),
 }));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
+
+const mockTransactionClient = {
+    query: jest.fn(),
+    release: jest.fn(),
+};
+const mockLogFinancialActivity = jest.fn();
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(mockTransactionClient)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    clientActor: jest.fn((label = 'Client', source = 'portal') => ({
+        id: null, type: 'client', label, source,
+    })),
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+    stripeActor: jest.fn(() => ({
+        id: null, type: 'system', label: 'Stripe', source: 'webhook',
+    })),
+    userActor: jest.fn(id => ({
+        id: id || null, type: 'user', label: null, source: 'crm',
+    })),
+}));
 
 const mockAddNote = jest.fn();
 jest.mock('../backend/src/services/jobsService', () => ({
@@ -32,6 +54,7 @@ const paymentsQueries = require('../backend/src/db/paymentsQueries');
 const paymentsService = require('../backend/src/services/paymentsService');
 const invoicesService = require('../backend/src/services/invoicesService');
 const invoicesQueries = require('../backend/src/db/invoicesQueries');
+const estimatesQueries = require('../backend/src/db/estimatesQueries');
 const contactPropagationService = require('../backend/src/services/contactPropagationService');
 
 const svc = require('../backend/src/services/stripePaymentsService');
@@ -40,7 +63,32 @@ const provider = require('../backend/src/services/stripeConnectProvider');
 const COMPANY = '11111111-1111-1111-1111-111111111111';
 const ACCT = 'acct_test_123';
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+    jest.clearAllMocks();
+    mockTransactionClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockLogFinancialActivity.mockResolvedValue({ ok: true });
+    estimatesQueries.getContactContext.mockImplementation(
+        async (companyId, id) => (companyId === COMPANY ? { id, company_id: companyId } : null)
+    );
+    estimatesQueries.getJobContext.mockImplementation(
+        async (companyId, id) => (companyId === COMPANY ? { id, company_id: companyId } : null)
+    );
+    invoicesQueries.getInvoiceById.mockImplementation(
+        async (companyId, id) => (
+            companyId === COMPANY
+                ? {
+                    id,
+                    company_id: companyId,
+                    contact_id: 5,
+                    job_id: null,
+                    estimate_id: null,
+                    balance_due: 0,
+                    amount_paid: 50,
+                }
+                : null
+        )
+    );
+});
 
 // ── TC-01..06: readiness state machine (pure) ───────────────────────────────
 describe('computeReadiness', () => {
@@ -146,8 +194,26 @@ describe('handleWebhook', () => {
         const txArg = paymentsQueries.createTransaction.mock.calls[0][1];
         expect(txArg).toMatchObject({ external_source: 'stripe', external_id: 'pi_1', invoice_id: 42, amount: 50 });
         // No tip → full amount applied to the invoice.
-        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, 50);
-        expect(invoicesQueries.updateInvoiceStatus).toHaveBeenCalledWith(42, COMPANY, 'paid', 'paid_at');
+        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(
+            42,
+            COMPANY,
+            50,
+            mockTransactionClient
+        );
+        expect(invoicesQueries.updateInvoiceStatus).toHaveBeenCalledWith(
+            42,
+            COMPANY,
+            'paid',
+            'paid_at',
+            mockTransactionClient
+        );
+        expect(mockLogFinancialActivity.mock.calls.map(([activity]) => activity.action))
+            .toEqual(['payment.succeeded', 'invoice.payment_succeeded']);
+        expect(mockLogFinancialActivity.mock.calls.every(([activity]) => (
+            activity.actor.type === 'system'
+                && activity.actor.label === 'Stripe'
+                && activity.actor.id === null
+        ))).toBe(true);
     });
 
     it('TC-31b tip is split: full charge to ledger, only balance applied to invoice', async () => {
@@ -171,7 +237,12 @@ describe('handleWebhook', () => {
         const txArg = paymentsQueries.createTransaction.mock.calls[0][1];
         expect(Number(txArg.amount)).toBe(115);            // full charge on ledger
         expect(txArg.metadata.tip).toBe(15);               // tip recorded
-        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, 100); // only balance to invoice
+        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(
+            42,
+            COMPANY,
+            100,
+            mockTransactionClient
+        ); // only balance to invoice
     });
 
     it('TC-33 idempotent on (company, external_id) — existing tx → no duplicate', async () => {
@@ -202,8 +273,130 @@ describe('handleWebhook', () => {
         });
         const res = await svc.handleWebhook(body, sig);
         expect(res).toEqual({ ok: true });
-        expect(q.updateSession).toHaveBeenCalledWith(9, { status: 'failed', failure_reason: 'card_declined' });
+        expect(q.updateSession).toHaveBeenCalledWith(
+            COMPANY,
+            9,
+            { status: 'failed', failure_reason: 'card_declined' },
+            mockTransactionClient
+        );
         expect(paymentsService.createTransaction).not.toHaveBeenCalled();
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'payment.failed',
+                actor: {
+                    id: null,
+                    type: 'system',
+                    label: 'Stripe',
+                    source: 'webhook',
+                },
+            }),
+            { client: mockTransactionClient }
+        );
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'invoice.payment_failed',
+                entity: expect.objectContaining({ id: 42 }),
+            }),
+            { client: mockTransactionClient }
+        );
+    });
+
+    it('logs invoice.payment_failed from owned metadata when no local session exists', async () => {
+        q.getAccountByStripeId.mockResolvedValue({
+            company_id: COMPANY,
+            stripe_account_id: ACCT,
+        });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.getSessionByPaymentIntent.mockResolvedValue(null);
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        const { body, sig } = signed({
+            id: 'evt_fail_metadata',
+            type: 'payment_intent.payment_failed',
+            account: ACCT,
+            data: {
+                object: {
+                    id: 'pi_fail_metadata',
+                    metadata: { invoice_id: '42', contact_id: '5' },
+                    last_payment_error: { message: 'card_declined' },
+                },
+            },
+        });
+
+        const res = await svc.handleWebhook(body, sig);
+
+        expect(res).toEqual({ ok: true });
+        expect(invoicesQueries.getInvoiceById).toHaveBeenCalledWith(
+            COMPANY,
+            42,
+            mockTransactionClient
+        );
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'invoice.payment_failed',
+                entity: expect.objectContaining({ id: 42 }),
+            }),
+            { client: mockTransactionClient }
+        );
+    });
+
+    it('logs refund.failed with the Stripe system actor when local refund projection fails', async () => {
+        q.getAccountByStripeId.mockResolvedValue({
+            company_id: COMPANY,
+            stripe_account_id: ACCT,
+        });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        const original = {
+            id: 100,
+            external_id: 'pi_refund_failed',
+            invoice_id: 42,
+            amount: 50,
+            currency: 'USD',
+        };
+        paymentsQueries.findByExternalSourceId
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(original)
+            .mockResolvedValueOnce(original);
+        paymentsQueries.createTransaction.mockRejectedValue(
+            new Error('ledger unavailable')
+        );
+        const { body, sig } = signed({
+            id: 'evt_refund_failed',
+            type: 'charge.refunded',
+            account: ACCT,
+            data: {
+                object: {
+                    id: 'ch_refund_failed',
+                    payment_intent: 'pi_refund_failed',
+                    amount_refunded: 5000,
+                    currency: 'usd',
+                    refunds: {
+                        data: [{ id: 're_refund_failed', amount: 5000 }],
+                    },
+                },
+            },
+        });
+
+        const res = await svc.handleWebhook(body, sig);
+
+        expect(res).toEqual({ ok: false, error: 'ledger unavailable' });
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'refund.failed',
+                entity: original,
+                actor: {
+                    id: null,
+                    type: 'system',
+                    label: 'Stripe',
+                    source: 'webhook',
+                },
+            })
+        );
+        expect(q.markWebhookEvent).toHaveBeenCalledWith(
+            'evt_refund_failed',
+            'failed',
+            { error: 'ledger unavailable', companyId: COMPANY }
+        );
     });
 
     it('TC-39 unknown event type → ignored', async () => {
@@ -293,7 +486,12 @@ describe('createPublicPayIntent provider invariant', () => {
         provider.createPaymentIntent.mockResolvedValue({ id: 'pi_public', client_secret: 'pi_public_secret' });
         q.insertSession.mockResolvedValue({ id: 12 });
 
-        const result = await svc.createPublicPayIntent('public-token', { tip: 15 });
+        const result = await svc.createPublicPayIntent(
+            'public-token',
+            { tip: 15 },
+            null,
+            { recordActivity: true }
+        );
 
         expect(result).toMatchObject({ amount: 95, tip: 15, balance_due: 80 });
         expect(provider.createPaymentIntent).toHaveBeenCalledWith(
@@ -302,10 +500,100 @@ describe('createPublicPayIntent provider invariant', () => {
             expect.objectContaining({ idempotencyKey: expect.any(String) })
         );
         expect(provider.createCardPaymentIntent).not.toHaveBeenCalled();
-        expect(q.insertSession).toHaveBeenCalledWith(COMPANY, expect.objectContaining({
-            surface: 'manual_card',
-            metadata: { tip: 15, public: true },
-        }));
+        expect(q.insertSession).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                surface: 'manual_card',
+                metadata: { tip: 15, public: true },
+            }),
+            null
+        );
+        expect(mockLogFinancialActivity.mock.calls.map(([activity]) => activity.action))
+            .toEqual(['payment.session_started', 'invoice.card_session_started']);
+        expect(mockLogFinancialActivity.mock.calls.every(([activity]) => (
+            activity.actor.type === 'client' && activity.actor.id === null
+        ))).toBe(true);
+    });
+});
+
+describe('contact-only payment sessions', () => {
+    const readyAccount = {
+        company_id: COMPANY,
+        stripe_account_id: ACCT,
+        details_submitted: true,
+        charges_enabled: true,
+        payouts_enabled: true,
+        capabilities: { card_payments: 'active' },
+        status: 'connected_ready',
+    };
+    const actor = {
+        id: '22222222-2222-4222-8222-222222222222',
+        type: 'user',
+        label: null,
+        source: 'crm',
+    };
+
+    beforeEach(() => {
+        provider.createCardPaymentIntent = jest.fn().mockResolvedValue({
+            id: 'pi_contact',
+            client_secret: 'pi_contact_secret',
+        });
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        q.insertSession.mockResolvedValue({
+            id: 15,
+            contact_id: 5,
+            invoice_id: null,
+            job_id: null,
+            currency: 'USD',
+        });
+    });
+
+    it('validates and retains Contact as the parent for an otherwise parentless session', async () => {
+        await svc.createManualCardSession(
+            COMPANY,
+            { id: actor.id },
+            { contactId: 5, amount: 25 },
+            mockTransactionClient,
+            actor
+        );
+
+        expect(estimatesQueries.getContactContext).toHaveBeenCalledWith(
+            COMPANY,
+            5,
+            mockTransactionClient
+        );
+        expect(q.insertSession).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                contact_id: 5,
+                invoice_id: null,
+                job_id: null,
+            }),
+            mockTransactionClient
+        );
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'payment.session_started',
+                entity: expect.objectContaining({ contact_id: 5 }),
+            }),
+            { client: mockTransactionClient }
+        );
+    });
+
+    it('rejects a foreign Contact before provider or session mutation', async () => {
+        estimatesQueries.getContactContext.mockResolvedValueOnce(null);
+
+        await expect(svc.createManualCardSession(
+            COMPANY,
+            { id: actor.id },
+            { contactId: 999, amount: 25 },
+            mockTransactionClient,
+            actor
+        )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+
+        expect(provider.createCardPaymentIntent).not.toHaveBeenCalled();
+        expect(q.insertSession).not.toHaveBeenCalled();
+        expect(mockLogFinancialActivity).not.toHaveBeenCalled();
     });
 });
 
@@ -335,7 +623,7 @@ describe('getManualCardSessionResult', () => {
 
         expect(result).toEqual({ status: 'succeeded', amount: 95, brand: 'visa', last4: '4242' });
         expect(Object.keys(result)).toEqual(['status', 'amount', 'brand', 'last4']);
-        expect(q.getSessionById).toHaveBeenCalledWith(COMPANY, 11);
+        expect(q.getSessionById).toHaveBeenCalledWith(COMPANY, 11, null);
         expect(provider.retrievePaymentIntent).toHaveBeenCalledWith(ACCT, 'pi_merchant');
         expect(provider.retrievePaymentMethod).toHaveBeenCalledWith(ACCT, 'pm_1');
     });
@@ -420,7 +708,7 @@ describe('sendManualCardReceipt', () => {
 
         expect(provider.retrievePaymentIntent).toHaveBeenCalledWith(ACCT, 'pi_merchant');
         expect(provider.updateChargeReceiptEmail).toHaveBeenCalledWith(ACCT, 'ch_1', 'customer@example.com');
-        expect(q.getSessionReceiptContact).toHaveBeenCalledWith(COMPANY, 11);
+        expect(q.getSessionReceiptContact).toHaveBeenCalledWith(COMPANY, 11, null);
         expect(contactPropagationService.propagateContactDetails).toHaveBeenCalledWith(
             COMPANY,
             5,
@@ -624,6 +912,6 @@ describe('refunds (Phase 5)', () => {
         // Ledger refund row is the full -$115...
         expect(Number(paymentsQueries.createTransaction.mock.calls[0][1].amount)).toBe(-115);
         // ...but only the $100 balance portion is reversed against the invoice.
-        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, -100);
+        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, -100, null);
     });
 });

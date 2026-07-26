@@ -27,6 +27,14 @@
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const INV_ID = 501;
+const TX_CLIENT = { query: jest.fn() };
+const HUMAN_ACTOR = {
+    id: USER_ID,
+    type: 'user',
+    label: null,
+    source: 'crm',
+};
+const mockLogFinancialActivity = jest.fn();
 
 // ─── DB query layer (fully mocked) ───────────────────────────────────────────
 const mockGetInvoiceById = jest.fn();
@@ -36,6 +44,9 @@ const mockReplaceInvoiceItems = jest.fn();
 const mockRecalculateInvoiceTotals = jest.fn();
 const mockCreateRevision = jest.fn();
 const mockCreateEvent = jest.fn();
+const mockAddInvoiceItem = jest.fn();
+const mockUpdateInvoiceItem = jest.fn();
+const mockDeleteInvoiceItem = jest.fn();
 
 jest.mock('../backend/src/db/invoicesQueries', () => ({
     getInvoiceById: (...a) => mockGetInvoiceById(...a),
@@ -45,9 +56,15 @@ jest.mock('../backend/src/db/invoicesQueries', () => ({
     recalculateInvoiceTotals: (...a) => mockRecalculateInvoiceTotals(...a),
     createRevision: (...a) => mockCreateRevision(...a),
     createEvent: (...a) => mockCreateEvent(...a),
+    addInvoiceItem: (...a) => mockAddInvoiceItem(...a),
+    updateInvoiceItem: (...a) => mockUpdateInvoiceItem(...a),
+    deleteInvoiceItem: (...a) => mockDeleteInvoiceItem(...a),
 }));
 // estimatesQueries is required at module top of invoicesService but unused on this path.
 jest.mock('../backend/src/db/estimatesQueries', () => ({}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+}));
 
 const invoicesService = require('../backend/src/services/invoicesService');
 
@@ -80,6 +97,10 @@ beforeEach(() => {
     mockRecalculateInvoiceTotals.mockResolvedValue(invoiceRow());
     mockCreateRevision.mockResolvedValue({ id: 1 });
     mockCreateEvent.mockResolvedValue(undefined);
+    mockAddInvoiceItem.mockResolvedValue({ id: 71 });
+    mockUpdateInvoiceItem.mockResolvedValue({ id: 71 });
+    mockDeleteInvoiceItem.mockResolvedValue(true);
+    mockLogFinancialActivity.mockResolvedValue({ ok: true });
 });
 
 // ─── T1: changed items array → replace + recalc, returns invoice ─────────────
@@ -180,5 +201,54 @@ describe('T5 — non-draft invoice (status sent)', () => {
         // ORDER: snapshot BEFORE the item replace (so it captures the pre-edit state).
         expect(mockCreateRevision.mock.invocationCallOrder[0])
             .toBeLessThan(mockReplaceInvoiceItems.mock.invocationCallOrder[0]);
+    });
+});
+
+describe('ACTIVITY-LOG-001 edit-on-save', () => {
+    it('emits one coarse updated event for the whole-document Save and none for item sub-endpoints', async () => {
+        await invoicesService.updateInvoice(
+            COMPANY_A,
+            USER_ID,
+            INV_ID,
+            { notes: 'Committed', items: NEW_ITEMS },
+            TX_CLIENT,
+            HUMAN_ACTOR
+        );
+
+        expect(mockLogFinancialActivity).toHaveBeenCalledTimes(1);
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'invoice.updated',
+                entityType: 'invoice',
+                actor: HUMAN_ACTOR,
+            }),
+            { client: TX_CLIENT }
+        );
+
+        mockLogFinancialActivity.mockClear();
+        await invoicesService.addItem(
+            COMPANY_A,
+            INV_ID,
+            USER_ID,
+            NEW_ITEMS[0],
+            TX_CLIENT
+        );
+        await invoicesService.updateItem(
+            COMPANY_A,
+            INV_ID,
+            USER_ID,
+            71,
+            { quantity: 3 },
+            TX_CLIENT
+        );
+        await invoicesService.removeItem(
+            COMPANY_A,
+            INV_ID,
+            USER_ID,
+            71,
+            TX_CLIENT
+        );
+
+        expect(mockLogFinancialActivity).not.toHaveBeenCalled();
     });
 });

@@ -17,6 +17,14 @@ const mockStripeService = {
 jest.mock('../backend/src/services/stripePaymentsService', () => mockStripeService);
 jest.mock('../backend/src/services/paymentsService', () => ({}));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(null)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    userActor: jest.fn(id => ({
+        id: id || null, type: 'user', label: null, source: 'crm',
+    })),
+}));
 
 const paymentsRouter = require('../backend/src/routes/payments');
 const { ALL_PERMISSION_KEYS } = require('../backend/src/services/permissionCatalog');
@@ -104,7 +112,14 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
             COMPANY_A,
             '11',
             'customer@example.com',
-            { id: CRM_USER_ID, name: 'Agent' }
+            { id: CRM_USER_ID, name: 'Agent' },
+            null,
+            {
+                id: CRM_USER_ID,
+                type: 'user',
+                label: null,
+                source: 'crm',
+            }
         );
     });
 
@@ -117,7 +132,14 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
             COMPANY_A,
             '11',
             'customer@example.com',
-            { id: null, name: 'Agent' }
+            { id: null, name: 'Agent' },
+            null,
+            {
+                id: null,
+                type: 'user',
+                label: null,
+                source: 'crm',
+            }
         );
     });
 
@@ -149,7 +171,14 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
             COMPANY_B,
             '11',
             'customer@example.com',
-            { id: CRM_USER_ID, name: 'Agent' }
+            { id: CRM_USER_ID, name: 'Agent' },
+            null,
+            {
+                id: CRM_USER_ID,
+                type: 'user',
+                label: null,
+                source: 'crm',
+            }
         );
     });
 

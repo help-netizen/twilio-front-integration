@@ -19,6 +19,18 @@ jest.mock('../backend/src/db/companyQueries', () => ({
 jest.mock('../backend/src/services/technicianProfilesService', () => ({
     getTechnicianForInvoice: jest.fn(),
 }));
+const mockLogFinancialActivity = jest.fn();
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    clientActor: jest.fn((label = 'Client', source = 'portal') => ({
+        id: null, type: 'client', label, source,
+    })),
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+    stripeActor: jest.fn(),
+    userActor: jest.fn(),
+}));
 
 const stripeQueries = require('../backend/src/db/stripePaymentsQueries');
 const invoicesQueries = require('../backend/src/db/invoicesQueries');
@@ -55,10 +67,14 @@ beforeEach(() => {
     });
     companyQueries.getCompanyById.mockResolvedValue({ name: 'Albusto Test' });
     technicianProfilesService.getTechnicianForInvoice.mockResolvedValue(null);
+    mockLogFinancialActivity.mockResolvedValue({ ok: true });
 });
 
 test('ORDER-LIST-001 public invoice pay-info excludes order_list', async () => {
-    const result = await stripePaymentsService.getPublicPayInfo('invoice_token_123');
+    const result = await stripePaymentsService.getPublicPayInfo(
+        'invoice_token_123',
+        { recordView: true }
+    );
 
     expect(result).toMatchObject({
         invoice_number: 'INVOICE 91',
@@ -67,4 +83,15 @@ test('ORDER-LIST-001 public invoice pay-info excludes order_list', async () => {
     });
     expect(result).not.toHaveProperty('order_list');
     expect(JSON.stringify(result)).not.toContain(SECRET_PART);
+    expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+            action: 'invoice.viewed',
+            actor: {
+                id: null,
+                type: 'client',
+                label: 'Client',
+                source: 'portal',
+            },
+        })
+    );
 });

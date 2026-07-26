@@ -9,6 +9,10 @@ const chatgptMcpQueries = require('../db/chatgptMcpQueries');
 const { safeResult } = require('./chatgptMcpReadService');
 const { CrmServiceError } = require('./crmErrors');
 const { toE164 } = require('../utils/phoneUtils');
+const {
+    aiActor,
+    logFinancialActivity,
+} = require('./financialActivityService');
 
 class ChatgptMcpWriteError extends CrmServiceError {
     constructor(code, message, httpStatus = 400) {
@@ -651,12 +655,17 @@ function hasOwnFields(value) {
     return Object.keys(value).length > 0;
 }
 
+function financialAiActor(context) {
+    return aiActor(context.actorName || 'Avatar');
+}
+
 async function createEstimate(context, args, client) {
     return estimatesService.createEstimate(
         context.companyId,
         context.actorId,
         args,
-        client
+        client,
+        financialAiActor(context)
     );
 }
 
@@ -709,7 +718,19 @@ async function updateEstimate(context, args, client) {
             client
         );
     }
-    return estimatesService.getEstimate(context.companyId, args.estimate_id, client);
+    const estimate = await estimatesService.getEstimate(
+        context.companyId,
+        args.estimate_id,
+        client
+    );
+    await logFinancialActivity({
+        companyId: context.companyId,
+        entityType: 'estimate',
+        action: 'estimate.updated',
+        entity: estimate,
+        actor: financialAiActor(context),
+    }, { client });
+    return estimate;
 }
 
 async function createInvoice(context, args, client) {
@@ -717,7 +738,8 @@ async function createInvoice(context, args, client) {
         context.companyId,
         context.actorId,
         args,
-        client
+        client,
+        financialAiActor(context)
     );
 }
 
@@ -770,7 +792,19 @@ async function updateInvoice(context, args, client) {
             client
         );
     }
-    return invoicesService.getInvoice(context.companyId, args.invoice_id, client);
+    const invoice = await invoicesService.getInvoice(
+        context.companyId,
+        args.invoice_id,
+        client
+    );
+    await logFinancialActivity({
+        companyId: context.companyId,
+        entityType: 'invoice',
+        action: 'invoice.updated',
+        entity: invoice,
+        actor: financialAiActor(context),
+    }, { client });
+    return invoice;
 }
 
 async function convertEstimateToInvoice(context, args, client) {
@@ -780,7 +814,8 @@ async function convertEstimateToInvoice(context, args, client) {
             context.companyId,
             context.actorId,
             args.estimate_id,
-            client
+            client,
+            financialAiActor(context)
         );
     } catch (err) {
         if (err?.name === 'EstimatesServiceError') {
@@ -925,7 +960,8 @@ async function sendDocument(context, args, client, documentType) {
                     name: context.actorName || 'Avatar',
                 },
             },
-            client
+            client,
+            financialAiActor(context)
         );
     } catch (err) {
         throw normalizeDocumentSendError(err);

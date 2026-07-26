@@ -7,6 +7,8 @@ const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const invoicesService = require('../services/invoicesService');
 const { actorFromRequest } = require('../services/documentSendNoteService');
+const { userActor } = require('../services/financialActivityService');
+const { withTransaction } = require('../services/transactionService');
 
 // Resolve the active company scope from any of the supported middleware shapes.
 function getCompanyId(req) {
@@ -17,10 +19,7 @@ function getCompanyId(req) {
 // created_by/updated_by FK → crm_users(id): use the resolved CRM user id, NOT the Keycloak sub
 // (they differ — crm_users.id ≠ keycloak_sub — so writing the sub violates the created_by FK).
 function getUserId(req) {
-    const userId = req.user?.crmUser?.id || req.user?.sub || req.user?.id || req.userId || null;
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId || '')
-        ? userId
-        : null;
+    return req.user?.crmUser?.id || null;
 }
 
 // FK/audit-bound writes must never fall back to the Keycloak subject.
@@ -90,7 +89,13 @@ router.post('/', requirePermission('invoices.create'), async (req, res) => {
         const userId = getUserId(req);
         const data = req.body;
 
-        const result = await invoicesService.createInvoice(companyId, userId, data);
+        const result = await withTransaction(client => invoicesService.createInvoice(
+            companyId,
+            userId,
+            data,
+            client,
+            userActor(userId)
+        ));
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST / error:', err.message);
@@ -122,7 +127,14 @@ router.put('/:id', requirePermission('invoices.create'), async (req, res) => {
         const { id } = req.params;
         const data = req.body;
 
-        const result = await invoicesService.updateInvoice(companyId, userId, id, data);
+        const result = await withTransaction(client => invoicesService.updateInvoice(
+            companyId,
+            userId,
+            id,
+            data,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] PUT /:id error:', err.message);
@@ -135,9 +147,16 @@ router.put('/:id', requirePermission('invoices.create'), async (req, res) => {
 router.delete('/:id', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id } = req.params;
 
-        const result = await invoicesService.deleteInvoice(companyId, id);
+        const result = await withTransaction(client => invoicesService.deleteInvoice(
+            companyId,
+            id,
+            userId,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] DELETE /:id error:', err.message);
@@ -159,14 +178,21 @@ router.post('/:id/send', requirePermission('invoices.send'), async (req, res) =>
         const { channel, recipient, message, includePaymentLink } = req.body || {};
         const userEmail = getUserEmail(req);
 
-        const result = await invoicesService.sendInvoice(companyId, userId, id, {
-            channel,
-            recipient,
-            message,
-            includePaymentLink,
-            userEmail,
-            noteActor: actorFromRequest(req),
-        });
+        const result = await withTransaction(client => invoicesService.sendInvoice(
+            companyId,
+            userId,
+            id,
+            {
+                channel,
+                recipient,
+                message,
+                includePaymentLink,
+                userEmail,
+                noteActor: actorFromRequest(req),
+            },
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/send error:', err.message);
@@ -182,7 +208,13 @@ router.post('/:id/void', requirePermission('invoices.create'), async (req, res) 
         const userId = getUserId(req);
         const { id } = req.params;
 
-        const result = await invoicesService.voidInvoice(companyId, id, userId);
+        const result = await withTransaction(client => invoicesService.voidInvoice(
+            companyId,
+            id,
+            userId,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/void error:', err.message);
@@ -199,7 +231,14 @@ router.post('/:id/record-payment', requirePermission('payments.collect_offline')
         const { id } = req.params;
         const { amount, payment_method, reference } = req.body;
 
-        const result = await invoicesService.recordPayment(companyId, userId, id, { amount, payment_method, reference });
+        const result = await withTransaction(client => invoicesService.recordPayment(
+            companyId,
+            userId,
+            id,
+            { amount, payment_method, reference },
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/record-payment error:', err.message);
@@ -219,12 +258,14 @@ router.post(
             const actorId = getCrmUserId(req);
             const { invoiceId, paymentId } = req.params;
 
-            const result = await invoicesService.voidPayment(
+            const result = await withTransaction(client => invoicesService.voidPayment(
                 companyId,
                 actorId,
                 invoiceId,
-                paymentId
-            );
+                paymentId,
+                client,
+                userActor(actorId)
+            ));
             res.json({ ok: true, data: result });
         } catch (err) {
             console.error('[Invoices] POST /:invoiceId/payments/:paymentId/void error:', err.message);
@@ -255,7 +296,14 @@ router.post('/:id/sync-items', requirePermission('invoices.create'), async (req,
             return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'estimate_id is required (invoice not linked to any estimate)' } });
         }
 
-        const result = await invoicesService.syncItemsFromEstimate(companyId, userId, id, estimate_id);
+        const result = await withTransaction(client => invoicesService.syncItemsFromEstimate(
+            companyId,
+            userId,
+            id,
+            estimate_id,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/sync-items error:', err.message);
@@ -395,8 +443,14 @@ router.post('/:id/attachments', requirePermission('invoices.create'), (req, res)
 router.post('/:id/public-link', requirePermission('invoices.send'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
+        const actorId = getUserId(req);
         const { id } = req.params;
-        const result = await invoicesService.ensurePublicLink(companyId, id);
+        const result = await withTransaction(client => invoicesService.ensurePublicLink(
+            companyId,
+            id,
+            client,
+            userActor(actorId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/public-link error:', err.message);
@@ -441,7 +495,14 @@ function stripeError(err, req, res, tag) {
 router.post('/:id/stripe-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
     try {
         const actor = getStripeActor(req);
-        const link = await stripePaymentsService.ensurePaymentLink(getCompanyId(req), actor, req.params.id, { amount: req.body?.amount });
+        const link = await withTransaction(client => stripePaymentsService.ensurePaymentLink(
+            getCompanyId(req),
+            actor,
+            req.params.id,
+            { amount: req.body?.amount },
+            client,
+            userActor(actor.id)
+        ));
         res.json({ ok: true, data: link });
     } catch (err) { stripeError(err, req, res, 'stripe-payment-link POST'); }
 });
@@ -459,7 +520,14 @@ router.post('/:id/send-payment-link', requirePermission('payments.collect_online
     try {
         const actor = getStripeActor(req);
         const { channel, message } = req.body || {};
-        const result = await stripePaymentsService.sendPaymentLink(getCompanyId(req), actor, req.params.id, { channel, message });
+        const result = await withTransaction(client => stripePaymentsService.sendPaymentLink(
+            getCompanyId(req),
+            actor,
+            req.params.id,
+            { channel, message },
+            client,
+            userActor(actor.id)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) { stripeError(err, req, res, 'send-payment-link'); }
 });
@@ -467,7 +535,14 @@ router.post('/:id/send-payment-link', requirePermission('payments.collect_online
 // POST /api/invoices/:id/stripe-manual-card-session — Payment Element (keyed).
 router.post('/:id/stripe-manual-card-session', requirePermission('payments.collect_keyed'), async (req, res) => {
     try {
-        const data = await stripePaymentsService.createManualCardSession(getCompanyId(req), getStripeActor(req), { invoiceId: req.params.id, amount: req.body?.amount });
+        const actor = getStripeActor(req);
+        const data = await withTransaction(client => stripePaymentsService.createManualCardSession(
+            getCompanyId(req),
+            actor,
+            { invoiceId: req.params.id, amount: req.body?.amount },
+            client,
+            userActor(actor.id)
+        ));
         res.json({ ok: true, data });
     } catch (err) { stripeError(err, req, res, 'manual-card-session'); }
 });
@@ -475,7 +550,14 @@ router.post('/:id/stripe-manual-card-session', requirePermission('payments.colle
 // POST /api/invoices/:id/tap-to-pay/payment-intent — Terminal card_present intent.
 router.post('/:id/tap-to-pay/payment-intent', requirePermission('payments.collect_terminal'), async (req, res) => {
     try {
-        const data = await stripePaymentsService.createTapToPayIntent(getCompanyId(req), getStripeActor(req), { invoiceId: req.params.id, amount: req.body?.amount });
+        const actor = getStripeActor(req);
+        const data = await withTransaction(client => stripePaymentsService.createTapToPayIntent(
+            getCompanyId(req),
+            actor,
+            { invoiceId: req.params.id, amount: req.body?.amount },
+            client,
+            userActor(actor.id)
+        ));
         res.json({ ok: true, data });
     } catch (err) { stripeError(err, req, res, 'tap-to-pay-intent'); }
 });

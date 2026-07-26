@@ -88,6 +88,16 @@ jest.mock('../backend/src/services/documentTemplates', () => ({
 }));
 
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
+const mockLogFinancialActivity = jest.fn();
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(null)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+    userActor: jest.fn(id => ({
+        id: id || null, type: 'user', label: null, source: 'crm',
+    })),
+}));
 
 const mockAddNote = jest.fn();
 jest.mock('../backend/src/services/jobsService', () => ({
@@ -141,6 +151,7 @@ beforeEach(() => {
     mockGetInvoiceItems.mockResolvedValue([{ id: 1, name: 'Labor', quantity: 1, unit_price: 100, amount: 100 }]);
     mockUpdateInvoiceStatus.mockResolvedValue(invoiceRow({ status: 'sent' }));
     mockCreateEvent.mockResolvedValue(undefined);
+    mockLogFinancialActivity.mockResolvedValue({ ok: true });
     mockGetMailboxStatus.mockResolvedValue(CONNECTED);
     mockSendEmail.mockResolvedValue({ provider_message_id: 'gmail-1' });
     mockResolveProxy.mockResolvedValue('+15550001111');

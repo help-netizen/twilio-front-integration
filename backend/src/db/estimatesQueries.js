@@ -99,7 +99,7 @@ async function listEstimates(companyId, filters = {}) {
                 inv.invoice_number AS invoice_number,
                 COUNT(*) OVER() AS _total
          FROM estimates e
-         LEFT JOIN contacts c ON c.id = e.contact_id
+         LEFT JOIN contacts c ON c.id = e.contact_id AND c.company_id = e.company_id
          LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
          LEFT JOIN LATERAL (
             SELECT id, invoice_number
@@ -352,8 +352,9 @@ async function updateEstimate(id, companyId, data, client = null) {
     return rows[0] || null;
 }
 
-async function archiveEstimate(id, companyId, archivedBy) {
-    const { rows } = await db.query(
+async function archiveEstimate(id, companyId, archivedBy, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `UPDATE estimates
          SET archived_at = NOW(), archived_by = $3, updated_at = NOW()
          WHERE id = $1 AND company_id = $2 AND archived_at IS NULL
@@ -363,8 +364,9 @@ async function archiveEstimate(id, companyId, archivedBy) {
     return rows[0] || null;
 }
 
-async function restoreEstimate(id, companyId, restoredBy) {
-    const { rows } = await db.query(
+async function restoreEstimate(id, companyId, restoredBy, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `UPDATE estimates
          SET archived_at = NULL, archived_by = NULL, status = 'draft', updated_by = $3, updated_at = NOW()
          WHERE id = $1 AND company_id = $2 AND archived_at IS NOT NULL
@@ -374,10 +376,11 @@ async function restoreEstimate(id, companyId, restoredBy) {
     return rows[0] || null;
 }
 
-async function updateEstimateStatus(id, companyId, status, timestampField) {
+async function updateEstimateStatus(id, companyId, status, timestampField, client = null) {
+    const query = queryFor(client);
     const sets = ['status = $3', 'updated_at = NOW()'];
     if (timestampField) sets.push(`${timestampField} = NOW()`);
-    const { rows } = await db.query(
+    const { rows } = await query(
         `UPDATE estimates SET ${sets.join(', ')}
          WHERE id = $1 AND company_id = $2
          RETURNING *`,
@@ -648,9 +651,10 @@ async function listEvents(estimateId) {
 // =============================================================================
 
 /** Look up an estimate strictly by its public_token (no company scoping — the token IS the auth). */
-async function getEstimateByPublicToken(publicToken) {
+async function getEstimateByPublicToken(publicToken, client = null) {
     if (!publicToken) return null;
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT e.*,
                 c.full_name AS contact_name,
                 c.email AS contact_email,

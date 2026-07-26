@@ -327,8 +327,9 @@ async function updateInvoice(id, companyId, data, client = null) {
 /**
  * Delete an invoice (hard delete).
  */
-async function deleteInvoice(id, companyId) {
-    const { rowCount } = await db.query(
+async function deleteInvoice(id, companyId, client = null) {
+    const query = queryFor(client);
+    const { rowCount } = await query(
         `DELETE FROM invoices WHERE id = $1 AND company_id = $2`,
         [id, companyId]
     );
@@ -718,8 +719,9 @@ async function listEvents(invoiceId) {
  * Record a payment against an invoice.
  * Updates amount_paid and balance_due. Sets paid_at if fully paid.
  */
-async function recordPayment(id, companyId, amount) {
-    const { rows } = await db.query(
+async function recordPayment(id, companyId, amount, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `UPDATE invoices SET
             amount_paid = COALESCE(amount_paid, 0) + $3,
             balance_due = total - (COALESCE(amount_paid, 0) + $3),
@@ -737,9 +739,10 @@ async function recordPayment(id, companyId, amount) {
 // =============================================================================
 
 /** Look up an invoice strictly by its public_token (no company scoping — the token IS the auth). */
-async function getInvoiceByPublicToken(publicToken) {
+async function getInvoiceByPublicToken(publicToken, client = null) {
     if (!publicToken) return null;
-    const { rows } = await db.query(
+    const query = queryFor(client);
+    const { rows } = await query(
         `SELECT i.*,
                 c.full_name AS contact_name,
                 c.email AS contact_email,

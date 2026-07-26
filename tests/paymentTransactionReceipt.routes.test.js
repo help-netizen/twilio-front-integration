@@ -10,6 +10,14 @@ jest.mock('../backend/src/services/paymentsService', () => ({
 jest.mock('../backend/src/services/auditService', () => ({
     log: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(null)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    userActor: jest.fn(id => ({
+        id: id || null, type: 'user', label: null, source: 'crm',
+    })),
+}));
 
 const paymentsRouter = require('../backend/src/routes/payments');
 
@@ -158,6 +166,13 @@ describe('POST /api/payments/:id/receipt/email', () => {
                 id: CRM_USER_ID,
                 name: 'Agent',
                 email: 'agent@example.com',
+            },
+            null,
+            {
+                id: CRM_USER_ID,
+                type: 'user',
+                label: null,
+                source: 'crm',
             }
         );
     });
@@ -191,7 +206,14 @@ describe('POST /api/payments/:id/receipt/email', () => {
             COMPANY_B,
             '71',
             undefined,
-            expect.objectContaining({ id: CRM_USER_ID })
+            expect.objectContaining({ id: CRM_USER_ID }),
+            null,
+            {
+                id: CRM_USER_ID,
+                type: 'user',
+                label: null,
+                source: 'crm',
+            }
         );
     });
 });

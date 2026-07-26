@@ -41,8 +41,8 @@ describe('STRIPE-ACTOR-FK-001 · FK-bound Stripe writes never receive the Keyclo
         expect(source).toMatch(/function getStripeActor\(req\) \{\s*return \{ id: req\.user\?\.crmUser\?\.id \|\| null \};/);
         // The pre-fix bug literal must never come back.
         expect(source).not.toContain('const actor = { id: getUserId(req) }');
-        // Both link routes go through the helper.
-        expect(source.match(/const actor = getStripeActor\(req\);/g)).toHaveLength(2);
+        // Link, send-link, keyed-card, and Tap-to-Pay routes go through the helper.
+        expect(source.match(/const actor = getStripeActor\(req\);/g)).toHaveLength(4);
     });
 
     test('jobs.js: all four Stripe sites keep the deployed crmUser-or-null literal', () => {

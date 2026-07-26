@@ -13,6 +13,14 @@ jest.mock('../backend/src/services/stripePaymentsService', () => ({
 jest.mock('../backend/src/services/auditService', () => ({
     log: jest.fn(() => Promise.resolve()),
 }));
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(null)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    userActor: jest.fn(id => ({
+        id: id || null, type: 'user', label: null, source: 'crm',
+    })),
+}));
 
 const invoicesRouter = require('../backend/src/routes/invoices');
 
@@ -72,7 +80,14 @@ describe('POST /api/invoices/:invoiceId/payments/:paymentId/void', () => {
                 COMPANY_ID,
                 CRM_USER_ID,
                 INVOICE_ID,
-                PAYMENT_ID
+                PAYMENT_ID,
+                null,
+                {
+                    id: CRM_USER_ID,
+                    type: 'user',
+                    label: null,
+                    source: 'crm',
+                }
             );
             expect(mockVoidPayment.mock.calls[0]).not.toContain('keycloak-subject');
             expect(mockVoidPayment.mock.calls[0]).not.toContain(
@@ -105,7 +120,14 @@ describe('POST /api/invoices/:invoiceId/payments/:paymentId/void', () => {
             COMPANY_ID,
             null,
             INVOICE_ID,
-            PAYMENT_ID
+            PAYMENT_ID,
+            null,
+            {
+                id: null,
+                type: 'user',
+                label: null,
+                source: 'crm',
+            }
         );
         expect(mockVoidPayment.mock.calls[0]).not.toContain('keycloak-subject');
     });

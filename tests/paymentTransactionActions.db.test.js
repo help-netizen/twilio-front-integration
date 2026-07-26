@@ -8,6 +8,8 @@
 const { randomUUID } = require('crypto');
 const db = require('../backend/src/db/connection');
 const paymentsQueries = require('../backend/src/db/paymentsQueries');
+const paymentsService = require('../backend/src/services/paymentsService');
+const { clientActor } = require('../backend/src/services/financialActivityService');
 
 jest.setTimeout(60000);
 
@@ -17,6 +19,8 @@ let client;
 let originalQuery;
 let companyA;
 let companyB;
+let contactA;
+let contactB;
 
 beforeAll(async () => {
     originalQuery = db.query;
@@ -40,6 +44,14 @@ beforeAll(async () => {
          ) VALUES ($1, $2, true)`,
         [companyA, `acct_${TAG}`]
     );
+    const { rows: contacts } = await db.query(
+        `INSERT INTO contacts (company_id, full_name)
+         VALUES ($1, $3), ($2, $4)
+         RETURNING id, company_id`,
+        [companyA, companyB, `${TAG} Contact A`, `${TAG} Contact B`]
+    );
+    contactA = contacts.find(row => row.company_id === companyA).id;
+    contactB = contacts.find(row => row.company_id === companyB).id;
 });
 
 afterAll(async () => {
@@ -88,6 +100,103 @@ async function insertSession({ paymentIntentId, chargeId }) {
 }
 
 describe('transaction action tenant and card-only contract', () => {
+    test('payment write and activity row roll back atomically on the shared client', async () => {
+        const reference = `${TAG}-atomic`;
+        await client.query('SAVEPOINT financial_activity_atomic');
+
+        const transaction = await paymentsService.createTransaction(
+            companyA,
+            null,
+            {
+                transaction_type: 'payment',
+                payment_method: 'cash',
+                contact_id: contactA,
+                amount: 37,
+                currency: 'USD',
+                reference_number: reference,
+            },
+            client,
+            clientActor()
+        );
+
+        await expect(client.query(
+            `SELECT id
+             FROM payment_transactions
+             WHERE company_id = $1 AND id = $2`,
+            [companyA, transaction.id]
+        )).resolves.toMatchObject({ rowCount: 1 });
+        await expect(client.query(
+            `SELECT details->>'parent_type' AS parent_type,
+                    details->>'parent_id' AS parent_id
+             FROM audit_log
+             WHERE company_id = $1
+               AND action = 'payment.recorded'
+               AND target_id = $2`,
+            [companyA, String(transaction.id)]
+        )).resolves.toMatchObject({
+            rows: [{
+                parent_type: 'contact',
+                parent_id: String(contactA),
+            }],
+        });
+
+        await client.query('ROLLBACK TO SAVEPOINT financial_activity_atomic');
+        await client.query('RELEASE SAVEPOINT financial_activity_atomic');
+
+        await expect(client.query(
+            `SELECT id
+             FROM payment_transactions
+             WHERE company_id = $1 AND reference_number = $2`,
+            [companyA, reference]
+        )).resolves.toMatchObject({ rows: [] });
+        await expect(client.query(
+            `SELECT id
+             FROM audit_log
+             WHERE company_id = $1
+               AND action = 'payment.recorded'
+               AND target_id = $2`,
+            [companyA, String(transaction.id)]
+        )).resolves.toMatchObject({ rows: [] });
+    });
+
+    test('foreign Contact linkage is a 404 and leaves ledger plus activity unchanged', async () => {
+        const beforePayments = await client.query(
+            'SELECT COUNT(*)::INT AS count FROM payment_transactions WHERE company_id = $1',
+            [companyA]
+        );
+        const beforeActivities = await client.query(
+            `SELECT COUNT(*)::INT AS count
+             FROM audit_log
+             WHERE company_id = $1 AND action = 'payment.recorded'`,
+            [companyA]
+        );
+
+        await expect(paymentsService.createTransaction(
+            companyA,
+            null,
+            {
+                transaction_type: 'payment',
+                payment_method: 'cash',
+                contact_id: contactB,
+                amount: 25,
+                currency: 'USD',
+            },
+            client,
+            clientActor()
+        )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+
+        await expect(client.query(
+            'SELECT COUNT(*)::INT AS count FROM payment_transactions WHERE company_id = $1',
+            [companyA]
+        )).resolves.toMatchObject({ rows: beforePayments.rows });
+        await expect(client.query(
+            `SELECT COUNT(*)::INT AS count
+             FROM audit_log
+             WHERE company_id = $1 AND action = 'payment.recorded'`,
+            [companyA]
+        )).resolves.toMatchObject({ rows: beforeActivities.rows });
+    });
+
     test('receipt context cannot resolve another company transaction', async () => {
         const transaction = await insertTransaction({
             method: 'credit_card',

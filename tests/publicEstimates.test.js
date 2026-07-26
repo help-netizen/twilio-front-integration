@@ -36,6 +36,13 @@ jest.mock('../backend/src/db/estimatesQueries', () => ({
 jest.mock('../backend/src/services/estimatePdfService', () => ({
     renderEstimatePdf: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4 mock')),
 }));
+const mockLogFinancialActivity = jest.fn();
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    clientActor: jest.fn((label = 'Client', source = 'portal') => ({
+        id: null, type: 'client', label, source,
+    })),
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+}));
 
 const estimatesService = require('../backend/src/services/estimatesService');
 const publicRouter = require('../backend/src/routes/public-estimates');
@@ -52,6 +59,7 @@ const GOOD_TOKEN = 'abc123XYZ_-'; // 11 chars, base64url — matches TOKEN_RE
 
 beforeEach(() => {
     jest.clearAllMocks();
+    mockLogFinancialActivity.mockResolvedValue({ ok: true });
 });
 
 // ─── A. getPublicEstimate — customer-safe view (TC-SD-004) ───────────────────

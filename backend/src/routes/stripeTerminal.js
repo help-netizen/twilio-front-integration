@@ -9,6 +9,8 @@ const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const stripePaymentsService = require('../services/stripePaymentsService');
+const { userActor } = require('../services/financialActivityService');
+const { withTransaction } = require('../services/transactionService');
 
 function companyId(req) { return req.companyFilter?.company_id; }
 // created_by references crm_users(id); the Keycloak `sub` is a UUID but NOT a
@@ -42,12 +44,21 @@ router.post('/payment-intents', requirePermission('payments.collect_terminal'), 
         if (!Number.isInteger(amount) || amount <= 0) {
             return res.status(400).json({ ok: false, error: { code: 'INVALID_AMOUNT', message: 'amount must be a positive integer (cents)' } });
         }
-        const data = await stripePaymentsService.createTapToPayIntent(companyId(req), actor(req), {
-            amount,
-            invoiceId: invoice_id,
-            jobId: job_id,
-            contactId: contact_id,
-        });
+        const paymentActor = actor(req);
+        const data = await withTransaction(client => (
+            stripePaymentsService.createTapToPayIntent(
+                companyId(req),
+                paymentActor,
+                {
+                    amount,
+                    invoiceId: invoice_id,
+                    jobId: job_id,
+                    contactId: contact_id,
+                },
+                client,
+                userActor(paymentActor.id)
+            )
+        ));
         res.json({ ok: true, data });
     } catch (err) { handle(err, req, res); }
 });

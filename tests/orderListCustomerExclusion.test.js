@@ -49,7 +49,21 @@ const mockPortalQueries = {
 };
 jest.mock('../backend/src/db/portalQueries', () => mockPortalQueries);
 jest.mock('../backend/src/db/paymentsQueries', () => ({}));
-jest.mock('../backend/src/services/paymentsService', () => ({}));
+const mockCreatePayment = jest.fn();
+jest.mock('../backend/src/services/paymentsService', () => ({
+    createTransaction: (...args) => mockCreatePayment(...args),
+}));
+const mockLogFinancialActivity = jest.fn();
+const mockPortalTransactionClient = { query: jest.fn() };
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(mockPortalTransactionClient)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    clientActor: jest.fn((label = 'Client', source = 'portal') => ({
+        id: null, type: 'client', label, source,
+    })),
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+}));
 
 const estimatesService = require('../backend/src/services/estimatesService');
 const invoicesService = require('../backend/src/services/invoicesService');
@@ -111,6 +125,8 @@ beforeEach(() => {
     });
     mockPortalQueries.touchSession.mockResolvedValue({});
     mockPortalQueries.logEvent.mockResolvedValue({});
+    mockCreatePayment.mockResolvedValue({ id: 91, amount: 25 });
+    mockLogFinancialActivity.mockResolvedValue({ ok: true });
 });
 
 describe('ORDER-LIST-001 customer-facing PDF payloads', () => {
@@ -169,6 +185,17 @@ describe('ORDER-LIST-001 public and portal JSON payloads', () => {
         expect(result).not.toHaveProperty('order_list');
         expect(result.approved_snapshot).not.toHaveProperty('order_list');
         expect(JSON.stringify(result)).not.toContain(SECRET_PART);
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'estimate.viewed',
+                actor: {
+                    id: null,
+                    type: 'client',
+                    label: 'Client',
+                    source: 'portal',
+                },
+            })
+        );
     });
 
     test('portal invoice detail excludes order_list at every depth', async () => {
@@ -197,6 +224,35 @@ describe('ORDER-LIST-001 public and portal JSON payloads', () => {
         } finally {
             spy.mockRestore();
         }
+    });
+
+    test('portal payment uses the client actor and its distinct canonical action', async () => {
+        await portalService.submitPayment('session-1', {
+            invoiceId: 81,
+            amount: 25,
+            paymentMethod: 'cash',
+        });
+
+        expect(mockCreatePayment).toHaveBeenCalledWith(
+            COMPANY_ID,
+            null,
+            expect.objectContaining({
+                contact_id: CONTACT_ID,
+                invoice_id: 81,
+                amount: 25,
+            }),
+            mockPortalTransactionClient,
+            {
+                id: null,
+                type: 'client',
+                label: 'Client',
+                source: 'portal',
+            },
+            {
+                action: 'payment.portal_submitted',
+                invoiceAction: 'invoice.payment_recorded',
+            }
+        );
     });
 });
 

@@ -10,6 +10,7 @@ const estimateItemPresetsQueries = require('../db/estimateItemPresetsQueries');
 const { renderEstimatePdf } = require('./estimatePdfService');
 const { toE164 } = require('../utils/phoneUtils');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
+const { logFinancialActivity } = require('./financialActivityService');
 const {
     normalizeOrderList,
     stripInternalOrderList,
@@ -201,7 +202,7 @@ async function snapshotEstimate(companyId, id, client = null) {
     return { ...estimate, items };
 }
 
-async function createEstimate(companyId, userId, data = {}, client = null) {
+async function createEstimate(companyId, userId, data = {}, client = null, activityActor = null) {
     const items = normalizeItems(data.items) || [];
     const orderList = normalizeOrderList(data.order_list ?? []);
     validateSavePayload(data, items);
@@ -233,11 +234,20 @@ async function createEstimate(companyId, userId, data = {}, client = null) {
         null,
         client
     );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: 'estimate.created',
+            entity: estimate,
+            actor: activityActor,
+        }, { client });
+    }
 
     return getEstimate(companyId, estimate.id, client);
 }
 
-async function updateEstimate(companyId, userId, id, data = {}, client = null) {
+async function updateEstimate(companyId, userId, id, data = {}, client = null, activityActor = null) {
     const existing = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!existing) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(existing);
@@ -299,27 +309,46 @@ async function updateEstimate(companyId, userId, id, data = {}, client = null) {
         { fields: Object.keys(data) },
         client
     );
+    if (activityActor) {
+        const current = await estimatesQueries.getEstimateById(companyId, id, client);
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: 'estimate.updated',
+            entity: current,
+            actor: activityActor,
+        }, { client });
+    }
 
     return getEstimate(companyId, id, client);
 }
 
-async function archiveEstimate(companyId, userId, id) {
-    const existing = await estimatesQueries.getEstimateById(companyId, id);
+async function archiveEstimate(companyId, userId, id, client = null, activityActor = null) {
+    const existing = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!existing) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
-    const updated = await estimatesQueries.archiveEstimate(id, companyId, userId);
-    if (!updated) return getEstimate(companyId, id);
+    const updated = await estimatesQueries.archiveEstimate(id, companyId, userId, client);
+    if (!updated) return getEstimate(companyId, id, client);
 
-    await estimatesQueries.createEvent(companyId, id, 'archived', 'user', userId, null);
-    return getEstimate(companyId, id);
+    await estimatesQueries.createEvent(companyId, id, 'archived', 'user', userId, null, client);
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: 'estimate.archived',
+            entity: updated,
+            actor: activityActor,
+        }, { client });
+    }
+    return getEstimate(companyId, id, client);
 }
 
-async function restoreEstimate(companyId, userId, id) {
-    const existing = await estimatesQueries.getEstimateById(companyId, id);
+async function restoreEstimate(companyId, userId, id, client = null, activityActor = null) {
+    const existing = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!existing) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
-    const updated = await estimatesQueries.restoreEstimate(id, companyId, userId);
-    if (!updated) return getEstimate(companyId, id);
+    const updated = await estimatesQueries.restoreEstimate(id, companyId, userId, client);
+    if (!updated) return getEstimate(companyId, id, client);
 
     await estimatesQueries.createEvent(
         companyId,
@@ -327,9 +356,20 @@ async function restoreEstimate(companyId, userId, id) {
         'restored',
         'user',
         userId,
-        { status: 'draft' }
+        { status: 'draft' },
+        client
     );
-    return getEstimate(companyId, id);
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: 'estimate.restored',
+            entity: updated,
+            actor: activityActor,
+            summary: { status: 'draft' },
+        }, { client });
+    }
+    return getEstimate(companyId, id, client);
 }
 
 async function resetStatusAfterItemEdit(companyId, userId, estimate, client = null) {
@@ -526,7 +566,8 @@ async function sendEstimate(
     userId,
     id,
     { channel, recipient, message, userEmail, noteActor } = {},
-    client = null
+    client = null,
+    activityActor = null
 ) {
     const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
@@ -544,10 +585,11 @@ async function sendEstimate(
     const number = estimate.estimate_number || `estimate-${id}`;
     let noteRecipient = to;
 
-    // Public page link is shared by both channels (idempotent — never re-mints).
-    const { url: link } = await ensurePublicLink(companyId, id, client);
+    try {
+        // Public page link is shared by both channels (idempotent — never re-mints).
+        const { url: link } = await ensurePublicLink(companyId, id, client);
 
-    if (normalizedChannel === 'email') {
+        if (normalizedChannel === 'email') {
         // Pre-check: a mailbox that is missing / disconnected / reconnect_required
         // must surface as 409, never reach Gmail, and never flip status.
         const emailMailboxService = require('./emailMailboxService');
@@ -597,7 +639,7 @@ async function sendEstimate(
         // is intentionally skipped here — it needs a resolved timeline_id which is not
         // trivially available on the estimate row, and the invoice path doesn't stamp
         // either. The EMAIL-TIMELINE-001 sent-mail projection self-heals the stamp.
-    } else {
+        } else {
         // SMS — resolve the company sending number BEFORE any side effects.
         const { resolveCompanyProxyE164 } = require('./messagingHelper');
         const proxy = await resolveCompanyProxyE164(companyId);
@@ -613,7 +655,20 @@ async function sendEstimate(
         const conversationsService = require('./conversationsService');
         const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
         // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
-        await conversationsService.sendMessage(conv.id, { body: buildSmsBody(message, link) });
+            await conversationsService.sendMessage(conv.id, { body: buildSmsBody(message, link) });
+        }
+    } catch (err) {
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'estimate',
+                action: 'estimate.send_failed',
+                entity: estimate,
+                actor: activityActor,
+                summary: { channel: normalizedChannel },
+            });
+        }
+        throw err;
     }
 
     // Dispatch resolved → NOW flip status and record the send (never before).
@@ -634,6 +689,17 @@ async function sendEstimate(
             recipient: to,
         });
     }
+    if (activityActor) {
+        const current = await estimatesQueries.getEstimateById(companyId, id, client);
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: 'estimate.sent',
+            entity: current,
+            actor: activityActor,
+            summary: { channel: normalizedChannel, status: 'sent' },
+        }, { client });
+    }
 
     await recordDocumentSendNote({
         companyId,
@@ -648,11 +714,19 @@ async function sendEstimate(
     return getEstimate(companyId, id, client);
 }
 
-async function approveEstimate(companyId, id, actorType, actorId, options = {}) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
+async function approveEstimate(
+    companyId,
+    id,
+    actorType,
+    actorId,
+    options = {},
+    client = null,
+    activityActor = null
+) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
-    const items = await assertHasItems(companyId, id);
+    const items = await assertHasItems(companyId, id, client);
 
     if (estimate.signature_required && actorType === 'client') {
         if (!asText(options.signature_name) || options.signature_consent !== true) {
@@ -671,7 +745,13 @@ async function approveEstimate(companyId, id, actorType, actorId, options = {}) 
         signature_consented_at: signatureConsentedAt,
         items,
     };
-    await estimatesQueries.createRevision(companyId, id, snapshot, actorId);
+    await estimatesQueries.createRevision(
+        companyId,
+        id,
+        snapshot,
+        actorType === 'user' ? actorId : null,
+        client
+    );
 
     const updated = await estimatesQueries.updateEstimate(id, companyId, {
         status: 'approved',
@@ -679,17 +759,37 @@ async function approveEstimate(companyId, id, actorType, actorId, options = {}) 
         approved_snapshot: snapshot,
         signature_name: signatureName,
         signature_consented_at: signatureConsentedAt,
-    });
+    }, client);
 
     await estimatesQueries.createEvent(companyId, id, 'approved', actorType || 'user', actorId, {
         signature_required: !!estimate.signature_required,
-    });
+    }, client);
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: actorType === 'client'
+                ? 'estimate.client_accepted'
+                : 'estimate.approved',
+            entity: updated,
+            actor: activityActor,
+            summary: { status: 'approved' },
+        }, { client });
+    }
 
     return updated;
 }
 
-async function declineEstimate(companyId, id, actorType, actorId, { reason } = {}) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
+async function declineEstimate(
+    companyId,
+    id,
+    actorType,
+    actorId,
+    { reason } = {},
+    client = null,
+    activityActor = null
+) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
 
@@ -698,28 +798,47 @@ async function declineEstimate(companyId, id, actorType, actorId, { reason } = {
         throw new EstimatesServiceError('VALIDATION', 'Decline reason is required', 400);
     }
 
-    const updated = await estimatesQueries.updateEstimateStatus(id, companyId, 'declined', 'declined_at');
+    const updated = await estimatesQueries.updateEstimateStatus(
+        id,
+        companyId,
+        'declined',
+        'declined_at',
+        client
+    );
     await estimatesQueries.createEvent(
         companyId,
         id,
         'declined',
         actorType || 'user',
         actorId,
-        { reason: comment }
+        { reason: comment },
+        client
     );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: actorType === 'client'
+                ? 'estimate.client_declined'
+                : 'estimate.declined',
+            entity: updated,
+            actor: activityActor,
+            summary: { status: 'declined' },
+        }, { client });
+    }
 
     return updated;
 }
 
-async function linkJob(companyId, userId, id, jobId) {
-    const estimate = await estimatesQueries.getEstimateById(companyId, id);
+async function linkJob(companyId, userId, id, jobId, client = null, activityActor = null) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
 
-    const job = await estimatesQueries.getJobContext(companyId, jobId);
+    const job = await estimatesQueries.getJobContext(companyId, jobId, client);
     if (!job) throw new EstimatesServiceError('VALIDATION', 'Job not found', 400);
 
-    const sequence = await estimatesQueries.nextEstimateSequence(companyId, { jobId: job.id });
+    const sequence = await estimatesQueries.nextEstimateSequence(companyId, { jobId: job.id }, client);
     const updated = await estimatesQueries.updateEstimate(id, companyId, {
         job_id: job.id,
         lead_id: estimate.lead_id || job.lead_id || null,
@@ -728,7 +847,7 @@ async function linkJob(companyId, userId, id, jobId) {
         estimate_number: estimatesQueries.buildEstimateNumber({ leadSerialId: job.lead_serial_id || job.lead_id || job.id, sequence }),
         status: estimate.status === 'draft' ? undefined : 'draft',
         updated_by: userId,
-    });
+    }, client);
 
     await estimatesQueries.createEvent(
         companyId,
@@ -736,12 +855,29 @@ async function linkJob(companyId, userId, id, jobId) {
         'job_linked',
         'user',
         userId,
-        { job_id: jobId }
+        { job_id: jobId },
+        client
     );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: 'estimate.linked_job',
+            entity: updated,
+            actor: activityActor,
+            summary: { job_id: job.id },
+        }, { client });
+    }
     return updated;
 }
 
-async function convertToInvoiceInTransaction(companyId, userId, id, client) {
+async function convertToInvoiceInTransaction(
+    companyId,
+    userId,
+    id,
+    client,
+    activityActor = null
+) {
     const locked = await estimatesQueries.lockEstimateForConversion(companyId, id, client);
     if (!locked) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
@@ -874,14 +1010,38 @@ async function convertToInvoiceInTransaction(companyId, userId, id, client) {
         { invoice_id: invoice.id },
         client
     );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: 'estimate.converted',
+            entity: estimate,
+            actor: activityActor,
+            summary: { invoice_id: invoice.id },
+        }, { client });
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.created',
+            entity: invoice,
+            actor: activityActor,
+            summary: { estimate_id: estimate.id },
+        }, { client });
+    }
 
     const created = await invoicesService.getInvoice(companyId, invoice.id, client);
     return { ...created, already_converted: false };
 }
 
-async function convertToInvoice(companyId, userId, id, client = null) {
+async function convertToInvoice(companyId, userId, id, client = null, activityActor = null) {
     if (client?.query) {
-        return convertToInvoiceInTransaction(companyId, userId, id, client);
+        return convertToInvoiceInTransaction(
+            companyId,
+            userId,
+            id,
+            client,
+            activityActor
+        );
     }
 
     const ownedClient = await db.pool.connect();
@@ -891,7 +1051,8 @@ async function convertToInvoice(companyId, userId, id, client = null) {
             companyId,
             userId,
             id,
-            ownedClient
+            ownedClient,
+            activityActor
         );
         await ownedClient.query('COMMIT');
         return result;
@@ -967,12 +1128,12 @@ async function ensurePublicLink(companyId, id, client = null) {
  * (route maps to 404). Exposes ONLY doc-safe fields — never internal IDs,
  * contact email/phone, costs/margins, or other tenant data.
  */
-async function getPublicEstimate(publicToken) {
+async function getPublicEstimate(publicToken, { recordView = false } = {}) {
     const estimate = await estimatesQueries.getEstimateByPublicToken(publicToken);
     if (!estimate) return null;
     const items = await estimatesQueries.getEstimateItems(estimate.company_id, estimate.id);
 
-    return {
+    const view = {
         estimate_number: estimate.estimate_number,
         status: estimate.status,
         currency: estimate.currency || 'USD',
@@ -992,15 +1153,36 @@ async function getPublicEstimate(publicToken) {
         tax_amount: Number(estimate.tax_amount),
         total: Number(estimate.total),
     };
+    if (recordView) {
+        const { clientActor } = require('./financialActivityService');
+        await logFinancialActivity({
+            companyId: estimate.company_id,
+            entityType: 'estimate',
+            action: 'estimate.viewed',
+            entity: estimate,
+            actor: clientActor('Client', 'portal'),
+        });
+    }
+    return view;
 }
 
 /**
  * Render the PDF for an estimate resolved by its `public_token`.
  * No auth/scoping — the token is the credential. Reuses generatePdf.
  */
-async function generatePdfByPublicToken(publicToken) {
+async function generatePdfByPublicToken(publicToken, { recordView = false } = {}) {
     const estimate = await estimatesQueries.getEstimateByPublicToken(publicToken);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', 'Estimate not found', 404);
+    if (recordView) {
+        const { clientActor } = require('./financialActivityService');
+        await logFinancialActivity({
+            companyId: estimate.company_id,
+            entityType: 'estimate',
+            action: 'estimate.viewed',
+            entity: estimate,
+            actor: clientActor('Client', 'portal'),
+        });
+    }
     return generatePdf(estimate.company_id, estimate.id);
 }
 

@@ -12,7 +12,8 @@
 
 const paymentsQueries = require('../db/paymentsQueries');
 const invoicesQueries = require('../db/invoicesQueries');
-const auditService = require('./auditService');
+const estimatesQueries = require('../db/estimatesQueries');
+const { logFinancialActivity } = require('./financialActivityService');
 
 // =============================================================================
 // Error class
@@ -58,12 +59,43 @@ async function listTransactions(companyId, filters = {}) {
 /**
  * Get a single transaction, throws NOT_FOUND if missing.
  */
-async function getTransaction(companyId, id) {
-    const tx = await paymentsQueries.getTransactionById(companyId, id);
+async function getTransaction(companyId, id, client = null) {
+    const tx = await paymentsQueries.getTransactionById(companyId, id, client);
     if (!tx) {
         throw new PaymentsServiceError('NOT_FOUND', `Transaction ${id} not found`, 404);
     }
     return tx;
+}
+
+async function validateRelatedEntities(companyId, data, client = null) {
+    if (data.contact_id != null) {
+        const contact = await estimatesQueries.getContactContext(
+            companyId,
+            data.contact_id,
+            client
+        );
+        if (!contact) throw new PaymentsServiceError('NOT_FOUND', 'Contact not found', 404);
+    }
+    if (data.estimate_id != null) {
+        const estimate = await estimatesQueries.getEstimateById(
+            companyId,
+            data.estimate_id,
+            client
+        );
+        if (!estimate) throw new PaymentsServiceError('NOT_FOUND', 'Estimate not found', 404);
+    }
+    if (data.invoice_id != null) {
+        const invoice = await invoicesQueries.getInvoiceById(
+            companyId,
+            data.invoice_id,
+            client
+        );
+        if (!invoice) throw new PaymentsServiceError('NOT_FOUND', 'Invoice not found', 404);
+    }
+    if (data.job_id != null) {
+        const job = await estimatesQueries.getJobContext(companyId, data.job_id, client);
+        if (!job) throw new PaymentsServiceError('NOT_FOUND', 'Job not found', 404);
+    }
 }
 
 /**
@@ -71,7 +103,17 @@ async function getTransaction(companyId, id) {
  * Validates amount, transaction_type, payment_method.
  * If invoice_id is provided, also records payment on the invoice.
  */
-async function createTransaction(companyId, userId, data) {
+async function createTransaction(
+    companyId,
+    userId,
+    data,
+    client = null,
+    activityActor = null,
+    {
+        action = 'payment.recorded',
+        invoiceAction = 'invoice.payment_recorded',
+    } = {}
+) {
     const { amount, transaction_type, payment_method, invoice_id } = data;
 
     // Validation
@@ -84,20 +126,54 @@ async function createTransaction(companyId, userId, data) {
     if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
         throw new PaymentsServiceError('VALIDATION', `payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')}`, 400);
     }
+    await validateRelatedEntities(companyId, data, client);
 
     const tx = await paymentsQueries.createTransaction(companyId, {
         ...data,
         status: 'completed',
         processed_at: data.processed_at || new Date().toISOString(),
         recorded_by: userId,
-    });
+    }, client);
 
     // If linked to an invoice, update invoice amount_paid / balance_due
     if (invoice_id) {
-        try {
-            await invoicesQueries.recordPayment(invoice_id, companyId, parseFloat(amount));
-        } catch (err) {
-            console.warn(`[PaymentsService] Could not update invoice ${invoice_id} amount_paid:`, err.message);
+        const updated = await invoicesQueries.recordPayment(
+            invoice_id,
+            companyId,
+            parseFloat(amount),
+            client
+        );
+        if (!updated) {
+            throw new PaymentsServiceError('NOT_FOUND', 'Invoice not found', 404);
+        }
+    }
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action,
+            entity: tx,
+            actor: activityActor,
+            summary: {
+                amount: Number(amount),
+                currency: tx.currency || data.currency || 'USD',
+                status: tx.status,
+            },
+        }, { client });
+        if (invoice_id && invoiceAction) {
+            const invoice = await invoicesQueries.getInvoiceById(companyId, invoice_id, client);
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: invoiceAction,
+                entity: invoice,
+                actor: activityActor,
+                summary: {
+                    payment_id: tx.id,
+                    amount: Number(amount),
+                    currency: tx.currency || data.currency || 'USD',
+                },
+            }, { client });
         }
     }
 
@@ -107,7 +183,14 @@ async function createTransaction(companyId, userId, data) {
 /**
  * Record a manual/offline payment.
  */
-async function recordManualPayment(companyId, userId, data) {
+async function recordManualPayment(
+    companyId,
+    userId,
+    data,
+    client = null,
+    activityActor = null,
+    activityOptions = {}
+) {
     const paymentMethod = normalizeManualPaymentMethod(data.payment_method);
 
     if (!MANUAL_PAYMENT_METHODS.includes(paymentMethod)) {
@@ -118,13 +201,20 @@ async function recordManualPayment(companyId, userId, data) {
         ? `Manual payment recorded — ${data.memo}`
         : 'Manual payment recorded';
 
-    return createTransaction(companyId, userId, {
-        ...data,
-        payment_method: paymentMethod,
-        transaction_type: 'payment',
-        external_source: 'manual',
-        memo,
-    });
+    return createTransaction(
+        companyId,
+        userId,
+        {
+            ...data,
+            payment_method: paymentMethod,
+            transaction_type: 'payment',
+            external_source: 'manual',
+            memo,
+        },
+        client,
+        activityActor,
+        activityOptions
+    );
 }
 
 // =============================================================================
@@ -136,8 +226,15 @@ async function recordManualPayment(companyId, userId, data) {
  * Validates original exists, is completed, amount does not exceed original.
  * If linked to an invoice, reverses the amount_paid on the invoice.
  */
-async function refundTransaction(companyId, userId, id, { amount, reason } = {}) {
-    const original = await getTransaction(companyId, id);
+async function refundTransaction(
+    companyId,
+    userId,
+    id,
+    { amount, reason } = {},
+    client = null,
+    activityActor = null
+) {
+    const original = await getTransaction(companyId, id, client);
 
     if (original.status !== 'completed') {
         throw new PaymentsServiceError('INVALID_STATUS', `Cannot refund transaction with status '${original.status}'. Only completed transactions can be refunded.`, 400);
@@ -151,14 +248,57 @@ async function refundTransaction(companyId, userId, id, { amount, reason } = {})
         throw new PaymentsServiceError('VALIDATION', `Refund amount (${refundAmount}) exceeds original transaction amount (${original.amount})`, 400);
     }
 
-    const refundTx = await paymentsQueries.createRefundTransaction(companyId, id, refundAmount, userId);
+    const refundTx = await paymentsQueries.createRefundTransaction(
+        companyId,
+        id,
+        refundAmount,
+        userId,
+        client
+    );
 
     // If linked to an invoice, reverse the amount_paid
     if (original.invoice_id) {
-        try {
-            await invoicesQueries.recordPayment(original.invoice_id, companyId, -refundAmount);
-        } catch (err) {
-            console.warn(`[PaymentsService] Could not reverse invoice ${original.invoice_id} amount_paid:`, err.message);
+        const updated = await invoicesQueries.recordPayment(
+            original.invoice_id,
+            companyId,
+            -refundAmount,
+            client
+        );
+        if (!updated) {
+            throw new PaymentsServiceError('NOT_FOUND', 'Invoice not found', 404);
+        }
+    }
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.refunded',
+            entity: original,
+            actor: activityActor,
+            summary: {
+                amount: refundAmount,
+                currency: original.currency,
+                payment_id: refundTx.id,
+            },
+        }, { client });
+        if (original.invoice_id) {
+            const invoice = await invoicesQueries.getInvoiceById(
+                companyId,
+                original.invoice_id,
+                client
+            );
+            await logFinancialActivity({
+                companyId,
+                entityType: 'invoice',
+                action: 'invoice.refunded',
+                entity: invoice,
+                actor: activityActor,
+                summary: {
+                    payment_id: original.id,
+                    amount: refundAmount,
+                    currency: original.currency,
+                },
+            }, { client });
         }
     }
 
@@ -169,8 +309,14 @@ async function refundTransaction(companyId, userId, id, { amount, reason } = {})
  * Void a transaction. Only valid for pending/completed transactions.
  * If linked to an invoice, reverses the amount_paid on the invoice.
  */
-async function voidTransaction(companyId, userId, id) {
-    const original = await getTransaction(companyId, id);
+async function voidTransaction(
+    companyId,
+    userId,
+    id,
+    client = null,
+    activityActor = null
+) {
+    const original = await getTransaction(companyId, id, client);
 
     if (!isManualOrigin(original)) {
         throw new PaymentsServiceError(
@@ -181,7 +327,14 @@ async function voidTransaction(companyId, userId, id) {
     }
 
     if (original.invoice_id) {
-        const result = await voidInvoicePayment(companyId, userId, original.invoice_id, id);
+        const result = await voidInvoicePayment(
+            companyId,
+            userId,
+            original.invoice_id,
+            id,
+            client,
+            activityActor
+        );
         return result.payment;
     }
 
@@ -192,9 +345,19 @@ async function voidTransaction(companyId, userId, id) {
         throw new PaymentsServiceError('INVALID_STATUS', `Cannot void transaction with status '${original.status}'`, 400);
     }
 
-    const voided = await paymentsQueries.voidTransaction(id, companyId, userId);
+    const voided = await paymentsQueries.voidTransaction(id, companyId, userId, client);
     if (!voided) {
         throw new PaymentsServiceError('VOID_FAILED', 'Could not void transaction', 500);
+    }
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.voided',
+            entity: voided,
+            actor: activityActor,
+            summary: { status: 'voided' },
+        }, { client });
     }
 
     return voided;
@@ -206,7 +369,14 @@ async function voidTransaction(companyId, userId, id) {
  * Repeating the request returns 200 data with idempotent=true and writes no
  * second audit event.
  */
-async function voidInvoicePayment(companyId, userId, invoiceId, paymentId) {
+async function voidInvoicePayment(
+    companyId,
+    userId,
+    invoiceId,
+    paymentId,
+    client = null,
+    activityActor = null
+) {
     if (!userId) {
         throw new PaymentsServiceError(
             'CRM_ACTOR_REQUIRED',
@@ -215,7 +385,7 @@ async function voidInvoicePayment(companyId, userId, invoiceId, paymentId) {
         );
     }
 
-    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
     if (!invoice) {
         throw new PaymentsServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
@@ -223,7 +393,8 @@ async function voidInvoicePayment(companyId, userId, invoiceId, paymentId) {
     const payment = await paymentsQueries.getTransactionForInvoice(
         companyId,
         invoiceId,
-        paymentId
+        paymentId,
+        client
     );
     if (!payment) {
         throw new PaymentsServiceError('NOT_FOUND', `Payment ${paymentId} not found`, 404);
@@ -254,7 +425,8 @@ async function voidInvoicePayment(companyId, userId, invoiceId, paymentId) {
         companyId,
         invoiceId,
         paymentId,
-        userId
+        userId,
+        client
     );
     if (!mutation) {
         throw new PaymentsServiceError('NOT_FOUND', `Payment ${paymentId} not found`, 404);
@@ -270,9 +442,14 @@ async function voidInvoicePayment(companyId, userId, invoiceId, paymentId) {
     const currentPayment = await paymentsQueries.getTransactionForInvoice(
         companyId,
         invoiceId,
-        paymentId
+        paymentId,
+        client
     );
-    const currentInvoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+    const currentInvoice = await invoicesQueries.getInvoiceById(
+        companyId,
+        invoiceId,
+        client
+    );
     if (!currentPayment || !currentInvoice) {
         throw new PaymentsServiceError('NOT_FOUND', `Payment ${paymentId} not found`, 404);
     }
@@ -285,18 +462,32 @@ async function voidInvoicePayment(companyId, userId, invoiceId, paymentId) {
         };
     }
 
-    await auditService.log({
-        actor_id: userId,
-        action: 'invoice.payment_voided',
-        target_type: 'invoice',
-        target_id: String(invoiceId),
-        company_id: companyId,
-        details: {
-            payment_id: String(paymentId),
-            amount: payment.amount,
-            payment_method: payment.payment_method,
-        },
-    });
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.voided',
+            entity: currentPayment,
+            actor: activityActor,
+            summary: {
+                status: 'voided',
+                amount: Number(payment.amount),
+                currency: payment.currency,
+            },
+        }, { client });
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.payment_voided',
+            entity: currentInvoice,
+            actor: activityActor,
+            summary: {
+                payment_id: paymentId,
+                amount: Number(payment.amount),
+                currency: payment.currency,
+            },
+        }, { client });
+    }
 
     return {
         payment: currentPayment,
@@ -312,10 +503,10 @@ async function voidInvoicePayment(companyId, userId, invoiceId, paymentId) {
 /**
  * Get receipt for a transaction (validates company scope first).
  */
-async function getReceipt(companyId, transactionId) {
+async function getReceipt(companyId, transactionId, client = null) {
     // Validate tx belongs to company
-    await getTransaction(companyId, transactionId);
-    const receipt = await paymentsQueries.getReceipt(transactionId);
+    await getTransaction(companyId, transactionId, client);
+    const receipt = await paymentsQueries.getReceipt(companyId, transactionId, client);
     return receipt;
 }
 
@@ -525,10 +716,21 @@ async function sendRecordedReceiptEmail(companyId, actor, context, email) {
  * Deliver one owned transaction's receipt to its customer. Stripe card rows use
  * Stripe's native receipt; recorded cash/check rows use the company mailbox.
  */
-async function emailTransactionReceipt(companyId, transactionId, rawEmail, actor = null) {
+async function emailTransactionReceipt(
+    companyId,
+    transactionId,
+    rawEmail,
+    actor = null,
+    client = null,
+    activityActor = null
+) {
     // Tenant ownership is resolved before email validation or any external call,
     // keeping foreign and missing transaction ids indistinguishable.
-    const context = await paymentsQueries.getTransactionReceiptContext(companyId, transactionId);
+    const context = await paymentsQueries.getTransactionReceiptContext(
+        companyId,
+        transactionId,
+        client
+    );
     assertReceiptTransaction(context, transactionId);
     const email = normalizeReceiptEmail(rawEmail || context.customer_email, { required: true });
 
@@ -546,13 +748,27 @@ async function emailTransactionReceipt(companyId, transactionId, rawEmail, actor
 
     let receiptUrl = null;
     let delivery = 'email';
-    if (isStripeCardPayment(context)) {
-        const { provider, accountId, chargeId } = await resolveStripeCharge(context);
-        const charge = await provider.updateChargeReceiptEmail(accountId, chargeId, email);
-        receiptUrl = charge?.receipt_url || null;
-        delivery = 'stripe';
-    } else {
-        await sendRecordedReceiptEmail(companyId, actor, context, email);
+    try {
+        if (isStripeCardPayment(context)) {
+            const { provider, accountId, chargeId } = await resolveStripeCharge(context);
+            const charge = await provider.updateChargeReceiptEmail(accountId, chargeId, email);
+            receiptUrl = charge?.receipt_url || null;
+            delivery = 'stripe';
+        } else {
+            await sendRecordedReceiptEmail(companyId, actor, context, email);
+        }
+    } catch (err) {
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'payment',
+                action: 'payment.receipt_send_failed',
+                entity: context,
+                actor: activityActor,
+                summary: { channel: 'email' },
+            });
+        }
+        throw err;
     }
 
     const { recordDocumentSendNote } = require('./documentSendNoteService');
@@ -565,6 +781,16 @@ async function emailTransactionReceipt(companyId, transactionId, rawEmail, actor
         channel: 'email',
         recipient: email,
     });
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.receipt_sent',
+            entity: context,
+            actor: activityActor,
+            summary: { channel: 'email' },
+        }, { client });
+    }
 
     return {
         sent: true,
@@ -577,9 +803,16 @@ async function emailTransactionReceipt(companyId, transactionId, rawEmail, actor
 /**
  * Send/create a receipt for a transaction (MVP: creates record, no actual sending).
  */
-async function sendReceipt(companyId, userId, transactionId, { channel, recipient } = {}) {
+async function sendReceipt(
+    companyId,
+    userId,
+    transactionId,
+    { channel, recipient } = {},
+    client = null,
+    activityActor = null
+) {
     // Validate tx belongs to company
-    await getTransaction(companyId, transactionId);
+    const transaction = await getTransaction(companyId, transactionId, client);
 
     if (!channel || !['email', 'sms', 'portal'].includes(channel)) {
         throw new PaymentsServiceError('VALIDATION', 'channel must be one of: email, sms, portal', 400);
@@ -597,7 +830,22 @@ async function sendReceipt(companyId, userId, transactionId, { channel, recipien
         receiptData.sent_to_phone = recipient;
     }
 
-    const receipt = await paymentsQueries.createReceipt(transactionId, receiptData);
+    const receipt = await paymentsQueries.createReceipt(
+        companyId,
+        transactionId,
+        receiptData,
+        client
+    );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.receipt_sent',
+            entity: transaction,
+            actor: activityActor,
+            summary: { channel },
+        }, { client });
+    }
     return receipt;
 }
 

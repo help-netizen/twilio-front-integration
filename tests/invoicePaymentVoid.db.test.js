@@ -12,6 +12,7 @@ const { randomUUID } = require('crypto');
 const db = require('../backend/src/db/connection');
 const invoicesService = require('../backend/src/services/invoicesService');
 const paymentsService = require('../backend/src/services/paymentsService');
+const { userActor } = require('../backend/src/services/financialActivityService');
 
 jest.setTimeout(60000);
 
@@ -100,6 +101,17 @@ async function rowBytes(table, id) {
     return rows[0]?.snapshot;
 }
 
+function voidPayment(companyId, userId, invoiceId, paymentId) {
+    return paymentsService.voidInvoicePayment(
+        companyId,
+        userId,
+        invoiceId,
+        paymentId,
+        client,
+        userActor(userId)
+    );
+}
+
 beforeAll(async () => {
     originalQuery = db.query;
     client = await db.pool.connect();
@@ -130,6 +142,12 @@ beforeAll(async () => {
             userB, `${TAG}-user-b`, `${TAG}-b@example.com`, companyB,
         ]
     );
+    await db.query(
+        `INSERT INTO company_memberships (user_id, company_id, role, status)
+         VALUES ($1, $2, 'company_member', 'active'),
+                ($3, $4, 'company_member', 'active')`,
+        [userA, companyA, userB, companyB]
+    );
 });
 
 afterAll(async () => {
@@ -152,7 +170,9 @@ describe('manual invoice payment void contract', () => {
             companyA,
             userA,
             invoice.id,
-            { amount: 100, payment_method: 'card', reference: 'OFFLINE-100' }
+            { amount: 100, payment_method: 'card', reference: 'OFFLINE-100' },
+            client,
+            userActor(userA)
         );
         expect({
             amount_paid: Number(paid.amount_paid),
@@ -173,12 +193,7 @@ describe('manual invoice payment void contract', () => {
             net_amount: 100,
         });
 
-        const result = await paymentsService.voidInvoicePayment(
-            companyA,
-            userA,
-            invoice.id,
-            ledger[0].id
-        );
+        const result = await voidPayment(companyA, userA, invoice.id, ledger[0].id);
 
         expect(result.idempotent).toBe(false);
         expect(result.payment).toMatchObject({
@@ -228,7 +243,11 @@ describe('manual invoice payment void contract', () => {
                 target_type: 'invoice',
                 target_id: String(invoice.id),
                 company_id: companyA,
-                details: expect.objectContaining({ payment_id: String(ledger[0].id) }),
+                details: expect.objectContaining({
+                    summary: expect.objectContaining({
+                        payment_id: String(ledger[0].id),
+                    }),
+                }),
             }),
         ]);
     });
@@ -252,12 +271,7 @@ describe('manual invoice payment void contract', () => {
             method: 'credit_card',
         });
 
-        const result = await paymentsService.voidInvoicePayment(
-            companyA,
-            userA,
-            invoice.id,
-            manual.id
-        );
+        const result = await voidPayment(companyA, userA, invoice.id, manual.id);
 
         expect({
             amount_paid: Number(result.invoice.amount_paid),
@@ -294,7 +308,7 @@ describe('manual invoice payment void contract', () => {
         const invoiceBefore = await rowBytes('invoices', invoice.id);
 
         await expect(
-            paymentsService.voidInvoicePayment(companyA, userA, invoice.id, payment.id)
+            voidPayment(companyA, userA, invoice.id, payment.id)
         ).rejects.toMatchObject({
             code: 'EXTERNAL_PAYMENT_NOT_VOIDABLE',
             httpStatus: 409,
@@ -319,12 +333,7 @@ describe('manual invoice payment void contract', () => {
         const invoiceBefore = await rowBytes('invoices', invoice.id);
 
         await expect(
-            paymentsService.voidInvoicePayment(
-                companyA,
-                userA,
-                invoice.id,
-                foreignPayment.id
-            )
+            voidPayment(companyA, userA, invoice.id, foreignPayment.id)
         ).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
 
         expect(await rowBytes('payment_transactions', foreignPayment.id)).toBe(paymentBefore);
@@ -343,12 +352,7 @@ describe('manual invoice payment void contract', () => {
             source: 'manual',
         });
 
-        const first = await paymentsService.voidInvoicePayment(
-            companyA,
-            userA,
-            invoice.id,
-            payment.id
-        );
+        const first = await voidPayment(companyA, userA, invoice.id, payment.id);
         expect(first.idempotent).toBe(false);
 
         const paymentAfterFirst = await rowBytes('payment_transactions', payment.id);
@@ -358,16 +362,11 @@ describe('manual invoice payment void contract', () => {
              FROM audit_log
              WHERE company_id = $1
                AND action = 'invoice.payment_voided'
-               AND details->>'payment_id' = $2`,
+               AND details->'summary'->>'payment_id' = $2`,
             [companyA, String(payment.id)]
         );
 
-        const second = await paymentsService.voidInvoicePayment(
-            companyA,
-            userA,
-            invoice.id,
-            payment.id
-        );
+        const second = await voidPayment(companyA, userA, invoice.id, payment.id);
         expect(second.idempotent).toBe(true);
         expect(await rowBytes('payment_transactions', payment.id)).toBe(paymentAfterFirst);
         expect(await rowBytes('invoices', invoice.id)).toBe(invoiceAfterFirst);
@@ -377,7 +376,7 @@ describe('manual invoice payment void contract', () => {
              FROM audit_log
              WHERE company_id = $1
                AND action = 'invoice.payment_voided'
-               AND details->>'payment_id' = $2`,
+               AND details->'summary'->>'payment_id' = $2`,
             [companyA, String(payment.id)]
         );
         expect(auditsAfterSecond.rows[0].count).toBe(auditsAfterFirst.rows[0].count);

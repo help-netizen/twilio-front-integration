@@ -56,6 +56,14 @@ jest.mock('../backend/src/services/stripePaymentsService', () => ({
 jest.mock('../backend/src/services/auditService', () => ({
     log: jest.fn(() => Promise.resolve()),
 }));
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(null)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    userActor: jest.fn(id => ({
+        id: id || null, type: 'user', label: null, source: 'crm',
+    })),
+}));
 
 const jobsRouter = require('../backend/src/routes/jobs');
 
@@ -121,6 +129,11 @@ describe('POST /api/jobs/:id/record-payment', () => {
             reference_number: 'CASH-17',
             memo: 'Deposit',
             processed_at: '2026-07-10',
+        }, null, {
+            id: 'crm-user-7',
+            type: 'user',
+            label: null,
+            source: 'crm',
         });
         expect(mockRecordManualPayment.mock.calls[0][2].invoice_id).toBeUndefined();
     });
@@ -185,7 +198,14 @@ describe('POST /api/jobs/:id/record-payment', () => {
         expect(mockRecordManualPayment).toHaveBeenCalledWith(
             COMPANY_ID,
             null,
-            expect.objectContaining({ job_id: '41', payment_method: 'check' })
+            expect.objectContaining({ job_id: '41', payment_method: 'check' }),
+            null,
+            {
+                id: null,
+                type: 'user',
+                label: null,
+                source: 'crm',
+            }
         );
         expect(mockRecordManualPayment.mock.calls[0][1]).not.toBe('keycloak-sub');
     });

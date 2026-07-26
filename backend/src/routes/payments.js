@@ -8,6 +8,8 @@ const express = require('express');
 const router = express.Router();
 const paymentsService = require('../services/paymentsService');
 const { requirePermission } = require('../middleware/authorization');
+const { userActor } = require('../services/financialActivityService');
+const { withTransaction } = require('../services/transactionService');
 
 // =============================================================================
 // Payment transactions
@@ -61,10 +63,16 @@ router.get('/', requirePermission('payments.view'), async (req, res) => {
 router.post('/', requirePermission('payments.collect_online'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.crmUser?.id || null;
         const data = req.body;
 
-        const result = await paymentsService.createTransaction(companyId, userId, data);
+        const result = await withTransaction(client => paymentsService.createTransaction(
+            companyId,
+            userId,
+            data,
+            client,
+            userActor(userId)
+        ));
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] POST / error:', err.message);
@@ -96,10 +104,16 @@ router.get('/summary', requirePermission('payments.view'), async (req, res) => {
 router.post('/manual', requirePermission('payments.collect_offline'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.crmUser?.id || null;
         const data = req.body;
 
-        const result = await paymentsService.recordManualPayment(companyId, userId, data);
+        const result = await withTransaction(client => paymentsService.recordManualPayment(
+            companyId,
+            userId,
+            data,
+            client,
+            userActor(userId)
+        ));
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] POST /manual error:', err.message);
@@ -133,7 +147,9 @@ router.post('/manual-card-sessions/:sessionId/receipt', requirePermission('payme
             companyId,
             req.params.sessionId,
             req.body?.email,
-            actorFromRequest(req)
+            actorFromRequest(req),
+            null,
+            userActor(req.user?.crmUser?.id || null)
         );
         res.json(result);
     } catch (err) {
@@ -165,11 +181,18 @@ router.get('/:id', requirePermission('payments.view'), async (req, res) => {
 router.post('/:id/refund', requirePermission('payments.refund'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.crmUser?.id || null;
         const { id } = req.params;
         const { amount, reason } = req.body;
 
-        const result = await paymentsService.refundTransaction(companyId, userId, id, { amount, reason });
+        const result = await withTransaction(client => paymentsService.refundTransaction(
+            companyId,
+            userId,
+            id,
+            { amount, reason },
+            client,
+            userActor(userId)
+        ));
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] POST /:id/refund error:', err.message);
@@ -184,7 +207,12 @@ router.post('/:id/stripe-refund', requirePermission('payments.refund'), async (r
         const stripePaymentsService = require('../services/stripePaymentsService');
         const companyId = req.companyFilter?.company_id;
         const { amount, reason } = req.body || {};
-        const result = await stripePaymentsService.refundStripePayment(companyId, { id: req.user?.sub || req.userId }, req.params.id, { amount, reason });
+        const result = await stripePaymentsService.refundStripePayment(
+            companyId,
+            { id: req.user?.crmUser?.id || null },
+            req.params.id,
+            { amount, reason }
+        );
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         if (err.name === 'StripePaymentsError') {
@@ -202,7 +230,13 @@ router.post('/:id/void', requirePermission('payments.refund'), async (req, res) 
         const userId = req.user?.crmUser?.id || null;
         const { id } = req.params;
 
-        const result = await paymentsService.voidTransaction(companyId, userId, id);
+        const result = await withTransaction(client => paymentsService.voidTransaction(
+            companyId,
+            userId,
+            id,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] POST /:id/void error:', err.message);
@@ -245,12 +279,14 @@ router.post(
                 ...actorFromRequest(req),
                 email: req.user?.email || null,
             };
-            const result = await paymentsService.emailTransactionReceipt(
+            const result = await withTransaction(client => paymentsService.emailTransactionReceipt(
                 companyId,
                 req.params.id,
                 req.body?.email,
-                actor
-            );
+                actor,
+                client,
+                userActor(req.user?.crmUser?.id || null)
+            ));
             res.json({ ok: true, data: result });
         } catch (err) {
             console.error('[Payments] POST /:id/receipt/email error:', err.message);
@@ -279,11 +315,18 @@ router.get('/:id/receipt', requirePermission('payments.view'), async (req, res) 
 router.post('/:id/receipt/send', requirePermission('payments.collect_online', 'payments.collect_offline'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || req.user?.sub || req.userId;
+        const userId = req.user?.crmUser?.id || null;
         const { id } = req.params;
         const { channel, recipient } = req.body;
 
-        const result = await paymentsService.sendReceipt(companyId, userId, id, { channel, recipient });
+        const result = await withTransaction(client => paymentsService.sendReceipt(
+            companyId,
+            userId,
+            id,
+            { channel, recipient },
+            client,
+            userActor(userId)
+        ));
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] POST /:id/receipt/send error:', err.message);

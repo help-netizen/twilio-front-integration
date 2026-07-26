@@ -15,7 +15,7 @@ router.get('/estimates/:token', async (req, res) => {
     try {
         const { token } = req.params;
         if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
-        const view = await estimatesService.getPublicEstimate(token);
+        const view = await estimatesService.getPublicEstimate(token, { recordView: true });
         if (!view) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
         res.json({ ok: true, data: view });
     } catch (err) {
@@ -30,7 +30,10 @@ router.get('/estimates/:token/pdf', async (req, res) => {
     try {
         const { token } = req.params;
         if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
-        const { estimate, buffer } = await estimatesService.generatePdfByPublicToken(token);
+        const { estimate, buffer } = await estimatesService.generatePdfByPublicToken(
+            token,
+            { recordView: true }
+        );
         const safeNumber = String(estimate.estimate_number || `estimate-${estimate.id}`).replace(/[^a-z0-9_-]+/gi, '_');
 
         res.setHeader('Content-Type', 'application/pdf');

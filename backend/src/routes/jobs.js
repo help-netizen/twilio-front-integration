@@ -1072,6 +1072,8 @@ router.get('/:id/rate-status', requirePermission('jobs.view'), async (req, res) 
 // =============================================================================
 const stripePaymentsService = require('../services/stripePaymentsService');
 const paymentsService = require('../services/paymentsService');
+const { userActor: financialUserActor } = require('../services/financialActivityService');
+const { withTransaction: withFinancialTransaction } = require('../services/transactionService');
 
 function jobStripeError(err, res) {
     if (err instanceof stripePaymentsService.StripePaymentsError) {
@@ -1084,7 +1086,16 @@ function jobStripeError(err, res) {
 router.post('/:id/stripe-manual-card-session', requirePermission('payments.collect_keyed'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const data = await stripePaymentsService.createManualCardSession(companyId, { id: req.user?.crmUser?.id || null }, { jobId: req.params.id, amount: req.body?.amount });
+        const actor = { id: req.user?.crmUser?.id || null };
+        const data = await withFinancialTransaction(client => (
+            stripePaymentsService.createManualCardSession(
+                companyId,
+                actor,
+                { jobId: req.params.id, amount: req.body?.amount },
+                client,
+                financialUserActor(actor.id)
+            )
+        ));
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
 });
@@ -1092,7 +1103,16 @@ router.post('/:id/stripe-manual-card-session', requirePermission('payments.colle
 router.post('/:id/tap-to-pay/payment-intent', requirePermission('payments.collect_terminal'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const data = await stripePaymentsService.createTapToPayIntent(companyId, { id: req.user?.crmUser?.id || null }, { jobId: req.params.id, amount: req.body?.amount });
+        const actor = { id: req.user?.crmUser?.id || null };
+        const data = await withFinancialTransaction(client => (
+            stripePaymentsService.createTapToPayIntent(
+                companyId,
+                actor,
+                { jobId: req.params.id, amount: req.body?.amount },
+                client,
+                financialUserActor(actor.id)
+            )
+        ));
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
 });
@@ -1150,14 +1170,22 @@ router.post('/:id/record-payment', requirePermission('payments.collect_offline')
         }
 
         const processed_at = req.body?.payment_date || req.body?.processed_at || undefined;
-        const data = await paymentsService.recordManualPayment(companyId, actorId, {
-            job_id: req.params.id,
-            amount,
-            payment_method,
-            reference_number: req.body?.reference_number,
-            memo: req.body?.memo,
-            processed_at,
-        });
+        const data = await withFinancialTransaction(client => (
+            paymentsService.recordManualPayment(
+                companyId,
+                actorId,
+                {
+                    job_id: req.params.id,
+                    amount,
+                    payment_method,
+                    reference_number: req.body?.reference_number,
+                    memo: req.body?.memo,
+                    processed_at,
+                },
+                client,
+                financialUserActor(actorId)
+            )
+        ));
         res.json({ ok: true, data });
     } catch (err) { jobPaymentError(err, res); }
 });

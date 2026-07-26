@@ -17,12 +17,33 @@ jest.mock('../backend/src/db/paymentsQueries');
 jest.mock('../backend/src/services/paymentsService');
 jest.mock('../backend/src/services/invoicesService');
 jest.mock('../backend/src/db/invoicesQueries');
+jest.mock('../backend/src/db/estimatesQueries');
 jest.mock('../backend/src/services/marketplaceService');
 jest.mock('../backend/src/db/marketplaceQueries', () => ({
     ensureMarketplaceSchema: jest.fn().mockResolvedValue(undefined),
     listInstallations: jest.fn().mockResolvedValue([]),
 }));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
+const mockTransactionClient = {
+    query: jest.fn(),
+    release: jest.fn(),
+};
+const mockLogFinancialActivity = jest.fn();
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work(mockTransactionClient)),
+}));
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    clientActor: jest.fn((label = 'Client', source = 'portal') => ({
+        id: null, type: 'client', label, source,
+    })),
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+    stripeActor: jest.fn(() => ({
+        id: null, type: 'system', label: 'Stripe', source: 'webhook',
+    })),
+    userActor: jest.fn(id => ({
+        id: id || null, type: 'user', label: null, source: 'crm',
+    })),
+}));
 // NEW mocks the job path needs.
 jest.mock('../backend/src/services/jobsService');
 jest.mock('../backend/src/services/emailService');
@@ -36,6 +57,7 @@ const q = require('../backend/src/db/stripePaymentsQueries');
 const paymentsQueries = require('../backend/src/db/paymentsQueries');
 const invoicesService = require('../backend/src/services/invoicesService');
 const invoicesQueries = require('../backend/src/db/invoicesQueries');
+const estimatesQueries = require('../backend/src/db/estimatesQueries');
 const auditService = require('../backend/src/services/auditService');
 const jobsService = require('../backend/src/services/jobsService');
 const emailService = require('../backend/src/services/emailService');
@@ -53,6 +75,14 @@ const readyAccount = { company_id: COMPANY, stripe_account_id: ACCT, details_sub
 
 beforeEach(() => {
     jest.clearAllMocks();
+    mockTransactionClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockLogFinancialActivity.mockResolvedValue({ ok: true });
+    estimatesQueries.getContactContext.mockImplementation(
+        async (companyId, id) => (companyId === COMPANY ? { id, company_id: companyId } : null)
+    );
+    estimatesQueries.getJobContext.mockImplementation(
+        async (companyId, id) => (companyId === COMPANY ? { id, company_id: companyId } : null)
+    );
     provider.createCheckoutSession = jest.fn();
     provider.createPaymentIntent = jest.fn();
     provider.createCardPaymentIntent = jest.fn();
@@ -160,9 +190,13 @@ describe('createManualCardSession (job branch)', () => {
             expect.objectContaining({ idempotencyKey: expect.any(String) })
         );
         expect(provider.createPaymentIntent).not.toHaveBeenCalled();
-        expect(q.insertSession).toHaveBeenCalledWith(COMPANY, expect.objectContaining({
-            job_id: 'job-1', invoice_id: null, surface: 'manual_card', metadata: {},
-        }));
+        expect(q.insertSession).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                job_id: 'job-1', invoice_id: null, surface: 'manual_card', metadata: {},
+            }),
+            null
+        );
     });
 });
 
