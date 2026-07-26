@@ -37,7 +37,15 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount,
     const tabs = useVisibleTabs();
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-            <h1 className="text-2xl font-semibold" style={{ margin: 0, color: '#202223' }}>Albusto</h1>
+            <button
+                type="button"
+                onClick={() => navigate('/pulse')}
+                aria-label="albusto — go to Pulse"
+                title="Pulse"
+                style={{ margin: 0, padding: 0, border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+            >
+                <img src="/albusto-wordmark.svg" alt="albusto" style={{ height: 28, width: 'auto', display: 'block' }} />
+            </button>
             <Tabs value={activeTab} className="w-auto hidden md:block">
                 <TabsList>
                     {tabs.map(t => {
