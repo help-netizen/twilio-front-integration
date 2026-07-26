@@ -24,7 +24,6 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { EstimateItemDialog, type ItemDraft } from '../estimates/EstimateItemDialog';
 import ManualCardDialog from './ManualCardDialog';
@@ -507,6 +506,15 @@ export function InvoiceDetailPanel({
     const paymentProgress = totalNum > 0 ? Math.min((paidNum / totalNum) * 100, 100) : 0;
     const balanceDueNum = Number(invoice.balance_due) || 0;
 
+    // INVOICE footer (mirror of ESTIMATE-FOOTER-001): exactly ONE primary CTA per
+    // state + a "More" kebab for everything else.
+    const previewPdf = () => openAuthedPdf(`/api/invoices/${invoice.id}/pdf`, `${invoice.invoice_number || `Invoice-${invoice.id}`}.pdf`)
+        .catch(() => toast.error('Could not open the PDF'));
+    const primaryKey: 'send' | 'collect' | 'preview' =
+        !isVoid && invoice.status === 'draft' && canSend ? 'send'
+        : !isVoid && canRecordPayment ? 'collect'
+        : 'preview';
+
     return (
         <div className={`flex h-full min-h-0 flex-col bg-[var(--blanc-panel-surface,#fffdf9)] text-[var(--blanc-ink-1)] ${isVoid ? 'grayscale opacity-60' : ''}`}>
             <div className="shrink-0 border-b border-[var(--blanc-line)] px-5 py-4 pr-14">
@@ -844,85 +852,58 @@ export function InvoiceDetailPanel({
             </div>
 
             <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-bg,#F1F1F0)] px-5 py-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="grid grid-cols-2 gap-2 md:flex">
-                        <Button variant="outline" size="sm" onClick={() => {
-                            openAuthedPdf(`/api/invoices/${invoice.id}/pdf`, `${invoice.invoice_number || `Invoice-${invoice.id}`}.pdf`)
-                                .catch(() => toast.error('Could not open the PDF'));
-                        }}>
-                            <Eye className="mr-1 size-3.5" />Preview PDF
-                        </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2 md:justify-end">
-                        {!isVoid ? (
-                            <>
-                                {canSend && (
-                                    <Button variant="default" size="sm" onClick={onSend}>
-                                        <Send className="mr-1 size-3.5" />Send
-                                    </Button>
-                                )}
-                                {canRecordPayment && (
-                                    <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                            <Button variant="default" size="sm" disabled={collecting}>
-                                                <CreditCard className="mr-1 size-3.5" />Collect payment
-                                            </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end" className="w-52">
-                                            <DropdownMenuItem onSelect={() => collectPayment('send')}>
-                                                <Send className="size-4" />Send payment link
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem onSelect={() => collectPayment('copy')}>
-                                                <CreditCard className="size-4" />Copy payment link
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem onSelect={() => {
-                                                setManualCardAmount(Number(invoice.balance_due) || undefined);
-                                                setManualCardOpen(true);
-                                            }}>
-                                                <CreditCard className="size-4" />Enter card manually
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem disabled>Tap to Pay · mobile app</DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                    </DropdownMenu>
-                                )}
-                                {canRecordPayment && (
-                                    <Popover open={paymentOpen} onOpenChange={setPaymentOpen}>
-                                        <PopoverTrigger asChild>
-                                            <Button variant="outline" size="sm">
-                                                <CreditCard className="mr-1 size-3.5" />Record offline payment
-                                            </Button>
-                                        </PopoverTrigger>
-                                        <PopoverContent align="end" className="w-72">
-                                            <p className="mb-2 text-sm font-semibold">Record offline payment</p>
-                                            {paymentFormBody}
-                                        </PopoverContent>
-                                    </Popover>
-                                )}
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <Button variant="outline" size="sm">
-                                            <MoreHorizontal className="mr-1 size-3.5" />More
-                                        </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end" className="w-44">
-                                        {canVoid && (
-                                            <DropdownMenuItem onSelect={onVoid}>
-                                                <Ban className="size-4" />Void
-                                            </DropdownMenuItem>
-                                        )}
-                                        <DropdownMenuSeparator />
-                                        <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={onDelete}>
-                                            <Trash2 className="size-4" />Delete
-                                        </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </>
-                        ) : (
-                            <Badge variant="secondary" className="capitalize">{invoice.status}</Badge>
-                        )}
-                    </div>
+                <div className="flex items-center justify-end gap-2">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm" aria-label="More actions">
+                                <MoreHorizontal className="size-4" />
+                                <span className="ml-1 hidden sm:inline">More</span>
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52">
+                            {primaryKey !== 'preview' && (
+                                <DropdownMenuItem onSelect={previewPdf}><Eye className="size-4" />Preview PDF</DropdownMenuItem>
+                            )}
+                            {canSend && primaryKey !== 'send' && (
+                                <DropdownMenuItem onSelect={onSend}><Send className="size-4" />{invoice.status === 'draft' ? 'Send' : 'Resend'}</DropdownMenuItem>
+                            )}
+                            {!isVoid && (
+                                <>
+                                    {canVoid && <DropdownMenuItem onSelect={onVoid}><Ban className="size-4" />Void</DropdownMenuItem>}
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={onDelete}><Trash2 className="size-4" />Delete</DropdownMenuItem>
+                                </>
+                            )}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    {primaryKey === 'collect' ? (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button disabled={collecting}><CreditCard className="mr-1.5 size-4" />Collect payment</Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-56">
+                                <DropdownMenuItem onSelect={() => collectPayment('send')}><Send className="size-4" />Send payment link</DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => collectPayment('copy')}><CreditCard className="size-4" />Copy payment link</DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => { setManualCardAmount(Number(invoice.balance_due) || undefined); setManualCardOpen(true); }}><CreditCard className="size-4" />Enter card manually</DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => setPaymentOpen(true)}><CreditCard className="size-4" />Record offline payment</DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    ) : primaryKey === 'send' ? (
+                        <Button onClick={onSend}><Send className="mr-1.5 size-4" />Send</Button>
+                    ) : (
+                        <Button onClick={previewPdf}><Eye className="mr-1.5 size-4" />Preview PDF</Button>
+                    )}
                 </div>
             </div>
+
+            {/* Offline payment — converted from a footer popover to a small dialog. */}
+            <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+                <DialogContent variant="dialog" size="sm">
+                    <DialogHeader><DialogTitle>Record offline payment</DialogTitle></DialogHeader>
+                    {paymentFormBody}
+                </DialogContent>
+            </Dialog>
 
             <EstimateSummaryDialog
                 open={notesDialogOpen}
