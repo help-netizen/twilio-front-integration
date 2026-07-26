@@ -27,7 +27,7 @@ export function useAdminCompanyUsers(companyId: string) {
     // Edit Mode
     const [editOpen, setEditOpen] = useState(false);
     const [editUser, setEditUser] = useState<CompanyUser | null>(null);
-    const [editForm, setEditForm] = useState<EditUserForm>({ role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false, zenbooker_team_member_id: null });
+    const [editForm, setEditForm] = useState<EditUserForm>({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false, zenbooker_team_member_id: null });
 
     // Reset Password
     const [resetPasswordOpen, setResetPasswordOpen] = useState(false);
@@ -158,6 +158,9 @@ export function useAdminCompanyUsers(companyId: string) {
     const openEditDialog = (u: CompanyUser) => {
         setEditUser(u);
         setEditForm({
+            full_name: u.full_name || '',
+            email: u.email || '',
+            phone: u.phone || '',
             role_key: u.role_key || 'dispatcher',
             phone_calls_allowed: !!u.phone_calls_allowed,
             is_provider: !!u.is_provider,

@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { FloatingField } from '../components/ui/floating-field';
 import { FloatingSelect } from '../components/ui/floating-select';
 import { Switch } from '../components/ui/switch';
-import { Copy, Link2, Unlink } from 'lucide-react';
+import { Copy, Link2, Unlink, KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { authedFetch } from '../services/apiClient';
@@ -153,11 +153,12 @@ interface EditUserDialogProps {
     user: CompanyUser | null;
     form: EditUserForm; 
     setForm: (fn: (f: EditUserForm) => EditUserForm) => void; 
-    handleUpdate: () => void; 
-    loading: string | null; 
+    handleUpdate: () => void;
+    loading: string | null;
+    onResetPassword?: (user: CompanyUser) => void;
 }
 
-export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdate, loading }: EditUserDialogProps) {
+export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdate, loading, onResetPassword }: EditUserDialogProps) {
     if (!user) return null;
 
     return (
@@ -177,6 +178,22 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
 
                 <DialogBody className="md:px-8 md:py-7">
                   <div className="mx-auto w-full max-w-[740px] space-y-6">
+                    {/* OB-36: identity — full name, sign-in email, phone. Company-admin
+                        surface only (the super-admin dialog omits onResetPassword). */}
+                    {onResetPassword && (
+                      <div className="space-y-3.5">
+                        <div className="blanc-eyebrow">Identity</div>
+                        <FloatingField id="edit-user-name" label="Full name" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            <FloatingField id="edit-user-email" label="Email (sign-in)" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+                            <FloatingField id="edit-user-phone" label="Phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+                        </div>
+                        <Button type="button" variant="outline" size="sm" onClick={() => onResetPassword(user)}>
+                            <KeyRound className="size-4 mr-1.5" /> Send password-reset link
+                        </Button>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                         {/* Role */}
                         <FloatingSelect label="Role" value={form.role_key} onValueChange={v => setForm(f => ({ ...f, role_key: v }))}>
@@ -243,7 +260,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
 
                 <DialogPanelFooter>
                     <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-                    <Button onClick={handleUpdate} disabled={loading === user.id}>
+                    <Button onClick={() => handleUpdate()} disabled={loading === user.id}>
                         {loading === user.id ? 'Saving…' : 'Save changes'}
                     </Button>
                 </DialogPanelFooter>

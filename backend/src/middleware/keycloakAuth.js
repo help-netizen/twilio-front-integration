@@ -126,7 +126,14 @@ function authenticate(req, res, next) {
         req.user = { sub: decoded.sub, email: decoded.email || decoded.preferred_username, name: decoded.name || decoded.preferred_username || 'Unknown', roles, is_super_admin, company_id: null };
 
         try {
-            const crmUser = await userService.findOrCreateUser({ sub: decoded.sub, email: decoded.email, name: decoded.name, preferred_username: decoded.preferred_username, realm_roles: roles });
+            const crmUser = await userService.findOrCreateUser({
+                sub: decoded.sub,
+                email: decoded.email,
+                name: decoded.name,
+                preferred_username: decoded.preferred_username,
+                realm_roles: roles,
+                issued_at: decoded.iat,
+            });
             req.user.crmUser = crmUser;
             req.user.company_id = crmUser?.company_id || null;
 

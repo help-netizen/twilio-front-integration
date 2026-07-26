@@ -17,11 +17,11 @@ const ROLE_HIERARCHY = ['super_admin', 'company_admin', 'company_member'];
  * Find or create a CRM user from a Keycloak JWT payload.
  * Upserts by keycloak_sub, resolves company_id from membership.
  * 
- * @param {{ sub: string, email?: string, name?: string, preferred_username?: string, realm_roles?: string[] }} keycloakUser
+ * @param {{ sub: string, email?: string, name?: string, preferred_username?: string, realm_roles?: string[], issued_at?: number }} keycloakUser
  * @returns {Promise<Object>} The crm_users row with company_id
  */
 async function findOrCreateUser(keycloakUser) {
-    const { sub, email, name, preferred_username, realm_roles = [] } = keycloakUser;
+    const { sub, email, name, preferred_username, realm_roles = [], issued_at } = keycloakUser;
 
     // Determine primary role from token
     const primaryRole = ROLE_HIERARCHY.find(r => realm_roles.includes(r)) || 'company_member';
@@ -32,13 +32,21 @@ async function findOrCreateUser(keycloakUser) {
         `INSERT INTO crm_users (keycloak_sub, email, full_name, role, last_login_at, updated_at)
          VALUES ($1, $2, $3, $4, NOW(), NOW())
          ON CONFLICT (keycloak_sub) DO UPDATE SET
-             email = COALESCE(EXCLUDED.email, crm_users.email),
-             full_name = COALESCE(EXCLUDED.full_name, crm_users.full_name),
+             email = CASE
+                 WHEN $5::BIGINT IS NULL OR crm_users.updated_at <= TO_TIMESTAMP($5)
+                 THEN COALESCE(EXCLUDED.email, crm_users.email)
+                 ELSE crm_users.email
+             END,
+             full_name = CASE
+                 WHEN $5::BIGINT IS NULL OR crm_users.updated_at <= TO_TIMESTAMP($5)
+                 THEN COALESCE(EXCLUDED.full_name, crm_users.full_name)
+                 ELSE crm_users.full_name
+             END,
              role = EXCLUDED.role,
              last_login_at = NOW(),
              updated_at = NOW()
          RETURNING *`,
-        [sub, email, fullName, primaryRole]
+        [sub, email, fullName, primaryRole, Number.isInteger(issued_at) ? issued_at : null]
     );
 
     const crmUser = rows[0];
@@ -129,6 +137,7 @@ async function listUsers(companyId, opts = {}) {
         `SELECT u.id, u.email, u.full_name, u.last_login_at, u.created_at,
                 COALESCE(m.role_key, m.role) as membership_role, m.role_key, m.role as legacy_role, m.status as membership_status,
                 m.id as membership_id, m.company_id,
+                p.phone,
                 COALESCE(p.phone_calls_allowed, false) as phone_calls_allowed,
                 COALESCE(p.is_provider, false) as is_provider,
                 p.schedule_color,
@@ -212,9 +221,10 @@ async function createUserWithMembership(data) {
         const p = data.profile || {};
         await client.query(
             `INSERT INTO company_user_profiles (
-                membership_id, phone_calls_allowed, is_provider, schedule_color, call_masking_enabled, location_tracking_enabled
-             ) VALUES ($1, $2, $3, $4, $5, $6)
+                membership_id, phone, phone_calls_allowed, is_provider, schedule_color, call_masking_enabled, location_tracking_enabled
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (membership_id) DO UPDATE SET
+                phone = EXCLUDED.phone,
                 phone_calls_allowed = EXCLUDED.phone_calls_allowed,
                 is_provider = EXCLUDED.is_provider,
                 schedule_color = EXCLUDED.schedule_color,
@@ -222,7 +232,10 @@ async function createUserWithMembership(data) {
                 location_tracking_enabled = EXCLUDED.location_tracking_enabled,
                 updated_at = NOW()`,
              [
-                 membershipId, 
+                 membershipId,
+                 p.phone === null || p.phone === undefined || String(p.phone).trim() === ''
+                     ? null
+                     : String(p.phone).trim(),
                  p.phone_calls_allowed || false, 
                  p.is_provider || false, 
                  p.schedule_color || '#3B82F6', 
@@ -249,6 +262,77 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
     try {
         await client.query('BEGIN');
 
+        const { rows: targetRows } = await client.query(
+            `SELECT m.id AS membership_id, u.email, u.full_name,
+                    (SELECT COUNT(*)::INTEGER
+                     FROM company_memberships all_m
+                     WHERE all_m.user_id = u.id) AS membership_count
+             FROM company_memberships m
+             JOIN crm_users u ON u.id = m.user_id
+             WHERE m.user_id = $1 AND m.company_id = $2
+             FOR UPDATE OF m, u`,
+            [userId, companyId]
+        );
+        if (targetRows.length === 0) throw serviceError('MEMBERSHIP_NOT_FOUND', 'Membership not found');
+        const target = targetRows[0];
+        const identityChanging = (
+            (updates.full_name !== undefined && updates.full_name !== target.full_name)
+            || (updates.email !== undefined
+                && String(updates.email).toLowerCase() !== String(target.email || '').toLowerCase())
+        );
+        if (identityChanging && target.membership_count > 1) {
+            throw serviceError(
+                'SHARED_IDENTITY_REQUIRES_PLATFORM_ADMIN',
+                'This identity belongs to more than one company'
+            );
+        }
+        if (updates.expected_email !== undefined
+            && String(target.email || '').toLowerCase() !== String(updates.expected_email || '').toLowerCase()) {
+            throw serviceError('USER_IDENTITY_CHANGED', 'User identity changed during update');
+        }
+
+        if (updates.email !== undefined) {
+            const { rows: conflictRows } = await client.query(
+                `SELECT 1
+                 FROM company_memberships conflict_m
+                 JOIN crm_users conflict_u ON conflict_u.id = conflict_m.user_id
+                 WHERE conflict_m.company_id = $1
+                   AND conflict_u.id <> $2
+                   AND LOWER(TRIM(conflict_u.email)) = LOWER(TRIM($3))
+                 LIMIT 1`,
+                [companyId, userId, updates.email]
+            );
+            if (conflictRows.length > 0) {
+                throw serviceError('EMAIL_IN_USE', 'Email is already used by another company member');
+            }
+        }
+
+        const userFields = [];
+        const userValues = [];
+        if (updates.full_name !== undefined) {
+            userValues.push(updates.full_name);
+            userFields.push(`full_name = $${userValues.length}`);
+        }
+        if (updates.email !== undefined) {
+            userValues.push(updates.email);
+            userFields.push(`email = $${userValues.length}`);
+        }
+        if (userFields.length > 0) {
+            userValues.push(userId, companyId);
+            await client.query(
+                `UPDATE crm_users
+                 SET ${userFields.join(', ')}, updated_at = NOW()
+                 WHERE id = $${userValues.length - 1}
+                   AND EXISTS (
+                       SELECT 1
+                       FROM company_memberships scoped_m
+                       WHERE scoped_m.user_id = crm_users.id
+                         AND scoped_m.company_id = $${userValues.length}
+                   )`,
+                userValues
+            );
+        }
+
         // Update role if changed
         if (updates.role_key) {
             const legacyRole = updates.role_key === 'tenant_admin' ? 'company_admin' : 'company_member';
@@ -262,18 +346,26 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
             );
             if (rows.length === 0) throw new Error('Membership not found');
 
-            await client.query(
-                'UPDATE crm_users SET role = $1, updated_at = NOW() WHERE id = $2',
-                [legacyRole, userId]
-            );
+            // crm_users.role is only a legacy single-company fallback. For a
+            // multi-company identity, changing it would bleed company A's role
+            // into company B even though memberships are authoritative.
+            if (target.membership_count === 1) {
+                await client.query(
+                    `UPDATE crm_users
+                     SET role = $1, updated_at = NOW()
+                     WHERE id = $2
+                       AND EXISTS (
+                           SELECT 1
+                           FROM company_memberships scoped_m
+                           WHERE scoped_m.user_id = crm_users.id
+                             AND scoped_m.company_id = $3
+                       )`,
+                    [legacyRole, userId, companyId]
+                );
+            }
         }
 
-        const { rows: memRows } = await client.query(
-            `SELECT id FROM company_memberships WHERE user_id = $1 AND company_id = $2`,
-            [userId, companyId]
-        );
-        if (memRows.length === 0) throw new Error('Membership not found');
-        const membershipId = memRows[0].id;
+        const membershipId = target.membership_id;
 
         // Update profile
         const changes = { membershipId, providerBridgeChanged: false, previousTeamMemberId: undefined, newTeamMemberId: undefined };
@@ -283,6 +375,12 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
             const values = [membershipId];
             let i = 2;
 
+            if ('phone' in p) {
+                fields.push(`phone = $${i++}`);
+                values.push(p.phone === null || p.phone === undefined || String(p.phone).trim() === ''
+                    ? null
+                    : String(p.phone).trim());
+            }
             if (typeof p.phone_calls_allowed === 'boolean') { fields.push(`phone_calls_allowed = $${i++}`); values.push(p.phone_calls_allowed); }
             if (typeof p.is_provider === 'boolean') { fields.push(`is_provider = $${i++}`); values.push(p.is_provider); }
             if (p.schedule_color) { fields.push(`schedule_color = $${i++}`); values.push(p.schedule_color); }
@@ -325,7 +423,17 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
             }
         }
 
+        const { rows: updatedRows } = await client.query(
+            `SELECT u.email, u.full_name, p.phone
+             FROM crm_users u
+             JOIN company_memberships m ON m.user_id = u.id AND m.company_id = $2
+             LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+             WHERE u.id = $1`,
+            [userId, companyId]
+        );
+
         await client.query('COMMIT');
+        changes.user = updatedRows[0];
         return changes;
     } catch (err) {
         await client.query('ROLLBACK');
@@ -333,6 +441,49 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
     } finally {
         client.release();
     }
+}
+
+function serviceError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+}
+
+/**
+ * Resolve one member's editable identity inside one company.
+ * The membership count is intentionally returned only as a boolean-relevant
+ * count; no foreign-company attributes leave this tenant-scoped query.
+ */
+async function getManagedUser(userId, companyId) {
+    if (!userId || !companyId) return null;
+    const { rows } = await db.query(
+        `SELECT u.id, u.keycloak_sub, u.email, u.full_name, u.updated_at,
+                m.id AS membership_id, p.phone,
+                (SELECT COUNT(*)::INTEGER
+                 FROM company_memberships all_m
+                 WHERE all_m.user_id = u.id) AS membership_count
+         FROM company_memberships m
+         JOIN crm_users u ON u.id = m.user_id
+         LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+         WHERE m.user_id = $1 AND m.company_id = $2`,
+        [userId, companyId]
+    );
+    return rows[0] || null;
+}
+
+async function companyEmailIsInUse(companyId, userId, email) {
+    const { rows } = await db.query(
+        `SELECT EXISTS (
+             SELECT 1
+             FROM company_memberships m
+             JOIN crm_users u ON u.id = m.user_id
+             WHERE m.company_id = $1
+               AND u.id <> $2
+               AND LOWER(TRIM(u.email)) = LOWER(TRIM($3))
+         ) AS in_use`,
+        [companyId, userId, email]
+    );
+    return rows[0]?.in_use === true;
 }
 
 /**
@@ -421,5 +572,7 @@ module.exports = {
     updateMembershipStatus,
     countCompanyAdmins,
     getUserDetail,
+    getManagedUser,
+    companyEmailIsInUse,
     ROLE_HIERARCHY,
 };

@@ -41,7 +41,7 @@ export default function CompanyUsersPage() {
                     users={h.users} loading={h.loading}
                     filtered={!!h.search || h.roleFilter !== 'all' || h.statusFilter !== 'all'}
                     fmtDate={h.fmtDate} actionLoading={h.actionLoading}
-                    onEdit={h.openEditDialog} onToggleStatus={requestToggle}
+                    onEdit={h.openEditDialog} onToggleStatus={requestToggle} onResetPassword={h.resetPassword}
                 />
 
                 {h.totalPages > 1 && (
@@ -56,7 +56,7 @@ export default function CompanyUsersPage() {
             </div>
 
             <CreateUserDialog open={h.createOpen} setOpen={h.setCreateOpen} createForm={h.createForm} setCreateForm={h.setCreateForm} creating={h.creating} tempPassword={h.tempPassword} setTempPassword={h.setTempPassword} handleCreate={h.handleCreate} />
-            <EditUserDialog open={h.editOpen} setOpen={h.setEditOpen} user={h.editUser} form={h.editForm} setForm={h.setEditForm} handleUpdate={h.handleUpdateUser} loading={h.actionLoading} />
+            <EditUserDialog open={h.editOpen} setOpen={h.setEditOpen} user={h.editUser} form={h.editForm} setForm={h.setEditForm} handleUpdate={h.handleUpdateUser} loading={h.actionLoading} onResetPassword={h.resetPassword} />
             <ConfirmActionDialog confirmDialog={h.confirmDialog} setConfirmDialog={h.setConfirmDialog} />
         </SettingsPageShell>
     );

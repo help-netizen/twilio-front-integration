@@ -1,19 +1,22 @@
 /**
  * User Management API Routes (§5, §6, §7)
  * 
- * All routes require authentication + company_admin or super_admin role.
+ * The parent mount requires authentication, tenant.users.manage, and company
+ * context. Identity/profile mutations below additionally require tenant_admin.
  * 
  * POST   /            - Create user (in Keycloak + CRM DB)
  * GET    /            - List company users
- * PUT    /:id/role    - Change user role
- * PUT    /:id/disable - Disable user
+ * PATCH  /:id         - Manage a company member
+ * PATCH  /:id/status  - Enable/disable a company member
+ * POST   /:id/reset-password - Email a set-password link
  */
 
 const express = require('express');
 const router = express.Router();
 const userService = require('../services/userService');
 const auditService = require('../services/auditService');
-const { generateTempPassword: sharedGenerateTempPassword } = require('../services/keycloakService');
+const keycloakService = require('../services/keycloakService');
+const { generateTempPassword: sharedGenerateTempPassword } = keycloakService;
 
 /**
  * POST / — Create a new user
@@ -37,6 +40,20 @@ function getTenantCompanyId(req, res) {
         return null;
     }
     return companyId;
+}
+
+function requireTenantAdmin(req, res, next) {
+    if (req.user?._devMode) return next();
+    if (req.authz?.membership?.role_key === 'tenant_admin') return next();
+    return res.status(403).json({
+        code: 'TENANT_ADMIN_ONLY',
+        message: 'Tenant admin role required',
+        trace_id: req.traceId,
+    });
+}
+
+function isValidEmail(email) {
+    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
 }
 
 router.post('/', async (req, res) => {
@@ -181,12 +198,19 @@ router.get('/:id', async (req, res) => {
 });
 
 /**
- * PATCH /:id — Update user role and profile
- * Accepts profile.zenbooker_team_member_id (provider bridge, PF007-HARDENING-001).
+ * PATCH /:id — Update user identity, role, and membership profile.
+ * The parent mount requires tenant.users.manage; this route additionally
+ * requires the actual tenant_admin role.
  */
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireTenantAdmin, async (req, res) => {
     try {
-        const { role_key, profile } = req.body;
+        const {
+            role_key,
+            profile,
+            full_name,
+            email,
+            confirm_identity_change,
+        } = req.body || {};
         const userId = req.params.id;
         const companyId = getTenantCompanyId(req, res);
         if (!companyId) return;
@@ -198,7 +222,40 @@ router.patch('/:id', async (req, res) => {
                 trace_id: req.traceId,
             });
         }
-
+        if (full_name !== undefined
+            && (typeof full_name !== 'string' || !full_name.trim() || full_name.trim().length > 255)) {
+            return res.status(422).json({
+                code: 'VALIDATION_ERROR',
+                message: 'full_name must be a non-empty string up to 255 characters',
+                trace_id: req.traceId,
+            });
+        }
+        if (email !== undefined
+            && (typeof email !== 'string' || email.trim().length > 255 || !isValidEmail(email.trim()))) {
+            return res.status(422).json({
+                code: 'VALIDATION_ERROR',
+                message: 'email must be a valid address up to 255 characters',
+                trace_id: req.traceId,
+            });
+        }
+        if (profile !== undefined && (profile === null || typeof profile !== 'object' || Array.isArray(profile))) {
+            return res.status(422).json({
+                code: 'VALIDATION_ERROR',
+                message: 'profile must be an object',
+                trace_id: req.traceId,
+            });
+        }
+        if (profile && 'phone' in profile) {
+            const phone = profile.phone;
+            if (phone !== null && phone !== ''
+                && (typeof phone !== 'string' || phone.trim().length > 50)) {
+                return res.status(422).json({
+                    code: 'VALIDATION_ERROR',
+                    message: 'phone must be a string up to 50 characters or null',
+                    trace_id: req.traceId,
+                });
+            }
+        }
         if (profile && 'zenbooker_team_member_id' in profile) {
             const v = profile.zenbooker_team_member_id;
             const isValid = v === null || v === '' ||
@@ -212,7 +269,113 @@ router.patch('/:id', async (req, res) => {
             }
         }
 
-        const changes = await userService.updateMembershipAndProfile(userId, companyId, { role_key, profile });
+        const target = await userService.getManagedUser(userId, companyId);
+        if (!target) {
+            return res.status(404).json({
+                code: 'NOT_FOUND',
+                message: 'User not found',
+                trace_id: req.traceId,
+            });
+        }
+
+        const normalizedFullName = full_name === undefined ? undefined : full_name.trim();
+        const normalizedEmail = email === undefined ? undefined : email.trim().toLowerCase();
+        const fullNameChanged = normalizedFullName !== undefined && normalizedFullName !== target.full_name;
+        const emailChanged = normalizedEmail !== undefined
+            && normalizedEmail !== String(target.email || '').toLowerCase();
+        const identityChanged = fullNameChanged || emailChanged;
+
+        if (identityChanged && Number(target.membership_count) > 1) {
+            return res.status(409).json({
+                code: 'SHARED_IDENTITY_REQUIRES_PLATFORM_ADMIN',
+                message: 'This login identity belongs to more than one company and cannot be changed by a company admin',
+                trace_id: req.traceId,
+            });
+        }
+
+        let linkedIdentityProviders = [];
+        let keycloakBefore = null;
+        let keycloakWasUpdated = false;
+        if (identityChanged) {
+            if (!target.keycloak_sub) {
+                return res.status(409).json({
+                    code: 'KEYCLOAK_IDENTITY_MISSING',
+                    message: 'This member is not linked to a login identity',
+                    trace_id: req.traceId,
+                });
+            }
+            if (emailChanged
+                && await userService.companyEmailIsInUse(companyId, userId, normalizedEmail)) {
+                return res.status(409).json({
+                    code: 'EMAIL_IN_USE',
+                    message: 'Another company member already uses this email',
+                    trace_id: req.traceId,
+                });
+            }
+
+            const identity = await keycloakService.inspectUserIdentity(target.keycloak_sub);
+            if (!identity) {
+                return res.status(409).json({
+                    code: 'KEYCLOAK_IDENTITY_MISSING',
+                    message: 'This member is not linked to a login identity',
+                    trace_id: req.traceId,
+                });
+            }
+            keycloakBefore = identity.user;
+            linkedIdentityProviders = identity.federatedIdentities
+                .map(link => link.identityProvider)
+                .filter(Boolean);
+
+            if (emailChanged
+                && await keycloakService.realmLoginIsInUse(normalizedEmail, target.keycloak_sub)) {
+                return res.status(409).json({
+                    code: 'EMAIL_IN_USE',
+                    message: 'This email is already used by another login identity',
+                    trace_id: req.traceId,
+                });
+            }
+            if (emailChanged && linkedIdentityProviders.length > 0 && confirm_identity_change !== true) {
+                return res.status(409).json({
+                    code: 'IDENTITY_CHANGE_CONFIRMATION_REQUIRED',
+                    message: 'Changing this email may affect linked sign-in providers',
+                    identity_change: {
+                        linked_identity_providers: linkedIdentityProviders,
+                        email_verification_will_reset: true,
+                    },
+                    trace_id: req.traceId,
+                });
+            }
+
+            await keycloakService.updateUserIdentity(target.keycloak_sub, keycloakBefore, {
+                ...(emailChanged ? { email: normalizedEmail } : {}),
+                ...(fullNameChanged ? { full_name: normalizedFullName } : {}),
+                reset_email_verification: emailChanged,
+            });
+            keycloakWasUpdated = true;
+        }
+
+        let changes;
+        try {
+            changes = await userService.updateMembershipAndProfile(userId, companyId, {
+                role_key,
+                profile,
+                ...(fullNameChanged ? { full_name: normalizedFullName } : {}),
+                ...(emailChanged ? { email: normalizedEmail } : {}),
+                expected_email: target.email,
+            });
+        } catch (dbErr) {
+            if (keycloakWasUpdated) {
+                try {
+                    await keycloakService.restoreUserIdentity(target.keycloak_sub, keycloakBefore);
+                } catch (restoreErr) {
+                    console.error('[Users] Keycloak identity compensation failed:', restoreErr.message);
+                    const syncErr = new Error('Keycloak and CRM identity updates are inconsistent');
+                    syncErr.code = 'IDENTITY_SYNC_INCONSISTENT';
+                    throw syncErr;
+                }
+            }
+            throw dbErr;
+        }
 
         // Keep the internal job assignee mirror consistent with the new bridge
         if (changes.providerBridgeChanged) {
@@ -225,7 +388,7 @@ router.patch('/:id', async (req, res) => {
         }
 
         await auditService.log({
-            actor_id: req.user.crmUser?.id,
+            actor_id: req.user.crmUser.id,
             actor_email: req.user.email,
             actor_ip: req.ip,
             action: 'user_updated',
@@ -235,6 +398,10 @@ router.patch('/:id', async (req, res) => {
             details: {
                 role_key,
                 profile_updated: !!profile,
+                full_name_updated: fullNameChanged,
+                email_updated: emailChanged,
+                email_verification_reset: emailChanged,
+                linked_identity_providers: linkedIdentityProviders,
                 ...(changes.providerBridgeChanged ? {
                     zenbooker_team_member_id: {
                         from: changes.previousTeamMemberId,
@@ -245,7 +412,21 @@ router.patch('/:id', async (req, res) => {
             trace_id: req.traceId,
         });
 
-        res.json({ ok: true, message: 'User updated successfully' });
+        res.json({
+            ok: true,
+            message: 'User updated successfully',
+            user: {
+                id: userId,
+                email: changes.user?.email ?? target.email,
+                full_name: changes.user?.full_name ?? target.full_name,
+                phone: changes.user?.phone ?? target.phone ?? null,
+            },
+            identity_change: {
+                email_changed: emailChanged,
+                email_verification_reset: emailChanged,
+                linked_identity_providers: linkedIdentityProviders,
+            },
+        });
     } catch (err) {
         console.error('[Users] Update failed:', err.message);
         if (err.message.includes('LAST_ADMIN_REQUIRED')) {
@@ -255,16 +436,107 @@ router.patch('/:id', async (req, res) => {
                 trace_id: req.traceId,
             });
         }
-        if (err.message.includes('Membership not found') || err.code === '22P02') {
+        if (err.code === 'EMAIL_IN_USE') {
+            return res.status(409).json({
+                code: 'EMAIL_IN_USE',
+                message: 'Another company member already uses this email',
+                trace_id: req.traceId,
+            });
+        }
+        if (err.code === 'KEYCLOAK_IDENTITY_CONFLICT') {
+            return res.status(409).json({
+                code: 'EMAIL_IN_USE',
+                message: 'This email is already used by another login identity',
+                trace_id: req.traceId,
+            });
+        }
+        if (err.code === 'SHARED_IDENTITY_REQUIRES_PLATFORM_ADMIN'
+            || err.code === 'USER_IDENTITY_CHANGED') {
+            return res.status(409).json({
+                code: err.code,
+                message: err.message,
+                trace_id: req.traceId,
+            });
+        }
+        if (err.code === 'MEMBERSHIP_NOT_FOUND' || err.code === '22P02') {
             return res.status(404).json({
                 code: 'NOT_FOUND',
                 message: 'User not found',
                 trace_id: req.traceId,
             });
         }
+        if (err.code === 'KEYCLOAK_ADMIN_ERROR') {
+            return res.status(502).json({
+                code: 'IDENTITY_PROVIDER_ERROR',
+                message: 'The login identity could not be updated',
+                trace_id: req.traceId,
+            });
+        }
+        if (err.code === 'IDENTITY_SYNC_INCONSISTENT') {
+            return res.status(500).json({
+                code: err.code,
+                message: 'The login identity update needs administrator attention',
+                trace_id: req.traceId,
+            });
+        }
         res.status(500).json({
             code: 'INTERNAL_ERROR',
             message: 'Failed to update user',
+            trace_id: req.traceId,
+        });
+    }
+});
+
+/**
+ * POST /:id/reset-password — ask Keycloak to email UPDATE_PASSWORD.
+ * No password or reset token is generated, returned, or logged by Albusto.
+ */
+router.post('/:id/reset-password', requireTenantAdmin, async (req, res) => {
+    try {
+        const companyId = getTenantCompanyId(req, res);
+        if (!companyId) return;
+        const user = await userService.getManagedUser(req.params.id, companyId);
+        if (!user) {
+            return res.status(404).json({
+                code: 'NOT_FOUND',
+                message: 'User not found',
+                trace_id: req.traceId,
+            });
+        }
+        if (!user.keycloak_sub) {
+            return res.status(409).json({
+                code: 'KEYCLOAK_IDENTITY_MISSING',
+                message: 'This member is not linked to a login identity',
+                trace_id: req.traceId,
+            });
+        }
+
+        await keycloakService.sendUpdatePasswordEmail(user.keycloak_sub);
+        await auditService.log({
+            actor_id: req.user.crmUser.id,
+            actor_email: req.user.email,
+            actor_ip: req.ip,
+            action: 'user.password_reset',
+            target_type: 'user',
+            target_id: user.id,
+            company_id: companyId,
+            details: { mode: 'email' },
+            trace_id: req.traceId,
+        });
+
+        res.json({ ok: true, sent: true });
+    } catch (err) {
+        if (err.code === '22P02') {
+            return res.status(404).json({
+                code: 'NOT_FOUND',
+                message: 'User not found',
+                trace_id: req.traceId,
+            });
+        }
+        console.error('[Users] Password reset email failed:', err.message);
+        res.status(502).json({
+            code: 'IDENTITY_PROVIDER_ERROR',
+            message: 'The password reset email could not be sent',
             trace_id: req.traceId,
         });
     }

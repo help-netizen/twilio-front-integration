@@ -4,10 +4,13 @@ import { toast } from 'sonner';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
-export interface CompanyUser { id: string; email: string; full_name: string; membership_role: string; role_key: string; legacy_role: string; membership_status: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; call_masking_enabled: boolean; location_tracking_enabled: boolean; zenbooker_team_member_id: string | null; last_login_at: string | null; created_at: string; }
+export interface CompanyUser { id: string; email: string; full_name: string; phone: string | null; membership_role: string; role_key: string; legacy_role: string; membership_status: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; call_masking_enabled: boolean; location_tracking_enabled: boolean; zenbooker_team_member_id: string | null; last_login_at: string | null; created_at: string; }
 interface PaginatedResponse { ok: boolean; users: CompanyUser[]; total: number; page: number; limit: number; }
 
 export type EditUserForm = {
+    full_name: string;
+    email: string;
+    phone: string;
     role_key: string;
     phone_calls_allowed: boolean;
     is_provider: boolean;
@@ -35,7 +38,7 @@ export function useCompanyUsers() {
     // Edit Mode
     const [editOpen, setEditOpen] = useState(false);
     const [editUser, setEditUser] = useState<CompanyUser | null>(null);
-    const [editForm, setEditForm] = useState<EditUserForm>({ role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false, zenbooker_team_member_id: null });
+    const [editForm, setEditForm] = useState<EditUserForm>({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false, zenbooker_team_member_id: null });
 
     // Status / Misc
     const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; description: string; onConfirm: () => void }>({ open: false, title: '', description: '', onConfirm: () => { } });
@@ -68,7 +71,7 @@ export function useCompanyUsers() {
         } catch { toast.error('Connection error'); } finally { setCreating(false); } 
     };
 
-    const handleUpdateUser = async () => {
+    const handleUpdateUser = async (confirmIdentityChange = false) => {
         if (!editUser) return;
         setActionLoading(editUser.id);
         try {
@@ -76,8 +79,12 @@ export function useCompanyUsers() {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    full_name: editForm.full_name,
+                    email: editForm.email,
                     role_key: editForm.role_key,
+                    confirm_identity_change: confirmIdentityChange,
                     profile: {
+                        phone: editForm.phone,
                         phone_calls_allowed: editForm.phone_calls_allowed,
                         is_provider: editForm.is_provider,
                         schedule_color: editForm.schedule_color,
@@ -89,10 +96,31 @@ export function useCompanyUsers() {
                 })
             });
             const json = await res.json();
-            if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') toast.error('Cannot remove the last company admin');
-            else if (!res.ok) toast.error(json.message || 'Failed to update user');
-            else { toast.success('User updated'); fetchUsers(); }
-        } catch { toast.error('Connection error'); } finally { setActionLoading(null); setEditOpen(false); }
+            if (res.ok) { toast.success('User updated'); setEditOpen(false); fetchUsers(); return; }
+            switch (json.code) {
+                case 'IDENTITY_CHANGE_CONFIRMATION_REQUIRED': {
+                    const providers = (json.linked_identity_providers || []).join(', ');
+                    if (window.confirm(`Changing this email may affect the user's linked sign-in${providers ? ` (${providers})` : ''}. Continue?`)) {
+                        await handleUpdateUser(true);
+                    }
+                    break;
+                }
+                case 'EMAIL_IN_USE': toast.error('That email is already used by another user'); break;
+                case 'SHARED_IDENTITY_REQUIRES_PLATFORM_ADMIN': toast.error('This person belongs to more than one company — a platform admin must change their name or email'); break;
+                case 'LAST_ADMIN_REQUIRED': toast.error('Cannot remove the last company admin'); break;
+                default: toast.error(json.message || 'Failed to update user');
+            }
+        } catch { toast.error('Connection error'); } finally { setActionLoading(null); }
+    };
+
+    const resetPassword = async (user: CompanyUser) => {
+        setActionLoading(user.id);
+        try {
+            const res = await authedFetch(`${API_BASE}/users/${user.id}/reset-password`, { method: 'POST' });
+            const json = await res.json().catch(() => ({}));
+            if (res.ok) toast.success(`Password-reset link sent to ${user.email}`);
+            else toast.error(json.message || 'Could not send the reset link');
+        } catch { toast.error('Connection error'); } finally { setActionLoading(null); }
     };
 
     const toggleStatus = async (user: CompanyUser) => { 
@@ -120,6 +148,9 @@ export function useCompanyUsers() {
     const openEditDialog = (u: CompanyUser) => {
         setEditUser(u);
         setEditForm({
+            full_name: u.full_name || '',
+            email: u.email || '',
+            phone: u.phone || '',
             role_key: u.role_key || 'dispatcher',
             phone_calls_allowed: !!u.phone_calls_allowed,
             is_provider: !!u.is_provider,
@@ -135,7 +166,7 @@ export function useCompanyUsers() {
         users, loading, search, roleFilter, statusFilter, page, setPage, setRoleFilter, setStatusFilter,
         searchInput, setSearchInput, fetchUsers, totalPages, data, limit, fmtDate,
         createOpen, setCreateOpen, createForm, setCreateForm, creating, tempPassword, setTempPassword, handleCreate,
-        editOpen, setEditOpen, editUser, editForm, setEditForm, handleUpdateUser, openEditDialog,
+        editOpen, setEditOpen, editUser, editForm, setEditForm, handleUpdateUser, openEditDialog, resetPassword,
         confirmDialog, setConfirmDialog, actionLoading, toggleStatus
     };
 }

@@ -79,7 +79,7 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                         const active = u.membership_status === 'active';
                         const busy = actionLoading === u.id;
                         return (
-                            <TableRow key={u.id}>
+                            <TableRow key={u.id} onClick={() => onEdit(u)} className="cursor-pointer">
                                 <TableCell className="px-4 py-2.5">
                                     <div className="font-medium text-sm flex items-center gap-2 text-[var(--blanc-ink-1)]">
                                         <span style={{ backgroundColor: u.schedule_color || 'var(--blanc-ink-3, #7d8796)' }} className="size-2.5 rounded-full flex-shrink-0" />
@@ -108,7 +108,7 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                                     </div>
                                 </TableCell>
                                 <TableCell className="px-4 py-2.5 text-sm text-[var(--blanc-ink-2)]">{fmtDate(u.last_login_at)}</TableCell>
-                                <TableCell className="px-4 py-2.5 text-right">
+                                <TableCell className="px-4 py-2.5 text-right" onClick={e => e.stopPropagation()}>
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
                                             <Button variant="ghost" className="h-8 w-8 p-0" disabled={busy} aria-label={`Actions for ${u.full_name}`}>
@@ -117,7 +117,7 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
                                             <DropdownMenuItem onClick={() => onEdit(u)}>
-                                                <Settings className="size-4 mr-2" /> Edit settings
+                                                <Settings className="size-4 mr-2" /> Manage user
                                             </DropdownMenuItem>
                                             {onResetPassword && (
                                                 <DropdownMenuItem onClick={() => onResetPassword(u)}>
