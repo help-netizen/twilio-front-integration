@@ -24,10 +24,9 @@ function loadScript(): Promise<void> {
     }
     scriptPromise = new Promise<void>((resolve, reject) => {
         const script = document.createElement('script');
-        // advancedFraudSignals=false drops Stripe's persistent m.stripe.network beacon iframe.
-        script.src = 'https://js.stripe.com/v3?advancedFraudSignals=false';
+        // Keep Stripe Radar's advanced fraud signals ON (Stripe's recommendation).
+        script.src = 'https://js.stripe.com/v3';
         script.async = true;
-        script.setAttribute('data-albusto-stripe', '1');
         script.onload = () => resolve();
         script.onerror = () => reject(new Error('Failed to load Stripe.js'));
         document.head.appendChild(script);
@@ -36,12 +35,13 @@ function loadScript(): Promise<void> {
 }
 
 /**
- * Remove Stripe.js's document footprint (script + all injected iframes) and reset the
- * loader. Once Stripe Elements has mounted a card field, iOS Safari flags the whole tab
- * as payment-collecting and shows the saved-card AutoFill bar on EVERY input for the rest
- * of the SPA session — even after the card form closes. Tearing the footprint down when
- * the manual-card dialog closes removes that context; the next loadStripe() reloads clean.
- * (No-op on the server / when Stripe was never loaded.)
+ * Remove Stripe.js's document footprint (script + all injected iframes, including the
+ * m.stripe.network fraud beacon) and reset the loader. Once Stripe Elements has mounted a
+ * card field, iOS Safari flags the whole tab as payment-collecting and shows the saved-card
+ * AutoFill bar on EVERY input for the rest of the SPA session — even after the card form
+ * closes. Tearing the footprint down when the manual-card dialog closes removes that
+ * context; the next loadStripe() reloads Stripe (and Radar) clean. (No-op on the server /
+ * when Stripe was never loaded.)
  */
 export function teardownStripe(): void {
     if (typeof document === 'undefined') return;
