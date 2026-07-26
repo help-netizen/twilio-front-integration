@@ -29,7 +29,6 @@ const AI_DRAFT_RESPONSE_SCHEMA = {
         summary: { type: 'STRING' },
         items: {
             type: 'ARRAY',
-            maxItems: MAX_LINE_ITEMS,
             items: {
                 type: 'OBJECT',
                 properties: {
@@ -42,7 +41,6 @@ const AI_DRAFT_RESPONSE_SCHEMA = {
         },
         order_list: {
             type: 'ARRAY',
-            maxItems: MAX_ORDER_LIST_ROWS,
             items: {
                 type: 'OBJECT',
                 properties: {
