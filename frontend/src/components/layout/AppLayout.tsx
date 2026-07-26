@@ -257,7 +257,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 {/* SOFTPHONE-WARMUP-SUMMARY-001 belt 2b: render gate — /schedule term kept verbatim. */}
                 <WarmUpSummaryDialog open={(showWarmUp || warmUpPreview) && !isMobile && !isMobileDevice && !location.pathname.startsWith('/schedule')} counts={warmUpPreviewCounts ?? { pulseInbox: pulseUnreadCount === null || arCount === null ? null : pulseUnreadCount + arCount, newLeads: leadsNewCount, openTasks: openTasksCount }} onNavigate={handleSummaryNavigate} onDismiss={handleWarmUpDismiss} />
                 {!isMobile && !isMobileDevice && <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} disabledReason={!softPhoneEnabled && softPhoneGroupsLoaded ? 'You are not assigned to any group. Ask your administrator.' : undefined} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />}
-                {isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET) && <FeedbackWidget />}
+                {/* Feedback chat lives ONLY on the exact /pulse inbox — its floating button
+                    overlaps content on timelines and other pages, so hide it everywhere else
+                    (incl. /pulse/timeline/:id). */}
+                {location.pathname === '/pulse' && isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET) && <FeedbackWidget />}
                 <AutonomousModeBanner visible={autonomous.autonomousMode} />
             </div>
           </AutonomousModeProvider>

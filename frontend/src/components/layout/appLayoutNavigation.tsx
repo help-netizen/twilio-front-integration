@@ -118,7 +118,11 @@ export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) =>
     const location = useLocation();
     const { permissions, platformRole } = useAuthz();
     const isMobile = useIsMobile();
-    const isFeedbackEnabled = isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET);
+    // Feedback is offered ONLY on the exact /pulse inbox (matches the FAB gating in
+    // AppLayout), so the mobile "Send feedback" item never dispatches into a widget
+    // that isn't mounted.
+    const isFeedbackEnabled = isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET)
+        && location.pathname === '/pulse';
     const groups = getVisibleSettingsGroups({ permissions, platformRole });
     const activeGroup = findActiveSettingsGroup(groups, location);
 
