@@ -77,6 +77,7 @@ export const SETTINGS_GROUP_PATHS: Record<SettingsGroupId, string> = {
 export const PHONE_SYSTEM_LINKS = [
     { id: 'phone-user-groups', label: 'User Groups', to: '/settings/telephony/user-groups', permissions: ['tenant.telephony.manage'] },
     { id: 'phone-numbers', label: 'Phone Numbers', to: '/settings/telephony/phone-numbers', permissions: ['tenant.telephony.manage'] },
+    { id: 'phone-call-masking', label: 'Call Masking', to: '/settings/telephony/call-masking', permissions: ['tenant.telephony.manage'] },
     { id: 'phone-audio-library', label: 'Audio Library', to: '/settings/telephony/audio-library', permissions: ['tenant.telephony.manage'] },
     { id: 'phone-blacklist', label: 'Blacklist', to: '/settings/telephony/blacklist', permissions: ['tenant.telephony.manage'] },
     { id: 'phone-provider-settings', label: 'Provider Settings', to: '/settings/telephony/provider-settings', permissions: ['tenant.telephony.manage'] },

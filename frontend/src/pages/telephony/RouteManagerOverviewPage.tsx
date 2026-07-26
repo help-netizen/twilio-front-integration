@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, LayoutDashboard, Music, Phone, Shield, ShieldBan, Users, Zap } from 'lucide-react';
+import { FileText, LayoutDashboard, Music, Phone, PhoneForwarded, Shield, ShieldBan, Users, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { PHONE_SYSTEM_LINKS } from '../../components/settings/settingsNav';
 import { telephonyApi } from '../../services/telephonyApi';
@@ -59,6 +59,7 @@ export default function RouteManagerOverviewPage() {
     }> = {
         'phone-dashboard': { desc: 'Active calls, queues, and agent presence', icon: LayoutDashboard, count: 'Live' },
         'phone-numbers': { desc: 'Buy, route, and assign numbers; SMS compliance', icon: Phone, count: `${counts.phone_numbers_count} numbers` },
+        'phone-call-masking': { desc: "Reach customers through a company number; hide the tech's line", icon: PhoneForwarded, count: null },
         'phone-user-groups': { desc: 'Agent groups with numbers, schedules & call flows', icon: Users, count: `${counts.user_groups_count} groups` },
         'phone-audio-library': { desc: 'Greetings, prompts, hold music', icon: Music, count: null },
         'phone-blacklist': { desc: 'Block unwanted callers and destinations', icon: ShieldBan, count: null },

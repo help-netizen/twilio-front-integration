@@ -78,6 +78,7 @@ import RouteManagerOverviewPage from './pages/telephony/RouteManagerOverviewPage
 import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
 import WorkflowBuilderPage from './pages/workflows/WorkflowBuilderPage';
 import PhoneNumbersPage from './pages/telephony/PhoneNumbersPage';
+import CallMaskingPage from './pages/telephony/CallMaskingPage';
 import AudioLibraryPage from './pages/telephony/AudioLibraryPage';
 import ProviderSettingsPage from './pages/telephony/ProviderSettingsPage';
 import RoutingLogsPage from './pages/telephony/RoutingLogsPage';
@@ -190,6 +191,7 @@ function App() {
                 <Route path="/settings/telephony/user-groups" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupsPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/telephony/user-groups/:groupId" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupDetailPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
+                <Route path="/settings/telephony/call-masking" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><CallMaskingPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/telephony/audio-library" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/telephony/blacklist" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><BlacklistPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />

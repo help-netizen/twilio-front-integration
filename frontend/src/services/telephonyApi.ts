@@ -55,6 +55,24 @@ async function blacklistFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     return body as T;
 }
 
+// ─── Call masking (CALL-MASKING-001) ──────────────────────────────────────────
+
+export interface MaskingSettings {
+    call_masking_enabled: boolean;
+    call_masking_number: string;
+}
+
+/** Like apiFetch but surfaces the backend's friendly `error` message (422 guards). */
+async function maskingFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+    const res = await authedFetch(`${API_BASE}${path}`, {
+        ...opts,
+        headers: { 'Content-Type': 'application/json', ...(opts?.headers || {}) },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'The call masking request failed.');
+    return (body.data !== undefined ? body.data : body) as T;
+}
+
 // ─── Fallback mocks (used when API unavailable during dev) ────────────────────
 
 const MOCK_AUDIO: AudioAsset[] = [
@@ -131,6 +149,15 @@ export const telephonyApi = {
             method: 'DELETE',
         });
     },
+
+    // Call masking — real API
+    getMaskingSettings: async (): Promise<MaskingSettings> =>
+        maskingFetch<MaskingSettings>('/telephony/numbers/masking-settings'),
+    saveMaskingSettings: async (payload: MaskingSettings): Promise<MaskingSettings> =>
+        maskingFetch<MaskingSettings>('/telephony/numbers/masking-settings', {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+        }),
 
     // Audio — still mock (no backend yet)
     listAudio: async (): Promise<AudioAsset[]> => { await delay(); return MOCK_AUDIO; },
