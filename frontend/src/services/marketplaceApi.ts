@@ -26,6 +26,12 @@ export interface MarketplaceAppMetadata {
         persistent_reference?: string;
         stores_derived_results?: boolean;
     };
+    /** MARKETPLACE-RATINGS-001: per-app pricing (all Free for now). */
+    pricing?: {
+        paid: boolean;
+        label: string;
+        text: string;
+    };
     [key: string]: unknown;
 }
 
@@ -48,6 +54,9 @@ export interface MarketplaceApp {
     status: 'published';
     metadata: MarketplaceAppMetadata;
     installation: MarketplaceInstallationSummary | null;
+    /** Cross-company aggregate over posted reviews. null avg until first rating. */
+    avg_rating: number | null;
+    rating_count: number;
 }
 
 export interface MarketplaceInstallation {
@@ -291,4 +300,122 @@ export async function setChatgptMcpSends(enabled: boolean): Promise<ChatgptMcpWr
         `${API_BASE}/apps/chatgpt-crm-mcp/sends/${enabled ? 'enable' : 'disable'}`,
         { method: 'POST', body: JSON.stringify({}) }
     );
+}
+
+// ── MARKETPLACE-RATINGS-001: ratings, reviews & moderation ──────────────────
+export type AppReviewStatus = 'posted' | 'pending' | 'rejected';
+export type ModerationSource = 'security' | 'llm' | 'manual';
+
+/** A review as shown on the public app detail: global posted + the viewer's own. */
+export interface AppReview {
+    id: number;
+    app_key: string;
+    stars: number;
+    comment: string | null;
+    status: AppReviewStatus;
+    reviewer_first_name: string | null;
+    is_mine: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AppRatingSubmitResult {
+    status: AppReviewStatus;
+    review: {
+        id: number;
+        app_key: string;
+        stars: number;
+        comment: string | null;
+        status: AppReviewStatus;
+        moderation_reason: string | null;
+        moderation_source: ModerationSource | null;
+        created_at: string;
+        updated_at: string;
+    };
+}
+
+/** Carries the server error `code` (e.g. REVIEW_LINKS_NOT_ALLOWED) for inline UI. */
+export class MarketplaceRatingError extends Error {
+    code: string;
+    constructor(message: string, code: string) {
+        super(message);
+        this.name = 'MarketplaceRatingError';
+        this.code = code;
+    }
+}
+
+export async function fetchAppReviews(appKey: string): Promise<AppReview[]> {
+    const data = await request<{ reviews: AppReview[] }>(`${API_BASE}/apps/${appKey}/reviews`);
+    return data.reviews;
+}
+
+export async function submitAppRating(
+    appKey: string,
+    input: { stars: number; comment?: string },
+): Promise<AppRatingSubmitResult> {
+    const res = await authedFetch(`${API_BASE}/apps/${appKey}/rating`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+    });
+    const body = await res.json().catch(() => ({} as Record<string, unknown>));
+    if (!res.ok) {
+        throw new MarketplaceRatingError(
+            (body as { message?: string }).message || `Request failed: ${res.status}`,
+            (body as { code?: string }).code || 'REQUEST_FAILED',
+        );
+    }
+    return body as unknown as AppRatingSubmitResult;
+}
+
+export async function deleteMyAppRating(appKey: string): Promise<boolean> {
+    const data = await request<{ deleted: boolean }>(`${API_BASE}/apps/${appKey}/rating`, {
+        method: 'DELETE',
+    });
+    return data.deleted;
+}
+
+// ── super-admin moderation queue (/api/platform/app-reviews, super_admin only) ──
+export interface AppModerationReview {
+    id: number;
+    app_key: string;
+    app_name: string;
+    stars: number;
+    comment: string | null;
+    status: AppReviewStatus;
+    moderation_reason: string | null;
+    moderation_source: ModerationSource | null;
+    reviewer_first_name: string | null;
+    company_id: string;
+    company_name: string;
+    moderated_by: string | null;
+    moderator_first_name: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AppReviewsQueue {
+    reviews: AppModerationReview[];
+    total: number;
+    page: number;
+    limit: number;
+}
+
+export async function fetchAppReviewQueue(status: AppReviewStatus, page = 1): Promise<AppReviewsQueue> {
+    const data = await request<AppReviewsQueue & { ok: boolean }>(
+        `/api/platform/app-reviews?status=${status}&page=${page}`,
+    );
+    return { reviews: data.reviews, total: data.total, page: data.page, limit: data.limit };
+}
+
+export async function moderateAppReview(
+    id: number,
+    action: 'approve' | 'reject',
+    reason?: string,
+): Promise<AppModerationReview> {
+    const data = await request<{ review: AppModerationReview }>(
+        `/api/platform/app-reviews/${id}/moderate`,
+        { method: 'POST', body: JSON.stringify({ action, ...(reason ? { reason } : {}) }) },
+    );
+    return data.review;
 }

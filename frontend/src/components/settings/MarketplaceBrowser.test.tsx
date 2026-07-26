@@ -25,6 +25,8 @@ function marketplaceApp(appKey: string, name: string, category: string): Marketp
         status: 'published',
         metadata: {},
         installation: null,
+        avg_rating: null,
+        rating_count: 0,
     };
 }
 
