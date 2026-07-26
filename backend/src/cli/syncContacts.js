@@ -11,12 +11,13 @@
 require('dotenv').config();
 
 const { runSync } = require('../services/contactsSyncService');
+const { ZENBOOKER_DEFAULT_COMPANY_ID } = require('../services/zenbookerClient');
 
 async function main() {
     console.log(`[syncContacts] Starting at ${new Date().toISOString()}`);
 
     try {
-        const result = await runSync();
+        const result = await runSync(ZENBOOKER_DEFAULT_COMPANY_ID);
         console.log(`[syncContacts] Completed — upserted: ${result.upserted}, errors: ${result.errors}, elapsed: ${result.elapsed}s`);
         process.exit(0);
     } catch (err) {

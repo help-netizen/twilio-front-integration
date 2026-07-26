@@ -13,6 +13,8 @@
 
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
+const { logFinancialActivity } = require('./financialActivityService');
+const { logZenbookerBatch } = require('./zenbookerActivityService');
 const {
     createCursorFingerprint,
     encodeCursor,
@@ -683,7 +685,7 @@ async function syncPayments(companyId, dateFrom, dateTo, options = {}) {
         console.error('[PaymentsService] Post-sync reconcile/projection failed (non-fatal):', e.message);
     }
 
-    return {
+    const result = {
         mode: fullHistory ? 'full_history' : 'range',
         synced: totals.synced,
         total_transactions: totals.synced,
@@ -696,6 +698,16 @@ async function syncPayments(companyId, dateFrom, dateTo, options = {}) {
         unresolved_job_id: totals.unresolved_job_id,
         job_fetch_failed: totals.job_fetch_failed,
     };
+    await logZenbookerBatch({
+        companyId,
+        entityType: 'payment',
+        summary: {
+            count: result.synced,
+            imported_count: result.imported,
+            error_count: result.unlinked,
+        },
+    });
+    return result;
 }
 
 /**
@@ -1412,16 +1424,59 @@ async function getPaymentDetail(companyId, paymentId) {
 // updateCheckDeposited — Toggle check_deposited flag
 // =============================================================================
 
-async function updateCheckDeposited(companyId, paymentId, deposited) {
-    const result = await db.query(
-        `UPDATE zb_payments
-         SET check_deposited = $3, updated_at = now()
-         WHERE company_id = $1 AND id = $2
-         RETURNING check_deposited`,
+async function updateCheckDeposited(
+    companyId,
+    paymentId,
+    deposited,
+    client = null,
+    activityActor = null
+) {
+    const runner = client || db;
+    const result = await runner.query(
+        `WITH updated AS (
+            UPDATE zb_payments
+            SET check_deposited = $3, updated_at = now()
+            WHERE company_id = $1 AND id = $2
+            RETURNING id, transaction_id, check_deposited
+         )
+         SELECT
+            updated.id AS zb_payment_id,
+            updated.check_deposited,
+            payment.id,
+            payment.job_id,
+            payment.contact_id,
+            payment.invoice_id,
+            payment.estimate_id
+         FROM updated
+         LEFT JOIN payment_transactions payment
+           ON payment.company_id = $1
+          AND payment.external_source = 'zenbooker'
+          AND payment.external_id = updated.transaction_id`,
         [companyId, paymentId, !!deposited]
     );
     if (result.rows.length === 0) return null;
-    return { check_deposited: result.rows[0].check_deposited };
+    const row = result.rows[0];
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: row.check_deposited
+                ? 'payment.check_deposited'
+                : 'payment.check_deposit_reopened',
+            entity: {
+                id: row.id || `zb_${row.zb_payment_id}`,
+                job_id: row.job_id,
+                contact_id: row.contact_id,
+                invoice_id: row.invoice_id,
+                estimate_id: row.estimate_id,
+            },
+            actor: activityActor,
+            summary: {
+                status: row.check_deposited ? 'deposited' : 'not_deposited',
+            },
+        }, { client });
+    }
+    return { check_deposited: row.check_deposited };
 }
 
 module.exports = {

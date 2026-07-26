@@ -602,7 +602,7 @@ async function createNewContact(
     try {
         const zenbookerSyncService = require('./zenbookerSyncService');
         if (zenbookerSyncService.FEATURE_ENABLED) {
-            zenbookerSyncService.pushContactToZenbooker(contactId).catch(err =>
+            zenbookerSyncService.pushContactToZenbooker(contactId, companyId).catch(err =>
                 console.error(`[ContactDedupe] Zenbooker auto-create error (non-blocking):`, err.message)
             );
         }

@@ -746,7 +746,11 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
                 );
                 if (jobRows.length > 0 && jobRows[0].converted_to_job && jobRows[0].zenbooker_job_id) {
                     const jobSyncService = require('../services/jobSyncService');
-                    jobSyncService.syncBlancStatusToZenbooker(uuid, fields.SubStatus).catch(err => {
+                    jobSyncService.syncBlancStatusToZenbooker(
+                        uuid,
+                        fields.SubStatus,
+                        companyId
+                    ).catch(err => {
                         console.error(`[LeadsAPI][${reqId}] Zenbooker job sync error (non-blocking):`, err.message);
                     });
                 }

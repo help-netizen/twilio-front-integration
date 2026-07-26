@@ -51,16 +51,25 @@ function request(app, method, path, body = null) {
 // =============================================================================
 
 const mockCreateDirectJob = jest.fn();
+const mockSyncFromZenbooker = jest.fn();
 const mockLogJobActivity = jest.fn();
 jest.mock('../backend/src/services/jobsService', () => ({
     createDirectJob: mockCreateDirectJob,
+    syncFromZenbooker: mockSyncFromZenbooker,
 }));
 jest.mock('../backend/src/services/jobActivityService', () => ({
     userActor: (id) => ({ id, type: 'user', label: null, source: 'crm' }),
     logJobActivity: (...args) => mockLogJobActivity(...args),
 }));
 // Stub the other modules the route file pulls in so requiring it is cheap.
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
+const mockZenbookerGet = jest.fn();
+jest.mock('../backend/src/services/zenbookerClient', () => ({
+    getClientForCompany: jest.fn(async () => ({ get: mockZenbookerGet })),
+}));
+const mockLogZenbookerBatch = jest.fn();
+jest.mock('../backend/src/services/zenbookerActivityService', () => ({
+    logZenbookerBatch: (...args) => mockLogZenbookerBatch(...args),
+}));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     MAX_FILE_SIZE: 1, MAX_FILES_PER_NOTE: 1,
 }));
@@ -139,6 +148,47 @@ describe('POST /api/jobs — permission + tenant context', () => {
         expect(res.status).toBe(404);
         expect(res.body.ok).toBe(false);
         expect(res.body.error).toBe('Contact not found');
+    });
+});
+
+describe('POST /api/jobs/sync — coalesced Zenbooker activity', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockZenbookerGet.mockImplementation(async url => {
+            if (url === '/jobs') {
+                return {
+                    data: {
+                        results: [{ id: 'zb-1' }, { id: 'zb-2' }],
+                        has_more: false,
+                    },
+                };
+            }
+            return { data: { id: url.split('/').pop() } };
+        });
+        mockSyncFromZenbooker
+            .mockResolvedValueOnce({ updated: true, created: true, job_id: 1 })
+            .mockResolvedValueOnce({ updated: true, created: false, job_id: 2 });
+        mockLogZenbookerBatch.mockResolvedValue({ ok: true });
+    });
+
+    test('writes one integration event for the run, not one per Job', async () => {
+        const res = await request(
+            routeApp({ permissions: ['jobs.edit'] }),
+            'POST',
+            '/sync'
+        );
+
+        expect(res.status).toBe(200);
+        expect(mockSyncFromZenbooker).toHaveBeenCalledTimes(2);
+        expect(mockLogZenbookerBatch).toHaveBeenCalledTimes(1);
+        expect(mockLogZenbookerBatch).toHaveBeenCalledWith({
+            companyId: COMPANY,
+            entityType: 'job',
+            summary: {
+                count: 2,
+                created_count: 1,
+            },
+        });
     });
 });
 

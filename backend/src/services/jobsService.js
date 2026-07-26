@@ -307,6 +307,12 @@ async function refreshCompanyProviderMirror(companyId) {
 // =============================================================================
 
 async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId }) {
+    if (!companyId) {
+        const err = new Error('createJob requires companyId');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
     const cols = zbData ? zbJobToColumns(zbData) : {};
     const blancStatus = zbData
         ? computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled)
@@ -349,6 +355,7 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
             lng = EXCLUDED.lng,
             assigned_provider_user_ids = EXCLUDED.assigned_provider_user_ids,
             updated_at = NOW()
+        WHERE jobs.company_id = EXCLUDED.company_id
         RETURNING *
     `, [
         leadId || null, contactId || null, zenbookerJobId, blancStatus,
@@ -363,6 +370,12 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
         assignedProviderUserIds,
     ]);
 
+    if (!rows[0]) {
+        const err = new Error('Zenbooker job id is already owned by another company');
+        err.code = 'ZENBOOKER_ID_CONFLICT';
+        err.httpStatus = 409;
+        throw err;
+    }
     return rowToJob(rows[0]);
 }
 
@@ -733,8 +746,11 @@ async function getJobById(id, companyId = null, providerScope = null) {
     return job;
 }
 
-async function getJobByZbId(zbJobId) {
-    const { rows } = await db.query('SELECT * FROM jobs WHERE zenbooker_job_id = $1', [zbJobId]);
+async function getJobByZbId(zbJobId, companyId) {
+    const { rows } = await db.query(
+        'SELECT * FROM jobs WHERE zenbooker_job_id = $1 AND company_id = $2',
+        [zbJobId, companyId]
+    );
     if (rows.length === 0) return null;
     return rowToJob(rows[0]);
 }
@@ -1394,7 +1410,13 @@ function mergeNotes(localNotes, zbNotes) {
     return [...merged, ...unechoed];
 }
 
-async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = '') {
+async function syncFromZenbooker(zbJobId, zbData, companyId, eventType = '') {
+    if (!companyId) {
+        const err = new Error('syncFromZenbooker requires companyId');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
     const cols = zbJobToColumns(zbData);
     const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled, eventType);
 
@@ -1403,8 +1425,11 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
     const zbCustomerId = zbData.customer?.id ? String(zbData.customer.id) : null;
     if (zbCustomerId) {
         const { rows: contactRows } = await db.query(
-            'SELECT id FROM contacts WHERE zenbooker_customer_id = $1 LIMIT 1',
-            [zbCustomerId]
+            `SELECT id
+             FROM contacts
+             WHERE zenbooker_customer_id = $1 AND company_id = $2
+             LIMIT 1`,
+            [zbCustomerId, companyId]
         );
         if (contactRows.length > 0) {
             contactId = contactRows[0].id;
@@ -1413,7 +1438,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
     }
 
     // Check if job exists
-    const existing = await getJobByZbId(zbJobId);
+    const existing = await getJobByZbId(zbJobId, companyId);
 
     // JOB-CONTACT-SYNC-001: ZB imports routinely create bare contacts (no
     // phone/email) while the ZB job carries them — then inbound calls never
@@ -1507,7 +1532,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                 company_id = COALESCE($23, company_id),
                 assigned_provider_user_ids = $24::jsonb,
                 updated_at = NOW()
-            WHERE zenbooker_job_id = $19
+            WHERE zenbooker_job_id = $19 AND company_id = $23
         `, [
             cols.zb_status, cols.zb_canceled, cols.zb_rescheduled,
             effectiveBlancStatus,
@@ -1568,8 +1593,15 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                             zbRefresh.assigned_providers
                         );
                         await db.query(
-                            `UPDATE jobs SET assigned_techs = $1::jsonb, zb_raw = $2::jsonb, assigned_provider_user_ids = $3::jsonb, updated_at = NOW() WHERE zenbooker_job_id = $4`,
-                            [JSON.stringify(zbRefresh.assigned_providers), JSON.stringify(zbRefresh), refreshedMirror, zbJobId]
+                            `UPDATE jobs SET assigned_techs = $1::jsonb, zb_raw = $2::jsonb, assigned_provider_user_ids = $3::jsonb, updated_at = NOW()
+                             WHERE zenbooker_job_id = $4 AND company_id = $5`,
+                            [
+                                JSON.stringify(zbRefresh.assigned_providers),
+                                JSON.stringify(zbRefresh),
+                                refreshedMirror,
+                                zbJobId,
+                                companyId,
+                            ]
                         );
                         console.log(`[JobsService] Delayed re-fetch: auto-assigned ${zbRefresh.assigned_providers.length} provider(s) for job ${job.id}`);
                         // SCHED-ROUTE-VIS-001 (FR-1, S-7): techs just landed via the

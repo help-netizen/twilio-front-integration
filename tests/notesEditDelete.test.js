@@ -68,6 +68,9 @@ describe('getEntityHistory excludes soft-deleted notes', () => {
 
     it('drops the deleted note and all note events while retaining legacy business events', async () => {
         db.query.mockImplementation(async sql => {
+            if (sql.includes('FROM activity_log_config')) {
+                return { rows: [{ cutover_at: new Date('2026-03-01T00:00:00Z') }] };
+            }
             if (sql.includes('FROM audit_log')) return { rows: [] };
             return {
                 rows: [
@@ -93,6 +96,7 @@ describe('getEntityHistory excludes soft-deleted notes', () => {
                 ],
             };
         });
+        eventService.resetActivityLogCutoverCache();
 
         const entityNotes = [
             { id: 'n1', text: 'b', created: '2026-02-03T00:00:00Z' },

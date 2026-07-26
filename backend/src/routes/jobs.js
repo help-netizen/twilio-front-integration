@@ -24,6 +24,7 @@ const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
 const { resolveCompanyProxyE164 } = require('../services/messagingHelper');
 const { logJobActivity, userActor } = require('../services/jobActivityService');
+const { logZenbookerBatch } = require('../services/zenbookerActivityService');
 const { withTransaction } = require('../services/transactionService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
@@ -138,6 +139,14 @@ router.post('/sync', requirePermission('jobs.edit'), async (req, res) => {
         }
 
         console.log(`[Jobs Sync] Done: ${totalSynced} synced, ${totalCreated} new`);
+        await logZenbookerBatch({
+            companyId,
+            entityType: 'job',
+            summary: {
+                count: totalSynced,
+                created_count: totalCreated,
+            },
+        });
         res.json({ ok: true, data: { synced: totalSynced, created: totalCreated } });
     } catch (err) {
         console.error('[Jobs Sync] error:', err.message);
@@ -1134,7 +1143,9 @@ router.post('/:id/rate-link', requirePermission('messages.send'), async (req, re
         const stamped = await rateMeQueries.stampTokenSent(token, companyId, channel);
         await logJobActivity({
             companyId,
-            action: 'job.rating_link_sent',
+            action: channel === 'copy'
+                ? 'job.rating_link_created'
+                : 'job.rating_link_sent',
             jobId,
             actor: jobUserActor(req),
             summary: { channel },

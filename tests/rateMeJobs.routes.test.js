@@ -192,7 +192,7 @@ describe('POST /api/jobs/:id/rate-link', () => {
         expect(mockStampTokenSent).toHaveBeenCalledWith(TOKEN, COMPANY_X, 'copy');
         expect(mockLogJobActivity).toHaveBeenCalledWith({
             companyId: COMPANY_X,
-            action: 'job.rating_link_sent',
+            action: 'job.rating_link_created',
             jobId: 41,
             actor: {
                 id: 'crm-user-1',

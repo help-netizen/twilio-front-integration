@@ -35,7 +35,10 @@ function createApp() {
     // Simulate auth middleware
     app.use((req, _res, next) => {
         req.user = { company_id: TEST_COMPANY_ID };
-        req.authz = { scope: 'tenant', permissions: ['payments.view'] };
+        req.authz = {
+            scope: 'tenant',
+            permissions: ['payments.view', 'tenant.integrations.manage'],
+        };
         req.companyFilter = { company_id: TEST_COMPANY_ID };
         next();
     });

@@ -858,6 +858,77 @@ describe('getConnectionToken (Phase 4)', () => {
     });
 });
 
+describe('cancelTerminalIntent activity', () => {
+    const session = {
+        id: 71,
+        surface: 'tap_to_pay',
+        invoice_id: 42,
+        job_id: null,
+        contact_id: 5,
+        amount: 25,
+        currency: 'USD',
+    };
+    const activityActor = {
+        id: '22222222-2222-4222-8222-222222222222',
+        type: 'user',
+        label: null,
+        source: 'crm',
+    };
+
+    beforeEach(() => {
+        provider.cancelPaymentIntent = jest.fn().mockResolvedValue({});
+        q.getSessionByPaymentIntent.mockResolvedValue(session);
+        q.getAccountByCompany.mockResolvedValue({ stripe_account_id: ACCT });
+        q.updateSession.mockResolvedValue({ ...session, status: 'canceled' });
+    });
+
+    it('cancels the owned terminal session and emits payment.session_canceled', async () => {
+        await expect(svc.cancelTerminalIntent(
+            COMPANY,
+            { id: activityActor.id },
+            'pi_terminal',
+            mockTransactionClient,
+            activityActor
+        )).resolves.toEqual({ canceled: true });
+
+        expect(q.getSessionByPaymentIntent).toHaveBeenCalledWith(
+            COMPANY,
+            'pi_terminal',
+            mockTransactionClient
+        );
+        expect(provider.cancelPaymentIntent).toHaveBeenCalledWith(ACCT, 'pi_terminal');
+        expect(q.updateSession).toHaveBeenCalledWith(
+            COMPANY,
+            session.id,
+            { status: 'canceled' },
+            mockTransactionClient
+        );
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith({
+            companyId: COMPANY,
+            entityType: 'payment',
+            action: 'payment.session_canceled',
+            entity: expect.objectContaining({ id: session.id, status: 'canceled' }),
+            actor: activityActor,
+            summary: { status: 'canceled' },
+        }, { client: mockTransactionClient });
+    });
+
+    it('404s a foreign/missing session before calling Stripe', async () => {
+        q.getSessionByPaymentIntent.mockResolvedValue(null);
+
+        await expect(svc.cancelTerminalIntent(
+            COMPANY,
+            { id: activityActor.id },
+            'pi_foreign',
+            mockTransactionClient,
+            activityActor
+        )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+
+        expect(provider.cancelPaymentIntent).not.toHaveBeenCalled();
+        expect(mockLogFinancialActivity).not.toHaveBeenCalled();
+    });
+});
+
 // ── Phase 5: refunds ────────────────────────────────────────────────────────
 describe('refunds (Phase 5)', () => {
     beforeEach(() => { provider.createRefund = jest.fn(); });

@@ -81,14 +81,22 @@ describe('jobsService.resolveAssignedProviderUserIds', () => {
 
 describe('jobSyncService.refreshAssigneeMirrorFromAssignment', () => {
     it('skips when the event payload has no assigned_providers array', async () => {
-        const res = await jobSyncService.refreshAssigneeMirrorFromAssignment('zb-job-1', {});
+        const res = await jobSyncService.refreshAssigneeMirrorFromAssignment(
+            'zb-job-1',
+            {},
+            'company-1'
+        );
         expect(res).toEqual({ updated: false, reason: 'no_assignment_payload' });
         expect(db.query).not.toHaveBeenCalled();
     });
 
     it('skips when the job is unknown locally', async () => {
         db.query.mockResolvedValueOnce({ rows: [] });
-        const res = await jobSyncService.refreshAssigneeMirrorFromAssignment('zb-job-1', { assigned_providers: [] });
+        const res = await jobSyncService.refreshAssigneeMirrorFromAssignment(
+            'zb-job-1',
+            { assigned_providers: [] },
+            'company-1'
+        );
         expect(res).toEqual({ updated: false, reason: 'job_not_found' });
     });
 
@@ -103,7 +111,7 @@ describe('jobSyncService.refreshAssigneeMirrorFromAssignment', () => {
 
         const res = await jobSyncService.refreshAssigneeMirrorFromAssignment('zb-job-1', {
             assigned_providers: [{ id: 'zb-1', name: 'Tech' }],
-        });
+        }, 'company-1');
 
         expect(res).toEqual({ updated: true, job_id: 42 });
         const bridgeCall = db.query.mock.calls[1];
@@ -114,6 +122,7 @@ describe('jobSyncService.refreshAssigneeMirrorFromAssignment', () => {
             JSON.stringify([{ id: 'zb-1', name: 'Tech' }]),
             JSON.stringify(['uuid-1']),
             42,
+            'company-1',
         ]);
     });
 });

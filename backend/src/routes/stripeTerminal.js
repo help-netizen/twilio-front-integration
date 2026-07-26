@@ -66,7 +66,17 @@ router.post('/payment-intents', requirePermission('payments.collect_terminal'), 
 // POST /api/stripe-terminal/payment-intents/:id/cancel
 router.post('/payment-intents/:id/cancel', requirePermission('payments.collect_terminal'), async (req, res) => {
     try {
-        res.json({ ok: true, data: await stripePaymentsService.cancelTerminalIntent(companyId(req), actor(req), req.params.id) });
+        const paymentActor = actor(req);
+        const data = await withTransaction(client => (
+            stripePaymentsService.cancelTerminalIntent(
+                companyId(req),
+                paymentActor,
+                req.params.id,
+                client,
+                userActor(paymentActor.id)
+            )
+        ));
+        res.json({ ok: true, data });
     } catch (err) { handle(err, req, res); }
 });
 

@@ -474,7 +474,9 @@ async function markJobComplete(id, data = {}) {
  * @param {Object} params - { created_after? }
  * @returns {Array} All customer objects
  */
-async function getCustomers(params = {}) {
+async function getCustomers(params = {}, companyId = null) {
+    const client = companyId ? await getClientForCompany(companyId) : getClient();
+    if (!client) return [];
     const allResults = [];
     let cursor = 0;
     const limit = 100; // max allowed by API
@@ -484,7 +486,7 @@ async function getCustomers(params = {}) {
         if (params.created_after) queryParams.created_after = params.created_after;
 
         const res = await retryRequest(() =>
-            getClient().get('/customers', { params: queryParams })
+            client.get('/customers', { params: queryParams })
         );
 
         const data = res.data;

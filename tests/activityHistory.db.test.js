@@ -118,7 +118,14 @@ beforeAll(async () => {
             company_id UUID NOT NULL,
             value TEXT NOT NULL
         );
+        CREATE TEMP TABLE activity_log_config (
+            key TEXT PRIMARY KEY,
+            value TIMESTAMPTZ NOT NULL
+        );
+        INSERT INTO activity_log_config (key, value)
+        VALUES ('cutover_at', '2026-07-26T08:00:00Z');
     `);
+    eventService.resetActivityLogCutoverCache();
 });
 
 afterAll(async () => {
@@ -278,4 +285,42 @@ databaseTest('History unions own, snapshot, current-child, note, and legacy rows
         { limit: 2, offset: 1 }
     );
     expect(page.map(item => item.id)).toEqual(history.slice(1, 3).map(item => item.id));
+});
+
+databaseTest('History reads legacy events only before the global audit-log cutover', async () => {
+    const companyId = randomUUID();
+    const jobId = '314';
+
+    await client.query(
+        `INSERT INTO domain_events (
+            company_id, aggregate_type, aggregate_id, event_type,
+            event_data, actor_type, created_at
+         ) VALUES
+            ($1, 'job', $2, 'status_changed', '{"from":"New","to":"Scheduled"}', 'system',
+                '2026-07-26T07:00:00Z'),
+            ($1, 'job', $2, 'status_changed', '{"from":"Scheduled","to":"Complete"}', 'system',
+                '2026-07-26T09:00:00Z')`,
+        [companyId, jobId]
+    );
+    await client.query(
+        `INSERT INTO audit_log (
+            action, target_type, target_id, company_id, details, created_at
+         ) VALUES (
+            'job.status_changed', 'job', $1, $2,
+            '{"actor_type":"integration","actor_label":"Zenbooker","summary":{"status":"Complete"}}',
+            '2026-07-26T09:00:00Z'
+         )`,
+        [jobId, companyId]
+    );
+
+    const history = await eventService.getEntityHistory(companyId, 'job', jobId);
+    const events = history.filter(item => item.type === 'event');
+
+    expect(events.filter(item => item.action === 'status_changed')).toHaveLength(1);
+    expect(events.filter(item => item.action === 'job.status_changed')).toHaveLength(1);
+    expect(events).toHaveLength(2);
+    expect(events.map(item => item.created_at)).toEqual([
+        '2026-07-26T09:00:00.000Z',
+        '2026-07-26T07:00:00.000Z',
+    ]);
 });

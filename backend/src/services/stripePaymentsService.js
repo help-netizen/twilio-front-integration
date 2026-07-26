@@ -860,12 +860,36 @@ const createTapToPayIntent = (
     activityActor
 );
 
-async function cancelTerminalIntent(companyId, actor, paymentIntentId) {
+async function cancelTerminalIntent(
+    companyId,
+    actor,
+    paymentIntentId,
+    client = null,
+    activityActor = null
+) {
+    const session = await q.getSessionByPaymentIntent(companyId, paymentIntentId, client);
+    if (!session || session.surface !== 'tap_to_pay') {
+        throw new StripePaymentsError('NOT_FOUND', 'Terminal payment session not found', 404);
+    }
     const account = await q.getAccountByCompany(companyId);
     if (!account) throw new StripePaymentsError('NOT_CONNECTED', 'Stripe account not connected', 400);
     await provider.cancelPaymentIntent(account.stripe_account_id, paymentIntentId);
-    const session = await q.getSessionByPaymentIntent(companyId, paymentIntentId);
-    if (session) await q.updateSession(companyId, session.id, { status: 'canceled' });
+    const updated = await q.updateSession(
+        companyId,
+        session.id,
+        { status: 'canceled' },
+        client
+    );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.session_canceled',
+            entity: updated || session,
+            actor: activityActor,
+            summary: { status: 'canceled' },
+        }, { client });
+    }
     return { canceled: true };
 }
 

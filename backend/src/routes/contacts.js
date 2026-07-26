@@ -761,7 +761,7 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
 
         // Async: push to Zenbooker if linked
         if (zenbookerSyncService.FEATURE_ENABLED && updated.zenbooker_customer_id) {
-            zenbookerSyncService.syncContactToZenbooker(id).catch(err =>
+            zenbookerSyncService.syncContactToZenbooker(id, companyId).catch(err =>
                 console.error(`[ContactsAPI][${reqId}] Zenbooker sync error (non-blocking):`, err.message)
             );
         }
@@ -878,7 +878,11 @@ router.patch('/:id/addresses/:addressId', requirePermission('contacts.edit'), as
 
         // Async: push address to Zenbooker if linked
         if (zenbookerSyncService.FEATURE_ENABLED) {
-            zenbookerSyncService.syncAddressToZenbooker(contactId, addressId).catch(err =>
+            zenbookerSyncService.syncAddressToZenbooker(
+                contactId,
+                addressId,
+                companyId
+            ).catch(err =>
                 console.error(`[ContactsAPI][${reqId}] Zenbooker address sync error (non-blocking):`, err.message)
             );
         }

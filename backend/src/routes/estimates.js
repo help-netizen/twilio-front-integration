@@ -263,7 +263,13 @@ router.post('/:id/public-link', requirePermission('estimates.send'), async (req,
         const companyId = getCompanyId(req);
         const { id } = req.params;
 
-        const { url } = await estimatesService.ensurePublicLink(companyId, id);
+        const userId = getUserId(req);
+        const { url } = await withTransaction(client => estimatesService.ensurePublicLink(
+            companyId,
+            id,
+            client,
+            userActor(userId)
+        ));
         res.json({ ok: true, data: { url } });
     } catch (err) {
         console.error('[Estimates] POST /:id/public-link error:', err.message);

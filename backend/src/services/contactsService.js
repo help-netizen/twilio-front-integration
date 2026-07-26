@@ -319,7 +319,13 @@ async function getContactEmails(contactId, primaryEmail = null) {
 // =============================================================================
 // Upsert from Zenbooker customer data
 // =============================================================================
-async function upsertFromZenbooker(customer) {
+async function upsertFromZenbooker(customer, companyId) {
+    if (!companyId) {
+        const err = new Error('Tenant context required');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        err.httpStatus = 403;
+        throw err;
+    }
     const customerId = String(customer.id);
     const fullName = [customer.first_name, customer.last_name].filter(Boolean).join(' ') || null;
     const phone = toE164(customer.phone) || customer.phone || null;
@@ -330,21 +336,50 @@ async function upsertFromZenbooker(customer) {
     // Store full Zenbooker payload for rich display
     const zbData = JSON.stringify(customer);
 
-    const sql = `
-        INSERT INTO contacts (full_name, phone_e164, secondary_phone, secondary_phone_name, email, notes, zenbooker_customer_id, zenbooker_data)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-        ON CONFLICT (zenbooker_customer_id) DO UPDATE SET
-            full_name = COALESCE(EXCLUDED.full_name, contacts.full_name),
-            phone_e164 = COALESCE(EXCLUDED.phone_e164, contacts.phone_e164),
-            secondary_phone = COALESCE(EXCLUDED.secondary_phone, contacts.secondary_phone),
-            secondary_phone_name = COALESCE(EXCLUDED.secondary_phone_name, contacts.secondary_phone_name),
-            email = COALESCE(EXCLUDED.email, contacts.email),
-            notes = COALESCE(EXCLUDED.notes, contacts.notes),
-            zenbooker_data = EXCLUDED.zenbooker_data
-        RETURNING *
-    `;
+    const params = [
+        companyId,
+        fullName,
+        phone,
+        secondaryPhone,
+        secondaryPhoneName,
+        email,
+        notes,
+        customerId,
+        zbData,
+    ];
+    const inserted = await db.query(
+        `INSERT INTO contacts (
+            company_id, full_name, phone_e164, secondary_phone,
+            secondary_phone_name, email, notes, zenbooker_customer_id,
+            zenbooker_data
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        params
+    );
+    if (inserted.rows[0]) return rowToContact(inserted.rows[0]);
 
-    const { rows } = await db.query(sql, [fullName, phone, secondaryPhone, secondaryPhoneName, email, notes, customerId, zbData]);
+    const { rows } = await db.query(
+        `UPDATE contacts
+         SET full_name = COALESCE($2, full_name),
+             phone_e164 = COALESCE($3, phone_e164),
+             secondary_phone = COALESCE($4, secondary_phone),
+             secondary_phone_name = COALESCE($5, secondary_phone_name),
+             email = COALESCE($6, email),
+             notes = COALESCE($7, notes),
+             zenbooker_data = $9::jsonb,
+             updated_at = NOW()
+         WHERE company_id = $1 AND zenbooker_customer_id = $8
+         RETURNING *`,
+        params
+    );
+    if (!rows[0]) {
+        const err = new Error('Zenbooker customer id is already owned by another company');
+        err.code = 'ZENBOOKER_ID_CONFLICT';
+        err.httpStatus = 409;
+        throw err;
+    }
     return rowToContact(rows[0]);
 }
 

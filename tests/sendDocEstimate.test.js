@@ -427,10 +427,28 @@ describe('ensurePublicLink', () => {
 
     it('TC-SD-001: mints + persists a base64url token when absent, returns /e/<token>', async () => {
         mockGetEstimateById.mockResolvedValue(estimateRow({ public_token: null }));
-        const out = await estimatesService.ensurePublicLink(COMPANY_A, EST_ID);
+        const activityActor = {
+            id: CRM_USER_ID,
+            type: 'user',
+            label: null,
+            source: 'crm',
+        };
+        const out = await estimatesService.ensurePublicLink(
+            COMPANY_A,
+            EST_ID,
+            null,
+            activityActor
+        );
         expect(out.token).toMatch(/^[A-Za-z0-9_-]{11}$/); // 8 bytes → 11 url-safe chars
         expect(out.url).toBe(`https://app.albusto.com/e/${out.token}`);
         expect(mockSetPublicToken).toHaveBeenCalledWith(EST_ID, COMPANY_A, out.token);
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            entityType: 'estimate',
+            action: 'estimate.link_created',
+            entity: expect.objectContaining({ id: EST_ID }),
+            actor: activityActor,
+        }, { client: null });
     });
 
     it('TC-SD-003: missing/cross-tenant estimate → NOT_FOUND 404', async () => {

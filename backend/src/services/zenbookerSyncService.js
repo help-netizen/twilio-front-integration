@@ -127,14 +127,14 @@ function legacyTextFromZbNotes(notes) {
         .join('\n');
 }
 
-async function syncContactNotesFromZenbooker(contactId, notes) {
+async function syncContactNotesFromZenbooker(contactId, notes, companyId) {
     if (!contactId) return;
     const incomingNotes = normalizeZbCustomerNotes(notes);
     if (incomingNotes.length === 0) return;
 
     const { rows } = await db.query(
-        'SELECT structured_notes FROM contacts WHERE id = $1',
-        [contactId]
+        'SELECT structured_notes FROM contacts WHERE id = $1 AND company_id = $2',
+        [contactId, companyId]
     );
     const existingNotes = rows[0]?.structured_notes || [];
     const mergedNotes = mergeStructuredNotes(existingNotes, incomingNotes);
@@ -146,8 +146,8 @@ async function syncContactNotesFromZenbooker(contactId, notes) {
          SET structured_notes = $1::jsonb,
              notes = COALESCE(NULLIF(notes, ''), NULLIF($2, '')),
              updated_at = NOW()
-         WHERE id = $3`,
-        [JSON.stringify(mergedNotes), legacyText, contactId]
+         WHERE id = $3 AND company_id = $4`,
+        [JSON.stringify(mergedNotes), legacyText, contactId, companyId]
     );
 }
 
@@ -170,10 +170,16 @@ function assertEnabled() {
  * @param {number} contactId
  * @returns {Object} { zenbooker_customer_id, contact }
  */
-async function pushContactToZenbooker(contactId) {
+async function pushContactToZenbooker(contactId, companyId) {
     assertEnabled();
 
-    const contact = await contactsService.getContactById(contactId);
+    const contact = await contactsService.getContactById(contactId, companyId);
+    if (!contact) {
+        throw Object.assign(new Error('Contact not found'), {
+            code: 'NOT_FOUND',
+            httpStatus: 404,
+        });
+    }
     if (contact.zenbooker_customer_id) {
         throw Object.assign(
             new Error('Contact already linked to Zenbooker'),
@@ -191,8 +197,10 @@ async function pushContactToZenbooker(contactId) {
 
     // Set status to pending before API call
     await db.query(
-        `UPDATE contacts SET zenbooker_sync_status = 'pending', zenbooker_last_error = NULL WHERE id = $1`,
-        [contactId]
+        `UPDATE contacts
+         SET zenbooker_sync_status = 'pending', zenbooker_last_error = NULL
+         WHERE id = $1 AND company_id = $2`,
+        [contactId, companyId]
     );
 
     try {
@@ -206,21 +214,23 @@ async function pushContactToZenbooker(contactId) {
                  zenbooker_sync_status = 'linked',
                  zenbooker_synced_at = NOW(),
                  zenbooker_last_error = NULL
-             WHERE id = $2`,
-            [zbId, contactId]
+             WHERE id = $2 AND company_id = $3`,
+            [zbId, contactId, companyId]
         );
 
         // Push existing addresses to Zenbooker
-        await pushExistingAddresses(contactId, zbId);
+        await pushExistingAddresses(contactId, zbId, companyId);
 
-        const updated = await contactsService.getContactById(contactId);
+        const updated = await contactsService.getContactById(contactId, companyId);
         console.log(`[ZbSync] Contact ${contactId} linked to Zenbooker customer ${zbId}`);
         return { zenbooker_customer_id: zbId, contact: updated };
     } catch (err) {
         const errorMsg = err.response?.data?.error?.message || err.message;
         await db.query(
-            `UPDATE contacts SET zenbooker_sync_status = 'error', zenbooker_last_error = $1 WHERE id = $2`,
-            [errorMsg, contactId]
+            `UPDATE contacts
+             SET zenbooker_sync_status = 'error', zenbooker_last_error = $1
+             WHERE id = $2 AND company_id = $3`,
+            [errorMsg, contactId, companyId]
         );
         throw err;
     }
@@ -235,10 +245,16 @@ async function pushContactToZenbooker(contactId) {
  *
  * @param {number} contactId
  */
-async function syncContactToZenbooker(contactId) {
+async function syncContactToZenbooker(contactId, companyId) {
     assertEnabled();
 
-    const contact = await contactsService.getContactById(contactId);
+    const contact = await contactsService.getContactById(contactId, companyId);
+    if (!contact) {
+        throw Object.assign(new Error('Contact not found'), {
+            code: 'NOT_FOUND',
+            httpStatus: 404,
+        });
+    }
     if (!contact.zenbooker_customer_id) {
         console.log(`[ZbSync] Contact ${contactId} not linked, skipping sync`);
         return;
@@ -277,15 +293,20 @@ async function syncContactToZenbooker(contactId) {
         }
 
         await db.query(
-            `UPDATE contacts SET zenbooker_synced_at = NOW(), zenbooker_sync_status = 'linked', zenbooker_last_error = NULL WHERE id = $1`,
-            [contactId]
+            `UPDATE contacts
+             SET zenbooker_synced_at = NOW(), zenbooker_sync_status = 'linked',
+                 zenbooker_last_error = NULL
+             WHERE id = $1 AND company_id = $2`,
+            [contactId, companyId]
         );
         console.log(`[ZbSync] Contact ${contactId} synced to Zenbooker`);
     } catch (err) {
         const errorMsg = err.response?.data?.error?.message || err.message;
         await db.query(
-            `UPDATE contacts SET zenbooker_sync_status = 'error', zenbooker_last_error = $1 WHERE id = $2`,
-            [errorMsg, contactId]
+            `UPDATE contacts
+             SET zenbooker_sync_status = 'error', zenbooker_last_error = $1
+             WHERE id = $2 AND company_id = $3`,
+            [errorMsg, contactId, companyId]
         );
         console.error(`[ZbSync] Failed to sync contact ${contactId}:`, errorMsg);
         // Don't rethrow — sync failure shouldn't block the original save
@@ -303,13 +324,15 @@ async function syncContactToZenbooker(contactId) {
  * @param {number} contactId
  * @param {number} addressId
  */
-async function syncAddressToZenbooker(contactId, addressId) {
+async function syncAddressToZenbooker(contactId, addressId, companyId) {
     assertEnabled();
 
     // Get contact's Zenbooker customer ID
     const { rows: cRows } = await db.query(
-        'SELECT zenbooker_customer_id FROM contacts WHERE id = $1',
-        [contactId]
+        `SELECT zenbooker_customer_id
+         FROM contacts
+         WHERE id = $1 AND company_id = $2`,
+        [contactId, companyId]
     );
     const zbCustomerId = cRows[0]?.zenbooker_customer_id;
     if (!zbCustomerId) {
@@ -320,8 +343,16 @@ async function syncAddressToZenbooker(contactId, addressId) {
     // Get address
     const { rows: aRows } = await db.query(
         `SELECT id, street_line1, street_line2, city, state, postal_code, country, zenbooker_address_id
-         FROM contact_addresses WHERE id = $1 AND contact_id = $2`,
-        [addressId, contactId]
+         FROM contact_addresses address
+         WHERE address.id = $1
+           AND address.contact_id = $2
+           AND EXISTS (
+               SELECT 1
+               FROM contacts contact
+               WHERE contact.id = address.contact_id
+                 AND contact.company_id = $3
+           )`,
+        [addressId, contactId, companyId]
     );
     if (aRows.length === 0) return;
     const addr = aRows[0];
@@ -346,8 +377,17 @@ async function syncAddressToZenbooker(contactId, addressId) {
             const zbAddrId = result?.id || result?.address_id;
             if (zbAddrId) {
                 await db.query(
-                    `UPDATE contact_addresses SET zenbooker_address_id = $1, zenbooker_customer_id = $2 WHERE id = $3`,
-                    [String(zbAddrId), zbCustomerId, addressId]
+                    `UPDATE contact_addresses address
+                     SET zenbooker_address_id = $1, zenbooker_customer_id = $2
+                     WHERE address.id = $3
+                       AND address.contact_id = $4
+                       AND EXISTS (
+                           SELECT 1
+                           FROM contacts contact
+                           WHERE contact.id = address.contact_id
+                             AND contact.company_id = $5
+                       )`,
+                    [String(zbAddrId), zbCustomerId, addressId, contactId, companyId]
                 );
                 console.log(`[ZbSync] Address ${addressId} pushed to Zenbooker as ${zbAddrId}`);
             }
@@ -361,11 +401,19 @@ async function syncAddressToZenbooker(contactId, addressId) {
 // =============================================================================
 // Push existing addresses when first linking contact
 // =============================================================================
-async function pushExistingAddresses(contactId, zbCustomerId) {
+async function pushExistingAddresses(contactId, zbCustomerId, companyId) {
     const { rows } = await db.query(
         `SELECT id, street_line1, street_line2, city, state, postal_code, country
-         FROM contact_addresses WHERE contact_id = $1 ORDER BY is_primary DESC`,
-        [contactId]
+         FROM contact_addresses address
+         WHERE address.contact_id = $1
+           AND EXISTS (
+               SELECT 1
+               FROM contacts contact
+               WHERE contact.id = address.contact_id
+                 AND contact.company_id = $2
+           )
+         ORDER BY is_primary DESC`,
+        [contactId, companyId]
     );
 
     for (const addr of rows) {
@@ -381,8 +429,17 @@ async function pushExistingAddresses(contactId, zbCustomerId) {
             const zbAddrId = result?.id || result?.address_id;
             if (zbAddrId) {
                 await db.query(
-                    `UPDATE contact_addresses SET zenbooker_address_id = $1, zenbooker_customer_id = $2 WHERE id = $3`,
-                    [String(zbAddrId), zbCustomerId, addr.id]
+                    `UPDATE contact_addresses address
+                     SET zenbooker_address_id = $1, zenbooker_customer_id = $2
+                     WHERE address.id = $3
+                       AND address.contact_id = $4
+                       AND EXISTS (
+                           SELECT 1
+                           FROM contacts contact
+                           WHERE contact.id = address.contact_id
+                             AND contact.company_id = $5
+                       )`,
+                    [String(zbAddrId), zbCustomerId, addr.id, contactId, companyId]
                 );
             }
         } catch (err) {
@@ -402,6 +459,12 @@ async function pushExistingAddresses(contactId, zbCustomerId) {
  */
 async function handleWebhookPayload(payload, companyId = null) {
     assertEnabled();
+    if (!companyId) {
+        throw Object.assign(new Error('Tenant context required'), {
+            code: 'TENANT_CONTEXT_REQUIRED',
+            httpStatus: 403,
+        });
+    }
 
     const { event, data, account } = payload;
     if (!data?.id) {
@@ -428,14 +491,16 @@ async function handleWebhookPayload(payload, companyId = null) {
 
     // 1. Try exact match by zenbooker_customer_id
     const { rows: exact } = await db.query(
-        'SELECT id FROM contacts WHERE zenbooker_customer_id = $1',
-        [customerId]
+        `SELECT id
+         FROM contacts
+         WHERE zenbooker_customer_id = $1 AND company_id = $2`,
+        [customerId, companyId]
     );
 
     if (exact.length > 0) {
         // Existing linked contact — update from Zenbooker data
-        await updateContactFromZenbooker(exact[0].id, data, account);
-        return;
+        await updateContactFromZenbooker(exact[0].id, data, account, companyId);
+        return { contact_id: exact[0].id, created: false };
     }
 
     // 2. Try match by name + phone
@@ -447,12 +512,13 @@ async function handleWebhookPayload(payload, companyId = null) {
             `SELECT id FROM contacts
              WHERE LOWER(TRIM(first_name)) = $1
                AND LOWER(TRIM(last_name)) = $2
-               AND phone_e164 = $3`,
-            [(firstName || '').toLowerCase(), (lastName || '').toLowerCase(), phone]
+               AND phone_e164 = $3
+               AND company_id = $4`,
+            [(firstName || '').toLowerCase(), (lastName || '').toLowerCase(), phone, companyId]
         );
         if (byPhone.length === 1) {
-            await linkAndUpdate(byPhone[0].id, customerId, data, account);
-            return;
+            await linkAndUpdate(byPhone[0].id, customerId, data, account, companyId);
+            return { contact_id: byPhone[0].id, created: false };
         }
     }
 
@@ -462,12 +528,13 @@ async function handleWebhookPayload(payload, companyId = null) {
             `SELECT id FROM contacts
              WHERE LOWER(TRIM(first_name)) = $1
                AND LOWER(TRIM(last_name)) = $2
-               AND LOWER(TRIM(email)) = $3`,
-            [(firstName || '').toLowerCase(), (lastName || '').toLowerCase(), email]
+               AND LOWER(TRIM(email)) = $3
+               AND company_id = $4`,
+            [(firstName || '').toLowerCase(), (lastName || '').toLowerCase(), email, companyId]
         );
         if (byEmail.length === 1) {
-            await linkAndUpdate(byEmail[0].id, customerId, data, account);
-            return;
+            await linkAndUpdate(byEmail[0].id, customerId, data, account, companyId);
+            return { contact_id: byEmail[0].id, created: false };
         }
     }
 
@@ -480,34 +547,34 @@ async function handleWebhookPayload(payload, companyId = null) {
                                zenbooker_sync_status, zenbooker_synced_at, zenbooker_data,
                                notes, structured_notes, company_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'linked', NOW(), $8::jsonb, $9, $10::jsonb, $11)
-         ON CONFLICT (zenbooker_customer_id) DO UPDATE SET
-             zenbooker_data = EXCLUDED.zenbooker_data,
-             structured_notes = CASE
-                 WHEN contacts.structured_notes IS NULL OR contacts.structured_notes = '[]'::jsonb
-                 THEN EXCLUDED.structured_notes
-                 ELSE contacts.structured_notes
-             END,
-             zenbooker_synced_at = NOW()
+         ON CONFLICT DO NOTHING
          RETURNING id`,
         [fullName, firstName, lastName,
             phone || null, data.email || null,
             customerId, account || null,
             JSON.stringify(data), legacyNotes || null, JSON.stringify(structuredNotes), companyId]
     );
-    console.log(`[ZbSync] Created new contact ${newRows[0]?.id} from Zenbooker customer ${customerId}`);
-    await syncContactNotesFromZenbooker(newRows[0]?.id, data.notes);
+    if (!newRows[0]) {
+        throw Object.assign(
+            new Error('Zenbooker customer id is already owned by another company'),
+            { code: 'ZENBOOKER_ID_CONFLICT', httpStatus: 409 }
+        );
+    }
+    console.log(`[ZbSync] Created new contact ${newRows[0].id} from Zenbooker customer ${customerId}`);
+    await syncContactNotesFromZenbooker(newRows[0].id, data.notes, companyId);
 
     // Import addresses
     if (newRows[0]?.id && data.addresses?.length) {
-        await importAddresses(newRows[0].id, customerId, data.addresses);
+        await importAddresses(newRows[0].id, customerId, data.addresses, companyId);
     }
+    return { contact_id: newRows[0]?.id, created: true };
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-async function linkAndUpdate(contactId, zbCustomerId, data, account) {
+async function linkAndUpdate(contactId, zbCustomerId, data, account, companyId) {
     await db.query(
         `UPDATE contacts
          SET zenbooker_customer_id = $1,
@@ -516,18 +583,18 @@ async function linkAndUpdate(contactId, zbCustomerId, data, account) {
              zenbooker_synced_at = NOW(),
              zenbooker_data = $3::jsonb,
              zenbooker_last_error = NULL
-         WHERE id = $4`,
-        [zbCustomerId, account || null, JSON.stringify(data), contactId]
+         WHERE id = $4 AND company_id = $5`,
+        [zbCustomerId, account || null, JSON.stringify(data), contactId, companyId]
     );
     console.log(`[ZbSync] Linked contact ${contactId} to Zenbooker customer ${zbCustomerId}`);
-    await syncContactNotesFromZenbooker(contactId, data.notes);
+    await syncContactNotesFromZenbooker(contactId, data.notes, companyId);
 
     if (data.addresses?.length) {
-        await importAddresses(contactId, zbCustomerId, data.addresses);
+        await importAddresses(contactId, zbCustomerId, data.addresses, companyId);
     }
 }
 
-async function updateContactFromZenbooker(contactId, data, account) {
+async function updateContactFromZenbooker(contactId, data, account, companyId) {
     // Parse name — ZB sends `name` (full) or `first_name`/`last_name`
     let firstName = data.first_name || null;
     let lastName = data.last_name || null;
@@ -558,28 +625,42 @@ async function updateContactFromZenbooker(contactId, data, account) {
              last_name = COALESCE($5, last_name),
              phone_e164 = COALESCE($6, phone_e164),
              email = COALESCE($7, email)
-         WHERE id = $8`,
+         WHERE id = $8 AND company_id = $9`,
         [JSON.stringify(data), account || null,
             fullName, firstName, lastName, phone, email,
-            contactId]
+            contactId, companyId]
     );
     console.log(`[ZbSync] Updated contact ${contactId} from Zenbooker (name=${fullName}, phone=${phone}, email=${email})`);
-    await syncContactNotesFromZenbooker(contactId, data.notes);
+    await syncContactNotesFromZenbooker(contactId, data.notes, companyId);
 
     if (data.addresses?.length) {
-        await importAddresses(contactId, data.id ? String(data.id) : null, data.addresses);
+        await importAddresses(
+            contactId,
+            data.id ? String(data.id) : null,
+            data.addresses,
+            companyId
+        );
     }
 }
 
-async function importAddresses(contactId, zbCustomerId, addresses) {
+async function importAddresses(contactId, zbCustomerId, addresses, companyId) {
     for (const addr of addresses) {
         const zbAddrId = addr.id ? String(addr.id) : null;
         if (!zbAddrId) continue;
 
         // Check if already imported
         const { rows: existing } = await db.query(
-            'SELECT id FROM contact_addresses WHERE contact_id = $1 AND zenbooker_address_id = $2',
-            [contactId, zbAddrId]
+            `SELECT address.id
+             FROM contact_addresses address
+             WHERE address.contact_id = $1
+               AND address.zenbooker_address_id = $2
+               AND EXISTS (
+                   SELECT 1
+                   FROM contacts contact
+                   WHERE contact.id = address.contact_id
+                     AND contact.company_id = $3
+               )`,
+            [contactId, zbAddrId, companyId]
         );
         if (existing.length > 0) continue; // skip duplicate
 
@@ -596,10 +677,13 @@ async function importAddresses(contactId, zbCustomerId, addresses) {
             `INSERT INTO contact_addresses
                 (contact_id, street_line1, street_line2, city, state, postal_code, country,
                  zenbooker_address_id, zenbooker_customer_id, address_normalized_hash, is_primary)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false
+             FROM contacts contact
+             WHERE contact.id = $1 AND contact.company_id = $11
              ON CONFLICT DO NOTHING`,
             [contactId, addr.line1 || '', addr.line2 || '', addr.city || '', addr.state || '',
-                addr.postal_code || '', addr.country || 'US', zbAddrId, zbCustomerId, hash]
+                addr.postal_code || '', addr.country || 'US', zbAddrId, zbCustomerId, hash,
+                companyId]
         );
     }
 }

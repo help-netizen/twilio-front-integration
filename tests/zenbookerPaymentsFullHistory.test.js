@@ -14,6 +14,10 @@ jest.mock('../backend/src/services/zenbookerClient', () => ({
     ZENBOOKER_DEFAULT_COMPANY_ID: '00000000-0000-0000-0000-000000000001',
     getPaymentReaderForCompany: jest.fn(),
 }));
+const mockLogZenbookerBatch = jest.fn();
+jest.mock('../backend/src/services/zenbookerActivityService', () => ({
+    logZenbookerBatch: (...args) => mockLogZenbookerBatch(...args),
+}));
 
 const db = require('../backend/src/db/connection');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
@@ -67,6 +71,7 @@ describe('payment sync route modes and tenant gate', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockLogZenbookerBatch.mockResolvedValue({ ok: true });
         syncSpy = jest.spyOn(syncService, 'syncPayments').mockResolvedValue({
             mode: 'full_history', imported: 0, skipped_existing: 0, remaining: false, cursor: null,
         });
@@ -169,6 +174,16 @@ describe('bounded full-history service', () => {
             last_range: { from: '2026-01-02T12:00:00.000Z', to: '2026-01-02T12:00:00.000Z' },
         });
         expect(reader.getTransactionsPage).toHaveBeenNthCalledWith(1, expect.objectContaining({ cursor: 0 }));
+        expect(mockLogZenbookerBatch).toHaveBeenCalledTimes(1);
+        expect(mockLogZenbookerBatch).toHaveBeenLastCalledWith({
+            companyId: DEFAULT_CO,
+            entityType: 'payment',
+            summary: {
+                count: 1,
+                imported_count: 1,
+                error_count: 1,
+            },
+        });
 
         const complete = await syncService.syncPayments(DEFAULT_CO, null, null, {
             fullHistory: true,
@@ -178,6 +193,7 @@ describe('bounded full-history service', () => {
         });
         expect(reader.getTransactionsPage).toHaveBeenNthCalledWith(2, expect.objectContaining({ cursor: 'cursor-25' }));
         expect(complete).toMatchObject({ remaining: false, cursor: null, imported: 1 });
+        expect(mockLogZenbookerBatch).toHaveBeenCalledTimes(2);
     });
 
     it('CTRL-ZBPAY-RERUN-DEDUPE: a repeated full-history run imports once then skips the same source id', async () => {

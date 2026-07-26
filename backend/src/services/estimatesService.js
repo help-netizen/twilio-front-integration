@@ -1101,7 +1101,7 @@ async function generatePdf(companyId, id, client = null) {
  * Return (creating if necessary) a public link for the estimate. Idempotent —
  * subsequent calls return the same token + URL. Re-send never re-mints.
  */
-async function ensurePublicLink(companyId, id, client = null) {
+async function ensurePublicLink(companyId, id, client = null, activityActor = null) {
     const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
@@ -1113,6 +1113,15 @@ async function ensurePublicLink(companyId, id, client = null) {
             await estimatesQueries.setPublicToken(estimate.id, companyId, token, client);
         } else {
             await estimatesQueries.setPublicToken(estimate.id, companyId, token);
+        }
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'estimate',
+                action: 'estimate.link_created',
+                entity: estimate,
+                actor: activityActor,
+            }, { client });
         }
     }
 

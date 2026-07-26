@@ -10,12 +10,14 @@ const express = require('express');
 const router = express.Router();
 const paymentsService = require('../../services/zenbookerPaymentsSyncService');
 const { requirePermission } = require('../../middleware/authorization');
+const { userActor } = require('../../services/financialActivityService');
+const { withTransaction } = require('../../services/transactionService');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // POST /api/zenbooker/payments/sync  — Sync from Zenbooker into local DB
 // ═══════════════════════════════════════════════════════════════════════════════
 
-router.post('/sync', async (req, res) => {
+router.post('/sync', requirePermission('tenant.integrations.manage'), async (req, res) => {
     // Sync can take minutes for large date ranges (many ZB API calls).
     // Override the global 15s server.setTimeout for this request only.
     req.setTimeout(300000);   // 5 min
@@ -193,7 +195,7 @@ router.get('/:id', async (req, res) => {
 // PATCH /api/zenbooker/payments/:id  — Update check_deposited flag
 // ═══════════════════════════════════════════════════════════════════════════════
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requirePermission('payments.collect_offline'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         if (!companyId) {
@@ -210,7 +212,16 @@ router.patch('/:id', async (req, res) => {
             return res.status(400).json({ ok: false, error: 'check_deposited (boolean) is required' });
         }
 
-        const result = await paymentsService.updateCheckDeposited(companyId, paymentId, check_deposited);
+        const actorId = req.user?.crmUser?.id || null;
+        const result = await withTransaction(client => (
+            paymentsService.updateCheckDeposited(
+                companyId,
+                paymentId,
+                check_deposited,
+                client,
+                userActor(actorId)
+            )
+        ));
 
         if (!result) {
             return res.status(404).json({ ok: false, error: 'Transaction not found' });

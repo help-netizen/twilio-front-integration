@@ -25,6 +25,7 @@ test('the Phase 3 Job action catalog is wired with exact canonical keys', () => 
         'job.assigned',
         'job.unassigned',
         'job.eta_notified',
+        'job.rating_link_created',
         'job.rating_link_sent',
     ];
 

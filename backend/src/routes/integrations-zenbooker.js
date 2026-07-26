@@ -14,7 +14,12 @@ const crypto = require('crypto');
 const router = express.Router();
 const db = require('../db/connection');
 const zenbookerSyncService = require('../services/zenbookerSyncService');
+const {
+    logZenbookerEntity,
+} = require('../services/zenbookerActivityService');
+const zenbookerClient = require('../services/zenbookerClient');
 const { authenticate, requireCompanyAccess } = require('../middleware/keycloakAuth');
+const { requirePermission } = require('../middleware/authorization');
 
 const WEBHOOK_SECRET = process.env.ZENBOOKER_WEBHOOK_SECRET;
 
@@ -58,7 +63,20 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
     // Process event
     if (event.startsWith('customer.') && zenbookerSyncService.FEATURE_ENABLED) {
         try {
-            await zenbookerSyncService.handleWebhookPayload(payload, companyId);
+            const contactResult = await zenbookerSyncService.handleWebhookPayload(
+                payload,
+                companyId
+            );
+            if (contactResult?.contact_id) {
+                await logZenbookerEntity({
+                    companyId,
+                    entityType: 'contact',
+                    entityId: contactResult.contact_id,
+                    summary: {
+                        status: contactResult.created ? 'created' : 'updated',
+                    },
+                });
+            }
             await db.query(
                 `UPDATE webhook_inbox SET status = 'processed', processed_at = NOW(), attempts = attempts + 1
                  WHERE event_key = $1 AND provider = 'zenbooker'`,
@@ -98,9 +116,19 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
                 }
                 const localResult = await jobsService.syncFromZenbooker(zbJobId, fullJobData, companyId, event);
                 console.log(`[ZbWebhook][${reqId}] Local job sync:`, JSON.stringify(localResult));
+                if (localResult?.job_id) {
+                    await logZenbookerEntity({
+                        companyId,
+                        entityType: 'job',
+                        entityId: localResult.job_id,
+                        summary: {
+                            status: localResult.blanc_status,
+                        },
+                    });
+                }
             }
 
-            const legacyResult = await jobSyncService.handleJobWebhook(payload);
+            const legacyResult = await jobSyncService.handleJobWebhook(payload, companyId);
             console.log(`[ZbWebhook][${reqId}] Lead sub_status sync:`, JSON.stringify(legacyResult));
 
             await db.query(
@@ -136,7 +164,12 @@ router.post('/webhooks', async (req, res) => {
         }
 
         res.status(200).json({ ok: true, request_id: reqId });
-        await processWebhookPayload(reqId, req.body, req.headers);
+        await processWebhookPayload(
+            reqId,
+            req.body,
+            req.headers,
+            zenbookerClient.ZENBOOKER_DEFAULT_COMPANY_ID
+        );
     } catch (err) {
         console.error(`[ZbWebhook][${reqId}] Unexpected error:`, err);
     }
@@ -241,7 +274,7 @@ router.post('/webhook-url/regenerate', authenticate, requireCompanyAccess, async
 // =============================================================================
 // POST /contacts/:contactId/create-customer — Create Zenbooker customer
 // =============================================================================
-router.post('/contacts/:contactId/create-customer', authenticate, requireCompanyAccess, async (req, res) => {
+router.post('/contacts/:contactId/create-customer', authenticate, requireCompanyAccess, requirePermission('contacts.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const contactId = Number(req.params.contactId);
@@ -249,7 +282,10 @@ router.post('/contacts/:contactId/create-customer', authenticate, requireCompany
             return res.status(400).json({ ok: false, error: { code: 'INVALID_ID', message: 'Contact ID must be a number' } });
         }
 
-        const result = await zenbookerSyncService.pushContactToZenbooker(contactId);
+        const result = await zenbookerSyncService.pushContactToZenbooker(
+            contactId,
+            req.companyFilter?.company_id
+        );
         res.json({ ok: true, data: result, meta: { request_id: reqId } });
     } catch (err) {
         if (err.code === 'FEATURE_DISABLED') {
@@ -269,7 +305,7 @@ router.post('/contacts/:contactId/create-customer', authenticate, requireCompany
 // =============================================================================
 // POST /contacts/:contactId/sync — Sync Albusto contact to Zenbooker
 // =============================================================================
-router.post('/contacts/:contactId/sync', authenticate, requireCompanyAccess, async (req, res) => {
+router.post('/contacts/:contactId/sync', authenticate, requireCompanyAccess, requirePermission('contacts.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const contactId = Number(req.params.contactId);
@@ -277,7 +313,10 @@ router.post('/contacts/:contactId/sync', authenticate, requireCompanyAccess, asy
             return res.status(400).json({ ok: false, error: { code: 'INVALID_ID', message: 'Contact ID must be a number' } });
         }
 
-        await zenbookerSyncService.syncContactToZenbooker(contactId);
+        await zenbookerSyncService.syncContactToZenbooker(
+            contactId,
+            req.companyFilter?.company_id
+        );
 
         const contactsService = require('../services/contactsService');
         const companyId = req.companyFilter?.company_id || null;
@@ -414,3 +453,4 @@ router.put('/api-key', authenticate, requireCompanyAccess, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.processWebhookPayload = processWebhookPayload;

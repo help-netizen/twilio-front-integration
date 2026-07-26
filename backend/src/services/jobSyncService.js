@@ -67,7 +67,8 @@ const EVENT_TO_STATUS = {
  * @param {Object} payload - Webhook payload { event, data, ... }
  * @returns {{ updated: boolean, lead_uuid?: string, sub_status?: string }}
  */
-async function handleJobWebhook(payload) {
+async function handleJobWebhook(payload, companyId) {
+    if (!companyId) throw new Error('handleJobWebhook requires companyId');
     const event = payload.event;
     const jobId = payload.data?.id ? String(payload.data.id) : null;
 
@@ -79,9 +80,11 @@ async function handleJobWebhook(payload) {
     // 1. Find matching Albusto lead
     const { rows } = await db.query(
         `SELECT uuid, sub_status FROM leads
-         WHERE zenbooker_job_id = $1 AND converted_to_job = true
+         WHERE zenbooker_job_id = $1
+           AND converted_to_job = true
+           AND company_id = $2
          LIMIT 1`,
-        [jobId]
+        [jobId, companyId]
     );
 
     if (rows.length === 0) {
@@ -104,7 +107,7 @@ async function handleJobWebhook(payload) {
         // must still refresh the internal assignee mirror (PF007-HARDENING-001).
         if (event === 'job.service_providers.assigned') {
             try {
-                await refreshAssigneeMirrorFromAssignment(jobId, payload.data);
+                await refreshAssigneeMirrorFromAssignment(jobId, payload.data, companyId);
             } catch (mirrorErr) {
                 console.error(`[JobSync] Assignee mirror update failed for job ${jobId}:`, mirrorErr.message);
             }
@@ -140,8 +143,8 @@ async function handleJobWebhook(payload) {
     // 5. Update Albusto sub_status
     await db.query(
         `UPDATE leads SET sub_status = $1, updated_at = NOW()
-         WHERE uuid = $2`,
-        [newSubStatus, lead.uuid]
+         WHERE uuid = $2 AND company_id = $3`,
+        [newSubStatus, lead.uuid, companyId]
     );
 
     console.log(`[JobSync] Updated lead ${lead.uuid}: sub_status '${lead.sub_status}' → '${newSubStatus}' (event=${event})`);
@@ -156,7 +159,8 @@ async function handleJobWebhook(payload) {
  * External provider ids are resolved to crm_users.id strictly inside the
  * job's own company; unmapped ids resolve to nothing. Idempotent.
  */
-async function refreshAssigneeMirrorFromAssignment(zbJobId, eventData) {
+async function refreshAssigneeMirrorFromAssignment(zbJobId, eventData, companyId) {
+    if (!companyId) throw new Error('refreshAssigneeMirrorFromAssignment requires companyId');
     const assignedProviders = eventData?.assigned_providers;
     if (!Array.isArray(assignedProviders)) {
         // Partial webhook payload — the full job sync path (syncFromZenbooker,
@@ -165,8 +169,11 @@ async function refreshAssigneeMirrorFromAssignment(zbJobId, eventData) {
     }
 
     const { rows } = await db.query(
-        `SELECT id, company_id FROM jobs WHERE zenbooker_job_id = $1 LIMIT 1`,
-        [String(zbJobId)]
+        `SELECT id, company_id
+         FROM jobs
+         WHERE zenbooker_job_id = $1 AND company_id = $2
+         LIMIT 1`,
+        [String(zbJobId), companyId]
     );
     if (rows.length === 0) return { updated: false, reason: 'job_not_found' };
 
@@ -179,8 +186,8 @@ async function refreshAssigneeMirrorFromAssignment(zbJobId, eventData) {
          SET assigned_techs = $1::jsonb,
              assigned_provider_user_ids = $2::jsonb,
              updated_at = NOW()
-         WHERE id = $3`,
-        [JSON.stringify(assignedProviders), mirror, job.id]
+         WHERE id = $3 AND company_id = $4`,
+        [JSON.stringify(assignedProviders), mirror, job.id, companyId]
     );
 
     console.log(`[JobSync] Assignee mirror updated for job ${job.id} (zb=${zbJobId}): ${mirror}`);
@@ -199,12 +206,13 @@ async function refreshAssigneeMirrorFromAssignment(zbJobId, eventData) {
  * @param {string} newSubStatus - New Albusto sub_status value
  * @returns {{ synced: boolean, action?: string }}
  */
-async function syncBlancStatusToZenbooker(leadUuid, newSubStatus) {
+async function syncBlancStatusToZenbooker(leadUuid, newSubStatus, companyId) {
+    if (!companyId) throw new Error('syncBlancStatusToZenbooker requires companyId');
     // 1. Fetch lead to get zenbooker_job_id
     const { rows } = await db.query(
         `SELECT zenbooker_job_id FROM leads
-         WHERE uuid = $1 AND converted_to_job = true`,
-        [leadUuid]
+         WHERE uuid = $1 AND converted_to_job = true AND company_id = $2`,
+        [leadUuid, companyId]
     );
 
     if (rows.length === 0 || !rows[0].zenbooker_job_id) {

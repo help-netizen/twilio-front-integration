@@ -6,6 +6,7 @@
  */
 
 const db = require('../db/connection');
+let activityLogCutoverPromise = null;
 
 // ─── Log Event (fire-and-forget) ─────────────────────────────────────────────
 
@@ -59,11 +60,96 @@ function describeEvent(eventType, data) {
     }
 }
 
-function describeActivity(action) {
-    const [entity, ...actionParts] = String(action).split('.');
-    if (actionParts.length === 0) return String(action).replace(/_/g, ' ');
-    const entityLabel = entity.charAt(0).toUpperCase() + entity.slice(1);
-    return `${entityLabel} ${actionParts.join(' ').replace(/_/g, ' ')}`;
+const ACTIVITY_DESCRIPTIONS = Object.freeze({
+    'estimate.created': 'Estimate created.',
+    'estimate.updated': 'Estimate updated.',
+    'estimate.sent': 'Estimate sent.',
+    'estimate.approved': 'Estimate approved.',
+    'estimate.declined': 'Estimate declined.',
+    'estimate.client_accepted': 'Client accepted the estimate.',
+    'estimate.client_declined': 'Client declined the estimate.',
+    'estimate.converted': 'Estimate converted to an invoice.',
+    'estimate.linked_job': 'Estimate linked to a job.',
+    'estimate.archived': 'Estimate archived.',
+    'estimate.restored': 'Estimate restored.',
+    'estimate.link_created': 'Estimate link created.',
+    'estimate.viewed': 'Client viewed the estimate.',
+    'estimate.send_failed': 'Estimate could not be sent.',
+    'invoice.created': 'Invoice created.',
+    'invoice.updated': 'Invoice updated.',
+    'invoice.sent': 'Invoice sent.',
+    'invoice.voided': 'Invoice voided.',
+    'invoice.deleted': 'Draft invoice deleted.',
+    'invoice.payment_recorded': 'Invoice payment recorded.',
+    'invoice.payment_voided': 'Invoice payment voided.',
+    'invoice.link_created': 'Invoice link created.',
+    'invoice.link_sent': 'Invoice payment link sent.',
+    'invoice.card_session_started': 'Invoice card-payment session started.',
+    'invoice.payment_succeeded': 'Invoice payment succeeded.',
+    'invoice.payment_failed': 'Invoice payment failed.',
+    'invoice.refunded': 'Invoice payment refunded.',
+    'invoice.items_synced': 'Invoice items synced from the estimate.',
+    'invoice.viewed': 'Client viewed the invoice.',
+    'invoice.send_failed': 'Invoice could not be sent.',
+    'payment.recorded': 'Payment recorded.',
+    'payment.portal_submitted': 'Client submitted a payment.',
+    'payment.session_started': 'Payment session started.',
+    'payment.session_canceled': 'Payment session canceled.',
+    'payment.succeeded': 'Payment succeeded.',
+    'payment.failed': 'Payment failed.',
+    'payment.refunded': 'Payment refunded.',
+    'payment.voided': 'Payment voided.',
+    'payment.disputed': 'Payment disputed.',
+    'payment.receipt_sent': 'Payment receipt sent.',
+    'payment.receipt_send_failed': 'Payment receipt could not be sent.',
+    'payment.check_deposited': 'Check marked as deposited.',
+    'payment.check_deposit_reopened': 'Check marked as not deposited.',
+    'refund.failed': 'Refund failed.',
+    'job.created': 'Job created.',
+    'job.updated': 'Job updated.',
+    'job.status_changed': 'Job status changed.',
+    'job.rescheduled': 'Job rescheduled.',
+    'job.assigned': 'Job assigned.',
+    'job.unassigned': 'Job unassigned.',
+    'job.eta_notified': 'Arrival estimate sent.',
+    'job.rating_link_created': 'Rating link created.',
+    'job.rating_link_sent': 'Rating link sent.',
+    'job.synced': 'Job synced from Zenbooker.',
+    'lead.created': 'Lead created.',
+    'lead.updated': 'Lead updated.',
+    'lead.status_changed': 'Lead status changed.',
+    'lead.lost': 'Lead marked as lost.',
+    'lead.reactivated': 'Lead reactivated.',
+    'lead.assigned': 'Lead assigned.',
+    'lead.unassigned': 'Lead unassigned.',
+    'lead.converted': 'Lead converted to a job.',
+    'contact.created': 'Contact created.',
+    'contact.updated': 'Contact updated.',
+    'contact.merged': 'Contacts merged.',
+    'contact.phone_moved': 'Phone moved to this contact.',
+    'contact.email_moved': 'Email moved to this contact.',
+    'contact.address_set': 'Default address updated.',
+    'contact.portal_profile_updated': 'Client updated the contact profile.',
+    'contact.synced': 'Contact synced from Zenbooker.',
+    'job.sync_completed': 'Zenbooker job sync completed.',
+    'contact.sync_completed': 'Zenbooker contact sync completed.',
+    'payment.sync_completed': 'Zenbooker payment sync completed.',
+});
+
+function describeActivity(action, details = {}) {
+    let description = ACTIVITY_DESCRIPTIONS[action];
+    if (!description) {
+        const [entity, ...actionParts] = String(action).split('.');
+        if (actionParts.length === 0) return `${String(action).replace(/_/g, ' ')}.`;
+        const entityLabel = entity.charAt(0).toUpperCase() + entity.slice(1);
+        description = `${entityLabel} ${actionParts.join(' ').replace(/_/g, ' ')}.`;
+    }
+
+    const channel = details?.summary?.channel;
+    if (channel && ['sent', 'created', 'notified'].some(word => action.endsWith(word))) {
+        return `${description.slice(0, -1)} by ${String(channel).toUpperCase()}.`;
+    }
+    return description;
 }
 
 function isoTimestamp(value) {
@@ -79,6 +165,30 @@ function paginationValue(value, fallback, min, max) {
     return Math.min(parsed, max);
 }
 
+async function getActivityLogCutoverAt() {
+    if (!activityLogCutoverPromise) {
+        activityLogCutoverPromise = db.query(
+            `SELECT value AS cutover_at
+             FROM activity_log_config
+             WHERE key = 'cutover_at'`
+        ).then(({ rows }) => {
+            const cutoverAt = rows[0]?.cutover_at;
+            if (!cutoverAt || Number.isNaN(new Date(cutoverAt).getTime())) {
+                throw new Error('[EventService] activity_log cutover_at is not configured');
+            }
+            return cutoverAt;
+        }).catch(error => {
+            activityLogCutoverPromise = null;
+            throw error;
+        });
+    }
+    return activityLogCutoverPromise;
+}
+
+function resetActivityLogCutoverCache() {
+    activityLogCutoverPromise = null;
+}
+
 // ─── Get Entity History (canonical + legacy events + notes) ─────────────────
 
 async function getEntityHistory(companyId, aggregateType, aggregateId, entityNotes = [], options = {}) {
@@ -89,10 +199,12 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
 
     const limit = paginationValue(options.limit, 100, 1, 200);
     const offset = paginationValue(options.offset, 0, 0, 10000);
+    const cutoverAt = await getActivityLogCutoverAt();
     // The global top K cannot contain a row ranked below K in either DB source.
     // Fetching offset + limit from each leg therefore preserves merge pagination
     // while avoiding an unbounded audit/domain-event read.
-    const params = [companyId, aggregateType, String(aggregateId), offset + limit];
+    const auditParams = [companyId, aggregateType, String(aggregateId), offset + limit];
+    const legacyParams = [...auditParams, cutoverAt];
     const auditPromise = db.query(
         `WITH requested_parent AS (
             SELECT
@@ -225,6 +337,8 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
             al.details,
             al.actor_id,
             al.actor_email,
+            al.target_type,
+            al.target_id,
             al.created_at,
             actor.full_name AS actor_name,
             actor.email AS actor_user_email
@@ -238,7 +352,7 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
         WHERE al.company_id = $1
         ORDER BY al.created_at DESC, al.id DESC
         LIMIT $4`,
-        params
+        auditParams
     );
     const legacyPromise = db.query(
         `SELECT id, event_type, event_data, actor_type, actor_id, created_at
@@ -247,9 +361,10 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
            AND aggregate_type = $2
            AND aggregate_id = $3
            AND event_type NOT IN ('note_added', 'note_edited', 'note_deleted')
+           AND created_at < $5
          ORDER BY created_at DESC, id DESC
          LIMIT $4`,
-        params
+        legacyParams
     );
     const [{ rows: auditRows }, { rows: legacyEvents }] = await Promise.all([
         auditPromise,
@@ -260,16 +375,23 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
         .map(row => {
             const details = row.details || {};
             const actorType = details.actor_type || (row.actor_id ? 'user' : 'system');
+            const actorLabel = actorType === 'user' ? null : (details.actor_label || 'Albusto');
+            const actorUserName = actorType === 'user'
+                ? (row.actor_name || row.actor_user_email || row.actor_email || 'Unknown')
+                : null;
+            const actor = actorUserName || actorLabel;
             return {
                 id: `audit_${row.id}`,
                 type: 'event',
                 event_type: row.action,
-                description: describeActivity(row.action),
-                actor: details.actor_label
-                    || row.actor_name
-                    || row.actor_user_email
-                    || row.actor_email
-                    || (actorType === 'user' ? 'Unknown' : 'Albusto'),
+                action: row.action,
+                description: describeActivity(row.action, details),
+                actor,
+                actor_type: actorType,
+                actor_label: actorLabel,
+                actor_name: actorUserName,
+                target_type: row.target_type,
+                target_id: row.target_id,
                 created_at: isoTimestamp(row.created_at),
                 data: details,
             };
@@ -281,9 +403,19 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
             id: `evt_${event.id}`,
             type: 'event',
             event_type: event.event_type,
+            action: event.event_type,
             description: describeEvent(event.event_type, event.event_data || {}),
             actor: event.event_data?.actor_name
                 || (event.actor_type === 'system' || event.actor_type === 'webhook' ? 'Albusto' : 'Unknown'),
+            actor_type: event.actor_type,
+            actor_label: event.actor_type === 'user'
+                ? null
+                : (event.event_data?.actor_name || 'Albusto'),
+            actor_name: event.actor_type === 'user'
+                ? (event.event_data?.actor_name || 'Unknown')
+                : null,
+            target_type: aggregateType,
+            target_id: String(aggregateId),
             created_at: isoTimestamp(event.created_at),
             data: event.event_data || {},
         }));
@@ -309,4 +441,10 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
     return merged.slice(offset, offset + limit);
 }
 
-module.exports = { logEvent, actorName, getEntityHistory };
+module.exports = {
+    logEvent,
+    actorName,
+    describeActivity,
+    getEntityHistory,
+    resetActivityLogCutoverCache,
+};

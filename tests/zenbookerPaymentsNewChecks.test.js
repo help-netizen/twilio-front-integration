@@ -3,6 +3,10 @@ jest.mock('../backend/src/db/connection', () => ({
 }));
 
 jest.mock('../backend/src/services/zenbookerClient', () => ({}));
+const mockLogFinancialActivity = jest.fn();
+jest.mock('../backend/src/services/financialActivityService', () => ({
+    logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+}));
 
 const db = require('../backend/src/db/connection');
 const paymentsService = require('../backend/src/services/zenbookerPaymentsSyncService');
@@ -73,5 +77,63 @@ describe('zenbookerPaymentsSyncService listPayments new checks filter', () => {
         expect(rowsSql).not.toContain('OFFSET');
         expect(countParams).toEqual(['company-1', '2026-05-01', '2026-06-14', '%check%']);
         expect(rowsParams).toEqual(['company-1', '2026-05-01', '2026-06-14', '%check%', 1001]);
+    });
+});
+
+describe('zenbookerPaymentsSyncService check deposit activity', () => {
+    const client = { query: jest.fn() };
+    const actor = {
+        id: '22222222-2222-4222-8222-222222222222',
+        type: 'user',
+        label: null,
+        source: 'crm',
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockLogFinancialActivity.mockResolvedValue({ ok: true });
+    });
+
+    test.each([
+        [true, 'payment.check_deposited', 'deposited'],
+        [false, 'payment.check_deposit_reopened', 'not_deposited'],
+    ])('logs the coalesced check action for deposited=%s', async (deposited, action, status) => {
+        client.query.mockResolvedValue({
+            rows: [{
+                zb_payment_id: 7,
+                check_deposited: deposited,
+                id: 81,
+                job_id: 42,
+                contact_id: 5,
+                invoice_id: null,
+                estimate_id: null,
+            }],
+        });
+
+        await expect(paymentsService.updateCheckDeposited(
+            'company-1',
+            7,
+            deposited,
+            client,
+            actor
+        )).resolves.toEqual({ check_deposited: deposited });
+
+        expect(client.query.mock.calls[0][0]).toContain(
+            'WHERE company_id = $1 AND id = $2'
+        );
+        expect(mockLogFinancialActivity).toHaveBeenCalledWith({
+            companyId: 'company-1',
+            entityType: 'payment',
+            action,
+            entity: {
+                id: 81,
+                job_id: 42,
+                contact_id: 5,
+                invoice_id: null,
+                estimate_id: null,
+            },
+            actor,
+            summary: { status },
+        }, { client });
     });
 });
