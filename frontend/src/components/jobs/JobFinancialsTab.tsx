@@ -60,9 +60,9 @@ function MetricCell({ label, value, tone = 'default' }: { label: string; value: 
             ? 'text-[var(--blanc-success)]'
             : 'text-[var(--blanc-ink-1)]';
     return (
-        <div className="min-w-0 bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-3">
+        <div className="blanc-money-cell min-w-0 bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--blanc-ink-3)]">{label}</p>
-            <p className={`mt-1 truncate font-mono text-lg font-semibold ${valueClass}`}>{value}</p>
+            <p className={`blanc-money-value mt-1 truncate font-mono font-semibold ${valueClass}`}>{value}</p>
         </div>
     );
 }
@@ -194,8 +194,8 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, hasContact
                 <h2 className="text-xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em' }}>Finance</h2>
                 <p className="mt-0.5 text-sm text-[var(--blanc-ink-2)]">Estimates, invoices and payments for this job.</p>
             </div>
-                <div className="overflow-hidden rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-line)]">
-                    <div className="grid grid-cols-2 gap-px sm:grid-cols-4">
+                <div className="blanc-money-tiles overflow-hidden rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-line)]">
+                    <div className="blanc-money-grid gap-px">
                         <MetricCell label="Estimated" value={money(totalEstimated)} />
                         <MetricCell label="Invoiced" value={money(totalInvoiced)} />
                         <MetricCell label="Paid" value={money(totalPaid)} />

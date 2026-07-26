@@ -1005,6 +1005,20 @@ table tbody tr:hover {
     }
 }
 
+/* ── Finance money tiles — responsive to their OWN width (container queries), not
+   the viewport. The $ value shrinks with the tile (clamp on cqi) down to a floor,
+   then the row folds 4→2 columns before values truncate (owner feedback). */
+.blanc-money-tiles { container-type: inline-size; }
+.blanc-money-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@container (min-width: 440px) {
+    .blanc-money-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.blanc-money-cell { container-type: inline-size; }
+.blanc-money-value { font-size: clamp(0.85rem, 13cqi, 1.125rem); line-height: 1.2; }
+
 /* ── Comfortable form fields (panel drawers) ──
    Taller, roomier controls than the dense table/list defaults — the panel has
    the width to afford it. Scoped so it never touches compact toolbars/tables. */
