@@ -241,6 +241,7 @@ export async function reconcileManualCardSession({
 interface HandleCardEntryPopupResultOptions {
     popupResult: CardframeResultMessage;
     sessionId: number;
+    succeededFallback: Omit<ManualCardSessionResult, 'status'>;
     getResult: (sessionId: number) => Promise<ManualCardSessionResult>;
     wait: (milliseconds: number) => Promise<void>;
     isCancelled?: () => boolean;
@@ -253,6 +254,7 @@ interface HandleCardEntryPopupResultOptions {
 export async function handleCardEntryPopupResult({
     popupResult,
     sessionId,
+    succeededFallback,
     getResult,
     wait,
     isCancelled = () => false,
@@ -270,6 +272,12 @@ export async function handleCardEntryPopupResult({
         ...(delays ? { delays } : {}),
     });
     if (isCancelled()) return;
+    if (popupResult.status === 'succeeded') {
+        await onSucceeded(result?.status === 'succeeded'
+            ? result
+            : { ...succeededFallback, status: 'succeeded' });
+        return;
+    }
     if (result?.status === 'succeeded') {
         await onSucceeded(result);
         return;
@@ -539,6 +547,11 @@ export default function ManualCardDialog({
         await handleCardEntryPopupResult({
             popupResult,
             sessionId: session.session_id,
+            succeededFallback: {
+                amount: session.amount,
+                brand: selectedCard?.brand ?? null,
+                last4: selectedCard?.last4 ?? null,
+            },
             getResult: stripePaymentsApi.getManualCardSessionResult,
             wait,
             isCancelled: () => flowId !== flowIdRef.current,
@@ -552,7 +565,7 @@ export default function ManualCardDialog({
         });
         if (flowId !== flowIdRef.current) return;
         reconcileRunningRef.current = false;
-    }, [enterSuccess, wait]);
+    }, [enterSuccess, selectedCard, wait]);
 
     const collectCard = useCallback(() => {
         const session = sessionRef.current;
@@ -627,7 +640,12 @@ export default function ManualCardDialog({
             if (flowId !== flowIdRef.current) return;
             popupHandleRef.current = null;
             if (outcome.status === 'succeeded') {
-                await reconcile({ kind: 'cardframe:result', status: 'succeeded' });
+                enterSuccess({
+                    status: 'succeeded',
+                    amount: session.amount,
+                    brand: card.brand,
+                    last4: card.last4,
+                });
                 return;
             }
 
@@ -657,7 +675,7 @@ export default function ManualCardDialog({
                 message: String(error?.message || 'The card could not be charged.'),
             });
         }
-    }, [onCopyLinkFallback, reconcile, selectedCard]);
+    }, [enterSuccess, onCopyLinkFallback, reconcile, selectedCard]);
 
     const sendReceipt = useCallback(async () => {
         const sessionId = sessionRef.current?.session_id;

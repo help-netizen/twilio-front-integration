@@ -27,6 +27,7 @@ import {
     canDismissManualCard,
     completeManualCardDialog,
     createManualCardReceiptState,
+    handleCardEntryPopupResult,
     manualCardReducer,
     manualCardReceiptReducer,
     openManualCardAuthenticationPopup,
@@ -333,6 +334,88 @@ describe('manual-card popup integration', () => {
 });
 
 describe('ambiguous result reconciliation', () => {
+    it.each([
+        {
+            label: 'throws',
+            getResult: () => vi.fn().mockRejectedValue(new Error('offline')),
+            delays: [0],
+        },
+        {
+            label: 'returns null',
+            getResult: () => vi.fn().mockResolvedValue(null),
+            delays: [0],
+        },
+        {
+            label: 'times out on non-final statuses',
+            getResult: () => vi.fn().mockResolvedValue({ ...SUCCEEDED, status: 'processing' }),
+            delays: [0, 1000, 2000],
+        },
+        {
+            label: 'returns a stale declined status',
+            getResult: () => vi.fn().mockResolvedValue({
+                ...SUCCEEDED,
+                status: 'requires_payment_method',
+            }),
+            delays: [0],
+        },
+    ])('keeps server-confirmed success authoritative when result enrichment $label', async ({
+        getResult: createGetResult,
+        delays,
+    }) => {
+        const getResult = createGetResult();
+        const onPaymentConfirmed = vi.fn(async () => true);
+        const onUnresolved = vi.fn();
+        const onDeclined = vi.fn();
+        let state = manualCardReducer(INITIAL_MANUAL_CARD_STATE, { type: 'SESSION_READY' });
+        state = manualCardReducer(state, { type: 'CHARGE' });
+        state = manualCardReducer(state, { type: 'NETWORK_CHECKING' });
+        const outcome = await runManualCardCharge({
+            session: {
+                session_id: 11,
+                client_secret: 'pi_secret',
+                payment_intent_id: 'pi_11',
+                account_id: 'acct_11',
+                amount: 95,
+            },
+            paymentMethodId: 'pm_card_11',
+            confirmSession: vi.fn().mockResolvedValue({ status: 'succeeded' }),
+            finalizeSession: vi.fn(),
+            openAuthentication: vi.fn(),
+        });
+        expect(outcome.status).toBe('succeeded');
+        if (outcome.status !== 'succeeded') throw new Error('Expected confirmed success');
+
+        await handleCardEntryPopupResult({
+            popupResult: { kind: 'cardframe:result', status: outcome.status },
+            sessionId: 11,
+            succeededFallback: {
+                amount: SUCCEEDED.amount,
+                brand: SUCCEEDED.brand,
+                last4: SUCCEEDED.last4,
+            },
+            getResult,
+            wait: async () => {},
+            delays,
+            onSucceeded: async result => {
+                state = manualCardReducer(state, { type: 'SUCCEEDED', result });
+                await settleFinanceSync(result, onPaymentConfirmed);
+            },
+            onDeclined,
+            onUnresolved,
+        });
+
+        expect(getResult).toHaveBeenCalledTimes(delays.length);
+        expect(state.phase).toBe('success');
+        expect(state.networkChecking).toBe(false);
+        expect(onUnresolved).not.toHaveBeenCalled();
+        expect(onDeclined).not.toHaveBeenCalled();
+        expect(onPaymentConfirmed).toHaveBeenCalledOnce();
+        expect(onPaymentConfirmed).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'succeeded',
+            amount: 95,
+        }));
+    });
+
     it('keeps non-final statuses locked until the same PI succeeds', async () => {
         const getResult = vi.fn()
             .mockResolvedValueOnce({ ...SUCCEEDED, status: 'processing' })
