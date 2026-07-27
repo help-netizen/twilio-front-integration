@@ -269,6 +269,8 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const canSaveEdit = (!!editText.trim() || editAttach.ids.length > 0) && !editSubmitting && !editAttach.blocked;
 
     const displayedNotes = prepareNotesForDisplay(notes);
+    // The note being edited — on mobile it opens the same floating overlay as add.
+    const editingNote = editingKey ? displayedNotes.find(d => d.renderKey === editingKey)?.note ?? null : null;
 
     return (
         <div ref={containerRef} className="space-y-3">
@@ -371,29 +373,84 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                 </div>
             )}
 
-            {/* Mobile: floating ADD composer docked above the keyboard (NOTE-COMPOSER-KEYBOARD). */}
+            {/* Mobile: floating ADD composer docked above the keyboard (NOTE-COMPOSER-KEYBOARD).
+                One filled --blanc-field card — borderless textarea over the round action row —
+                identical to the desktop composer / Pulse reply (COMPOSER-CANON). */}
             <NoteComposerOverlay open={expanded && isMobile} onClose={() => setExpanded(false)}>
-                <textarea
-                    className="w-full resize-none outline-none"
-                    style={{ background: 'var(--blanc-field)', border: 'none', borderRadius: 12, padding: '10px 12px', minHeight: 96, fontSize: 16, lineHeight: 1.5, color: 'var(--blanc-ink-1)' }}
-                    placeholder="Write a note…"
-                    value={text}
-                    onChange={e => setText(e.target.value)}
-                    autoFocus
-                />
-                <div className="flex items-center justify-between" style={{ marginTop: 10 }}>
-                    <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" />
-                    <button
-                        type="button"
-                        onClick={handleSubmit}
-                        disabled={!canSubmit}
-                        aria-label="Add note"
-                        className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
-                        style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
-                    >
-                        {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
-                    </button>
+                <div style={{ background: 'var(--blanc-field)', borderRadius: 16, padding: '10px 12px' }}>
+                    <textarea
+                        className="w-full resize-none outline-none bg-transparent"
+                        style={{ border: 'none', padding: '2px 2px 0', minHeight: 72, fontSize: 16, lineHeight: 1.5, color: 'var(--blanc-ink-1)' }}
+                        placeholder="Write a note…"
+                        value={text}
+                        onChange={e => setText(e.target.value)}
+                        autoFocus
+                    />
+                    <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
+                        <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                        <button
+                            type="button"
+                            onClick={handleSubmit}
+                            disabled={!canSubmit}
+                            aria-label="Add note"
+                            className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                            style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
+                        >
+                            {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
+                        </button>
+                    </div>
                 </div>
+            </NoteComposerOverlay>
+
+            {/* Mobile: floating EDIT composer — same overlay + canon card as add. */}
+            <NoteComposerOverlay open={!!editingNote && isMobile} onClose={cancelEdit}>
+                {editingNote && (
+                    <div style={{ background: 'var(--blanc-field)', borderRadius: 16, padding: '10px 12px' }}>
+                        <textarea
+                            className="w-full resize-none outline-none bg-transparent"
+                            style={{ border: 'none', padding: '2px 2px 0', minHeight: 72, fontSize: 16, lineHeight: 1.5, color: 'var(--blanc-ink-1)' }}
+                            placeholder="Write a note…"
+                            value={editText}
+                            onChange={e => setEditText(e.target.value)}
+                            autoFocus
+                        />
+                        {editingNote.attachments && editingNote.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>
+                                {editingNote.attachments.map(att => {
+                                    const marked = removeIds.has(String(att.id));
+                                    return (
+                                        <div key={att.id} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs" style={{ background: 'rgba(25,25,25,0.06)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)', opacity: marked ? 0.4 : 1, textDecoration: marked ? 'line-through' : 'none' }}>
+                                            <span className="max-w-[120px] truncate">{att.fileName}</span>
+                                            <button type="button" onClick={() => toggleRemoveAttachment(att.id)} className="hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }} title={marked ? 'Keep attachment' : 'Remove attachment'}>
+                                                <X className="size-3" />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        {editError && <p className="text-xs" style={{ color: '#b42318', marginTop: 8 }}>{editError}</p>}
+                        <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
+                            <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                            <div className="flex items-center gap-4">
+                                <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onMouseDown={e => e.preventDefault()}
+                                    onClick={() => saveEdit(editingNote)}
+                                    disabled={!canSaveEdit}
+                                    aria-label="Save note"
+                                    className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                                    style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
+                                >
+                                    {editSubmitting ? <Loader2 className="size-5 animate-spin" /> : <Check className="size-5" />}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </NoteComposerOverlay>
 
             {/* Pinned tasks — TASKS-001 (tasks live at the top of the notes feed) */}
@@ -411,7 +468,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                 const showKebab = !editing && !!note.id && canEdit(note);
                 return (
                     <div key={renderKey} className="relative p-3 rounded-xl space-y-2" style={{ background: NOTE_BG }}>
-                        {editing ? (
+                        {editing && !isMobile ? (
                             <div className="space-y-2">
                                 <textarea
                                     className="w-full resize-none outline-none"
