@@ -294,21 +294,32 @@ export const ScheduleMapCanvas = memo(function ScheduleMapCanvas({
                         className="flex items-center gap-1.5 rounded-xl px-2 py-1.5"
                         style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', boxShadow: 'var(--blanc-shadow-sm)' }}
                     >
-                        <Search className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
                         <input
                             value={zip}
                             onChange={e => { setZip(e.target.value); setZipError(null); }}
                             placeholder="Find a ZIP on the map"
                             inputMode="numeric"
+                            enterKeyHint="search"
                             aria-label="Find a ZIP on the map"
-                            className="w-[128px] bg-transparent text-[12px] outline-none placeholder:text-[var(--blanc-ink-3)]"
+                            className="w-[124px] bg-transparent text-[12px] outline-none placeholder:text-[var(--blanc-ink-3)]"
                             style={{ color: 'var(--blanc-ink-1)' }}
                         />
                         {zipActive && (
-                            <button type="button" onClick={clearZipSearch} aria-label="Clear ZIP" className="shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
+                            <button type="button" onClick={clearZipSearch} aria-label="Clear ZIP" className="flex shrink-0 items-center justify-center" style={{ color: 'var(--blanc-ink-3)', padding: 2, margin: -2 }}>
                                 <X className="size-3.5" />
                             </button>
                         )}
+                        {/* Explicit search button — the numeric keypad on mobile has no submit
+                            key, so tapping this is the only way to run the search there. */}
+                        <button
+                            type="submit"
+                            aria-label="Search ZIP"
+                            disabled={!zip.trim()}
+                            className="flex shrink-0 items-center justify-center rounded-lg transition-opacity hover:opacity-85 disabled:opacity-40"
+                            style={{ background: 'var(--blanc-accent)', color: '#fff', width: 30, height: 24 }}
+                        >
+                            <Search className="size-3.5" />
+                        </button>
                     </form>
                     {zipError && (
                         <span className="rounded-lg px-2 py-1 text-[11px] font-medium" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-danger)' }}>
