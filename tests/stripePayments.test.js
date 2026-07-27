@@ -674,6 +674,164 @@ describe('getManualCardSessionResult', () => {
     });
 });
 
+describe('manual-card server confirmation (CARDFRAME-001 P2a)', () => {
+    const merchantSession = {
+        id: 11,
+        company_id: COMPANY,
+        surface: 'manual_card',
+        stripe_payment_intent_id: 'pi_merchant',
+        stripe_account_id: ACCT,
+        invoice_id: null,
+        job_id: null,
+        contact_id: null,
+        metadata: {},
+    };
+
+    beforeEach(() => {
+        provider.confirmPaymentIntent = jest.fn();
+        provider.retrievePaymentIntent = jest.fn();
+        q.updateSession.mockResolvedValue({ ...merchantSession, status: 'complete' });
+        paymentsQueries.findByExternalSourceId.mockResolvedValue(null);
+        paymentsQueries.createTransaction.mockResolvedValue({
+            id: 501,
+            external_id: 'pi_merchant',
+            currency: 'USD',
+        });
+    });
+
+    it('confirms the owned PI with pmId and synchronously reconciles the ledger', async () => {
+        q.getSessionById.mockResolvedValue(merchantSession);
+        provider.confirmPaymentIntent.mockResolvedValue({
+            id: 'pi_merchant',
+            status: 'succeeded',
+            amount: 9500,
+            amount_received: 9500,
+            currency: 'usd',
+            latest_charge: 'ch_merchant',
+            metadata: { surface: 'manual_card' },
+        });
+
+        await expect(svc.confirmManualCardSession(
+            COMPANY,
+            11,
+            'pm_card_11'
+        )).resolves.toEqual({ status: 'succeeded' });
+
+        expect(provider.confirmPaymentIntent).toHaveBeenCalledWith(
+            ACCT,
+            'pi_merchant',
+            { paymentMethodId: 'pm_card_11' },
+            {
+                idempotencyKey:
+                    `manual-card-confirm-${COMPANY}-11-pm_card_11`,
+            }
+        );
+        expect(q.getSessionById).toHaveBeenCalledWith(
+            COMPANY,
+            11,
+            mockTransactionClient
+        );
+        expect(q.updateSession).toHaveBeenCalledWith(
+            COMPANY,
+            11,
+            { status: 'complete', stripe_charge_id: 'ch_merchant' },
+            mockTransactionClient
+        );
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                transaction_type: 'payment',
+                status: 'completed',
+                amount: 95,
+                external_id: 'pi_merchant',
+                external_source: 'stripe',
+            }),
+            mockTransactionClient
+        );
+    });
+
+    it('returns the client secret for popup authentication without writing the ledger', async () => {
+        q.getSessionById.mockResolvedValue(merchantSession);
+        provider.confirmPaymentIntent.mockResolvedValue({
+            id: 'pi_merchant',
+            status: 'requires_action',
+            client_secret: 'pi_action_secret',
+        });
+
+        await expect(svc.confirmManualCardSession(
+            COMPANY,
+            11,
+            'pm_3ds'
+        )).resolves.toEqual({
+            status: 'requires_action',
+            clientSecret: 'pi_action_secret',
+        });
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+        expect(q.updateSession).not.toHaveBeenCalled();
+    });
+
+    it('maps a Stripe decline to a structured error and leaves the ledger unchanged', async () => {
+        q.getSessionById.mockResolvedValue(merchantSession);
+        const decline = new Error('Your card was declined.');
+        decline.stripeCode = 'card_declined';
+        decline.httpStatus = 402;
+        decline.stripePaymentIntent = { status: 'requires_payment_method' };
+        provider.confirmPaymentIntent.mockRejectedValue(decline);
+
+        await expect(svc.confirmManualCardSession(
+            COMPANY,
+            11,
+            'pm_declined'
+        )).rejects.toMatchObject({
+            code: 'CARD_DECLINED',
+            httpStatus: 402,
+            message: 'Your card was declined.',
+        });
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+        expect(q.updateSession).not.toHaveBeenCalled();
+    });
+
+    it('finalizes the authenticated PI through the same idempotent ledger path', async () => {
+        q.getSessionById.mockResolvedValue(merchantSession);
+        provider.retrievePaymentIntent.mockResolvedValue({
+            id: 'pi_merchant',
+            status: 'succeeded',
+            amount: 9500,
+            amount_received: 9500,
+            currency: 'usd',
+            latest_charge: { id: 'ch_after_3ds' },
+            metadata: { surface: 'manual_card' },
+        });
+
+        await expect(svc.finalizeManualCardSession(COMPANY, 11))
+            .resolves.toEqual({ status: 'succeeded' });
+        expect(provider.retrievePaymentIntent).toHaveBeenCalledWith(
+            ACCT,
+            'pi_merchant'
+        );
+        expect(q.updateSession).toHaveBeenCalledWith(
+            COMPANY,
+            11,
+            { status: 'complete', stripe_charge_id: 'ch_after_3ds' },
+            mockTransactionClient
+        );
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('T-foreign: rejects before Stripe or ledger mutation', async () => {
+        q.getSessionById.mockResolvedValue(null);
+
+        await expect(svc.confirmManualCardSession(
+            '22222222-2222-2222-2222-222222222222',
+            11,
+            'pm_card_11'
+        )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(provider.confirmPaymentIntent).not.toHaveBeenCalled();
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+        expect(q.updateSession).not.toHaveBeenCalled();
+    });
+});
+
 describe('sendManualCardReceipt', () => {
     const noteActor = { id: '22222222-2222-4222-8222-222222222222', name: 'Agent' };
     const merchantSession = {

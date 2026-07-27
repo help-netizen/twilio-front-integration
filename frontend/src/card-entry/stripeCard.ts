@@ -17,7 +17,7 @@ export function createCardElementOptions() {
     };
 
     return {
-        hidePostalCode: false,
+        hidePostalCode: true,
         style: {
             base,
             invalid: danger ? { color: danger } : {},
@@ -38,11 +38,14 @@ export interface StripeCardHandlers {
 
 export function mountStripeCard(
     stripe: any,
-    clientSecret: string,
+    clientSecret: string | null,
     mountNode: HTMLDivElement,
     handlers: StripeCardHandlers,
 ) {
-    const elements = stripe.elements({ clientSecret, locale: 'en' });
+    const elements = stripe.elements({
+        ...(clientSecret ? { clientSecret } : {}),
+        locale: 'en',
+    });
     const card = elements.create('card', createCardElementOptions());
     card.on('change', handlers.onChange);
     card.on('focus', handlers.onFocus);
@@ -80,4 +83,28 @@ export function decideConfirmation(response: any): ConfirmationDecision {
         return { kind: 'validation', message: response.error.message || 'Check the card details and try again.' };
     }
     return { kind: 'unknown' };
+}
+
+export type PaymentMethodDecision =
+    | { kind: 'created'; pmId: string; brand: string; last4: string }
+    | { kind: 'validation'; message: string };
+
+export function decidePaymentMethod(response: any): PaymentMethodDecision {
+    const paymentMethod = response?.paymentMethod;
+    if (
+        /^pm_[A-Za-z0-9_]+$/.test(String(paymentMethod?.id || ''))
+        && typeof paymentMethod?.card?.brand === 'string'
+        && /^\d{4}$/.test(String(paymentMethod?.card?.last4 || ''))
+    ) {
+        return {
+            kind: 'created',
+            pmId: paymentMethod.id,
+            brand: paymentMethod.card.brand,
+            last4: paymentMethod.card.last4,
+        };
+    }
+    return {
+        kind: 'validation',
+        message: response?.error?.message || 'Check the card details and try again.',
+    };
 }

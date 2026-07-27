@@ -2,6 +2,9 @@ export const CARDFRAME_READY_KIND = 'cardframe:ready' as const;
 export const CARDFRAME_INIT_KIND = 'cardframe:init' as const;
 export const CARDFRAME_CARD_CHANGE_KIND = 'cardframe:card_change' as const;
 export const CARDFRAME_RESULT_KIND = 'cardframe:result' as const;
+export const CARDFRAME_PAYMENT_METHOD_KIND = 'cardframe:payment_method' as const;
+
+export type CardframeMode = 'collect' | 'authenticate';
 
 export type CardframeResultStatus =
     | 'succeeded'
@@ -13,12 +16,15 @@ export interface CardframeReadyMessage {
     kind: typeof CARDFRAME_READY_KIND;
 }
 
-export interface CardframeInitMessage {
+interface CardframeInitBase {
     kind: typeof CARDFRAME_INIT_KIND;
-    clientSecret: string;
     accountId: string;
     amount: number;
 }
+
+export type CardframeInitMessage =
+    | (CardframeInitBase & { mode: 'collect' })
+    | (CardframeInitBase & { mode: 'authenticate'; clientSecret: string });
 
 export interface CardframeCardChangeMessage {
     kind: typeof CARDFRAME_CARD_CHANGE_KIND;
@@ -30,6 +36,17 @@ export interface CardframeResultMessage {
     status: CardframeResultStatus;
     message?: string;
 }
+
+export interface CardframePaymentMethodMessage {
+    kind: typeof CARDFRAME_PAYMENT_METHOD_KIND;
+    pmId: string;
+    brand: string;
+    last4: string;
+}
+
+export type CardframeCompletionMessage =
+    | CardframeResultMessage
+    | CardframePaymentMethodMessage;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -44,13 +61,18 @@ export function isCardframeReadyMessage(value: unknown): value is CardframeReady
 }
 
 export function isCardframeInitMessage(value: unknown): value is CardframeInitMessage {
-    return isRecord(value)
-        && value.kind === CARDFRAME_INIT_KIND
-        && isNonEmptyString(value.clientSecret)
-        && isNonEmptyString(value.accountId)
-        && typeof value.amount === 'number'
-        && Number.isFinite(value.amount)
-        && value.amount > 0;
+    if (!isRecord(value)) return false;
+    if (
+        value.kind !== CARDFRAME_INIT_KIND
+        || !isNonEmptyString(value.accountId)
+        || typeof value.amount !== 'number'
+        || !Number.isFinite(value.amount)
+        || value.amount <= 0
+    ) {
+        return false;
+    }
+    if (value.mode === 'collect') return true;
+    return value.mode === 'authenticate' && isNonEmptyString(value.clientSecret);
 }
 
 export function isCardframeResultMessage(value: unknown): value is CardframeResultMessage {
@@ -64,6 +86,24 @@ export function isCardframeResultMessage(value: unknown): value is CardframeResu
         return false;
     }
     return value.message === undefined || typeof value.message === 'string';
+}
+
+export function isCardframePaymentMethodMessage(
+    value: unknown,
+): value is CardframePaymentMethodMessage {
+    return isRecord(value)
+        && value.kind === CARDFRAME_PAYMENT_METHOD_KIND
+        && isNonEmptyString(value.pmId)
+        && /^pm_[A-Za-z0-9_]+$/.test(value.pmId)
+        && isNonEmptyString(value.brand)
+        && typeof value.last4 === 'string'
+        && /^\d{4}$/.test(value.last4);
+}
+
+export function isCardframeCompletionMessage(
+    value: unknown,
+): value is CardframeCompletionMessage {
+    return isCardframeResultMessage(value) || isCardframePaymentMethodMessage(value);
 }
 
 function httpOrigin(value: string, baseOrigin: string): string | null {

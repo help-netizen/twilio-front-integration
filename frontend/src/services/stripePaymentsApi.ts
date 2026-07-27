@@ -51,6 +51,10 @@ export interface ManualCardReceiptResult {
     contact_email_saved: boolean;
 }
 
+export type ManualCardConfirmation =
+    | { status: 'succeeded' }
+    | { status: 'requires_action'; clientSecret: string };
+
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     const res = await authedFetch(`${API_BASE}${path}`, {
         ...opts,
@@ -96,6 +100,28 @@ async function sendManualCardReceipt(sessionId: number, email: string): Promise<
     };
 }
 
+async function postManualCardAction(
+    sessionId: number,
+    action: 'confirm' | 'finalize',
+    body?: unknown,
+): Promise<ManualCardConfirmation> {
+    const res = await authedFetch(`/api/payments/manual-card-sessions/${sessionId}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+        const message = typeof json?.error === 'string' ? json.error : json?.error?.message;
+        throw new Error(message || `Request failed: ${res.status}`);
+    }
+    if (json.status === 'succeeded') return { status: 'succeeded' };
+    if (json.status === 'requires_action' && typeof json.clientSecret === 'string') {
+        return { status: 'requires_action', clientSecret: json.clientSecret };
+    }
+    throw new Error('Stripe returned an unexpected payment status');
+}
+
 export const stripePaymentsApi = {
     getStatus: (): Promise<{ status: StripePaymentsStatus }> => apiFetch('/status'),
     connect: (): Promise<{ account_id: string; onboarding_url: string }> =>
@@ -107,6 +133,17 @@ export const stripePaymentsApi = {
     disconnect: (): Promise<{ disconnected: boolean }> =>
         apiFetch('/disconnect', { method: 'POST' }),
     getManualCardSessionResult,
+    confirmManualCardSession: (
+        sessionId: number,
+        paymentMethodId: string,
+    ): Promise<ManualCardConfirmation> => postManualCardAction(
+        sessionId,
+        'confirm',
+        { payment_method_id: paymentMethodId },
+    ),
+    finalizeManualCardSession: (
+        sessionId: number,
+    ): Promise<ManualCardConfirmation> => postManualCardAction(sessionId, 'finalize'),
     sendManualCardReceipt,
 };
 

@@ -57,6 +57,7 @@ async function call(method, path, body, opts = {}) {
         const err = new Error(json.error?.message || `Stripe ${res.status}`);
         err.stripeCode = json.error?.code;
         err.httpStatus = res.status;
+        err.stripePaymentIntent = json.error?.payment_intent || null;
         throw err;
     }
     return json;
@@ -175,6 +176,24 @@ async function retrievePaymentIntent(accountId, paymentIntentId) {
     return call('GET', `/payment_intents/${encodeURIComponent(paymentIntentId)}`, undefined, { stripeAccount: accountId });
 }
 
+/**
+ * Confirm a connected-account PaymentIntent with a client-created PaymentMethod.
+ * `use_stripe_sdk` keeps next-action data compatible with the popup's Stripe.js
+ * challenge handler. This is a one-off, on-session payment: no future-use or MOTO
+ * flag is set, so the PaymentMethod is not saved and 3DS remains available.
+ */
+async function confirmPaymentIntent(
+    accountId,
+    paymentIntentId,
+    { paymentMethodId },
+    { idempotencyKey } = {}
+) {
+    return call('POST', `/payment_intents/${encodeURIComponent(paymentIntentId)}/confirm`, {
+        payment_method: paymentMethodId,
+        use_stripe_sdk: true,
+    }, { stripeAccount: accountId, idempotencyKey });
+}
+
 async function retrievePaymentMethod(accountId, paymentMethodId) {
     return call('GET', `/payment_methods/${encodeURIComponent(paymentMethodId)}`, undefined, { stripeAccount: accountId });
 }
@@ -273,6 +292,7 @@ module.exports = {
     createPaymentIntent,
     createCardPaymentIntent,
     retrievePaymentIntent,
+    confirmPaymentIntent,
     retrievePaymentMethod,
     retrieveCharge,
     updateChargeReceiptEmail,

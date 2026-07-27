@@ -53,6 +53,28 @@ describe('Stripe Connect PaymentIntent provider split', () => {
         expect(body.get('payment_method_types[0]')).toBe('card');
         expect(body.has('automatic_payment_methods[enabled]')).toBe(false);
     });
+
+    it('confirms a one-off on-session card with Stripe.js next-action support', async () => {
+        await provider.confirmPaymentIntent(
+            'acct_merchant',
+            'pi_merchant',
+            { paymentMethodId: 'pm_card_11' },
+            { idempotencyKey: 'manual-confirm-key' }
+        );
+
+        const [url, options] = global.fetch.mock.calls[0];
+        const body = new URLSearchParams(options.body);
+        expect(url).toBe(
+            'https://api.stripe.com/v1/payment_intents/pi_merchant/confirm'
+        );
+        expect(options.method).toBe('POST');
+        expect(options.headers['Stripe-Account']).toBe('acct_merchant');
+        expect(options.headers['Idempotency-Key']).toBe('manual-confirm-key');
+        expect(body.get('payment_method')).toBe('pm_card_11');
+        expect(body.get('use_stripe_sdk')).toBe('true');
+        expect(body.has('setup_future_usage')).toBe(false);
+        expect(body.has('payment_method_options[card][moto]')).toBe(false);
+    });
 });
 
 describe('Stripe Connect result retrieval', () => {

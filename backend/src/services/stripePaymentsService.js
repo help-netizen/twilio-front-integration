@@ -680,6 +680,113 @@ async function getMerchantManualCardSession(companyId, sessionId, client = null)
     return session;
 }
 
+function manualCardFailure(pi, fallbackMessage = 'The card could not be charged') {
+    const message = pi?.last_payment_error?.message || fallbackMessage;
+    if (pi?.status === 'requires_payment_method') {
+        return new StripePaymentsError('CARD_DECLINED', message, 402);
+    }
+    if (pi?.status === 'canceled') {
+        return new StripePaymentsError('PAYMENT_CANCELED', message, 409);
+    }
+    return new StripePaymentsError('PAYMENT_NOT_FINAL', message, 409);
+}
+
+/**
+ * Project a synchronously confirmed keyed-card PaymentIntent through the same
+ * idempotent ledger path used by payment_intent.succeeded webhooks. A later
+ * webhook dedupes on the PaymentIntent id.
+ */
+async function reconcileSuccessfulManualCardPayment(companyId, session, pi) {
+    await withTransaction(async (client) => {
+        const ownedSession = await getMerchantManualCardSession(companyId, session.id, client);
+        const charge = pi.latest_charge;
+        await q.updateSession(companyId, ownedSession.id, {
+            status: 'complete',
+            stripe_charge_id: typeof charge === 'string' ? charge : charge?.id || null,
+        }, client);
+        await applyStripePayment(companyId, {
+            externalId: pi.id,
+            invoiceId: ownedSession.invoice_id || null,
+            contactId: ownedSession.contact_id || null,
+            jobId: ownedSession.job_id || null,
+            amount: (pi.amount_received ?? pi.amount) / 100,
+            currency: pi.currency,
+            metadata: {
+                surface: pi.metadata?.surface || 'manual_card',
+                payment_intent_id: pi.id,
+                tip: pi.metadata?.tip || 0,
+            },
+        }, client, stripeActor());
+    });
+}
+
+async function resolveManualCardConfirmation(companyId, session, pi) {
+    if (pi.status === 'succeeded') {
+        await reconcileSuccessfulManualCardPayment(companyId, session, pi);
+        return { status: 'succeeded' };
+    }
+    if (pi.status === 'requires_action') {
+        if (!pi.client_secret) {
+            throw new StripePaymentsError(
+                'CLIENT_SECRET_UNAVAILABLE',
+                'Card authentication could not be started',
+                409
+            );
+        }
+        return { status: 'requires_action', clientSecret: pi.client_secret };
+    }
+    throw manualCardFailure(pi);
+}
+
+/**
+ * Confirm the existing company-owned manual-card PaymentIntent with the
+ * PaymentMethod created in the popup. The stable key makes a transport retry of
+ * the same session + PaymentMethod safe.
+ */
+async function confirmManualCardSession(companyId, sessionId, paymentMethodId) {
+    const session = await getMerchantManualCardSession(companyId, sessionId);
+    if (!/^pm_[A-Za-z0-9_]+$/.test(String(paymentMethodId || ''))) {
+        throw new StripePaymentsError('INVALID_PAYMENT_METHOD', 'Choose a valid card', 400);
+    }
+
+    let pi;
+    try {
+        pi = await provider.confirmPaymentIntent(
+            session.stripe_account_id,
+            session.stripe_payment_intent_id,
+            { paymentMethodId },
+            {
+                idempotencyKey:
+                    `manual-card-confirm-${companyId}-${session.id}-${paymentMethodId}`,
+            }
+        );
+    } catch (err) {
+        if (err.stripePaymentIntent?.status === 'requires_payment_method'
+            || err.stripeCode === 'card_declined') {
+            throw new StripePaymentsError(
+                'CARD_DECLINED',
+                err.message || 'The card was declined',
+                402
+            );
+        }
+        throw err;
+    }
+    return resolveManualCardConfirmation(companyId, session, pi);
+}
+
+/**
+ * After Stripe.js handles a next action in the popup, retrieve the same owned
+ * PaymentIntent and synchronously project a success into the canonical ledger.
+ */
+async function finalizeManualCardSession(companyId, sessionId) {
+    const session = await getMerchantManualCardSession(companyId, sessionId);
+    const pi = await provider.retrievePaymentIntent(
+        session.stripe_account_id,
+        session.stripe_payment_intent_id
+    );
+    return resolveManualCardConfirmation(companyId, session, pi);
+}
+
 /**
  * Reconcile one merchant manual-card session without exposing Stripe/session ids.
  * Ownership and merchant/public classification are resolved before any Stripe call.
@@ -1665,6 +1772,8 @@ module.exports = {
     createPublicPayIntent,
     applyStripePayment,
     createManualCardSession,
+    confirmManualCardSession,
+    finalizeManualCardSession,
     getManualCardSessionResult,
     sendManualCardReceipt,
     getConnectionToken,

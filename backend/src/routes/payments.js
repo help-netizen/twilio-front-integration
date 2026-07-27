@@ -136,6 +136,41 @@ router.get('/manual-card-sessions/:sessionId/result', requirePermission('payment
     }
 });
 
+// POST /api/payments/manual-card-sessions/:sessionId/confirm — confirm the
+// existing company-owned keyed-card PaymentIntent with a popup-created pm id.
+router.post('/manual-card-sessions/:sessionId/confirm', requirePermission('payments.collect_keyed'), async (req, res) => {
+    try {
+        const stripePaymentsService = require('../services/stripePaymentsService');
+        const companyId = req.companyFilter?.company_id;
+        const result = await stripePaymentsService.confirmManualCardSession(
+            companyId,
+            req.params.sessionId,
+            req.body?.payment_method_id
+        );
+        res.json(result);
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/payments/manual-card-sessions/:sessionId/finalize — after popup
+// authentication, retrieve and project the same PaymentIntent into the ledger.
+router.post('/manual-card-sessions/:sessionId/finalize', requirePermission('payments.collect_keyed'), async (req, res) => {
+    try {
+        const stripePaymentsService = require('../services/stripePaymentsService');
+        const companyId = req.companyFilter?.company_id;
+        const result = await stripePaymentsService.finalizeManualCardSession(
+            companyId,
+            req.params.sessionId
+        );
+        res.json(result);
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
 // POST /api/payments/manual-card-sessions/:sessionId/receipt — ask Stripe to
 // send its native connected-account receipt; never write the email to logs.
 router.post('/manual-card-sessions/:sessionId/receipt', requirePermission('payments.collect_keyed'), async (req, res) => {

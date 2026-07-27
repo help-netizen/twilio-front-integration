@@ -1,9 +1,9 @@
-import type { ManualCardSession } from '../services/stripePaymentsApi';
 import {
     CARDFRAME_INIT_KIND,
-    type CardframeResultMessage,
+    type CardframeCompletionMessage,
+    type CardframeInitMessage,
     isCardframeReadyMessage,
-    isCardframeResultMessage,
+    isCardframeCompletionMessage,
     resolveCardEntryTarget,
 } from './protocol';
 
@@ -15,9 +15,22 @@ export class CardEntryPopupBlockedError extends Error {
 }
 
 export interface CardEntryPopupHandle {
-    result: Promise<CardframeResultMessage>;
+    result: Promise<CardframeCompletionMessage>;
     cancel: () => void;
 }
+
+export type CardEntryPopupRequest =
+    | {
+        mode: 'collect';
+        accountId: string;
+        amount: number;
+    }
+    | {
+        mode: 'authenticate';
+        accountId: string;
+        amount: number;
+        clientSecret: string;
+    };
 
 export interface CardEntryPopupLaunchOptions {
     hostWindow?: Window;
@@ -26,7 +39,7 @@ export interface CardEntryPopupLaunchOptions {
 }
 
 export function launchCardEntryPopup(
-    session: ManualCardSession,
+    request: CardEntryPopupRequest,
     {
         hostWindow = window,
         configuredOrigin = import.meta.env.VITE_CARD_ENTRY_ORIGIN,
@@ -44,8 +57,8 @@ export function launchCardEntryPopup(
     let initialized = false;
     let finished = false;
     let closePoll: number | null = null;
-    let resolveResult!: (result: CardframeResultMessage) => void;
-    const result = new Promise<CardframeResultMessage>(resolve => {
+    let resolveResult!: (result: CardframeCompletionMessage) => void;
+    const result = new Promise<CardframeCompletionMessage>(resolve => {
         resolveResult = resolve;
     });
 
@@ -57,7 +70,7 @@ export function launchCardEntryPopup(
         }
     };
 
-    const finish = (message: CardframeResultMessage) => {
+    const finish = (message: CardframeCompletionMessage) => {
         if (finished) return;
         finished = true;
         cleanup();
@@ -69,15 +82,19 @@ export function launchCardEntryPopup(
         if (isCardframeReadyMessage(event.data)) {
             if (initialized) return;
             initialized = true;
-            popup.postMessage({
+            const initMessage: CardframeInitMessage = {
                 kind: CARDFRAME_INIT_KIND,
-                clientSecret: session.client_secret,
-                accountId: session.account_id,
-                amount: session.amount,
-            }, target.origin);
+                mode: request.mode,
+                accountId: request.accountId,
+                amount: request.amount,
+                ...(request.mode === 'authenticate'
+                    ? { clientSecret: request.clientSecret }
+                    : {}),
+            } as CardframeInitMessage;
+            popup.postMessage(initMessage, target.origin);
             return;
         }
-        if (initialized && isCardframeResultMessage(event.data)) finish(event.data);
+        if (initialized && isCardframeCompletionMessage(event.data)) finish(event.data);
     };
 
     hostWindow.addEventListener('message', onMessage);

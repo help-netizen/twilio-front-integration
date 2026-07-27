@@ -27,12 +27,13 @@ import {
     canDismissManualCard,
     completeManualCardDialog,
     createManualCardReceiptState,
-    handleCardEntryPopupResult,
     manualCardReducer,
     manualCardReceiptReducer,
+    openManualCardAuthenticationPopup,
     openManualCardEntryPopup,
     reconcileManualCardSession,
     requestManualCardDismiss,
+    runManualCardCharge,
     settleFinanceSync,
     shouldShowReceiptContactSaveCaption,
     validateReceiptEmail,
@@ -68,7 +69,7 @@ afterEach(() => {
 });
 
 describe('Stripe-hosted composite Card Element', () => {
-    it('creates only card with en locale, visible ZIP, token-resolved style, and cleanup', () => {
+    it('creates only card with en locale, hidden ZIP, token-resolved style, and cleanup', () => {
         const card = {
             on: vi.fn(),
             off: vi.fn(),
@@ -80,12 +81,12 @@ describe('Stripe-hosted composite Card Element', () => {
         const handlers = { onChange: vi.fn(), onFocus: vi.fn(), onBlur: vi.fn() };
         const mountNode = {} as HTMLDivElement;
 
-        const mounted = mountStripeCard(stripe, 'pi_secret', mountNode, handlers);
+        const mounted = mountStripeCard(stripe, null, mountNode, handlers);
 
-        expect(stripe.elements).toHaveBeenCalledWith({ clientSecret: 'pi_secret', locale: 'en' });
+        expect(stripe.elements).toHaveBeenCalledWith({ locale: 'en' });
         expect(elements.create).toHaveBeenCalledOnce();
         expect(elements.create).toHaveBeenCalledWith('card', expect.objectContaining({
-            hidePostalCode: false,
+            hidePostalCode: true,
             style: expect.objectContaining({
                 base: expect.objectContaining({ color: '#191919', fontFamily: 'IBM Plex Sans' }),
                 invalid: { color: '#F0503F' },
@@ -101,7 +102,7 @@ describe('Stripe-hosted composite Card Element', () => {
 
     it('keeps the supported legacy Card Element style contract', () => {
         expect(createCardElementOptions()).toEqual(expect.objectContaining({
-            hidePostalCode: false,
+            hidePostalCode: true,
             style: expect.any(Object),
         }));
         expect(createCardElementOptions()).not.toHaveProperty('appearance');
@@ -109,14 +110,21 @@ describe('Stripe-hosted composite Card Element', () => {
 });
 
 describe('manual card state machine', () => {
-    it('opens popup submission only after the session is ready and locks duplicate/3DS-pending submits', () => {
-        expect(manualCardReducer(INITIAL_MANUAL_CARD_STATE, { type: 'SUBMIT' }).phase).toBe('loading');
+    it('collects a card only after the session is ready and locks the server charge/3DS phases', () => {
+        expect(manualCardReducer(INITIAL_MANUAL_CARD_STATE, { type: 'COLLECT' }).phase).toBe('loading');
 
         let state = manualCardReducer(INITIAL_MANUAL_CARD_STATE, { type: 'SESSION_READY' });
-        state = manualCardReducer(state, { type: 'SUBMIT' });
-        expect(state.phase).toBe('submitting');
+        state = manualCardReducer(state, { type: 'COLLECT' });
+        expect(state.phase).toBe('collecting');
         expect(canDismissManualCard(state.phase)).toBe(false);
-        expect(manualCardReducer(state, { type: 'SUBMIT' })).toBe(state);
+        expect(manualCardReducer(state, { type: 'CHARGE' })).toBe(state);
+
+        state = manualCardReducer(state, { type: 'CARD_SELECTED' });
+        state = manualCardReducer(state, { type: 'CHARGE' });
+        expect(state.phase).toBe('charging');
+        state = manualCardReducer(state, { type: 'AUTHENTICATE' });
+        expect(state.phase).toBe('authenticating');
+        expect(canDismissManualCard(state.phase)).toBe(false);
     });
 
     it('enters success only for exact succeeded and gates retry on requires_payment_method', () => {
@@ -139,7 +147,7 @@ describe('manual card state machine', () => {
 });
 
 describe('manual-card popup integration', () => {
-    it('opens the popup and reconciles a mocked succeeded result into onPaymentConfirmed', async () => {
+    it('opens collect mode and accepts the popup PaymentMethod mask without charging', async () => {
         const popup = {
             closed: false,
             postMessage: vi.fn(),
@@ -189,7 +197,7 @@ describe('manual-card popup integration', () => {
         } as unknown as MessageEvent);
         expect(popup.postMessage).toHaveBeenCalledWith({
             kind: 'cardframe:init',
-            clientSecret: 'pi_secret',
+            mode: 'collect',
             accountId: 'acct_11',
             amount: 95,
         }, 'https://cards.albusto.test');
@@ -197,27 +205,82 @@ describe('manual-card popup integration', () => {
         messageListeners[0]?.({
             origin: 'https://cards.albusto.test',
             source: popup,
-            data: { kind: 'cardframe:result', status: 'succeeded' },
+            data: {
+                kind: 'cardframe:payment_method',
+                pmId: 'pm_card_11',
+                brand: 'visa',
+                last4: '4242',
+            },
         } as unknown as MessageEvent);
         const popupResult = await handle!.result;
-        const getResult = vi.fn().mockResolvedValue(SUCCEEDED);
-        const onPaymentConfirmed = vi.fn(async () => true);
-
-        await handleCardEntryPopupResult({
-            popupResult,
-            sessionId: session.session_id,
-            getResult,
-            wait: async () => {},
-            delays: [0],
-            onSucceeded: async result => {
-                await settleFinanceSync(result, onPaymentConfirmed);
-            },
-            onDeclined: vi.fn(),
-            onUnresolved: vi.fn(),
+        expect(popupResult).toEqual({
+            kind: 'cardframe:payment_method',
+            pmId: 'pm_card_11',
+            brand: 'visa',
+            last4: '4242',
         });
+    });
 
-        expect(getResult).toHaveBeenCalledWith(11);
-        expect(onPaymentConfirmed).toHaveBeenCalledWith(SUCCEEDED);
+    it('opens authenticate mode after server requires_action, then finalizes', async () => {
+        const session = {
+            session_id: 11,
+            client_secret: 'pi_secret',
+            payment_intent_id: 'pi_11',
+            account_id: 'acct_11',
+            amount: 95,
+        };
+        const confirmSession = vi.fn().mockResolvedValue({
+            status: 'requires_action',
+            clientSecret: 'pi_action_secret',
+        });
+        const finalizeSession = vi.fn().mockResolvedValue({ status: 'succeeded' });
+        const onAuthenticationStarted = vi.fn();
+        const openAuthentication = vi.fn(() => ({
+            result: Promise.resolve({ kind: 'cardframe:result' as const, status: 'succeeded' as const }),
+            cancel: vi.fn(),
+        }));
+
+        await expect(runManualCardCharge({
+            session,
+            paymentMethodId: 'pm_card_11',
+            confirmSession,
+            finalizeSession,
+            openAuthentication,
+            onAuthenticationStarted,
+        })).resolves.toEqual({ status: 'succeeded' });
+
+        expect(confirmSession).toHaveBeenCalledWith(11, 'pm_card_11');
+        expect(onAuthenticationStarted).toHaveBeenCalledOnce();
+        expect(openAuthentication).toHaveBeenCalledWith('pi_action_secret');
+        expect(finalizeSession).toHaveBeenCalledWith(11);
+    });
+
+    it('does not finalize a declined authentication result', async () => {
+        const finalizeSession = vi.fn();
+        await expect(runManualCardCharge({
+            session: {
+                session_id: 11,
+                client_secret: 'pi_secret',
+                payment_intent_id: 'pi_11',
+                account_id: 'acct_11',
+                amount: 95,
+            },
+            paymentMethodId: 'pm_declined',
+            confirmSession: vi.fn().mockResolvedValue({
+                status: 'requires_action',
+                clientSecret: 'pi_action_secret',
+            }),
+            finalizeSession,
+            openAuthentication: () => ({
+                result: Promise.resolve({
+                    kind: 'cardframe:result',
+                    status: 'requires_payment_method',
+                    message: 'Your card was declined.',
+                }),
+                cancel: vi.fn(),
+            }),
+        })).resolves.toEqual({ status: 'failed', message: 'Your card was declined.' });
+        expect(finalizeSession).not.toHaveBeenCalled();
     });
 
     it('offers the existing Copy-link fallback when the popup is blocked', () => {
@@ -243,6 +306,29 @@ describe('manual-card popup integration', () => {
         );
         toastError.mock.calls[0]?.[1]?.action.onClick();
         expect(fallback).toHaveBeenCalledOnce();
+    });
+
+    it('offers the Copy-link fallback when the authentication popup is blocked', () => {
+        const fallback = vi.fn();
+        const hostWindow = {
+            location: { origin: 'https://app.albusto.test' },
+            open: vi.fn(() => null),
+        } as unknown as Window;
+
+        expect(openManualCardAuthenticationPopup({
+            session_id: 11,
+            client_secret: 'pi_secret',
+            payment_intent_id: 'pi_11',
+            account_id: 'acct_11',
+            amount: 95,
+        }, 'pi_action_secret', fallback, { hostWindow })).toBeNull();
+
+        expect(toastError).toHaveBeenCalledWith(
+            'Pop-up blocked. Allow pop-ups to verify the card.',
+            expect.objectContaining({
+                action: expect.objectContaining({ label: 'Copy link instead' }),
+            }),
+        );
     });
 });
 
@@ -404,6 +490,42 @@ describe('manual card result API', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email: 'customer@example.com' }),
+            },
+        );
+    });
+
+    it('confirms with the popup PaymentMethod and projects requires_action', async () => {
+        authedFetch.mockResolvedValueOnce(jsonResponse({
+            status: 'requires_action',
+            clientSecret: 'pi_action_secret',
+            payment_intent_id: 'must-not-project',
+        }));
+
+        await expect(stripePaymentsApi.confirmManualCardSession(11, 'pm_card_11')).resolves.toEqual({
+            status: 'requires_action',
+            clientSecret: 'pi_action_secret',
+        });
+        expect(authedFetch).toHaveBeenCalledWith(
+            '/api/payments/manual-card-sessions/11/confirm',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ payment_method_id: 'pm_card_11' }),
+            },
+        );
+    });
+
+    it('finalizes after popup authentication without sending a PaymentMethod again', async () => {
+        authedFetch.mockResolvedValueOnce(jsonResponse({ status: 'succeeded' }));
+
+        await expect(stripePaymentsApi.finalizeManualCardSession(11)).resolves.toEqual({
+            status: 'succeeded',
+        });
+        expect(authedFetch).toHaveBeenCalledWith(
+            '/api/payments/manual-card-sessions/11/finalize',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
             },
         );
     });
