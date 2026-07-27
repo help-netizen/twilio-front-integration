@@ -1,11 +1,12 @@
 import { useRef, useState, useEffect, useCallback, type ChangeEvent } from 'react';
-import { Paperclip, X, FileText, Image as ImageIcon, Loader2, AlertCircle, RotateCcw } from 'lucide-react';
+import { Paperclip, X, FileText, Loader2, RotateCcw } from 'lucide-react';
 import { uploadStagedAttachment, deleteStagedAttachment, type NoteEntityType } from '../../services/noteAttachmentsApi';
 import { isHeicOrHeif, yieldToMainThread } from '../../lib/imageCompression';
 import { NOTE_ATTACHMENT_MAX_FILE_SIZE, prepareImageAttachmentForUpload } from './noteAttachmentPreparation';
 
 const MAX_FILES = 5;
 const ACCEPT = 'image/*,application/pdf,.doc,.docx,.xls,.xlsx';
+const THUMB = 40; // px — a hair under the 44px attach button, per the owner ("no bigger than the attach icon")
 
 type ItemStatus = 'compressing' | 'uploading' | 'done' | 'error';
 interface Item {
@@ -18,6 +19,8 @@ interface Item {
     status: ItemStatus;
     id?: number;
     error?: string;
+    /** Object URL for the inline image thumbnail (images only). */
+    previewUrl?: string;
 }
 
 export interface AttachmentState {
@@ -34,15 +37,15 @@ interface NoteAttachmentInputProps {
     onStateChange: (state: AttachmentState) => void;
     compact?: boolean;
     /**
-     * Trigger style. 'text' (default) = the inline paperclip link. 'round' = a
-     * 44px circular icon button (composer-canon) with a big tap area — matches the
-     * sheet's close X. Used by the mobile note composer.
+     * Trigger style. 'text' (default) = the inline paperclip link (legacy chip list below).
+     * 'round' = a 44px circular icon button (composer-canon) with inline thumbnails to its
+     * right — the mobile/desktop note composer.
      */
     variant?: 'text' | 'round';
     /**
-     * Background of the 'round' button. Defaults to the field fill (its ground on
-     * a white sheet). Override to a contrasting tone when the round button sits on
-     * a filled --blanc-field composer card (desktop), so it stays visible.
+     * Background of the 'round' button. Defaults to the field fill (its ground on a white
+     * sheet). Override to a contrasting tone when the round button sits on a filled
+     * --blanc-field composer card, so it stays visible.
      */
     roundBg?: string;
 }
@@ -53,6 +56,8 @@ function formatSize(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const isBusyStatus = (s: ItemStatus) => s === 'compressing' || s === 'uploading';
+
 export function NoteAttachmentInput({ entityType, entityId, onStateChange, compact, variant = 'text', roundBg = 'var(--blanc-field)' }: NoteAttachmentInputProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const [items, setItems] = useState<Item[]>([]);
@@ -62,10 +67,23 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
     const cb = useRef(onStateChange);
     cb.current = onStateChange;
 
+    // Track every object URL we mint so we can revoke them all on unmount (removeItem
+    // revokes eagerly; double-revoke is a harmless no-op).
+    const createdUrls = useRef<Set<string>>(new Set());
+    const makeThumbUrl = useCallback((file: File) => {
+        const url = URL.createObjectURL(file);
+        createdUrls.current.add(url);
+        return url;
+    }, []);
+    useEffect(() => () => {
+        createdUrls.current.forEach(url => URL.revokeObjectURL(url));
+        createdUrls.current.clear();
+    }, []);
+
     // Report state up AFTER render (never during a setState updater).
     useEffect(() => {
         const ids = items.filter(i => i.status === 'done' && i.id != null).map(i => i.id!);
-        const blocked = items.some(i => i.status === 'compressing' || i.status === 'uploading' || i.status === 'error');
+        const blocked = items.some(i => isBusyStatus(i.status) || i.status === 'error');
         cb.current({ ids, blocked });
     }, [items]);
 
@@ -76,6 +94,9 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                 const result = await prepareImageAttachmentForUpload(item.file);
                 if (removedKeys.current.has(item.key)) return;
                 uploadFile = result.file;
+                // HEIC/HEIF can't render in <img> before conversion, so those get their
+                // thumbnail here (from the converted JPEG); regular images already have one.
+                const newPreview = item.isImage && !item.previewUrl ? makeThumbUrl(uploadFile) : undefined;
                 setItems(prev => prev.map(i => (i.key === item.key ? {
                     ...i,
                     file: uploadFile,
@@ -83,6 +104,7 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                     size: uploadFile.size,
                     prepared: true,
                     status: 'uploading',
+                    ...(newPreview ? { previewUrl: newPreview } : {}),
                 } : i)));
             }
 
@@ -94,11 +116,11 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
             if (removedKeys.current.has(item.key)) return;
             setItems(prev => prev.map(i => (i.key === item.key ? { ...i, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' } : i)));
         }
-    }, [entityType, entityId]);
+    }, [entityType, entityId, makeThumbUrl]);
 
     const enqueueItems = useCallback((queuedItems: Item[]) => {
         uploadQueue.current = uploadQueue.current.then(async () => {
-            // Let the Compressing… chip render before the first full-size decode.
+            // Let the thumbnail render before the first full-size decode.
             await yieldToMainThread();
             for (let index = 0; index < queuedItems.length; index += 1) {
                 const item = queuedItems[index];
@@ -123,10 +145,12 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
         if (toAdd.length === 0) return;
         const newItems: Item[] = toAdd.map(f => {
             const isImage = f.type.startsWith('image/') || isHeicOrHeif(f);
+            // Non-HEIC images get an immediate preview from the original; HEIC waits for conversion.
+            const previewUrl = isImage && !isHeicOrHeif(f) ? makeThumbUrl(f) : undefined;
             return {
                 key: `${Date.now()}-${keySeq.current++}`,
                 file: f, name: f.name, size: f.size,
-                isImage, prepared: false,
+                isImage, prepared: false, previewUrl,
                 status: isImage ? 'compressing' as const : 'uploading' as const,
             };
         });
@@ -138,6 +162,7 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
         removedKeys.current.add(key);
         setItems(prev => {
             const it = prev.find(i => i.key === key);
+            if (it?.previewUrl) URL.revokeObjectURL(it.previewUrl);
             if (it?.status === 'done' && it.id != null) deleteStagedAttachment(it.id).catch(() => {});
             return prev.filter(i => i.key !== key);
         });
@@ -151,47 +176,127 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
         enqueueItems([{ ...it, status, error: undefined }]);
     };
 
-    return (
-        <div>
-            <input ref={inputRef} type="file" multiple accept={ACCEPT} onChange={handleChange} className="hidden" />
+    const fileInput = <input ref={inputRef} type="file" multiple accept={ACCEPT} onChange={handleChange} className="hidden" />;
 
-            {variant === 'round' ? (
+    // ---- 'round' composer variant: attach button + inline thumbnails (image previews) ----
+    if (variant === 'round') {
+        // Collapse past a few: show the first 2 + a "+N" chip (owner — don't spill into rows).
+        const visible = items.length > 3 ? items.slice(0, 2) : items;
+        const hidden = items.slice(visible.length);
+        const overflow = hidden.length;
+        const hiddenBusy = hidden.some(i => isBusyStatus(i.status));
+        const hiddenError = hidden.some(i => i.status === 'error');
+
+        return (
+            <div className="flex items-center gap-1.5">
+                {fileInput}
                 <button
                     type="button"
                     onMouseDown={e => e.preventDefault()}
                     onClick={() => inputRef.current?.click()}
                     disabled={items.length >= MAX_FILES}
                     aria-label="Attach files"
-                    className="flex items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:opacity-30"
-                    style={{
-                        width: 44,
-                        height: 44,
-                        background: roundBg,
-                        border: 'none',
-                        color: 'var(--blanc-ink-2)',
-                    }}
+                    className="flex shrink-0 items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:opacity-30"
+                    style={{ width: 44, height: 44, background: roundBg, border: 'none', color: 'var(--blanc-ink-2)' }}
                     title="Attach files"
                 >
                     <Paperclip className="size-5" />
                 </button>
-            ) : (
-                <button
-                    type="button"
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={() => inputRef.current?.click()}
-                    disabled={items.length >= MAX_FILES}
-                    className="inline-flex items-center gap-1 text-xs transition-opacity hover:opacity-70 disabled:opacity-30"
-                    style={{ color: 'var(--blanc-ink-3)' }}
-                    title="Attach files"
-                >
-                    <Paperclip className="size-3.5" />
-                    {!compact && <span>Attach</span>}
-                </button>
-            )}
+
+                {visible.map(item => {
+                    const busy = isBusyStatus(item.status);
+                    const err = item.status === 'error';
+                    return (
+                        <div
+                            key={item.key}
+                            className="relative shrink-0"
+                            style={{ width: THUMB, height: THUMB }}
+                            title={err ? (item.error || 'Upload failed') : item.name}
+                        >
+                            {item.isImage && item.previewUrl ? (
+                                <img
+                                    src={item.previewUrl}
+                                    alt={item.name}
+                                    className="h-full w-full object-cover"
+                                    style={{ borderRadius: 10, border: '1px solid var(--blanc-line)' }}
+                                />
+                            ) : (
+                                <div
+                                    className="flex h-full w-full items-center justify-center"
+                                    style={{ borderRadius: 10, background: 'rgba(25,25,25,0.06)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)' }}
+                                >
+                                    <FileText className="size-4" />
+                                </div>
+                            )}
+                            {busy && (
+                                <div className="absolute inset-0 flex items-center justify-center" style={{ borderRadius: 10, background: 'rgba(25,25,25,0.45)' }}>
+                                    <Loader2 className="size-4 animate-spin" style={{ color: '#fff' }} />
+                                </div>
+                            )}
+                            {err && (
+                                <button
+                                    type="button"
+                                    onMouseDown={e => e.preventDefault()}
+                                    onClick={() => retry(item.key)}
+                                    title="Retry upload"
+                                    className="absolute inset-0 flex items-center justify-center"
+                                    style={{ borderRadius: 10, background: 'rgba(180,35,24,0.5)' }}
+                                >
+                                    <RotateCcw className="size-4" style={{ color: '#fff' }} />
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onMouseDown={e => e.preventDefault()}
+                                onClick={() => removeItem(item.key)}
+                                aria-label="Remove attachment"
+                                className="absolute flex items-center justify-center"
+                                style={{ top: -5, right: -5, width: 18, height: 18, borderRadius: 999, background: 'var(--blanc-ink-1)', color: '#fff', border: '2px solid var(--blanc-surface-strong)' }}
+                            >
+                                <X className="size-2.5" />
+                            </button>
+                        </div>
+                    );
+                })}
+
+                {overflow > 0 && (
+                    // +N chip; spins while any hidden upload is still in flight (owner: keep
+                    // spinning until everything is loaded, however many there are).
+                    <div
+                        className="flex shrink-0 items-center justify-center"
+                        style={{ width: THUMB, height: THUMB, borderRadius: 10, background: 'rgba(25,25,25,0.06)', border: '1px solid var(--blanc-line)', color: hiddenError ? '#b42318' : 'var(--blanc-ink-2)' }}
+                        title={`${overflow} more`}
+                    >
+                        {hiddenBusy
+                            ? <Loader2 className="size-4 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
+                            : <span className="text-xs font-semibold">+{overflow}</span>}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    // ---- legacy 'text' variant: paperclip link + chip list below ----
+    return (
+        <div>
+            {fileInput}
+            <button
+                type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => inputRef.current?.click()}
+                disabled={items.length >= MAX_FILES}
+                className="inline-flex items-center gap-1 text-xs transition-opacity hover:opacity-70 disabled:opacity-30"
+                style={{ color: 'var(--blanc-ink-3)' }}
+                title="Attach files"
+            >
+                <Paperclip className="size-3.5" />
+                {!compact && <span>Attach</span>}
+            </button>
 
             {items.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
                     {items.map(item => {
+                        const busy = isBusyStatus(item.status);
                         const isErr = item.status === 'error';
                         return (
                             <div
@@ -201,41 +306,25 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                                     background: isErr ? 'rgba(180,35,24,0.06)' : 'rgba(25,25,25,0.06)',
                                     border: `1px solid ${isErr ? 'rgba(180,35,24,0.4)' : 'var(--blanc-line)'}`,
                                     color: 'var(--blanc-ink-2)',
-                                    opacity: item.status === 'compressing' || item.status === 'uploading' ? 0.75 : 1,
+                                    opacity: busy ? 0.75 : 1,
                                 }}
                                 title={isErr ? (item.error || 'Upload failed') : undefined}
                             >
-                                {item.status === 'compressing' || item.status === 'uploading'
+                                {busy
                                     ? <Loader2 className="size-3 shrink-0 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
                                     : isErr
-                                        ? <AlertCircle className="size-3 shrink-0" style={{ color: '#b42318' }} />
-                                        : item.isImage
-                                            ? <ImageIcon className="size-3 shrink-0" />
-                                            : <FileText className="size-3 shrink-0" />}
+                                        ? <RotateCcw className="size-3 shrink-0" style={{ color: '#b42318' }} />
+                                        : <FileText className="size-3 shrink-0" />}
                                 <span className="max-w-[120px] truncate">{item.name}</span>
                                 <span className="text-[10px]" style={{ color: 'var(--blanc-ink-3)' }}>
                                     {item.status === 'compressing' ? 'Compressing…' : item.status === 'uploading' ? 'Uploading…' : isErr ? 'Failed' : formatSize(item.size)}
                                 </span>
                                 {isErr && (
-                                    <button
-                                        type="button"
-                                        onMouseDown={e => e.preventDefault()}
-                                        onClick={() => retry(item.key)}
-                                        className="hover:opacity-70"
-                                        style={{ color: 'var(--blanc-ink-3)' }}
-                                        title="Retry upload"
-                                    >
+                                    <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => retry(item.key)} className="hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }} title="Retry upload">
                                         <RotateCcw className="size-3" />
                                     </button>
                                 )}
-                                <button
-                                    type="button"
-                                    onMouseDown={e => e.preventDefault()}
-                                    onClick={() => removeItem(item.key)}
-                                    className="hover:opacity-70"
-                                    style={{ color: 'var(--blanc-ink-3)' }}
-                                    title="Remove"
-                                >
+                                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => removeItem(item.key)} className="hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }} title="Remove">
                                     <X className="size-3" />
                                 </button>
                             </div>
