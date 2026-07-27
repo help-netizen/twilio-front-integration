@@ -172,11 +172,13 @@ export function IntegrationsPage() {
         setSearchParams(next, { replace: true });
     };
 
-    const chatgptMcpPanelOpen = searchParams.get('app') === 'chatgpt-crm-mcp';
+    // The connector panel opens for the branded ?app=avatar slug; the legacy
+    // ?app=chatgpt-crm-mcp is still accepted so old deep-links keep working.
+    const chatgptMcpPanelOpen = ['avatar', 'chatgpt-crm-mcp'].includes(searchParams.get('app') ?? '');
 
     const setChatgptMcpPanelOpen = (open: boolean) => {
         const next = new URLSearchParams(searchParams);
-        if (open) next.set('app', 'chatgpt-crm-mcp');
+        if (open) next.set('app', 'avatar');
         else next.delete('app');
         setSearchParams(next, { replace: true });
     };
