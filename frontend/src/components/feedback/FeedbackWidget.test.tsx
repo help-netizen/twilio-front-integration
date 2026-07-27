@@ -93,6 +93,11 @@ vi.mock('../../auth/AuthProvider', () => ({
     getKeycloak: () => ({ updateToken: vi.fn() }),
 }));
 
+// Default desktop; flip per-test. Mocked directly so the hand-rolled react mock
+// never reaches window.matchMedia (absent in this SSR test env).
+const isMobileState = vi.hoisted(() => ({ value: false }));
+vi.mock('../../hooks/useIsMobile', () => ({ useIsMobile: () => isMobileState.value }));
+
 interface TestElementProps {
     children?: ReactNode;
     className?: string;
@@ -395,11 +400,17 @@ describe('feedback widget open event', () => {
 describe('feedback FAB vs open overlays', () => {
     afterEach(() => {
         overlayStackState.open = false;
+        isMobileState.value = false;
     });
 
     it('shows the floating button when no overlay is open', () => {
         overlayStackState.open = false;
         expect(renderToStaticMarkup(renderFeedbackWidget())).toContain('feedback-fab');
+    });
+
+    it('hides the floating button on mobile — feedback comes from the More menu instead', () => {
+        isMobileState.value = true;
+        expect(renderToStaticMarkup(renderFeedbackWidget())).not.toContain('feedback-fab');
     });
 
     it('hides the floating button while a dialog/panel is open (no overlap with its footer)', () => {

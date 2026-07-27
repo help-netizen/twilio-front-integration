@@ -10,6 +10,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import { authedFetch } from '../../services/apiClient';
 import { FloatingField } from '../ui/floating-field';
 import { useHasOpenOverlay } from '../ui/OverlayStack';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import './FeedbackWidget.css';
 
 export type FeedbackBotPhase = 'greeting' | 'chatting' | 'escalated';
@@ -184,6 +185,11 @@ export function FeedbackWidget() {
     // Hide the floating button while any dialog / panel / sheet is open, so it never
     // paints over an overlay's footer actions (e.g. a wizard's "Create job" button).
     const overlayOpen = useHasOpenOverlay();
+    // On mobile the floating launcher is intentionally NOT shown — feedback is
+    // reached from the bottom-nav "More" sheet (which fires openFeedbackWidget), so
+    // the widget mounts everywhere on mobile for that event but paints no FAB. The
+    // FAB stays a desktop-only affordance (gated to /pulse by AppLayout).
+    const isMobile = useIsMobile();
     const [open, setOpen] = useState(false);
     const [botState, setBotState] = useState<FeedbackBotState>(createInitialFeedbackBotState);
     const [chatInput, setChatInput] = useState('');
@@ -424,7 +430,7 @@ export function FeedbackWidget() {
                 </section>
             )}
 
-            {!(overlayOpen && !open) && (
+            {!isMobile && !(overlayOpen && !open) && (
                 <button
                     type="button"
                     className="feedback-fab"

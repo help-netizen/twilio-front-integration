@@ -81,10 +81,9 @@ export const MobileMoreSheet: React.FC<{ open: boolean; onClose: () => void; log
     const overflowTabs = useVisibleTabs().filter(t => !PRIMARY_KEYS.includes(t.key));
     const groups = getVisibleSettingsGroups({ permissions, platformRole });
     const activeGroup = findActiveSettingsGroup(groups, location);
-    // Feedback is offered ONLY on the exact /pulse inbox (matches the FAB gating
-    // in AppLayout), so the sheet never dispatches into a widget that isn't mounted.
-    const isFeedbackEnabled = isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET)
-        && location.pathname === '/pulse';
+    // On mobile the feedback widget mounts on every page (AppLayout), painting no FAB,
+    // so the sheet's "Send feedback" is available EVERYWHERE — not gated to /pulse.
+    const isFeedbackEnabled = isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET);
     const go = (path: string) => { onClose(); navigate(path); };
 
     return (

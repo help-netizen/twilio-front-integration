@@ -257,10 +257,12 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 {/* SOFTPHONE-WARMUP-SUMMARY-001 belt 2b: render gate — /schedule term kept verbatim. */}
                 <WarmUpSummaryDialog open={(showWarmUp || warmUpPreview) && !isMobile && !isMobileDevice && !location.pathname.startsWith('/schedule')} counts={warmUpPreviewCounts ?? { pulseInbox: pulseUnreadCount === null || arCount === null ? null : pulseUnreadCount + arCount, newLeads: leadsNewCount, openTasks: openTasksCount }} onNavigate={handleSummaryNavigate} onDismiss={handleWarmUpDismiss} />
                 {!isMobile && !isMobileDevice && <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} disabledReason={!softPhoneEnabled && softPhoneGroupsLoaded ? 'You are not assigned to any group. Ask your administrator.' : undefined} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />}
-                {/* Feedback chat lives ONLY on the exact /pulse inbox — its floating button
-                    overlaps content on timelines and other pages, so hide it everywhere else
-                    (incl. /pulse/timeline/:id). */}
-                {location.pathname === '/pulse' && isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET) && <FeedbackWidget />}
+                {/* Feedback: on DESKTOP the floating button overlaps content on timelines and
+                    other pages, so its FAB lives ONLY on the exact /pulse inbox. On MOBILE there
+                    is no FAB (the widget paints none) — feedback is reached from the bottom-nav
+                    "More" sheet on every page, so the widget must mount everywhere on mobile for
+                    that openFeedbackWidget event to have a listener. */}
+                {(location.pathname === '/pulse' || isMobile) && isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET) && <FeedbackWidget />}
                 <AutonomousModeBanner visible={autonomous.autonomousMode} />
             </div>
           </AutonomousModeProvider>
