@@ -585,10 +585,14 @@ async function sendInvoice(
         }
 
         let companyName = '';
+        let senderName = '';
         try {
             const companyQueries = require('../db/companyQueries');
             const company = await companyQueries.getCompanyById(companyId);
             companyName = asText(company?.name);
+            // Preferred outbound display name (stored in the settings bag); falls back
+            // to the company name below.
+            senderName = asText(company?.settings?.email_sender_name);
         } catch { /* subject falls back to no company suffix */ }
         const subject = companyName
             ? `Invoice #${number} from ${companyName}`
@@ -610,6 +614,7 @@ async function sendInvoice(
                 }],
                 userId,
                 userEmail,
+                fromName: senderName || companyName || undefined,
             });
         } catch (err) {
             // sendEmail throws a PLAIN Error('Mailbox is not connected') (no statusCode)

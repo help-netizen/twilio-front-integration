@@ -105,7 +105,7 @@ function buildDefaultMessage(
         '',
         url ? `Whenever you're ready, you can view and pay it online here:\n${url}` : null,
         '',
-        'No rush at all — if anything looks off or you have a question, just hit reply and we will sort it out.',
+        'Feel free to reply if you have any questions.',
         '',
         `Thanks,${signature}`,
     ].filter(s => s !== null).join('\n');
@@ -143,7 +143,9 @@ export function InvoiceSendDialog({ open, onOpenChange, invoiceId, contactEmail,
         if (!open || !invoiceId) return;
         let cancelled = false;
         ensureInvoicePublicLink(invoiceId)
-            .then(({ url }) => { if (!cancelled) setPublicUrl(url); })
+            // The public-link endpoint returns the /i/<token> PDF viewer; the message
+            // should point at /pay/<token> (same token) — the page with the Pay button.
+            .then(({ url }) => { if (!cancelled) setPublicUrl(url.replace('/i/', '/pay/')); })
             .catch(() => { if (!cancelled) setPublicUrl(''); });
         return () => { cancelled = true; };
     }, [open, invoiceId]);

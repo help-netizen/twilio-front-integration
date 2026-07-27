@@ -599,10 +599,12 @@ async function sendEstimate(
         }
 
         let companyName = '';
+        let senderName = '';
         try {
             const companyQueries = require('../db/companyQueries');
             const company = await companyQueries.getCompanyById(companyId);
             companyName = asText(company?.name);
+            senderName = asText(company?.settings?.email_sender_name);
         } catch { /* subject falls back to no company suffix */ }
         const subject = companyName
             ? `Estimate ${number} from ${companyName}`
@@ -624,6 +626,7 @@ async function sendEstimate(
                 }],
                 userId,
                 userEmail,
+                fromName: senderName || companyName || undefined,
             });
         } catch (err) {
             // sendEmail throws a PLAIN Error('Mailbox is not connected') (no statusCode)

@@ -89,7 +89,7 @@ function buildMimeMessage({ from, to, cc, subject, body, textBody, inReplyTo, re
 
 // ─── Send new email ──────────────────────────────────────────────────────
 
-async function sendEmail(companyId, { to, cc, subject, body, textBody, files, userId, userEmail, inReplyTo, references, threadId }) {
+async function sendEmail(companyId, { to, cc, subject, body, textBody, files, userId, userEmail, inReplyTo, references, threadId, fromName }) {
     const accessToken = await emailMailboxService.getValidAccessToken(companyId);
     const mailboxData = await emailQueries.getMailboxWithTokens(companyId);
 
@@ -103,8 +103,15 @@ async function sendEmail(companyId, { to, cc, subject, body, textBody, files, us
     }
 
     const gmail = createGmailClient(accessToken);
+    // Give the recipient a friendly sender name ("Appliance Repair with ABC Homes
+    // <help@…>") instead of the bare address (which clients render as "help"). The
+    // display name is RFC5322-quoted; empty/absent fromName keeps the plain address.
+    const cleanFromName = typeof fromName === 'string' ? fromName.trim() : '';
+    const fromHeader = cleanFromName
+        ? `${JSON.stringify(cleanFromName)} <${mailboxData.email_address}>`
+        : mailboxData.email_address;
     const raw = buildMimeMessage({
-        from: mailboxData.email_address,
+        from: fromHeader,
         to,
         cc,
         subject,

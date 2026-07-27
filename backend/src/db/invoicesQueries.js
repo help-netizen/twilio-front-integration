@@ -126,6 +126,8 @@ async function listInvoices(companyId, filters = {}) {
     const sql = `
         SELECT i.*,
                c.full_name AS contact_name,
+               c.email AS contact_email,
+               c.phone_e164 AS contact_phone,
                l.serial_id AS lead_serial_id,
                COUNT(*) OVER() AS _total
         FROM invoices i
