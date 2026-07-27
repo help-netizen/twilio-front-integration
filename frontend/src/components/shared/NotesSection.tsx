@@ -386,7 +386,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         onChange={e => setText(e.target.value)}
                         autoFocus
                     />
-                    <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
+                    <div className="flex items-center justify-end gap-3" style={{ marginTop: 6 }}>
                         <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
                         <button
                             type="button"
@@ -394,7 +394,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                             disabled={!canSubmit}
                             aria-label="Add note"
                             className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
-                            style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
+                            style={{ width: 40, height: 40, background: 'var(--blanc-accent)', color: '#fff' }}
                         >
                             {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
                         </button>
@@ -430,24 +430,22 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                             </div>
                         )}
                         {editError && <p className="text-xs" style={{ color: '#b42318', marginTop: 8 }}>{editError}</p>}
-                        <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
+                        <div className="flex items-center justify-end gap-4" style={{ marginTop: 6 }}>
                             <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
-                            <div className="flex items-center gap-4">
-                                <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
-                                    Cancel
-                                </button>
-                                <button
-                                    type="button"
-                                    onMouseDown={e => e.preventDefault()}
-                                    onClick={() => saveEdit(editingNote)}
-                                    disabled={!canSaveEdit}
-                                    aria-label="Save note"
-                                    className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
-                                    style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
-                                >
-                                    {editSubmitting ? <Loader2 className="size-5 animate-spin" /> : <Check className="size-5" />}
-                                </button>
-                            </div>
+                            <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onMouseDown={e => e.preventDefault()}
+                                onClick={() => saveEdit(editingNote)}
+                                disabled={!canSaveEdit}
+                                aria-label="Save note"
+                                className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                                style={{ width: 40, height: 40, background: 'var(--blanc-accent)', color: '#fff' }}
+                            >
+                                {editSubmitting ? <Loader2 className="size-5 animate-spin" /> : <Check className="size-5" />}
+                            </button>
                         </div>
                     </div>
                 )}
