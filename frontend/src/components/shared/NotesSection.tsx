@@ -5,7 +5,7 @@
  * Usage: <NotesSection entityType="job" entityId={123} />
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, MoreVertical, Pencil, Trash2, X, ArrowUp, Loader2 } from 'lucide-react';
+import { Plus, MoreVertical, Pencil, Trash2, X, ArrowUp, Check, Loader2 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { BottomSheet } from '../ui/BottomSheet';
 import { NoteAttachmentInput, type AttachmentState } from './NoteAttachmentInput';
@@ -267,6 +267,8 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const canSaveEdit = (!!editText.trim() || editAttach.ids.length > 0) && !editSubmitting && !editAttach.blocked;
 
     const displayedNotes = prepareNotesForDisplay(notes);
+    // The note currently being edited (mobile routes editing through a keyboard-safe sheet).
+    const editingNote = editingKey ? displayedNotes.find(d => d.renderKey === editingKey)?.note ?? null : null;
 
     return (
         <div ref={containerRef} className="space-y-3">
@@ -383,7 +385,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                 const showKebab = !editing && !!note.id && canEdit(note);
                 return (
                     <div key={renderKey} className="relative p-3 rounded-xl space-y-2" style={{ background: NOTE_BG }}>
-                        {editing ? (
+                        {editing && !isMobile ? (
                             <div className="space-y-2">
                                 <textarea
                                     className="w-full resize-none outline-none"
@@ -589,6 +591,70 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     </div>
                 </div>
             </BottomSheet>
+
+            {/* NOTE-COMPOSER-KEYBOARD: mobile note EDIT rides the same keyboard-safe sheet as
+                add (owner: editing must use the new composer too) — pre-filled, Save via the
+                round violet check. Desktop keeps the inline editor above. */}
+            {isMobile && editingNote && (
+                <BottomSheet open onClose={cancelEdit} size="auto" showHeader={false} ariaLabel="Edit note">
+                    <div className="relative">
+                        <button
+                            type="button"
+                            onClick={cancelEdit}
+                            aria-label="Cancel"
+                            className="absolute right-0 top-0 z-10 flex items-center justify-center rounded-full transition-opacity hover:opacity-80"
+                            style={{ width: 32, height: 32, background: 'var(--blanc-field)', color: 'var(--blanc-ink-2)' }}
+                        >
+                            <X className="size-4" />
+                        </button>
+                        <textarea
+                            className="w-full resize-none bg-transparent outline-none"
+                            style={{ border: 'none', minHeight: 150, padding: '4px 44px 0 2px', fontSize: 16, lineHeight: 1.5, color: 'var(--blanc-ink-1)' }}
+                            placeholder="Write a note…"
+                            value={editText}
+                            onChange={e => setEditText(e.target.value)}
+                        />
+                        {editingNote.attachments && editingNote.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>
+                                {editingNote.attachments.map(att => {
+                                    const marked = removeIds.has(String(att.id));
+                                    return (
+                                        <div
+                                            key={att.id}
+                                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs"
+                                            style={{ background: 'rgba(25,25,25,0.06)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)', opacity: marked ? 0.4 : 1, textDecoration: marked ? 'line-through' : 'none' }}
+                                        >
+                                            <span className="max-w-[120px] truncate">{att.fileName}</span>
+                                            <button type="button" onClick={() => toggleRemoveAttachment(att.id)} className="hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }} title={marked ? 'Keep attachment' : 'Remove attachment'}>
+                                                <X className="size-3" />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        {editError && <p className="text-xs" style={{ color: '#b42318', marginTop: 8 }}>{editError}</p>}
+                        <div className="flex items-center justify-between gap-2" style={{ marginTop: 8 }}>
+                            <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" />
+                            <div className="flex items-center gap-4">
+                                <button type="button" onClick={cancelEdit} disabled={editSubmitting} className="text-sm font-medium" style={{ color: 'var(--blanc-ink-2)' }}>
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => saveEdit(editingNote)}
+                                    disabled={!canSaveEdit}
+                                    aria-label="Save note"
+                                    className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                                    style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
+                                >
+                                    {editSubmitting ? <Loader2 className="size-5 animate-spin" /> : <Check className="size-5" />}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </BottomSheet>
+            )}
         </div>
     );
 }
