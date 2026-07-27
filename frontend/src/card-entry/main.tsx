@@ -92,15 +92,14 @@ export function CardEntryPage() {
                         />
                         <p className="card-entry-caption">Secure card fields by Stripe</p>
                         <div className="card-entry-zip-field">
-                            <label className="card-entry-label" htmlFor="card-entry-zip">
-                                ZIP code
-                            </label>
                             <input
                                 ref={zipInputRef}
                                 id="card-entry-zip"
                                 name="postalCode"
                                 type="text"
                                 className="card-entry-zip-input"
+                                placeholder="ZIP code"
+                                aria-label="ZIP code"
                                 inputMode="numeric"
                                 autoComplete="postal-code"
                                 maxLength={10}
