@@ -9,7 +9,7 @@ import SignupPage from './pages/auth/SignupPage';
 import OnboardingPage from './pages/auth/OnboardingPage';
 import TwoFactorGate from './components/auth/TwoFactorGate';
 import { useAuth } from './auth/AuthProvider';
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 /** ALB-101: authenticated users without a company go to onboarding. */
@@ -45,7 +45,6 @@ import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
 import MailSecretarySettingsPage from './pages/MailSecretarySettingsPage';
 import OutboundLeadCallerSettingsPage from './pages/OutboundLeadCallerSettingsPage';
 import OutboundPartsCallerSettingsPage from './pages/OutboundPartsCallerSettingsPage';
-import PublicInvoicePayPage from './pages/PublicInvoicePayPage';
 import PublicPayThanksPage from './pages/PublicPayThanksPage';
 import PublicEstimateViewPage from './pages/PublicEstimateViewPage';
 import RatePage from './pages/RatePage';
@@ -99,6 +98,10 @@ import { Toaster } from './components/ui/sonner';
 import { OverlayStackProvider } from './components/ui/OverlayStack';
 import './App.css';
 
+// Keep the Phase-2 public payment surface out of the authenticated CRM entry graph.
+// Its existing inline Stripe behavior is unchanged and loads only on /pay/:token.
+const PublicInvoicePayPage = lazy(() => import('./pages/PublicInvoicePayPage'));
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -120,7 +123,7 @@ function App() {
             <Routes>
               <Route path="/signup" element={<SignupPage />} />
               <Route path="/pay/thanks" element={<PublicPayThanksPage />} />
-              <Route path="/pay/:token" element={<PublicInvoicePayPage />} />
+              <Route path="/pay/:token" element={<Suspense fallback={null}><PublicInvoicePayPage /></Suspense>} />
               <Route path="/e/:token" element={<PublicEstimateViewPage />} />
               <Route path="/r/:token" element={<RatePage />} />
               <Route path="/onboarding" element={<OnboardingPage />} />

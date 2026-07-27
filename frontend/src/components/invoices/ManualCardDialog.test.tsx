@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authedFetch = vi.hoisted(() => vi.fn());
+const toastError = vi.hoisted(() => vi.fn());
 
 vi.mock('../../services/apiClient', () => ({ authedFetch }));
+vi.mock('sonner', () => ({ toast: { error: toastError } }));
 vi.mock('../ui/button', () => ({ Button: () => null }));
 vi.mock('../ui/dialog', () => ({
     Dialog: () => null,
@@ -16,15 +18,19 @@ vi.mock('../ui/dialog', () => ({
 
 import { stripePaymentsApi, type ManualCardSessionResult } from '../../services/stripePaymentsApi';
 import {
+    createCardElementOptions,
+    decideConfirmation,
+    mountStripeCard,
+} from '../../card-entry/stripeCard';
+import {
     INITIAL_MANUAL_CARD_STATE,
     canDismissManualCard,
     completeManualCardDialog,
-    createCardElementOptions,
     createManualCardReceiptState,
-    decideConfirmation,
+    handleCardEntryPopupResult,
     manualCardReducer,
     manualCardReceiptReducer,
-    mountStripeCard,
+    openManualCardEntryPopup,
     reconcileManualCardSession,
     requestManualCardDismiss,
     settleFinanceSync,
@@ -45,6 +51,7 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
 
 beforeEach(() => {
     authedFetch.mockReset();
+    toastError.mockReset();
     vi.stubGlobal('document', { documentElement: {} });
     vi.stubGlobal('getComputedStyle', () => ({
         getPropertyValue: (name: string) => ({
@@ -102,11 +109,10 @@ describe('Stripe-hosted composite Card Element', () => {
 });
 
 describe('manual card state machine', () => {
-    it('gates idle submission on Card Element completeness and locks duplicate/3DS-pending submits', () => {
-        let state = manualCardReducer(INITIAL_MANUAL_CARD_STATE, { type: 'SESSION_READY' });
-        expect(manualCardReducer(state, { type: 'SUBMIT' }).phase).toBe('idle');
+    it('opens popup submission only after the session is ready and locks duplicate/3DS-pending submits', () => {
+        expect(manualCardReducer(INITIAL_MANUAL_CARD_STATE, { type: 'SUBMIT' }).phase).toBe('loading');
 
-        state = manualCardReducer(state, { type: 'CARD_CHANGE', complete: true, error: null });
+        let state = manualCardReducer(INITIAL_MANUAL_CARD_STATE, { type: 'SESSION_READY' });
         state = manualCardReducer(state, { type: 'SUBMIT' });
         expect(state.phase).toBe('submitting');
         expect(canDismissManualCard(state.phase)).toBe(false);
@@ -129,6 +135,114 @@ describe('manual card state machine', () => {
         expect(state.phase).toBe('success');
         expect(state.result).toEqual(SUCCEEDED);
         expect(state.financeSync).toBe('delayed');
+    });
+});
+
+describe('manual-card popup integration', () => {
+    it('opens the popup and reconciles a mocked succeeded result into onPaymentConfirmed', async () => {
+        const popup = {
+            closed: false,
+            postMessage: vi.fn(),
+            close: vi.fn(),
+        };
+        const messageListeners: Array<(event: MessageEvent) => void> = [];
+        const hostWindow = {
+            location: { origin: 'https://app.albusto.test' },
+            open: vi.fn(() => popup),
+            addEventListener: vi.fn((_type: string, listener: (event: MessageEvent) => void) => {
+                messageListeners.push(listener);
+            }),
+            removeEventListener: vi.fn(),
+            setInterval: vi.fn(() => 17),
+            clearInterval: vi.fn(),
+        } as unknown as Window;
+        const session = {
+            session_id: 11,
+            client_secret: 'pi_secret',
+            payment_intent_id: 'pi_11',
+            account_id: 'acct_11',
+            amount: 95,
+        };
+
+        const handle = openManualCardEntryPopup(session, undefined, {
+            hostWindow,
+            configuredOrigin: 'https://cards.albusto.test',
+        });
+        expect(handle).not.toBeNull();
+        expect(hostWindow.open).toHaveBeenCalledWith(
+            'https://cards.albusto.test/card-entry.html',
+            'albusto-card',
+            'width=460,height=640',
+        );
+
+        messageListeners[0]?.({
+            origin: 'https://evil.test',
+            source: popup,
+            data: { kind: 'cardframe:ready' },
+        } as unknown as MessageEvent);
+        expect(popup.postMessage).not.toHaveBeenCalled();
+
+        messageListeners[0]?.({
+            origin: 'https://cards.albusto.test',
+            source: popup,
+            data: { kind: 'cardframe:ready' },
+        } as unknown as MessageEvent);
+        expect(popup.postMessage).toHaveBeenCalledWith({
+            kind: 'cardframe:init',
+            clientSecret: 'pi_secret',
+            accountId: 'acct_11',
+            amount: 95,
+        }, 'https://cards.albusto.test');
+
+        messageListeners[0]?.({
+            origin: 'https://cards.albusto.test',
+            source: popup,
+            data: { kind: 'cardframe:result', status: 'succeeded' },
+        } as unknown as MessageEvent);
+        const popupResult = await handle!.result;
+        const getResult = vi.fn().mockResolvedValue(SUCCEEDED);
+        const onPaymentConfirmed = vi.fn(async () => true);
+
+        await handleCardEntryPopupResult({
+            popupResult,
+            sessionId: session.session_id,
+            getResult,
+            wait: async () => {},
+            delays: [0],
+            onSucceeded: async result => {
+                await settleFinanceSync(result, onPaymentConfirmed);
+            },
+            onDeclined: vi.fn(),
+            onUnresolved: vi.fn(),
+        });
+
+        expect(getResult).toHaveBeenCalledWith(11);
+        expect(onPaymentConfirmed).toHaveBeenCalledWith(SUCCEEDED);
+    });
+
+    it('offers the existing Copy-link fallback when the popup is blocked', () => {
+        const fallback = vi.fn();
+        const hostWindow = {
+            location: { origin: 'https://app.albusto.test' },
+            open: vi.fn(() => null),
+        } as unknown as Window;
+
+        expect(openManualCardEntryPopup({
+            session_id: 11,
+            client_secret: 'pi_secret',
+            payment_intent_id: 'pi_11',
+            account_id: 'acct_11',
+            amount: 95,
+        }, fallback, { hostWindow })).toBeNull();
+
+        expect(toastError).toHaveBeenCalledWith(
+            'Pop-up blocked. Allow pop-ups to enter card details.',
+            expect.objectContaining({
+                action: expect.objectContaining({ label: 'Copy link instead' }),
+            }),
+        );
+        toastError.mock.calls[0]?.[1]?.action.onClick();
+        expect(fallback).toHaveBeenCalledOnce();
     });
 });
 

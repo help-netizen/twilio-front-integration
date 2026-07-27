@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { CircleCheckBig, Loader2, LockKeyhole } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { FloatingField } from '../ui/floating-field';
 import {
@@ -18,7 +19,13 @@ import {
     type ManualCardSession,
     type ManualCardSessionResult,
 } from '../../services/stripePaymentsApi';
-import { loadStripe, teardownStripe } from '../../utils/loadStripe';
+import {
+    CardEntryPopupBlockedError,
+    launchCardEntryPopup,
+    type CardEntryPopupHandle,
+    type CardEntryPopupLaunchOptions,
+} from '../../card-entry/opener';
+import type { CardframeResultMessage } from '../../card-entry/protocol';
 import { formatSignedCurrency } from '../jobs/jobFinanceMath';
 
 // Stripe.js does not expose a challenge-start callback. `submitting` is therefore
@@ -97,8 +104,6 @@ export function validateReceiptEmail(value: string): string | null {
 
 export interface ManualCardState {
     phase: ManualCardPhase;
-    cardComplete: boolean;
-    elementError: string | null;
     paymentError: string | null;
     networkChecking: boolean;
     result: ManualCardSessionResult | null;
@@ -109,20 +114,16 @@ type ManualCardAction =
     | { type: 'RESET' }
     | { type: 'SESSION_READY' }
     | { type: 'INITIALIZATION_FAILED'; message: string }
-    | { type: 'CARD_CHANGE'; complete: boolean; error: string | null }
     | { type: 'SUBMIT' }
-    | { type: 'VALIDATION_ERROR'; message: string }
+    | { type: 'POPUP_CANCELED' }
     | { type: 'DECLINED'; message: string | null }
     | { type: 'NETWORK_CHECKING' }
     | { type: 'NETWORK_UNRESOLVED' }
     | { type: 'SUCCEEDED'; result: ManualCardSessionResult }
-    | { type: 'RESULT_ENRICHED'; result: ManualCardSessionResult }
     | { type: 'FINANCE_SYNCED'; sync: Exclude<FinanceSyncState, 'updating'> };
 
 export const INITIAL_MANUAL_CARD_STATE: ManualCardState = {
     phase: 'loading',
-    cardComplete: false,
-    elementError: null,
     paymentError: null,
     networkChecking: false,
     result: null,
@@ -137,14 +138,11 @@ export function manualCardReducer(state: ManualCardState, action: ManualCardActi
             return { ...state, phase: 'idle', paymentError: null };
         case 'INITIALIZATION_FAILED':
             return { ...state, phase: 'idle', paymentError: action.message };
-        case 'CARD_CHANGE':
-            if (state.phase === 'submitting' || state.phase === 'network' || state.phase === 'success') return state;
-            return { ...state, cardComplete: action.complete, elementError: action.error };
         case 'SUBMIT':
-            if ((state.phase !== 'idle' && state.phase !== 'declined') || !state.cardComplete || state.elementError) return state;
+            if (state.phase !== 'idle' && state.phase !== 'declined') return state;
             return { ...state, phase: 'submitting', paymentError: null };
-        case 'VALIDATION_ERROR':
-            return { ...state, phase: 'idle', paymentError: action.message };
+        case 'POPUP_CANCELED':
+            return { ...state, phase: 'idle', paymentError: null, networkChecking: false };
         case 'DECLINED':
             return { ...state, phase: 'declined', paymentError: action.message, networkChecking: false };
         case 'NETWORK_CHECKING':
@@ -160,10 +158,6 @@ export function manualCardReducer(state: ManualCardState, action: ManualCardActi
                 result: action.result,
                 financeSync: 'updating',
             };
-        case 'RESULT_ENRICHED':
-            return state.phase === 'success' && action.result.status === 'succeeded'
-                ? { ...state, result: action.result }
-                : state;
         case 'FINANCE_SYNCED':
             return state.phase === 'success' ? { ...state, financeSync: action.sync } : state;
     }
@@ -192,90 +186,6 @@ export async function settleFinanceSync(
     } catch {
         return 'delayed';
     }
-}
-
-function tokenValue(name: string): string {
-    if (typeof document === 'undefined' || typeof getComputedStyle === 'undefined') return '';
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-export function createCardElementOptions() {
-    const ink = tokenValue('--blanc-ink-1');
-    const muted = tokenValue('--blanc-ink-3');
-    const danger = tokenValue('--blanc-danger');
-    const fontFamily = tokenValue('--blanc-font-body');
-    const base: Record<string, unknown> = {
-        fontSize: '16px',
-        fontSmoothing: 'antialiased',
-        ...(ink ? { color: ink } : {}),
-        ...(fontFamily ? { fontFamily } : {}),
-        ...(muted ? { '::placeholder': { color: muted } } : {}),
-    };
-
-    return {
-        hidePostalCode: false,
-        style: {
-            base,
-            invalid: danger ? { color: danger } : {},
-        },
-    };
-}
-
-interface StripeCardChangeEvent {
-    complete: boolean;
-    error?: { message?: string };
-}
-
-interface StripeCardHandlers {
-    onChange: (event: StripeCardChangeEvent) => void;
-    onFocus: () => void;
-    onBlur: () => void;
-}
-
-export function mountStripeCard(
-    stripe: any,
-    clientSecret: string,
-    mountNode: HTMLDivElement,
-    handlers: StripeCardHandlers,
-) {
-    const elements = stripe.elements({ clientSecret, locale: 'en' });
-    const card = elements.create('card', createCardElementOptions());
-    card.on('change', handlers.onChange);
-    card.on('focus', handlers.onFocus);
-    card.on('blur', handlers.onBlur);
-    card.mount(mountNode);
-
-    let destroyed = false;
-    return {
-        card,
-        destroy: () => {
-            if (destroyed) return;
-            destroyed = true;
-            card.off?.('change', handlers.onChange);
-            card.off?.('focus', handlers.onFocus);
-            card.off?.('blur', handlers.onBlur);
-            if (card.destroy) card.destroy();
-            else card.unmount?.();
-        },
-    };
-}
-
-type ConfirmationDecision =
-    | { kind: 'succeeded' }
-    | { kind: 'declined'; message: string | null }
-    | { kind: 'validation'; message: string }
-    | { kind: 'unknown' };
-
-export function decideConfirmation(response: any): ConfirmationDecision {
-    const status = response?.paymentIntent?.status || response?.error?.payment_intent?.status;
-    if (status === 'succeeded') return { kind: 'succeeded' };
-    if (status === 'requires_payment_method') {
-        return { kind: 'declined', message: response?.error?.message || null };
-    }
-    if (response?.error?.type === 'validation_error') {
-        return { kind: 'validation', message: response.error.message || 'Check the card details and try again.' };
-    }
-    return { kind: 'unknown' };
 }
 
 export const RESULT_RECONCILE_DELAYS_MS = [0, 1000, 2000, 4000, 8000] as const;
@@ -308,6 +218,70 @@ export async function reconcileManualCardSession({
     return null;
 }
 
+interface HandleCardEntryPopupResultOptions {
+    popupResult: CardframeResultMessage;
+    sessionId: number;
+    getResult: (sessionId: number) => Promise<ManualCardSessionResult>;
+    wait: (milliseconds: number) => Promise<void>;
+    isCancelled?: () => boolean;
+    onSucceeded: (result: ManualCardSessionResult) => void | Promise<void>;
+    onDeclined: (message: string | null) => void;
+    onUnresolved: () => void;
+    delays?: readonly number[];
+}
+
+export async function handleCardEntryPopupResult({
+    popupResult,
+    sessionId,
+    getResult,
+    wait,
+    isCancelled = () => false,
+    onSucceeded,
+    onDeclined,
+    onUnresolved,
+    delays,
+}: HandleCardEntryPopupResultOptions): Promise<void> {
+    if (popupResult.status === 'canceled' || isCancelled()) return;
+    const result = await reconcileManualCardSession({
+        sessionId,
+        getResult,
+        wait,
+        isCancelled,
+        ...(delays ? { delays } : {}),
+    });
+    if (isCancelled()) return;
+    if (result?.status === 'succeeded') {
+        await onSucceeded(result);
+        return;
+    }
+    if (result?.status === 'requires_payment_method') {
+        onDeclined(popupResult.message || null);
+        return;
+    }
+    onUnresolved();
+}
+
+export function openManualCardEntryPopup(
+    session: ManualCardSession,
+    onCopyLinkFallback?: () => void | Promise<void>,
+    options?: CardEntryPopupLaunchOptions,
+): CardEntryPopupHandle | null {
+    try {
+        return launchCardEntryPopup(session, options);
+    } catch (error) {
+        if (!(error instanceof CardEntryPopupBlockedError)) throw error;
+        toast.error('Pop-up blocked. Allow pop-ups to enter card details.', {
+            ...(onCopyLinkFallback ? {
+                action: {
+                    label: 'Copy link instead',
+                    onClick: () => { void onCopyLinkFallback(); },
+                },
+            } : {}),
+        });
+        return null;
+    }
+}
+
 interface Props {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -320,9 +294,10 @@ interface Props {
     hasContact?: boolean;
     onPaymentConfirmed?: (payment: ManualCardSessionResult) => boolean | void | Promise<boolean | void>;
     onDone?: () => void;
+    onCopyLinkFallback?: () => void | Promise<void>;
 }
 
-/** Stripe-hosted keyed card entry. PAN, expiry, CVC, and ZIP never enter React state or Albusto APIs. */
+/** Opens Stripe-hosted keyed card entry in a separate top-level browsing context. */
 export default function ManualCardDialog({
     open,
     onOpenChange,
@@ -335,12 +310,10 @@ export default function ManualCardDialog({
     hasContact,
     onPaymentConfirmed,
     onDone,
+    onCopyLinkFallback,
 }: Props) {
-    const mountRef = useRef<HTMLDivElement>(null);
-    const stripeRef = useRef<any>(null);
-    const cardRef = useRef<any>(null);
     const sessionRef = useRef<ManualCardSession | null>(null);
-    const mountedCardRef = useRef<{ destroy: () => void } | null>(null);
+    const popupHandleRef = useRef<CardEntryPopupHandle | null>(null);
     const submitLockRef = useRef(false);
     const receiptSendingRef = useRef(false);
     const reconcileRunningRef = useRef(false);
@@ -355,7 +328,6 @@ export default function ManualCardDialog({
         createManualCardReceiptState,
     );
     const [displayAmount, setDisplayAmount] = useState<number | null>(amount ?? null);
-    const [cardFocused, setCardFocused] = useState(false);
 
     const cancelWaits = useCallback(() => {
         for (const cancel of waitersRef.current.values()) cancel();
@@ -380,7 +352,6 @@ export default function ManualCardDialog({
             dispatch({ type: 'RESET' });
             receiptDispatch({ type: 'RESET', email: contactEmail || '' });
             setDisplayAmount(amount ?? null);
-            setCardFocused(false);
             receiptSendingRef.current = false;
             return;
         }
@@ -403,22 +374,8 @@ export default function ManualCardDialog({
                 const session = jobId != null
                     ? await jobStripeApi.manualCardSession(jobId, amount)
                     : await invoiceStripeApi.manualCardSession(invoiceId!, amount);
-                const stripe = await loadStripe(session.account_id);
-                if (cancelled || flowId !== flowIdRef.current || !mountRef.current) return;
-
-                const mounted = mountStripeCard(stripe, session.client_secret, mountRef.current, {
-                    onChange: event => dispatch({
-                        type: 'CARD_CHANGE',
-                        complete: event.complete,
-                        error: event.error?.message || null,
-                    }),
-                    onFocus: () => setCardFocused(true),
-                    onBlur: () => setCardFocused(false),
-                });
-                stripeRef.current = stripe;
-                cardRef.current = mounted.card;
+                if (cancelled || flowId !== flowIdRef.current) return;
                 sessionRef.current = session;
-                mountedCardRef.current = mounted;
                 setDisplayAmount(session.amount);
                 dispatch({ type: 'SESSION_READY' });
             } catch (error: any) {
@@ -437,10 +394,8 @@ export default function ManualCardDialog({
             cancelled = true;
             flowIdRef.current += 1;
             cancelWaits();
-            mountedCardRef.current?.destroy();
-            mountedCardRef.current = null;
-            stripeRef.current = null;
-            cardRef.current = null;
+            popupHandleRef.current?.cancel();
+            popupHandleRef.current = null;
             sessionRef.current = null;
             submitLockRef.current = false;
             receiptSendingRef.current = false;
@@ -448,24 +403,11 @@ export default function ManualCardDialog({
         };
     }, [open, invoiceId, jobId, amount, cancelWaits]);
 
-    // When the manual-card dialog closes, strip Stripe.js's document footprint so iOS
-    // Safari stops flagging the tab as payment-collecting (otherwise the saved-card
-    // AutoFill bar sticks on every input for the rest of the session). Runs only on
-    // close — never mid-session — so it can't tear down an active card field.
-    useEffect(() => {
-        if (!open) teardownStripe();
-    }, [open]);
-
     // Contact hydration can finish after the panel opens. Adopt that prefill only
     // until the technician edits the field; never recreate the PaymentIntent for it.
     useEffect(() => {
         if (open) receiptDispatch({ type: 'PREFILL', email: contactEmail || '' });
     }, [open, contactEmail]);
-
-    const locked = state.phase === 'submitting' || state.phase === 'network' || state.phase === 'success';
-    useEffect(() => {
-        cardRef.current?.update?.({ disabled: locked });
-    }, [locked]);
 
     const enterSuccess = useCallback((result: ManualCardSessionResult) => {
         if (result.status !== 'succeeded') return;
@@ -480,81 +422,71 @@ export default function ManualCardDialog({
         });
     }, [onPaymentConfirmed]);
 
-    const reconcile = useCallback(async () => {
+    const reconcile = useCallback(async (
+        popupResult: CardframeResultMessage = {
+            kind: 'cardframe:result',
+            status: 'failed',
+        },
+    ) => {
         const session = sessionRef.current;
         if (!session || reconcileRunningRef.current) return;
         reconcileRunningRef.current = true;
         submitLockRef.current = true;
         dispatch({ type: 'NETWORK_CHECKING' });
         const flowId = flowIdRef.current;
-        const result = await reconcileManualCardSession({
+        await handleCardEntryPopupResult({
+            popupResult,
             sessionId: session.session_id,
             getResult: stripePaymentsApi.getManualCardSessionResult,
             wait,
             isCancelled: () => flowId !== flowIdRef.current,
+            onSucceeded: enterSuccess,
+            onDeclined: message => {
+                submitLockRef.current = false;
+                dispatch({ type: 'DECLINED', message });
+            },
+            onUnresolved: () => dispatch({ type: 'NETWORK_UNRESOLVED' }),
         });
         if (flowId !== flowIdRef.current) return;
         reconcileRunningRef.current = false;
-        if (result?.status === 'succeeded') {
-            enterSuccess(result);
-            return;
-        }
-        if (result?.status === 'requires_payment_method') {
-            submitLockRef.current = false;
-            dispatch({ type: 'DECLINED', message: null });
-            return;
-        }
-        dispatch({ type: 'NETWORK_UNRESOLVED' });
     }, [enterSuccess, wait]);
 
-    const submit = useCallback(async () => {
-        const stripe = stripeRef.current;
-        const card = cardRef.current;
+    const submit = useCallback(() => {
         const session = sessionRef.current;
-        if (!stripe || !card || !session || !state.cardComplete || state.elementError || submitLockRef.current) return;
+        if (!session || submitLockRef.current) return;
 
         submitLockRef.current = true;
         dispatch({ type: 'SUBMIT' });
         try {
-            const response = await stripe.confirmCardPayment(session.client_secret, {
-                payment_method: { card },
+            const handle = openManualCardEntryPopup(session, onCopyLinkFallback);
+            if (!handle) {
+                submitLockRef.current = false;
+                dispatch({
+                    type: 'INITIALIZATION_FAILED',
+                    message: 'Allow pop-ups to enter card details, or copy a payment link instead.',
+                });
+                return;
+            }
+            popupHandleRef.current = handle;
+            const flowId = flowIdRef.current;
+            void handle.result.then(popupResult => {
+                if (flowId !== flowIdRef.current) return;
+                popupHandleRef.current = null;
+                if (popupResult.status === 'canceled') {
+                    submitLockRef.current = false;
+                    dispatch({ type: 'POPUP_CANCELED' });
+                    return;
+                }
+                void reconcile(popupResult);
             });
-            const decision = decideConfirmation(response);
-            if (decision.kind === 'succeeded') {
-                const result: ManualCardSessionResult = {
-                    status: 'succeeded',
-                    amount: session.amount,
-                    brand: null,
-                    last4: null,
-                };
-                enterSuccess(result);
-                const flowId = flowIdRef.current;
-                void stripePaymentsApi.getManualCardSessionResult(session.session_id)
-                    .then(enriched => {
-                        if (flowId === flowIdRef.current && enriched.status === 'succeeded') {
-                            dispatch({ type: 'RESULT_ENRICHED', result: enriched });
-                        }
-                    })
-                    .catch(() => {
-                        // confirmCardPayment already returned the authoritative succeeded status.
-                    });
-                return;
-            }
-            if (decision.kind === 'validation') {
-                submitLockRef.current = false;
-                dispatch({ type: 'VALIDATION_ERROR', message: decision.message });
-                return;
-            }
-            if (decision.kind === 'declined') {
-                submitLockRef.current = false;
-                dispatch({ type: 'DECLINED', message: decision.message });
-                return;
-            }
-            await reconcile();
-        } catch {
-            await reconcile();
+        } catch (error: any) {
+            submitLockRef.current = false;
+            dispatch({
+                type: 'INITIALIZATION_FAILED',
+                message: String(error?.message || 'Could not open secure card entry'),
+            });
         }
-    }, [enterSuccess, reconcile, state.cardComplete, state.elementError]);
+    }, [onCopyLinkFallback, reconcile]);
 
     const sendReceipt = useCallback(async () => {
         const sessionId = sessionRef.current?.session_id;
@@ -590,11 +522,6 @@ export default function ManualCardDialog({
         ? `${state.result.brand.charAt(0).toUpperCase()}${state.result.brand.slice(1)} •••• ${state.result.last4}`
         : null;
     const contextLabel = jobId != null ? `Job ${jobId}` : 'Invoice';
-    const cardBorder = state.elementError
-        ? 'var(--blanc-danger)'
-        : cardFocused
-            ? 'var(--blanc-accent)'
-            : 'transparent';
     const receiptLocked = receiptState.phase === 'sending' || receiptState.phase === 'sent';
     const showContactSaveCaption = shouldShowReceiptContactSaveCaption(
         hasContact,
@@ -638,28 +565,26 @@ export default function ManualCardDialog({
 
                                 {state.phase === 'loading' && !state.paymentError && (
                                     <div className="flex items-center gap-2 py-6 text-sm text-[var(--blanc-ink-2)]">
-                                        <Loader2 className="size-4 animate-spin" /> Preparing secure form…
+                                        <Loader2 className="size-4 animate-spin" /> Preparing payment…
                                     </div>
                                 )}
 
-                                <div className={`space-y-2 ${state.phase === 'loading' ? 'pointer-events-none opacity-0' : ''}`}>
-                                    <div
-                                        ref={mountRef}
-                                        aria-label="Card number, MM/YY, CVC, ZIP"
-                                        className={`min-h-[52px] rounded-[10px] px-4 py-[17px] transition-opacity ${locked ? 'pointer-events-none opacity-60' : ''}`}
-                                        style={{
-                                            background: 'var(--blanc-field)',
-                                            border: `1.5px solid ${cardBorder}`,
-                                        }}
-                                    />
-                                    <p className="text-xs text-[var(--blanc-ink-3)]">Secure card fields by Stripe</p>
-                                </div>
-
-                                {state.elementError && (
-                                    <p className="text-sm text-[var(--blanc-danger)]" role="alert">{state.elementError}</p>
-                                )}
                                 {state.phase === 'idle' && state.paymentError && (
                                     <p className="text-sm text-[var(--blanc-danger)]" role="alert">{state.paymentError}</p>
+                                )}
+
+                                {state.phase === 'idle' && !state.paymentError && (
+                                    <div className="space-y-1 rounded-2xl bg-[var(--blanc-field)] px-4 py-3 text-sm">
+                                        <strong className="block text-[var(--blanc-ink-1)]">Card entry opens in a separate secure window</strong>
+                                        <span className="block text-[var(--blanc-ink-2)]">Complete or cancel the payment there, then return here for the result.</span>
+                                    </div>
+                                )}
+
+                                {state.phase === 'submitting' && (
+                                    <div className="flex items-center gap-2 rounded-2xl bg-[var(--blanc-field)] px-4 py-3 text-sm text-[var(--blanc-ink-2)]" role="status">
+                                        <Loader2 className="size-4 animate-spin" />
+                                        Complete the payment in the secure card-entry window.
+                                    </div>
                                 )}
 
                                 {state.phase === 'declined' && (
@@ -766,14 +691,14 @@ export default function ManualCardDialog({
                             ) : (
                                 <Button
                                     onClick={() => void submit()}
-                                    disabled={state.phase === 'loading' || state.phase === 'submitting' || !state.cardComplete || !!state.elementError}
+                                    disabled={state.phase === 'loading' || state.phase === 'submitting' || !sessionRef.current}
                                 >
                                     {state.phase === 'submitting' && <Loader2 className="mr-2 size-4 animate-spin" />}
                                     {state.phase === 'submitting'
-                                        ? `Charging ${amountText}…`
+                                        ? 'Card entry open…'
                                         : state.phase === 'declined'
-                                            ? 'Try again'
-                                            : `Charge ${amountText}`}
+                                            ? 'Try another card'
+                                            : `Open card entry · ${amountText}`}
                                 </Button>
                             )}
                         </>

@@ -927,6 +927,7 @@ export function InvoiceDetailPanel({
                 contactEmail={invoice.contact_email}
                 hasContact={invoice.contact_id != null}
                 onPaymentConfirmed={revalidateAfterCardPayment}
+                onCopyLinkFallback={() => collectPayment('copy')}
             />
         </div>
     );

@@ -1,0 +1,113 @@
+@import '../styles/tailwind.css';
+@import '../styles/design-system.css';
+
+.card-entry-page {
+    min-height: 100dvh;
+    background: var(--blanc-bg);
+    color: var(--blanc-ink-1);
+    padding: 24px;
+}
+
+.card-entry-shell {
+    margin: 0 auto;
+    max-width: 420px;
+    border-radius: var(--blanc-radius-lg);
+    background: var(--blanc-surface-strong);
+    box-shadow: var(--blanc-shadow-main);
+    padding: 28px;
+}
+
+.card-entry-eyebrow {
+    color: var(--blanc-ink-3);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.card-entry-title {
+    margin-top: 8px;
+    color: var(--blanc-ink-1);
+    font-family: var(--blanc-font-heading);
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.card-entry-amount {
+    margin-top: 6px;
+    color: var(--blanc-ink-2);
+    font-size: 16px;
+}
+
+.card-entry-security {
+    margin-top: 22px;
+    border-radius: var(--blanc-radius-md);
+    background: var(--blanc-accent-soft);
+    color: var(--blanc-ink-2);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 12px 14px;
+}
+
+.card-entry-field {
+    min-height: 52px;
+    margin-top: 20px;
+    border: 1.5px solid transparent;
+    border-radius: var(--blanc-radius-sm);
+    background: var(--blanc-field);
+    padding: 17px 16px;
+}
+
+.card-entry-field[data-focused='true'] {
+    border-color: var(--blanc-accent);
+}
+
+.card-entry-field[data-error='true'] {
+    border-color: var(--blanc-danger);
+}
+
+.card-entry-field[data-disabled='true'] {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.card-entry-caption,
+.card-entry-status {
+    margin-top: 8px;
+    color: var(--blanc-ink-3);
+    font-size: 12px;
+}
+
+.card-entry-status[data-error='true'] {
+    color: var(--blanc-danger);
+}
+
+.card-entry-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 24px;
+}
+
+.card-entry-button {
+    min-height: 42px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 18px;
+}
+
+.card-entry-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.card-entry-button-secondary {
+    border: 1px solid var(--blanc-line-strong);
+    color: var(--blanc-ink-2);
+}
+
+.card-entry-button-primary {
+    flex: 1;
+    background: var(--blanc-accent);
+    color: var(--primary-foreground);
+}

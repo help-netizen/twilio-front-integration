@@ -366,6 +366,7 @@ export function CollectPaymentDialog({
                 hasContact={hasContact}
                 onPaymentConfirmed={manualCardCallbacks.onPaymentConfirmed}
                 onDone={manualCardCallbacks.onDone}
+                onCopyLinkFallback={copyLink}
             />
         </>
     );
