@@ -39,6 +39,28 @@ const ROLLBACK_SQL = fs.readFileSync(
     ),
     'utf8'
 );
+const REASON_MIGRATION_SQL = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        '211_payment_transaction_void_reason.sql'
+    ),
+    'utf8'
+);
+const REASON_ROLLBACK_SQL = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        'rollback_211_payment_transaction_void_reason.sql'
+    ),
+    'utf8'
+);
 
 let client;
 let originalQuery;
@@ -101,14 +123,15 @@ async function rowBytes(table, id) {
     return rows[0]?.snapshot;
 }
 
-function voidPayment(companyId, userId, invoiceId, paymentId) {
+function voidPayment(companyId, userId, invoiceId, paymentId, reason = null) {
     return paymentsService.voidInvoicePayment(
         companyId,
         userId,
         invoiceId,
         paymentId,
         client,
-        userActor(userId)
+        userActor(userId),
+        reason
     );
 }
 
@@ -119,6 +142,7 @@ beforeAll(async () => {
     db.query = (text, params) => client.query(text, params);
 
     await db.query(MIGRATION_SQL);
+    await db.query(REASON_MIGRATION_SQL);
 
     companyA = randomUUID();
     companyB = randomUUID();
@@ -193,13 +217,20 @@ describe('manual invoice payment void contract', () => {
             net_amount: 100,
         });
 
-        const result = await voidPayment(companyA, userA, invoice.id, ledger[0].id);
+        const result = await voidPayment(
+            companyA,
+            userA,
+            invoice.id,
+            ledger[0].id,
+            '  Bounced check  '
+        );
 
         expect(result.idempotent).toBe(false);
         expect(result.payment).toMatchObject({
             id: ledger[0].id,
             status: 'voided',
             voided_by: userA,
+            void_reason: 'Bounced check',
         });
         expect(result.payment.voided_at).toBeTruthy();
         expect({
@@ -232,24 +263,89 @@ describe('manual invoice payment void contract', () => {
             `SELECT actor_id, action, target_type, target_id, company_id, details
              FROM audit_log
              WHERE company_id = $1
-               AND action = 'invoice.payment_voided'
+               AND action = 'payment.voided'
                AND target_id = $2`,
-            [companyA, String(invoice.id)]
+            [companyA, String(ledger[0].id)]
         );
         expect(audits).toEqual([
             expect.objectContaining({
                 actor_id: userA,
-                action: 'invoice.payment_voided',
-                target_type: 'invoice',
-                target_id: String(invoice.id),
+                action: 'payment.voided',
+                target_type: 'payment',
+                target_id: String(ledger[0].id),
                 company_id: companyA,
                 details: expect.objectContaining({
-                    summary: expect.objectContaining({
-                        payment_id: String(ledger[0].id),
-                    }),
+                    summary: {
+                        status: 'voided',
+                        amount: 100,
+                        currency: 'USD',
+                    },
+                    parent_type: null,
+                    parent_id: null,
                 }),
             }),
         ]);
+        expect(JSON.stringify(audits[0].details)).not.toContain('Bounced check');
+    });
+
+    test('requires a trimmed 1-500 character reason on the canonical API', async () => {
+        const invoice = await createInvoice({
+            label: 'reason-bounds',
+            amountPaid: 10,
+            status: 'partial',
+        });
+        const payment = await createPayment({
+            invoiceId: invoice.id,
+            amount: 10,
+            source: 'manual',
+        });
+        const before = await rowBytes('payment_transactions', payment.id);
+
+        await expect(paymentsService.voidPayment(
+            companyA,
+            userA,
+            payment.id,
+            { reason: '   ', invoiceId: invoice.id },
+            client,
+            userActor(userA)
+        )).rejects.toMatchObject({ code: 'VALIDATION', httpStatus: 400 });
+        await expect(paymentsService.voidPayment(
+            companyA,
+            userA,
+            payment.id,
+            { reason: 'x'.repeat(501), invoiceId: invoice.id },
+            client,
+            userActor(userA)
+        )).rejects.toMatchObject({ code: 'VALIDATION', httpStatus: 400 });
+        expect(await rowBytes('payment_transactions', payment.id)).toBe(before);
+
+        const result = await paymentsService.voidPayment(
+            companyA,
+            userA,
+            payment.id,
+            { reason: `  ${'x'.repeat(500)}  `, invoiceId: invoice.id },
+            client,
+            userActor(userA)
+        );
+        expect(result.payment.void_reason).toHaveLength(500);
+        expect(result.payment.void_reason).toBe('x'.repeat(500));
+    });
+
+    test('historical voided rows remain valid with a null reason', async () => {
+        const invoice = await createInvoice({ label: 'historical-null-reason' });
+        const payment = await createPayment({
+            invoiceId: invoice.id,
+            amount: 15,
+            source: 'manual',
+        });
+        const { rows } = await db.query(
+            `UPDATE payment_transactions
+             SET status = 'voided', voided_at = NOW(), voided_by = $3
+             WHERE id = $1 AND company_id = $2
+             RETURNING void_reason`,
+            [payment.id, companyA, userA]
+        );
+        expect(rows).toEqual([{ void_reason: null }]);
     });
 
     test('voiding a manual payment preserves remaining paid money and sorts the voided row last', async () => {
@@ -361,8 +457,8 @@ describe('manual invoice payment void contract', () => {
             `SELECT COUNT(*)::INT AS count
              FROM audit_log
              WHERE company_id = $1
-               AND action = 'invoice.payment_voided'
-               AND details->'summary'->>'payment_id' = $2`,
+               AND action = 'payment.voided'
+               AND target_id = $2`,
             [companyA, String(payment.id)]
         );
 
@@ -375,8 +471,8 @@ describe('manual invoice payment void contract', () => {
             `SELECT COUNT(*)::INT AS count
              FROM audit_log
              WHERE company_id = $1
-               AND action = 'invoice.payment_voided'
-               AND details->'summary'->>'payment_id' = $2`,
+               AND action = 'payment.voided'
+               AND target_id = $2`,
             [companyA, String(payment.id)]
         );
         expect(auditsAfterSecond.rows[0].count).toBe(auditsAfterFirst.rows[0].count);
@@ -425,7 +521,9 @@ describe('manual invoice payment void contract', () => {
         });
     });
 
-    test('rollback removes only migration backfill rows and both void columns', async () => {
+    test('rollback removes only migration backfill rows and void columns', async () => {
+        await db.query(REASON_ROLLBACK_SQL);
+        await db.query(REASON_ROLLBACK_SQL);
         await db.query(ROLLBACK_SQL);
         await db.query(ROLLBACK_SQL);
 
@@ -434,7 +532,7 @@ describe('manual invoice payment void contract', () => {
              FROM information_schema.columns
              WHERE table_schema = current_schema()
                AND table_name = 'payment_transactions'
-               AND column_name IN ('voided_at', 'voided_by')`
+               AND column_name IN ('voided_at', 'voided_by', 'void_reason')`
         );
         expect(columns).toHaveLength(0);
 

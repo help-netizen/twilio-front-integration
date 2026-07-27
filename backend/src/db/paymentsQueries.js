@@ -334,24 +334,6 @@ async function updateTransactionStatus(id, companyId, status, extraSets = {}, cl
 }
 
 /**
- * Void a transaction (only if not already voided/refunded).
- */
-async function voidTransaction(id, companyId, voidedBy, client = null) {
-    const query = queryFor(client);
-    const { rows } = await query(
-        `UPDATE payment_transactions
-         SET status = 'voided',
-             voided_at = NOW(),
-             voided_by = $3,
-             updated_at = NOW()
-         WHERE id = $1 AND company_id = $2 AND status NOT IN ('voided', 'refunded')
-         RETURNING *`,
-        [id, companyId, voidedBy]
-    );
-    return rows[0] || null;
-}
-
-/**
  * Create a refund transaction linked to the original.
  * Also updates the original transaction status to 'refunded'.
  */
@@ -371,17 +353,18 @@ async function createRefundTransaction(companyId, originalTxId, amount, recorded
             company_id, contact_id, estimate_id, invoice_id, job_id,
             transaction_type, payment_method, status,
             amount, currency, reference_number,
-            memo, metadata, processed_at, recorded_by
+            external_source, memo, metadata, processed_at, recorded_by
         ) VALUES (
             $1, $2, $3, $4, $5,
             'refund', $6, 'completed',
             $7, $8, $9,
-            $10, $11, NOW(), $12
+            $10, $11, $12, NOW(), $13
         ) RETURNING *`,
         [
             companyId, original.contact_id, original.estimate_id, original.invoice_id, original.job_id,
             original.payment_method,
             -Math.abs(amount), original.currency, original.reference_number,
+            original.external_source,
             `Refund for transaction #${originalTxId}`,
             JSON.stringify({ original_transaction_id: originalTxId }),
             recordedBy,
@@ -483,33 +466,51 @@ async function getTransactionForInvoice(companyId, invoiceId, paymentId, client 
 }
 
 /**
- * Atomically void a completed invoice payment and reverse only that payment's
- * contribution to the materialized invoice totals.
+ * Lock and void one canonical manual payment. Invoice-linked and standalone
+ * Job payments use this same statement; an optional invoice id makes the
+ * nested invoice route a tenant-scoped compatibility adapter.
  */
-async function voidInvoicePayment(companyId, invoiceId, paymentId, voidedBy, client = null) {
+async function voidPayment(
+    companyId,
+    paymentId,
+    voidedBy,
+    voidReason,
+    expectedInvoiceId = null,
+    client = null
+) {
     const query = queryFor(client);
     const { rows } = await query(
         `WITH candidate AS MATERIALIZED (
             SELECT pt.*
             FROM payment_transactions pt
             WHERE pt.company_id = $1
-              AND pt.invoice_id = $2
-              AND pt.id = $3
+              AND pt.id = $2
+              AND ($5::BIGINT IS NULL OR pt.invoice_id = $5::BIGINT)
             FOR UPDATE
         ),
         voided_payment AS (
             UPDATE payment_transactions pt
             SET status = 'voided',
                 voided_at = NOW(),
-                voided_by = $4,
+                voided_by = $3,
+                void_reason = $4,
                 updated_at = NOW()
             FROM candidate c
             WHERE pt.id = c.id
               AND pt.company_id = $1
-              AND pt.invoice_id = $2
-              AND pt.transaction_type = 'payment'
-              AND pt.status = 'completed'
-              AND pt.voided_at IS NULL
+              AND c.transaction_type = 'payment'
+              AND c.status = 'completed'
+              AND c.external_source = 'manual'
+              AND c.voided_at IS NULL
+              AND (
+                    c.invoice_id IS NULL
+                 OR EXISTS (
+                        SELECT 1
+                        FROM invoices owned_invoice
+                        WHERE owned_invoice.id = c.invoice_id
+                          AND owned_invoice.company_id = $1
+                    )
+              )
             RETURNING pt.*
         ),
         updated_invoice AS (
@@ -543,15 +544,34 @@ async function voidInvoicePayment(companyId, invoiceId, paymentId, voidedBy, cli
                 END,
                 updated_at = NOW()
             FROM voided_payment v
-            WHERE i.id = $2
+            WHERE v.invoice_id IS NOT NULL
+              AND i.id = v.invoice_id
               AND i.company_id = $1
             RETURNING i.*
         )
         SELECT
+            c.id AS candidate_id,
+            c.transaction_type AS candidate_transaction_type,
+            c.status AS candidate_status,
+            c.external_source AS candidate_external_source,
+            c.invoice_id AS candidate_invoice_id,
+            c.voided_at AS candidate_voided_at,
+            CASE
+                WHEN c.invoice_id IS NULL THEN TRUE
+                ELSE EXISTS (
+                    SELECT 1
+                    FROM invoices owned_invoice
+                    WHERE owned_invoice.id = c.invoice_id
+                      AND owned_invoice.company_id = $1
+                )
+            END AS linked_invoice_owned,
             EXISTS (SELECT 1 FROM voided_payment) AS did_void,
-            EXISTS (SELECT 1 FROM updated_invoice) AS invoice_updated
-        FROM candidate`,
-        [companyId, invoiceId, paymentId, voidedBy]
+            CASE
+                WHEN c.invoice_id IS NULL THEN TRUE
+                ELSE EXISTS (SELECT 1 FROM updated_invoice)
+            END AS invoice_updated
+        FROM candidate c`,
+        [companyId, paymentId, voidedBy, voidReason, expectedInvoiceId]
     );
     return rows[0] || null;
 }
@@ -605,11 +625,11 @@ async function getTransactionSummary(companyId, filters = {}) {
 
     const { rows } = await db.query(`
         SELECT
-            COALESCE(SUM(CASE WHEN transaction_type = 'payment' AND status = 'completed' THEN amount ELSE 0 END), 0) AS total_collected,
+            COALESCE(SUM(CASE WHEN transaction_type = 'payment' AND status IN ('completed', 'refunded') THEN amount ELSE 0 END), 0) AS total_collected,
             COALESCE(SUM(CASE WHEN transaction_type = 'refund' AND status = 'completed' THEN ABS(amount) ELSE 0 END), 0) AS total_refunded,
             COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) AS total_pending,
             COALESCE(
-                SUM(CASE WHEN transaction_type = 'payment' AND status = 'completed' THEN amount ELSE 0 END) -
+                SUM(CASE WHEN transaction_type = 'payment' AND status IN ('completed', 'refunded') THEN amount ELSE 0 END) -
                 SUM(CASE WHEN transaction_type = 'refund' AND status = 'completed' THEN ABS(amount) ELSE 0 END),
             0) AS net_amount
         FROM payment_transactions
@@ -635,9 +655,8 @@ module.exports = {
     createTransaction,
     findByExternalSourceId,
     updateTransactionStatus,
-    voidTransaction,
     getTransactionForInvoice,
-    voidInvoicePayment,
+    voidPayment,
     createRefundTransaction,
     getReceipt,
     createReceipt,

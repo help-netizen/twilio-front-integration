@@ -361,18 +361,29 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
     // the payment_transactions ledger (debt #6). Zenbooker is the master payment
     // system, so when a job carries Zenbooker-source rows those are authoritative
     // and native rows are ignored to avoid double counting; otherwise native
-    // rows are summed. Refunds/voids/failures excluded. Numbers verified
+    // rows are summed. Completed refunds offset gross completed/refunded
+    // payments; voids/failures are excluded. Numbers verified
     // identical to the legacy zb_payments path on a prod-data copy (migration 104).
+    const effectiveSource = `COALESCE(
+      NULLIF(pt.external_source, ''),
+      refund_origin.external_source
+    )`;
     const ledgerSum = (scope) => `
       COALESCE((
         SELECT SUM(
           CASE
-            WHEN pt.transaction_type = 'payment' AND pt.status = 'completed' THEN pt.amount
+            WHEN pt.transaction_type = 'payment'
+             AND pt.status IN ('completed', 'refunded') THEN pt.amount
             WHEN pt.transaction_type = 'refund'  AND pt.status = 'completed' THEN -ABS(pt.amount)
             ELSE 0
           END
         )
         FROM payment_transactions pt
+        LEFT JOIN payment_transactions refund_origin
+          ON pt.transaction_type = 'refund'
+         AND refund_origin.company_id = pt.company_id
+         AND refund_origin.transaction_type = 'payment'
+         AND refund_origin.id::text = pt.metadata->>'original_transaction_id'
         WHERE pt.job_id = j.id
           AND pt.company_id = j.company_id
           AND pt.voided_at IS NULL ${scope}
@@ -383,7 +394,7 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
                      WHERE pt.job_id = j.id
                        AND pt.company_id = j.company_id
                        AND pt.external_source = 'zenbooker')
-          THEN ${ledgerSum("AND pt.external_source = 'zenbooker'")}
+          THEN ${ledgerSum(`AND ${effectiveSource} = 'zenbooker'`)}
         ELSE ${ledgerSum('')}
       END
     `;

@@ -147,15 +147,15 @@ export function useTransactions() {
         }
     }, [loadTransactions, loadSummary, selectedTransaction, transactions]);
 
-    const handleVoid = useCallback(async (id: number) => {
-        const txn = await paymentsApi.voidTransaction(id);
+    const handleVoid = useCallback(async (id: number, reason?: string) => {
+        const { payment } = await paymentsApi.voidTransaction(id, reason);
         toast.success('Transaction voided');
         await loadTransactions();
         await loadSummary();
         if (selectedTransaction?.id === id) {
-            setSelectedTransaction(txn);
+            setSelectedTransaction(payment);
         }
-        return txn;
+        return payment;
     }, [loadTransactions, loadSummary, selectedTransaction]);
 
     const handleSendReceipt = useCallback(async (id: number, data: SendReceiptData) => {

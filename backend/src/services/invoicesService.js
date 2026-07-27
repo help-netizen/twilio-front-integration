@@ -834,7 +834,8 @@ async function voidPayment(
     invoiceId,
     paymentId,
     client = null,
-    activityActor = null
+    activityActor = null,
+    reason = null
 ) {
     return paymentsService.voidInvoicePayment(
         companyId,
@@ -842,7 +843,8 @@ async function voidPayment(
         invoiceId,
         paymentId,
         client,
-        activityActor
+        activityActor,
+        reason
     );
 }
 

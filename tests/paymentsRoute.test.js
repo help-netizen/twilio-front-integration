@@ -306,12 +306,16 @@ const mockCanonical = {
     recordManualPayment: jest.fn(),
     getTransaction: jest.fn(),
     refundTransaction: jest.fn(),
+    voidPayment: jest.fn(),
     voidTransaction: jest.fn(),
     getReceipt: jest.fn(),
     sendReceipt: jest.fn(),
 };
 jest.mock('../backend/src/services/paymentsService', () => mockCanonical);
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+jest.mock('../backend/src/services/transactionService', () => ({
+    withTransaction: jest.fn(work => work({ query: jest.fn() })),
+}));
 
 describe('PF007: canonical payments router', () => {
     const COMPANY = '00000000-0000-0000-0000-00000000000a';
@@ -370,5 +374,95 @@ describe('PF007: canonical payments router', () => {
         const res = await request(canonicalApp({ permissions: ['payments.view', 'payments.collect_online'] }), 'POST', '/tx-1/refund', { amount: 5 });
         expect(res.status).toBe(403);
         expect(mockCanonical.refundTransaction).not.toHaveBeenCalled();
+    });
+
+    it('manual void requires payments.collect_offline, not payments.refund', async () => {
+        const denied = await request(
+            canonicalApp({ permissions: ['payments.refund'] }),
+            'POST',
+            '/tx-1/void',
+            { reason: 'Bounced check' }
+        );
+        expect(denied.status).toBe(403);
+        expect(mockCanonical.voidPayment).not.toHaveBeenCalled();
+
+        mockCanonical.voidPayment.mockResolvedValue({
+            payment: {
+                id: 'tx-1',
+                status: 'voided',
+                void_reason: 'Bounced check',
+            },
+            invoice: null,
+            idempotent: false,
+        });
+        const allowed = await request(
+            canonicalApp({ permissions: ['payments.collect_offline'] }),
+            'POST',
+            '/tx-1/void',
+            { reason: '  Bounced check  ' }
+        );
+
+        expect(allowed.status).toBe(200);
+        expect(allowed.body).toEqual({
+            ok: true,
+            data: {
+                payment: {
+                    id: 'tx-1',
+                    status: 'voided',
+                    void_reason: 'Bounced check',
+                },
+                invoice: null,
+                idempotent: false,
+            },
+        });
+        expect(mockCanonical.voidPayment).toHaveBeenCalledWith(
+            COMPANY,
+            'u-1',
+            'tx-1',
+            expect.objectContaining({
+                reason: '  Bounced check  ',
+                allowMissingReason: true,
+            }),
+            expect.objectContaining({ query: expect.any(Function) }),
+            {
+                id: 'u-1',
+                type: 'user',
+                label: null,
+                source: 'crm',
+            }
+        );
+        expect(mockCanonical.voidPayment.mock.calls[0]).not.toContain('kc');
+        expect(mockCanonical.voidPayment.mock.calls[0]).not.toContain(
+            'LEGACY-DO-NOT-USE'
+        );
+    });
+
+    it('allows canonical manual void without a reason', async () => {
+        mockCanonical.voidPayment.mockResolvedValue({
+            payment: {
+                id: 'tx-2',
+                status: 'voided',
+                void_reason: null,
+            },
+            invoice: null,
+            idempotent: false,
+        });
+
+        const response = await request(
+            canonicalApp({ permissions: ['payments.collect_offline'] }),
+            'POST',
+            '/tx-2/void'
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.body.data.payment.void_reason).toBeNull();
+        expect(mockCanonical.voidPayment).toHaveBeenCalledWith(
+            COMPANY,
+            'u-1',
+            'tx-2',
+            { reason: undefined, allowMissingReason: true },
+            expect.objectContaining({ query: expect.any(Function) }),
+            expect.objectContaining({ id: 'u-1', type: 'user' })
+        );
     });
 });

@@ -4,6 +4,7 @@ const mockPayments = {
     createTransaction: jest.fn(),
     getTransactionById: jest.fn(),
     createRefundTransaction: jest.fn(),
+    voidPayment: jest.fn(),
     voidTransaction: jest.fn(),
 };
 const mockInvoices = {
@@ -147,9 +148,21 @@ test('refund and void use their canonical Payment actions and share the mutation
         transaction_type: 'refund',
         amount: -10,
     });
-    mockPayments.voidTransaction.mockResolvedValue({
+    const voided = {
         ...original,
         status: 'voided',
+        void_reason: 'Bounced check',
+    };
+    mockPayments.voidPayment.mockResolvedValue({
+        candidate_id: original.id,
+        candidate_transaction_type: 'payment',
+        candidate_status: 'completed',
+        candidate_external_source: 'manual',
+        candidate_invoice_id: null,
+        candidate_voided_at: null,
+        linked_invoice_owned: true,
+        did_void: true,
+        invoice_updated: true,
     });
 
     await paymentsService.refundTransaction(
@@ -160,16 +173,33 @@ test('refund and void use their canonical Payment actions and share the mutation
         CLIENT,
         HUMAN_ACTOR
     );
-    await paymentsService.voidTransaction(
+    mockPayments.getTransactionById.mockResolvedValueOnce(voided);
+    await paymentsService.voidPayment(
         COMPANY,
         CRM_USER,
         original.id,
+        { reason: '  Bounced check  ' },
         CLIENT,
         HUMAN_ACTOR
     );
 
     expect(mockLogFinancialActivity.mock.calls.map(([event]) => event.action))
         .toEqual(['payment.refunded', 'payment.voided']);
+    const voidEvent = mockLogFinancialActivity.mock.calls[1][0];
+    expect(voidEvent.summary).toEqual({
+        status: 'voided',
+        amount: 40,
+        currency: 'USD',
+    });
+    expect(voidEvent.summary).not.toHaveProperty('reason');
+    expect(mockPayments.voidPayment).toHaveBeenCalledWith(
+        COMPANY,
+        original.id,
+        CRM_USER,
+        'Bounced check',
+        null,
+        CLIENT
+    );
     expect(mockLogFinancialActivity.mock.calls.every(([, options]) => (
         options.client === CLIENT
     ))).toBe(true);

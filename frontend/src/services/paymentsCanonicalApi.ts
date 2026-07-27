@@ -44,6 +44,9 @@ export interface PaymentTransaction {
     recorded_by: string | null;
     created_at: string;
     updated_at: string;
+    voided_at?: string | null;
+    voided_by?: string | null;
+    void_reason?: string | null;
 }
 
 export interface PaymentReceipt {
@@ -194,9 +197,17 @@ export async function refundTransaction(id: number, data: RefundData): Promise<P
     });
 }
 
-export async function voidTransaction(id: number): Promise<PaymentTransaction> {
-    return paymentsRequest<PaymentTransaction>(`${PAYMENTS_BASE}/${id}/void`, {
+export interface VoidTransactionResult {
+    payment: PaymentTransaction;
+    invoice: unknown | null;
+    idempotent: boolean;
+}
+
+export async function voidTransaction(id: number, reason?: string): Promise<VoidTransactionResult> {
+    const trimmed = reason?.trim();
+    return paymentsRequest<VoidTransactionResult>(`${PAYMENTS_BASE}/${id}/void`, {
         method: 'POST',
+        body: JSON.stringify(trimmed ? { reason: trimmed } : {}),
     });
 }
 

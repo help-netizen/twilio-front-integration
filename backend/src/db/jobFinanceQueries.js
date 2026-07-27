@@ -28,17 +28,49 @@ async function listJobPaymentRollups(companyId, jobIds, client = null) {
         ),
         standalone_rollup AS (
             SELECT pt.company_id, pt.job_id,
-                   SUM(pt.amount) AS standalone_paid,
-                   SUM(pt.amount) FILTER (
-                       WHERE pt.external_source IS DISTINCT FROM 'zenbooker'
+                   SUM(
+                       CASE
+                           WHEN pt.transaction_type = 'payment'
+                            AND pt.status IN ('completed', 'refunded')
+                               THEN pt.amount
+                           WHEN pt.transaction_type = 'refund'
+                            AND pt.status = 'completed'
+                               THEN -ABS(pt.amount)
+                           ELSE 0
+                       END
+                   ) AS standalone_paid,
+                   SUM(
+                       CASE
+                           WHEN pt.transaction_type = 'payment'
+                            AND pt.status IN ('completed', 'refunded')
+                               THEN pt.amount
+                           WHEN pt.transaction_type = 'refund'
+                            AND pt.status = 'completed'
+                               THEN -ABS(pt.amount)
+                           ELSE 0
+                       END
+                   ) FILTER (
+                       WHERE COALESCE(
+                           NULLIF(pt.external_source, ''),
+                           refund_origin.external_source
+                       ) IS DISTINCT FROM 'zenbooker'
                    ) AS standalone_due_offset
             FROM payment_transactions pt
+            LEFT JOIN payment_transactions refund_origin
+              ON pt.transaction_type = 'refund'
+             AND refund_origin.company_id = pt.company_id
+             AND refund_origin.transaction_type = 'payment'
+             AND refund_origin.id::TEXT = pt.metadata->>'original_transaction_id'
             WHERE pt.job_id = ANY($1)
               AND pt.company_id = $2
               AND pt.invoice_id IS NULL
-              AND pt.transaction_type = 'payment'
-              AND pt.status = 'completed'
               AND pt.voided_at IS NULL
+              AND (
+                    (pt.transaction_type = 'payment'
+                     AND pt.status IN ('completed', 'refunded'))
+                 OR (pt.transaction_type = 'refund'
+                     AND pt.status = 'completed')
+              )
             GROUP BY pt.company_id, pt.job_id
         ),
         jobs_with_money AS (

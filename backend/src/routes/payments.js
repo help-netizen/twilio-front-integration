@@ -258,17 +258,19 @@ router.post('/:id/stripe-refund', requirePermission('payments.refund'), async (r
     }
 });
 
-// POST /api/payments/:id/void — Void payment
-router.post('/:id/void', requirePermission('payments.refund'), async (req, res) => {
+// POST /api/payments/:id/void — Void a manual/offline payment
+router.post('/:id/void', requirePermission('payments.collect_offline'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const userId = req.user?.crmUser?.id || null;
         const { id } = req.params;
+        const { reason } = req.body || {};
 
-        const result = await withTransaction(client => paymentsService.voidTransaction(
+        const result = await withTransaction(client => paymentsService.voidPayment(
             companyId,
             userId,
             id,
+            { reason, allowMissingReason: true },
             client,
             userActor(userId)
         ));

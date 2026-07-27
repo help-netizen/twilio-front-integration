@@ -37,21 +37,52 @@ describe('calculateJobFinanceSummary', () => {
             .toEqual({ estimated: 0, invoiced: 0, paid: 95, due: 0 });
     });
 
-    it('combines invoice paid with only completed standalone payment rows', () => {
+    it('nets a completed refund against standalone payments and ignores invoice-linked/pending rows', () => {
         const payments = [
-            { amount: '25', invoice_id: null, transaction_type: 'payment', status: 'completed', external_source: 'manual' },
-            { amount: '100', invoice_id: 8, transaction_type: 'payment', status: 'completed' },
-            { amount: '50', invoice_id: null, transaction_type: 'payment', status: 'pending' },
-            { amount: '10', invoice_id: null, transaction_type: 'refund', status: 'completed' },
+            { id: 1, amount: '25', invoice_id: null, transaction_type: 'payment', status: 'completed', external_source: 'manual' },
+            { id: 2, amount: '100', invoice_id: 8, transaction_type: 'payment', status: 'completed' },
+            { id: 3, amount: '50', invoice_id: null, transaction_type: 'payment', status: 'pending' },
+            { id: 4, amount: '10', invoice_id: null, transaction_type: 'refund', status: 'completed' },
         ];
 
-        expect(completedStandalonePaid(payments)).toBe(25);
-        expect(completedStandaloneDueOffset(payments)).toBe(25);
+        // 25 completed payment − 10 completed refund = 15 (pending + invoice-linked ignored).
+        expect(completedStandalonePaid(payments)).toBe(15);
+        expect(completedStandaloneDueOffset(payments)).toBe(15);
         expect(calculateJobFinanceSummary(
             [{ total: '150' }],
             [{ total: '100', amount_paid: '40' }],
             payments,
-        )).toEqual({ estimated: 150, invoiced: 100, paid: 65, due: 35 });
+        )).toEqual({ estimated: 150, invoiced: 100, paid: 55, due: 45 });
+    });
+
+    it('TXN-STATUS-VOID-001: gross counts refunded originals, nets the refund, excludes voided', () => {
+        const payments = [
+            { id: 1, amount: '100', invoice_id: null, transaction_type: 'payment', status: 'refunded', external_source: 'manual' },
+            { id: 2, amount: '30', invoice_id: null, transaction_type: 'refund', status: 'completed', external_source: null, metadata: { original_transaction_id: 1 } },
+            { id: 3, amount: '40', invoice_id: null, transaction_type: 'payment', status: 'voided', voided_at: '2026-01-01T00:00:00Z', external_source: 'manual' },
+        ];
+
+        // $100 payment (now 'refunded') still counts gross; −$30 refund → net $70; the voided $40 contributes nothing.
+        expect(completedStandalonePaid(payments)).toBe(70);
+        expect(completedStandaloneDueOffset(payments)).toBe(70);
+    });
+
+    it('a refund of a Zenbooker payment inherits the zenbooker source (Paid nets, Due gets no credit)', () => {
+        const payments = [
+            { id: 10, amount: '100', invoice_id: null, transaction_type: 'payment', status: 'refunded', external_source: 'zenbooker' },
+            { id: 11, amount: '30', invoice_id: null, transaction_type: 'refund', status: 'completed', external_source: null, metadata: { original_transaction_id: 10 } },
+        ];
+
+        expect(completedStandalonePaid(payments)).toBe(70);
+        expect(completedStandaloneDueOffset(payments)).toBe(0);
+    });
+
+    it('drops a voided invoice from Invoiced/Paid/Due', () => {
+        expect(calculateJobFinanceSummary(
+            [],
+            [{ total: '100', amount_paid: '100', status: 'voided' }],
+            [],
+        )).toEqual({ estimated: 0, invoiced: 0, paid: 0, due: 0 });
     });
 
     it('FINANCE-DUE-001: total 100 and paid 30 yields due 70 while estimates stay separate', () => {

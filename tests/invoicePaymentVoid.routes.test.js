@@ -69,7 +69,8 @@ describe('POST /api/invoices/:invoiceId/payments/:paymentId/void', () => {
         'R-matrix allow: %s can void a manual/offline payment',
         async (role) => {
             const response = await request(appAs(role))
-                .post(`/${INVOICE_ID}/payments/${PAYMENT_ID}/void`);
+                .post(`/${INVOICE_ID}/payments/${PAYMENT_ID}/void`)
+                .send({ reason: 'Bounced check' });
 
             expect(response.status).toBe(200);
             expect(response.body).toMatchObject({
@@ -87,7 +88,8 @@ describe('POST /api/invoices/:invoiceId/payments/:paymentId/void', () => {
                     type: 'user',
                     label: null,
                     source: 'crm',
-                }
+                },
+                'Bounced check'
             );
             expect(mockVoidPayment.mock.calls[0]).not.toContain('keycloak-subject');
             expect(mockVoidPayment.mock.calls[0]).not.toContain(
@@ -127,7 +129,8 @@ describe('POST /api/invoices/:invoiceId/payments/:paymentId/void', () => {
                 type: 'user',
                 label: null,
                 source: 'crm',
-            }
+            },
+            undefined
         );
         expect(mockVoidPayment.mock.calls[0]).not.toContain('keycloak-subject');
     });

@@ -269,6 +269,11 @@ export async function fetchInvoicePayments(id: number): Promise<any[]> {
 /** OB-31: void a manually recorded payment — it stays in history (grayed, listed
  *  last) but no longer counts toward amount_paid/balance. Manual-origin only;
  *  Stripe/Zenbooker-sourced rows are refused by the backend. */
-export async function voidInvoicePayment(invoiceId: number, paymentId: number | string): Promise<void> {
-    await invoicesRequest(`${INVOICES_BASE}/${invoiceId}/payments/${paymentId}/void`, { method: 'POST' });
+export async function voidInvoicePayment(invoiceId: number, paymentId: number | string, reason?: string): Promise<void> {
+    const trimmed = reason?.trim();
+    await invoicesRequest(`${INVOICES_BASE}/${invoiceId}/payments/${paymentId}/void`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(trimmed ? { reason: trimmed } : {}),
+    });
 }

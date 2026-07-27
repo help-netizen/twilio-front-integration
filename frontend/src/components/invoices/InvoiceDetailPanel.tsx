@@ -51,13 +51,14 @@ import {
     updateInvoiceItem,
     voidInvoicePayment,
 } from '../../services/invoicesApi';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { useAuthz } from '../../hooks/useAuthz';
 import { TaskStack } from '../tasks/TaskStack';
 import { openAuthedPdf } from '../../lib/openAuthedPdf';
 import { toast } from 'sonner';
 import type { ManualCardSessionResult } from '../../services/stripePaymentsApi';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
+import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -182,7 +183,6 @@ export function InvoiceDetailPanel({
     const [payments, setPayments] = useState<any[]>([]);
     // OB-31: payment pending the void confirmation (manual/offline rows only).
     const [voidTx, setVoidTx] = useState<any | null>(null);
-    const [voidingTx, setVoidingTx] = useState(false);
     useEffect(() => {
         if (!invoice?.id) return;
         fetchInvoicePayments(invoice.id).then(setPayments).catch(() => {});
@@ -796,43 +796,25 @@ export function InvoiceDetailPanel({
                         </section>
                     )}
 
-                    {/* OB-31: void-payment confirmation (short action → center modal). */}
-                    <Dialog open={!!voidTx} onOpenChange={o => { if (!o) setVoidTx(null); }}>
-                        <DialogContent>
-                            <DialogHeader>
-                                <DialogTitle>Void this payment?</DialogTitle>
-                            </DialogHeader>
-                            <p className="text-sm text-[var(--blanc-ink-2)]">
-                                {money(voidTx?.amount ?? voidTx?.metadata?.amount)}
-                                {(voidTx?.payment_method || voidTx?.metadata?.payment_method) && ` · ${paymentMethodLabel(voidTx?.payment_method || voidTx?.metadata?.payment_method)}`}
-                                {' '}— the payment stays in history but no longer counts toward the invoice total.
-                            </p>
-                            <DialogFooter>
-                                <Button variant="outline" onClick={() => setVoidTx(null)} disabled={voidingTx}>Cancel</Button>
-                                <Button
-                                    variant="destructive"
-                                    disabled={voidingTx}
-                                    onClick={async () => {
-                                        if (!voidTx) return;
-                                        setVoidingTx(true);
-                                        try {
-                                            await voidInvoicePayment(invoice.id, voidTx.id);
-                                            const [fresh, ps] = await Promise.all([fetchInvoice(invoice.id), fetchInvoicePayments(invoice.id)]);
-                                            setInvoice(fresh); setPayments(ps); onChanged?.(fresh);
-                                            toast.success('Payment voided');
-                                            setVoidTx(null);
-                                        } catch (err) {
-                                            toast.error(err instanceof Error ? err.message : 'Could not void the payment');
-                                        } finally {
-                                            setVoidingTx(false);
-                                        }
-                                    }}
-                                >
-                                    {voidingTx ? 'Voiding…' : 'Void payment'}
-                                </Button>
-                            </DialogFooter>
-                        </DialogContent>
-                    </Dialog>
+                    {/* OB-31 / TXN-STATUS-VOID-001: void-payment confirmation with a reason,
+                        shared with the Job finance surface. */}
+                    <VoidPaymentDialog
+                        open={!!voidTx}
+                        onOpenChange={o => { if (!o) setVoidTx(null); }}
+                        bodyText="This will remove the payment from the invoice and recalculate the invoice's balance."
+                        onConfirm={async reason => {
+                            if (!voidTx) return;
+                            try {
+                                await voidInvoicePayment(invoice.id, voidTx.id, reason);
+                                const [fresh, ps] = await Promise.all([fetchInvoice(invoice.id), fetchInvoicePayments(invoice.id)]);
+                                setInvoice(fresh); setPayments(ps); onChanged?.(fresh);
+                                toast.success('Payment voided');
+                            } catch (err) {
+                                toast.error(err instanceof Error ? err.message : 'Could not void the payment');
+                                throw err;
+                            }
+                        }}
+                    />
 
                     {events.length > 0 && (
                         <section className="space-y-3 text-sm">

@@ -257,6 +257,7 @@ router.post(
             const companyId = getCompanyId(req);
             const actorId = getCrmUserId(req);
             const { invoiceId, paymentId } = req.params;
+            const { reason } = req.body || {};
 
             const result = await withTransaction(client => invoicesService.voidPayment(
                 companyId,
@@ -264,7 +265,8 @@ router.post(
                 invoiceId,
                 paymentId,
                 client,
-                userActor(actorId)
+                userActor(actorId),
+                reason
             ));
             res.json({ ok: true, data: result });
         } catch (err) {

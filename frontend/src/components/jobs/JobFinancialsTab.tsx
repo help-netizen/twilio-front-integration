@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
-import { Archive, Banknote, ChevronRight, CreditCard, ExternalLink, FileText, Loader2, Lock, Mail, MoreVertical, Plus, Receipt } from 'lucide-react';
+import { Archive, Ban, Banknote, ChevronRight, CreditCard, ExternalLink, FileText, Loader2, Lock, Mail, MoreVertical, Plus, Receipt } from 'lucide-react';
 import { CloudBanner } from '../ui/CloudBanner';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
 import { useAuthz } from '../../hooks/useAuthz';
@@ -27,7 +27,9 @@ import { toast } from 'sonner';
 import { calculateJobFinanceSummary, formatSignedCurrency } from './jobFinanceMath';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { emailTransactionReceipt, fetchReceiptView, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
+import { emailTransactionReceipt, fetchReceiptView, voidTransaction, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
+import { PaymentStatusChip, isVoidablePayment, isVoidedPayment, VOIDED_AMOUNT_CLASS } from '../payments/paymentStatus';
+import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -98,6 +100,8 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
     const [showRecord, setShowRecord] = useState(false);
     // JOBPANEL-REWORK-001: transaction "Review" opens a read-only receipt slide-over.
     const [receiptPayment, setReceiptPayment] = useState<PaymentTransaction | null>(null);
+    // TXN-STATUS-VOID-001: the row targeted by the Void-payment confirm dialog.
+    const [voidTarget, setVoidTarget] = useState<PaymentTransaction | null>(null);
 
     // ── STRIPE-ADHOC-PAY-001: collect-payment button/CTA gating ─────────────────
     const navigate = useNavigate();
@@ -139,10 +143,11 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
         }
     };
 
+    // Show every standalone payment — including voided — so history is never silently
+    // dropped (TXN-STATUS-VOID-001). Money math stays status-aware in jobFinanceMath.
     const jobLedgerPayments = (jobPayments || []).filter(payment => (
         payment.invoice_id == null
         && payment.transaction_type === 'payment'
-        && payment.status === 'completed'
     ));
     // Newest → oldest (owner directive). Fall back to created_at when unprocessed.
     const sortedJobPayments = [...jobLedgerPayments].sort((a, b) => (
@@ -165,6 +170,18 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
             if (receipt_url) window.open(receipt_url, '_blank', 'noopener,noreferrer');
             else toast.error('Stripe receipt is not available for this payment yet');
         } catch (err: any) { toast.error(err?.message || 'Could not open Stripe receipt'); }
+    };
+    // Void a manually-recorded payment (throws on failure so the dialog stays open).
+    const handleVoidPayment = async (reason: string) => {
+        if (!voidTarget) return;
+        try {
+            await voidTransaction(voidTarget.id, reason);
+        } catch (err: any) {
+            toast.error(err?.message || 'Could not void the payment');
+            throw err;
+        }
+        toast.success('Payment voided');
+        refresh();
     };
 
     const {
@@ -231,14 +248,17 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                                     className="flex items-center gap-2.5 rounded-md bg-[rgba(25,25,25,0.04)] px-3 py-2.5"
                                 >
                                     <div className="min-w-0 flex-1">
-                                        <p className="text-sm font-medium">{paymentMethodLabel(payment.payment_method)}</p>
+                                        <div className="flex items-center gap-2">
+                                            <p className="truncate text-sm font-medium">{paymentMethodLabel(payment.payment_method)}</p>
+                                            <PaymentStatusChip status={payment.status} transactionType={payment.transaction_type} />
+                                        </div>
                                         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--blanc-ink-2)]">
                                             {payment.processed_at && <span>{paymentDate(payment.processed_at)}</span>}
                                             {payment.processed_at && payment.reference_number && <span aria-hidden="true">·</span>}
                                             {payment.reference_number && <span>Ref {payment.reference_number}</span>}
                                         </div>
                                     </div>
-                                    <span className="font-mono text-sm font-semibold">{money(payment.amount)}</span>
+                                    <span className={`font-mono text-sm font-semibold ${isVoidedPayment(payment) ? VOIDED_AMOUNT_CLASS : ''}`}>{money(payment.amount)}</span>
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
                                             <button
@@ -261,6 +281,14 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                                             {isStripePayment(payment) && (
                                                 <DropdownMenuItem onSelect={() => viewInStripe(payment)}>
                                                     <ExternalLink className="size-4" />View in Stripe
+                                                </DropdownMenuItem>
+                                            )}
+                                            {canRecordOffline && isVoidablePayment(payment) && (
+                                                <DropdownMenuItem
+                                                    onSelect={() => setVoidTarget(payment)}
+                                                    className="text-[var(--blanc-danger)] focus:text-[var(--blanc-danger)]"
+                                                >
+                                                    <Ban className="size-4" />Void transaction
                                                 </DropdownMenuItem>
                                             )}
                                         </DropdownMenuContent>
@@ -612,6 +640,13 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                 jobId={jobId}
                 outstanding={totalDue}
                 onSuccess={() => refresh()}
+            />
+
+            <VoidPaymentDialog
+                open={!!voidTarget}
+                onOpenChange={open => { if (!open) setVoidTarget(null); }}
+                onConfirm={handleVoidPayment}
+                bodyText="This will remove the payment from the job balance and recalculate Paid and Due."
             />
 
             {/* Transaction "Review" — read-only receipt slide-over (JOBPANEL-REWORK-001) */}
