@@ -43,16 +43,15 @@ beforeEach(() => {
 });
 
 describe('BottomNavBar (mobile) — MOBILE-NAV-001', () => {
-    it('renders only the four primary workspaces plus More in the bar', () => {
+    it('renders the five primary workspaces (incl. Schedule) plus More in the bar', () => {
         authz.permissions = ALL_PERMS;
         const html = renderToStaticMarkup(
             <BottomNavBar activeTab="pulse" pulseUnreadCount={0} leadsNewCount={0} openTasksCount={0} logout={() => {}} />,
         );
-        for (const label of ['Pulse', 'Leads', 'Jobs', 'Tasks', 'More']) {
+        for (const label of ['Pulse', 'Leads', 'Jobs', 'Schedule', 'Tasks', 'More']) {
             expect(html).toContain(`<span>${label}</span>`);
         }
         // The overflow workspaces stay OUT of the bar — they live in the sheet.
-        expect(html).not.toContain('<span>Schedule</span>');
         expect(html).not.toContain('<span>Contacts</span>');
         expect(html).not.toContain('<span>Payments</span>');
     });
@@ -76,8 +75,7 @@ describe('MobileMoreSheet — MOBILE-NAV-001', () => {
         const html = renderToStaticMarkup(
             <MobileMoreSheet open onClose={() => {}} logout={() => {}} activeTab="pulse" />,
         );
-        // overflow workspaces (moved out of the bar)
-        expect(html).toContain('Schedule');
+        // overflow workspaces (Schedule is now primary → only Contacts + Payments remain here)
         expect(html).toContain('Contacts');
         expect(html).toContain('Payments');
         // settings section + a known group + the exit

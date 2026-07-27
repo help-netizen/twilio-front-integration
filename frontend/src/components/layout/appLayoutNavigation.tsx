@@ -68,11 +68,11 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount,
 
 // ─── Bottom Navigation Bar (mobile) ─────────────────────────────────────────
 // MOBILE-NAV-001: the top header (brand + settings gear) is hidden on mobile to
-// reclaim vertical space. The bottom bar carries the four primary workspaces and
-// a "More" gear that opens a sheet with the remaining workspaces, every settings
+// reclaim vertical space. The bottom bar carries the primary workspaces and a
+// "More" gear that opens a sheet with the remaining workspaces, every settings
 // group, feedback and Log out — so the whole app stays reachable from one bar.
-
-const PRIMARY_KEYS: readonly string[] = ['pulse', 'leads', 'jobs', 'tasks'];
+// Owner keeps Schedule in the bar (2026-07-26) alongside Pulse/Leads/Jobs/Tasks.
+const PRIMARY_KEYS: readonly string[] = ['pulse', 'leads', 'jobs', 'schedule', 'tasks'];
 
 export const MobileMoreSheet: React.FC<{ open: boolean; onClose: () => void; logout: () => void; activeTab: string }> = ({ open, onClose, logout, activeTab }) => {
     const navigate = useNavigate();
