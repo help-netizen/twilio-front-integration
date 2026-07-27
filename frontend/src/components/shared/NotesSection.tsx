@@ -12,6 +12,8 @@ import { authedFetch } from '../../services/apiClient';
 import { useAuthz } from '../../hooks/useAuthz';
 import { TaskStack } from '../tasks/TaskStack';
 import { prepareNotesForDisplay } from './notesDisplay';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { NoteComposerOverlay } from './NoteComposerOverlay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -86,8 +88,9 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const [composeAttach, setComposeAttach] = useState<AttachmentState>({ ids: [], blocked: false });
     const [composeAttachKey, setComposeAttachKey] = useState(0);
     const [expanded, setExpanded] = useState(false);
-    // OB-35: on phones the inline composer button is a tiny tap target and the
-    // keyboard covers it — mobile opens a dedicated bottom-sheet composer instead.
+    // Mobile opens the composer as a floating overlay docked above the keyboard
+    // (NoteComposerOverlay); desktop expands it inline. Same content either way.
+    const isMobile = useIsMobile();
     const [submitting, setSubmitting] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -174,11 +177,13 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     }, [text, composeAttach.ids.length, composeAttach.blocked]);
 
     useEffect(() => {
-        if (expanded) {
+        // Desktop-only: on mobile the composer is a portaled overlay (outside containerRef),
+        // so this outside-click would fire when tapping the textarea and collapse it.
+        if (expanded && !isMobile) {
             document.addEventListener('mousedown', handleClickOutside);
             return () => document.removeEventListener('mousedown', handleClickOutside);
         }
-    }, [expanded, handleClickOutside]);
+    }, [expanded, isMobile, handleClickOutside]);
 
     // ─── Edit / Delete ───────────────────────────────────────────────────────
 
@@ -267,8 +272,9 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     return (
         <div ref={containerRef} className="space-y-3">
-            {/* Add note input — always at top */}
-            {expanded ? (
+            {/* Add note input — always at top. Desktop expands inline; mobile keeps the
+                button and opens the floating overlay below (docked above the keyboard). */}
+            {expanded && !isMobile ? (
                 /* COMPOSER-CANON-001 (OB-38): the desktop inline composer matches the mobile
                    one — a single rounded filled card holding a roomy borderless textarea over a
                    row of round action buttons (attach + violet send-arrow, no "Add note" label).
@@ -364,6 +370,31 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     )}
                 </div>
             )}
+
+            {/* Mobile: floating ADD composer docked above the keyboard (NOTE-COMPOSER-KEYBOARD). */}
+            <NoteComposerOverlay open={expanded && isMobile} onClose={() => setExpanded(false)}>
+                <textarea
+                    className="w-full resize-none outline-none"
+                    style={{ background: 'var(--blanc-field)', border: 'none', borderRadius: 12, padding: '10px 12px', minHeight: 96, fontSize: 16, lineHeight: 1.5, color: 'var(--blanc-ink-1)' }}
+                    placeholder="Write a note…"
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                    autoFocus
+                />
+                <div className="flex items-center justify-between" style={{ marginTop: 10 }}>
+                    <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" />
+                    <button
+                        type="button"
+                        onClick={handleSubmit}
+                        disabled={!canSubmit}
+                        aria-label="Add note"
+                        className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                        style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
+                    >
+                        {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
+                    </button>
+                </div>
+            </NoteComposerOverlay>
 
             {/* Pinned tasks — TASKS-001 (tasks live at the top of the notes feed) */}
             <TaskStack
