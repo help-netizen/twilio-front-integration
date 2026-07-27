@@ -258,7 +258,7 @@ describe('CHATGPT-CRM-MCP S2a write executor', () => {
         expect(db.pool.connect).not.toHaveBeenCalled();
     });
 
-    test('albusto.mcp.write scope is mandatory before a transaction starts', async () => {
+    test('live write consent and RBAC allow execution without reconnecting for write scope', async () => {
         const req = requestContext();
         req.authz.oauthScopes = [permissions.READ_SCOPE];
         await expect(executor.execute(
@@ -266,8 +266,9 @@ describe('CHATGPT-CRM-MCP S2a write executor', () => {
             'svc.transition_job',
             { job_id: 5, action: 'complete' },
             { confirmed: true, confirmation_id: 'confirm-4' }
-        )).rejects.toMatchObject({ mcpCode: 'access_denied' });
-        expect(db.pool.connect).not.toHaveBeenCalled();
+        )).resolves.toEqual({ lead_uuid: 'LEAD-A' });
+        expect(mockQuery.mock.calls.map(([sql]) => sql)).toEqual(['BEGIN', 'COMMIT']);
+        expect(writeService.execute).toHaveBeenCalledTimes(1);
     });
 
     test('protocol advertises non-destructive W confirmation for all 12 write tools', async () => {

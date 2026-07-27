@@ -231,12 +231,9 @@ export function AvatarsPanel({ open, onOpenChange, myName, companyName }: Avatar
                                                 </div>
                                             </div>
 
-                                            {(me?.writes_enabled || me?.sends_enabled) && (
-                                                <div className="mt-3 space-y-2">
-                                                    <p className="text-sm text-[var(--blanc-ink-2)]">Update the connector’s <strong>Scope</strong> in {baseLabel((me?.base ?? 'chatgpt') as AvatarBase)} and re-connect:</p>
-                                                    <CopyRow label="Scope" value={scopeFor(me)} />
-                                                </div>
-                                            )}
+                                            {/* AVATARS-NO-RECONNECT: toggling write/send now takes effect
+                                                immediately (governed by live RBAC, not the token scope) — no
+                                                Scope edit / re-connect in the connector is needed anymore. */}
                                         </div>
                                     ) : (
                                         <div className="rounded-xl bg-[var(--blanc-field)] p-5 text-center">

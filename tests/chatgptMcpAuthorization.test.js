@@ -170,7 +170,7 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         }
     });
 
-    test('avatar discovery uses live owner rights, tier booleans, and OAuth scope', () => {
+    test('avatar discovery uses live owner rights and tier booleans, not frozen OAuth scope', () => {
         const dispatcherTools = registry.listTools({
             includeDispatcher: true,
             dispatcherOnly: true,
@@ -184,11 +184,6 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
             dispatcherTools,
             { ...LIVE_OWNER, writes_enabled: true, sends_enabled: false },
             [permissions.READ_SCOPE]
-        )).toHaveLength(19);
-        expect(authorization.filterAvatarTools(
-            dispatcherTools,
-            { ...LIVE_OWNER, writes_enabled: true, sends_enabled: false },
-            [permissions.READ_SCOPE, permissions.WRITE_SCOPE]
         )).toHaveLength(31);
     });
 
@@ -275,7 +270,7 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
     });
 
     test.each(permissions.READ_TOOL_NAMES)(
-        'R-matrix %s: missing OAuth read scope denies before dispatch',
+        'R-matrix %s: avatar authorization ignores frozen OAuth tool scopes',
         async (name) => {
             const req = requestContext();
             req.authz.oauthScopes = [];
@@ -284,12 +279,12 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
                 LIVE_OWNER,
                 req.authz.oauthScopes
             ).map((tool) => tool.name);
-            expect(visible).not.toContain(name);
+            expect(visible).toContain(name);
             await expect(executor.execute(req, name, validArgs(name)))
-                .rejects.toMatchObject({ mcpCode: 'access_denied' });
+                .resolves.toEqual({ ok: true });
             expect(identityService.recordInvocation).toHaveBeenCalledWith(
                 expect.any(Object),
-                expect.objectContaining({ toolName: name, status: 'denied' })
+                expect.objectContaining({ toolName: name, status: 'succeeded' })
             );
         }
     );

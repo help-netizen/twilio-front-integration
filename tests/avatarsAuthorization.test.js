@@ -185,4 +185,55 @@ describe('AVATARS-001 Phase B live owner authorization parity', () => {
             ALL_SCOPES
         )).toThrow(expect.objectContaining({ mcpCode: 'access_denied' }));
     });
+
+    test('SAB-AVATAR-NO-RECONNECT-ALLOW: live write consent and RBAC do not require a new OAuth scope', () => {
+        const tool = registry.getTool('svc.create_job');
+        const owner = authority('tenant_admin', {
+            owner_permissions: ['jobs.create'],
+            writes_enabled: true,
+        });
+        const readOnlyScopes = [permissions.READ_SCOPE];
+
+        expect(authorization.canInvokeAvatar(tool, owner, readOnlyScopes)).toBe(true);
+        expect(() => authorization.requireAvatarToolAccess(
+            tool,
+            owner,
+            readOnlyScopes
+        )).not.toThrow();
+    });
+
+    test('SAB-AVATAR-NO-RECONNECT-TIER-STILL-GATES: live tier consent still denies writes and sends', () => {
+        const writeTool = registry.getTool('svc.create_job');
+        const sendTool = registry.getTool('svc.send_invoice');
+        const writesDisabled = authority('tenant_admin', { writes_enabled: false });
+        const sendsDisabled = authority('tenant_admin', { sends_enabled: false });
+
+        expect(authorization.canInvokeAvatar(writeTool, writesDisabled, ALL_SCOPES)).toBe(false);
+        expect(() => authorization.requireAvatarToolAccess(
+            writeTool,
+            writesDisabled,
+            ALL_SCOPES
+        )).toThrow(expect.objectContaining({ mcpCode: 'access_denied' }));
+        expect(authorization.canInvokeAvatar(sendTool, sendsDisabled, ALL_SCOPES)).toBe(false);
+        expect(() => authorization.requireAvatarToolAccess(
+            sendTool,
+            sendsDisabled,
+            ALL_SCOPES
+        )).toThrow(expect.objectContaining({ mcpCode: 'access_denied' }));
+    });
+
+    test('SAB-AVATAR-NO-RECONNECT-RBAC-STILL-GATES: live owner RBAC still denies writes', () => {
+        const tool = registry.getTool('svc.create_job');
+        const owner = authority('tenant_admin', {
+            owner_permissions: [],
+            writes_enabled: true,
+        });
+
+        expect(authorization.canInvokeAvatar(tool, owner, ALL_SCOPES)).toBe(false);
+        expect(() => authorization.requireAvatarToolAccess(
+            tool,
+            owner,
+            ALL_SCOPES
+        )).toThrow(expect.objectContaining({ mcpCode: 'access_denied' }));
+    });
 });

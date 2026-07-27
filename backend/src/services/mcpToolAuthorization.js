@@ -102,15 +102,15 @@ function avatarTierEnabled(tool, ownerAuthz = {}) {
     return false;
 }
 
-function canInvokeAvatar(tool, ownerAuthz = {}, oauthScopes = [], args = null) {
+function canInvokeAvatar(tool, ownerAuthz = {}, _oauthScopes = [], args = null) {
+    // Avatar access follows live tier consent and owner RBAC; token scopes are connect-time claims.
     const required = avatarBusinessPermissions(tool, args);
     if (!required || !avatarTierEnabled(tool, ownerAuthz)) return false;
     const granted = new Set(Array.isArray(ownerAuthz.owner_permissions)
         ? ownerAuthz.owner_permissions
         : []);
     return required.every.every((permission) => granted.has(permission))
-        && (required.any.length === 0 || required.any.some((permission) => granted.has(permission)))
-        && hasRequiredOAuthScopes(tool, oauthScopes);
+        && (required.any.length === 0 || required.any.some((permission) => granted.has(permission)));
 }
 
 function filterAvatarTools(tools, ownerAuthz = {}, oauthScopes = []) {
@@ -125,12 +125,9 @@ function requireAvatarToolAccess(tool, ownerAuthz = {}, oauthScopes = [], args =
         required_permissions: required
             ? [...required.every, ...required.any]
             : [],
-        required_oauth_scopes: requiredOAuthScopes(tool),
         reason: required
             ? (avatarTierEnabled(tool, ownerAuthz)
-                ? (hasRequiredOAuthScopes(tool, oauthScopes)
-                    ? 'OWNER_PERMISSION_REQUIRED'
-                    : 'OAUTH_SCOPE_REQUIRED')
+                ? 'OWNER_PERMISSION_REQUIRED'
                 : 'OWNER_TIER_REQUIRED')
             : 'TOOL_PERMISSION_UNMAPPED',
     });
