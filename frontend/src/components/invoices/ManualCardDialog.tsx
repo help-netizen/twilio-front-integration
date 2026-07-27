@@ -9,7 +9,6 @@ import {
     DialogDescription,
     DialogPanelHeader,
     DialogBody,
-    DialogPanelFooter,
     DialogTitle,
 } from '../ui/dialog';
 import {
@@ -855,6 +854,10 @@ export default function ManualCardDialog({
         <Dialog open={open} onOpenChange={handleDialogOpenChange}>
             <DialogContent
                 variant="panel"
+                // Charge/confirm content is short; floor the mobile sheet so it isn't a
+                // cramped strip. Not on 'success' — that step has the receipt input and a
+                // min-height would fight the keyboard-viewport clamp.
+                className={state.phase !== 'success' ? 'max-md:min-h-[56dvh]' : undefined}
                 onEscapeKeyDown={event => { if (!canDismissManualCard(state.phase)) event.preventDefault(); }}
                 onInteractOutside={event => { if (!canDismissManualCard(state.phase)) event.preventDefault(); }}
             >
@@ -872,7 +875,7 @@ export default function ManualCardDialog({
                 </DialogPanelHeader>
 
                 <DialogBody className="md:px-8 md:py-7">
-                    <div className="mx-auto w-full max-w-[740px] space-y-6">
+                    <div className="mx-auto flex h-full w-full max-w-[740px] flex-col gap-6">
                         {state.phase !== 'success' ? (
                             <>
                                 <div className="flex items-start gap-3 rounded-2xl bg-[var(--blanc-accent-soft)] px-4 py-3 text-sm text-[var(--blanc-ink-2)]">
@@ -961,67 +964,70 @@ export default function ManualCardDialog({
                                         <span className="block text-[var(--blanc-ink-2)]">We’re checking Stripe before another charge is allowed. Don’t retry yet.</span>
                                     </div>
                                 )}
+
+                                {/* Actions live inline at the bottom of the form (not a separate
+                                    footer bar): mt-auto pins them to the base of the filled column. */}
+                                <div className="mt-auto flex w-full gap-3 pt-2">
+                                    <Button
+                                        variant="ghost"
+                                        className="flex-1"
+                                        onClick={() => requestManualCardDismiss(state.phase, onOpenChange)}
+                                        disabled={
+                                            state.phase === 'collecting'
+                                            || state.phase === 'charging'
+                                            || state.phase === 'authenticating'
+                                            || state.phase === 'network'
+                                        }
+                                    >
+                                        Cancel
+                                    </Button>
+                                    {state.phase === 'network' ? (
+                                        <Button className="flex-1" onClick={() => void reconcile()} disabled={state.networkChecking}>
+                                            {state.networkChecking && <Loader2 className="mr-2 size-4 animate-spin" />}
+                                            {state.networkChecking ? 'Checking status…' : 'Check status'}
+                                        </Button>
+                                    ) : (
+                                        <Button
+                                            className="flex-[2]"
+                                            onClick={() => void pay()}
+                                            disabled={
+                                                state.phase === 'loading'
+                                                || state.phase === 'collecting'
+                                                || state.phase === 'charging'
+                                                || state.phase === 'authenticating'
+                                                || !sessionRef.current
+                                                || !selectedCard
+                                            }
+                                        >
+                                            {(state.phase === 'charging' || state.phase === 'authenticating')
+                                                && <Loader2 className="mr-2 size-4 animate-spin" />}
+                                            {state.phase === 'charging'
+                                                ? `Paying ${amountText}…`
+                                                : state.phase === 'authenticating'
+                                                    ? 'Verifying card…'
+                                                    : `Pay ${amountText}`}
+                                        </Button>
+                                    )}
+                                </div>
                             </>
                         ) : (
-                            <ManualCardSuccessView
-                                result={state.result!}
-                                cardLabel={cardLabel}
-                                receiptState={receiptState}
-                                receiptLocked={receiptLocked}
-                                showContactSaveCaption={showContactSaveCaption}
-                                onReceiptEmailChange={email => receiptDispatch({ type: 'EDIT', email })}
-                                onSendReceipt={() => void sendReceipt()}
-                            />
+                            <>
+                                <ManualCardSuccessView
+                                    result={state.result!}
+                                    cardLabel={cardLabel}
+                                    receiptState={receiptState}
+                                    receiptLocked={receiptLocked}
+                                    showContactSaveCaption={showContactSaveCaption}
+                                    onReceiptEmailChange={email => receiptDispatch({ type: 'EDIT', email })}
+                                    onSendReceipt={() => void sendReceipt()}
+                                />
+                                <div className="mt-auto pt-2">
+                                    <Button className="w-full" onClick={() => completeManualCardDialog(onOpenChange, onDone)}>Done</Button>
+                                </div>
+                            </>
                         )}
                     </div>
                 </DialogBody>
-
-                <DialogPanelFooter>
-                    {state.phase === 'success' ? (
-                        <Button onClick={() => completeManualCardDialog(onOpenChange, onDone)}>Done</Button>
-                    ) : (
-                        <>
-                            <Button
-                                variant="ghost"
-                                onClick={() => requestManualCardDismiss(state.phase, onOpenChange)}
-                                disabled={
-                                    state.phase === 'collecting'
-                                    || state.phase === 'charging'
-                                    || state.phase === 'authenticating'
-                                    || state.phase === 'network'
-                                }
-                            >
-                                Cancel
-                            </Button>
-                            {state.phase === 'network' ? (
-                                <Button onClick={() => void reconcile()} disabled={state.networkChecking}>
-                                    {state.networkChecking && <Loader2 className="mr-2 size-4 animate-spin" />}
-                                    {state.networkChecking ? 'Checking status…' : 'Check status'}
-                                </Button>
-                            ) : (
-                                <Button
-                                    onClick={() => void pay()}
-                                    disabled={
-                                        state.phase === 'loading'
-                                        || state.phase === 'collecting'
-                                        || state.phase === 'charging'
-                                        || state.phase === 'authenticating'
-                                        || !sessionRef.current
-                                        || !selectedCard
-                                    }
-                                >
-                                    {(state.phase === 'charging' || state.phase === 'authenticating')
-                                        && <Loader2 className="mr-2 size-4 animate-spin" />}
-                                    {state.phase === 'charging'
-                                        ? `Paying ${amountText}…`
-                                        : state.phase === 'authenticating'
-                                            ? 'Verifying card…'
-                                            : `Pay ${amountText}`}
-                                </Button>
-                            )}
-                        </>
-                    )}
-                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );
