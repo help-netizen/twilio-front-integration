@@ -18,6 +18,10 @@ interface FloatingFieldProps {
     onBlur?: React.FocusEventHandler<HTMLInputElement | HTMLTextAreaElement>
     onFocus?: React.FocusEventHandler<HTMLInputElement | HTMLTextAreaElement>
     onKeyDown?: React.KeyboardEventHandler<HTMLInputElement | HTMLTextAreaElement>
+    /** readOnly + onClick let a field act as a tap TRIGGER (e.g. FloatingTextField's mobile
+     *  overlay) — readOnly stops iOS raising the keyboard in place; onClick opens the overlay. */
+    readOnly?: boolean
+    onClick?: React.MouseEventHandler<HTMLInputElement | HTMLTextAreaElement>
 }
 
 /**
