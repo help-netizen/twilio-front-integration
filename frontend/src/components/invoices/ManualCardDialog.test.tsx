@@ -172,7 +172,7 @@ describe('manual card state machine', () => {
         expect(confirmedSessionRef.current).toBe(11);
         expect(state.phase).toBe('success');
 
-        const renderSuccess = (projectedDue: number) => renderToStaticMarkup(
+        const renderSuccess = () => renderToStaticMarkup(
             <ManualCardSuccessView
                 result={state.result!}
                 cardLabel="Visa •••• 4242"
@@ -181,20 +181,21 @@ describe('manual card state machine', () => {
                 showContactSaveCaption={false}
                 onReceiptEmailChange={() => {}}
                 onSendReceipt={() => {}}
-                financeSync={state.financeSync}
-                projectedDue={projectedDue}
-                jobId={1516}
-                jobHasInvoices={false}
             />,
         );
-        expect(renderSuccess(0)).toContain('Payment successful');
-        expect(renderSuccess(0)).toContain('Paid $95.00');
+        expect(renderSuccess()).toContain('Payment successful');
+        expect(renderSuccess()).toContain('Paid $95.00');
+        // The success screen is stripped to the essentials — no redundant eyebrow,
+        // no finance-sync / "recorded on Job" copy.
+        expect(renderSuccess()).not.toContain('Payment complete');
+        expect(renderSuccess()).not.toContain('recorded on Job');
+        expect(renderSuccess()).not.toContain('Finance updated');
 
         // A same-open-cycle effect RESET and a parent Finance rerender cannot leave
         // the terminal state or replace its success screen.
         state = manualCardReducer(state, { type: 'RESET' });
         expect(state.phase).toBe('success');
-        expect(renderSuccess(-95)).toContain('Payment successful');
+        expect(renderSuccess()).toContain('Payment successful');
         expect(commitManualCardSuccess(
             SUCCEEDED,
             capturedSessionId,

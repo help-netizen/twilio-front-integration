@@ -231,10 +231,6 @@ interface ManualCardSuccessViewProps {
     showContactSaveCaption: boolean;
     onReceiptEmailChange: (email: string) => void;
     onSendReceipt: () => void;
-    financeSync: FinanceSyncState;
-    projectedDue: number | null;
-    jobId?: number | string;
-    jobHasInvoices?: boolean;
 }
 
 export function ManualCardSuccessView({
@@ -245,75 +241,54 @@ export function ManualCardSuccessView({
     showContactSaveCaption,
     onReceiptEmailChange,
     onSendReceipt,
-    financeSync,
-    projectedDue,
-    jobId,
-    jobHasInvoices,
 }: ManualCardSuccessViewProps) {
+    const receiptSent = receiptState.phase === 'sent' && Boolean(receiptState.sentEmail);
     return (
         <div className="flex flex-col items-center py-8 text-center">
             <CircleCheckBig className="size-16 text-[var(--blanc-success)]" strokeWidth={1.6} aria-hidden="true" />
-            <p className="blanc-eyebrow mt-5">Payment complete</p>
-            <h2 className="mt-2 text-2xl font-semibold text-[var(--blanc-ink-1)]" style={{ fontFamily: 'var(--blanc-font-heading)' }}>
+            <h2 className="mt-4 text-2xl font-semibold text-[var(--blanc-ink-1)]" style={{ fontFamily: 'var(--blanc-font-heading)' }}>
                 Payment successful
             </h2>
             <p className="mt-3 text-xl font-semibold text-[var(--blanc-ink-1)]">Paid {formatSignedCurrency(result.amount)}</p>
             {cardLabel && <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{cardLabel}</p>}
 
             <div className="mt-6 w-full max-w-md space-y-3.5 text-left">
-                <FloatingField
-                    label="Customer email"
-                    type="email"
-                    inputMode="email"
-                    value={receiptState.email}
-                    onChange={event => onReceiptEmailChange(event.target.value)}
-                    disabled={receiptLocked}
-                />
-                {showContactSaveCaption && (
-                    <p className="text-xs text-[var(--blanc-ink-3)]">
-                        This email will be saved to the customer's contact.
-                    </p>
-                )}
-                <Button
-                    type="button"
-                    variant="secondary"
-                    className="w-full"
-                    onClick={onSendReceipt}
-                    disabled={receiptLocked || !receiptState.email.trim()}
-                >
-                    {receiptState.phase === 'sending' && <Loader2 className="size-4 animate-spin" />}
-                    {receiptState.phase === 'sent' && <CircleCheckBig className="size-4" />}
-                    {receiptState.phase === 'sending'
-                        ? 'Sending receipt…'
-                        : receiptState.phase === 'sent'
-                            ? 'Receipt sent'
-                            : 'Send receipt'}
-                </Button>
-                {receiptState.phase === 'sent' && receiptState.sentEmail && (
-                    <p className="flex items-center gap-2 text-sm font-medium text-[var(--blanc-success)]" role="status">
+                {receiptSent ? (
+                    <p className="flex items-center justify-center gap-2 text-sm font-medium text-[var(--blanc-success)]" role="status">
                         <CircleCheckBig className="size-4 shrink-0" aria-hidden="true" />
                         <span>Receipt sent to {receiptState.sentEmail}</span>
                     </p>
-                )}
-                {receiptState.error && (
-                    <p className="text-sm text-[var(--blanc-danger)]" role="alert">{receiptState.error}</p>
+                ) : (
+                    <>
+                        <FloatingField
+                            label="Customer email"
+                            type="email"
+                            inputMode="email"
+                            value={receiptState.email}
+                            onChange={event => onReceiptEmailChange(event.target.value)}
+                            disabled={receiptLocked}
+                        />
+                        {showContactSaveCaption && (
+                            <p className="text-xs text-[var(--blanc-ink-3)]">
+                                This email will be saved to the customer's contact.
+                            </p>
+                        )}
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            className="w-full"
+                            onClick={onSendReceipt}
+                            disabled={receiptLocked || !receiptState.email.trim()}
+                        >
+                            {receiptState.phase === 'sending' && <Loader2 className="size-4 animate-spin" />}
+                            {receiptState.phase === 'sending' ? 'Sending receipt…' : 'Send receipt'}
+                        </Button>
+                        {receiptState.error && (
+                            <p className="text-sm text-[var(--blanc-danger)]" role="alert">{receiptState.error}</p>
+                        )}
+                    </>
                 )}
             </div>
-
-            <p className="mt-5 text-sm font-medium text-[var(--blanc-success)]">
-                {financeSync === 'updating' && 'Updating Finance…'}
-                {financeSync === 'updated' && (projectedDue != null
-                    ? `Finance updated · Due ${formatSignedCurrency(projectedDue)}`
-                    : 'Finance updated.')}
-                {financeSync === 'delayed' && 'Payment is confirmed. Finance may take a moment to update.'}
-            </p>
-            <p className="mt-3 max-w-md text-sm text-[var(--blanc-ink-2)]">
-                {jobId != null && !jobHasInvoices && projectedDue != null && projectedDue < 0
-                    ? `The payment is recorded on Job ${jobId} as a credit because there is no invoice.`
-                    : jobId != null
-                        ? `The payment is recorded on Job ${jobId}.`
-                        : 'The payment is recorded on this invoice.'}
-            </p>
         </div>
     );
 }
@@ -546,7 +521,6 @@ export default function ManualCardDialog({
     jobId,
     amount,
     balanceBefore,
-    jobHasInvoices,
     contactEmail,
     hasContact,
     onPaymentConfirmed,
@@ -858,9 +832,6 @@ export default function ManualCardDialog({
     }, [receiptState.email, receiptState.phase]);
 
     const amountText = formatSignedCurrency(displayAmount ?? 0);
-    const projectedDue = state.result && initialBalanceRef.current != null
-        ? initialBalanceRef.current - state.result.amount
-        : null;
     const cardLabel = state.result?.brand && state.result.last4
         ? `${state.result.brand.charAt(0).toUpperCase()}${state.result.brand.slice(1)} •••• ${state.result.last4}`
         : null;
@@ -1000,10 +971,6 @@ export default function ManualCardDialog({
                                 showContactSaveCaption={showContactSaveCaption}
                                 onReceiptEmailChange={email => receiptDispatch({ type: 'EDIT', email })}
                                 onSendReceipt={() => void sendReceipt()}
-                                financeSync={state.financeSync}
-                                projectedDue={projectedDue}
-                                jobId={jobId}
-                                jobHasInvoices={jobHasInvoices}
                             />
                         )}
                     </div>
