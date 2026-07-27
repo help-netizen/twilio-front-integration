@@ -13,7 +13,10 @@ vi.mock('../ui/dialog', () => ({
 }));
 vi.mock('../ui/floating-field', () => ({ FloatingField: () => null }));
 vi.mock('../invoices/ManualCardDialog', () => ({ default: () => null }));
-import { createManualCardCollectionCallbacks } from './CollectPaymentDialog';
+import {
+    amountAfterCollectionRefresh,
+    createManualCardCollectionCallbacks,
+} from './CollectPaymentDialog';
 
 const PAYMENT: ManualCardSessionResult = {
     status: 'succeeded',
@@ -23,6 +26,11 @@ const PAYMENT: ManualCardSessionResult = {
 };
 
 describe('CollectPaymentDialog manual-card wiring', () => {
+    it('preserves the charged amount when Finance refreshes the parent balance', () => {
+        expect(amountAfterCollectionRefresh('1.00', 0, true)).toBe('1.00');
+        expect(amountAfterCollectionRefresh('1.00', 0, false)).toBe('');
+    });
+
     it('starts Finance revalidation on confirmation without closing either panel', async () => {
         const setManualCardOpen = vi.fn();
         const setCollectionOpen = vi.fn();

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 const authedFetch = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
@@ -24,7 +25,9 @@ import {
 } from '../../card-entry/stripeCard';
 import {
     INITIAL_MANUAL_CARD_STATE,
+    ManualCardSuccessView,
     canDismissManualCard,
+    commitManualCardSuccess,
     completeManualCardDialog,
     createManualCardReceiptState,
     handleCardEntryPopupResult,
@@ -144,6 +147,64 @@ describe('manual card state machine', () => {
         expect(state.phase).toBe('success');
         expect(state.result).toEqual(SUCCEEDED);
         expect(state.financeSync).toBe('delayed');
+    });
+
+    it('shows and keeps success when the captured session succeeds after its live ref is cleared', () => {
+        let state = manualCardReducer(INITIAL_MANUAL_CARD_STATE, { type: 'SESSION_READY' });
+        state = manualCardReducer(state, { type: 'CHARGE' });
+        const sessionRef: { current: { session_id: number } | null } = {
+            current: { session_id: 11 },
+        };
+        const capturedSessionId = sessionRef.current!.session_id;
+
+        // Reproduce the production race: an effect cleanup clears the live ref before
+        // the server-confirmed Pay promise resumes.
+        sessionRef.current = null;
+        const confirmedSessionRef = { current: null as number | null };
+        expect(commitManualCardSuccess(
+            SUCCEEDED,
+            capturedSessionId,
+            confirmedSessionRef,
+            result => {
+                state = manualCardReducer(state, { type: 'SUCCEEDED', result });
+            },
+        )).toBe(true);
+        expect(confirmedSessionRef.current).toBe(11);
+        expect(state.phase).toBe('success');
+
+        const renderSuccess = (projectedDue: number) => renderToStaticMarkup(
+            <ManualCardSuccessView
+                result={state.result!}
+                cardLabel="Visa •••• 4242"
+                receiptState={createManualCardReceiptState('customer@example.com')}
+                receiptLocked={false}
+                showContactSaveCaption={false}
+                onReceiptEmailChange={() => {}}
+                onSendReceipt={() => {}}
+                financeSync={state.financeSync}
+                projectedDue={projectedDue}
+                jobId={1516}
+                jobHasInvoices={false}
+            />,
+        );
+        expect(renderSuccess(0)).toContain('Payment successful');
+        expect(renderSuccess(0)).toContain('Paid $95.00');
+
+        // A same-open-cycle effect RESET and a parent Finance rerender cannot leave
+        // the terminal state or replace its success screen.
+        state = manualCardReducer(state, { type: 'RESET' });
+        expect(state.phase).toBe('success');
+        expect(renderSuccess(-95)).toContain('Payment successful');
+        expect(commitManualCardSuccess(
+            SUCCEEDED,
+            capturedSessionId,
+            confirmedSessionRef,
+            () => {
+                throw new Error('Duplicate success must not dispatch');
+            },
+        )).toBe(false);
+
+        expect(manualCardReducer(state, { type: 'RESET', force: true })).toBe(INITIAL_MANUAL_CARD_STATE);
     });
 });
 

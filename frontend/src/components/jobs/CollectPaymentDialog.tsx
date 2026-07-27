@@ -61,6 +61,16 @@ function validateAmount(raw: string): string | null {
     return null;
 }
 
+export function amountAfterCollectionRefresh(
+    currentAmount: string,
+    outstanding: number,
+    manualCardOpen: boolean,
+): string {
+    return manualCardOpen
+        ? currentAmount
+        : (outstanding > 0 ? outstanding.toFixed(2) : '');
+}
+
 // Client mirror of the server email shape (stripePaymentsService RECEIPT_EMAIL_SHAPE). UX-only.
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -103,7 +113,8 @@ export function CollectPaymentDialog({
     // contact, and default the channel to whichever contact field we actually have.
     useEffect(() => {
         if (!open) return;
-        setAmount(outstanding > 0 ? outstanding.toFixed(2) : '');
+        setAmount(current => amountAfterCollectionRefresh(current, outstanding, manualCardOpen));
+        if (manualCardOpen) return;
         setMode('choose');
         setBusy(null);
         const em = (contactEmail || '').trim();
@@ -111,7 +122,7 @@ export function CollectPaymentDialog({
         setEmail(em);
         setPhone(ph);
         setChannel(em ? 'email' : (ph ? 'sms' : 'email'));
-    }, [open, outstanding, contactEmail, contactPhone]);
+    }, [open, manualCardOpen, outstanding, contactEmail, contactPhone]);
 
     const error = validateAmount(amount);
     const amountNum = error ? undefined : Number(amount);
