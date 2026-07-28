@@ -19,7 +19,7 @@ export function EstimateSummaryDialog({ open, onOpenChange, initial, onSave }: P
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-xl z-[70]">
+            <DialogContent className="max-w-xl">
                 <DialogHeader><DialogTitle>Summary</DialogTitle></DialogHeader>
                 <Textarea
                     value={draft}

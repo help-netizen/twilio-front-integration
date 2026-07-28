@@ -40,7 +40,7 @@ export function EstimateItemDialog({ open, onOpenChange, isEdit, initial, onSave
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent variant="panel" className="z-[70]">
+            <DialogContent variant="panel">
                 <DialogPanelHeader>
                     <DialogTitle
                         className="text-[22px] font-semibold leading-tight"
