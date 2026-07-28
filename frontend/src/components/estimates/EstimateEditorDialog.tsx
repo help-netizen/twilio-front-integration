@@ -174,10 +174,13 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
         setSummaryDialogOpen(true);
     };
 
+    const [reportToEstimateOff, setReportToEstimateOff] = useState(false);
+
     const handleAiGenerate = async () => {
         const text = aiReport.trim();
         if (!text || aiGenerating) return;
         setAiGenerating(true);
+        setReportToEstimateOff(false);
         try {
             const draft = await aiDraftEstimate(text, defaultJobId);
             if (draft.summary) { setSummary(draft.summary); setSummaryOpen(true); }
@@ -206,7 +209,11 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
             );
             setAiReport('');
         } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Could not generate the draft');
+            if ((err as { code?: string }).code === 'app_disabled') {
+                setReportToEstimateOff(true);
+            } else {
+                toast.error(err instanceof Error ? err.message : 'Could not generate the draft');
+            }
         } finally {
             setAiGenerating(false);
         }
@@ -348,6 +355,12 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                     <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
                                         Paste a repair report or a short description — AI fills the summary and line items, matching your Price Book. Review before you save.
                                     </p>
+                                    {reportToEstimateOff && (
+                                        <div className="mt-3 rounded-xl px-3.5 py-2.5 text-sm" style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-ink-1)' }}>
+                                            <span className="font-medium">Report → Estimate is turned off.</span>{' '}
+                                            Enable it in Settings → Integrations to draft from a report.
+                                        </div>
+                                    )}
                                     <textarea
                                         value={aiReport}
                                         onChange={event => setAiReport(event.target.value)}

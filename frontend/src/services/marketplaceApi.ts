@@ -225,6 +225,26 @@ export async function saveRateMeSettings(settings: RateMeSettingsResponse['setti
     });
 }
 
+export interface ReportToEstimateSettingsResponse {
+    app_key: string;
+    /** True when the app is connected (generation allowed). */
+    enabled: boolean;
+    installation_id: number | null;
+    /** Effective instruction — the per-company custom text, or the default when unedited. */
+    instruction_text: string;
+}
+
+export async function fetchReportToEstimateSettings(): Promise<ReportToEstimateSettingsResponse> {
+    return request<ReportToEstimateSettingsResponse>(`${API_BASE}/apps/report-to-estimate/settings`);
+}
+
+export async function saveReportToEstimateInstruction(instructionText: string): Promise<ReportToEstimateSettingsResponse> {
+    return request<ReportToEstimateSettingsResponse>(`${API_BASE}/apps/report-to-estimate/settings`, {
+        method: 'PATCH',
+        body: JSON.stringify({ instruction_text: instructionText }),
+    });
+}
+
 export async function fetchOutboundPartsCallerSettings(): Promise<OutboundPartsCallerSettingsResponse> {
     return request<OutboundPartsCallerSettingsResponse>(`${API_BASE}/apps/outbound-parts-caller/settings`);
 }

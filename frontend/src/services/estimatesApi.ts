@@ -212,7 +212,10 @@ export async function aiDraftEstimate(reportText: string, jobId?: number): Promi
     });
     const json = await res.json().catch(() => null);
     if (!res.ok || json?.ok === false) {
-        throw new Error(json?.error?.message || `AI draft failed (${res.status})`);
+        const err = new Error(json?.error?.message || `AI draft failed (${res.status})`) as Error & { code?: string };
+        // Surface the backend error code (e.g. 'app_disabled') so the editor can show the right banner.
+        err.code = json?.error?.code;
+        throw err;
     }
     return json as AiDraftResult;
 }
