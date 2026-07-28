@@ -386,7 +386,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         onChange={e => setText(e.target.value)}
                         autoFocus
                     />
-                    <div className="flex items-center justify-end gap-3" style={{ marginTop: 6 }}>
+                    <div className="flex items-center justify-between gap-3" style={{ marginTop: 6 }}>
                         <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
                         <button
                             type="button"
@@ -431,7 +431,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         )}
                         {editError && <p className="text-xs" style={{ color: '#b42318', marginTop: 8 }}>{editError}</p>}
                         <div className="flex items-center justify-end gap-4" style={{ marginTop: 6 }}>
-                            <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                            <div className="mr-auto"><NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" /></div>
                             <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
                                 Cancel
                             </button>
