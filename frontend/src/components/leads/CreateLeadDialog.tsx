@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter
 import { Button } from '../ui/button';
 import { PhoneInput, toE164 } from '../ui/PhoneInput';
 import { FloatingField } from '../ui/floating-field';
+import { FloatingTextField } from '../shared/FloatingTextField';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import { toast } from 'sonner';
@@ -11,6 +12,7 @@ import * as leadsApi from '../../services/leadsApi';
 import type { Lead, CreateLeadInput } from '../../types/lead';
 import { AddressAutocomplete } from '../AddressAutocomplete';
 import { useContactSearch, snapshotFromForm, hasFieldChanges } from './useContactSearch';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import './CreateLeadDialog.css';
 
 interface CreateLeadDialogProps {
@@ -22,6 +24,7 @@ interface CreateLeadDialogProps {
 export const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
+    const isMobile = useIsMobile();
     const [loading, setLoading] = useState(false);
     const [showSecondary, setShowSecondary] = useState(false);
     const [showCompany, setShowCompany] = useState(false);
@@ -90,7 +93,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
 
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
+            <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
                 <DialogContent variant="panel">
                     {/* ── Header ── */}
                     <DialogPanelHeader>
@@ -135,12 +138,12 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                             <FloatingField id="cld-second-name" label="Secondary Name" value={formData.SecondPhoneName || ''} onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })} />
                                         )}
                                         {companyVisible && !showSecondary && (
-                                            <FloatingField id="cld-company" label="Company" value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
+                                            <FloatingTextField label="Company" value={formData.Company || ''} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
                                         )}
                                     </div>
                                 )}
                                 {companyVisible && showSecondary && (
-                                    <FloatingField id="cld-company" label="Company" value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
+                                    <FloatingTextField label="Company" value={formData.Company || ''} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
                                 )}
 
                                 {(!showSecondary || !companyVisible) && (
@@ -172,7 +175,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                         {JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                                     </FloatingSelect>
                                 </div>
-                                <FloatingField id="cld-description" label="Description" textarea rows={4} value={formData.Description} onChange={(e) => setFormData({ ...formData, Description: e.target.value })} />
+                                <FloatingTextField label="Description" textarea rows={4} value={formData.Description || ''} onChange={(e) => setFormData({ ...formData, Description: e.target.value })} />
                             </div>
 
                             {/* ── Custom metadata (only if fields configured) ── */}

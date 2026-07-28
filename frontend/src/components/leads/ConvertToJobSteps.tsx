@@ -5,6 +5,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { SelectItem } from '../ui/select';
 import { FloatingField } from '../ui/floating-field';
+import { FloatingTextField } from '../shared/FloatingTextField';
 import { FloatingSelect } from '../ui/floating-select';
 import { Calendar, Clock, RefreshCw, X } from 'lucide-react';
 import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete';
@@ -79,12 +80,12 @@ export function ConvertStep2({ serviceName, setServiceName, serviceDescription, 
                     {serviceName && !jobTypes.includes(serviceName) && <SelectItem key={serviceName} value={serviceName}>{serviceName}</SelectItem>}
                 </FloatingSelect>
             ) : (
-                <FloatingField id="cj-svc-name" label="Service" value={serviceName} onChange={e => setServiceName(e.target.value)} />
+                <FloatingTextField label="Service" value={serviceName} onChange={e => setServiceName(e.target.value)} />
             )}
-            <FloatingField id="cj-svc-desc" label="Description" textarea rows={4} value={serviceDescription} onChange={e => setServiceDescription(e.target.value)} />
+            <FloatingTextField label="Description" textarea rows={4} value={serviceDescription} onChange={e => setServiceDescription(e.target.value)} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <FloatingField id="cj-svc-price" label="Price ($)" inputMode="decimal" value={servicePrice} onChange={e => setServicePrice(e.target.value)} />
-                <FloatingField id="cj-svc-duration" label="Duration (min)" inputMode="numeric" value={serviceDuration} onChange={e => setServiceDuration(e.target.value)} />
+                <FloatingTextField label="Price ($)" inputMode="decimal" value={servicePrice} onChange={e => setServicePrice(e.target.value)} />
+                <FloatingTextField label="Duration (min)" inputMode="numeric" value={serviceDuration} onChange={e => setServiceDuration(e.target.value)} />
             </div>
         </div>
     );

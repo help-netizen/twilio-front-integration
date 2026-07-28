@@ -3,15 +3,17 @@ import { Button } from '../ui/button';
 import type { Lead } from '../../types/lead';
 import { useConvertToJob, type Step } from './useConvertToJob';
 import { StepIndicator, ConvertStep1, ConvertStep2, ConvertStep3, ConvertStep4 } from './ConvertToJobSteps';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface ConvertToJobDialogProps { lead: Lead; open: boolean; onOpenChange: (open: boolean) => void; onSuccess: (lead: Lead) => void; }
 
 export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: ConvertToJobDialogProps) {
+    const isMobile = useIsMobile();
     const h = useConvertToJob(lead, open, onSuccess, onOpenChange);
     const stepProps = { ...h, lead } as any;
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
             <DialogContent variant="panel">
                 <DialogPanelHeader>
                     <DialogTitle

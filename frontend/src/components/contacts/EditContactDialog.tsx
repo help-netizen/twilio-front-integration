@@ -3,11 +3,13 @@ import { X } from 'lucide-react';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { FloatingField } from '../ui/floating-field';
+import { FloatingTextField } from '../shared/FloatingTextField';
 import { PhoneInput, toE164, formatUSPhone } from '../ui/PhoneInput';
 import { toast } from 'sonner';
 import { useContactConflictFlow } from './useContactConflictFlow';
 import { MergeContactsDialog } from './MergeContactsDialog';
 import type { Contact } from '../../types/contact';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface EditContactDialogProps {
     contact: Contact;
@@ -69,6 +71,7 @@ function sortPrimaryFirst(rows: EmailRow[]): EmailRow[] {
 }
 
 export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: EditContactDialogProps) {
+    const isMobile = useIsMobile();
     const [loading, setLoading] = useState(false);
     // CONTACT-MERGE-001 (CM1-T4): save → 409 conflict → MergeContactsDialog → one retry.
     const conflictFlow = useContactConflictFlow();
@@ -186,7 +189,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
 
     return (
         <>
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
             <DialogContent variant="panel">
                 <DialogPanelHeader>
                     <DialogTitle
@@ -204,21 +207,18 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                         {/* Client details */}
                         <div className="space-y-3.5">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <FloatingField
-                                    id="ec-first-name"
+                                <FloatingTextField
                                     label="First name"
                                     value={formData.first_name}
                                     onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
                                 />
-                                <FloatingField
-                                    id="ec-last-name"
+                                <FloatingTextField
                                     label="Last name"
                                     value={formData.last_name}
                                     onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
                                 />
                             </div>
-                            <FloatingField
-                                id="ec-company"
+                            <FloatingTextField
                                 label="Company name"
                                 value={formData.company_name}
                                 onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
@@ -303,8 +303,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                         </div>
 
                         {/* Notes */}
-                        <FloatingField
-                            id="ec-notes"
+                        <FloatingTextField
                             label="Notes"
                             textarea
                             rows={3}

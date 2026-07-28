@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter
 import { Button } from '../ui/button';
 import { PhoneInput, toE164 } from '../ui/PhoneInput';
 import { FloatingField } from '../ui/floating-field';
+import { FloatingTextField } from '../shared/FloatingTextField';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import { toast } from 'sonner';
@@ -14,8 +15,10 @@ import { AddressAutocomplete } from '../AddressAutocomplete';
 import { makeFormData, DEFAULT_JOB_TYPES, JOB_SOURCES } from './editLeadHelpers';
 import type { EditLeadDialogProps } from './editLeadHelpers';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLeadDialogProps) {
+    const isMobile = useIsMobile();
     const [loading, setLoading] = useState(false);
     const [showSecondary, setShowSecondary] = useState(!!(lead.SecondPhone || lead.SecondPhoneName));
     const { customFields: allFields, jobTypes: dynamicJobTypes } = useLeadFormSettings(open);
@@ -45,7 +48,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
     const update = (patch: Partial<UpdateLeadInput>) => setFormData(prev => ({ ...prev, ...patch }));
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
             <DialogContent variant="panel">
                 <DialogPanelHeader>
                     <DialogTitle
@@ -63,22 +66,22 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                         {/* Contact */}
                         <div className="space-y-3.5">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <FloatingField id="firstName" label="First name" value={formData.FirstName} onChange={e => update({ FirstName: e.target.value })} />
-                                <FloatingField id="lastName" label="Last name" value={formData.LastName} onChange={e => update({ LastName: e.target.value })} />
+                                <FloatingTextField label="First name" value={formData.FirstName || ''} onChange={e => update({ FirstName: e.target.value })} />
+                                <FloatingTextField label="Last name" value={formData.LastName || ''} onChange={e => update({ LastName: e.target.value })} />
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                                 <PhoneInput id="phone" label="Phone" value={formData.Phone || ''} onChange={formatted => update({ Phone: formatted })} required />
-                                <FloatingField id="email" label="Email" type="email" value={formData.Email} onChange={e => update({ Email: e.target.value })} />
+                                <FloatingTextField label="Email" type="email" value={formData.Email || ''} onChange={e => update({ Email: e.target.value })} />
                             </div>
                             {!showSecondary ? (
                                 <button type="button" onClick={() => setShowSecondary(true)} className="justify-self-start text-xs text-primary hover:underline">+ Secondary Phone</button>
                             ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                                     <PhoneInput id="secondPhone" label="Secondary phone" value={formData.SecondPhone || ''} onChange={formatted => update({ SecondPhone: formatted })} />
-                                    <FloatingField id="secondPhoneName" label="Secondary name" value={formData.SecondPhoneName || ''} onChange={e => update({ SecondPhoneName: e.target.value })} />
+                                    <FloatingTextField label="Secondary name" value={formData.SecondPhoneName || ''} onChange={e => update({ SecondPhoneName: e.target.value })} />
                                 </div>
                             )}
-                            <FloatingField id="company" label="Company" value={formData.Company} onChange={e => update({ Company: e.target.value })} />
+                            <FloatingTextField label="Company" value={formData.Company || ''} onChange={e => update({ Company: e.target.value })} />
                         </div>
 
                         {/* Address */}
@@ -94,7 +97,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                                     {JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                                 </FloatingSelect>
                             </div>
-                            <FloatingField id="leadNotes" label="Description" textarea rows={4} value={formData.Description} onChange={e => update({ Description: e.target.value })} />
+                            <FloatingTextField label="Description" textarea rows={4} value={formData.Description || ''} onChange={e => update({ Description: e.target.value })} />
                         </div>
 
                         {/* Metadata */}
