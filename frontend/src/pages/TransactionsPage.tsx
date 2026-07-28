@@ -10,6 +10,9 @@ import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, DollarSign, T
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { useAuthz } from '../hooks/useAuthz';
 import { paymentMethodLabel } from '../lib/paymentMethodLabels';
+import { isVoidablePayment } from '../components/payments/paymentStatus';
+import { VoidPaymentDialog } from '../components/payments/VoidPaymentDialog';
+import type { PaymentTransaction } from '../services/paymentsCanonicalApi';
 
 // -- Constants ----------------------------------------------------------------
 
@@ -79,6 +82,8 @@ function SummaryCard({ label, value, icon: Icon, className }: { label: string; v
 
 export function TransactionsPage() {
     const page = useTransactions();
+    // TXN-STATUS-VOID-001: the ledger row targeted by the Void reason dialog.
+    const [voidTarget, setVoidTarget] = useState<PaymentTransaction | null>(null);
     const { hasAnyPermission } = useAuthz();
     const canRecordPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
     const [recordOpen, setRecordOpen] = useState(false);
@@ -222,8 +227,8 @@ export function TransactionsPage() {
                                                     {txn.status === 'completed' && txn.transaction_type === 'payment' && (
                                                         <DropdownMenuItem onClick={() => page.selectTransaction(txn.id)}>Refund</DropdownMenuItem>
                                                     )}
-                                                    {(txn.status === 'pending' || txn.status === 'processing') && (
-                                                        <DropdownMenuItem className="text-red-600" onClick={() => page.handleVoid(txn.id)}>Void</DropdownMenuItem>
+                                                    {isVoidablePayment(txn) && (
+                                                        <DropdownMenuItem className="text-red-600" onClick={() => setVoidTarget(txn)}>Void</DropdownMenuItem>
                                                     )}
                                                 </DropdownMenuContent>
                                             </DropdownMenu>
@@ -268,6 +273,16 @@ export function TransactionsPage() {
                 onOpenChange={setRecordOpen}
                 onSave={page.handleRecordManual}
             />
+
+            <VoidPaymentDialog
+                open={!!voidTarget}
+                onOpenChange={o => { if (!o) setVoidTarget(null); }}
+                bodyText="This will void the payment and recalculate the linked invoice or job balance."
+                onConfirm={async reason => {
+                    if (!voidTarget) return;
+                    await page.handleVoid(voidTarget.id, reason);
+                }}
+            />
             </div>
 
             <FloatingDetailPanel open={!!page.selectedTransaction} onClose={page.closeDetail}>
@@ -277,7 +292,7 @@ export function TransactionsPage() {
                         receipt={page.receipt}
                         onClose={page.closeDetail}
                         onRefund={page.handleRefund}
-                        onVoid={page.handleVoid}
+                        onVoid={async () => { if (page.selectedTransaction) setVoidTarget(page.selectedTransaction); }}
                         onSendReceipt={page.handleSendReceipt}
                     />
                 )}

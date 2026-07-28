@@ -59,6 +59,7 @@ import { toast } from 'sonner';
 import type { ManualCardSessionResult } from '../../services/stripePaymentsApi';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
+import { PaymentStatusChip } from '../payments/paymentStatus';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -769,10 +770,12 @@ export function InvoiceDetailPanel({
                                     const manual = !tx.external_source || tx.external_source === '' || tx.external_source === 'manual';
                                     return (
                                         <div key={tx.id} className="flex items-center justify-between gap-2 text-xs">
-                                            <span className={voided ? 'text-[var(--blanc-ink-3)]' : 'text-[var(--blanc-ink-2)]'}>
-                                                {fmtDate(tx.transaction_date || tx.created_at)}
-                                                {(tx.payment_method || tx.metadata?.payment_method) && ` · ${paymentMethodLabel(tx.payment_method || tx.metadata?.payment_method)}`}
-                                                {voided && ' · Voided'}
+                                            <span className="flex min-w-0 items-center gap-2">
+                                                <span className={voided ? 'text-[var(--blanc-ink-3)]' : 'text-[var(--blanc-ink-2)]'}>
+                                                    {fmtDate(tx.transaction_date || tx.created_at)}
+                                                    {(tx.payment_method || tx.metadata?.payment_method) && ` · ${paymentMethodLabel(tx.payment_method || tx.metadata?.payment_method)}`}
+                                                </span>
+                                                <PaymentStatusChip status={voided ? 'voided' : 'completed'} transactionType="payment" />
                                             </span>
                                             <span className="flex items-center gap-1">
                                                 <span className={`font-mono ${voided ? 'text-[var(--blanc-ink-3)] line-through' : 'text-emerald-700'}`}>

@@ -6,6 +6,7 @@ import { Undo2, Ban, Send, Receipt } from 'lucide-react';
 import type { PaymentTransaction, PaymentReceipt, SendReceiptData, RefundData } from '../../services/paymentsCanonicalApi';
 import { RefundDialog } from './RefundDialog';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
+import { isVoidablePayment } from '../payments/paymentStatus';
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -56,7 +57,9 @@ export function TransactionDetailPanel({ transaction, receipt, onClose: _onClose
     const [voiding, setVoiding] = useState(false);
 
     const canRefund = transaction.status === 'completed' && transaction.transaction_type === 'payment';
-    const canVoid = transaction.status === 'pending' || transaction.status === 'processing';
+    // Void = a completed, manually-recorded payment (matches the canonical endpoint);
+    // the panel's Void button opens the shared reason dialog on the ledger page.
+    const canVoid = isVoidablePayment(transaction);
     const canSendReceipt = transaction.status === 'completed';
 
     const handleVoid = async () => {
