@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { ChevronDown, Loader2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { aiDraftEstimate } from '../../services/estimatesApi';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { FullScreenTextEditor } from '../shared/FullScreenTextEditor';
 import {
     Dialog,
     DialogContent,
@@ -152,6 +154,8 @@ export function InvoiceEditorDialog({
         setSummaryDialogOpen(true);
     };
     const [reportToEstimateOff, setReportToEstimateOff] = useState(false);
+    const isMobile = useIsMobile();
+    const [reportEditorOpen, setReportEditorOpen] = useState(false);
 
     const handleAiGenerate = async () => {
         const text = aiReport.trim();
@@ -328,14 +332,25 @@ export function InvoiceEditorDialog({
                                         Enable it in Settings → Integrations to draft from a report.
                                     </div>
                                 )}
+                                {/* Mobile: reports are often long — tap opens the full-screen editor (type B). */}
                                 <textarea
                                     value={aiReport}
                                     onChange={event => setAiReport(event.target.value)}
+                                    readOnly={isMobile}
+                                    onClick={isMobile && !aiGenerating ? () => setReportEditorOpen(true) : undefined}
                                     placeholder="Paste the report here…"
                                     rows={3}
                                     disabled={aiGenerating}
                                     className="mt-3 w-full resize-none rounded-lg border-[1.5px] border-transparent px-3 py-2 text-sm outline-none focus:border-[var(--blanc-ink-2)] disabled:opacity-60"
                                     style={{ background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-1)' }}
+                                />
+                                <FullScreenTextEditor
+                                    open={isMobile && reportEditorOpen}
+                                    initialValue={aiReport}
+                                    onDone={text => { setAiReport(text); setReportEditorOpen(false); }}
+                                    onCancel={() => setReportEditorOpen(false)}
+                                    title="Report"
+                                    placeholder="Paste or type the service report…"
                                 />
                                 <div className="mt-3 flex justify-end">
                                     <Button type="button" onClick={handleAiGenerate} disabled={aiGenerating || !aiReport.trim()}>
