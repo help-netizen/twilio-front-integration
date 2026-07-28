@@ -191,7 +191,7 @@ Standalone job HTML shows the job number/service and payment amount only.
 
 ## Receipt history and migration
 
-Migration 213 adds:
+Migration 215 adds:
 
 - `payment_receipts.idempotency_key TEXT`
 - `payment_receipts.provider_message_id TEXT`

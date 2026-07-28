@@ -5,11 +5,11 @@ const path = require('path');
 const db = require('../backend/src/db/connection');
 
 const migration = fs.readFileSync(
-    path.join(__dirname, '..', 'backend', 'db', 'migrations', '213_payment_receipt_delivery_tracking.sql'),
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '215_payment_receipt_delivery_tracking.sql'),
     'utf8'
 );
 const rollback = fs.readFileSync(
-    path.join(__dirname, '..', 'backend', 'db', 'migrations', 'rollback_213_payment_receipt_delivery_tracking.sql'),
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', 'rollback_215_payment_receipt_delivery_tracking.sql'),
     'utf8'
 );
 
@@ -19,7 +19,7 @@ afterAll(async () => {
     try { await db.pool.end(); } catch { /* already closed */ }
 });
 
-test('migration 213 is idempotent and rollback removes only receipt delivery tracking', async () => {
+test('migration 215 is idempotent and rollback removes only receipt delivery tracking', async () => {
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
