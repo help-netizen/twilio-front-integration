@@ -17,6 +17,7 @@ const zenbookerRouter = require('../backend/src/routes/zenbooker');
 const integrationsLeadsRouter = require('../backend/src/routes/integrations-leads');
 const integrationsAnalyticsRouter = require('../backend/src/routes/integrations-analytics');
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
+const leadChannelAnalyticsRouter = require('../backend/src/routes/leadChannelAnalytics');
 const marketplaceRouter = require('../backend/src/routes/marketplace');
 const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
 const jobTagsSettingsRouter = require('../backend/src/routes/job-tags-settings');
@@ -257,6 +258,14 @@ app.use('/', publicInvoicesRouter.shortRouter);
 app.use('/', publicEstimatesRouter.shortRouter);
 app.use('/api/invoices', authenticate, requireCompanyAccess, invoicesRouter);
 app.use('/api/payments', authenticate, requireCompanyAccess, paymentsCanonicalRouter);
+app.use(
+    '/api/lead-channel-analytics',
+    authenticate,
+    requireCompanyAccess,
+    requirePermission('reports.financial.view'),
+    requirePermission('lead_source.view'),
+    leadChannelAnalyticsRouter
+);
 app.use('/api/portal', portalRouter); // public auth + portal-session auth inside router
 app.use('/api/fsm', authenticate, requireCompanyAccess, fsmRouter);
 app.use('/api/note-attachments', authenticate, requireCompanyAccess, noteAttachmentsRouter);
