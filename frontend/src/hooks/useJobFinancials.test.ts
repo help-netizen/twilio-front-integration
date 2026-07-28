@@ -62,7 +62,7 @@ beforeEach(() => {
 });
 
 describe('fetchJobFinanceSnapshot', () => {
-    it('refreshes invoices and only canonical completed job payments', async () => {
+    it('refreshes invoices and fetches ALL job transactions (voided + refunds included)', async () => {
         const invoices = [{ id: 3 }];
         const payments = [payment()];
         api.fetchInvoices.mockResolvedValueOnce({ invoices, total: 1, page: 1, limit: 100 });
@@ -70,12 +70,8 @@ describe('fetchJobFinanceSnapshot', () => {
 
         await expect(fetchJobFinanceSnapshot(7)).resolves.toEqual({ invoices, jobPayments: payments });
         expect(api.fetchInvoices).toHaveBeenCalledWith({ job_id: 7, limit: 100 });
-        expect(api.fetchTransactions).toHaveBeenCalledWith({
-            job_id: 7,
-            transaction_type: 'payment',
-            status: 'completed',
-            limit: 100,
-        });
+        // No status/type filter — voided rows stay visible and refund rows reach the money math.
+        expect(api.fetchTransactions).toHaveBeenCalledWith({ job_id: 7, limit: 100 });
     });
 });
 

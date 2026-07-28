@@ -657,6 +657,11 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                             <p className="blanc-eyebrow">Payment receipt</p>
                             <p className="mt-1 font-mono text-3xl font-semibold text-[var(--blanc-ink-1)]">{money(receiptPayment.amount)}</p>
                             <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{paymentMethodLabel(receiptPayment.payment_method)}</p>
+                            {isVoidedPayment(receiptPayment) && (
+                                <span className="mt-2 inline-block">
+                                    <PaymentStatusChip status="voided" transactionType="payment" />
+                                </span>
+                            )}
                         </div>
                         <div className="space-y-3">
                             {receiptPayment.processed_at && (
@@ -675,6 +680,12 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                                 <div className="flex items-baseline justify-between gap-4">
                                     <span className="blanc-eyebrow">Memo</span>
                                     <span className="max-w-[60%] text-right text-sm text-[var(--blanc-ink-1)]">{receiptPayment.memo}</span>
+                                </div>
+                            )}
+                            {receiptPayment.void_reason && (
+                                <div className="flex items-baseline justify-between gap-4">
+                                    <span className="blanc-eyebrow">Void reason</span>
+                                    <span className="max-w-[60%] text-right text-sm text-[var(--blanc-ink-1)]">{receiptPayment.void_reason}</span>
                                 </div>
                             )}
                         </div>

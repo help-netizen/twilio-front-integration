@@ -23,9 +23,10 @@ export async function fetchJobFinanceSnapshot(jobId: number, toleratePaymentFail
     const [invoiceResult, paymentResult] = await Promise.all([
         fetchInvoices({ job_id: jobId, limit: 100 }),
         fetchTransactions({
+            // All statuses + types: voided rows stay visible (TXN-STATUS-VOID) and
+            // refund rows reach the money math (refund netting). Downstream filters —
+            // the jobLedgerPayments render + jobFinanceMath — re-scope by type/status.
             job_id: jobId,
-            transaction_type: 'payment',
-            status: 'completed',
             limit: 100,
         }).catch(error => {
             if (!toleratePaymentFailure) throw error;
