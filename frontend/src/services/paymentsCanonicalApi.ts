@@ -47,6 +47,18 @@ export interface PaymentTransaction {
     voided_at?: string | null;
     voided_by?: string | null;
     void_reason?: string | null;
+    // RECEIPT-REVIEW-001: enriched fields (present on GET /api/payments/:id detail).
+    voided_by_name?: string | null;
+    brand?: string | null;
+    last4?: string | null;
+    invoice_number?: string | null;
+    customer_name?: string | null;
+    created_by_name?: string | null;
+    territory?: string | null;
+    stripe_payment_id?: string | null;
+    stripe_customer_id?: string | null;
+    stripe_livemode?: boolean | null;
+    receipt_history?: Array<{ to: string | null; sent_at: string; channel: 'email' | 'sms' | 'portal' }>;
 }
 
 export interface PaymentReceipt {
@@ -222,34 +234,28 @@ export async function sendReceipt(transactionId: number, data: SendReceiptData):
     });
 }
 
-// JOBPANEL-REWORK-001 — transaction kebab (Review / Email receipt / View in Stripe).
+// RECEIPT-REVIEW-001 — send our own branded receipt (Stripe hosted receipt removed).
 
-export interface ReceiptView {
-    receipt_type: 'recorded' | 'stripe';
-    /** Stripe hosted receipt URL for card charges; null for recorded cash/check. */
-    receipt_url: string | null;
-    receipt: {
-        transaction_id: number;
-        amount: string;
-        currency: string;
-        payment_method: string;
-        processed_at: string | null;
-        created_at: string;
-        reference_number: string | null;
-        customer_name: string | null;
-        job_id: number | null;
-    };
+export interface EmailReceiptResult {
+    sent: boolean;
+    delivery: string;
+    contact_email_saved: boolean;
+    idempotent: boolean;
+    receipt_history_entry: { to: string | null; sent_at: string; channel: 'email' | 'sms' | 'portal' } | null;
 }
 
-/** Resolve a transaction's receipt — Stripe's hosted receipt for card charges, a recorded view model otherwise. */
-export async function fetchReceiptView(transactionId: number): Promise<ReceiptView> {
-    return paymentsRequest<ReceiptView>(`${PAYMENTS_BASE}/${transactionId}/receipt/view`);
-}
-
-/** Email a transaction's receipt to the customer (backend falls back to the on-file email when omitted). */
-export async function emailTransactionReceipt(transactionId: number, email?: string): Promise<{ receipt_url: string | null }> {
-    return paymentsRequest<{ receipt_url: string | null }>(`${PAYMENTS_BASE}/${transactionId}/receipt/email`, {
+/** Email the customer our branded payment receipt (backend falls back to the on-file
+ *  email when omitted). Pass a stable idempotencyKey per user send action. */
+export async function emailTransactionReceipt(
+    transactionId: number,
+    email?: string,
+    idempotencyKey?: string,
+): Promise<EmailReceiptResult> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    return paymentsRequest<EmailReceiptResult>(`${PAYMENTS_BASE}/${transactionId}/receipt/email`, {
         method: 'POST',
+        headers,
         body: JSON.stringify(email ? { email } : {}),
     });
 }

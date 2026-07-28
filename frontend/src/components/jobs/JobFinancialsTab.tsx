@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
-import { Archive, Ban, Banknote, ChevronRight, CreditCard, ExternalLink, FileText, Loader2, Lock, Mail, MoreVertical, Plus, Receipt } from 'lucide-react';
+import { Archive, Ban, Banknote, ChevronRight, CreditCard, FileText, Loader2, Lock, MoreVertical, Plus, Receipt } from 'lucide-react';
 import { CloudBanner } from '../ui/CloudBanner';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
 import { useAuthz } from '../../hooks/useAuthz';
@@ -27,9 +27,10 @@ import { toast } from 'sonner';
 import { calculateJobFinanceSummary, formatSignedCurrency } from './jobFinanceMath';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { emailTransactionReceipt, fetchReceiptView, voidTransaction, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
+import { voidTransaction, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
 import { PaymentStatusChip, isVoidablePayment, isVoidedPayment, VOIDED_AMOUNT_CLASS } from '../payments/paymentStatus';
 import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
+import { TransactionReview } from '../payments/TransactionReview';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -154,23 +155,6 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
         (b.processed_at || b.created_at).localeCompare(a.processed_at || a.created_at)
     ));
 
-    // Transaction kebab actions. "View in Stripe" only for our own Stripe card charges
-    // (external_source==='stripe'); Zenbooker/cash/check have no Stripe object. Matches
-    // the backend's isStripeCardPayment gate so the item never shows for a non-Stripe row.
-    const isStripePayment = (p: PaymentTransaction) => p.external_source === 'stripe' && p.payment_method === 'credit_card';
-    const emailReceipt = async (p: PaymentTransaction) => {
-        try {
-            await emailTransactionReceipt(p.id, contactEmail || undefined);
-            toast.success(contactEmail ? `Receipt emailed to ${contactEmail}` : 'Receipt emailed');
-        } catch (err: any) { toast.error(err?.message || 'Could not email receipt'); }
-    };
-    const viewInStripe = async (p: PaymentTransaction) => {
-        try {
-            const { receipt_url } = await fetchReceiptView(p.id);
-            if (receipt_url) window.open(receipt_url, '_blank', 'noopener,noreferrer');
-            else toast.error('Stripe receipt is not available for this payment yet');
-        } catch (err: any) { toast.error(err?.message || 'Could not open Stripe receipt'); }
-    };
     // Void a manually-recorded payment (throws on failure so the dialog stays open).
     const handleVoidPayment = async (reason: string) => {
         if (!voidTarget) return;
@@ -273,16 +257,6 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                                             <DropdownMenuItem onSelect={() => setReceiptPayment(payment)}>
                                                 <Receipt className="size-4" />Review
                                             </DropdownMenuItem>
-                                            {contactEmail && (
-                                                <DropdownMenuItem onSelect={() => emailReceipt(payment)}>
-                                                    <Mail className="size-4" />Email receipt
-                                                </DropdownMenuItem>
-                                            )}
-                                            {isStripePayment(payment) && (
-                                                <DropdownMenuItem onSelect={() => viewInStripe(payment)}>
-                                                    <ExternalLink className="size-4" />View in Stripe
-                                                </DropdownMenuItem>
-                                            )}
                                             {canRecordOffline && isVoidablePayment(payment) && (
                                                 <DropdownMenuItem
                                                     onSelect={() => setVoidTarget(payment)}
@@ -652,58 +626,13 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
             {/* Transaction "Review" — read-only receipt slide-over (JOBPANEL-REWORK-001) */}
             {receiptPayment && (
                 <FloatingDetailPanel open={!!receiptPayment} onClose={() => setReceiptPayment(null)}>
-                    <div className="space-y-6 p-6">
-                        <div>
-                            <p className="blanc-eyebrow">Payment receipt</p>
-                            <p className="mt-1 font-mono text-3xl font-semibold text-[var(--blanc-ink-1)]">{money(receiptPayment.amount)}</p>
-                            <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{paymentMethodLabel(receiptPayment.payment_method)}</p>
-                            {isVoidedPayment(receiptPayment) && (
-                                <span className="mt-2 inline-block">
-                                    <PaymentStatusChip status="voided" transactionType="payment" />
-                                </span>
-                            )}
-                        </div>
-                        <div className="space-y-3">
-                            {receiptPayment.processed_at && (
-                                <div className="flex items-baseline justify-between gap-4">
-                                    <span className="blanc-eyebrow">Date</span>
-                                    <span className="text-sm text-[var(--blanc-ink-1)]">{paymentDate(receiptPayment.processed_at)}</span>
-                                </div>
-                            )}
-                            {receiptPayment.reference_number && (
-                                <div className="flex items-baseline justify-between gap-4">
-                                    <span className="blanc-eyebrow">Reference</span>
-                                    <span className="font-mono text-sm text-[var(--blanc-ink-1)]">{receiptPayment.reference_number}</span>
-                                </div>
-                            )}
-                            {receiptPayment.memo && (
-                                <div className="flex items-baseline justify-between gap-4">
-                                    <span className="blanc-eyebrow">Memo</span>
-                                    <span className="max-w-[60%] text-right text-sm text-[var(--blanc-ink-1)]">{receiptPayment.memo}</span>
-                                </div>
-                            )}
-                            {receiptPayment.void_reason && (
-                                <div className="flex items-baseline justify-between gap-4">
-                                    <span className="blanc-eyebrow">Void reason</span>
-                                    <span className="max-w-[60%] text-right text-sm text-[var(--blanc-ink-1)]">{receiptPayment.void_reason}</span>
-                                </div>
-                            )}
-                        </div>
-                        {(contactEmail || isStripePayment(receiptPayment)) && (
-                            <div className="flex flex-wrap gap-2">
-                                {contactEmail && (
-                                    <Button variant="outline" size="sm" onClick={() => emailReceipt(receiptPayment)}>
-                                        <Mail className="mr-1.5 size-4" />Email receipt
-                                    </Button>
-                                )}
-                                {isStripePayment(receiptPayment) && (
-                                    <Button variant="outline" size="sm" onClick={() => viewInStripe(receiptPayment)}>
-                                        <ExternalLink className="mr-1.5 size-4" />View in Stripe
-                                    </Button>
-                                )}
-                            </div>
-                        )}
-                    </div>
+                    <TransactionReview
+                        transactionId={receiptPayment.id}
+                        initial={receiptPayment}
+                        contactEmail={contactEmail}
+                        canVoid={canRecordOffline}
+                        onChanged={refresh}
+                    />
                 </FloatingDetailPanel>
             )}
         </div>
