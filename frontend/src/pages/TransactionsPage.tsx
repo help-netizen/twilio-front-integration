@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useTransactions } from '../hooks/useTransactions';
-import { TransactionDetailPanel } from '../components/transactions/TransactionDetailPanel';
+import { TransactionReview } from '../components/payments/TransactionReview';
+import { RefundDialog } from '../components/transactions/RefundDialog';
 import { RecordPaymentDialog } from '../components/transactions/RecordPaymentDialog';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, DollarSign, TrendingDown, Clock, Minus } from 'lucide-react';
+import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, DollarSign, TrendingDown, Clock, Minus, Undo2 } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { useAuthz } from '../hooks/useAuthz';
 import { paymentMethodLabel } from '../lib/paymentMethodLabels';
@@ -84,9 +85,15 @@ export function TransactionsPage() {
     const page = useTransactions();
     // TXN-STATUS-VOID-001: the ledger row targeted by the Void reason dialog.
     const [voidTarget, setVoidTarget] = useState<PaymentTransaction | null>(null);
+    // RECEIPT-REVIEW-001: the ledger detail panel's Refund dialog.
+    const [refundOpen, setRefundOpen] = useState(false);
+    // Bumped after a parent-driven change (refund) to remount the Review with fresh data.
+    const [reviewNonce, setReviewNonce] = useState(0);
     const { hasAnyPermission } = useAuthz();
     const canRecordPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
     const [recordOpen, setRecordOpen] = useState(false);
+    const selected = page.selectedTransaction;
+    const canRefundSelected = selected?.status === 'completed' && selected?.transaction_type === 'payment';
 
     return (
         <div className="blanc-page-wrapper">
@@ -285,18 +292,35 @@ export function TransactionsPage() {
             />
             </div>
 
-            <FloatingDetailPanel open={!!page.selectedTransaction} onClose={page.closeDetail}>
-                {page.selectedTransaction && (
-                    <TransactionDetailPanel
-                        transaction={page.selectedTransaction}
-                        receipt={page.receipt}
-                        onClose={page.closeDetail}
-                        onRefund={page.handleRefund}
-                        onVoid={async () => { if (page.selectedTransaction) setVoidTarget(page.selectedTransaction); }}
-                        onSendReceipt={page.handleSendReceipt}
+            <FloatingDetailPanel open={!!selected} onClose={page.closeDetail}>
+                {selected && (
+                    <TransactionReview
+                        key={`${selected.id}-${reviewNonce}`}
+                        transactionId={selected.id}
+                        initial={selected}
+                        canVoid
+                        onChanged={() => { page.loadTransactions(); page.loadSummary(); }}
+                        extraActions={canRefundSelected ? (
+                            <Button variant="outline" className="w-full" onClick={() => setRefundOpen(true)}>
+                                <Undo2 className="mr-1.5 size-4" />Refund
+                            </Button>
+                        ) : null}
                     />
                 )}
             </FloatingDetailPanel>
+
+            {/* Refund dialog for the ledger detail panel */}
+            {selected && (
+                <RefundDialog
+                    open={refundOpen}
+                    onOpenChange={setRefundOpen}
+                    transaction={selected}
+                    onRefund={async data => {
+                        await page.handleRefund(selected.id, data);
+                        setReviewNonce(n => n + 1);
+                    }}
+                />
+            )}
         </div>
     );
 }

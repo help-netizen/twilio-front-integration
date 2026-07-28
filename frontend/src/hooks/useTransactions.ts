@@ -202,6 +202,7 @@ export function useTransactions() {
         summary,
         receipt,
         loadTransactions,
+        loadSummary,
         selectTransaction,
         closeDetail,
         handleCreateTransaction,

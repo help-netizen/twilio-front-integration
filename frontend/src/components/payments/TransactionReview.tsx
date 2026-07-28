@@ -29,6 +29,8 @@ interface Props {
     contactEmail?: string | null;
     /** Whether the operator may void (payments.collect_offline). */
     canVoid?: boolean;
+    /** Extra action(s) rendered in the action stack (e.g. the ledger's Refund). */
+    extraActions?: React.ReactNode;
     /** Called after a successful void so the parent can refresh its finance data. */
     onChanged?: () => void;
 }
@@ -62,7 +64,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     );
 }
 
-export function TransactionReview({ transactionId, initial, contactEmail, canVoid = false, onChanged }: Props) {
+export function TransactionReview({ transactionId, initial, contactEmail, canVoid = false, extraActions, onChanged }: Props) {
     const [tx, setTx] = useState<PaymentTransaction | null>(initial ?? null);
     const [voidOpen, setVoidOpen] = useState(false);
 
@@ -213,6 +215,8 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
                         <Mail className="mr-1.5 size-4" />{sentTo || receiptHistory.length > 0 ? 'Resend receipt' : 'Send receipt'}
                     </Button>
                 )}
+
+                {extraActions}
 
                 {canVoid && isVoidablePayment(tx) && (
                     <Button
