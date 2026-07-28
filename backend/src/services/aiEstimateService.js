@@ -1,9 +1,8 @@
 /**
  * REPORT-TO-ESTIMATE-001 — build an estimate/invoice draft from the Price Book.
  *
- * The document itself is never persisted here. The only writes this service may
- * perform are explicit Price Book item creates requested by a `source: "new"`
- * model selection.
+ * The document itself is never persisted here, and `source: "new"` selections
+ * remain ad-hoc draft lines rather than creating Price Book items.
  */
 
 'use strict';
@@ -11,7 +10,6 @@
 const jsonLlmClient = require('./llm/jsonLlmClient');
 const presetQueries = require('../db/estimateItemPresetsQueries');
 const priceBookQueries = require('../db/priceBookQueries');
-const presetService = require('./estimateItemPresetsService');
 const {
     MAX_ORDER_LIST_ROWS,
     MAX_PART_NAME_CHARS,
@@ -82,7 +80,11 @@ your catalog is the source of truth for what you sell, how it's described, and w
 5. Use **Price Book prices**; override a price only when the report explicitly quotes a
    different amount.
 6. Use the report's quantity when stated, otherwise the catalog default. Never invent work,
-   parts, or prices.`;
+   parts, or prices.
+7. When the report prices items separately (a materials price and a labor price), add them as
+   INDIVIDUAL item lines, each with its OWN unit_price. Never put a combined or total amount on a line.
+8. Never set unit_price on a group line — a group keeps each item's own catalog price; when the
+   report prices items separately, use individual item lines, not a group.`;
 
 const SECURITY_PREAMBLE = `You build estimate line items from a company's Price Book.
 
@@ -121,6 +123,8 @@ Rules:
 - Omit qty when it is not stated; the server will use the catalog or group-link default.
 - Omit unit_price when it is not stated.
 - A total for several units is not a unit price unless the report makes that clear.
+- When the report prices items separately (a materials price and a labor price), add them as INDIVIDUAL item lines, each with its OWN unit_price. Never put a combined or total amount on a line.
+- Never set unit_price on a group line — a group keeps each item's own catalog price; when the report prices items separately, use individual item lines, not a group.
 - order_list is internal parts-to-order data and never includes prices.
 - Include an order_list row only when the report explicitly provides ALL of its part_number, part_name, and quantity.
 - Exclude partial parts. Return an empty order_list when the report has no clear, complete parts information.
@@ -592,7 +596,6 @@ function createAiEstimateService({
     itemQueries = presetQueries,
     categoryQueries = priceBookQueries,
     priceQueries: injectedPriceQueries = null,
-    itemsService = presetService,
     appConnectionChecker = defaultAppConnectionChecker,
     instructionLoader = defaultInstructionLoader,
     logger = console,
@@ -634,10 +637,8 @@ function createAiEstimateService({
 
     async function generateDraft({
         companyId,
-        actorId,
         reportText,
         jobId,
-        canManagePriceBook = false,
     }) {
         const appKey = require('./marketplaceService').REPORT_TO_ESTIMATE_APP_KEY;
         const enabled = await appConnectionChecker(companyId, appKey);
@@ -708,12 +709,12 @@ function createAiEstimateService({
                     lineItems.push(responseLine({
                         title: catalogTitle,
                         description: selection.description,
-                        qty: selection.qty ?? positiveNumber(
+                        qty: positiveNumber(
                             member.quantity,
                             positiveNumber(catalogItem.default_quantity, 1),
                         ),
-                        unitPrice: selection.unitPrice ?? catalogPrice,
-                        priceSource: selection.unitPrice == null ? 'price_book' : 'report',
+                        unitPrice: catalogPrice,
+                        priceSource: 'price_book',
                         priceBookItemId: catalogItem.id,
                         created: false,
                         path: categoryPath(context.categories, catalogItem.category_id),
@@ -746,45 +747,15 @@ function createAiEstimateService({
             const path = category
                 ? categoryPath(context.categories, category.id)
                 : undefined;
-            if (!canManagePriceBook) {
-                lineItems.push(responseLine({
-                    title: selection.title,
-                    description: selection.description,
-                    qty: selection.qty ?? 1,
-                    unitPrice: selection.unitPrice ?? 0,
-                    priceSource: 'report',
-                    priceBookItemId: null,
-                    created: false,
-                    path,
-                }));
-                continue;
-            }
-
-            const created = await itemsService.create(companyId, {
-                name: selection.title,
-                description: null,
-                default_quantity: 1,
-                default_unit_price: selection.unitPrice ?? 0,
-                default_taxable: false,
-                category_id: category ? Number(category.id) : null,
-            }, { createdBy: actorId });
-            const createdRow = {
-                ...created,
-                company_id: companyId,
-                category_id: created.category_id ?? (category ? Number(category.id) : null),
-                archived_at: null,
-            };
-            context.items.push(createdRow);
-            context.itemsById.set(Number(createdRow.id), createdRow);
             lineItems.push(responseLine({
-                title: cleanText(created.name, MAX_TITLE_CHARS) || selection.title,
+                title: selection.title,
                 description: selection.description,
-                qty: selection.qty ?? positiveNumber(created.default_quantity, 1),
-                unitPrice: selection.unitPrice ?? reportPrice(created.default_unit_price) ?? 0,
+                qty: selection.qty ?? 1,
+                unitPrice: selection.unitPrice ?? 0,
                 priceSource: 'report',
-                priceBookItemId: created.id,
-                created: true,
-                path: categoryPath(context.categories, createdRow.category_id),
+                priceBookItemId: null,
+                created: false,
+                path,
             }));
         }
 
