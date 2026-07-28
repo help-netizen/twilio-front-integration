@@ -147,12 +147,20 @@ describe('email workspace routes', () => {
     });
 
     test('GET /threads/:id returns thread detail', async () => {
+        const rawFullHtml =
+            '<p>Latest reply</p><div class="gmail_quote">FULL-WORKSPACE-THREAD-SENTINEL</div>';
         emailQueries.getThreadById.mockResolvedValue({ id: 1, subject: 'Hello' });
-        emailQueries.getMessagesByThread.mockResolvedValue([{ id: 10, body_text: 'Test message' }]);
+        emailQueries.getMessagesByThread.mockResolvedValue([{
+            id: 10,
+            body_text: 'Test message\n> Full prior thread',
+            body_html: rawFullHtml,
+        }]);
         const res = await request(app).get('/api/email/threads/1');
         expect(res.status).toBe(200);
         expect(res.body.data.thread.subject).toBe('Hello');
         expect(res.body.data.messages).toHaveLength(1);
+        expect(res.body.data.messages[0].body_html).toBe(rawFullHtml);
+        expect(res.body.data.messages[0]).not.toHaveProperty('display_html');
     });
 
     test('GET /threads/:id returns 404 for missing thread', async () => {

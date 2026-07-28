@@ -135,7 +135,7 @@ describe('linkYelpAgentSend', () => {
                 to_email: [YELP_REPLY],
                 subject: 'Message from Acme',
                 body_text: 'Hi Kim — new text',
-                body_html: '<p>Hi Kim — new text</p>',
+                display_html: '<p>Hi Kim — new text</p>',
                 sent_at: '2026-06-23T13:00:00.000Z',
                 thread_id: 77,
                 sent_by_user_email: 'agent@co.com',
@@ -143,6 +143,8 @@ describe('linkYelpAgentSend', () => {
             { id: null },
             TL
         );
+        expect(realtimeService.publishMessageAdded.mock.calls[0][0])
+            .not.toHaveProperty('body_html');
         expect(mockProvider.pullChanges).not.toHaveBeenCalled();
     });
 

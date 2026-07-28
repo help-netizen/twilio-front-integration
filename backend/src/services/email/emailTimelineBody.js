@@ -43,9 +43,17 @@ const RE_ORIGINAL_MESSAGE = /^\s*-{2,}\s*Original Message\s*-{2,}\s*$/i;
 /** Outlook underscore divider (a run of 10+ underscores). */
 const RE_UNDERSCORE_DIVIDER = /^\s*_{10,}\s*$/;
 /** Start of an Outlook quoted-header block. */
-const RE_HEADER_FROM = /^\s*From:\s.+/;
-const RE_HEADER_SENT = /^\s*(?:Sent|Date):\s/;
-const RE_HEADER_TO = /^\s*To:\s/;
+const RE_HEADER_FROM = /^\s*From:\s.+/i;
+const RE_HEADER_SENT = /^\s*(?:Sent|Date):\s/i;
+const RE_HEADER_TO = /^\s*To:\s/i;
+/**
+ * Outlook sometimes collapses the whole header run onto one physical line
+ * (notably after MIME/plain-text normalization). Require the ordered
+ * From → Sent/Date → To → Subject labels so prose containing a lone `From:`
+ * stays untouched.
+ */
+const RE_COLLAPSED_HEADER_RUN =
+  /^\s*From:\s.+?\s+(?:Sent|Date):\s.+?\s+To:\s.+?\s+Subject:\s.+/i;
 /** A quoted line (leading optional whitespace then `>`). */
 const RE_QUOTE = /^\s*>/;
 /** RFC 3676 signature delimiter line: exactly `--` or `-- ` (optional trailing ws). */
@@ -105,6 +113,10 @@ function findCutIndex(lines) {
 
     // 4) Outlook header block: `From:` then within 4 lines a `Sent:`/`Date:` AND a `To:`
     if (RE_HEADER_FROM.test(line)) {
+      if (RE_COLLAPSED_HEADER_RUN.test(line)) {
+        consider(i);
+        break;
+      }
       let sawSent = false;
       let sawTo = false;
       for (let j = i + 1; j <= i + 4 && j < lines.length; j++) {

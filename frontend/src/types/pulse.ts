@@ -47,7 +47,11 @@ export interface EmailTimelineItem {
     to_email: string | string[] | null; // raw to_recipients_json
     subject: string | null;
     body_text: string | null; // plain text, already quote-stripped server-side
-    body_html: string | null; // raw HTML body — sanitized client-side (SafeEmailHtml)
+    // EMAIL-FEED-BODY-001: server-side quote-stripped display HTML (new message only;
+    // raw body_html is NEVER sent to Pulse). null → no HTML for the feed (empty,
+    // oversize, parse failure, or near-empty after a recognized cut) → body_text
+    // fallback. STILL UNTRUSTED — must go through sanitizeEmailHtml/SafeEmailHtml.
+    display_html: string | null;
     sent_at: string; // gmail_internal_at (ISO8601) — timeline sort timestamp
     thread_id: string | null;
     sent_by_user_email: string | null; // outbound attribution (nullable)

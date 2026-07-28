@@ -90,6 +90,8 @@ function scriptedGenerate(steps) {
     });
 }
 const inbound = (body = 'hello', pmid = 'ymsg-REPLY-1') => ({ provider_message_id: pmid, body_text: body });
+const RAW_YELP_QUOTE_HTML =
+    '<div>Kim requested a quote.</div><div class="gmail_quote">FULL-YELP-THREAD-SENTINEL</div>';
 const greetingInbound = (context = {}) => ({
     provider_message_id: 'ymsg-NEW-1:greet0',
     body_text: 'untrusted first-message wrapper',
@@ -140,7 +142,7 @@ beforeEach(() => {
         subject: 'Re: your request',
         // quote fields (YELP-REPLY-FORMAT-001): the send must embed the quoted original
         body_text: 'Kim requested a quote from ABC Homes for a dishwasher repair.',
-        body_html: null,
+        body_html: RAW_YELP_QUOTE_HTML,
         from_email: 'reply+aa11bb22cc33dd44@messaging.yelp.com',
         from_name: 'Yelp Inbox',
         gmail_internal_at: '2026-07-11T21:39:23.000Z',
@@ -432,6 +434,11 @@ describe('YCB-LOOP-02 · reply → exactly ONE sendEmail to conv.last_reply_to',
         expect(payload.textBody).toMatch(/wrote:/);
         expect(payload.textBody).toContain('> Kim requested a quote from ABC Homes');
         expect(payload.body).toContain('gmail_quote');
+        // EMAIL-FEED-BODY-001 sabotage guard: Yelp resolves the RAW DB row, not the
+        // Pulse display projector. Its full original HTML stays byte-identical
+        // inside the relay-required quoted block.
+        expect(payload.body).toContain(RAW_YELP_QUOTE_HTML);
+        expect(payload.body).toContain('FULL-YELP-THREAD-SENTINEL');
         expect(mockUpdateLead).not.toHaveBeenCalled();
         expect(mockCreateTask).not.toHaveBeenCalled();
     });

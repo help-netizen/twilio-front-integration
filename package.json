@@ -39,6 +39,7 @@
     "googleapis": "^171.4.0",
     "jsonwebtoken": "^9.0.3",
     "jwks-rsa": "^3.2.2",
+    "linkedom": "0.18.12",
     "multer": "^2.0.2",
     "node-fetch": "^2.7.0",
     "pg": "^8.18.0",

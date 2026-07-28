@@ -22,7 +22,7 @@ const companyQueries = require('../../db/companyQueries');
 const queries = require('../../db/queries');
 const db = require('../../db/connection');
 const realtimeService = require('../realtimeService');
-const { toTimelineBody } = require('./emailTimelineBody');
+const { projectEmailTimelineItem } = require('./emailTimelineItem');
 
 const SENT_DRAFT_LABELS = new Set(['SENT', 'DRAFT']);
 
@@ -32,49 +32,6 @@ function codedError(httpStatus, code, message) {
     err.httpStatus = httpStatus;
     err.code = code;
     return err;
-}
-
-/**
- * Shape an email_messages row into the FLAT timeline email item — the exact shape
- * the read projection emits (`buildTimeline` in routes/pulse.js + the items from
- * `emailQueries.getTimelineEmailByContact`) and the frontend `EmailTimelineItem`
- * consumes: `{ id, type, direction, is_outbound, from_email, from_name, to_email,
- * subject, body_text, sent_at, thread_id, sent_by_user_email }`.
- *
- * Keeping this identical to the read projection means the SSE `message.added`
- * email payload is consistent with a `refetchTimeline()`, so a future
- * append-from-SSE renders the same way a refetch does.
- *
- * Accepts either a raw `email_messages` row (e.g. from `linkMessageToContact`,
- * which has `direction` but no derived `is_outbound`) or a projection row (from
- * `getTimelineEmailByContact`, which already carries `is_outbound`). `is_outbound`
- * is derived from `direction` when absent. `body_text` is quote-stripped via
- * `toTimelineBody` (the read projection does the same) — storage is untouched.
- */
-function toEmailItem(row) {
-    if (!row) return null;
-    const isOutbound = typeof row.is_outbound === 'boolean'
-        ? row.is_outbound
-        : row.direction === 'outbound';
-    return {
-        company_id: row.company_id || null,
-        id: row.id,
-        type: 'email',
-        direction: row.direction,
-        is_outbound: isOutbound,
-        from_email: row.from_email || null,
-        from_name: row.from_name || null,
-        to_email: row.to_recipients_json || [],
-        subject: row.subject || null,
-        // Quote-strip the STORED body for display only (storage untouched), exactly
-        // as the read projection does.
-        body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
-        // RAW HTML body (un-sanitized) — parity with the REST projection; sanitized client-side.
-        body_html: row.body_html || null,
-        sent_at: row.gmail_internal_at,
-        thread_id: row.thread_id,
-        sent_by_user_email: row.sent_by_user_email || null,
-    };
 }
 
 /**
@@ -157,7 +114,7 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
                         if (linkedRow && !alreadyLinked) {
                             await timelinesQueries.markTimelineUnread(timelineId);
                             try {
-                                realtimeService.publishMessageAdded(toEmailItem(linkedRow), { id: null }, timelineId);
+                                realtimeService.publishMessageAdded(projectEmailTimelineItem(linkedRow), { id: null }, timelineId);
                             } catch (e) {
                                 console.error('[EmailTimeline] Yelp publishMessageAdded failed:', e.message);
                             }
@@ -351,7 +308,7 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
         // Email has no conversation; pass a minimal object so the publisher's
         // `conversation.id` read is null-safe.
         try {
-            realtimeService.publishMessageAdded(toEmailItem(linked), { id: null }, timelineId);
+            realtimeService.publishMessageAdded(projectEmailTimelineItem(linked), { id: null }, timelineId);
         } catch (e) {
             console.error('[EmailTimeline] publishMessageAdded failed:', e.message);
         }
@@ -504,7 +461,7 @@ async function linkOutboundMessage(companyId, msg) {
         // Email has no conversation; pass a minimal object so the publisher's
         // `conversation.id` read is null-safe.
         try {
-            realtimeService.publishMessageAdded(toEmailItem(linked), { id: null }, timelineId);
+            realtimeService.publishMessageAdded(projectEmailTimelineItem(linked), { id: null }, timelineId);
         } catch (e) {
             console.error('[EmailTimeline] linkOutboundMessage publishMessageAdded failed:', e.message);
         }
@@ -789,7 +746,7 @@ async function sendForContact(companyId, contactId, { body, toEmail, userId, use
         //    case where the row exists but linkMessageToContact's RETURNING wasn't
         //    the one we read); last resort, synthesize from what we know so the UI
         //    still gets a right-aligned bubble.
-        let item = linkedRow ? toEmailItem(linkedRow) : null;
+        let item = linkedRow ? projectEmailTimelineItem(linkedRow) : null;
         if (!item) {
             const rows = await emailQueries.getTimelineEmailByContact(companyId, contactId);
             const match = Array.isArray(rows)
@@ -797,10 +754,10 @@ async function sendForContact(companyId, contactId, { body, toEmail, userId, use
                     && r.direction === 'outbound')
                     || rows[rows.length - 1]
                 : null;
-            item = match ? toEmailItem(match) : null;
+            item = match ? projectEmailTimelineItem(match) : null;
         }
         if (!item) {
-            item = toEmailItem({
+            item = projectEmailTimelineItem({
                 id: null,
                 thread_id: threadId,
                 direction: 'outbound',
@@ -905,7 +862,7 @@ async function linkYelpAgentSend(companyId, { providerMessageId, providerThreadI
         }
 
         try {
-            realtimeService.publishMessageAdded(toEmailItem(linkedRow), { id: null }, timelineId);
+            realtimeService.publishMessageAdded(projectEmailTimelineItem(linkedRow), { id: null }, timelineId);
         } catch (e) {
             console.error('[EmailTimeline] linkYelpAgentSend publishMessageAdded failed:', e.message);
         }

@@ -602,6 +602,8 @@ test('TC-TRP-027: no-limit response on both endpoints is byte-identical to froze
         expect(response.body.calls.at(-1).started_at).toBeNull();
         expect(response.body.messages[0].media).toEqual(expect.any(Array));
         expect(response.body.email_messages[0].body_text).toBe('Fresh reply');
+        expect(response.body.email_messages[0].display_html).toBe('<p>Fresh reply</p>');
+        expect(response.body.email_messages[0]).not.toHaveProperty('body_html');
         expect(JSON.stringify(response.body)).not.toContain('"ts"');
     }
 });
@@ -675,7 +677,8 @@ test('TC-TRP-030: contactless timeline pages email by timeline and skips SMS/fin
     state.contact = null;
     state.conversations = [];
     state.data = { calls: [], messages: [], emails: emailOnly, estimates: [], invoices: [] };
-    const response = await request(stubApp()).get(`/api/pulse/timeline-by-id/${TIMELINE.id}?limit=20`);
+    const response = await request(stubApp({ scopes: { job_visibility: 'all' } }))
+        .get(`/api/pulse/timeline-by-id/${TIMELINE.id}?limit=20`);
     expect(response.status).toBe(200);
     expect(response.body.page.items).toHaveLength(3);
     expect(response.body.page.items.every(item => item.src === 'email')).toBe(true);

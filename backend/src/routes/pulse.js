@@ -10,7 +10,7 @@ const queries = require('../db/queries');
 const convQueries = require('../db/conversationsQueries');
 const contactsService = require('../services/contactsService');
 const emailQueries = require('../db/emailQueries');
-const { toTimelineBody } = require('../services/email/emailTimelineBody');
+const { projectEmailTimelineItem } = require('../services/email/emailTimelineItem');
 const timelinePage = require('../services/timelinePage');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
@@ -275,26 +275,6 @@ function mapSmsRow(conv, row) {
     };
 }
 
-function projectEmailRow(row) {
-    return {
-        id: row.id,
-        type: 'email',
-        direction: row.direction,
-        is_outbound: row.is_outbound,
-        from_email: row.from_email,
-        from_name: row.from_name,
-        to_email: row.to_recipients_json,
-        subject: row.subject,
-        // Quote-strip the STORED body for display only (storage untouched).
-        body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
-        // RAW HTML body (un-quote-stripped, un-sanitized) — sanitized client-side.
-        body_html: row.body_html || null,
-        sent_at: row.gmail_internal_at,
-        thread_id: row.thread_id,
-        sent_by_user_email: row.sent_by_user_email,
-    };
-}
-
 function mapEstimateRow(row, contactId) {
     return {
         id: `estimate-${row.id}`,
@@ -493,7 +473,7 @@ async function buildTimelinePage(req, res, contact, timeline, { limit, before })
                 rows: rows.map(row => ({
                     ts: row.ts,
                     id: String(row.id),
-                    data: projectEmailRow(row),
+                    data: projectEmailTimelineItem(row),
                 })),
             };
         })());
@@ -667,7 +647,7 @@ async function buildTimeline(req, res, contact, timeline) {
             const emailRows = contact?.id
                 ? await emailQueries.getTimelineEmailByContact(emailCompanyId, contact.id)
                 : await emailQueries.getTimelineEmailByTimeline(emailCompanyId, timeline.id);
-            emailMessages = emailRows.map(projectEmailRow);
+            emailMessages = emailRows.map(projectEmailTimelineItem);
         } catch (err) {
             console.error('[Pulse] timeline email query error:', err.message);
         }

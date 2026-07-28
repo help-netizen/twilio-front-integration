@@ -37,6 +37,7 @@ function outboundRow(overrides = {}) {
         to_recipients_json: [CONTACT_EMAIL],
         subject: 'Message from Acme',
         body_text: 'hi',
+        body_html: '<p>hi</p><div class="gmail_quote">OLD-HTML</div>',
         snippet: null,
         gmail_internal_at: '2026-06-23T13:00:00.000Z',
         sent_by_user_email: 'agent@co.com',
@@ -171,8 +172,10 @@ describe('sendForContact — reply vs initiate (P0)', () => {
             id: 5, type: 'email', direction: 'outbound', is_outbound: true,
             from_email: 'mb@co.com', to_email: [CONTACT_EMAIL], thread_id: 77,
             body_text: 'hi', sent_at: '2026-06-23T13:00:00.000Z',
+            display_html: '<p>hi</p>',
             sent_by_user_email: 'agent@co.com',
         });
+        expect(item).not.toHaveProperty('body_html');
         expect(item).not.toHaveProperty('from'); // no nested {from:{...}} shape
         // No re-import needed when the link succeeds first try.
         expect(mockProvider.pullChanges).not.toHaveBeenCalled();
@@ -371,6 +374,8 @@ describe('POST /contacts/:contactId/send — route (P0)', () => {
         expect(res.status).toBe(200);
         expect(res.body.ok).toBe(true);
         expect(res.body.data).toMatchObject({ type: 'email', direction: 'outbound' });
+        expect(res.body.data).toHaveProperty('display_html');
+        expect(res.body.data).not.toHaveProperty('body_html');
     });
 
     it('company_id comes ONLY from req.companyFilter (poisoned body/req.companyId ignored)', async () => {
@@ -462,6 +467,7 @@ function linkedOutboundRow(overrides = {}) {
         from_name: 'Acme Support', from_email: 'mb@co.com',
         to_recipients_json: [{ name: 'Alice', email: CONTACT_EMAIL }],
         subject: 'Re: your booking', body_text: 'on our way', snippet: 'on our way',
+        body_html: '<p>on our way</p><div class="gmail_quote">OLD-HTML</div>',
         gmail_internal_at: '2026-06-23T14:00:00.000Z', sent_by_user_email: 'agent@co.com',
         ...overrides,
     };
@@ -494,8 +500,10 @@ describe('linkOutboundMessage — link-by-recipient (P0)', () => {
         expect(emitted).toMatchObject({
             id: 31, type: 'email', direction: 'outbound', is_outbound: true,
             from_email: 'mb@co.com', body_text: 'on our way', thread_id: 88,
+            display_html: '<p>on our way</p>',
             sent_at: '2026-06-23T14:00:00.000Z', sent_by_user_email: 'agent@co.com',
         });
+        expect(emitted).not.toHaveProperty('body_html');
         expect(conv).toEqual({ id: null });
         expect(tl).toBe(TIMELINE);
     });

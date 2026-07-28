@@ -3,8 +3,10 @@
  * Outgoing: right-aligned indigo bubble. Incoming: left-aligned warm surface bubble.
  * Shows a small mail glyph + "Email" channel hint, an emphasized subject, then the
  * body via the EMAIL-HTML-RENDER-001 render matrix (M1–M4):
- *   M1 inbound + body_html → sanitized HTML in a Shadow DOM (SafeEmailHtml),
- *      with a caller-owned "Show images" gate for remote images;
+ *   M1 inbound + display_html → sanitized HTML in a Shadow DOM (SafeEmailHtml),
+ *      with a caller-owned "Show images" gate for remote images. display_html is
+ *      the SERVER-side quote-stripped body (EMAIL-FEED-BODY-001) — the new
+ *      message only, still untrusted (sanitized here as before);
  *   M2 inbound + text only  → linkified plain text (URLs/emails/phones);
  *   M3 outbound (any)       → ALWAYS linkified text, never SafeEmailHtml;
  *   M4 no body              → nothing.
@@ -52,8 +54,9 @@ export function EmailListItem({ email }: EmailListItemProps) {
 
     const hasText = !!email.body_text && email.body_text.trim().length > 0;
     // M1 is inbound-only: outbound always renders as linkified text (M3), even
-    // if body_html is present. So HTML rendering is gated on !isOutgoing.
-    const renderHtml = !isOutgoing && !!email.body_html && email.body_html.trim().length > 0;
+    // if display_html is present. So HTML rendering is gated on !isOutgoing.
+    // display_html === null → M2 text fallback (server had no feed-safe HTML).
+    const renderHtml = !isOutgoing && !!email.display_html && email.display_html.trim().length > 0;
     // Body exists (and the bubble should reserve padding for it) when we render
     // either the HTML (M1) or linkified text (M2/M3). This extends the old
     // text-only check so an inbound HTML-only email still shows a body.
@@ -64,7 +67,7 @@ export function EmailListItem({ email }: EmailListItemProps) {
     // scroll/re-render. allowImages is fixed false here: we only need to know
     // whether the KEPT reply has a blockable image, independent of the toggle.
     const displayHtml = useMemo(
-        () => stripEmailQuote(sanitizeEmailHtml(email.body_html ?? '')),
+        () => stripEmailQuote(sanitizeEmailHtml(email.display_html ?? '')),
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [email.id],
     );
@@ -122,17 +125,17 @@ export function EmailListItem({ email }: EmailListItemProps) {
 
                 {/* Body — EMAIL-HTML-RENDER-001 render matrix (M1–M4). */}
                 {renderHtml ? (
-                    /* M1 — inbound + body_html: sanitized HTML in a Shadow DOM.
-                       SafeEmailHtml's host is its own overflow-x:auto cage, so a
-                       wide email scrolls INSIDE the bubble instead of clipping /
-                       widening it. The bubble keeps max-w-[75%] + overflow-hidden;
-                       overflow-x:visible here lets the host's own scroll win. */
+                    /* M1 — inbound + display_html (server-stripped, still untrusted):
+                       sanitized HTML in a Shadow DOM. SafeEmailHtml's host is its own
+                       overflow-x:auto cage, so a wide email scrolls INSIDE the bubble
+                       instead of clipping / widening it. The bubble keeps max-w-[75%] +
+                       overflow-hidden; overflow-x:visible lets the host's scroll win. */
                     <div
                         className={`px-3 ${hasSubject ? 'pt-1 pb-1.5' : 'pt-1.5 pb-1.5'}`}
                         style={{ overflowX: 'visible' }}
                     >
                         <SafeEmailHtml
-                            html={email.body_html || ''}
+                            html={email.display_html || ''}
                             allowImages={allowImages}
                             stripQuotedHistory
                             messageId={email.id}

@@ -10,10 +10,17 @@
  *     --testPathIgnorePatterns "/node_modules/"
  */
 
+const fs = require('fs');
+const path = require('path');
 const {
   toTimelineBody,
   htmlToText,
 } = require('../backend/src/services/email/emailTimelineBody');
+
+const OUTLOOK_79436_TEXT = fs.readFileSync(
+  path.join(__dirname, 'fixtures/email-79436-outlook-desktop.txt'),
+  'utf8'
+);
 
 describe('toTimelineBody — quote/thread stripper (EMAIL-TIMELINE-001 §3c)', () => {
   // ── Fixture strings (mirror docs/test-cases/EMAIL-TIMELINE-001.md "Fixtures") ──
@@ -133,6 +140,32 @@ describe('toTimelineBody — quote/thread stripper (EMAIL-TIMELINE-001 §3c)', (
     expect(toTimelineBody(body)).toBe(
       'Forwarding the note From: the vendor as requested.\nLet me know.'
     );
+  });
+
+  test('TC-ET-014d: strips the real 79436 unmarked multiline Outlook header run', () => {
+    expect(toTimelineBody(OUTLOOK_79436_TEXT)).toBe([
+      'Hello:',
+      '',
+      'Attached is an updated W-9 form that my accounting departments needs to be filled out.  Can you kindly fill in and send back to me?',
+      '',
+      'Kind regards,',
+      'Dana',
+    ].join('\n'));
+  });
+
+  test('TC-ET-014e: strips a collapsed From/Sent/To/Subject header run', () => {
+    const body = [
+      'New reply only.',
+      '',
+      'From: Support Team <help@example.com> Sent: Monday, July 27, 2026 2:38 AM To: Recipient <recipient@example.com> Cc: Reviewer <reviewer@example.com> Subject: Re: Work [EXTERNAL]',
+      'Old message.',
+    ].join('\n');
+    expect(toTimelineBody(body)).toBe('New reply only.');
+  });
+
+  test('TC-ET-014f: collapsed run requires the full ordered label sequence', () => {
+    const prose = 'From: Support Sent: eventually, but this sentence has no recipient header.';
+    expect(toTimelineBody(prose)).toBe(prose);
   });
 
   // ── TC-ET-015: "----- Original Message -----" delimiter stripped ──

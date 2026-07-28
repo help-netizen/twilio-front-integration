@@ -105,6 +105,7 @@ function wireMatchAndLink() {
         from_name: 'Alice', from_email: 'alice@example.com',
         to_recipients_json: ['mailbox@co.com'], subject: 'Hello',
         body_text: 'hi there', snippet: 'hi there',
+        body_html: '<p>hi there</p><div class="gmail_quote">OLD-HTML</div>',
         gmail_internal_at: '2026-06-23T12:00:00.000Z', sent_by_user_email: null,
     });
     queries.markContactUnread.mockResolvedValue(undefined);
@@ -206,8 +207,10 @@ describe('linkInboundMessage — contact match / no-match (P0)', () => {
             from_email: 'alice@example.com', from_name: 'Alice',
             to_email: ['mailbox@co.com'], subject: 'Hello',
             body_text: 'hi there', thread_id: 'gthr-1',
+            display_html: '<p>hi there</p>',
             sent_at: '2026-06-23T12:00:00.000Z', sent_by_user_email: null,
         });
+        expect(emitted).not.toHaveProperty('body_html');
         expect(emitted).not.toHaveProperty('from'); // flat shape, not nested
     });
 

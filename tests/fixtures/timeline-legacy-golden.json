@@ -108,7 +108,7 @@
       ],
       "subject": "Golden email",
       "body_text": "Fresh reply",
-      "body_html": "<p>Fresh reply</p><blockquote>quoted text</blockquote>",
+      "display_html": "<p>Fresh reply</p>",
       "sent_at": "2026-07-12T13:00:00.000Z",
       "thread_id": "6001",
       "sent_by_user_email": null

@@ -1,0 +1,14 @@
+Hello:
+
+Attached is an updated W-9 form that my accounting departments needs to be filled out.  Can you kindly fill in and send back to me?
+
+Kind regards,
+Dana
+
+From: Support Team <help@example.com>
+Sent: Monday, July 27, 2026 2:38 AM
+To: Recipient, Sam <sam@corp-example.com>
+Cc: Reviewer, Lee <lee@corp-example.com>; Sender, Dana <dana@corp-example.com>
+Subject: Re: Fridge Issue [EXTERNAL]
+
+Hi Thank you, it is attached
