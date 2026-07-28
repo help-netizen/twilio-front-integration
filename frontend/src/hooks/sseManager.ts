@@ -11,6 +11,7 @@
  */
 
 import { getAuthToken } from '../auth/AuthProvider';
+import { isNativeWebViewAuthMode } from '../auth/nativeWebViewBridge';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -76,6 +77,13 @@ function dispatch(eventType: string, data: any) {
 function connect() {
     // Don't connect if no subscribers or manually disconnected
     if (subscriberCount <= 0 || isManuallyDisconnected) return;
+
+    if (isNativeWebViewAuthMode()) {
+        // TODO(webview-sse): replace this spike gate with authenticated streaming
+        // that does not expose Bearer tokens in URLs.
+        setConnected(false);
+        return;
+    }
 
     // Close existing
     if (eventSource) { eventSource.close(); eventSource = null; }

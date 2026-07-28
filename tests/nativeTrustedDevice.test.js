@@ -84,7 +84,9 @@ beforeEach(() => {
     jest.clearAllMocks();
     jwt.verify.mockImplementation((_token, _key, _options, callback) => callback(null, claims()));
     otpService.isDeviceTrusted.mockImplementation(async (_userId, credential) => (
-        credential === 'native-good' || credential === 'cookie-good'
+        credential === 'native-good'
+        || credential === 'cookie-good'
+        || credential === '0123456789abcdef0123456789abcdef'
     ));
     otpService.validateOtpToken.mockReturnValue({ phone: '+16175550123', purpose: 'login' });
     otpService.trustDevice.mockResolvedValue({
@@ -198,5 +200,85 @@ describe('POST /api/auth/trust-native-device', () => {
         expect(response.status).toBe(401);
         expect(response.body.code).toBe('OTP_REQUIRED');
         expect(otpService.trustDevice).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /api/auth/webview-session', () => {
+    test('valid Bearer and device set a host-only session cookie and 303 to /tasks without leaking the token', async () => {
+        const bearerToken = 'webview-bearer-secret';
+        const logSpies = [
+            jest.spyOn(console, 'log').mockImplementation(() => {}),
+            jest.spyOn(console, 'warn').mockImplementation(() => {}),
+            jest.spyOn(console, 'error').mockImplementation(() => {}),
+        ];
+
+        try {
+            const response = await request(authApp())
+                .post('/api/auth/webview-session')
+                .set('Authorization', `Bearer ${bearerToken}`)
+                .set('X-Albusto-Device', '0123456789abcdef0123456789abcdef')
+                .send({ return_path: '/tasks' });
+
+            expect(response.status).toBe(303);
+            expect(response.headers.location).toBe('/tasks');
+            expect(response.headers['cache-control']).toBe('no-store');
+            expect(response.headers.pragma).toBe('no-cache');
+            expect(response.headers.authorization).toBeUndefined();
+            expect(response.headers['set-cookie']).toHaveLength(1);
+            expect(response.headers['set-cookie'][0]).toContain('albusto_td=0123456789abcdef0123456789abcdef');
+            expect(response.headers['set-cookie'][0]).toContain('Path=/');
+            expect(response.headers['set-cookie'][0]).toContain('HttpOnly');
+            expect(response.headers['set-cookie'][0]).toContain('Secure');
+            expect(response.headers['set-cookie'][0]).toContain('SameSite=Lax');
+            expect(response.headers['set-cookie'][0]).not.toContain('Domain=');
+            expect(response.headers['set-cookie'][0]).not.toContain('Expires=');
+            expect(response.headers['set-cookie'][0]).not.toContain('Max-Age=');
+            expect(otpService.isDeviceTrusted).toHaveBeenCalledWith(
+                'mobile-user-a',
+                '0123456789abcdef0123456789abcdef',
+            );
+            expect(response.text).not.toContain(bearerToken);
+            expect(JSON.stringify(response.headers)).not.toContain(bearerToken);
+            expect(JSON.stringify(logSpies.flatMap(spy => spy.mock.calls))).not.toContain(bearerToken);
+        } finally {
+            logSpies.forEach(spy => spy.mockRestore());
+        }
+    });
+
+    test.each([
+        ['missing', null],
+        ['invalid', 'native-bad'],
+    ])('%s device credential is rejected without setting a cookie', async (_label, credential) => {
+        let pending = request(authApp())
+            .post('/api/auth/webview-session')
+            .set('Authorization', 'Bearer mobile-token')
+            .send({ return_path: '/tasks' });
+        if (credential) pending = pending.set('X-Albusto-Device', credential);
+
+        const response = await pending;
+
+        expect(response.status).toBe(401);
+        expect(response.body.code).toBe('DEVICE_CREDENTIAL_REQUIRED');
+        expect(response.headers['set-cookie']).toBeUndefined();
+    });
+
+    test.each([
+        '//evil.example/tasks',
+        'https://evil.example/tasks',
+        '../tasks',
+        '/../tasks',
+        '/tasks?next=https://evil.example',
+        String.raw`\tasks`,
+    ])('rejects malicious return path %s without setting a cookie', async (returnPath) => {
+        const response = await request(authApp())
+            .post('/api/auth/webview-session')
+            .set('Authorization', 'Bearer mobile-token')
+            .set('X-Albusto-Device', '0123456789abcdef0123456789abcdef')
+            .send({ return_path: returnPath });
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe('INVALID_RETURN_PATH');
+        expect(response.headers['set-cookie']).toBeUndefined();
+        expect(otpService.isDeviceTrusted).not.toHaveBeenCalled();
     });
 });

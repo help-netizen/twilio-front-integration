@@ -4,6 +4,11 @@ import type {
     CallEventsResponse, CallMedia,
 } from '../types/models';
 import { getAuthHeaders, getKeycloak } from '../auth/AuthProvider';
+import {
+    isNativeWebViewAuthMode,
+    requestNativeWebViewTokenRefresh,
+    signalNativeWebViewSessionExpired,
+} from '../auth/nativeWebViewBridge';
 import { requireTwoFactor } from './twoFactorGate';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
@@ -29,6 +34,25 @@ apiClient.interceptors.response.use(
     async (error) => {
         const status = error.response?.status;
         const original = error.config;
+        if (status === 401 && FEATURE_AUTH && isNativeWebViewAuthMode()
+            && original && !(original as any).__authRetried) {
+            (original as any).__authRetried = true;
+            try {
+                await requestNativeWebViewTokenRefresh();
+            } catch {
+                signalNativeWebViewSessionExpired();
+                return Promise.reject(error);
+            }
+            const h = getAuthHeaders();
+            if (h.Authorization) {
+                original.headers = original.headers || {};
+                original.headers.Authorization = h.Authorization;
+            }
+            return apiClient.request(original);
+        } else if (status === 401 && isNativeWebViewAuthMode()) {
+            signalNativeWebViewSessionExpired();
+            return Promise.reject(error);
+        }
         // AUTH-2FA-GATE (BUG-22 hotfix): a 401 PHONE_VERIFICATION_REQUIRED is NOT a
         // dead session — the token is fine, the DEVICE is untrusted. Dispatching
         // session-expired here sent the app to kc.login(); with a live SSO session

@@ -4,6 +4,11 @@
  */
 
 import { getAuthHeaders, getKeycloak } from '../auth/AuthProvider';
+import {
+    isNativeWebViewAuthMode,
+    requestNativeWebViewTokenRefresh,
+    signalNativeWebViewSessionExpired,
+} from '../auth/nativeWebViewBridge';
 import { requireTwoFactor } from './twoFactorGate';
 
 const FEATURE_AUTH = import.meta.env.VITE_FEATURE_AUTH_ENABLED === 'true';
@@ -39,6 +44,14 @@ export async function authedFetch(
     init?: RequestInit
 ): Promise<Response> {
     let res = await rawFetch(input, init);
+    if (res.status === 401 && FEATURE_AUTH && isNativeWebViewAuthMode()) {
+        try {
+            await requestNativeWebViewTokenRefresh();
+            res = await rawFetch(input, init);
+        } catch { /* native refresh failed → session expired below */ }
+        if (res.status === 401) signalNativeWebViewSessionExpired();
+        return res;
+    }
     if (res.status === 401) {
         let code: string | undefined;
         try { code = (await res.clone().json())?.code; } catch { /* non-JSON 401 */ }

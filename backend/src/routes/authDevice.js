@@ -9,6 +9,19 @@ const router = express.Router();
 const db = require('../db/connection');
 const otpService = require('../services/otpService');
 
+function readNativeDeviceCredential(req) {
+    const value = req.get('X-Albusto-Device');
+    if (typeof value !== 'string') return null;
+    const credential = value.trim();
+    return /^[a-f0-9]{32}$/.test(credential) ? credential : null;
+}
+
+function isSafeWebViewReturnPath(value) {
+    return typeof value === 'string'
+        && !value.startsWith('//')
+        && /^\/[A-Za-z0-9/_-]*$/.test(value);
+}
+
 // POST /api/auth/otp/send — send a login code to the user's own verified phone
 router.post('/otp/send', async (req, res) => {
     try {
@@ -115,6 +128,44 @@ router.post('/trust-native-device', async (req, res) => {
     } catch (err) {
         console.error('[AuthDevice] trust-native-device error:', err.message);
         res.status(500).json({ code: 'INTERNAL_ERROR' });
+    }
+});
+
+// POST /api/auth/webview-session — exchange the authenticated native app's
+// Keychain-backed device credential for the host-only trusted-device cookie,
+// then enter the CRM at a strictly relative application path.
+router.post('/webview-session', async (req, res) => {
+    try {
+        const crmUser = req.user?.crmUser;
+        if (!crmUser?.id) return res.status(401).json({ code: 'AUTH_REQUIRED' });
+
+        const returnPath = req.body?.return_path;
+        if (!isSafeWebViewReturnPath(returnPath)) {
+            return res.status(400).json({
+                code: 'INVALID_RETURN_PATH',
+                message: 'return_path must be a relative application path',
+            });
+        }
+
+        const deviceCredential = readNativeDeviceCredential(req);
+        if (!deviceCredential
+            || !await otpService.isDeviceTrusted(crmUser.id, deviceCredential)) {
+            return res.status(401).json({ code: 'DEVICE_CREDENTIAL_REQUIRED' });
+        }
+
+        res.set('Cache-Control', 'no-store');
+        res.set('Pragma', 'no-cache');
+        res.cookie('albusto_td', deviceCredential, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'lax',
+            path: '/',
+        });
+        return res.redirect(303, returnPath);
+    } catch {
+        // Fixed text only: neither the Bearer nor device credential can enter logs.
+        console.error('[AuthDevice] webview-session error');
+        return res.status(500).json({ code: 'INTERNAL_ERROR' });
     }
 });
 

@@ -3,6 +3,13 @@ import Keycloak from 'keycloak-js';
 import { classifyRefreshFailure, REFRESH_RETRY_BACKOFF_MS } from './refreshPolicy';
 import { loginRedirectAllowed, clearLoginRedirects } from './loginLoopBreaker';
 import { nextCompany } from './companyIdentity';
+import {
+    getNativeWebViewAccessToken,
+    isNativeWebViewAuthMode,
+    requestNativeWebViewTokenRefresh,
+    signalNativeWebViewSessionExpired,
+    subscribeNativeWebViewToken,
+} from './nativeWebViewBridge';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,6 +121,10 @@ export function getKeycloak(): Keycloak {
 // code→token exchange.
 let kcInitPromise: Promise<boolean> | null = null;
 export function ensureKeycloakInitialized(): Promise<boolean> {
+    if (isNativeWebViewAuthMode()) {
+        signalNativeWebViewSessionExpired();
+        return Promise.reject(new Error('Keycloak browser auth is disabled in native WebView mode'));
+    }
     const kc = getKeycloak();
     if (!kcInitPromise) {
         kcInitialized = true;
@@ -123,6 +134,10 @@ export function ensureKeycloakInitialized(): Promise<boolean> {
 }
 
 export async function loginWithIdp(idpHint: string, redirectUri: string): Promise<void> {
+    if (isNativeWebViewAuthMode()) {
+        signalNativeWebViewSessionExpired();
+        return;
+    }
     await ensureKeycloakInitialized();
     await getKeycloak().login({ idpHint, redirectUri });
 }
@@ -189,6 +204,45 @@ function extractRoles(kc: Keycloak): string[] {
     return Array.from(roles);
 }
 
+function parseNativeDisplayUser(jwtToken: string): AuthUser | null {
+    try {
+        const encodedPayload = jwtToken.split('.')[1];
+        if (!encodedPayload) return null;
+        const paddedPayload = encodedPayload
+            .replace(/-/g, '+')
+            .replace(/_/g, '/')
+            .padEnd(Math.ceil(encodedPayload.length / 4) * 4, '=');
+        const binaryPayload = window.atob(paddedPayload);
+        const payloadBytes = Uint8Array.from(binaryPayload, char => char.charCodeAt(0));
+        const parsed = JSON.parse(new TextDecoder().decode(payloadBytes)) as Record<string, unknown>;
+        if (typeof parsed.sub !== 'string' || !parsed.sub) return null;
+
+        const roles = new Set<string>();
+        const realmAccess = parsed.realm_access as { roles?: unknown } | undefined;
+        if (Array.isArray(realmAccess?.roles)) {
+            realmAccess.roles.forEach(role => {
+                if (typeof role === 'string') roles.add(role);
+            });
+        }
+        if (Array.isArray(parsed.realm_roles)) {
+            parsed.realm_roles.forEach(role => {
+                if (typeof role === 'string') roles.add(role);
+            });
+        }
+
+        return {
+            sub: parsed.sub,
+            email: typeof parsed.email === 'string' ? parsed.email : '',
+            name: typeof parsed.name === 'string'
+                ? parsed.name
+                : (typeof parsed.preferred_username === 'string' ? parsed.preferred_username : 'Unknown'),
+            roles: Array.from(roles),
+        };
+    } catch {
+        return null;
+    }
+}
+
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 // Paths that must render WITHOUT forcing a Keycloak login (ALB-101)
@@ -250,6 +304,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         let loginPending = false;
         const handleSessionExpired = () => {
+            if (isNativeWebViewAuthMode()) {
+                signalNativeWebViewSessionExpired();
+                return;
+            }
             if (FEATURE_AUTH && !loginPending) {
                 loginPending = true;
                 // BUG-22b: cross-reload loop breaker (loginPending alone resets
@@ -319,6 +377,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // current token is sufficient (no token refresh needed).
     const refreshAuthz = useCallback(async () => {
         if (!FEATURE_AUTH) return;
+        if (isNativeWebViewAuthMode()) {
+            const nativeToken = getNativeWebViewAccessToken();
+            if (nativeToken) await fetchAuthzContext(nativeToken);
+            return;
+        }
         const t = getKeycloak().token;
         if (t) await fetchAuthzContext(t);
     }, []);
@@ -336,6 +399,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (publicPage) return; // signup wizard is public — no login redirect
+        if (isNativeWebViewAuthMode()) {
+            let cancelled = false;
+            const applyNativeToken = (nativeToken: string | null) => {
+                if (cancelled) return;
+                setToken(nativeToken);
+                if (!nativeToken) {
+                    setAuthenticated(false);
+                    return;
+                }
+
+                const displayUser = parseNativeDisplayUser(nativeToken);
+                if (!displayUser) {
+                    setAuthenticated(false);
+                    return;
+                }
+
+                setUser(displayUser);
+                setAuthenticated(true);
+                void fetchAuthzContext(nativeToken);
+            };
+            const unsubscribe = subscribeNativeWebViewToken(applyNativeToken);
+            const nativeToken = getNativeWebViewAccessToken();
+            const displayUser = nativeToken ? parseNativeDisplayUser(nativeToken) : null;
+            if (!nativeToken || !displayUser) {
+                setLoading(false);
+                signalNativeWebViewSessionExpired();
+                return unsubscribe;
+            }
+
+            setUser(displayUser);
+            setToken(nativeToken);
+            void (async () => {
+                let ok = await fetchAuthzContext(nativeToken);
+                if (!ok) {
+                    await sleep(800);
+                    ok = await fetchAuthzContext(nativeToken);
+                }
+                if (cancelled) return;
+                setAuthenticated(ok);
+                setLoading(false);
+                if (!ok) signalNativeWebViewSessionExpired();
+            })();
+
+            return () => {
+                cancelled = true;
+                unsubscribe();
+            };
+        }
         if (kcInitialized) return;
         kcInitialized = true;
 
@@ -400,6 +511,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // set loading=false), we must not fall through to rendering {children} — the
     // AppLayout chrome would leak to a logged-out user. Force the login redirect.
     useEffect(() => {
+        if (isNativeWebViewAuthMode()) return;
         if (FEATURE_AUTH && !publicPage && !loading && !authenticated && !fatalAuthError) {
             // BUG-22b: THE loop engine lived here — kc.init failed (e.g. the
             // code→token exchange dying on iOS), authenticated stayed false, this
@@ -416,6 +528,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // path still handle a genuinely dead session.
     useEffect(() => {
         if (!FEATURE_AUTH) return;
+        if (isNativeWebViewAuthMode()) {
+            const refreshOnResume = () => {
+                if (document.visibilityState !== 'visible') return;
+                void requestNativeWebViewTokenRefresh()
+                    .catch(() => signalNativeWebViewSessionExpired());
+            };
+            document.addEventListener('visibilitychange', refreshOnResume);
+            window.addEventListener('focus', refreshOnResume);
+            return () => {
+                document.removeEventListener('visibilitychange', refreshOnResume);
+                window.removeEventListener('focus', refreshOnResume);
+            };
+        }
         const refreshOnResume = () => {
             if (document.visibilityState !== 'visible') return;
             const kc = getKeycloak();
@@ -439,6 +564,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const logout = useCallback(() => {
         if (FEATURE_AUTH) {
+            if (isNativeWebViewAuthMode()) {
+                signalNativeWebViewSessionExpired();
+                return;
+            }
             getKeycloak().logout({ redirectUri: window.location.origin });
         }
     }, []);
@@ -526,6 +655,10 @@ export function useAuth(): AuthContextType {
 }
 
 export function getAuthHeaders(): Record<string, string> {
+    if (isNativeWebViewAuthMode()) {
+        const nativeToken = getNativeWebViewAccessToken();
+        return nativeToken ? { Authorization: `Bearer ${nativeToken}` } : {};
+    }
     const kc = FEATURE_AUTH ? getKeycloak() : null;
     if (kc?.token) {
         return { Authorization: `Bearer ${kc.token}` };
@@ -534,6 +667,7 @@ export function getAuthHeaders(): Record<string, string> {
 }
 
 export function getAuthToken(): string | null {
+    if (isNativeWebViewAuthMode()) return getNativeWebViewAccessToken();
     const kc = FEATURE_AUTH ? getKeycloak() : null;
     return kc?.token || null;
 }
