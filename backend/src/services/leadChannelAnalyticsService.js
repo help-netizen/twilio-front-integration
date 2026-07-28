@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * LEAD-CHANNEL-ANALYTICS-001 Chunk 1a
+ * LEAD-CHANNEL-ANALYTICS-001 Chunk 1b
  *
  * Fresh tenant-safe acquisition-cohort analytics. This intentionally does not
  * reuse analyticsService.js (F014).
@@ -109,11 +109,40 @@ const COHORT_FACTS_SQL = `
                 OR l.converted_to_job = true
                 OR LOWER(BTRIM(COALESCE(l.status, ''))) = 'converted'
             ) AS converted,
-            COALESCE(ch.channel_key, 'unattributed') AS channel_key,
-            COALESCE(ch.display_name, 'Unattributed') AS channel_label,
+            CASE
+                WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL THEN ch2.id
+                ELSE ch.id
+            END AS channel_id,
+            COALESCE(
+                CASE
+                    WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL
+                        THEN ch2.channel_key
+                END,
+                ch.channel_key,
+                'unattributed'
+            ) AS channel_key,
+            COALESCE(
+                CASE
+                    WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL
+                        THEN ch2.display_name
+                END,
+                ch.display_name,
+                'Unattributed'
+            ) AS channel_label,
             (
-                ch.id IS NOT NULL
-                AND ch.channel_key <> 'unattributed'
+                CASE
+                    WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL
+                        THEN ch2.id
+                    ELSE ch.id
+                END IS NOT NULL
+                AND COALESCE(
+                    CASE
+                        WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL
+                            THEN ch2.channel_key
+                    END,
+                    ch.channel_key,
+                    'unattributed'
+                ) <> 'unattributed'
             ) AS channel_attributed,
             CASE
                 WHEN NULLIF(BTRIM(st.area), '') IS NULL
@@ -135,6 +164,10 @@ const COHORT_FACTS_SQL = `
           ON ch.company_id = $1
          AND ch.id = lsa.channel_id
          AND ch.is_active = true
+        LEFT JOIN lead_source_channels ch2
+          ON ch2.company_id = $1
+         AND ch2.channel_key = 'google_ads'
+         AND ch2.is_active = true
         LEFT JOIN service_territories st
           ON st.company_id = $1
          AND st.zip = SPLIT_PART(BTRIM(COALESCE(l.postal_code, '')), '-', 1)
@@ -279,6 +312,7 @@ const COHORT_FACTS_SQL = `
     SELECT
         c.id,
         (c.converted OR js.lead_id IS NOT NULL) AS converted,
+        c.channel_id,
         c.channel_key,
         c.channel_label,
         c.channel_attributed,
@@ -324,7 +358,11 @@ function normalizeFact(row) {
         visitCompleted: row.visit_completed === true,
         jobDone: row.job_done === true,
         channelAttributed: row.channel_attributed === true,
-        channel: { key: row.channel_key, label: row.channel_label },
+        channel: {
+            id: row.channel_id || null,
+            key: row.channel_key,
+            label: row.channel_label,
+        },
         area: { key: row.area_key, label: row.area_label },
         technicians: normalizeTechnicians(row.technicians),
         revenueNetCents: asInteger(row.revenue_net_cents),
@@ -339,6 +377,91 @@ async function loadCohortFacts(companyId, period) {
         [companyId, period.from, period.to, DEFAULT_TIMEZONE]
     );
     return rows.map(normalizeFact);
+}
+
+function emptyCostSnapshot() {
+    return {
+        channels: [],
+        total_cost_cents: 0,
+    };
+}
+
+async function loadCostSnapshot(companyId, period) {
+    requireCompanyId(companyId);
+    const result = await db.query(
+        `SELECT
+             perf.channel_id,
+             ch.channel_key,
+             ch.display_name AS channel_label,
+             COALESCE(ch.is_active, false) AS is_active,
+             ROUND(
+                 SUM(perf.cost_micros)::numeric / 10000
+             )::bigint AS cost_cents
+         FROM lead_source_performance_daily perf
+         LEFT JOIN lead_source_channels ch
+           ON ch.company_id = $1
+          AND ch.id = perf.channel_id
+         WHERE perf.company_id = $1
+           AND perf.performance_date >= $2::date
+           AND perf.performance_date <= $3::date
+         GROUP BY
+             perf.channel_id,
+             ch.channel_key,
+             ch.display_name,
+             ch.is_active
+         ORDER BY perf.channel_id`,
+        [companyId, period.from, period.to]
+    );
+    const rows = result?.rows || [];
+    if (rows.length === 0) return emptyCostSnapshot();
+
+    const channels = rows.map(row => ({
+        channel_id: row.channel_id,
+        channel_key: row.channel_key || null,
+        channel_label: row.channel_label || null,
+        is_active: row.is_active === true,
+        cost_cents: asInteger(row.cost_cents),
+    }));
+    return {
+        channels,
+        total_cost_cents: channels.reduce(
+            (total, channel) => total + channel.cost_cents,
+            0
+        ),
+    };
+}
+
+function normalizeDateOnly(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    return String(value).slice(0, 10);
+}
+
+function normalizeTimestamp(value) {
+    if (!value) return null;
+    return value instanceof Date ? value.toISOString() : String(value);
+}
+
+async function loadConnectedSources(companyId) {
+    requireCompanyId(companyId);
+    const result = await db.query(
+        `SELECT
+             status,
+             last_synced_at,
+             synced_from_date,
+             synced_through_date
+         FROM google_ads_connections
+         WHERE company_id = $1`,
+        [companyId]
+    );
+    return (result?.rows || []).map(row => ({
+        key: 'google_ads',
+        label: 'Google Ads',
+        status: row.status,
+        last_synced_at: normalizeTimestamp(row.last_synced_at),
+        synced_from_date: normalizeDateOnly(row.synced_from_date),
+        synced_through_date: normalizeDateOnly(row.synced_through_date),
+    }));
 }
 
 function percent(numerator, denominator) {
@@ -365,7 +488,13 @@ function totalsForFacts(facts) {
     });
 }
 
-function summaryKpis(totals) {
+function roasFor(revenueNetCents, adSpendCents) {
+    if (!adSpendCents) return null;
+    return revenueNetCents / adSpendCents;
+}
+
+function summaryKpis(totals, costSnapshot = emptyCostSnapshot()) {
+    const adSpendCents = costSnapshot.total_cost_cents;
     return {
         leads: totals.leads,
         converted: totals.converted,
@@ -373,10 +502,10 @@ function summaryKpis(totals) {
         jobs_done: totals.jobsDone,
         revenue_net_cents: totals.revenueNetCents,
         call_cost_cents: totals.callCostCents,
-        ad_spend_cents: 0,
-        roas: null,
+        ad_spend_cents: adSpendCents,
+        roas: roasFor(totals.revenueNetCents, adSpendCents),
         marketing_contribution_cents:
-            totals.revenueNetCents - totals.callCostCents,
+            totals.revenueNetCents - totals.callCostCents - adSpendCents,
     };
 }
 
@@ -408,13 +537,14 @@ function funnelForTotals(totals) {
 async function getSummary(companyId, query = {}) {
     const period = parsePeriod(query.from, query.to);
     requireCompanyId(companyId);
-    const [timezone, facts] = await Promise.all([
+    const [timezone, facts, costSnapshot] = await Promise.all([
         getCompanyTimezone(companyId),
         loadCohortFacts(companyId, period),
+        loadCostSnapshot(companyId, period),
     ]);
     const totals = totalsForFacts(facts);
     return {
-        kpis: summaryKpis(totals),
+        kpis: summaryKpis(totals, costSnapshot),
         funnel: funnelForTotals(totals),
         period: { ...period, timezone },
     };
@@ -434,6 +564,7 @@ function targetsForFact(fact, dimension) {
 
 function emptyBreakdownAccumulator(target) {
     return {
+        channelId: target.id || null,
         key: target.key,
         label: target.label,
         raw: {
@@ -443,6 +574,7 @@ function emptyBreakdownAccumulator(target) {
             jobsDone: 0,
             revenueNetCents: 0,
             callCostCents: 0,
+            adSpendCents: 0,
         },
         allocated: {},
     };
@@ -483,9 +615,72 @@ function allocateInteger(rows, rawKey, outputKey, targetTotal, scale = 1) {
     }
 }
 
-function buildBreakdownRows(facts, dimension, totals) {
+function allocateAdSpendToFacts(facts, costSnapshot = emptyCostSnapshot()) {
+    const allocatedFacts = facts.map(fact => ({
+        ...fact,
+        allocatedAdCostCents: 0,
+    }));
+    let allocatedCostCents = 0;
+    let unallocatedCostCents = 0;
+
+    for (const channelCost of costSnapshot.channels) {
+        const eligibleFacts = allocatedFacts.filter(fact => (
+            channelCost.is_active
+            && fact.channelAttributed
+            && fact.channel.id === channelCost.channel_id
+        ));
+        if (eligibleFacts.length === 0) {
+            unallocatedCostCents += channelCost.cost_cents;
+            continue;
+        }
+
+        // Modeled/estimated: observed channel spend is divided equally among
+        // that channel's acquisition-cohort leads, with integer reconciliation.
+        const allocationRows = eligibleFacts.map(fact => ({
+            key: String(fact.id),
+            raw: {
+                adSpendCents: channelCost.cost_cents / eligibleFacts.length,
+            },
+            allocated: {},
+            fact,
+        }));
+        allocateInteger(
+            allocationRows,
+            'adSpendCents',
+            'adSpendCents',
+            channelCost.cost_cents
+        );
+        for (const row of allocationRows) {
+            row.fact.allocatedAdCostCents += row.allocated.adSpendCents;
+        }
+        allocatedCostCents += channelCost.cost_cents;
+    }
+
+    return {
+        facts: allocatedFacts,
+        allocated_cost_cents: allocatedCostCents,
+        unallocated_cost_cents: unallocatedCostCents,
+    };
+}
+
+function costTarget(channelCost) {
+    const fallbackKey = `channel_${channelCost.channel_id}`;
+    return {
+        id: channelCost.channel_id,
+        key: channelCost.channel_key || fallbackKey,
+        label: channelCost.channel_label || channelCost.channel_key || fallbackKey,
+    };
+}
+
+function buildBreakdownRows(
+    facts,
+    dimension,
+    totals,
+    costSnapshot = emptyCostSnapshot(),
+    spendAllocation = allocateAdSpendToFacts(facts, costSnapshot)
+) {
     const accumulators = new Map();
-    for (const fact of facts) {
+    for (const fact of spendAllocation.facts) {
         const distinctTargets = Array.from(
             new Map(
                 targetsForFact(fact, dimension)
@@ -504,6 +699,23 @@ function buildBreakdownRows(facts, dimension, totals) {
             row.raw.jobsDone += fact.jobDone ? weight : 0;
             row.raw.revenueNetCents += fact.revenueNetCents * weight;
             row.raw.callCostCents += fact.callCostCents * weight;
+            if (dimension !== 'channel') {
+                row.raw.adSpendCents += fact.allocatedAdCostCents * weight;
+            }
+        }
+    }
+
+    if (dimension === 'channel') {
+        for (const channelCost of costSnapshot.channels) {
+            let row = Array.from(accumulators.values()).find(
+                candidate => candidate.channelId === channelCost.channel_id
+            );
+            if (!row && channelCost.cost_cents !== 0) {
+                const target = costTarget(channelCost);
+                row = emptyBreakdownAccumulator(target);
+                accumulators.set(target.key, row);
+            }
+            if (row) row.raw.adSpendCents = channelCost.cost_cents;
         }
     }
 
@@ -530,6 +742,16 @@ function buildBreakdownRows(facts, dimension, totals) {
         'callCostCents',
         totals.callCostCents
     );
+    const allocatedDimensionSpend = dimension === 'channel'
+        ? costSnapshot.total_cost_cents
+        : spendAllocation.allocated_cost_cents;
+    allocateInteger(
+        rows,
+        'adSpendCents',
+        'adSpendCents',
+        allocatedDimensionSpend
+    );
+    const hasObservedSpend = costSnapshot.total_cost_cents !== 0;
 
     return rows.map(row => ({
         key: row.key,
@@ -537,10 +759,20 @@ function buildBreakdownRows(facts, dimension, totals) {
         leads: row.allocated.leads,
         jobs_done: row.allocated.jobsDone,
         revenue_net_cents: row.allocated.revenueNetCents,
-        ad_spend_cents: null,
-        roas: null,
+        ad_spend_cents: hasObservedSpend ? row.allocated.adSpendCents : null,
+        // A zero-lead synthetic row is unattributed spend (also surfaced as
+        // unallocated_spend_cents); a 0× ROAS would falsely imply a measured
+        // return, so ROAS is null there. Real rows (leads > 0, revenue 0) keep 0×.
+        roas: row.allocated.leads === 0
+            ? null
+            : roasFor(
+                row.allocated.revenueNetCents,
+                row.allocated.adSpendCents
+            ),
         marketing_contribution_cents:
-            row.allocated.revenueNetCents - row.allocated.callCostCents,
+            row.allocated.revenueNetCents
+            - row.allocated.callCostCents
+            - row.allocated.adSpendCents,
         funnel_counts: {
             leads: row.allocated.leads,
             converted: row.allocated.converted,
@@ -565,19 +797,34 @@ async function getBreakdown(companyId, query = {}) {
         );
     }
 
-    const facts = await loadCohortFacts(companyId, period);
+    const [facts, costSnapshot] = await Promise.all([
+        loadCohortFacts(companyId, period),
+        loadCostSnapshot(companyId, period),
+    ]);
     const totals = totalsForFacts(facts);
+    const spendAllocation = allocateAdSpendToFacts(facts, costSnapshot);
+    const dimensionAdSpendCents = query.dimension === 'channel'
+        ? costSnapshot.total_cost_cents
+        : spendAllocation.allocated_cost_cents;
     return {
         dimension: query.dimension,
-        rows: buildBreakdownRows(facts, query.dimension, totals),
+        rows: buildBreakdownRows(
+            facts,
+            query.dimension,
+            totals,
+            costSnapshot,
+            spendAllocation
+        ),
         totals: {
             leads: totals.leads,
             jobs_done: totals.jobsDone,
             revenue_net_cents: totals.revenueNetCents,
-            ad_spend_cents: 0,
-            roas: null,
+            ad_spend_cents: dimensionAdSpendCents,
+            roas: roasFor(totals.revenueNetCents, dimensionAdSpendCents),
             marketing_contribution_cents:
-                totals.revenueNetCents - totals.callCostCents,
+                totals.revenueNetCents
+                - totals.callCostCents
+                - dimensionAdSpendCents,
             funnel_counts: {
                 leads: totals.leads,
                 converted: totals.converted,
@@ -639,16 +886,24 @@ async function getStandaloneNetCents(companyId, period) {
 async function getDataQuality(companyId, query = {}) {
     const period = parsePeriod(query.from, query.to);
     requireCompanyId(companyId);
-    const [facts, taxBasisUnknownCents] = await Promise.all([
+    const [
+        facts,
+        taxBasisUnknownCents,
+        costSnapshot,
+        connectedSources,
+    ] = await Promise.all([
         loadCohortFacts(companyId, period),
         getStandaloneNetCents(companyId, period),
+        loadCostSnapshot(companyId, period),
+        loadConnectedSources(companyId),
     ]);
     const attributed = facts.filter(fact => fact.channelAttributed).length;
+    const spendAllocation = allocateAdSpendToFacts(facts, costSnapshot);
     return {
         attribution_coverage_pct: percent(attributed, facts.length),
-        unallocated_spend_cents: 0,
+        unallocated_spend_cents: spendAllocation.unallocated_cost_cents,
         tax_basis_unknown_cents: taxBasisUnknownCents,
-        connected_sources: [],
+        connected_sources: connectedSources,
     };
 }
 

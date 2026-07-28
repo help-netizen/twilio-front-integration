@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { randomUUID } = require('crypto');
+const { createHash, randomUUID } = require('crypto');
 const { spawnSync } = require('child_process');
 const db = require('../backend/src/db/connection');
 const analytics = require('../backend/src/services/leadChannelAnalyticsService');
@@ -22,6 +22,17 @@ const MIGRATION = fs.readFileSync(
     ),
     'utf8'
 );
+const CONNECTOR_MIGRATION = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        '213_google_ads_connector.sql'
+    ),
+    'utf8'
+);
 
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
@@ -32,6 +43,9 @@ const TAG = `lca-${Date.now()}-${process.pid}`;
 const SHARED_PHONE = `+1555${String(Date.now()).slice(-7)}`;
 const FROM = '2026-07-01';
 const TO = '2026-07-31';
+const SEEDED_GOOGLE_ADS_KEY = `source_${
+    createHash('md5').update('google ads').digest('hex')
+}`;
 
 let contactA;
 let contactB;
@@ -328,12 +342,119 @@ async function cleanupFixtures() {
     await db.query('DELETE FROM companies WHERE id = ANY($1::uuid[])', [companyIds]);
 }
 
+async function resetSpendFixtures() {
+    const companyIds = [COMPANY_A, COMPANY_B];
+    await db.query(
+        `DELETE FROM lead_source_performance_daily
+         WHERE company_id = ANY($1::uuid[])`,
+        [companyIds]
+    );
+    await db.query(
+        `DELETE FROM google_ads_connections
+         WHERE company_id = ANY($1::uuid[])`,
+        [companyIds]
+    );
+    await db.query(
+        `DELETE FROM leads
+         WHERE company_id = $1
+           AND first_name = 'Phase B Allocation'`,
+        [COMPANY_A]
+    );
+    await db.query(
+        `UPDATE leads
+         SET gclid = NULL
+         WHERE company_id = ANY($1::uuid[])`,
+        [companyIds]
+    );
+    await db.query(
+        `DELETE FROM lead_source_channels
+         WHERE company_id = ANY($1::uuid[])
+           AND channel_key IN ('google_ads', 'phase_b_zero_lead')`,
+        [companyIds]
+    );
+}
+
+async function ensureChannel(
+    companyId,
+    channelKey = 'google_ads',
+    displayName = 'Google Ads',
+    isActive = true
+) {
+    const { rows } = await db.query(
+        `INSERT INTO lead_source_channels (
+             company_id,
+             channel_key,
+             display_name,
+             is_active
+         )
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (company_id, channel_key) DO UPDATE SET
+             display_name = EXCLUDED.display_name,
+             is_active = EXCLUDED.is_active,
+             updated_at = NOW()
+         RETURNING id`,
+        [companyId, channelKey, displayName, isActive]
+    );
+    return rows[0].id;
+}
+
+async function seedSpend(
+    companyId,
+    channelId,
+    costMicros,
+    campaignId = 'shared-campaign'
+) {
+    await db.query(
+        `INSERT INTO lead_source_performance_daily (
+             company_id,
+             provider_key,
+             external_account_id,
+             external_campaign_id,
+             external_campaign_name,
+             channel_id,
+             performance_date,
+             cost_micros
+         )
+         VALUES (
+             $1,
+             'google_ads',
+             'shared-account',
+             $2,
+             'Shared campaign label',
+             $3,
+             '2026-07-10',
+             $4
+         )`,
+        [companyId, campaignId, channelId, costMicros]
+    );
+}
+
+async function markLeadAsGoogleClick(leadId, companyId) {
+    await db.query(
+        `UPDATE leads
+         SET gclid = $1
+         WHERE id = $2
+           AND company_id = $3`,
+        [`${TAG}-gclid`, leadId, companyId]
+    );
+}
+
 beforeAll(async () => {
     if (!DATABASE.ready) return;
     await db.query(MIGRATION);
     await db.query(MIGRATION);
+    await db.query(CONNECTOR_MIGRATION);
+    await db.query(CONNECTOR_MIGRATION);
     await insertFixtures();
     dbReady = true;
+});
+
+beforeEach(async () => {
+    if (dbReady) await resetSpendFixtures();
+});
+
+afterEach(async () => {
+    if (dbReady) await resetSpendFixtures();
 });
 
 afterAll(async () => {
@@ -435,6 +556,82 @@ describe('LEAD-CHANNEL-ANALYTICS-001 migration and durable milestones', () => {
 });
 
 describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () => {
+    databaseTest('no connector or spend preserves the existing endpoint bytes', async () => {
+        const [summary, channel, quality] = await Promise.all([
+            invokeEndpoint(COMPANY_A, '/summary', { from: FROM, to: TO }),
+            invokeEndpoint(COMPANY_A, '/breakdown', {
+                dimension: 'channel',
+                from: FROM,
+                to: TO,
+            }),
+            invokeEndpoint(COMPANY_A, '/data-quality', { from: FROM, to: TO }),
+        ]);
+
+        expect(JSON.stringify(summary.body)).toBe(JSON.stringify({
+            kpis: {
+                leads: 1,
+                converted: 1,
+                visit_completed: 1,
+                jobs_done: 1,
+                revenue_net_cents: 10000,
+                call_cost_cents: 124,
+                ad_spend_cents: 0,
+                roas: null,
+                marketing_contribution_cents: 9876,
+            },
+            funnel: [
+                { stage: 'leads', count: 1, conv_pct: 100 },
+                { stage: 'converted', count: 1, conv_pct: 100 },
+                { stage: 'visit_completed', count: 1, conv_pct: 100 },
+                { stage: 'job_is_done', count: 1, conv_pct: 100 },
+            ],
+            period: {
+                from: FROM,
+                to: TO,
+                timezone: 'America/New_York',
+            },
+        }));
+        expect(JSON.stringify(channel.body)).toBe(JSON.stringify({
+            dimension: 'channel',
+            rows: [{
+                key: SEEDED_GOOGLE_ADS_KEY,
+                label: 'Google Ads',
+                leads: 1,
+                jobs_done: 1,
+                revenue_net_cents: 10000,
+                ad_spend_cents: null,
+                roas: null,
+                marketing_contribution_cents: 9876,
+                funnel_counts: {
+                    leads: 1,
+                    converted: 1,
+                    visit_completed: 1,
+                    jobs_done: 1,
+                },
+            }],
+            totals: {
+                leads: 1,
+                jobs_done: 1,
+                revenue_net_cents: 10000,
+                ad_spend_cents: 0,
+                roas: null,
+                marketing_contribution_cents: 9876,
+                funnel_counts: {
+                    leads: 1,
+                    converted: 1,
+                    visit_completed: 1,
+                    jobs_done: 1,
+                },
+            },
+        }));
+        expect(JSON.stringify(quality.body)).toBe(JSON.stringify({
+            attribution_coverage_pct: 100,
+            unallocated_spend_cents: 0,
+            tax_basis_unknown_cents: 1234,
+            connected_sources: [],
+        }));
+    });
+
     databaseTest('summary uses acquisition cohort, mature milestones, invoice net, and call cost', async () => {
         const response = await invokeEndpoint(COMPANY_A, '/summary', {
             from: FROM,
@@ -559,5 +756,269 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         expect(area.rows).toHaveLength(1);
         expect(area.rows[0].label).toBe('Downtown');
         expect(responses[4].body.tax_basis_unknown_cents).toBe(1234);
+    });
+
+    databaseTest('SAB-LCA-COST-COMPANY: summary spend scan cannot cross tenant boundaries', async () => {
+        const [channelA, channelB] = await Promise.all([
+            ensureChannel(COMPANY_A),
+            ensureChannel(COMPANY_B),
+        ]);
+        await Promise.all([
+            markLeadAsGoogleClick(leadA, COMPANY_A),
+            seedSpend(COMPANY_A, channelA, 25000000),
+            seedSpend(COMPANY_B, channelB, 99990000),
+        ]);
+
+        const response = await invokeEndpoint(COMPANY_A, '/summary', {
+            from: FROM,
+            to: TO,
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.body.kpis).toMatchObject({
+            revenue_net_cents: 10000,
+            call_cost_cents: 124,
+            ad_spend_cents: 2500,
+            roas: 4,
+            marketing_contribution_cents: 7376,
+        });
+    });
+
+    databaseTest('channel spend includes zero-lead synthetic rows and surfaces unallocated spend', async () => {
+        const googleAdsChannel = await ensureChannel(COMPANY_A);
+        const zeroLeadChannel = await ensureChannel(
+            COMPANY_A,
+            'phase_b_zero_lead',
+            'Zero-lead paid channel'
+        );
+        await markLeadAsGoogleClick(leadA, COMPANY_A);
+        await seedSpend(COMPANY_A, googleAdsChannel, 25000000, 'google-campaign');
+        await seedSpend(COMPANY_A, zeroLeadChannel, 10000000, 'zero-lead-campaign');
+
+        const [breakdown, quality] = await Promise.all([
+            invokeEndpoint(COMPANY_A, '/breakdown', {
+                dimension: 'channel',
+                from: FROM,
+                to: TO,
+            }),
+            invokeEndpoint(COMPANY_A, '/data-quality', { from: FROM, to: TO }),
+        ]);
+
+        const googleAds = breakdown.body.rows.find(row => row.key === 'google_ads');
+        const zeroLead = breakdown.body.rows.find(
+            row => row.key === 'phase_b_zero_lead'
+        );
+        expect(googleAds).toMatchObject({
+            leads: 1,
+            revenue_net_cents: 10000,
+            ad_spend_cents: 2500,
+            roas: 4,
+            marketing_contribution_cents: 7376,
+        });
+        expect(zeroLead).toEqual({
+            key: 'phase_b_zero_lead',
+            label: 'Zero-lead paid channel',
+            leads: 0,
+            jobs_done: 0,
+            revenue_net_cents: 0,
+            ad_spend_cents: 1000,
+            roas: null,
+            marketing_contribution_cents: -1000,
+            funnel_counts: {
+                leads: 0,
+                converted: 0,
+                visit_completed: 0,
+                jobs_done: 0,
+            },
+        });
+        expect(breakdown.body.totals).toMatchObject({
+            ad_spend_cents: 3500,
+            marketing_contribution_cents: 6376,
+        });
+        expect(breakdown.body.totals.roas).toBeCloseTo(10000 / 3500);
+        expect(
+            breakdown.body.rows.reduce(
+                (total, row) => total + row.ad_spend_cents,
+                0
+            )
+        ).toBe(3500);
+        expect(quality.body.unallocated_spend_cents).toBe(1000);
+    });
+
+    databaseTest('modeled per-lead area and technician spend allocation reconciles exactly', async () => {
+        const googleAdsChannel = await ensureChannel(COMPANY_A);
+        await markLeadAsGoogleClick(leadA, COMPANY_A);
+        await db.query(
+            `INSERT INTO leads (
+                 uuid,
+                 company_id,
+                 contact_id,
+                 first_name,
+                 phone,
+                 postal_code,
+                 gclid,
+                 status,
+                 converted_to_job,
+                 created_at,
+                 updated_at
+             )
+             VALUES (
+                 $1,
+                 $2,
+                 $3,
+                 'Phase B Allocation',
+                 $4,
+                 '99999',
+                 $5,
+                 'New',
+                 false,
+                 '2026-07-20T14:00:00Z',
+                 '2026-07-20T14:00:00Z'
+             )`,
+            [
+                `${TAG.slice(-11)}p`,
+                COMPANY_A,
+                contactA,
+                SHARED_PHONE,
+                `${TAG}-allocation-gclid`,
+            ]
+        );
+        await seedSpend(COMPANY_A, googleAdsChannel, 10010000);
+
+        const [area, technician, quality] = await Promise.all([
+            invokeEndpoint(COMPANY_A, '/breakdown', {
+                dimension: 'area',
+                from: FROM,
+                to: TO,
+            }),
+            invokeEndpoint(COMPANY_A, '/breakdown', {
+                dimension: 'technician',
+                from: FROM,
+                to: TO,
+            }),
+            invokeEndpoint(COMPANY_A, '/data-quality', { from: FROM, to: TO }),
+        ]);
+
+        for (const breakdown of [area.body, technician.body]) {
+            expect(breakdown.totals.ad_spend_cents).toBe(1001);
+            expect(breakdown.totals.marketing_contribution_cents).toBe(8875);
+            expect(
+                breakdown.rows.reduce(
+                    (total, row) => total + row.ad_spend_cents,
+                    0
+                )
+            ).toBe(1001);
+            expect(
+                breakdown.rows.reduce(
+                    (total, row) => total + row.marketing_contribution_cents,
+                    0
+                )
+            ).toBe(8875);
+        }
+
+        expect(area.body.rows.map(row => row.ad_spend_cents).sort()).toEqual([
+            500,
+            501,
+        ]);
+        const downtown = area.body.rows.find(row => row.label === 'Downtown');
+        const outside = area.body.rows.find(
+            row => row.label === 'Outside configured areas'
+        );
+        expect(downtown.marketing_contribution_cents).toBe(
+            10000 - 124 - downtown.ad_spend_cents
+        );
+        expect(outside.marketing_contribution_cents).toBe(
+            -outside.ad_spend_cents
+        );
+
+        const unassigned = technician.body.rows.find(
+            row => row.key === 'unassigned'
+        );
+        const assigned = technician.body.rows.filter(
+            row => row.key !== 'unassigned'
+        );
+        expect(assigned).toHaveLength(2);
+        expect(
+            assigned.reduce((total, row) => total + row.ad_spend_cents, 0)
+            + unassigned.ad_spend_cents
+        ).toBe(1001);
+        for (const row of assigned) {
+            expect(row.marketing_contribution_cents).toBe(
+                row.revenue_net_cents - 62 - row.ad_spend_cents
+            );
+        }
+        expect(unassigned.marketing_contribution_cents).toBe(
+            -unassigned.ad_spend_cents
+        );
+        expect(quality.body.unallocated_spend_cents).toBe(0);
+    });
+
+    databaseTest('connected source status is useful and excludes credentials and customer identity', async () => {
+        const channelId = await ensureChannel(COMPANY_A);
+        await db.query(
+            `INSERT INTO google_ads_connections (
+                 company_id,
+                 channel_id,
+                 customer_id,
+                 refresh_token_encrypted,
+                 status,
+                 last_sync_status,
+                 last_synced_at,
+                 synced_from_date,
+                 synced_through_date
+             )
+             VALUES (
+                 $1,
+                 $2,
+                 '1234567890',
+                 'v1:secret-iv:secret-tag:secret-ciphertext',
+                 'connected',
+                 'success',
+                 '2026-07-27T12:30:00Z',
+                 '2026-07-01',
+                 '2026-07-26'
+             )`,
+            [COMPANY_A, channelId]
+        );
+
+        const quality = await invokeEndpoint(COMPANY_A, '/data-quality', {
+            from: FROM,
+            to: TO,
+        });
+        expect(quality.body.connected_sources).toEqual([{
+            key: 'google_ads',
+            label: 'Google Ads',
+            status: 'connected',
+            last_synced_at: '2026-07-27T12:30:00.000Z',
+            synced_from_date: '2026-07-01',
+            synced_through_date: '2026-07-26',
+        }]);
+        const payload = JSON.stringify(quality.body.connected_sources);
+        expect(payload).not.toContain('customer');
+        expect(payload).not.toContain('1234567890');
+        expect(payload).not.toContain('token');
+        expect(payload).not.toContain('ciphertext');
+    });
+
+    databaseTest('gclid takes precedence over an existing source alias when google_ads is active', async () => {
+        await ensureChannel(COMPANY_A);
+        await markLeadAsGoogleClick(leadA, COMPANY_A);
+
+        const breakdown = await invokeEndpoint(COMPANY_A, '/breakdown', {
+            dimension: 'channel',
+            from: FROM,
+            to: TO,
+        });
+
+        expect(breakdown.statusCode).toBe(200);
+        expect(breakdown.body.rows).toHaveLength(1);
+        expect(breakdown.body.rows[0]).toMatchObject({
+            key: 'google_ads',
+            label: 'Google Ads',
+            leads: 1,
+            revenue_net_cents: 10000,
+            ad_spend_cents: null,
+        });
+        expect(breakdown.body.rows[0].key).not.toBe(SEEDED_GOOGLE_ADS_KEY);
     });
 });

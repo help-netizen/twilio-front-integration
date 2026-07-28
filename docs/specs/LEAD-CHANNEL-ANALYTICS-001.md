@@ -1,8 +1,9 @@
 # LEAD-CHANNEL-ANALYTICS-001 — lead-source funnel and unit economics
 
-**Status:** draft; chunk 1a implemented and verified, chunk 1b pending  
+**Status:** draft; chunks 1a and 1b implemented
 **Date:** 2026-07-27 · **Area:** Analytics / lead attribution / marketplace integrations  
 **Chunk 1a commit:** `2f87ca1b`
+**Chunk 1b Phase A commit:** `7511c1bf`
 
 ## Goal
 
@@ -64,15 +65,31 @@ actions from analytics, and any AI/MCP tool.
   the selected acquisition period.
 - Net revenue is completed invoice-linked payments less completed refunds, in
   integer cents; voided transactions do not contribute.
-- Chunk 1a marketing contribution is net revenue less attributed call cost because
-  no ad-cost source is connected yet. Chunk 1b extends it to net revenue less ad
-  spend and call cost.
-- ROAS is unavailable when cost is unknown. The API uses `null`, not a fabricated
-  zero, for unavailable ROAS.
+- Marketing contribution is net revenue less attributed call cost and observed ad
+  spend. Summary and channel projections subtract all period spend.
+- Spend is summed as provider micros by company, channel, and inclusive performance
+  date range, then converted once to integer cents after summation. Summary spend
+  is the exact sum of the resulting channel cents.
+- ROAS is net revenue divided by ad spend. It is `null` when spend is zero; the API
+  never fabricates a zero ROAS.
+- Channel rows carry their observed channel spend. A spend-bearing channel with no
+  attributed cohort leads remains visible as a synthetic zero-lead row whose
+  contribution is the negative spend.
+- Area and technician spend is modeled: each channel's integer-cent spend is
+  allocated equally across that channel's attributed cohort leads, with residual
+  cents deterministically reconciled. Area receives each lead's allocation;
+  technicians retain the existing equal split across distinct technicians, so
+  dimension rows reconcile exactly. Spend for a channel with no attributed cohort
+  leads, or a missing/inactive channel, is not distributed and is surfaced as
+  `unallocated_spend_cents`.
 - Calls are attributed only within the company and to the nearest company lead for
   the contact. Area and technician joins repeat company scope.
 - Canonical source identity is company-owned. An inactive or unmapped alias falls
   into the tenant's `unattributed` channel.
+- A non-null `gclid` takes precedence over raw-source alias mapping and attributes
+  the lead to the company's active canonical `google_ads` channel. If that channel
+  does not exist or is inactive, the existing alias/unattributed behavior is
+  unchanged.
 
 ## Task breakdown
 
@@ -83,16 +100,16 @@ actions from analytics, and any AI/MCP tool.
 | T3 — Summary, breakdown, and quality API | 1a | **DONE** | Three read endpoints validate period/dimension, preserve integer cents, and require both catalog permissions. |
 | T4 — Analytics Settings experience | 1a | **DONE** | `/settings/analytics`, Settings navigation, the marketing-analytics redirect, six KPIs, full funnel, three breakdown dimensions, and data quality render from React Query v5. |
 | T5 — Release evidence and render smoke | 1a | **DONE** | Backend suites, real-PostgreSQL tenancy control, TypeScript build, and loaded-state SSR smoke evidence are recorded below. |
-| T6 — Google Ads marketplace connector | 1b | **PENDING** | Native app/card, company-bound credential setup, enable/disable lifecycle, automatic pull, sync status, and safe reconnect/disconnect behavior. |
-| T7 — Pluggable cost ingestion and live ROAS | 1b | **PENDING** | Connector-neutral source/cost seam supplies spend, unallocated spend, connected sources, ROAS, and marketing contribution without coupling the cohort engine to Google Ads. |
+| T6 — Google Ads marketplace connector | 1b | **DONE** | Migration 213, native derived-connection app, company-bound encrypted credential lifecycle, scheduler/lease-based automatic pull, sync status, bootstrap, and safe reconnect/disconnect behavior shipped in Phase A. |
+| T7 — Pluggable cost ingestion and live ROAS | 1b | **DONE** | Phase B consumes tenant-scoped connector-neutral daily performance facts, reports observed/unallocated spend and non-secret connected-source status, and wires ROAS plus marketing contribution into every projection. |
 
 ## Tenancy & Roles
 
 | surface (route/worker/webhook/SSE/aggregate) | scoped by | key used | permission | roles ✓/✗ | blast-radius risk |
 |---|---|---|---|---|---|
-| `GET /api/lead-channel-analytics/summary` aggregate | `req.companyFilter?.company_id`, passed as required `companyId`; company-local dates resolved from the same company | company UUID + `from`/`to`; no client-supplied entity id | `reports.financial.view` **and** `lead_source.view` | tenant_admin ✓; manager ✓; dispatcher ✗; provider ✗ | An unscoped base cohort or downstream invoice/call join would inflate revenue, calls, and funnel totals with another tenant's rows. |
+| `GET /api/lead-channel-analytics/summary` aggregate | `req.companyFilter?.company_id`, passed as required `companyId`; company-local dates and spend rows resolve from the same company | company UUID + `from`/`to`; no client-supplied entity id | `reports.financial.view` **and** `lead_source.view` | tenant_admin ✓; manager ✓; dispatcher ✗; provider ✗ | An unscoped base cohort, downstream invoice/call join, or cost snapshot would inflate another tenant's revenue, calls, funnel, or spend. |
 | `GET /api/lead-channel-analytics/breakdown` aggregate | same required company context; base cohort and channel/area/technician joins repeat company predicates | company UUID + `dimension` + `from`/`to`; channel/area/technician keys are output only | `reports.financial.view` **and** `lead_source.view` | tenant_admin ✓; manager ✓; dispatcher ✗; provider ✗ | Shared source text, postal codes, contacts, or technician ids could cross-credit another tenant if any natural-key join lost company scope. |
-| `GET /api/lead-channel-analytics/data-quality` aggregate | same required company context; cohort and standalone-payment query both filter company | company UUID + `from`/`to`; no client-supplied entity id | `reports.financial.view` **and** `lead_source.view` | tenant_admin ✓; manager ✓; dispatcher ✗; provider ✗ | An unscoped payment scan could disclose another tenant's invoice-less net or distort attribution coverage. |
+| `GET /api/lead-channel-analytics/data-quality` aggregate | same required company context; cohort, standalone-payment, spend, and connector-status queries all filter company | company UUID + `from`/`to`; no client-supplied entity id | `reports.financial.view` **and** `lead_source.view` | tenant_admin ✓; manager ✓; dispatcher ✗; provider ✗ | An unscoped payment/spend/status scan could disclose another tenant's invoice-less net or connector state and distort attribution coverage or unallocated spend. |
 
 Tenant/RBAC test contract:
 
@@ -107,6 +124,9 @@ Tenant/RBAC test contract:
   dispatcher and provider deny paths return 403 before the service is called.
 - Sabotage: removing the base cohort's tenant guard makes the real-PostgreSQL suite
   fail, proving the guard is load-bearing.
+- Spend sabotage `SAB-LCA-COST-COMPANY`: removing `company_id = $1` from
+  `loadCostSnapshot` makes company A absorb company B's same-account,
+  same-campaign, same-date spend and fails the real-PostgreSQL summary assertion.
 
 Chunk 1b must apply the same contract to every connector worker, credential lookup,
 external account/customer id, spend row, and sync status. Workers have no `req`, so
@@ -118,10 +138,13 @@ key to it.
 ```text
 GET /api/lead-channel-analytics/summary?from&to → {kpis:{leads,converted,visit_completed,jobs_done,revenue_net_cents,call_cost_cents,ad_spend_cents,roas,marketing_contribution_cents}, funnel:[{stage,count,conv_pct}], period:{from,to,timezone}}
 GET /breakdown?dimension=channel|area|technician&from&to → {dimension, rows:[{key,label,leads,jobs_done,revenue_net_cents,ad_spend_cents|null,roas|null,marketing_contribution_cents,funnel_counts:{leads,converted,visit_completed,jobs_done}}], totals:{...}}
-GET /data-quality?from&to → {attribution_coverage_pct, unallocated_spend_cents, tax_basis_unknown_cents, connected_sources:[]}
+GET /data-quality?from&to → {attribution_coverage_pct, unallocated_spend_cents, tax_basis_unknown_cents, connected_sources:[{key:'google_ads',label:'Google Ads',status,last_synced_at,synced_from_date,synced_through_date}]}
 ```
 
-Chunk 1a: ad_spend_cents=0, roas=null (breakdown rows ad_spend/roas=null); real ad-spend/ROAS arrive in chunk 1b (the Google Ads connector).
+With no connection and no spend, the response bytes remain at the chunk-1a
+contract: summary/totals `ad_spend_cents=0`, all ROAS values `null`, breakdown-row
+`ad_spend_cents=null`, `unallocated_spend_cents=0`, and
+`connected_sources=[]`.
 
 Stable validation errors use `{error:{code,message}}`. `from` and `to` are required
 valid `YYYY-MM-DD` calendar dates with `to >= from`; the inclusive UTC date span is
@@ -146,11 +169,13 @@ F014 path has a known cross-tenant leak. The company cohort guard, repeated
 downstream company predicates, and integer reconciliation for equal technician
 splits are release invariants.
 
-Chunk 1b adds spend through a connector-neutral boundary: connector installations
-own enable/disable and sync lifecycle, providers translate external data into
-company-bound source/cost facts, and the cohort engine consumes those facts without
-provider-specific OAuth or Google Ads API logic. Google Ads is the first provider,
-not a hard-coded assumption in the analytics contract.
+Chunk 1b adds spend through a connector-neutral boundary:
+`lead_source_performance_daily` holds company-bound provider performance facts,
+while a separate cost snapshot query feeds the projection layer without modifying
+cohort membership. Connector installations own enable/disable and sync lifecycle;
+the analytics engine reads neither OAuth credentials nor provider responses.
+Google Ads is the first provider, not a hard-coded assumption in the cost
+projection contract.
 
 ## Verification
 
@@ -197,6 +222,36 @@ Result: exit 0; 1 test file passed; 1/1 test passed. The runner loader is requir
 in this restricted worktree because bundled config loading attempts to write under
 the main repository's read-only symlinked `node_modules/.vite-temp`; the one-shot
 bootstrap preserves the existing `vitest.config.ts` without leaving a helper file.
+
+### Chunk 1b Phase B backend
+
+Implementation-side non-PostgreSQL regression:
+
+```text
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/leadChannelAnalytics.service.test.js tests/leadChannelAnalytics.routes.test.js
+```
+
+Result: exit 0; 2 suites passed; 25/25 tests passed unchanged.
+
+Owner real-PostgreSQL gate (required after review):
+
+```text
+env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules /Users/rgareev91/contact_center/twilio-front-integration/node_modules/jest/bin/jest.js --config ./package.json --testPathIgnorePatterns /node_modules/ --runInBand --forceExit --runTestsByPath tests/leadChannelAnalytics.service.test.js tests/leadChannelAnalytics.routes.test.js tests/leadChannelAnalytics.db.test.js
+```
+
+Inventory after the Phase B extension: 3 suites and 37 tests. The 12-test
+real-PostgreSQL suite covers no-source byte compatibility, live summary/channel
+spend, zero-lead synthetic rows, modeled area/technician allocation,
+`unallocated_spend_cents`, non-secret connected-source status, gclid precedence,
+and tenant isolation. Execution is intentionally pending the owner-run
+PostgreSQL gate.
+
+Owner sabotage gate: copy `leadChannelAnalyticsService.js` to a backup; remove
+`WHERE company_id = $1` from the `lead_source_performance_daily` scan inside
+`loadCostSnapshot`; run the three-suite command and confirm
+`SAB-LCA-COST-COMPANY` goes RED because company A spend is inflated by company B;
+restore the service exactly with `cp` and rerun green. This gate is intentionally
+pending owner execution.
 
 ## Integration and MCP impact
 
