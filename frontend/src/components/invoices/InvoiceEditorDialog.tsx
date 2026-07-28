@@ -289,7 +289,7 @@ export function InvoiceEditorDialog({
 
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
+            <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
                 <DialogContent variant="panel" size="full">
                     <DialogPanelHeader>
                         <div className="flex items-start justify-between gap-4">

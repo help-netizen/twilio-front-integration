@@ -8,6 +8,7 @@ import { SelectItem } from '../ui/select';
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { useAuthz } from '../../hooks/useAuthz';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import {
     createTask, updateTask, deleteTask, listAssignees,
     type Task, type TaskParentType, type Assignee,
@@ -35,6 +36,7 @@ export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, t
     const { user } = useAuthz();
     const myEmail = user?.email;
     const editing = !!task;
+    const isMobile = useIsMobile();
 
     const [description, setDescription] = useState('');
     const [assigneeId, setAssigneeId] = useState<string>(UNASSIGNED);
@@ -115,7 +117,7 @@ export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, t
     }, [task, onDeleted, onOpenChange]);
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
             <DialogContent variant="panel">
                 <DialogPanelHeader>
                     <DialogTitle>{editing ? 'Edit task' : 'New task'}</DialogTitle>
