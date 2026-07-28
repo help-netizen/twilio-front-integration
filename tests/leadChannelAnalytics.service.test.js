@@ -49,6 +49,17 @@ describe('leadChannelAnalyticsService period validation', () => {
     test('accepts inclusive valid calendar dates', () => {
         expect(analytics._parsePeriod(PERIOD.from, PERIOD.to)).toEqual(PERIOD);
     });
+
+    test('caps the inclusive date range at 731 days', () => {
+        const accepted = { from: '2024-01-01', to: '2025-12-31' };
+        expect(analytics._parsePeriod(accepted.from, accepted.to))
+            .toEqual(accepted);
+        expect(() => analytics._parsePeriod('2024-01-01', '2026-01-01'))
+            .toThrow(expect.objectContaining({
+                code: 'RANGE_TOO_WIDE',
+                httpStatus: 400,
+            }));
+    });
 });
 
 describe('leadChannelAnalyticsService response math', () => {

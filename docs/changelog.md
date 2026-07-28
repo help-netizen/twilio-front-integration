@@ -2919,3 +2919,8 @@ fallback: все callers передают company и заметка всегда
 `AND company_id`. Real-PostgreSQL suite проверяет consent, честную
 disconnect-race, T-own/T-foreign/T-blast каждого инструмента, неизменность
 tenant B, replay, FSM denial и AI authorship.
+
+## 2026-07-27 — LEAD-CHANNEL-ANALYTICS-001 chunk 1a + durable draft
+
+- Commit `2f87ca1b` adds the tenant-safe lead acquisition cohort, canonical source/milestone foundation, three permission-gated analytics endpoints, and Settings analytics experience; Google Ads spend/ROAS remains chunk 1b.
+- Added the loaded-state AnalyticsPage SSR smoke test and durable requirements/architecture/spec drafts with the real-PostgreSQL tenancy sabotage evidence.

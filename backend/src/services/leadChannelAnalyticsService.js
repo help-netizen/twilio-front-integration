@@ -10,6 +10,7 @@
 const db = require('../db/connection');
 
 const DEFAULT_TIMEZONE = 'America/New_York';
+const MAX_RANGE_DAYS = 731;
 const VALID_DIMENSIONS = new Set(['channel', 'area', 'technician']);
 const COUNT_PRECISION = 10000;
 
@@ -49,6 +50,21 @@ function parsePeriod(from, to) {
         throw new LeadChannelAnalyticsError(
             'INVALID_PERIOD',
             'to must be on or after from'
+        );
+    }
+
+    const utcTime = value => {
+        const [year, month, day] = value.split('-').map(Number);
+        return Date.UTC(year, month - 1, day);
+    };
+    const inclusiveDays = (
+        (utcTime(to) - utcTime(from)) / (24 * 60 * 60 * 1000)
+    ) + 1;
+    if (inclusiveDays > MAX_RANGE_DAYS) {
+        throw new LeadChannelAnalyticsError(
+            'RANGE_TOO_WIDE',
+            'date range must not exceed 731 days',
+            400
         );
     }
     return { from, to };
