@@ -542,7 +542,16 @@ export function InvoiceEditorDialog({
             </Dialog>
 
             {/* Summary edit dialog */}
-            <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
+            {/* Mobile: edit the summary in the full-screen editor (type B). */}
+            <FullScreenTextEditor
+                open={summaryDialogOpen && isMobile}
+                initialValue={summary}
+                onDone={text => { setSummary(text); setSummaryDialogOpen(false); }}
+                onCancel={() => setSummaryDialogOpen(false)}
+                title="Summary"
+                placeholder="Make, model, serial, failure issue, findings, needs, cause…"
+            />
+            <Dialog open={summaryDialogOpen && !isMobile} onOpenChange={setSummaryDialogOpen}>
                 <DialogContent variant="panel">
                     <DialogPanelHeader>
                         <DialogTitle
