@@ -283,7 +283,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                     <span className="truncate">{query || PLACEHOLDER}</span>
                 </button>
                 {open && createPortal(
-                    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'var(--blanc-surface-strong)', display: 'flex', flexDirection: 'column' }} role="dialog" aria-modal="true">
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, pointerEvents: 'auto', background: 'var(--blanc-surface-strong)', display: 'flex', flexDirection: 'column' }} role="dialog" aria-modal="true">
                         <div className="flex items-center gap-2" style={{ padding: 'calc(env(safe-area-inset-top) + 10px) 12px 10px', flexShrink: 0 }}>
                             <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="flex size-9 shrink-0 items-center justify-center rounded-full" style={{ background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)' }}>
                                 <X className="size-5" />

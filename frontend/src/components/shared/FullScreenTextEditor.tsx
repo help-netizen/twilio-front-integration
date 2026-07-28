@@ -46,6 +46,7 @@ export function FullScreenTextEditor({
                 right: 0,
                 bottom: keyboardInset, // the surface ends exactly at the keyboard's top edge
                 zIndex: 1000,
+                pointerEvents: 'auto', // re-enable taps when opened over a Radix modal (which sets body pointer-events:none)
                 background: 'var(--blanc-surface-strong)',
                 display: 'flex',
                 flexDirection: 'column',

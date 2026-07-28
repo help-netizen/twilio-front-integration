@@ -53,7 +53,7 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
     if (!open) return null;
 
     return createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1000 }} aria-modal="true" role="dialog">
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, pointerEvents: 'auto' }} aria-modal="true" role="dialog">
             <div
                 onClick={onClose}
                 style={{ position: 'absolute', inset: 0, background: 'rgba(25, 25, 25, 0.38)' }}
