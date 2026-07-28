@@ -141,6 +141,29 @@ router.post('/apps/chatgpt-crm-mcp/sends/disable', async (req, res) => {
     await setChatgptMcpSends(req, res, false);
 });
 
+router.get('/apps/report-to-estimate/settings', async (req, res) => {
+    try {
+        const result = await marketplaceService.getReportToEstimateSettings(companyId(req));
+        res.json({ success: true, ...result, request_id: req.requestId });
+    } catch (err) {
+        handleError(err, req, res);
+    }
+});
+
+router.patch('/apps/report-to-estimate/settings', async (req, res) => {
+    try {
+        const result = await marketplaceService.updateReportToEstimateInstruction(
+            companyId(req),
+            actorId(req),
+            req.body,
+            { requestId: req.requestId }
+        );
+        res.json({ success: true, ...result, request_id: req.requestId });
+    } catch (err) {
+        handleError(err, req, res);
+    }
+});
+
 router.get('/apps/:appKey/settings', async (req, res) => {
     try {
         const result = await marketplaceService.getAppSettings(

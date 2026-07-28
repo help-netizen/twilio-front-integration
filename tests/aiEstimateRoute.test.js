@@ -161,4 +161,24 @@ describe('POST /api/estimates/ai-draft', () => {
             },
         });
     });
+
+    test('disabled marketplace app returns the structured 409 banner contract', async () => {
+        aiEstimateService.generateDraft.mockRejectedValue(Object.assign(
+            new Error('Report → Estimate is disabled for this company.'),
+            { code: 'app_disabled', httpStatus: 409 },
+        ));
+
+        const response = await request(app({ permissions: ['estimates.create'] }))
+            .post('/api/estimates/ai-draft')
+            .send({ report_text: 'Replace inlet valve.' });
+
+        expect(response.status).toBe(409);
+        expect(response.body).toEqual({
+            ok: false,
+            error: {
+                code: 'app_disabled',
+                message: 'Report → Estimate is disabled for this company.',
+            },
+        });
+    });
 });

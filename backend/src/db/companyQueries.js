@@ -5,6 +5,7 @@
  */
 
 const db = require('./connection');
+const marketplaceQueries = require('./marketplaceQueries');
 
 /**
  * Get company by ID.
@@ -66,18 +67,40 @@ async function listCompanies(opts = {}) {
  */
 async function createCompany(fields) {
     const { name, slug, timezone = 'America/New_York', locale = 'en-US', contact_email = null, contact_phone = null, status = 'active' } = fields;
-    
-    // Check if slug exists
-    const check = await db.query('SELECT id FROM companies WHERE slug = $1', [slug]);
-    if (check.rows.length > 0) throw new Error(`Company with slug '${slug}' already exists.`);
 
-    const { rows } = await db.query(
-        `INSERT INTO companies (name, slug, timezone, locale, contact_email, contact_phone, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-         RETURNING *`,
-        [name, slug, timezone, locale, contact_email, contact_phone, status]
-    );
-    return rows[0];
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const check = await client.query(
+            'SELECT id FROM companies WHERE slug = $1',
+            [slug]
+        );
+        if (check.rows.length > 0) {
+            throw new Error(`Company with slug '${slug}' already exists.`);
+        }
+
+        const { rows } = await client.query(
+            `INSERT INTO companies (name, slug, timezone, locale, contact_email, contact_phone, status, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+             RETURNING *`,
+            [name, slug, timezone, locale, contact_email, contact_phone, status]
+        );
+        const company = rows[0];
+
+        await marketplaceQueries.ensureDefaultReportToEstimateInstallation(
+            company.id,
+            { seededBy: 'REPORT-TO-ESTIMATE-001-ADMIN', client }
+        );
+
+        await client.query('COMMIT');
+        return company;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 }
 
 /**

@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../db/connection');
 const auditService = require('./auditService');
+const marketplaceQueries = require('../db/marketplaceQueries');
 
 const ROLE_SEED_SQL = fs.readFileSync(
     path.resolve(__dirname, '../../db/migrations/050_seed_role_configs.sql'),
@@ -46,6 +47,10 @@ async function bootstrapCompany({ userId, name, geo = {}, phone, email }) {
             [userId, name]
         );
         if (existing.length > 0) {
+            await marketplaceQueries.ensureDefaultReportToEstimateInstallation(
+                existing[0].id,
+                { seededBy: 'REPORT-TO-ESTIMATE-001-SELF-SIGNUP', client }
+            );
             await client.query('COMMIT');
             return { company: existing[0], created: false };
         }
@@ -83,6 +88,11 @@ async function bootstrapCompany({ userId, name, geo = {}, phone, email }) {
              VALUES ($1, $2)
              ON CONFLICT (membership_id) DO UPDATE SET phone = COALESCE(EXCLUDED.phone, company_user_profiles.phone)`,
             [memRows[0].id, phone || null]
+        );
+
+        await marketplaceQueries.ensureDefaultReportToEstimateInstallation(
+            company.id,
+            { seededBy: 'REPORT-TO-ESTIMATE-001-SELF-SIGNUP', client }
         );
 
         // Compatibility shadow + verified phone on the platform user

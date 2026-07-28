@@ -13,6 +13,11 @@ const { parseZipList, resolveRelySettings } = require('./relyLeadFilterService')
 const outboundCallSettingsService = require('./outboundCallSettingsService');
 const inspectorSettingsService = require('./inspectorSettingsService');
 const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
+const {
+    DEFAULT_INSTRUCTION,
+    MAX_INSTRUCTION_CHARS,
+    effectiveInstruction,
+} = require('./aiEstimateService');
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -31,6 +36,7 @@ const SMART_SLOT_ENGINE_APP_KEY = 'smart-slot-engine';
 // resolves through the GENERIC marketplace_installations status='connected' path;
 // NO isAppConnected special-case (only google-email/telephony-twilio are special).
 const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';
+const REPORT_TO_ESTIMATE_APP_KEY = 'report-to-estimate';
 const CHATGPT_CRM_MCP_APP_KEY = 'chatgpt-crm-mcp';
 
 async function requireChatgptTenantAdmin(companyId, actorId, client) {
@@ -349,6 +355,117 @@ function isPlainObject(value) {
 
 function invalidSettings(message) {
     throw new MarketplaceServiceError(message, 'INVALID_SETTINGS', 400);
+}
+
+function storedInstruction(metadata) {
+    const value = toMetadataObject(metadata).instruction_text;
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim();
+    if (!normalized || normalized.length > MAX_INSTRUCTION_CHARS) return null;
+    return normalized;
+}
+
+function validateReportToEstimateInstruction(body) {
+    if (!isPlainObject(body) || typeof body.instruction_text !== 'string') {
+        throw new MarketplaceServiceError(
+            'instruction_text must be a string.',
+            'INVALID_INSTRUCTION',
+            400
+        );
+    }
+    const instructionText = body.instruction_text.trim();
+    if (!instructionText) {
+        throw new MarketplaceServiceError(
+            'instruction_text cannot be empty.',
+            'INVALID_INSTRUCTION',
+            400
+        );
+    }
+    if (instructionText.length > MAX_INSTRUCTION_CHARS) {
+        throw new MarketplaceServiceError(
+            `instruction_text must be ${MAX_INSTRUCTION_CHARS} characters or fewer.`,
+            'INVALID_INSTRUCTION',
+            400
+        );
+    }
+    return instructionText;
+}
+
+async function resolveReportToEstimateState(companyId) {
+    const app = await marketplaceQueries.getPublishedAppByKey(REPORT_TO_ESTIMATE_APP_KEY);
+    if (!app) {
+        throw new MarketplaceServiceError(
+            'Marketplace app not found.',
+            'APP_NOT_FOUND',
+            404
+        );
+    }
+    const installation = await marketplaceQueries.findLatestInstallation(companyId, app.id);
+    return { app, installation };
+}
+
+function buildReportToEstimateSettings(installation) {
+    return {
+        app_key: REPORT_TO_ESTIMATE_APP_KEY,
+        enabled: installation?.status === 'connected',
+        installation_id: installation?.id || null,
+        instruction_text: effectiveInstruction(storedInstruction(installation?.metadata)),
+    };
+}
+
+async function getReportToEstimateSettings(companyId) {
+    const { installation } = await resolveReportToEstimateState(companyId);
+    return buildReportToEstimateSettings(installation);
+}
+
+async function getReportToEstimateInstruction(companyId) {
+    const app = await marketplaceQueries.getPublishedAppByKey(REPORT_TO_ESTIMATE_APP_KEY);
+    if (!app) return DEFAULT_INSTRUCTION;
+    const installation = await marketplaceQueries.findActiveInstallation(companyId, app.id);
+    return effectiveInstruction(storedInstruction(installation?.metadata));
+}
+
+async function updateReportToEstimateInstruction(
+    companyId,
+    actorId,
+    body,
+    { requestId = null } = {}
+) {
+    const { app, installation } = await resolveReportToEstimateState(companyId);
+    if (!installation) {
+        throw new MarketplaceServiceError(
+            'Marketplace app is not installed.',
+            'APP_NOT_INSTALLED',
+            404
+        );
+    }
+    const instructionText = validateReportToEstimateInstruction(body);
+    const updated = await marketplaceQueries.setInstallationInstructionText(
+        companyId,
+        installation.id,
+        REPORT_TO_ESTIMATE_APP_KEY,
+        instructionText
+    );
+    if (!updated) {
+        throw new MarketplaceServiceError(
+            'Marketplace app is not installed.',
+            'APP_NOT_INSTALLED',
+            404
+        );
+    }
+    await marketplaceQueries.writeEvent({
+        companyId,
+        installationId: updated.id,
+        appId: app.id,
+        actorId: actorId || null,
+        eventType: 'settings_updated',
+        requestId,
+        payload: {
+            app_key: REPORT_TO_ESTIMATE_APP_KEY,
+            instruction_length: instructionText.length,
+        },
+    });
+    return buildReportToEstimateSettings(updated);
 }
 
 function canonicalizeSettingsCatalog(values, catalog, code, label) {
@@ -769,6 +886,18 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
         if (active) {
             throw new MarketplaceServiceError('App is already installed for this company.', 'APP_ALREADY_INSTALLED', 409);
         }
+        let installationMetadata = {};
+        if (app.app_key === REPORT_TO_ESTIMATE_APP_KEY) {
+            const previous = await marketplaceQueries.findLatestInstallation(
+                companyId,
+                app.id,
+                client
+            );
+            const previousInstruction = storedInstruction(previous?.metadata);
+            if (previousInstruction) {
+                installationMetadata = { instruction_text: previousInstruction };
+            }
+        }
 
         // ONBTEL-001 §2.2 fail-safe: apps whose connected-state is DERIVED from
         // their own domain (metadata.derived_connection === true, e.g.
@@ -791,6 +920,7 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
             appId: app.id,
             actorId,
             status: 'provisioning_failed',
+            metadata: installationMetadata,
         }, client);
 
         if (app.provisioning_mode !== 'none') {
@@ -1264,6 +1394,7 @@ module.exports = {
     MarketplaceServiceError,
     SMART_SLOT_ENGINE_APP_KEY,
     AI_REPAIR_ADVISOR_APP_KEY,
+    REPORT_TO_ESTIMATE_APP_KEY,
     CHATGPT_CRM_MCP_APP_KEY,
     SETTINGS_ENABLED_APP_KEYS,
     isAppConnected,
@@ -1277,8 +1408,12 @@ module.exports = {
     validateRelySettingsInput,
     validateRateMeSettingsInput,
     validateAgentCallingWindowInput,
+    validateReportToEstimateInstruction,
     getAppSettings,
     updateAppSettings,
+    getReportToEstimateSettings,
+    getReportToEstimateInstruction,
+    updateReportToEstimateInstruction,
     resolveRelySettings,
     _toScopeArray: toScopeArray,
     _accessSummary: accessSummary,

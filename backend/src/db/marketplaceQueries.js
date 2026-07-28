@@ -82,6 +82,10 @@ async function ensureMarketplaceSchema(client = null) {
         // LEAD-INSTALL-GATE-001: make the already-live default-company Yelp
         // installation durable before runtime starts enforcing install state.
         await query(readMigration('206_seed_default_yelp_installation.sql'));
+        // REPORT-TO-ESTIMATE-001 T2: catalog registration plus default-ON
+        // installations for every existing company. The all-status NOT EXISTS
+        // guard makes boot replay preserve a deliberate disconnect.
+        await query(readMigration('212_seed_report_to_estimate_marketplace_app.sql'));
         return;
     }
 
@@ -241,6 +245,23 @@ async function findActiveInstallation(companyId, appId, client = null) {
     return rows[0] || null;
 }
 
+async function findLatestInstallation(companyId, appId, client = null) {
+    await ensureMarketplaceSchema(client);
+    const query = queryFor(client);
+    await reconcileRevokedInstallations(companyId, client);
+    const { rows } = await query(
+        `SELECT i.*, ai.key_id, ai.last_used_at
+         FROM marketplace_installations i
+         LEFT JOIN api_integrations ai ON ai.id = i.api_integration_id
+         WHERE i.company_id = $1
+           AND i.app_id = $2
+         ORDER BY i.created_at DESC, i.id DESC
+         LIMIT 1`,
+        [companyId, appId]
+    );
+    return rows[0] || null;
+}
+
 // RELY-LEADS-SETTINGS-001 P-14: this ingest hot-path read deliberately skips
 // ensureMarketplaceSchema/reconcileRevokedInstallations. A missing table throws
 // to the filter's fail-open boundary instead of adding schema work per lead.
@@ -340,17 +361,74 @@ async function getInstallationById(companyId, installationId, client = null) {
     return rows[0] || null;
 }
 
-async function createInstallation({ companyId, appId, actorId, status = 'provisioning_failed' }, client = null) {
+async function createInstallation({
+    companyId,
+    appId,
+    actorId,
+    status = 'provisioning_failed',
+    metadata = {},
+}, client = null) {
     await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `INSERT INTO marketplace_installations
-            (company_id, app_id, status, installed_by, installed_at, last_provisioning_attempt_at)
-         VALUES ($1, $2, $3, $4, NOW(), NOW())
+            (company_id, app_id, status, installed_by, installed_at,
+             last_provisioning_attempt_at, metadata)
+         VALUES ($1, $2, $3, $4, NOW(), NOW(), $5::jsonb)
          RETURNING *`,
-        [companyId, appId, status, actorId || null]
+        [companyId, appId, status, actorId || null, JSON.stringify(metadata || {})]
     );
     return rows[0];
+}
+
+/**
+ * Default-enable Report → Estimate for a newly-created company.
+ *
+ * This helper intentionally skips ensureMarketplaceSchema: company creation
+ * already runs after migrations, and replaying every marketplace migration
+ * inside a company bootstrap transaction would be unsafe. Any historical row,
+ * including disconnected/revoked, prevents a new default row so retries never
+ * resurrect a user-disabled app.
+ */
+async function ensureDefaultReportToEstimateInstallation(
+    companyId,
+    { seededBy = 'REPORT-TO-ESTIMATE-001', client = null } = {}
+) {
+    const query = queryFor(client);
+    const appResult = await query(
+        `SELECT id
+         FROM marketplace_apps
+         WHERE app_key = 'report-to-estimate'
+           AND status = 'published'
+         LIMIT 1`
+    );
+    const app = appResult.rows[0];
+    if (!app) {
+        throw new Error('Report → Estimate marketplace app is not available.');
+    }
+
+    const { rows } = await query(
+        `INSERT INTO marketplace_installations
+            (company_id, app_id, status, installed_at, metadata)
+         SELECT
+            $1,
+            $2,
+            'connected',
+            NOW(),
+            jsonb_build_object('seeded_by', $3::text)
+         WHERE NOT EXISTS (
+            SELECT 1
+            FROM marketplace_installations existing
+            WHERE existing.company_id = $1
+              AND existing.app_id = $2
+         )
+         ON CONFLICT (company_id, app_id)
+             WHERE status IN ('connected', 'provisioning_failed')
+         DO NOTHING
+         RETURNING *`,
+        [companyId, app.id, seededBy]
+    );
+    return rows[0] || null;
 }
 
 async function updateInstallationCredential(companyId, installationId, apiIntegrationId, client = null) {
@@ -379,6 +457,31 @@ async function setInstallationSettings(companyId, installationId, settingsObject
            AND id = $2
          RETURNING *`,
         [companyId, installationId, JSON.stringify(settingsObject)]
+    );
+    return rows[0] || null;
+}
+
+async function setInstallationInstructionText(
+    companyId,
+    installationId,
+    appKey,
+    instructionText,
+    client = null
+) {
+    await ensureMarketplaceSchema(client);
+    const query = queryFor(client);
+    const { rows } = await query(
+        `UPDATE marketplace_installations installation
+         SET metadata = COALESCE(installation.metadata, '{}'::jsonb)
+                        || jsonb_build_object('instruction_text', $4::text),
+             updated_at = NOW()
+         FROM marketplace_apps app
+         WHERE installation.company_id = $1
+           AND installation.id = $2
+           AND installation.app_id = app.id
+           AND app.app_key = $3
+         RETURNING installation.*`,
+        [companyId, installationId, appKey, instructionText]
     );
     return rows[0] || null;
 }
@@ -511,13 +614,16 @@ module.exports = {
     getAppConnectionSnapshot,
     getPublishedAppByKey,
     findActiveInstallation,
+    findLatestInstallation,
     getConnectedRelySettings,
     isLeadAppInstalled,
     listInstallations,
     getInstallationById,
     createInstallation,
+    ensureDefaultReportToEstimateInstallation,
     updateInstallationCredential,
     setInstallationSettings,
+    setInstallationInstructionText,
     revokeCredentialById,
     countOtherActiveInstallationsOnCredential,
     markInstallationConnected,
