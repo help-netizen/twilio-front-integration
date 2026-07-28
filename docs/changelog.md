@@ -2986,3 +2986,15 @@ fallback: все callers передают company и заметка всегда
 `AND company_id`. Real-PostgreSQL suite проверяет consent, честную
 disconnect-race, T-own/T-foreign/T-blast каждого инструмента, неизменность
 tenant B, replay, FSM denial и AI authorship.
+
+## 2026-07-27 — LEAD-CHANNEL-ANALYTICS-001 chunk 1a + durable draft
+
+- Commit `2f87ca1b` adds the tenant-safe lead acquisition cohort, canonical source/milestone foundation, three permission-gated analytics endpoints, and Settings analytics experience; Google Ads spend/ROAS remains chunk 1b.
+- Added the loaded-state AnalyticsPage SSR smoke test and durable requirements/architecture/spec drafts with the real-PostgreSQL tenancy sabotage evidence.
+
+## 2026-07-27 — LEAD-CHANNEL-ANALYTICS-001 chunk 1b — native Google Ads connector
+
+- Phase A `7511c1bf`: migration 213 (`google_ads_connections` + `lead_source_performance_daily`, tenant-inclusive keys), AES-256-GCM credential service (fail-closed, masked serialization, log redaction), per-company Google Ads v23 adapter (ported from rely-lead-processor + `segments.date` + pagination + USD gate), DB-leased daily sync via `schedulerRegistry` (731-day backfill + rolling 30-day), derived marketplace card + assistant status overlay, connection/sync/disconnect routes behind `tenant.integrations.manage`, and an env-only bootstrap CLI. 78 tests incl. real-PostgreSQL T-own/T-foreign/T-blast; sabotage (both company guards) → 6 red → restored.
+- Phase B `305f9270`: wires `lead_source_performance_daily` into the analytics engine — tenant-scoped `loadCostSnapshot`, gclid-precedence attribution to the active `google_ads` channel (byte-compatible when unconnected), real ROAS + marketing contribution, per-lead ad-cost allocation for area/technician (modeled), synthetic zero-lead channel rows (ROAS null, never a fabricated 0×), and unallocated spend + non-secret connected sources. 37/37 across the analytics suites; sabotage `SAB-LCA-COST-COMPANY` → red → restored.
+- Frontend `5e5cc6ed`: Google Ads connect/status panel (`?app=google-ads`) with sync/disconnect and a server-bootstrap setup guide, plus the `EST` badge marking modeled per-lead ad cost in the by-area / by-technician views.
+- Activation is a deploy-time step: set the `GOOGLE_ADS_*` env vars + token encryption key and run the bootstrap CLI with the account's customer id + refresh token (reused from the rely-lead-processor project). ⚠ Migration 213 assumes chunk-1a migration 212 lands first; a parallel session also created a 212 — recheck the free number and renumber at merge.

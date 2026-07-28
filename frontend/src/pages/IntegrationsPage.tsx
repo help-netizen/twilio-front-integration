@@ -21,6 +21,7 @@ import { MarketplaceGrid } from '../components/settings/marketplace/MarketplaceG
 import { MarketplaceAppDetail } from '../components/settings/marketplace/MarketplaceAppDetail';
 import { InspectorSettingsPanel } from '../components/settings/InspectorSettingsPanel';
 import { AvatarsPanel } from '../components/settings/AvatarsPanel';
+import { GoogleAdsPanel } from '../components/settings/GoogleAdsPanel';
 import { useAuth } from '../auth/AuthProvider';
 import { INTEGRATION_TAB_COPY, integrationTabFromSearchParams } from './integrationSettingsTabs';
 
@@ -185,6 +186,15 @@ export function IntegrationsPage() {
         setSearchParams(next, { replace: true });
     };
 
+    const googleAdsPanelOpen = searchParams.get('app') === 'google-ads';
+
+    const setGoogleAdsPanelOpen = (open: boolean) => {
+        const next = new URLSearchParams(searchParams);
+        if (open) next.set('app', 'google-ads');
+        else next.delete('app');
+        setSearchParams(next, { replace: true });
+    };
+
     const { data: apps = [], isLoading: marketplaceLoading } = useQuery({ queryKey: ['marketplace-apps'], queryFn: fetchMarketplaceApps });
     // The app whose detail panel is open — resolved from the live list so it stays
     // fresh across install/disconnect refetches.
@@ -252,6 +262,10 @@ export function IntegrationsPage() {
                 ) : app.app_key === 'google-email' ? (
                     <Button size="sm" variant={gmailConnected ? 'outline' : 'default'} onClick={() => navigate(String(app.metadata?.setup_path || '/settings/integrations/google-email'))}>
                         {gmailConnected ? 'Manage' : 'Connect'}
+                    </Button>
+                ) : app.app_key === 'google-ads' ? (
+                    <Button size="sm" variant={app.installation?.status === 'connected' ? 'outline' : 'default'} onClick={() => setGoogleAdsPanelOpen(true)}>
+                        {app.installation?.status === 'connected' ? 'Manage' : 'Connect'}
                     </Button>
                 ) : app.app_key === 'telephony-twilio' ? (
                     <Button size="sm" variant={app.installation?.status === 'connected' ? 'outline' : 'default'} onClick={() => navigate(app.installation?.status === 'connected' ? '/settings/telephony' : String(app.metadata?.setup_path || '/settings/integrations/telephony-twilio'))}>
@@ -418,6 +432,7 @@ export function IntegrationsPage() {
                 myName={user?.name || 'You'}
                 companyName={company?.name || 'your company'}
             />
+            <GoogleAdsPanel open={googleAdsPanelOpen} onOpenChange={setGoogleAdsPanelOpen} />
             <CreateDialog open={createOpen} onOpenChange={setCreateOpen} clientName={clientName} setClientName={setClientName} onSubmit={handleCreate} isPending={createMutation.isPending} />
             <SecretDialog open={secretModalOpen} onOpenChange={setSecretModalOpen} integration={newIntegration} />
             <RevokeDialog target={revokeTarget} onClose={() => setRevokeTarget(null)} onRevoke={() => revokeTarget && revokeMutation.mutate(revokeTarget.key_id)} isPending={revokeMutation.isPending} />

@@ -86,6 +86,9 @@ async function ensureMarketplaceSchema(client = null) {
         // installations for every existing company. The all-status NOT EXISTS
         // guard makes boot replay preserve a deliberate disconnect.
         await query(readMigration('212_seed_report_to_estimate_marketplace_app.sql'));
+        // LEAD-CHANNEL-ANALYTICS-001: derived Google Ads card + connection
+        // tables. Migration 214 is idempotent and owns its assistant metadata.
+        await query(readMigration('214_google_ads_connector.sql'));
         return;
     }
 
@@ -211,6 +214,17 @@ async function getAppConnectionSnapshot(companyId, client = null) {
         [companyId]
     );
     return rows;
+}
+
+async function getGoogleAdsConnectionStatus(companyId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT status
+         FROM google_ads_connections
+         WHERE company_id = $1`,
+        [companyId]
+    );
+    return rows[0]?.status || null;
 }
 
 async function getPublishedAppByKey(appKey, client = null) {
@@ -612,6 +626,7 @@ module.exports = {
     reconcileRevokedInstallations,
     listPublishedAppsWithInstallation,
     getAppConnectionSnapshot,
+    getGoogleAdsConnectionStatus,
     getPublishedAppByKey,
     findActiveInstallation,
     findLatestInstallation,

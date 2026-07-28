@@ -7120,3 +7120,18 @@ Outside work schedule… убрать вообще». Кастомные **Time 
 
 Полная спека, Tenancy & Roles matrix и live verification ledger:
 `docs/specs/PRICEBOOK-NESTED-001.md`.
+
+## LEAD-CHANNEL-ANALYTICS-001 — lead-source funnel and unit economics (2026-07-27)
+
+**Owner goal:** “Show me every lead source end to end—from request through completed repair and money collected—and tell me whether each channel, area, and technician earns or loses money.”
+
+- **[OWNER] Base integration:** ship a native marketplace app named Google Ads in chunk 1b, reusing the owner-approved secret-handling approach and operational learnings from the external Telegram reporter.
+- **[OWNER] Pluggable sources:** sources are independently enableable/disableable, and connecting one automatically pulls its data.
+- **[OWNER] Profit lens:** v1 reports both ROAS and marketing contribution.
+- **[OWNER] Funnel:** show both intermediate stages, Visit completed and Job is Done.
+- **[OWNER] Placement:** give Analytics a dedicated Settings section and surface the integration through the Google Ads marketplace app; the card seed lands in chunk 1b.
+- **[OWNER] Standalone payments:** invoice-less payments do not enter attributed contribution and are reported as `tax_basis_unknown_cents`.
+- **[OWNER] Technician credit:** split every metric equally across the distinct assigned technicians and reconcile the rows to company totals.
+
+Full draft, contracts, Tenancy & Roles matrix, and verification ledger:
+`docs/specs/LEAD-CHANNEL-ANALYTICS-001.md`.

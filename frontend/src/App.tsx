@@ -58,6 +58,7 @@ import RolesAccessPage from './pages/RolesAccessPage';
 import QuickMessagesPage from './pages/QuickMessagesPage';
 import PaymentsPage from './pages/PaymentsPage';
 import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
+import AnalyticsPage from './pages/AnalyticsPage';
 import AutomationPage from './pages/AutomationPage';
 import BillingPage from './pages/BillingPage';
 import GoogleEmailSettingsPage from './pages/GoogleEmailSettingsPage';
@@ -173,6 +174,8 @@ function App() {
                 <Route path="/settings/billing-group" element={<SettingsLandingRedirect groupId="billing" />} />
                 <Route path="/settings/platform-administration" element={<SettingsLandingRedirect groupId="platform-administration" />} />
                 <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/marketing-analytics" element={<SettingsLandingRedirect groupId="analytics" />} />
+                <Route path="/settings/analytics" element={<ProtectedRoute permissions={['reports.financial.view']}><AnalyticsPage /></ProtectedRoute>} />
                 <Route path="/settings/scheduling/company-schedule" element={<ProtectedRoute permissions={['schedule.dispatch', 'tenant.company.manage']}><CompanySchedulePage /></ProtectedRoute>} />
                 <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
                 <Route path="/settings/roles" element={<ProtectedRoute permissions={['tenant.roles.manage']}><RolesAccessPage /></ProtectedRoute>} />

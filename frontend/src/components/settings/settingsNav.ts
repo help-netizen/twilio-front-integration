@@ -9,6 +9,7 @@ export type SettingsGroupId =
     | 'business'
     | 'scheduling'
     | 'jobs'
+    | 'analytics'
     | 'phone-ai'
     | 'billing-payments'
     | 'apps-integrations'
@@ -65,6 +66,7 @@ export const SETTINGS_GROUP_PATHS: Record<SettingsGroupId, string> = {
     business: '/settings/business',
     scheduling: '/settings/scheduling',
     jobs: '/settings/jobs',
+    analytics: '/settings/marketing-analytics',
     'phone-ai': '/settings/phone-ai',
     'billing-payments': '/settings/billing-payments',
     'apps-integrations': '/settings/apps-integrations',
@@ -129,6 +131,18 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
             { id: 'automations', label: 'Automations', to: '/settings/automation', permissions: ['tenant.company.manage'] },
             // Job list columns intentionally NOT here: column choice is edited in
             // context on the Jobs page (owner decision), not in Settings.
+        ],
+    },
+    {
+        id: 'analytics',
+        title: 'Analytics',
+        landingPath: SETTINGS_GROUP_PATHS.analytics,
+        kind: 'tenant',
+        links: [
+            {
+                id: 'lead-channel-analytics', label: 'Marketing & channels', to: '/settings/analytics',
+                permissions: ['reports.financial.view'],
+            },
         ],
     },
     {

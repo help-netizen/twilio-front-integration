@@ -18,6 +18,7 @@ const {
     MAX_INSTRUCTION_CHARS,
     effectiveInstruction,
 } = require('./aiEstimateService');
+const googleAdsConnectionService = require('./googleAdsConnectionService');
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -55,6 +56,7 @@ async function requireChatgptTenantAdmin(companyId, actorId, client) {
 // the REAL Gmail mailbox, not a marketplace_installations row. Special-cased in
 // listApps + isAppConnected; all other apps are untouched.
 const GOOGLE_EMAIL_APP_KEY = 'google-email';
+const GOOGLE_ADS_APP_KEY = 'google-ads';
 
 const SETTINGS_ENABLED_APP_KEYS = new Set([
     'rely-leads',
@@ -96,6 +98,22 @@ async function buildGoogleEmailInstallationOverlay(companyId) {
         provisioning_error: null,
         last_used_at: connected ? mailbox.last_synced_at || null : null,
         external_installation_id: connected ? mailbox.email_address || null : null,
+    };
+}
+
+async function buildGoogleAdsInstallationOverlay(companyId) {
+    const connection = await googleAdsConnectionService
+        .getMarketplaceConnectionState(companyId);
+    if (!connection) return null;
+    const connected = connection.status === 'connected';
+    return {
+        id: null,
+        status: connected ? 'connected' : 'disconnected',
+        installed_at: connected ? connection.created_at : null,
+        disconnected_at: null,
+        provisioning_error: null,
+        last_used_at: connected ? connection.last_synced_at : null,
+        external_installation_id: null,
     };
 }
 
@@ -169,6 +187,11 @@ async function isAppConnected(companyId, appKey) {
     // an install row — the mail-secretary gate resolves from truth.
     if (appKey === GOOGLE_EMAIL_APP_KEY) {
         return isGoogleEmailMailboxConnected(companyId);
+    }
+    if (appKey === GOOGLE_ADS_APP_KEY) {
+        const connection = await googleAdsConnectionService
+            .getMarketplaceConnectionState(companyId);
+        return connection?.status === 'connected';
     }
     // ONBTEL-001 §2.2: telephony-twilio connected-state comes from
     // company_telephony (telephonyTenantService), never an install row — the
@@ -325,6 +348,11 @@ async function listApps(companyId) {
     const googleEmail = apps.find(app => app.app_key === GOOGLE_EMAIL_APP_KEY);
     if (googleEmail) {
         googleEmail.installation = await buildGoogleEmailInstallationOverlay(companyId);
+    }
+
+    const googleAds = apps.find(app => app.app_key === GOOGLE_ADS_APP_KEY);
+    if (googleAds) {
+        googleAds.installation = await buildGoogleAdsInstallationOverlay(companyId);
     }
 
     // ONBTEL-001 §2.2: same derived-overlay pattern for telephony-twilio — the

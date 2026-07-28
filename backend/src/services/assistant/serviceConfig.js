@@ -76,6 +76,10 @@ function isSlotEngine(appKey) {
 
 async function getServiceConfig(companyId) {
     const rows = await marketplaceQueries.getAppConnectionSnapshot(companyId);
+    const hasGoogleAds = rows.some(row => row.app_key === 'google-ads');
+    const googleAdsStatus = hasGoogleAds
+        ? await marketplaceQueries.getGoogleAdsConnectionStatus(companyId)
+        : null;
     const needsSlotSettings = rows.some(row => (
         isSlotEngine(row.app_key) && normalizeStatus(row.installation_status) === 'connected'
     ));
@@ -84,7 +88,10 @@ async function getServiceConfig(companyId) {
         : null;
 
     return rows.map((row) => {
-        const status = normalizeStatus(row.installation_status);
+        const derivedInstallationStatus = row.app_key === 'google-ads'
+            ? (googleAdsStatus === 'connected' ? 'connected' : null)
+            : row.installation_status;
+        const status = normalizeStatus(derivedInstallationStatus);
         const configured = status === 'connected';
         let settings = {};
         if (configured) {

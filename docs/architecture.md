@@ -8236,3 +8236,38 @@ legacy presets и второй run с zero drift. Полный контракт 
 ## INSPECTOR-LLM-QUEUE-001 — architecture (2026-07-20)
 
 Transport-layer hardening in `backend/src/services/llm/jsonLlmClient.js`: a reusable `createPacedQueue()` (FIFO single-flight + min-interval `waitForStart`) and `exponentialBackoffMs` (base·2^n + jitter, capped at maxBackoffMs, honoring a larger `Retry-After`), engaged ONLY when a caller passes `options.rateLimit: { queue, minIntervalMs, maxAttempts, baseBackoffMs, maxBackoffMs }`. The Inspector opts in with a module-level `inspectorLlmQueue` + bounded env config; **Mail Secretary does not pass `rateLimit` → its transport path is byte-unchanged**. In-process only (not distributed across Node instances — a multi-instance quota needs an external limiter). 429 stays spend-cap-stop by the existing contract (Gemini's 429 doesn't distinguish rate-limit from spend-cap, so stopping is the safe default; the min-interval pacing prevents rate-limit 429s proactively). Rejected: a global limiter inside the shared client (would throttle Mail too). Spec: `docs/specs/INSPECTOR-LLM-QUEUE-001.md`.
+
+## LEAD-CHANNEL-ANALYTICS-001 — architecture (2026-07-27)
+
+Chunk 1a uses a fresh `leadChannelAnalyticsService.js` acquisition-cohort model:
+company-local `from`/`to` selects tenant leads once, then company-scoped joins
+project job milestones, invoice-linked completed payments/refunds, call cost,
+service area, canonical channel, and distinct technicians into one fact per lead.
+Summary and all three breakdown dimensions derive from those facts; technician
+rows use equal fractional credit followed by deterministic integer-cent/count
+reconciliation to company totals. Invoice-less payments stay outside contribution
+and appear only as `tax_basis_unknown_cents`.
+
+Migration 212 establishes the durable seams: tenant-owned
+`lead_source_channels`, tenant-owned normalized `lead_source_aliases`, and
+first-reached `converted_at`, `visit_completed_at`, and `repair_done_at`
+milestones. Raw `leads.job_source` remains unchanged. The three read endpoints
+receive only `req.companyFilter?.company_id`, require both
+`reports.financial.view` and `lead_source.view`, and return integer cents plus
+explicit `null` when cost/ROAS is unavailable.
+
+The pluggable-source boundary belongs between provider connectors and the cohort
+engine. In chunk 1b, each company-bound connector owns its enable/disable,
+credentials, pull lifecycle, and source/cost normalization; connecting a source
+starts its pull. The aggregate consumes provider-neutral spend/source facts and
+connected-source status. Google Ads is the first native marketplace connector,
+not a provider assumption embedded in the funnel service.
+
+Rejected alternatives: reusing `analyticsService.js` (its F014 path has a known
+cross-tenant leak); grouping permanently by raw source text (aliases cannot merge
+or evolve safely); calculating milestones only from current status (loses
+first-reached history); assigning full credit to every technician (double-counts
+company totals); treating invoice-less payments as attributed profit (tax basis
+and lead attribution are unknown); and hard-wiring Google Ads OAuth/sync logic
+into the cohort aggregate (blocks additional sources). Full draft:
+`docs/specs/LEAD-CHANNEL-ANALYTICS-001.md`.

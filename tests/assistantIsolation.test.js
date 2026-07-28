@@ -6,6 +6,7 @@ const path = require('path');
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/db/marketplaceQueries', () => ({
     getAppConnectionSnapshot: jest.fn(),
+    getGoogleAdsConnectionStatus: jest.fn(),
 }));
 jest.mock('../backend/src/db/slotEngineSettingsQueries', () => ({
     getByCompany: jest.fn(),
@@ -41,6 +42,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     db.query.mockResolvedValue({ rows: [] });
     marketplaceQueries.getAppConnectionSnapshot.mockResolvedValue([]);
+    marketplaceQueries.getGoogleAdsConnectionStatus.mockResolvedValue(null);
     slotEngineSettingsQueries.getByCompany.mockResolvedValue(null);
 });
 
@@ -80,7 +82,10 @@ describe('ASSISTANT-BOT-001 structural isolation', () => {
             .map(match => match[1]);
         const slotCalls = [...serviceSource.matchAll(/slotEngineSettingsQueries\.([A-Za-z0-9_]+)/g)]
             .map(match => match[1]);
-        expect([...new Set(marketplaceCalls)]).toEqual(['getAppConnectionSnapshot']);
+        expect([...new Set(marketplaceCalls)]).toEqual([
+            'getAppConnectionSnapshot',
+            'getGoogleAdsConnectionStatus',
+        ]);
         expect([...new Set(slotCalls)]).toEqual(['getByCompany']);
     });
 
@@ -125,11 +130,15 @@ describe('ASSISTANT-BOT-001 structural isolation', () => {
         );
         const split = "await query(readMigration('170_split_lead_generator_marketplace_apps.sql'));";
         const assistant = "await query(readMigration('173_seed_assistant_app_descriptions.sql'));";
+        const googleAds = "await query(readMigration('214_google_ads_connector.sql'));";
 
         expect(source.match(/readMigration\('173_seed_assistant_app_descriptions\.sql'\)/g))
             .toHaveLength(1);
+        expect(source.match(/readMigration\('214_google_ads_connector\.sql'\)/g))
+            .toHaveLength(1);
         expect(source.indexOf(split)).toBeGreaterThan(-1);
         expect(source.indexOf(assistant)).toBeGreaterThan(source.indexOf(split));
+        expect(source.indexOf(googleAds)).toBeGreaterThan(source.indexOf(assistant));
     });
 
     test('marketplace connection snapshot is one company-scoped pure SELECT', async () => {
@@ -146,6 +155,20 @@ describe('ASSISTANT-BOT-001 structural isolation', () => {
         expect(sql).toContain("a.status = 'published'");
         expect(sql).toContain("i.metadata->'settings' AS installation_settings");
         expect(sql).not.toMatch(/\b(?:UPDATE|INSERT|DELETE|ALTER|CREATE|DROP)\b/i);
+        expect(params).toEqual([COMPANY_ID]);
+    });
+
+    test('Google Ads assistant overlay reads only company-scoped connection status', async () => {
+        db.query.mockResolvedValue({ rows: [{ status: 'connected' }] });
+
+        await expect(actualMarketplaceQueries.getGoogleAdsConnectionStatus(COMPANY_ID))
+            .resolves.toBe('connected');
+
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toMatch(/^SELECT/i);
+        expect(sql).toContain('SELECT status');
+        expect(sql).toContain('WHERE company_id = $1');
+        expect(sql).not.toMatch(/refresh_token|customer_id|last_error/i);
         expect(params).toEqual([COMPANY_ID]);
     });
 });
@@ -241,6 +264,39 @@ describe('getCapabilityCatalog', () => {
 });
 
 describe('getServiceConfig', () => {
+    test('overlays derived Google Ads connected/not-connected status without settings', async () => {
+        marketplaceQueries.getAppConnectionSnapshot.mockResolvedValue([
+            appRow('google-ads', null, {
+                refresh_token: 'must-not-leak',
+                customer_id: '1234567890',
+            }),
+        ]);
+        marketplaceQueries.getGoogleAdsConnectionStatus
+            .mockResolvedValueOnce('connected');
+
+        await expect(getServiceConfig(COMPANY_ID)).resolves.toEqual([{
+            app_key: 'google-ads',
+            name: 'App google-ads',
+            category: 'test',
+            status: 'connected',
+            configured: true,
+            settings: {},
+        }]);
+        expect(marketplaceQueries.getGoogleAdsConnectionStatus)
+            .toHaveBeenCalledWith(COMPANY_ID);
+
+        marketplaceQueries.getGoogleAdsConnectionStatus
+            .mockResolvedValueOnce('reconnect_required');
+        await expect(getServiceConfig(COMPANY_ID)).resolves.toEqual([{
+            app_key: 'google-ads',
+            name: 'App google-ads',
+            category: 'test',
+            status: 'not_connected',
+            configured: false,
+            settings: {},
+        }]);
+    });
+
     test('returns only per-app allowlisted settings and drops sabotage data', async () => {
         marketplaceQueries.getAppConnectionSnapshot.mockResolvedValue([
             appRow('rely-leads', 'connected', {
