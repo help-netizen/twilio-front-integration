@@ -1458,24 +1458,14 @@ async function syncFromZenbooker(zbJobId, zbData, companyId, eventType = '') {
     }
 
     if (existing) {
-        // Preserve manually-set blanc_status (e.g. "Waiting for parts", "Follow Up with Client")
-        // when the inbound ZB webhook was triggered by our own outbound sync.
-        // Only overwrite blanc_status if it's one of the auto-computed statuses.
-        const autoStatuses = ['Submitted', 'Visit completed', 'Rescheduled', 'Canceled'];
-        let shouldUpdateBlancStatus = autoStatuses.includes(existing.blanc_status);
-
-        // Operator-reopen override: Albusto can be reset to Submitted/Rescheduled by an
-        // operator even when the ZB job is still canceled or complete. Zenbooker has no
-        // API to un-cancel or un-complete, so Albusto maintains this divergence on purpose.
-        // Without this override the next inbound webhook would snap blanc back to
-        // Canceled / Visit completed.
-        if (
-            ['Submitted', 'Rescheduled'].includes(existing.blanc_status) &&
-            (cols.zb_canceled || cols.zb_status === 'complete')
-        ) {
-            shouldUpdateBlancStatus = false;
-        }
-
+        // Zenbooker is the source of truth for schedule/customer/notes/etc.,
+        // but blanc_status is owned by Albusto — once a job exists locally, the
+        // sync never overwrites its status. Zenbooker has no direct equivalent
+        // for Albusto states like "Visit completed", "Waiting for parts",
+        // "Follow Up with Client", "Part arrived", so any status change comes
+        // through the Albusto UI, not the ZB webhook. The initial status is
+        // still set by the createJob path when a new job first arrives.
+        const shouldUpdateBlancStatus = !existing.blanc_status;
         const effectiveBlancStatus = shouldUpdateBlancStatus ? newBlancStatus : existing.blanc_status;
 
         // Merge notes: keep Albusto-side metadata (author, created, attachments) for notes
