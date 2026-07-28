@@ -346,7 +346,7 @@ function BreakdownCard({
                             </thead>
                             <tbody>
                                 {data.rows.map((row, i) => (
-                                    <BreakdownTr key={row.key} row={row} color={DOT_PALETTE[i % DOT_PALETTE.length]} maxAbs={maxAbs} />
+                                    <BreakdownTr key={row.key} row={row} color={DOT_PALETTE[i % DOT_PALETTE.length]} maxAbs={maxAbs} modeledSpend={dimension !== 'channel'} />
                                 ))}
                             </tbody>
                         </table>
@@ -361,6 +361,9 @@ function BreakdownCard({
                         <div>
                             <b style={{ color: INK1 }}>ROAS shows only where cost is known.</b> Connect Google Ads to pull spend automatically;
                             free channels show contribution from revenue minus call cost. Until a source's cost is known, its ROAS stays “—”.
+                            {dimension !== 'channel' && (
+                                <> Ad cost per {dimension} is <b style={{ color: INK1 }}>estimated</b> (<b>EST</b>) — each channel's spend split evenly across its leads.</>
+                            )}
                         </div>
                     </div>
                 </>
@@ -369,7 +372,7 @@ function BreakdownCard({
     );
 }
 
-function BreakdownTr({ row, color, maxAbs }: { row: BreakdownRow; color: string; maxAbs: number }) {
+function BreakdownTr({ row, color, maxAbs, modeledSpend }: { row: BreakdownRow; color: string; maxAbs: number; modeledSpend: boolean }) {
     const contrib = row.marketing_contribution_cents;
     const positive = contrib >= 0;
     const barW = Math.round((Math.abs(contrib) / maxAbs) * 100);
@@ -387,7 +390,14 @@ function BreakdownTr({ row, color, maxAbs }: { row: BreakdownRow; color: string;
             </td>
             <td className="mono" style={tdStyle}>{fmtMoney(row.revenue_net_cents)}</td>
             <td className="mono" style={{ ...tdStyle, color: row.ad_spend_cents !== null ? INK1 : INK3 }}>
-                {row.ad_spend_cents !== null ? fmtMoney(row.ad_spend_cents) : '—'}
+                {row.ad_spend_cents !== null ? (
+                    <>
+                        {fmtMoney(row.ad_spend_cents)}
+                        {modeledSpend && row.ad_spend_cents > 0 && (
+                            <span title="Estimated: this channel's spend split evenly across its leads" style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: INK3, letterSpacing: '0.03em' }}>EST</span>
+                        )}
+                    </>
+                ) : '—'}
             </td>
             <td className="mono" style={{ ...tdStyle, fontWeight: 700, color: roasColor(row.roas) }}>
                 {row.roas !== null ? `${row.roas.toFixed(1)}×` : '—'}

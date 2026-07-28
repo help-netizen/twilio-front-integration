@@ -19,6 +19,7 @@ import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { MarketplaceBrowser } from '../components/settings/MarketplaceBrowser';
 import { InspectorSettingsPanel } from '../components/settings/InspectorSettingsPanel';
 import { AvatarsPanel } from '../components/settings/AvatarsPanel';
+import { GoogleAdsPanel } from '../components/settings/GoogleAdsPanel';
 import { useAuth } from '../auth/AuthProvider';
 import { INTEGRATION_TAB_COPY, integrationTabFromSearchParams } from './integrationSettingsTabs';
 
@@ -215,6 +216,15 @@ export function IntegrationsPage() {
         setSearchParams(next, { replace: true });
     };
 
+    const googleAdsPanelOpen = searchParams.get('app') === 'google-ads';
+
+    const setGoogleAdsPanelOpen = (open: boolean) => {
+        const next = new URLSearchParams(searchParams);
+        if (open) next.set('app', 'google-ads');
+        else next.delete('app');
+        setSearchParams(next, { replace: true });
+    };
+
     const { data: apps = [], isLoading: marketplaceLoading } = useQuery({ queryKey: ['marketplace-apps'], queryFn: fetchMarketplaceApps });
     const { data: mailbox } = useQuery({ queryKey: ['email-mailbox-settings'], queryFn: getMailboxSettings });
     const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: fetchIntegrations });
@@ -352,6 +362,14 @@ export function IntegrationsPage() {
                                                     onClick={() => navigate(String(app.metadata?.setup_path || '/settings/integrations/google-email'))}
                                                 >
                                                     {gmailConnected ? 'Manage' : 'Connect'}
+                                                </Button>
+                                            ) : app.app_key === 'google-ads' ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant={app.installation?.status === 'connected' ? 'outline' : 'default'}
+                                                    onClick={() => setGoogleAdsPanelOpen(true)}
+                                                >
+                                                    {app.installation?.status === 'connected' ? 'Manage' : 'Connect'}
                                                 </Button>
                                             ) : app.app_key === 'telephony-twilio' ? (
                                                 // ONBTEL-001 §2.2: derived connection state — the generic
@@ -499,6 +517,7 @@ export function IntegrationsPage() {
                 myName={user?.name || 'You'}
                 companyName={company?.name || 'your company'}
             />
+            <GoogleAdsPanel open={googleAdsPanelOpen} onOpenChange={setGoogleAdsPanelOpen} />
             <CreateDialog open={createOpen} onOpenChange={setCreateOpen} clientName={clientName} setClientName={setClientName} onSubmit={handleCreate} isPending={createMutation.isPending} />
             <SecretDialog open={secretModalOpen} onOpenChange={setSecretModalOpen} integration={newIntegration} />
             <RevokeDialog target={revokeTarget} onClose={() => setRevokeTarget(null)} onRevoke={() => revokeTarget && revokeMutation.mutate(revokeTarget.key_id)} isPending={revokeMutation.isPending} />
