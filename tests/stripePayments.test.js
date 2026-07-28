@@ -834,6 +834,7 @@ describe('manual-card server confirmation (CARDFRAME-001 P2a)', () => {
 
 describe('sendManualCardReceipt', () => {
     const noteActor = { id: '22222222-2222-4222-8222-222222222222', name: 'Agent' };
+    const activityActor = { id: noteActor.id, type: 'user', label: null, source: 'crm' };
     const merchantSession = {
         id: 11,
         company_id: COMPANY,
@@ -846,145 +847,54 @@ describe('sendManualCardReceipt', () => {
         metadata: {},
     };
 
-    beforeEach(() => {
-        provider.retrievePaymentIntent = jest.fn();
-        provider.updateChargeReceiptEmail = jest.fn();
-        mockAddNote.mockResolvedValue({ notes: [] });
-    });
-
-    it('updates the successful connected-account charge and fills an empty contact email', async () => {
+    it('delegates an owned canonical ledger payment to the Albusto email sender', async () => {
         q.getSessionById.mockResolvedValue(merchantSession);
-        q.getSessionReceiptContact.mockResolvedValue({ id: 5, email: null });
-        provider.retrievePaymentIntent.mockResolvedValue({ status: 'succeeded', amount: 9500, latest_charge: 'ch_1' });
-        provider.updateChargeReceiptEmail.mockResolvedValue({
-            receipt_email: 'customer@example.com',
-            receipt_url: 'https://pay.stripe.com/receipts/test',
+        paymentsQueries.findByExternalSourceId.mockResolvedValue({ id: 91 });
+        paymentsService.emailTransactionReceipt.mockResolvedValue({
+            sent: true,
+            delivery: 'email',
+            idempotent: false,
         });
-        contactPropagationService.propagateContactDetails.mockResolvedValue({ email: 'added' });
 
-        const result = await svc.sendManualCardReceipt(COMPANY, 11, ' Customer@Example.com ', noteActor);
-
-        expect(provider.retrievePaymentIntent).toHaveBeenCalledWith(ACCT, 'pi_merchant');
-        expect(provider.updateChargeReceiptEmail).toHaveBeenCalledWith(ACCT, 'ch_1', 'customer@example.com');
-        expect(q.getSessionReceiptContact).toHaveBeenCalledWith(COMPANY, 11, null);
-        expect(contactPropagationService.propagateContactDetails).toHaveBeenCalledWith(
+        const result = await svc.sendManualCardReceipt(
             COMPANY,
-            5,
-            { email: 'customer@example.com' },
-            { source: 'stripe_receipt', logPrefix: '[StripeReceipt]', redactEmail: true }
-        );
-        expect(contactPropagationService.propagateContactDetails.mock.invocationCallOrder[0])
-            .toBeLessThan(provider.updateChargeReceiptEmail.mock.invocationCallOrder[0]);
-        expect(mockAddNote).toHaveBeenCalledWith(
-            7,
-            'Receipt for $95.00 sent to customer@example.com',
-            [],
-            'Agent',
-            noteActor.id,
+            11,
+            'customer@example.com',
+            noteActor,
             null,
-            COMPANY,
+            activityActor,
+            'manual-card-receipt-11'
         );
-        expect(provider.updateChargeReceiptEmail.mock.invocationCallOrder[0])
-            .toBeLessThan(mockAddNote.mock.invocationCallOrder[0]);
+
+        expect(paymentsQueries.findByExternalSourceId).toHaveBeenCalledWith(
+            COMPANY,
+            'stripe',
+            'pi_merchant',
+            null
+        );
+        expect(paymentsService.emailTransactionReceipt).toHaveBeenCalledWith(
+            COMPANY,
+            91,
+            'customer@example.com',
+            noteActor,
+            null,
+            activityActor,
+            'manual-card-receipt-11'
+        );
         expect(result).toEqual({
             sent: true,
-            receipt_url: 'https://pay.stripe.com/receipts/test',
-            contact_email_saved: true,
+            delivery: 'email',
+            idempotent: false,
         });
     });
 
-    it('never writes a contact that already has an email, even when the receipt address differs', async () => {
+    it('returns a retryable conflict while a successful session is not yet in the ledger', async () => {
         q.getSessionById.mockResolvedValue(merchantSession);
-        q.getSessionReceiptContact.mockResolvedValue({ id: 5, email: 'original@example.com' });
-        provider.retrievePaymentIntent.mockResolvedValue({
-            status: 'succeeded',
-            amount_received: 9500,
-            latest_charge: { id: 'ch_expanded' },
-        });
-        provider.updateChargeReceiptEmail.mockResolvedValue({ receipt_url: 'https://pay.stripe.com/receipts/test' });
-
-        await expect(svc.sendManualCardReceipt(COMPANY, 11, 'edited@example.com', noteActor)).resolves.toMatchObject({
-            sent: true,
-            contact_email_saved: false,
-        });
-
-        expect(provider.updateChargeReceiptEmail).toHaveBeenCalledWith(ACCT, 'ch_expanded', 'edited@example.com');
-        expect(contactPropagationService.propagateContactDetails).not.toHaveBeenCalled();
-    });
-
-    it('sends without a contact write when no contact is bound', async () => {
-        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        q.getSessionById.mockResolvedValue({ ...merchantSession, contact_id: null, invoice_id: null, job_id: null });
-        q.getSessionReceiptContact.mockResolvedValue(null);
-        provider.retrievePaymentIntent.mockResolvedValue({ status: 'succeeded', amount: 9500, latest_charge: 'ch_1' });
-        provider.updateChargeReceiptEmail.mockResolvedValue({ receipt_url: 'https://pay.stripe.com/receipts/test' });
-
-        await expect(svc.sendManualCardReceipt(COMPANY, 11, 'customer@example.com', noteActor)).resolves.toMatchObject({
-            sent: true,
-            contact_email_saved: false,
-        });
-        expect(contactPropagationService.propagateContactDetails).not.toHaveBeenCalled();
-        expect(mockAddNote).not.toHaveBeenCalled();
-        expect(JSON.stringify(warn.mock.calls)).not.toContain('customer@example.com');
-        warn.mockRestore();
-    });
-
-    it('falls back from an invoice-bound session to the invoice job', async () => {
-        q.getSessionById.mockResolvedValue({ ...merchantSession, job_id: null });
-        q.getSessionReceiptContact.mockResolvedValue({ id: 5, email: 'original@example.com' });
-        invoicesQueries.getInvoiceById.mockResolvedValue({ id: 42, company_id: COMPANY, job_id: 88 });
-        provider.retrievePaymentIntent.mockResolvedValue({ status: 'succeeded', amount_received: 9500, latest_charge: 'ch_1' });
-        provider.updateChargeReceiptEmail.mockResolvedValue({ receipt_url: 'https://pay.stripe.com/receipts/test' });
-
-        await svc.sendManualCardReceipt(COMPANY, 11, 'customer@example.com', noteActor);
-
-        expect(invoicesQueries.getInvoiceById).toHaveBeenCalledWith(COMPANY, 42);
-        expect(mockAddNote).toHaveBeenCalledWith(
-            88,
-            'Receipt for $95.00 sent to customer@example.com',
-            [],
-            'Agent',
-            noteActor.id,
-            null,
-            COMPANY,
-        );
-    });
-
-    it('does not fail the successful Stripe send when the job note fails', async () => {
-        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        q.getSessionById.mockResolvedValue(merchantSession);
-        q.getSessionReceiptContact.mockResolvedValue({ id: 5, email: 'original@example.com' });
-        provider.retrievePaymentIntent.mockResolvedValue({ status: 'succeeded', amount: 9500, latest_charge: 'ch_1' });
-        provider.updateChargeReceiptEmail.mockResolvedValue({ receipt_url: 'https://pay.stripe.com/receipts/test' });
-        mockAddNote.mockRejectedValueOnce(new Error('notes unavailable'));
-
-        await expect(svc.sendManualCardReceipt(COMPANY, 11, 'one-off@example.com', noteActor)).resolves.toEqual({
-            sent: true,
-            receipt_url: 'https://pay.stripe.com/receipts/test',
-            contact_email_saved: false,
-        });
-        expect(warn).toHaveBeenCalledWith('[DocumentSendNote] Job note failed after successful send (non-fatal)');
-        expect(JSON.stringify(warn.mock.calls)).not.toContain('one-off@example.com');
-        warn.mockRestore();
-    });
-
-    it.each(['', 'not-an-email', 'two words@example.com', 'a@b'])('rejects invalid email %p before Stripe', async email => {
-        q.getSessionById.mockResolvedValue(merchantSession);
-
-        await expect(svc.sendManualCardReceipt(COMPANY, 11, email))
-            .rejects.toMatchObject({ code: 'INVALID_EMAIL', httpStatus: 400 });
-        expect(provider.retrievePaymentIntent).not.toHaveBeenCalled();
-        expect(provider.updateChargeReceiptEmail).not.toHaveBeenCalled();
-    });
-
-    it('rejects a non-succeeded PaymentIntent before updating a charge or contact', async () => {
-        q.getSessionById.mockResolvedValue(merchantSession);
-        provider.retrievePaymentIntent.mockResolvedValue({ status: 'processing', latest_charge: 'ch_1' });
+        paymentsQueries.findByExternalSourceId.mockResolvedValue(null);
 
         await expect(svc.sendManualCardReceipt(COMPANY, 11, 'customer@example.com'))
-            .rejects.toMatchObject({ code: 'PAYMENT_NOT_SUCCEEDED', httpStatus: 409 });
-        expect(provider.updateChargeReceiptEmail).not.toHaveBeenCalled();
-        expect(q.getSessionReceiptContact).not.toHaveBeenCalled();
+            .rejects.toMatchObject({ code: 'PAYMENT_NOT_SYNCED', httpStatus: 409 });
+        expect(paymentsService.emailTransactionReceipt).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -996,9 +906,8 @@ describe('sendManualCardReceipt', () => {
 
         await expect(svc.sendManualCardReceipt(COMPANY, 11, 'customer@example.com'))
             .rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
-        expect(provider.retrievePaymentIntent).not.toHaveBeenCalled();
-        expect(provider.updateChargeReceiptEmail).not.toHaveBeenCalled();
-        expect(q.getSessionReceiptContact).not.toHaveBeenCalled();
+        expect(paymentsQueries.findByExternalSourceId).not.toHaveBeenCalled();
+        expect(paymentsService.emailTransactionReceipt).not.toHaveBeenCalled();
     });
 });
 

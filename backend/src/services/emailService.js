@@ -70,9 +70,11 @@ function buildMimeMessage({ from, to, cc, subject, body, textBody, inReplyTo, re
 
         // Attachment parts
         for (const file of files) {
+            const isInline = Boolean(file.contentId);
             message += `--${boundary}\r\n`;
             message += `Content-Type: ${file.mimetype}; name="${file.originalname}"\r\n`;
-            message += `Content-Disposition: attachment; filename="${file.originalname}"\r\n`;
+            message += `Content-Disposition: ${isInline ? 'inline' : 'attachment'}; filename="${file.originalname}"\r\n`;
+            if (isInline) message += `Content-ID: <${file.contentId}>\r\n`;
             message += `Content-Transfer-Encoding: base64\r\n\r\n`;
             message += file.buffer.toString('base64') + '\r\n';
         }

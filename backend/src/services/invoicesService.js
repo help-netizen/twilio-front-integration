@@ -12,6 +12,7 @@ const paymentsService = require('./paymentsService');
 const { toE164 } = require('../utils/phoneUtils');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 const { logFinancialActivity } = require('./financialActivityService');
+const { buildEmailBody } = require('./documentEmailBody');
 const {
     normalizeOrderList,
     stripInternalOrderList,
@@ -503,16 +504,6 @@ async function removeItem(companyId, invoiceId, userId, itemId, client = null) {
  */
 function asText(value) {
     return typeof value === 'string' ? value.trim() : '';
-}
-
-/**
- * Build the HTML email body: the operator `message` (newlines → <br>) followed
- * by an anchor to the branded pay page. The PDF rides along as an attachment.
- */
-function buildEmailBody(message, link) {
-    const safe = String(message || '').replace(/\r\n|\r|\n/g, '<br>');
-    const anchor = link ? `<p><a href="${link}">View &amp; pay your invoice online</a></p>` : '';
-    return `<div>${safe}</div>${anchor}`;
 }
 
 /**

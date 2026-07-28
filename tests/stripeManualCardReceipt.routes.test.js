@@ -1,4 +1,4 @@
-/** STRIPE-RECEIPT-001 — real payments router/authz contract for native receipts. */
+/** RECEIPT-REVIEW-001 — keyed-card compatibility route contract. */
 
 class StripePaymentsError extends Error {
     constructor(code, message, httpStatus = 400) {
@@ -45,6 +45,7 @@ async function dispatch({
     authed = true,
     email = 'customer@example.com',
     crmUserId = CRM_USER_ID,
+    idempotencyKey = 'manual-card-route-11',
 } = {}) {
     const req = {
         method: 'POST',
@@ -61,6 +62,9 @@ async function dispatch({
         authz: authed ? { scope: 'tenant', company: { id: company }, permissions } : undefined,
         companyFilter: authed ? { company_id: company } : undefined,
         companyId: 'LEGACY-DO-NOT-USE',
+        get(name) {
+            return name.toLowerCase() === 'idempotency-key' ? idempotencyKey : undefined;
+        },
     };
     const res = {
         statusCode: 200,
@@ -100,7 +104,7 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
     it('uses req.companyFilter and forwards the strict acting CRM user', async () => {
         const result = {
             sent: true,
-            receipt_url: 'https://pay.stripe.com/receipts/test',
+            delivery: 'email',
             contact_email_saved: true,
         };
         mockStripeService.sendManualCardReceipt.mockResolvedValue(result);
@@ -119,7 +123,8 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
                 type: 'user',
                 label: null,
                 source: 'crm',
-            }
+            },
+            'manual-card-route-11'
         );
     });
 
@@ -139,7 +144,8 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
                 type: 'user',
                 label: null,
                 source: 'crm',
-            }
+            },
+            'manual-card-route-11'
         );
     });
 
@@ -178,7 +184,8 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
                 type: 'user',
                 label: null,
                 source: 'crm',
-            }
+            },
+            'manual-card-route-11'
         );
     });
 

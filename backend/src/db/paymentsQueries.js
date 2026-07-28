@@ -14,7 +14,7 @@ const STRIPE_TRANSACTION_JOINS = `
         LEFT JOIN LATERAL (
             SELECT s.id, s.contact_id, s.invoice_id, s.job_id,
                    s.stripe_payment_intent_id, s.stripe_charge_id,
-                   s.stripe_account_id
+                   s.stripe_account_id, s.created_by, s.surface
             FROM stripe_payment_sessions s
             WHERE s.company_id = t.company_id
               AND (
@@ -206,12 +206,12 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
         `SELECT t.*,
+                ${STRIPE_TRANSACTION_COLUMNS},
                 stripe_session.id AS stripe_session_id,
                 stripe_session.stripe_payment_intent_id,
                 stripe_session.stripe_charge_id,
                 COALESCE(stripe_session.stripe_account_id, stripe_account.stripe_account_id)
                     AS stripe_account_id,
-                stripe_account.livemode AS stripe_livemode,
                 COALESCE(t.contact_id, stripe_session.contact_id, i.contact_id, j.contact_id)
                     AS receipt_contact_id,
                 c.email AS receipt_contact_email,
@@ -220,7 +220,27 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
                 COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, ''))
                     AS customer_name,
                 COALESCE(t.job_id, stripe_session.job_id, i.job_id)
-                    AS receipt_job_id
+                    AS receipt_job_id,
+                COALESCE(t.invoice_id, stripe_session.invoice_id)
+                    AS receipt_invoice_id,
+                i.invoice_number,
+                j.job_number,
+                j.service_name,
+                COALESCE(NULLIF(j.territory, ''), NULLIF(j.city, ''))
+                    AS territory,
+                company.timezone AS company_timezone,
+                CASE
+                    WHEN creator.id IS NOT NULL
+                    THEN COALESCE(NULLIF(creator.full_name, ''), NULLIF(creator.email, ''))
+                    WHEN t.external_source = 'stripe' AND t.payment_method = 'credit_card'
+                    THEN 'Customer (online)'
+                    ELSE NULL
+                END AS created_by_name,
+                COALESCE(NULLIF(voider.full_name, ''), NULLIF(voider.email, ''))
+                    AS voided_by_name,
+                NULLIF(t.metadata->>'stripe_customer_id', '') AS stripe_customer_id,
+                NULLIF(t.metadata->'card'->>'brand', '') AS brand,
+                NULLIF(t.metadata->'card'->>'last4', '') AS last4
          FROM payment_transactions t
          ${STRIPE_TRANSACTION_JOINS}
          LEFT JOIN invoices i
@@ -232,6 +252,18 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
          LEFT JOIN contacts c
            ON c.id = COALESCE(t.contact_id, stripe_session.contact_id, i.contact_id, j.contact_id)
           AND c.company_id = t.company_id
+         JOIN companies company
+           ON company.id = t.company_id
+         LEFT JOIN company_memberships creator_membership
+           ON creator_membership.company_id = t.company_id
+          AND creator_membership.user_id = COALESCE(t.recorded_by, stripe_session.created_by)
+         LEFT JOIN crm_users creator
+           ON creator.id = creator_membership.user_id
+         LEFT JOIN company_memberships voider_membership
+           ON voider_membership.company_id = t.company_id
+          AND voider_membership.user_id = t.voided_by
+         LEFT JOIN crm_users voider
+           ON voider.id = voider_membership.user_id
          WHERE t.company_id = $1 AND t.id = $2`,
         [companyId, id]
     );
@@ -392,57 +424,132 @@ async function createRefundTransaction(companyId, originalTxId, amount, recorded
 async function getReceipt(companyId, transactionId, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
-        `SELECT pr.*
+        `SELECT pr.id,
+                pr.transaction_id,
+                pr.receipt_number,
+                pr.sent_to_email,
+                pr.sent_to_phone,
+                pr.sent_via,
+                pr.pdf_storage_key,
+                pr.sent_at,
+                pr.created_at
          FROM payment_receipts pr
          JOIN payment_transactions pt
            ON pt.id = pr.transaction_id
           AND pt.company_id = $1
-         WHERE pr.transaction_id = $2`,
+         WHERE pr.transaction_id = $2
+           AND pr.sent_at IS NOT NULL
+         ORDER BY pr.sent_at DESC, pr.id DESC
+         LIMIT 1`,
         [companyId, transactionId]
     );
     return rows[0] || null;
 }
 
 /**
- * Create a receipt with auto-generated receipt_number (REC-YYYYMMDD-NNN).
+ * Newest-first successful delivery history for one tenant-owned transaction.
  */
-async function createReceipt(companyId, transactionId, data, client = null) {
+async function listReceiptHistory(companyId, transactionId, client = null) {
     const query = queryFor(client);
-    const { sent_to_email, sent_to_phone, sent_via } = data;
-
-    // Generate receipt number: REC-YYYYMMDD-NNN
-    const today = new Date();
-    const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-
-    const { rows: countRows } = await query(
-        `SELECT COUNT(*) AS cnt
+    const { rows } = await query(
+        `SELECT COALESCE(pr.sent_to_email, pr.sent_to_phone) AS "to",
+                pr.sent_at,
+                pr.sent_via AS channel
          FROM payment_receipts pr
          JOIN payment_transactions pt
            ON pt.id = pr.transaction_id
           AND pt.company_id = $1
-         WHERE pr.receipt_number LIKE $2`,
-        [companyId, `REC-${dateStr}-%`]
+         WHERE pr.transaction_id = $2
+           AND pr.sent_at IS NOT NULL
+         ORDER BY pr.sent_at DESC, pr.id DESC`,
+        [companyId, transactionId]
     );
-    const seq = parseInt(countRows[0].cnt, 10) + 1;
-    const receiptNumber = `REC-${dateStr}-${String(seq).padStart(3, '0')}`;
+    return rows;
+}
 
+/**
+ * Claim a receipt delivery. The partial unique index makes a caller's stable
+ * key idempotent for this transaction while tenant ownership is enforced by
+ * the INSERT ... SELECT predicate.
+ */
+async function claimReceiptDelivery(
+    companyId,
+    transactionId,
+    { receiptNumber, idempotencyKey, email },
+    client = null
+) {
+    const query = queryFor(client);
     const { rows } = await query(
         `INSERT INTO payment_receipts (
             transaction_id, receipt_number,
-            sent_to_email, sent_to_phone, sent_via, sent_at
+            sent_to_email, sent_via, idempotency_key
         )
-        SELECT pt.id, $3, $4, $5, $6, NOW()
+        SELECT pt.id, $3, $4, 'email', $5
         FROM payment_transactions pt
         WHERE pt.company_id = $1 AND pt.id = $2
+        ON CONFLICT (transaction_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+            DO NOTHING
         RETURNING *`,
-        [
-            companyId,
-            transactionId, receiptNumber,
-            sent_to_email || null, sent_to_phone || null, sent_via || null,
-        ]
+        [companyId, transactionId, receiptNumber, email, idempotencyKey]
     );
+    if (rows[0]) return { receipt: rows[0], claimed: true };
 
-    return rows[0];
+    const { rows: existingRows } = await query(
+        `SELECT pr.*
+         FROM payment_receipts pr
+         JOIN payment_transactions pt
+           ON pt.id = pr.transaction_id
+          AND pt.company_id = $1
+         WHERE pr.transaction_id = $2
+           AND pr.idempotency_key = $3
+         LIMIT 1`,
+        [companyId, transactionId, idempotencyKey]
+    );
+    return { receipt: existingRows[0] || null, claimed: false };
+}
+
+/**
+ * Mark the tenant-owned claim successful only after Gmail accepts the message.
+ */
+async function completeReceiptDelivery(
+    companyId,
+    receiptId,
+    providerMessageId,
+    client = null
+) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `UPDATE payment_receipts pr
+         SET sent_at = NOW(),
+             provider_message_id = $3
+         FROM payment_transactions pt
+         WHERE pr.id = $2
+           AND pt.id = pr.transaction_id
+           AND pt.company_id = $1
+           AND pr.sent_at IS NULL
+         RETURNING pr.*`,
+        [companyId, receiptId, providerMessageId || null]
+    );
+    return rows[0] || null;
+}
+
+/**
+ * Remove an uncompleted tenant-owned claim when delivery definitively failed.
+ */
+async function releaseReceiptDelivery(companyId, receiptId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `DELETE FROM payment_receipts pr
+         USING payment_transactions pt
+         WHERE pr.id = $2
+           AND pt.id = pr.transaction_id
+           AND pt.company_id = $1
+           AND pr.sent_at IS NULL
+         RETURNING pr.id`,
+        [companyId, receiptId]
+    );
+    return Boolean(rows[0]);
 }
 
 // =============================================================================
@@ -659,7 +766,10 @@ module.exports = {
     voidPayment,
     createRefundTransaction,
     getReceipt,
-    createReceipt,
+    listReceiptHistory,
+    claimReceiptDelivery,
+    completeReceiptDelivery,
+    releaseReceiptDelivery,
     getTransactionsForInvoice,
     getTransactionSummary,
 };

@@ -304,7 +304,7 @@ const mockCanonical = {
     createTransaction: jest.fn(),
     getSummary: jest.fn(),
     recordManualPayment: jest.fn(),
-    getTransaction: jest.fn(),
+    getTransactionDetail: jest.fn(),
     refundTransaction: jest.fn(),
     voidPayment: jest.fn(),
     voidTransaction: jest.fn(),

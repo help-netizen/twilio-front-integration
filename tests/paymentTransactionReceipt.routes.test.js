@@ -37,6 +37,7 @@ async function dispatch(route, {
     company = COMPANY_A,
     permissions = [],
     email,
+    idempotencyKey,
 } = {}) {
     const req = {
         method,
@@ -56,6 +57,9 @@ async function dispatch(route, {
             name: 'Agent Smith',
             email: 'agent@example.com',
             crmUser: { id: CRM_USER_ID },
+        },
+        get(name) {
+            return name.toLowerCase() === 'idempotency-key' ? idempotencyKey : undefined;
         },
     };
     const res = {
@@ -85,8 +89,7 @@ beforeEach(() => {
 describe('GET /api/payments/:id/receipt/view', () => {
     test('uses payments.view and the companyFilter tenant', async () => {
         const data = {
-            receipt_type: 'stripe',
-            receipt_url: 'https://pay.stripe.com/receipts/one',
+            receipt_type: 'custom',
             receipt: { transaction_id: 71 },
         };
         mockGetTransactionReceiptView.mockResolvedValue(data);
@@ -145,9 +148,9 @@ describe('POST /api/payments/:id/receipt/email', () => {
     ])('accepts existing collection permission %s', async permission => {
         const data = {
             sent: true,
-            delivery: 'stripe',
-            receipt_url: 'https://pay.stripe.com/receipts/one',
+            delivery: 'email',
             contact_email_saved: false,
+            idempotent: false,
         };
         mockEmailTransactionReceipt.mockResolvedValue(data);
 
@@ -155,6 +158,7 @@ describe('POST /api/payments/:id/receipt/email', () => {
             method: 'POST',
             permissions: [permission],
             email: 'customer@example.com',
+            idempotencyKey: 'review-route-key',
         });
 
         expect(response).toEqual({ status: 200, body: { ok: true, data } });
@@ -173,7 +177,8 @@ describe('POST /api/payments/:id/receipt/email', () => {
                 type: 'user',
                 label: null,
                 source: 'crm',
-            }
+            },
+            'review-route-key'
         );
     });
 
@@ -213,7 +218,8 @@ describe('POST /api/payments/:id/receipt/email', () => {
                 type: 'user',
                 label: null,
                 source: 'crm',
-            }
+            },
+            undefined
         );
     });
 });

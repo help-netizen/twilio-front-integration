@@ -99,10 +99,7 @@ describe('Stripe Connect result retrieval', () => {
     });
 
     it('retrieves a Charge on the stored connected account without a body', async () => {
-        global.fetch.mockResolvedValueOnce(stripeResponse({
-            id: 'ch_1',
-            receipt_url: 'https://pay.stripe.com/receipts/test',
-        }));
+        global.fetch.mockResolvedValueOnce(stripeResponse({ id: 'ch_1' }));
         await provider.retrieveCharge('acct_merchant', 'ch_1');
 
         const [url, options] = global.fetch.mock.calls[0];
@@ -112,29 +109,6 @@ describe('Stripe Connect result retrieval', () => {
     });
 });
 
-describe('Stripe Connect native receipt', () => {
-    it('updates the successful Charge receipt_email on the stored connected account', async () => {
-        global.fetch.mockResolvedValueOnce(stripeResponse({
-            id: 'ch_1',
-            receipt_email: 'customer@example.com',
-            receipt_url: 'https://pay.stripe.com/receipts/test',
-        }));
-
-        const charge = await provider.updateChargeReceiptEmail(
-            'acct_merchant',
-            'ch_1',
-            'customer@example.com'
-        );
-
-        const [url, options] = global.fetch.mock.calls[0];
-        const body = new URLSearchParams(options.body);
-        expect(url).toBe('https://api.stripe.com/v1/charges/ch_1');
-        expect(options.method).toBe('POST');
-        expect(options.headers['Stripe-Account']).toBe('acct_merchant');
-        expect(body.get('receipt_email')).toBe('customer@example.com');
-        expect(charge).toMatchObject({
-            receipt_email: 'customer@example.com',
-            receipt_url: 'https://pay.stripe.com/receipts/test',
-        });
-    });
+test('STRIPE-NATIVE-RESURRECTION: provider exposes no native receipt-email mutation', () => {
+    expect(provider.updateChargeReceiptEmail).toBeUndefined();
 });

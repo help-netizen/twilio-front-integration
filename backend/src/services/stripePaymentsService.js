@@ -820,17 +820,9 @@ async function getManualCardSessionResult(companyId, sessionId) {
 
 const RECEIPT_EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function normalizeReceiptEmail(value) {
-    const email = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    if (!email || email.length > 254 || !RECEIPT_EMAIL_SHAPE.test(email)) {
-        throw new StripePaymentsError('INVALID_EMAIL', 'Enter a valid customer email', 400);
-    }
-    return email;
-}
-
 /**
- * Send Stripe's native receipt for a successful merchant keyed-card charge.
- * The contact lookup and optional fill-empty write are both resolved server-side.
+ * Resolve a keyed-card session to its canonical tenant-owned payment and
+ * delegate to the Albusto receipt sender. Stripe-native receipts are disabled.
  */
 async function sendManualCardReceipt(
     companyId,
@@ -838,109 +830,34 @@ async function sendManualCardReceipt(
     rawEmail,
     noteActor = null,
     client = null,
-    activityActor = null
+    activityActor = null,
+    idempotencyKey = null
 ) {
-    // Resolve tenant ownership + merchant/public classification before validation
-    // or any Stripe request so foreign/public session ids retain a uniform 404.
+    // Resolve tenant ownership before the ledger lookup so foreign/public
+    // session ids retain a uniform 404 with no provider or email side effects.
     const session = await getMerchantManualCardSession(companyId, sessionId, client);
-    const email = normalizeReceiptEmail(rawEmail);
-
-    const pi = await provider.retrievePaymentIntent(
-        session.stripe_account_id,
-        session.stripe_payment_intent_id
-    );
-    if (pi.status !== 'succeeded') {
-        throw new StripePaymentsError('PAYMENT_NOT_SUCCEEDED', 'Payment has not succeeded', 409);
-    }
-    const chargeId = typeof pi.latest_charge === 'string'
-        ? pi.latest_charge
-        : pi.latest_charge?.id;
-    if (!chargeId) {
-        throw new StripePaymentsError('CHARGE_NOT_FOUND', 'Successful charge is unavailable', 409);
-    }
-
-    let contactEmailSaved = false;
-    const contact = await q.getSessionReceiptContact(companyId, session.id, client);
-    if (contact && !String(contact.email || '').trim()) {
-        const { propagateContactDetails } = require('./contactPropagationService');
-        const outcome = await propagateContactDetails(
-            companyId,
-            contact.id,
-            { email },
-            { source: 'stripe_receipt', logPrefix: '[StripeReceipt]', redactEmail: true }
-        );
-        contactEmailSaved = outcome.email === 'added';
-    }
-
-    // Complete the local fill-empty write before the external send. If the local
-    // write fails, Stripe has not emailed yet; if Stripe then fails, retrying is
-    // safe for the contact because the same fill-empty guard becomes a no-op.
-    let charge;
-    try {
-        charge = await provider.updateChargeReceiptEmail(
-            session.stripe_account_id,
-            chargeId,
-            email
-        );
-    } catch (err) {
-        if (activityActor) {
-            await logFinancialActivity({
-                companyId,
-                entityType: 'payment',
-                action: 'payment.receipt_send_failed',
-                entity: session,
-                actor: activityActor,
-                summary: { channel: 'email' },
-            });
-        }
-        throw err;
-    }
-
-    let receiptJobId = session.job_id || null;
-    if (!receiptJobId && session.invoice_id) {
-        try {
-            const invoice = await invoicesQueries.getInvoiceById(companyId, session.invoice_id);
-            receiptJobId = invoice?.job_id || null;
-        } catch {
-            console.warn('[DocumentSendNote] Receipt invoice lookup failed after successful send (non-fatal)');
-        }
-    }
-    const amountInCents = pi.amount_received ?? pi.amount;
-    const amount = amountInCents == null
-        ? Number(session.amount || 0)
-        : Number(amountInCents) / 100;
-    const { recordDocumentSendNote } = require('./documentSendNoteService');
-    await recordDocumentSendNote({
+    const payment = await paymentsQueries.findByExternalSourceId(
         companyId,
-        jobId: receiptJobId,
-        actor: noteActor,
-        documentType: 'receipt',
-        amount,
-        channel: 'email',
-        recipient: email,
-    });
-    if (activityActor) {
-        const payment = await paymentsQueries.findByExternalSourceId(
-            companyId,
-            'stripe',
-            session.stripe_payment_intent_id,
-            client
+        'stripe',
+        session.stripe_payment_intent_id,
+        client
+    );
+    if (!payment) {
+        throw new StripePaymentsError(
+            'PAYMENT_NOT_SYNCED',
+            'Payment is still being recorded. Try sending the receipt again.',
+            409
         );
-        await logFinancialActivity({
-            companyId,
-            entityType: 'payment',
-            action: 'payment.receipt_sent',
-            entity: payment || session,
-            actor: activityActor,
-            summary: { channel: 'email' },
-        }, { client });
     }
-
-    return {
-        sent: true,
-        receipt_url: charge.receipt_url || null,
-        contact_email_saved: contactEmailSaved,
-    };
+    return paymentsService.emailTransactionReceipt(
+        companyId,
+        payment.id,
+        rawEmail,
+        noteActor,
+        client,
+        activityActor,
+        idempotencyKey
+    );
 }
 
 // ---- Terminal / Tap to Pay (backend) — Phase 4 -----------------------------

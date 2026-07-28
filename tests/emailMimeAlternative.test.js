@@ -83,3 +83,32 @@ describe('MIME-ALT-03 · attachments + textBody → alternative pair nested in m
         expect(raw).toContain('Content-Disposition: attachment; filename="doc.pdf"');
     });
 });
+
+describe('MIME-INLINE-01 · receipt logo uses a Content-ID part', () => {
+    it('marks CID files inline while preserving ordinary PDF attachments', () => {
+        const raw = decode(buildMimeMessage({
+            from: 'a@b.c',
+            to: 'x@y.z',
+            subject: 'Payment receipt',
+            body: '<img src="cid:albusto-company-logo">',
+            textBody: 'Payment receipt',
+            files: [
+                {
+                    mimetype: 'image/png',
+                    originalname: 'company-logo.png',
+                    buffer: Buffer.from('PNG'),
+                    contentId: 'albusto-company-logo',
+                },
+                {
+                    mimetype: 'application/pdf',
+                    originalname: 'Invoice-88.pdf',
+                    buffer: Buffer.from('PDF'),
+                },
+            ],
+        }));
+
+        expect(raw).toContain('Content-Disposition: inline; filename="company-logo.png"');
+        expect(raw).toContain('Content-ID: <albusto-company-logo>');
+        expect(raw).toContain('Content-Disposition: attachment; filename="Invoice-88.pdf"');
+    });
+});

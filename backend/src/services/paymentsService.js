@@ -10,6 +10,7 @@
  * services/zenbookerPaymentsSyncService.js to avoid confusion.
  */
 
+const { randomUUID } = require('crypto');
 const paymentsQueries = require('../db/paymentsQueries');
 const invoicesQueries = require('../db/invoicesQueries');
 const estimatesQueries = require('../db/estimatesQueries');
@@ -85,6 +86,77 @@ async function getTransaction(companyId, id, client = null) {
         throw new PaymentsServiceError('NOT_FOUND', `Transaction ${id} not found`, 404);
     }
     return tx;
+}
+
+function publicTransactionDetail(context, receiptHistory) {
+    const {
+        stripe_session_id: _stripeSessionId,
+        stripe_payment_intent_id: _stripePaymentIntentId,
+        stripe_charge_id: _stripeChargeId,
+        stripe_account_id: _stripeAccountId,
+        receipt_contact_id: _receiptContactId,
+        receipt_contact_email: _receiptContactEmail,
+        customer_email: _customerEmail,
+        receipt_job_id: receiptJobId,
+        receipt_invoice_id: receiptInvoiceId,
+        job_number: _jobNumber,
+        service_name: _serviceName,
+        company_timezone: _companyTimezone,
+        ...detail
+    } = context;
+
+    return {
+        ...detail,
+        job_id: receiptJobId || context.job_id || null,
+        invoice_id: receiptInvoiceId || context.invoice_id || null,
+        brand: context.brand || null,
+        last4: context.last4 || null,
+        invoice_number: context.invoice_number || null,
+        customer_name: context.customer_name || null,
+        created_by_name: context.created_by_name || null,
+        territory: context.territory || null,
+        stripe_payment_id: context.stripe_payment_id || null,
+        stripe_customer_id: context.stripe_customer_id || null,
+        voided_by_name: context.voided_by_name || null,
+        receipt_history: receiptHistory,
+    };
+}
+
+async function enrichStripeCardContext(context) {
+    if (!isStripeCardPayment(context)) return context;
+    try {
+        const { provider, accountId, chargeId } = await resolveStripeCharge(context);
+        const charge = await provider.retrieveCharge(accountId, chargeId);
+        const card = charge?.payment_method_details?.card;
+        const stripeCustomer = typeof charge?.customer === 'string'
+            ? charge.customer
+            : charge?.customer?.id;
+        return {
+            ...context,
+            brand: card?.brand || context.brand || null,
+            last4: card?.last4 || context.last4 || null,
+            stripe_customer_id: stripeCustomer || context.stripe_customer_id || null,
+        };
+    } catch {
+        // Card metadata is review enrichment. An unavailable Stripe read must not
+        // make an otherwise-owned local transaction unavailable.
+        return context;
+    }
+}
+
+/**
+ * Rich flat transaction detail for both payments screens.
+ */
+async function getTransactionDetail(companyId, id) {
+    const context = await paymentsQueries.getTransactionReceiptContext(companyId, id);
+    if (!context) {
+        throw new PaymentsServiceError('NOT_FOUND', `Transaction ${id} not found`, 404);
+    }
+    const [enriched, receiptHistory] = await Promise.all([
+        enrichStripeCardContext(context),
+        paymentsQueries.listReceiptHistory(companyId, id),
+    ]);
+    return publicTransactionDetail(enriched, receiptHistory);
 }
 
 async function validateRelatedEntities(companyId, data, client = null) {
@@ -528,6 +600,7 @@ async function getReceipt(companyId, transactionId, client = null) {
 }
 
 const RECEIPT_EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const RECEIPT_IDEMPOTENCY_KEY_SHAPE = /^[\x21-\x7E]+$/;
 
 function isStripeCardPayment(transaction) {
     return transaction?.external_source === 'stripe'
@@ -543,6 +616,25 @@ function normalizeReceiptEmail(value, { required = false } = {}) {
         throw new PaymentsServiceError('INVALID_EMAIL', 'Enter a valid customer email', 400);
     }
     return email;
+}
+
+function normalizeReceiptIdempotencyKey(value) {
+    if (value === undefined || value === null || value === '') {
+        return `receipt-${randomUUID()}`;
+    }
+    const key = typeof value === 'string' ? value.trim() : '';
+    if (
+        key.length < 8
+        || key.length > 128
+        || !RECEIPT_IDEMPOTENCY_KEY_SHAPE.test(key)
+    ) {
+        throw new PaymentsServiceError(
+            'INVALID_IDEMPOTENCY_KEY',
+            'Idempotency-Key must contain 8 to 128 visible ASCII characters',
+            400
+        );
+    }
+    return key;
 }
 
 function assertReceiptTransaction(context, transactionId) {
@@ -613,77 +705,20 @@ async function resolveStripeCharge(context) {
 }
 
 /**
- * Return the actionable receipt target for one owned transaction. Stripe card
- * payments resolve to Stripe's hosted receipt; recorded payments return a
- * normalized receipt model for the authenticated frontend to present.
+ * Return the custom receipt model for one owned transaction. No provider URL is
+ * resolved or exposed.
  */
 async function getTransactionReceiptView(companyId, transactionId) {
     const context = await paymentsQueries.getTransactionReceiptContext(companyId, transactionId);
     assertReceiptTransaction(context, transactionId);
 
-    const receipt = receiptViewModel(context);
-    if (!isStripeCardPayment(context)) {
-        return {
-            receipt_type: 'recorded',
-            receipt_url: null,
-            receipt,
-        };
-    }
-
-    const { provider, accountId, chargeId } = await resolveStripeCharge(context);
-    const charge = await provider.retrieveCharge(accountId, chargeId);
-    if (!charge?.receipt_url) {
-        throw new PaymentsServiceError(
-            'STRIPE_RECEIPT_UNAVAILABLE',
-            'Stripe receipt details are unavailable for this payment',
-            409
-        );
-    }
     return {
-        receipt_type: 'stripe',
-        receipt_url: charge.receipt_url,
-        receipt,
+        receipt_type: 'custom',
+        receipt: receiptViewModel(context),
     };
 }
 
-function escapeReceiptHtml(value) {
-    return String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
-}
-
-function recordedReceiptEmailBody(context) {
-    const amount = new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: context.currency || 'USD',
-    }).format(Number(context.amount || 0));
-    const dateValue = context.processed_at || context.created_at;
-    const date = dateValue
-        ? new Date(dateValue).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            timeZone: 'UTC',
-        })
-        : '';
-    const reference = context.reference_number
-        ? `<p><strong>Reference:</strong> ${escapeReceiptHtml(context.reference_number)}</p>`
-        : '';
-    const greeting = context.customer_name
-        ? `<p>Hello ${escapeReceiptHtml(context.customer_name)},</p>`
-        : '';
-
-    return `${greeting}<p>Thank you. We received your payment.</p>`
-        + `<p><strong>Amount:</strong> ${escapeReceiptHtml(amount)}</p>`
-        + `<p><strong>Date:</strong> ${escapeReceiptHtml(date)}</p>`
-        + `<p><strong>Method:</strong> ${escapeReceiptHtml(context.payment_method)}</p>`
-        + reference;
-}
-
-async function sendRecordedReceiptEmail(companyId, actor, context, email) {
+async function assertReceiptMailbox(companyId) {
     const emailMailboxService = require('./emailMailboxService');
     const mailbox = await emailMailboxService.getMailboxStatus(companyId);
     if (!mailbox || mailbox.status !== 'connected') {
@@ -693,45 +728,86 @@ async function sendRecordedReceiptEmail(companyId, actor, context, email) {
             409
         );
     }
+}
 
-    let companyName = '';
-    try {
-        const companyQueries = require('../db/companyQueries');
-        const company = await companyQueries.getCompanyById(companyId);
-        companyName = String(company?.name || '').trim();
-    } catch {
-        // Subject falls back to the generic copy below.
-    }
-    const subject = companyName
-        ? `Payment receipt from ${companyName}`
-        : 'Payment receipt';
+function receiptNumber() {
+    const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
+    return `REC-${date}-${randomUUID().slice(0, 8)}`;
+}
 
-    try {
-        const emailService = require('./emailService');
-        await emailService.sendEmail(companyId, {
-            to: email,
-            subject,
-            body: recordedReceiptEmailBody(context),
-            files: [],
-            userId: actor?.id || null,
-            userEmail: actor?.email || null,
-        });
-    } catch (err) {
-        const message = err?.message || '';
-        if (err?.statusCode === 409 || /mailbox is not connected|requires reconnection/i.test(message)) {
-            throw new PaymentsServiceError(
-                'MAILBOX_NOT_CONNECTED',
-                'Connect Google Email to send.',
-                409
-            );
+function invoiceFileName(invoiceNumber) {
+    const safe = String(invoiceNumber || 'invoice').replace(/[^A-Za-z0-9._-]/g, '-');
+    return `Invoice-${safe}.pdf`;
+}
+
+async function buildReceiptDelivery(companyId, context) {
+    const documentTemplatesService = require('./documentTemplatesService');
+    const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice');
+    const brand = descriptor?.brand || {};
+    const files = [];
+    let logoContentId = null;
+
+    if (brand.logo_url) {
+        const { fetchPdfLogo } = require('./documentTemplates/pdfLogo');
+        const logo = await fetchPdfLogo(brand.logo_url);
+        if (logo) {
+            logoContentId = 'albusto-company-logo';
+            files.push({
+                originalname: `company-logo.${logo.format === 'jpg' ? 'jpg' : 'png'}`,
+                mimetype: logo.format === 'jpg' ? 'image/jpeg' : 'image/png',
+                buffer: logo.data,
+                contentId: logoContentId,
+            });
         }
-        throw err;
     }
+
+    let invoice = null;
+    if (context.receipt_invoice_id || context.invoice_id) {
+        const invoicesService = require('./invoicesService');
+        const generated = await invoicesService.generatePdf(
+            companyId,
+            context.receipt_invoice_id || context.invoice_id
+        );
+        invoice = generated.invoice;
+        files.push({
+            originalname: invoiceFileName(invoice.invoice_number),
+            mimetype: 'application/pdf',
+            buffer: generated.buffer,
+        });
+    }
+
+    const { buildPaymentReceiptEmail } = require('./paymentReceiptTemplate');
+    const template = buildPaymentReceiptEmail({
+        context,
+        invoice,
+        brand,
+        logoContentId,
+    });
+    const { buildEmailBody } = require('./documentEmailBody');
+    return {
+        subject: template.subject,
+        body: buildEmailBody(template.html, null, { preformatted: true }),
+        textBody: template.text,
+        files,
+        fromName: brand.name || null,
+    };
+}
+
+function mapMailboxError(err) {
+    const message = err?.message || '';
+    if (err?.statusCode === 409 || /mailbox is not connected|requires reconnection/i.test(message)) {
+        return new PaymentsServiceError(
+            'MAILBOX_NOT_CONNECTED',
+            'Connect Google Email to send.',
+            409
+        );
+    }
+    return err;
 }
 
 /**
- * Deliver one owned transaction's receipt to its customer. Stripe card rows use
- * Stripe's native receipt; recorded cash/check rows use the company mailbox.
+ * Deliver one owned transaction's custom receipt through the company Gmail
+ * mailbox. The successful history marker is written only after Gmail returns.
  */
 async function emailTransactionReceipt(
     companyId,
@@ -739,7 +815,8 @@ async function emailTransactionReceipt(
     rawEmail,
     actor = null,
     client = null,
-    activityActor = null
+    activityActor = null,
+    rawIdempotencyKey = null
 ) {
     // Tenant ownership is resolved before email validation or any external call,
     // keeping foreign and missing transaction ids indistinguishable.
@@ -750,31 +827,85 @@ async function emailTransactionReceipt(
     );
     assertReceiptTransaction(context, transactionId);
     const email = normalizeReceiptEmail(rawEmail || context.customer_email, { required: true });
+    const idempotencyKey = normalizeReceiptIdempotencyKey(rawIdempotencyKey);
+    await assertReceiptMailbox(companyId);
 
-    let contactEmailSaved = false;
-    if (context.receipt_contact_id && !String(context.receipt_contact_email || '').trim()) {
-        const { propagateContactDetails } = require('./contactPropagationService');
-        const outcome = await propagateContactDetails(
-            companyId,
-            context.receipt_contact_id,
-            { email },
-            { source: 'payment_receipt', logPrefix: '[PaymentReceipt]', redactEmail: true }
-        );
-        contactEmailSaved = outcome.email === 'added';
+    const claim = await paymentsQueries.claimReceiptDelivery(
+        companyId,
+        transactionId,
+        {
+            receiptNumber: receiptNumber(),
+            idempotencyKey,
+            email,
+        },
+        client
+    );
+    if (!claim.receipt) {
+        throw new PaymentsServiceError('NOT_FOUND', `Transaction ${transactionId} not found`, 404);
+    }
+    if (!claim.claimed) {
+        if (!claim.receipt.sent_at) {
+            throw new PaymentsServiceError(
+                'RECEIPT_SEND_IN_PROGRESS',
+                'A receipt send with this idempotency key is already in progress',
+                409
+            );
+        }
+        return {
+            sent: true,
+            delivery: 'email',
+            contact_email_saved: false,
+            idempotent: true,
+            receipt_history_entry: {
+                to: claim.receipt.sent_to_email,
+                sent_at: claim.receipt.sent_at,
+                channel: claim.receipt.sent_via,
+            },
+        };
     }
 
-    let receiptUrl = null;
-    let delivery = 'email';
+    let gmailAccepted = false;
+    let contactEmailSaved = false;
+    let completedReceipt = null;
     try {
-        if (isStripeCardPayment(context)) {
-            const { provider, accountId, chargeId } = await resolveStripeCharge(context);
-            const charge = await provider.updateChargeReceiptEmail(accountId, chargeId, email);
-            receiptUrl = charge?.receipt_url || null;
-            delivery = 'stripe';
-        } else {
-            await sendRecordedReceiptEmail(companyId, actor, context, email);
+        if (context.receipt_contact_id && !String(context.receipt_contact_email || '').trim()) {
+            const { propagateContactDetails } = require('./contactPropagationService');
+            const outcome = await propagateContactDetails(
+                companyId,
+                context.receipt_contact_id,
+                { email },
+                { source: 'payment_receipt', logPrefix: '[PaymentReceipt]', redactEmail: true }
+            );
+            contactEmailSaved = outcome.email === 'added';
+        }
+
+        const renderContext = await enrichStripeCardContext(context);
+        const delivery = await buildReceiptDelivery(companyId, renderContext);
+        const emailService = require('./emailService');
+        const sentMessage = await emailService.sendEmail(companyId, {
+            to: email,
+            ...delivery,
+            userId: actor?.id || null,
+            userEmail: actor?.email || null,
+        });
+        gmailAccepted = true;
+        completedReceipt = await paymentsQueries.completeReceiptDelivery(
+            companyId,
+            claim.receipt.id,
+            sentMessage?.provider_message_id || null,
+            client
+        );
+        if (!completedReceipt) {
+            throw new PaymentsServiceError(
+                'RECEIPT_HISTORY_FAILED',
+                'Receipt was sent but its history could not be recorded',
+                500
+            );
         }
     } catch (err) {
+        if (!gmailAccepted) {
+            await paymentsQueries.releaseReceiptDelivery(companyId, claim.receipt.id, client);
+        }
         if (activityActor) {
             await logFinancialActivity({
                 companyId,
@@ -785,7 +916,7 @@ async function emailTransactionReceipt(
                 summary: { channel: 'email' },
             });
         }
-        throw err;
+        throw mapMailboxError(err);
     }
 
     const { recordDocumentSendNote } = require('./documentSendNoteService');
@@ -811,59 +942,45 @@ async function emailTransactionReceipt(
 
     return {
         sent: true,
-        delivery,
-        receipt_url: receiptUrl,
+        delivery: 'email',
         contact_email_saved: contactEmailSaved,
+        idempotent: false,
+        receipt_history_entry: {
+            to: completedReceipt.sent_to_email,
+            sent_at: completedReceipt.sent_at,
+            channel: completedReceipt.sent_via,
+        },
     };
 }
 
 /**
- * Send/create a receipt for a transaction (MVP: creates record, no actual sending).
+ * Compatibility adapter for the old channel-based endpoint. Receipt delivery is
+ * email-only and delegates to the same custom sender.
  */
 async function sendReceipt(
     companyId,
     userId,
     transactionId,
-    { channel, recipient } = {},
+    { channel, recipient, idempotencyKey } = {},
     client = null,
     activityActor = null
 ) {
-    // Validate tx belongs to company
-    const transaction = await getTransaction(companyId, transactionId, client);
-
-    if (!channel || !['email', 'sms', 'portal'].includes(channel)) {
-        throw new PaymentsServiceError('VALIDATION', 'channel must be one of: email, sms, portal', 400);
+    if (channel !== 'email') {
+        throw new PaymentsServiceError(
+            'VALIDATION',
+            'Custom payment receipts can be sent by email only',
+            400
+        );
     }
-    if (!recipient) {
-        throw new PaymentsServiceError('VALIDATION', 'recipient is required', 400);
-    }
-
-    const receiptData = {
-        sent_via: channel,
-    };
-    if (channel === 'email') {
-        receiptData.sent_to_email = recipient;
-    } else if (channel === 'sms') {
-        receiptData.sent_to_phone = recipient;
-    }
-
-    const receipt = await paymentsQueries.createReceipt(
+    return emailTransactionReceipt(
         companyId,
         transactionId,
-        receiptData,
-        client
+        recipient,
+        { id: userId },
+        client,
+        activityActor,
+        idempotencyKey
     );
-    if (activityActor) {
-        await logFinancialActivity({
-            companyId,
-            entityType: 'payment',
-            action: 'payment.receipt_sent',
-            entity: transaction,
-            actor: activityActor,
-            summary: { channel },
-        }, { client });
-    }
-    return receipt;
 }
 
 // =============================================================================
@@ -901,6 +1018,7 @@ module.exports = {
     PaymentsServiceError,
     listTransactions,
     getTransaction,
+    getTransactionDetail,
     createTransaction,
     recordManualPayment,
     refundTransaction,

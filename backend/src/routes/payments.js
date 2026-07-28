@@ -171,8 +171,8 @@ router.post('/manual-card-sessions/:sessionId/finalize', requirePermission('paym
     }
 });
 
-// POST /api/payments/manual-card-sessions/:sessionId/receipt — ask Stripe to
-// send its native connected-account receipt; never write the email to logs.
+// POST /api/payments/manual-card-sessions/:sessionId/receipt — compatibility
+// adapter to the canonical Albusto receipt sender.
 router.post('/manual-card-sessions/:sessionId/receipt', requirePermission('payments.collect_keyed'), async (req, res) => {
     try {
         const stripePaymentsService = require('../services/stripePaymentsService');
@@ -184,7 +184,8 @@ router.post('/manual-card-sessions/:sessionId/receipt', requirePermission('payme
             req.body?.email,
             actorFromRequest(req),
             null,
-            userActor(req.user?.crmUser?.id || null)
+            userActor(req.user?.crmUser?.id || null),
+            req.get?.('Idempotency-Key')
         );
         res.json(result);
     } catch (err) {
@@ -199,7 +200,7 @@ router.get('/:id', requirePermission('payments.view'), async (req, res) => {
         const companyId = req.companyFilter?.company_id;
         const { id } = req.params;
 
-        const result = await paymentsService.getTransaction(companyId, id);
+        const result = await paymentsService.getTransactionDetail(companyId, id);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] GET /:id error:', err.message);
@@ -286,7 +287,7 @@ router.post('/:id/void', requirePermission('payments.collect_offline'), async (r
 // Receipts
 // =============================================================================
 
-// GET /api/payments/:id/receipt/view — Resolve a hosted or recorded receipt.
+// GET /api/payments/:id/receipt/view — Resolve the custom receipt model.
 router.get('/:id/receipt/view', requirePermission('payments.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
@@ -316,14 +317,15 @@ router.post(
                 ...actorFromRequest(req),
                 email: req.user?.email || null,
             };
-            const result = await withTransaction(client => paymentsService.emailTransactionReceipt(
+            const result = await paymentsService.emailTransactionReceipt(
                 companyId,
                 req.params.id,
                 req.body?.email,
                 actor,
-                client,
-                userActor(req.user?.crmUser?.id || null)
-            ));
+                null,
+                userActor(req.user?.crmUser?.id || null),
+                req.get?.('Idempotency-Key')
+            );
             res.json({ ok: true, data: result });
         } catch (err) {
             console.error('[Payments] POST /:id/receipt/email error:', err.message);
@@ -356,14 +358,18 @@ router.post('/:id/receipt/send', requirePermission('payments.collect_online', 'p
         const { id } = req.params;
         const { channel, recipient } = req.body;
 
-        const result = await withTransaction(client => paymentsService.sendReceipt(
+        const result = await paymentsService.sendReceipt(
             companyId,
             userId,
             id,
-            { channel, recipient },
-            client,
+            {
+                channel,
+                recipient,
+                idempotencyKey: req.get?.('Idempotency-Key'),
+            },
+            null,
             userActor(userId)
-        ));
+        );
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Payments] POST /:id/receipt/send error:', err.message);
