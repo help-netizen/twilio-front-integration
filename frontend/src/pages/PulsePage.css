@@ -664,6 +664,15 @@
         overflow: hidden;
     }
 
+    /* OB-40: the reply composer is the column's last child. On a short timeline the
+       column under-fills, so without this the composer floats mid-screen and bare
+       canvas (--blanc-bg-deep) shows below it down to the nav (the "grey strip").
+       margin-top:auto docks it to the bottom; it is inert when the timeline is tall
+       enough to scroll (no free space → auto resolves to 0). */
+    .pulse-layout[data-mobile-panel="content"] .pulse-right-column > .pulse-reply-dock {
+        margin-top: auto;
+    }
+
     .pulse-ar-plaque {
         padding: 8px 10px;
     }

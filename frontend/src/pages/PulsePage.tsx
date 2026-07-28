@@ -428,7 +428,7 @@ const PulsePageInner: React.FC = () => {
                             {/* Reply card — hidden for anonymous timeline (no callback target).
                                 Shown when there's a phone OR an email reply is possible. */}
                             {(p.phone || canEmailReply) && !isAnonTimeline && (
-                                <div className="pulse-card">
+                                <div className="pulse-card pulse-reply-dock">
                                     <SmsForm
                                         onSend={p.handleSendMessage}
                                         onAiFormat={p.handleAiFormat}
