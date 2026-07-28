@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const marketplaceService = require('../services/marketplaceService');
 const rateMeService = require('../services/rateMeService');
+const googleAdsConnectionService = require('../services/googleAdsConnectionService');
 
 function companyId(req) {
     return req.companyFilter?.company_id;
@@ -27,6 +28,24 @@ function handleError(err, req, res) {
         code: 'INTERNAL_ERROR',
         message: 'Internal server error.',
         request_id: req.requestId,
+    });
+}
+
+function handleGoogleAdsError(err, res) {
+    if (err instanceof googleAdsConnectionService.GoogleAdsConnectionError) {
+        return res.status(err.httpStatus).json({
+            error: {
+                code: err.code,
+                message: err.message,
+            },
+        });
+    }
+    console.error('[Marketplace] code=google_ads_request_failed');
+    return res.status(500).json({
+        error: {
+            code: 'INTERNAL_ERROR',
+            message: 'Google Ads request failed.',
+        },
     });
 }
 
@@ -91,6 +110,40 @@ router.post('/apps/chatgpt-crm-mcp/sends/enable', async (req, res) => {
 
 router.post('/apps/chatgpt-crm-mcp/sends/disable', async (req, res) => {
     await setChatgptMcpSends(req, res, false);
+});
+
+router.get('/apps/google-ads/connection', async (req, res) => {
+    try {
+        const status = await googleAdsConnectionService.getConnectionStatus(
+            companyId(req)
+        );
+        return res.json(status);
+    } catch (err) {
+        return handleGoogleAdsError(err, res);
+    }
+});
+
+router.post('/apps/google-ads/sync', async (req, res) => {
+    try {
+        const status = await googleAdsConnectionService.requestCompanySync(
+            companyId(req)
+        );
+        return res.json(status);
+    } catch (err) {
+        return handleGoogleAdsError(err, res);
+    }
+});
+
+router.post('/apps/google-ads/disconnect', async (req, res) => {
+    try {
+        const status = await googleAdsConnectionService.disconnectCompany(
+            companyId(req),
+            actorId(req)
+        );
+        return res.json(status);
+    } catch (err) {
+        return handleGoogleAdsError(err, res);
+    }
 });
 
 router.get('/apps/:appKey/settings', async (req, res) => {

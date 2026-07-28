@@ -71,6 +71,9 @@ async function ensureMarketplaceSchema(client = null) {
         // ASSISTANT-BOT-001: restore bot-facing descriptions after app seeds overwrite metadata.
         // MUST run AFTER every app seed above (it patches their metadata).
         await query(readMigration('173_seed_assistant_app_descriptions.sql'));
+        // LEAD-CHANNEL-ANALYTICS-001: derived Google Ads card + connection
+        // tables. Migration 213 is idempotent and owns its assistant metadata.
+        await query(readMigration('213_google_ads_connector.sql'));
         return;
     }
 
@@ -186,6 +189,17 @@ async function getAppConnectionSnapshot(companyId, client = null) {
         [companyId]
     );
     return rows;
+}
+
+async function getGoogleAdsConnectionStatus(companyId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT status
+         FROM google_ads_connections
+         WHERE company_id = $1`,
+        [companyId]
+    );
+    return rows[0]?.status || null;
 }
 
 async function getPublishedAppByKey(appKey, client = null) {
@@ -468,6 +482,7 @@ module.exports = {
     reconcileRevokedInstallations,
     listPublishedAppsWithInstallation,
     getAppConnectionSnapshot,
+    getGoogleAdsConnectionStatus,
     getPublishedAppByKey,
     findActiveInstallation,
     getConnectedRelySettings,
