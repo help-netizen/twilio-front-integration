@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogPanelHeader, DialogTitle, DialogDescription, DialogBody, DialogPanelFooter } from '../ui/dialog';
-import { FloatingField, FloatingLabel } from '../ui/floating-field';
+import { FloatingLabel } from '../ui/floating-field';
+import { FloatingTextField } from '../shared/FloatingTextField';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import { Button } from '../ui/button';
@@ -125,7 +126,7 @@ export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, t
 
                 <DialogBody className="md:px-8 md:py-7">
                     <div className="space-y-5">
-                        <FloatingField
+                        <FloatingTextField
                             label="Description"
                             textarea
                             rows={4}

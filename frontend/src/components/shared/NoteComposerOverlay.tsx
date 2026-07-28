@@ -58,6 +58,9 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
                 onClick={onClose}
                 style={{ position: 'absolute', inset: 0, background: 'rgba(25, 25, 25, 0.38)' }}
             />
+            {/* No sheet chrome — the card is transparent so ONLY the inner input floats above the
+                keyboard (owner: "don't show that the input is in a bottom sheet"). Minimal padding:
+                side margins + a small lift off the keyboard, no big bottom gap. */}
             <div
                 style={{
                     position: 'absolute',
@@ -65,10 +68,8 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
                     right: 0,
                     bottom: 0,
                     transform: `translateY(${-keyboardInset}px)`,
-                    background: 'var(--blanc-surface-strong)',
-                    borderRadius: '22px 22px 0 0',
-                    boxShadow: '0 -12px 40px rgba(40, 33, 22, 0.22)',
-                    padding: `12px 14px calc(12px + env(safe-area-inset-bottom))`,
+                    background: 'transparent',
+                    padding: '0 10px 8px',
                 }}
             >
                 {children}
