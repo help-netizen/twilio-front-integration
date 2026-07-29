@@ -10,7 +10,7 @@ import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import { overlapsUnavailability, unavailabilityWarningPhrase } from '../../services/scheduleApi';
 import { filterUnavailabilityByProviders } from '../../services/scheduleFilters';
-import { projectMobileAgendaUnavailabilityForDay } from '../../services/scheduleDisplayUnavailability';
+import { projectMainScheduleUnavailabilityForDay, projectMobileAgendaUnavailabilityForDay } from '../../services/scheduleDisplayUnavailability';
 import type { ScheduleItem, DispatchSettings, RouteSegment, UnavailabilityBlock } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
@@ -452,6 +452,47 @@ export const DayView: React.FC<DayViewProps> = ({
                             }}
                         />
                     )}
+
+                    {/* Unavailability bands (SCHED-DAYOFF-DISPLAY-001) — grey hatched layer
+                        UNDER the job cards; pointer-events:none so clicks/DnD pass straight
+                        through to the grid. The desktop day grid is one column for all
+                        providers, so a per-tech block spans the full width and names the
+                        technician. Parity with the Timeline view (which had this all along). */}
+                    {(() => {
+                        const dayStartUtc = dateInTZ(dy, dm, dd, 0, 0, tz);
+                        const nextUtcDay = new Date(Date.UTC(dy, dm - 1, dd + 1));
+                        const dayEndUtc = dateInTZ(nextUtcDay.getUTCFullYear(), nextUtcDay.getUTCMonth() + 1, nextUtcDay.getUTCDate(), 0, 0, tz);
+                        const gridStartUtc = dateInTZ(dy, dm, dd, Math.floor(startHour), Math.round((startHour % 1) * 60), tz);
+                        const gridEndUtc = dateInTZ(dy, dm, dd, Math.floor(endHour), Math.round((endHour % 1) * 60), tz);
+                        return projectMainScheduleUnavailabilityForDay(
+                            filterUnavailabilityByProviders(unavailability ?? [], providerFilterIds),
+                            dayStartUtc,
+                            dayEndUtc,
+                        )
+                            .filter(it => new Date(it.block.starts_at) < gridEndUtc && gridStartUtc < new Date(it.block.ends_at))
+                            .map(it => {
+                                const b = it.block;
+                                const label = it.displayKind === 'company_closed' ? 'Company closed'
+                                    : it.displayKind === 'day_off' ? 'Day off' : 'Time off';
+                                const bs = new Date(b.starts_at);
+                                const be = new Date(b.ends_at);
+                                const topMin = bs <= gridStartUtc ? 0 : Math.max(0, minutesSinceMidnight(bs, tz) - startHour * 60);
+                                const botMin = be >= gridEndUtc ? totalHours * 60 : Math.min(totalHours * 60, minutesSinceMidnight(be, tz) - startHour * 60);
+                                const topPx = topMin / 60 * HOUR_HEIGHT;
+                                const heightPx = Math.max(botMin / 60 * HOUR_HEIGHT - topPx, 18);
+                                return (
+                                    <div
+                                        key={`unavailability-${b.id}`}
+                                        className="absolute left-0 right-0 z-[2] pointer-events-none select-none overflow-hidden"
+                                        style={{ top: topPx, height: heightPx, background: UNAVAILABILITY_BG }}
+                                    >
+                                        <div className="px-2 pt-1 text-[11px] font-medium truncate" style={{ color: 'var(--sched-ink-3)' }}>
+                                            {b.technician_name ? `${b.technician_name} · ${label}` : label}
+                                        </div>
+                                    </div>
+                                );
+                            });
+                    })()}
 
                     {/* Positioned items — each overlap cluster splits column width across all lanes (no hidden "+N") */}
                     {(() => {
