@@ -230,18 +230,26 @@ export interface ReportToEstimateSettingsResponse {
     /** True when the app is connected (generation allowed). */
     enabled: boolean;
     installation_id: number | null;
-    /** Effective instruction — the per-company custom text, or the default when unedited. */
+    /** Effective estimate-generation instruction — per-company custom text, or default. */
     instruction_text: string;
+    /** Effective report-polish instruction — per-company custom text, or default. */
+    report_instruction_text: string;
+}
+
+/** A partial patch — send only the block(s) being saved; the other is left untouched. */
+export interface ReportToEstimateSettingsPatch {
+    instruction_text?: string;
+    report_instruction_text?: string;
 }
 
 export async function fetchReportToEstimateSettings(): Promise<ReportToEstimateSettingsResponse> {
     return request<ReportToEstimateSettingsResponse>(`${API_BASE}/apps/report-to-estimate/settings`);
 }
 
-export async function saveReportToEstimateInstruction(instructionText: string): Promise<ReportToEstimateSettingsResponse> {
+export async function saveReportToEstimateSettings(patch: ReportToEstimateSettingsPatch): Promise<ReportToEstimateSettingsResponse> {
     return request<ReportToEstimateSettingsResponse>(`${API_BASE}/apps/report-to-estimate/settings`, {
         method: 'PATCH',
-        body: JSON.stringify({ instruction_text: instructionText }),
+        body: JSON.stringify(patch),
     });
 }
 

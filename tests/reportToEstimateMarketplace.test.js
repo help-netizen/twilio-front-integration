@@ -26,7 +26,7 @@ jest.mock('../backend/src/db/marketplaceQueries', () => ({
     createInstallation: jest.fn(),
     updateInstallationCredential: jest.fn(),
     setInstallationSettings: jest.fn(),
-    setInstallationInstructionText: jest.fn(),
+    setInstallationInstructions: jest.fn(),
     revokeCredentialById: jest.fn(),
     countOtherActiveInstallationsOnCredential: jest.fn(),
     markInstallationConnected: jest.fn(),
@@ -128,14 +128,14 @@ beforeEach(() => {
     queries.getPublishedAppByKey.mockResolvedValue(APP);
     queries.findActiveInstallation.mockResolvedValue(installation());
     queries.findLatestInstallation.mockResolvedValue(installation());
-    queries.setInstallationInstructionText.mockImplementation(
-        async (companyId, id, _appKey, instructionText) => installation({
+    queries.setInstallationInstructions.mockImplementation(
+        async (companyId, id, _appKey, instructions) => installation({
             id,
             company_id: companyId,
             metadata: {
                 seeded_by: 'REPORT-TO-ESTIMATE-001',
                 sibling: true,
-                instruction_text: instructionText,
+                ...instructions,
             },
         })
     );
@@ -156,7 +156,7 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             ),
             'utf8'
         );
-        const start = source.indexOf('async function setInstallationInstructionText');
+        const start = source.indexOf('async function setInstallationInstructions');
         const end = source.indexOf('async function revokeCredentialById', start);
         const query = source.slice(start, end);
 
@@ -164,7 +164,7 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             "COALESCE(installation.metadata, '{}'::jsonb)"
         );
         expect(query).toContain(
-            "|| jsonb_build_object('instruction_text', $4::text)"
+            '|| $4::jsonb'
         );
         expect(query).toContain('installation.company_id = $1');
         expect(query).toContain('installation.id = $2');
@@ -172,8 +172,9 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
         expect(query).not.toContain('jsonb_set');
     });
 
-    test('APP key is stable and GET uses the single JS default without writing it', async () => {
+    test('APP key is stable and GET returns both JS defaults without writing them', async () => {
         expect(marketplaceService.REPORT_TO_ESTIMATE_APP_KEY).toBe('report-to-estimate');
+        expect(MAX_INSTRUCTION_CHARS).toBe(16000);
 
         const result = await marketplaceService.getReportToEstimateSettings(COMPANY_A);
 
@@ -182,10 +183,40 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             enabled: true,
             installation_id: 700,
             instruction_text: DEFAULT_INSTRUCTION,
+            report_instruction_text: marketplaceService.DEFAULT_REPORT_INSTRUCTION,
         });
         expect(queries.findLatestInstallation).toHaveBeenCalledWith(COMPANY_A, APP.id);
-        expect(queries.setInstallationInstructionText).not.toHaveBeenCalled();
+        expect(queries.setInstallationInstructions).not.toHaveBeenCalled();
         expect(queries.writeEvent).not.toHaveBeenCalled();
+    });
+
+    test('long custom estimate and report instructions remain effective below the 16000 cap', async () => {
+        const estimateInstruction = 'E'.repeat(12000);
+        const reportInstruction = 'R'.repeat(11603);
+        queries.findLatestInstallation.mockResolvedValueOnce(installation({
+            metadata: {
+                instruction_text: estimateInstruction,
+                report_instruction_text: reportInstruction,
+            },
+        }));
+
+        await expect(marketplaceService.getReportToEstimateSettings(COMPANY_A))
+            .resolves.toMatchObject({
+                instruction_text: estimateInstruction,
+                report_instruction_text: reportInstruction,
+            });
+
+        queries.findActiveInstallation
+            .mockResolvedValueOnce(installation({
+                metadata: { instruction_text: estimateInstruction },
+            }))
+            .mockResolvedValueOnce(installation({
+                metadata: { report_instruction_text: reportInstruction },
+            }));
+        await expect(marketplaceService.getReportToEstimateInstruction(COMPANY_A))
+            .resolves.toBe(estimateInstruction);
+        await expect(marketplaceService.getReportPolishInstruction(COMPANY_A))
+            .resolves.toBe(reportInstruction);
     });
 
     test('GET returns a disconnected company custom instruction and a no-row company default', async () => {
@@ -194,6 +225,7 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             metadata: {
                 seeded_by: 'REPORT-TO-ESTIMATE-001',
                 instruction_text: '  Keep diagnostic labor separate.  ',
+                report_instruction_text: '  Use the company report format.  ',
             },
         }));
 
@@ -203,6 +235,7 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
                 enabled: false,
                 installation_id: 700,
                 instruction_text: 'Keep diagnostic labor separate.',
+                report_instruction_text: 'Use the company report format.',
             });
 
         queries.findLatestInstallation.mockResolvedValueOnce(null);
@@ -212,11 +245,20 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
                 enabled: false,
                 installation_id: null,
                 instruction_text: DEFAULT_INSTRUCTION,
+                report_instruction_text: marketplaceService.DEFAULT_REPORT_INSTRUCTION,
             });
     });
 
     test('PATCH top-level-merges the custom instruction and audits no prompt text', async () => {
         const custom = 'Prefer the complete service group when the report names a standard repair.';
+        const existingReportInstruction = 'Preserve this report-polish instruction.';
+        queries.setInstallationInstructions.mockResolvedValue(installation({
+            metadata: {
+                seeded_by: 'REPORT-TO-ESTIMATE-001',
+                instruction_text: custom,
+                report_instruction_text: existingReportInstruction,
+            },
+        }));
         const result = await marketplaceService.updateReportToEstimateInstruction(
             COMPANY_A,
             ACTOR_A,
@@ -224,17 +266,18 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             { requestId: 'req-patch' }
         );
 
-        expect(queries.setInstallationInstructionText).toHaveBeenCalledWith(
+        expect(queries.setInstallationInstructions).toHaveBeenCalledWith(
             COMPANY_A,
             700,
             'report-to-estimate',
-            custom
+            { instruction_text: custom }
         );
         expect(result).toEqual({
             app_key: 'report-to-estimate',
             enabled: true,
             installation_id: 700,
             instruction_text: custom,
+            report_instruction_text: existingReportInstruction,
         });
         expect(queries.writeEvent).toHaveBeenCalledWith({
             companyId: COMPANY_A,
@@ -251,13 +294,99 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
         expect(JSON.stringify(queries.writeEvent.mock.calls[0][0])).not.toContain(custom);
     });
 
+    test('PATCH with only report_instruction_text preserves instruction_text', async () => {
+        const estimateInstruction = 'Keep the existing estimate behavior.';
+        const reportInstruction = 'Write a complete appliance technician report.';
+        queries.setInstallationInstructions.mockResolvedValue(installation({
+            metadata: {
+                instruction_text: estimateInstruction,
+                report_instruction_text: reportInstruction,
+            },
+        }));
+
+        const result = await marketplaceService.updateReportToEstimateInstruction(
+            COMPANY_A,
+            ACTOR_A,
+            { report_instruction_text: `  ${reportInstruction}  ` }
+        );
+
+        expect(queries.setInstallationInstructions).toHaveBeenCalledWith(
+            COMPANY_A,
+            700,
+            'report-to-estimate',
+            { report_instruction_text: reportInstruction }
+        );
+        expect(result).toMatchObject({
+            instruction_text: estimateInstruction,
+            report_instruction_text: reportInstruction,
+        });
+        expect(queries.writeEvent).toHaveBeenCalledWith(expect.objectContaining({
+            payload: {
+                app_key: 'report-to-estimate',
+                report_instruction_length: reportInstruction.length,
+            },
+        }));
+    });
+
+    test('PATCH accepts both instruction keys in one metadata merge', async () => {
+        const estimateInstruction = 'Prefer a matching service group.';
+        const reportInstruction = 'Use detailed findings and exact supplied prices.';
+
+        const result = await marketplaceService.updateReportToEstimateInstruction(
+            COMPANY_A,
+            ACTOR_A,
+            {
+                instruction_text: estimateInstruction,
+                report_instruction_text: reportInstruction,
+            }
+        );
+
+        expect(queries.setInstallationInstructions).toHaveBeenCalledWith(
+            COMPANY_A,
+            700,
+            'report-to-estimate',
+            {
+                instruction_text: estimateInstruction,
+                report_instruction_text: reportInstruction,
+            }
+        );
+        expect(result).toMatchObject({
+            instruction_text: estimateInstruction,
+            report_instruction_text: reportInstruction,
+        });
+        expect(queries.writeEvent).toHaveBeenCalledWith(expect.objectContaining({
+            payload: {
+                app_key: 'report-to-estimate',
+                instruction_length: estimateInstruction.length,
+                report_instruction_length: reportInstruction.length,
+            },
+        }));
+    });
+
+    test('getReportPolishInstruction uses the active company value and default fallback', async () => {
+        queries.findActiveInstallation.mockResolvedValueOnce(installation({
+            metadata: { report_instruction_text: '  Company report instruction.  ' },
+        }));
+        await expect(marketplaceService.getReportPolishInstruction(COMPANY_A))
+            .resolves.toBe('Company report instruction.');
+
+        queries.getPublishedAppByKey.mockResolvedValueOnce(null);
+        await expect(marketplaceService.getReportPolishInstruction(COMPANY_B))
+            .resolves.toBe(marketplaceService.DEFAULT_REPORT_INSTRUCTION);
+    });
+
     test.each([
-        [{}, 'instruction_text must be a string.'],
+        [{}, 'At least one instruction must be provided.'],
         [{ instruction_text: null }, 'instruction_text must be a string.'],
         [{ instruction_text: '   ' }, 'instruction_text cannot be empty.'],
         [
             { instruction_text: 'x'.repeat(MAX_INSTRUCTION_CHARS + 1) },
             `instruction_text must be ${MAX_INSTRUCTION_CHARS} characters or fewer.`,
+        ],
+        [{ report_instruction_text: '   ' }, 'report_instruction_text cannot be empty.'],
+        [
+            { report_instruction_text: 'x'.repeat(MAX_INSTRUCTION_CHARS + 1) },
+            `report_instruction_text must be ${MAX_INSTRUCTION_CHARS} characters or fewer.`,
         ],
     ])('PATCH rejects invalid instruction without writes or events', async (body, message) => {
         await expect(marketplaceService.updateReportToEstimateInstruction(
@@ -269,7 +398,7 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             httpStatus: 400,
             message,
         });
-        expect(queries.setInstallationInstructionText).not.toHaveBeenCalled();
+        expect(queries.setInstallationInstructions).not.toHaveBeenCalled();
         expect(queries.writeEvent).not.toHaveBeenCalled();
     });
 
@@ -284,28 +413,36 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             code: 'APP_NOT_INSTALLED',
             httpStatus: 404,
         });
-        expect(queries.setInstallationInstructionText).not.toHaveBeenCalled();
+        expect(queries.setInstallationInstructions).not.toHaveBeenCalled();
     });
 
-    test('reconnect copies only the previous custom instruction into the new installation', async () => {
+    test('reconnect copies both previous custom instructions into the new installation', async () => {
         const custom = 'Preserve this company-specific instruction.';
+        const reportCustom = 'Preserve this company-specific report instruction.';
         queries.findActiveInstallation.mockResolvedValue(null);
         queries.findLatestInstallation.mockResolvedValue(installation({
             status: 'disconnected',
             metadata: {
                 seeded_by: 'REPORT-TO-ESTIMATE-001',
                 instruction_text: custom,
+                report_instruction_text: reportCustom,
             },
         }));
         queries.createInstallation.mockResolvedValue({
             id: 701,
             status: 'provisioning_failed',
-            metadata: { instruction_text: custom },
+            metadata: {
+                instruction_text: custom,
+                report_instruction_text: reportCustom,
+            },
         });
         queries.markInstallationConnected.mockResolvedValue({
             id: 701,
             status: 'connected',
-            metadata: { instruction_text: custom },
+            metadata: {
+                instruction_text: custom,
+                report_instruction_text: reportCustom,
+            },
         });
 
         const result = await marketplaceService.installApp(
@@ -325,12 +462,15 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             appId: APP.id,
             actorId: ACTOR_A,
             status: 'provisioning_failed',
-            metadata: { instruction_text: custom },
+            metadata: {
+                instruction_text: custom,
+                report_instruction_text: reportCustom,
+            },
         }, mockClient);
         expect(result).toMatchObject({ id: 701, status: 'connected' });
     });
 
-    test('reconnect keeps instruction_text absent when the company never edited the default', async () => {
+    test('reconnect keeps both instruction keys absent when the company never edited defaults', async () => {
         queries.findActiveInstallation.mockResolvedValue(null);
         queries.findLatestInstallation.mockResolvedValue(installation({
             status: 'disconnected',
@@ -371,7 +511,7 @@ describe('REPORT-TO-ESTIMATE-001 marketplace settings', () => {
             request_id: 'req-scope',
         });
         expect(queries.findLatestInstallation).toHaveBeenCalledWith(COMPANY_B, APP.id);
-        expect(queries.setInstallationInstructionText).not.toHaveBeenCalled();
+        expect(queries.setInstallationInstructions).not.toHaveBeenCalled();
     });
 });
 
@@ -388,7 +528,7 @@ describe('Report → Estimate settings inherited RBAC', () => {
 
             expect([getResponse.status, patchResponse.status]).toEqual([403, 403]);
             expect(queries.getPublishedAppByKey).not.toHaveBeenCalled();
-            expect(queries.setInstallationInstructionText).not.toHaveBeenCalled();
+            expect(queries.setInstallationInstructions).not.toHaveBeenCalled();
         }
     );
 
@@ -402,11 +542,11 @@ describe('Report → Estimate settings inherited RBAC', () => {
 
         expect([getResponse.status, patchResponse.status]).toEqual([200, 200]);
         expect(queries.findLatestInstallation).toHaveBeenCalledWith(COMPANY_A, APP.id);
-        expect(queries.setInstallationInstructionText).toHaveBeenCalledWith(
+        expect(queries.setInstallationInstructions).toHaveBeenCalledWith(
             COMPANY_A,
             700,
             'report-to-estimate',
-            'Use company service groups.'
+            { instruction_text: 'Use company service groups.' }
         );
     });
 });

@@ -15,7 +15,6 @@ import { Plus, Copy, ShieldOff, Key, Webhook, RefreshCw, Check, Settings2, Save,
 import { CreateDialog, SecretDialog, RevokeDialog, RegenerateDialog } from './IntegrationDialogs';
 import { RelyLeadsSettingsDialog } from './RelyLeadsSettingsDialog';
 import { RateMeSettingsDialog } from './RateMeSettingsDialog';
-import { ReportToEstimateSettingsDialog } from './ReportToEstimateSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { MarketplaceGrid } from '../components/settings/marketplace/MarketplaceGrid';
 import { MarketplaceAppDetail } from '../components/settings/marketplace/MarketplaceAppDetail';
@@ -165,7 +164,6 @@ export function IntegrationsPage() {
     const [disconnectTarget, setDisconnectTarget] = useState<MarketplaceApp | null>(null);
     const [relySettingsOpen, setRelySettingsOpen] = useState(false);
     const [rateMeSettingsOpen, setRateMeSettingsOpen] = useState(false);
-    const [reportToEstimateSettingsOpen, setReportToEstimateSettingsOpen] = useState(false);
     const inspectorSettingsOpen = searchParams.get('app') === 'inspector';
 
     const setInspectorSettingsOpen = (open: boolean) => {
@@ -284,9 +282,6 @@ export function IntegrationsPage() {
                         )}
                         {app.app_key === 'rate-me' && app.installation?.status === 'connected' && (
                             <Button variant="outline" size="sm" onClick={() => setRateMeSettingsOpen(true)}>Settings</Button>
-                        )}
-                        {app.app_key === 'report-to-estimate' && app.installation?.status === 'connected' && (
-                            <Button variant="outline" size="sm" onClick={() => setReportToEstimateSettingsOpen(true)}>Edit instruction</Button>
                         )}
                         {app.app_key === 'chatgpt-crm-mcp' && app.installation?.status === 'connected' && (
                             <Button variant="outline" size="sm" onClick={() => setChatgptMcpPanelOpen(true)}>Setup</Button>
@@ -417,7 +412,6 @@ export function IntegrationsPage() {
             />
             <RelyLeadsSettingsDialog open={relySettingsOpen} onOpenChange={setRelySettingsOpen} />
             <RateMeSettingsDialog open={rateMeSettingsOpen} onOpenChange={setRateMeSettingsOpen} />
-            <ReportToEstimateSettingsDialog open={reportToEstimateSettingsOpen} onOpenChange={setReportToEstimateSettingsOpen} />
             <InspectorSettingsPanel open={inspectorSettingsOpen} onOpenChange={setInspectorSettingsOpen} />
 
             <MarketplaceAppDetail

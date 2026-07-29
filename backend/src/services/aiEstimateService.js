@@ -17,7 +17,7 @@ const {
 } = require('../utils/orderList');
 
 const MAX_REPORT_CHARS = 8000;
-const MAX_INSTRUCTION_CHARS = 8000;
+const MAX_INSTRUCTION_CHARS = 16000;
 const MAX_LINE_ITEMS = 40;
 const MAX_TITLE_CHARS = 200;
 const MAX_DESCRIPTION_CHARS = 2000;

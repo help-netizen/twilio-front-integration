@@ -42,6 +42,7 @@ import { IntegrationsPage } from './pages/IntegrationsPage';
 import CompanySettingsPage from './pages/CompanySettingsPage';
 import VapiSettingsPage from './pages/VapiSettingsPage';
 import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
+import { ReportToEstimateSettingsPage } from './pages/ReportToEstimateSettingsPage';
 import MailSecretarySettingsPage from './pages/MailSecretarySettingsPage';
 import OutboundLeadCallerSettingsPage from './pages/OutboundLeadCallerSettingsPage';
 import OutboundPartsCallerSettingsPage from './pages/OutboundPartsCallerSettingsPage';
@@ -209,6 +210,7 @@ function App() {
                 <Route path="/settings/integrations/outbound-lead-caller" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><OutboundLeadCallerSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/outbound-parts-caller" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><OutboundPartsCallerSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/integrations/report-to-estimate" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ReportToEstimateSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/google-email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><GoogleEmailSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/telephony-twilio" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><TelephonyTwilioSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/admin" element={<ProtectedRoute platformRoles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />

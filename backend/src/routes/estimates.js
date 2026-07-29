@@ -6,6 +6,8 @@ const express = require('express');
 const router = express.Router();
 const estimatesService = require('../services/estimatesService');
 const aiEstimateService = require('../services/aiEstimateService');
+const reportPolishService = require('../services/reportPolishService');
+const marketplaceService = require('../services/marketplaceService');
 const { requirePermission } = require('../middleware/authorization');
 const { actorFromRequest } = require('../services/documentSendNoteService');
 const { userActor } = require('../services/financialActivityService');
@@ -111,6 +113,56 @@ router.post('/ai-draft', requirePermission('estimates.create'), async (req, res)
         console.error('[Estimates] POST /ai-draft error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({
+            ok: false,
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
+    }
+});
+
+// POST /api/estimates/polish-report — Turn a provider's rough note into a report.
+// The runtime mount supplies authenticate + requireCompanyAccess. This route is
+// intentionally not gated by estimates.create; it owns its provider/app gates.
+router.post('/polish-report', async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        if (!companyId) {
+            return res.status(403).json({
+                ok: false,
+                error: { code: 'FORBIDDEN', message: 'Company context is required' },
+            });
+        }
+        if (req.authz?.membership?.role_key !== 'provider') {
+            return res.status(403).json({
+                ok: false,
+                error: {
+                    code: 'provider_only',
+                    message: 'Only providers can polish reports.',
+                },
+            });
+        }
+        const enabled = await marketplaceService.isAppConnected(
+            companyId,
+            marketplaceService.REPORT_TO_ESTIMATE_APP_KEY
+        );
+        if (!enabled) {
+            return res.status(409).json({
+                ok: false,
+                error: {
+                    code: 'app_disabled',
+                    message: 'Report → Estimate is disabled for this company.',
+                },
+            });
+        }
+
+        const report = await reportPolishService.polishReport({
+            companyId,
+            text: req.body?.text,
+        });
+        return res.json({ ok: true, data: { report } });
+    } catch (err) {
+        console.error('[Estimates] POST /polish-report error:', err.message);
+        const status = err.httpStatus || 500;
+        return res.status(status).json({
             ok: false,
             error: { code: err.code || 'INTERNAL', message: err.message },
         });

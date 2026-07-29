@@ -221,6 +221,26 @@ export async function aiDraftEstimate(reportText: string, jobId?: number): Promi
 }
 
 /**
+ * REPORT-POLISH-001 — POST /api/estimates/polish-report — turn a technician's rough note
+ * into a full professional report (provider-only). Returns the polished report text.
+ * Surfaces the backend error code ('provider_only' | 'app_disabled') for the caller.
+ */
+export async function polishReport(text: string): Promise<string> {
+    const res = await authedFetch(`${ESTIMATES_BASE}/polish-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.ok === false) {
+        const err = new Error(json?.error?.message || `Polish failed (${res.status})`) as Error & { code?: string };
+        err.code = json?.error?.code;
+        throw err;
+    }
+    return String(json?.data?.report ?? '');
+}
+
+/**
  * Error carrying the server-supplied `code`/`status` so the send dialog can branch
  * (409 MAILBOX_NOT_CONNECTED, 402 WALLET_BLOCKED, 422 NO_PROXY|NO_PHONE, 400 VALIDATION).
  */

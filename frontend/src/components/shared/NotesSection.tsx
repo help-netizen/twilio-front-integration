@@ -5,11 +5,14 @@
  * Usage: <NotesSection entityType="job" entityId={123} />
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus, MoreVertical, Pencil, Trash2, X, ArrowUp, Check, Loader2 } from 'lucide-react';
+import { Plus, MoreVertical, Pencil, Trash2, X, ArrowUp, Check, Loader2, Sparkles } from 'lucide-react';
 import { NoteAttachmentInput, type AttachmentState } from './NoteAttachmentInput';
 import { NoteAttachmentDisplay } from './NoteAttachmentDisplay';
 import { authedFetch } from '../../services/apiClient';
 import { useAuthz } from '../../hooks/useAuthz';
+import { FullScreenTextEditor } from './FullScreenTextEditor';
+import { polishReport } from '../../services/estimatesApi';
+import { toast } from 'sonner';
 import { TaskStack } from '../tasks/TaskStack';
 import { prepareNotesForDisplay } from './notesDisplay';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -77,9 +80,11 @@ function apiPath(entityType: string, entityId: string | number): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSectionProps) {
-    const { user, isTenantAdmin, hasAnyPermission } = useAuthz();
+    const { user, isTenantAdmin, hasAnyPermission, membership } = useAuthz();
     const myId = user?.sub;
     const isAdmin = isTenantAdmin();
+    // REPORT-POLISH-001: the "Polish report" composer action is Provider-only.
+    const isProvider = membership?.role_key === 'provider';
     const canCreateTask = hasAnyPermission('tasks.create', 'tasks.manage');
     const [taskCreateOpen, setTaskCreateOpen] = useState(false);
 
@@ -94,6 +99,67 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const [submitting, setSubmitting] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // REPORT-POLISH-001: turn the note text into a full professional report via the LLM, then
+    // review it in a full-screen (type B) editor. Accept → the report replaces the note text;
+    // Cancel → the note keeps the text the provider originally typed (we never mutate `text`
+    // until Accept). Re-polish re-runs on the editor's current (possibly edited) text.
+    const [polishOpen, setPolishOpen] = useState(false);
+    const [polishBusy, setPolishBusy] = useState(false);
+    const [polishText, setPolishText] = useState('');
+
+    const reportPolishError = (e: any) => {
+        const msg = e?.code === 'app_disabled'
+            ? 'Report → Estimate is turned off — enable it in Settings → Integrations.'
+            : e?.code === 'provider_only'
+                ? 'Report polishing is available to Providers only.'
+                : (e?.message || 'Could not polish the report');
+        toast.error(msg);
+    };
+
+    const startPolish = async () => {
+        const src = text.trim();
+        if (!src || polishBusy) return;
+        setPolishText('');
+        setPolishOpen(true);
+        setPolishBusy(true);
+        try {
+            setPolishText(await polishReport(src));
+        } catch (e) {
+            reportPolishError(e);
+            setPolishOpen(false);
+        } finally {
+            setPolishBusy(false);
+        }
+    };
+
+    const repolish = async (current: string) => {
+        const src = current.trim();
+        if (!src || polishBusy) return;
+        setPolishBusy(true);
+        try {
+            setPolishText(await polishReport(src));
+        } catch (e) {
+            reportPolishError(e); // keep the editor open so edits aren't lost
+        } finally {
+            setPolishBusy(false);
+        }
+    };
+
+    const renderPolishButton = (size: number) => isProvider ? (
+        <button
+            type="button"
+            onMouseDown={e => e.preventDefault()}
+            onClick={startPolish}
+            disabled={!text.trim() || polishBusy}
+            aria-label="Polish report"
+            title="Turn your note into a full technician report · Provider only"
+            className="flex shrink-0 items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:opacity-40"
+            style={{ width: size, height: size, background: 'var(--blanc-surface-strong)', color: 'var(--blanc-accent)' }}
+        >
+            {polishBusy ? <Loader2 className="size-5 animate-spin" /> : <Sparkles className="size-5" />}
+        </button>
+    ) : null;
 
     // Edit state
     const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -312,6 +378,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
                         <div className="flex items-center gap-3">
                             <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                            {renderPolishButton(44)}
                             <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>⌘ + Enter</p>
                         </div>
                         <button
@@ -387,7 +454,10 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         autoFocus
                     />
                     <div className="flex items-center justify-between gap-3" style={{ marginTop: 6 }}>
-                        <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                        <div className="flex items-center gap-2">
+                            <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                            {renderPolishButton(40)}
+                        </div>
                         <button
                             type="button"
                             onClick={handleSubmit}
@@ -617,6 +687,20 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     </div>
                 );
             })}
+
+            {/* REPORT-POLISH-001 — full-screen (type B) review of the polished report:
+                edit, Re-polish, Accept (→ note text) or Cancel (keeps the original text). */}
+            <FullScreenTextEditor
+                open={polishOpen}
+                initialValue={polishText}
+                busy={polishBusy}
+                title="Report"
+                doneLabel="Accept"
+                repolishLabel="Re-polish"
+                onRepolish={repolish}
+                onDone={(t) => { setText(t); setPolishOpen(false); }}
+                onCancel={() => setPolishOpen(false)}
+            />
 
         </div>
     );

@@ -475,11 +475,11 @@ async function setInstallationSettings(companyId, installationId, settingsObject
     return rows[0] || null;
 }
 
-async function setInstallationInstructionText(
+async function setInstallationInstructions(
     companyId,
     installationId,
     appKey,
-    instructionText,
+    instructions,
     client = null
 ) {
     await ensureMarketplaceSchema(client);
@@ -487,7 +487,7 @@ async function setInstallationInstructionText(
     const { rows } = await query(
         `UPDATE marketplace_installations installation
          SET metadata = COALESCE(installation.metadata, '{}'::jsonb)
-                        || jsonb_build_object('instruction_text', $4::text),
+                        || $4::jsonb,
              updated_at = NOW()
          FROM marketplace_apps app
          WHERE installation.company_id = $1
@@ -495,7 +495,7 @@ async function setInstallationInstructionText(
            AND installation.app_id = app.id
            AND app.app_key = $3
          RETURNING installation.*`,
-        [companyId, installationId, appKey, instructionText]
+        [companyId, installationId, appKey, JSON.stringify(instructions)]
     );
     return rows[0] || null;
 }
@@ -638,7 +638,7 @@ module.exports = {
     ensureDefaultReportToEstimateInstallation,
     updateInstallationCredential,
     setInstallationSettings,
-    setInstallationInstructionText,
+    setInstallationInstructions,
     revokeCredentialById,
     countOtherActiveInstallationsOnCredential,
     markInstallationConnected,

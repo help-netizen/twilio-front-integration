@@ -142,11 +142,11 @@ describe('REPORT-TO-ESTIMATE-001 migration 212 · real PostgreSQL', () => {
             const aId = installationIds.rows.find(row => row.company_id === COMPANY_A).id;
             const bId = installationIds.rows.find(row => row.company_id === COMPANY_B).id;
 
-            const updatedA = await marketplaceQueries.setInstallationInstructionText(
+            const updatedA = await marketplaceQueries.setInstallationInstructions(
                 COMPANY_A,
                 aId,
                 'report-to-estimate',
-                'Company A custom instruction.',
+                { instruction_text: 'Company A custom instruction.' },
                 client
             );
             expect(updatedA.metadata).toEqual({
@@ -161,11 +161,11 @@ describe('REPORT-TO-ESTIMATE-001 migration 212 · real PostgreSQL', () => {
                    AND id = $2`,
                 [COMPANY_A, aId]
             );
-            await expect(marketplaceQueries.setInstallationInstructionText(
+            await expect(marketplaceQueries.setInstallationInstructions(
                 COMPANY_B,
                 aId,
                 'report-to-estimate',
-                'Foreign overwrite.',
+                { instruction_text: 'Foreign overwrite.' },
                 client
             )).resolves.toBeNull();
             const aAfterForeign = await client.query(
@@ -184,11 +184,11 @@ describe('REPORT-TO-ESTIMATE-001 migration 212 · real PostgreSQL', () => {
                    AND id = $2`,
                 [COMPANY_B, bId]
             );
-            await marketplaceQueries.setInstallationInstructionText(
+            await marketplaceQueries.setInstallationInstructions(
                 COMPANY_A,
                 aId,
                 'report-to-estimate',
-                'Company A second instruction.',
+                { instruction_text: 'Company A second instruction.' },
                 client
             );
             const bAfterBlast = await client.query(

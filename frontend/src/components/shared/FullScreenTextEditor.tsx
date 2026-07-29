@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { X, Sparkles, Loader2 } from 'lucide-react';
 import { useKeyboardInset } from './NoteComposerOverlay';
 import { pushFloatingOverlay, popFloatingOverlay } from '../../lib/floatingOverlayLock';
 
@@ -12,6 +12,11 @@ interface FullScreenTextEditorProps {
     title?: string;
     placeholder?: string;
     doneLabel?: string;
+    /** When provided, a secondary action (e.g. re-run an AI polish) on the CURRENT text. */
+    onRepolish?: (currentText: string) => void;
+    repolishLabel?: string;
+    /** Disables the actions + shows a working state (during an in-flight polish). */
+    busy?: boolean;
 }
 
 /**
@@ -23,6 +28,7 @@ interface FullScreenTextEditorProps {
  */
 export function FullScreenTextEditor({
     open, initialValue, onDone, onCancel, title, placeholder, doneLabel = 'Done',
+    onRepolish, repolishLabel = 'Re-polish', busy = false,
 }: FullScreenTextEditorProps) {
     const [text, setText] = useState(initialValue);
     const keyboardInset = useKeyboardInset(open);
@@ -72,7 +78,8 @@ export function FullScreenTextEditor({
                     type="button"
                     onClick={onCancel}
                     aria-label="Close"
-                    className="flex items-center justify-center rounded-full"
+                    disabled={busy}
+                    className="flex items-center justify-center rounded-full disabled:opacity-40"
                     style={{ width: 40, height: 40, background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)' }}
                 >
                     <X className="size-5" />
@@ -80,30 +87,56 @@ export function FullScreenTextEditor({
                 {title && (
                     <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{title}</span>
                 )}
-                <button
-                    type="button"
-                    onClick={() => onDone(text)}
-                    className="rounded-full px-4 text-sm font-semibold"
-                    style={{ height: 40, background: 'var(--blanc-accent)', color: '#fff' }}
-                >
-                    {doneLabel}
-                </button>
+                <div className="flex items-center gap-2">
+                    {onRepolish && (
+                        <button
+                            type="button"
+                            onClick={() => onRepolish(text)}
+                            disabled={busy || !text.trim()}
+                            className="flex items-center gap-1.5 rounded-full px-3.5 text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-40"
+                            style={{ height: 40, background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                            {repolishLabel}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => onDone(text)}
+                        disabled={busy}
+                        className="rounded-full px-4 text-sm font-semibold disabled:opacity-40"
+                        style={{ height: 40, background: 'var(--blanc-accent)', color: '#fff' }}
+                    >
+                        {doneLabel}
+                    </button>
+                </div>
             </div>
 
-            <textarea
-                autoFocus
-                value={text}
-                onChange={e => setText(e.target.value)}
-                placeholder={placeholder}
-                className="w-full flex-1 resize-none bg-transparent outline-none"
-                style={{
-                    border: 'none',
-                    padding: '4px 16px 16px',
-                    fontSize: 16,
-                    lineHeight: 1.55,
-                    color: 'var(--blanc-ink-1)',
-                }}
-            />
+            <div className="relative flex flex-1 min-h-0">
+                <textarea
+                    autoFocus
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                    placeholder={placeholder}
+                    readOnly={busy}
+                    className="w-full flex-1 resize-none bg-transparent outline-none"
+                    style={{
+                        border: 'none',
+                        padding: '4px 16px 16px',
+                        fontSize: 16,
+                        lineHeight: 1.55,
+                        color: 'var(--blanc-ink-1)',
+                    }}
+                />
+                {busy && (
+                    <div
+                        className="absolute inset-0 flex items-center justify-center gap-2 text-sm"
+                        style={{ background: 'color-mix(in srgb, var(--blanc-surface-strong) 70%, transparent)', color: 'var(--blanc-ink-2)' }}
+                    >
+                        <Loader2 className="size-4 animate-spin" /> Polishing…
+                    </div>
+                )}
+            </div>
         </div>,
         document.body,
     );

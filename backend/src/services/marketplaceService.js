@@ -19,6 +19,306 @@ const {
     effectiveInstruction,
 } = require('./aiEstimateService');
 const googleAdsConnectionService = require('./googleAdsConnectionService');
+const DEFAULT_REPORT_INSTRUCTION = `APPLIANCE TECHNICIAN REPORT AND ESTIMATE INSTRUCTIONS
+Use the information I provide to prepare a complete professional appliance technician report and repair estimate.
+General Rules
+
+1. Write the entire report in English.
+2. Do not ask unnecessary follow-up questions. If information is missing, write "Not provided" or "Unable to determine."
+3. Do not invent test results, damage, prices, part numbers, warranties, delivery times, or service fees.
+4. Correct grammar and translate any Russian notes into professional technical English.
+5. Clearly explain:
+   * What the customer reported
+   * What the technician found
+   * What must be replaced or serviced
+   * What caused the malfunction
+6. Use the exact labor and parts prices provided.
+7. Calculate all subtotals and the Grand Total accurately to the cent.
+8. Do not round totals unless specifically requested.
+9. Do not add taxes, delivery charges, markup, refrigerant, supplies, or additional parts unless they were provided.
+10. Do not add a service call fee statement unless the service call fee was specifically provided.
+11. Do not mention a warranty unless warranty terms were specifically provided.
+12. Do not claim that a part is OEM unless the supplied information confirms it.
+13. Do not add offers, SMS versions, CSV suggestions, follow-up questions, or commentary after the report.
+
+Appliance Age
+Use the brand, model, and serial number to determine the manufacturing date and appliance age only when the date code can be interpreted reliably.
+Priority:
+
+1. Use the manufacturing date or age provided by the technician.
+2. Otherwise, determine the age from the brand, model, and serial number when reliable.
+3. If the date cannot be verified, write:
+
+Age
+Unable to determine reliably from the information provided.
+Never guess the manufacturing year.
+STANDARD REPORT FORMAT
+Technician Report
+Make
+[Brand]
+Appliance Type
+[Refrigerator, Dishwasher, Washer, Dryer, Range, Ice Machine, Commercial Refrigerator, etc.]
+Model
+[Model number]
+Serial
+[Serial number]
+Manufactured
+[Month and year, when known]
+Age
+[Approximate age]
+Failure Issue:
+Write a clear description of the customer's complaint in one or two sentences.
+Examples:
+
+* Refrigerator is not cooling properly.
+* Dishwasher does not circulate water during the wash cycle.
+* Dryer does not heat.
+* Oven displays an error code and does not ignite.
+
+Findings:
+Write a detailed professional diagnosis in two to five paragraphs when necessary.
+Include:
+
+* The failed component
+* The actual condition found
+* Relevant diagnostic results
+* Whether related components were tested and found operational
+* How the failure affects appliance operation
+* Any visible corrosion, contamination, overheating, leakage, obstruction, physical damage, or previous improper repair
+* Multiple separate issues when applicable
+
+Do not state that components were tested unless the technician provided that information or it logically follows from the supplied diagnostic notes.
+Needs:
+List the repair work required.
+Example:
+
+* Replace circulation pump
+* Replace damaged wiring
+* Perform internal cleaning and maintenance
+* Verify proper water circulation
+* Test the complete wash cycle after repair
+
+Part numbers should normally be listed only in the estimate breakdown and "Parts to Order" section, not in the Needs section.
+Cause:
+Explain the actual or most reasonably supported cause of the malfunction.
+Examples:
+
+* Internal electrical failure of the control board
+* Mechanical wear of the motor bearings
+* Restricted airflow caused by lint accumulation
+* Refrigerant loss caused by a sealed-system leak
+* Excessive ice buildup caused by a defrost control failure
+* Corrosion caused by age, moisture, and prolonged use
+* Physical damage caused by improper installation
+* Overloading that placed excessive stress on the drive system
+
+Do not present an uncertain cause as confirmed. Use wording such as "likely caused by" or "consistent with" when the cause is not fully confirmed.
+STANDARD ESTIMATE FORMAT
+Estimate
+Use a detailed opening sentence that explains exactly what the customer receives and why the work is needed.
+Do not put part numbers in this opening paragraph.
+Example:
+The total cost for your dishwasher repair, which includes replacement of the failed circulation pump, restoration of proper water flow through the spray arms, installation of the required components, and complete operational testing, is estimated at $366.45.
+The opening sentence should describe:
+
+* The principal component replacement
+* Related maintenance or cleaning
+* Restoration of the failed function
+* Final testing and verification
+
+Breakdown
+Materials:
+• $[price] – [Part name] ([part number])
+• $[price] – [Part name] ([part number])
+Materials Total: $[total]
+Labor:
+• $[price] – [Detailed description of labor]
+Labor Total: $[total]
+Include this line when there is more than one labor item.
+Grand Total:
+$[exact total]
+Parts to Order
+
+* [Part name] — [part number]
+* [Part name] — [part number]
+
+Do not include part numbers in the Failure Issue, estimate opening sentence, or customer-facing repair summary. Keep them in the Materials breakdown and Parts to Order section.
+PREMIUM ESTIMATE DESCRIPTION
+For expensive, luxury, commercial, or complicated repairs, use a more detailed opening sentence.
+Example:
+The total cost for your dishwasher repair, which includes replacement of the failed electronic control assembly, professional disassembly and reassembly of the appliance, restoration of proper heating and circulation performance, cleaning and maintenance of the internal wash system, and complete functional testing after installation, is estimated at $1,409.01.
+COMPRESSOR AND SEALED-SYSTEM REPAIR FORMAT
+Use this format when the repair includes a compressor, refrigerant leak, filter drier, TXV, evaporator, capillary tube, brazing, evacuation, or refrigerant recharge.
+Technician Report
+Failure Issue:
+Refrigerator is not cooling properly.
+Findings:
+Explain the actual sealed-system condition, such as:
+
+* Compressor does not start
+* Compressor runs but does not create suction or discharge pressure
+* Compressor is internally shorted
+* Compressor overheats and shuts down
+* Evaporator remains warm and dry
+* Refrigerant pressure is low
+* Refrigerant leak is present
+* Filter drier or TXV is restricted
+* Moisture or contamination is present in the sealed system
+
+State which other components were confirmed operational only when that information was provided.
+Needs:
+Depending on the repair, include:
+
+* Replace compressor
+* Replace filter drier
+* Replace TXV or capillary tube
+* Repair refrigerant leak
+* Perform brazing or welding
+* Flush sealed system
+* Pressure test with nitrogen
+* Evacuate system to a deep vacuum
+* Recharge with the correct refrigerant
+* Verify operating pressures and cooling performance
+
+Cause:
+Examples:
+
+* Internal mechanical compressor failure
+* Electrical short inside the compressor
+* Refrigerant loss caused by a sealed-system leak
+* Restricted refrigerant flow caused by a clogged filter drier or TXV
+* Compressor overheating caused by restricted condenser airflow
+* Moisture contamination inside the sealed system
+
+Sealed-System Estimate
+The total cost for your refrigerator repair, which includes compressor replacement and full sealed-system service, is estimated at $[total].
+Here's the breakdown of the total cost:
+Materials:
+• $[price] – Compressor ([part number])
+• $[price] – Filter Drier ([part number])
+• $[price] – Refrigerant
+• $[price] – Nitrogen, brazing materials, and sealed-system supplies
+Materials Total: $[total]
+Labor:
+• $[price] – Compressor and filter drier replacement, including removal, installation, and brazing
+• $[price] – Sealed-system service, including pressure testing, evacuation, vacuum, refrigerant recharge, and operational testing
+Labor Total: $[total]
+Grand Total:
+$[exact total]
+Only include materials that were actually provided. Do not invent refrigerant or supply costs.
+MULTIPLE REPAIR OPTIONS
+When there are two repair choices, separate them clearly.
+Example:
+Option 1 – Maintenance Only
+Explain what will be cleaned or serviced.
+Clearly state:
+
+* Whether the repair is temporary
+* Whether no warranty is provided
+* Whether long-term operation is not guaranteed
+
+Total Cost:
+$[amount]
+Option 2 – Recommended Component Replacement
+Provide the full materials and labor breakdown.
+Grand Total:
+$[amount]
+Include a short recommendation explaining which option is the more reliable repair.
+MULTIPLE SEPARATE ISSUES
+When the appliance has two unrelated problems, create separate sections:
+Failure Issue #1
+Findings
+Needs
+Cause
+Failure Issue #2
+Findings
+Needs
+Cause
+Then provide either:
+
+* Estimate #1 and Estimate #2 with a Combined Grand Total, or
+* One combined estimate when the customer provided only one total.
+
+Do not mix unrelated repairs into one unclear labor description.
+OPTIONAL MAINTENANCE
+Optional services must be shown separately and must not be included in the primary repair total unless the customer requests a combined total.
+Example:
+Optional Preventive Maintenance
+Service Includes:
+
+* Condenser coil cleaning
+* Internal lint removal
+* Drain system cleaning
+* Descaling and sanitizing
+* Airflow inspection
+* Operational testing
+
+Additional Cost:
+$210.00
+Total With Optional Maintenance:
+$[combined total]
+COMPLETED SERVICE / NO PARTS REQUIRED
+When the problem was fixed during the visit:
+Service Outcome
+Explain what was found, what was corrected, and confirm that the unit was tested.
+Example:
+Inspection found that the drain hose was incorrectly positioned, restricting water flow. The hose was repositioned and secured during the visit. The dishwasher was tested and is now draining properly.
+Service Performed:
+
+* Corrected drain hose alignment
+* Tested drain operation
+* Verified normal operation
+
+Total Due:
+$[labor/service amount]
+Do not list parts when none are required.
+EXTERNAL PROBLEM / APPLIANCE OPERATING CORRECTLY
+When the appliance is not defective:
+Clearly state that no appliance malfunction was found.
+Examples:
+
+* Insufficient voltage from the wall outlet
+* Low household water pressure
+* Faulty external shutoff valve
+* Restricted building drain
+* Improper vent installation
+
+Recommend the correct licensed professional, such as:
+
+* Licensed electrician
+* Licensed plumber
+* HVAC contractor
+
+Do not create an appliance repair estimate unless repair work was performed.
+NO-WARRANTY REPAIR
+When the manufacturer-required repair cannot be fully completed:
+Include a prominent notice:
+Important Notice:
+This repair is provided without warranty because the complete manufacturer-recommended repair cannot be performed. The unavailable or discontinued component may allow the original condition to return.
+Repeat this at the end:
+Warranty: No warranty is provided for this repair.
+DISCOUNTS
+Show discounts after the subtotal.
+Example:
+Subtotal: $703.47
+Customer Discount (10%): –$70.35
+Grand Total:
+$633.12
+Calculate percentage discounts to the nearest cent.
+Do not apply a discount unless specifically requested.
+FINAL CALCULATION CHECK
+Before producing the report:
+
+1. Add all part prices.
+2. Add all labor items.
+3. Subtract any stated discount.
+4. Confirm the opening estimate total matches the Grand Total.
+5. Confirm all cents are preserved.
+6. Confirm quantities are included when more than one identical part is required.
+7. Confirm no part number or price was accidentally changed.
+8. Confirm optional services are not included in the main total unless requested.
+9. Confirm the report does not contain conflicting totals.
+10. Confirm the report contains no invented details.`;
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -385,38 +685,69 @@ function invalidSettings(message) {
     throw new MarketplaceServiceError(message, 'INVALID_SETTINGS', 400);
 }
 
-function storedInstruction(metadata) {
-    const value = toMetadataObject(metadata).instruction_text;
+function storedInstruction(metadata, key = 'instruction_text') {
+    const value = toMetadataObject(metadata)[key];
     if (typeof value !== 'string') return null;
     const normalized = value.trim();
     if (!normalized || normalized.length > MAX_INSTRUCTION_CHARS) return null;
     return normalized;
 }
 
+function effectiveReportInstruction(value) {
+    if (typeof value !== 'string') return DEFAULT_REPORT_INSTRUCTION;
+    const normalized = value.trim();
+    if (!normalized || normalized.length > MAX_INSTRUCTION_CHARS) {
+        return DEFAULT_REPORT_INSTRUCTION;
+    }
+    return normalized;
+}
+
 function validateReportToEstimateInstruction(body) {
-    if (!isPlainObject(body) || typeof body.instruction_text !== 'string') {
+    if (!isPlainObject(body)) {
         throw new MarketplaceServiceError(
-            'instruction_text must be a string.',
+            'Settings must be an object.',
             'INVALID_INSTRUCTION',
             400
         );
     }
-    const instructionText = body.instruction_text.trim();
-    if (!instructionText) {
+
+    const keys = ['instruction_text', 'report_instruction_text'];
+    const providedKeys = keys.filter(key => Object.prototype.hasOwnProperty.call(body, key));
+    if (providedKeys.length === 0) {
         throw new MarketplaceServiceError(
-            'instruction_text cannot be empty.',
+            'At least one instruction must be provided.',
             'INVALID_INSTRUCTION',
             400
         );
     }
-    if (instructionText.length > MAX_INSTRUCTION_CHARS) {
-        throw new MarketplaceServiceError(
-            `instruction_text must be ${MAX_INSTRUCTION_CHARS} characters or fewer.`,
-            'INVALID_INSTRUCTION',
-            400
-        );
+
+    const instructions = {};
+    for (const key of providedKeys) {
+        if (typeof body[key] !== 'string') {
+            throw new MarketplaceServiceError(
+                `${key} must be a string.`,
+                'INVALID_INSTRUCTION',
+                400
+            );
+        }
+        const value = body[key].trim();
+        if (!value) {
+            throw new MarketplaceServiceError(
+                `${key} cannot be empty.`,
+                'INVALID_INSTRUCTION',
+                400
+            );
+        }
+        if (value.length > MAX_INSTRUCTION_CHARS) {
+            throw new MarketplaceServiceError(
+                `${key} must be ${MAX_INSTRUCTION_CHARS} characters or fewer.`,
+                'INVALID_INSTRUCTION',
+                400
+            );
+        }
+        instructions[key] = value;
     }
-    return instructionText;
+    return instructions;
 }
 
 async function resolveReportToEstimateState(companyId) {
@@ -438,6 +769,9 @@ function buildReportToEstimateSettings(installation) {
         enabled: installation?.status === 'connected',
         installation_id: installation?.id || null,
         instruction_text: effectiveInstruction(storedInstruction(installation?.metadata)),
+        report_instruction_text: effectiveReportInstruction(
+            storedInstruction(installation?.metadata, 'report_instruction_text')
+        ),
     };
 }
 
@@ -451,6 +785,15 @@ async function getReportToEstimateInstruction(companyId) {
     if (!app) return DEFAULT_INSTRUCTION;
     const installation = await marketplaceQueries.findActiveInstallation(companyId, app.id);
     return effectiveInstruction(storedInstruction(installation?.metadata));
+}
+
+async function getReportPolishInstruction(companyId) {
+    const app = await marketplaceQueries.getPublishedAppByKey(REPORT_TO_ESTIMATE_APP_KEY);
+    if (!app) return DEFAULT_REPORT_INSTRUCTION;
+    const installation = await marketplaceQueries.findActiveInstallation(companyId, app.id);
+    return effectiveReportInstruction(
+        storedInstruction(installation?.metadata, 'report_instruction_text')
+    );
 }
 
 async function updateReportToEstimateInstruction(
@@ -467,12 +810,12 @@ async function updateReportToEstimateInstruction(
             404
         );
     }
-    const instructionText = validateReportToEstimateInstruction(body);
-    const updated = await marketplaceQueries.setInstallationInstructionText(
+    const instructions = validateReportToEstimateInstruction(body);
+    const updated = await marketplaceQueries.setInstallationInstructions(
         companyId,
         installation.id,
         REPORT_TO_ESTIMATE_APP_KEY,
-        instructionText
+        instructions
     );
     if (!updated) {
         throw new MarketplaceServiceError(
@@ -481,6 +824,13 @@ async function updateReportToEstimateInstruction(
             404
         );
     }
+    const payload = { app_key: REPORT_TO_ESTIMATE_APP_KEY };
+    if (instructions.instruction_text) {
+        payload.instruction_length = instructions.instruction_text.length;
+    }
+    if (instructions.report_instruction_text) {
+        payload.report_instruction_length = instructions.report_instruction_text.length;
+    }
     await marketplaceQueries.writeEvent({
         companyId,
         installationId: updated.id,
@@ -488,10 +838,7 @@ async function updateReportToEstimateInstruction(
         actorId: actorId || null,
         eventType: 'settings_updated',
         requestId,
-        payload: {
-            app_key: REPORT_TO_ESTIMATE_APP_KEY,
-            instruction_length: instructionText.length,
-        },
+        payload,
     });
     return buildReportToEstimateSettings(updated);
 }
@@ -922,8 +1269,15 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
                 client
             );
             const previousInstruction = storedInstruction(previous?.metadata);
+            const previousReportInstruction = storedInstruction(
+                previous?.metadata,
+                'report_instruction_text'
+            );
             if (previousInstruction) {
-                installationMetadata = { instruction_text: previousInstruction };
+                installationMetadata.instruction_text = previousInstruction;
+            }
+            if (previousReportInstruction) {
+                installationMetadata.report_instruction_text = previousReportInstruction;
             }
         }
 
@@ -1420,6 +1774,7 @@ async function retryProvisioning(companyId, actorId, installationId, { requestId
 
 module.exports = {
     MarketplaceServiceError,
+    DEFAULT_REPORT_INSTRUCTION,
     SMART_SLOT_ENGINE_APP_KEY,
     AI_REPAIR_ADVISOR_APP_KEY,
     REPORT_TO_ESTIMATE_APP_KEY,
@@ -1437,10 +1792,12 @@ module.exports = {
     validateRateMeSettingsInput,
     validateAgentCallingWindowInput,
     validateReportToEstimateInstruction,
+    effectiveReportInstruction,
     getAppSettings,
     updateAppSettings,
     getReportToEstimateSettings,
     getReportToEstimateInstruction,
+    getReportPolishInstruction,
     updateReportToEstimateInstruction,
     resolveRelySettings,
     _toScopeArray: toScopeArray,
