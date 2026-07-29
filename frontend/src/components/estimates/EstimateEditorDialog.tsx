@@ -507,7 +507,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                 <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 shrink-0" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
                                                     <button
                                                         type="button"
-                                                        onClick={() => setDiscountType('fixed')}
+                                                        onClick={() => { if (discountType !== 'fixed') setDiscountValue(''); setDiscountType('fixed'); }}
                                                         className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
                                                             discountType === 'fixed'
                                                                 ? 'bg-[var(--blanc-ink-1)] text-white'
@@ -518,7 +518,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        onClick={() => setDiscountType('percentage')}
+                                                        onClick={() => { if (discountType !== 'percentage') setDiscountValue(''); setDiscountType('percentage'); }}
                                                         className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
                                                             discountType === 'percentage'
                                                                 ? 'bg-[var(--blanc-ink-1)] text-white'
@@ -539,6 +539,8 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                         type="text"
                                                         inputMode="decimal"
                                                         value={discountValue}
+                                                        placeholder="0"
+                                                        onFocus={event => event.currentTarget.select()}
                                                         onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))}
                                                         maxLength={6}
                                                         className="w-24 h-8 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"

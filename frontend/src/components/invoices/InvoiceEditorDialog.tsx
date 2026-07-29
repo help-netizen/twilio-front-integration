@@ -482,7 +482,7 @@ export function InvoiceEditorDialog({
                                         <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 shrink-0" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
                                             <button
                                                 type="button"
-                                                onClick={() => setDiscountType('fixed')}
+                                                onClick={() => { if (discountType !== 'fixed') setDiscountValue(''); setDiscountType('fixed'); }}
                                                 className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
                                                     discountType === 'fixed'
                                                         ? 'bg-[var(--blanc-ink-1)] text-white'
@@ -493,7 +493,7 @@ export function InvoiceEditorDialog({
                                             </button>
                                             <button
                                                 type="button"
-                                                onClick={() => setDiscountType('percentage')}
+                                                onClick={() => { if (discountType !== 'percentage') setDiscountValue(''); setDiscountType('percentage'); }}
                                                 className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
                                                     discountType === 'percentage'
                                                         ? 'bg-[var(--blanc-ink-1)] text-white'
@@ -514,6 +514,8 @@ export function InvoiceEditorDialog({
                                                 type="text"
                                                 inputMode="decimal"
                                                 value={discountValue}
+                                                placeholder="0"
+                                                onFocus={event => event.currentTarget.select()}
                                                 onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))}
                                                 maxLength={6}
                                                 className={`${CELL_INPUT} w-24 px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
