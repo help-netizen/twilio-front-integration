@@ -10,6 +10,7 @@
  * card rendered outside the provider (tests, storybook) never throws.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { toast } from 'sonner';
 import { useAuth } from '@/auth/AuthProvider';
 
 export interface PlayerTrack {
@@ -88,23 +89,59 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [rate, setRate] = useState(1);
-    // Pending seek for a track whose <audio> src is applied on the NEXT render
-    // (seekTrack on a non-active track): applied in the effect below.
+    // OB-44: the freshest auth token, readable inside gesture handlers without
+    // re-creating them. The src is applied IMPERATIVELY (never via the src prop),
+    // so a background token refresh cannot reset a playing element.
+    const tokenRef = useRef<string | null>(null);
+    tokenRef.current = token ?? null;
+    const rateRef = useRef(rate);
+    rateRef.current = rate;
+    // Guard so a broken source toasts once, not per retry/event.
+    const erroredSrcRef = useRef<string | null>(null);
+    // Seek requested before the element has metadata — applied on loadedmetadata.
     const pendingSeekRef = useRef<number | null>(null);
+
+    // OB-44: playback failures must be VISIBLE — a rejected play() or a media
+    // error used to be swallowed silently, leaving a dead Play button.
+    const surfacePlaybackFailure = useCallback((src: string | null) => {
+        setIsPlaying(false);
+        if (src && erroredSrcRef.current === src) return; // once per source
+        erroredSrcRef.current = src;
+        toast.error("Couldn't play the recording. Try again.");
+    }, []);
+
+    const safePlay = useCallback((a: HTMLAudioElement) => {
+        a.play()?.catch?.(() => surfacePlaybackFailure(a.currentSrc || a.getAttribute('src')));
+    }, [surfacePlaybackFailure]);
 
     useEffect(() => {
         const a = audioRef.current; if (!a) return;
         const onTime = () => setCurrentTime(a.currentTime);
-        const onDur = () => { if (isFinite(a.duration) && a.duration > 0) setDuration(a.duration); };
+        const onDur = () => {
+            if (isFinite(a.duration) && a.duration > 0) setDuration(a.duration);
+            // A seek requested before metadata arrived is applied here.
+            const seek = pendingSeekRef.current;
+            if (seek != null) {
+                pendingSeekRef.current = null;
+                try { a.currentTime = seek; setCurrentTime(seek); } catch { /* ignore */ }
+            }
+        };
         const onPlay = () => setIsPlaying(true);
         const onPause = () => setIsPlaying(false);
         const onEnded = () => setIsPlaying(false);
+        // Media/network errors (401 on a stale token, unsupported source, …).
+        // close() empties the src — an error with no src attribute is not real.
+        const onError = () => {
+            if (!a.getAttribute('src')) return;
+            surfacePlaybackFailure(a.currentSrc || a.getAttribute('src'));
+        };
         a.addEventListener('timeupdate', onTime);
         a.addEventListener('loadedmetadata', onDur);
         a.addEventListener('durationchange', onDur);
         a.addEventListener('play', onPlay);
         a.addEventListener('pause', onPause);
         a.addEventListener('ended', onEnded);
+        a.addEventListener('error', onError);
         return () => {
             a.removeEventListener('timeupdate', onTime);
             a.removeEventListener('loadedmetadata', onDur);
@@ -112,47 +149,46 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
             a.removeEventListener('play', onPlay);
             a.removeEventListener('pause', onPause);
             a.removeEventListener('ended', onEnded);
+            a.removeEventListener('error', onError);
         };
-    }, [track?.callSid]);
-
-    // New track mounted: apply rate, optional pending seek, start playback.
-    useEffect(() => {
-        const a = audioRef.current; if (!a || !track) return;
-        a.playbackRate = rate;
-        const seek = pendingSeekRef.current;
-        pendingSeekRef.current = null;
-        if (seek != null) { a.currentTime = seek; setCurrentTime(seek); }
-        a.play()?.catch?.(() => setIsPlaying(false));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [track?.callSid]);
+    }, [surfacePlaybackFailure]);
 
     // Leaving Pulse unmounts the provider — make the stop explicit as well
     // (TC-PP-08), not merely a consequence of DOM teardown.
     useEffect(() => () => { audioRef.current?.pause(); }, []);
 
-    const switchTo = useCallback((t: PlayerTrack, seek: number | null) => {
-        setTrack(prev => {
-            if (prev?.callSid === t.callSid) return prev;
-            setCurrentTime(seek ?? 0);
-            setDuration(t.durationHint && isFinite(t.durationHint) ? t.durationHint : 0);
-            return t;
-        });
-    }, []);
+    // OB-44 (iOS): load + play must run SYNCHRONOUSLY inside the user's tap.
+    // The old flow set state and played in an effect AFTER the re-render — outside
+    // the gesture — which iOS blocks (NotAllowedError) → dead Play button. The
+    // <audio> element is now persistent and its src is applied imperatively here,
+    // with the FRESHEST auth token (tokenRef), so a background token refresh can
+    // never reset a playing element either.
+    const startTrack = useCallback((t: PlayerTrack, seek: number | null) => {
+        const a = audioRef.current; if (!a) return;
+        erroredSrcRef.current = null;
+        pendingSeekRef.current = seek;
+        a.src = buildAudioSrc(t.audioUrl, tokenRef.current);
+        a.playbackRate = rateRef.current;
+        a.load();
+        setCurrentTime(seek ?? 0);
+        setDuration(t.durationHint && isFinite(t.durationHint) ? t.durationHint : 0);
+        setTrack(t);
+        safePlay(a);
+    }, [safePlay]);
 
     const playTrack = useCallback((t: PlayerTrack) => {
         const a = audioRef.current;
         if (resolvePlayIntent(track?.callSid ?? null, t) === 'toggle' && a) {
-            if (a.paused) a.play()?.catch?.(() => setIsPlaying(false)); else a.pause();
+            if (a.paused) safePlay(a); else a.pause();
             return;
         }
-        pendingSeekRef.current = null;
-        switchTo(t, null);
-    }, [track?.callSid, switchTo]);
+        startTrack(t, null);
+    }, [track?.callSid, startTrack, safePlay]);
 
     const toggle = useCallback(() => {
         const a = audioRef.current; if (!a || !track) return;
-        if (a.paused) a.play()?.catch?.(() => setIsPlaying(false)); else a.pause();
-    }, [track]);
+        if (a.paused) safePlay(a); else a.pause();
+    }, [track, safePlay]);
 
     const seekTo = useCallback((sec: number) => {
         const a = audioRef.current; if (!a) return;
@@ -164,12 +200,11 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
         const a = audioRef.current;
         if (resolveSeekIntent(track?.callSid ?? null, t, sec).kind === 'seek-current' && a) {
             seekTo(sec);
-            if (a.paused) a.play()?.catch?.(() => setIsPlaying(false));
+            if (a.paused) safePlay(a);
             return;
         }
-        pendingSeekRef.current = sec;
-        switchTo(t, sec);
-    }, [track?.callSid, seekTo, switchTo]);
+        startTrack(t, sec);
+    }, [track?.callSid, seekTo, startTrack, safePlay]);
 
     const skip = useCallback((deltaSec: number) => {
         const a = audioRef.current; if (!a) return;
@@ -185,7 +220,16 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const close = useCallback(() => {
-        audioRef.current?.pause();
+        const a = audioRef.current;
+        if (a) {
+            a.pause();
+            // Release the media source; the src-less error the load() below can fire
+            // is ignored by the onError guard (no src attribute).
+            a.removeAttribute('src');
+            a.load();
+        }
+        erroredSrcRef.current = null;
+        pendingSeekRef.current = null;
         setTrack(null); setIsPlaying(false); setCurrentTime(0); setDuration(0);
     }, []);
 
@@ -194,20 +238,17 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
         playTrack, toggle, seekTo, seekTrack, skip, cycleRate, close,
     }), [track, isPlaying, currentTime, duration, rate, playTrack, toggle, seekTo, seekTrack, skip, cycleRate, close]);
 
-    const src = track ? buildAudioSrc(track.audioUrl, token) : undefined;
-
     return (
         <PulsePlayerContext.Provider value={api}>
             {children}
-            {track && (
-                <audio
-                    key={track.callSid}
-                    ref={audioRef}
-                    src={src}
-                    preload="metadata"
-                    data-testid="pulse-player-audio"
-                />
-            )}
+            {/* PERSISTENT element (OB-44): it must exist BEFORE the first tap so
+                load+play can run synchronously inside that gesture (iOS policy).
+                Its src is applied imperatively in startTrack — never as a prop. */}
+            <audio
+                ref={audioRef}
+                preload="metadata"
+                data-testid="pulse-player-audio"
+            />
         </PulsePlayerContext.Provider>
     );
 }

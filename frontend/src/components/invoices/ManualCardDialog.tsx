@@ -3,6 +3,7 @@ import { CircleCheckBig, Loader2, LockKeyhole, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { FloatingTextField } from '../shared/FloatingTextField';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import {
     Dialog,
     DialogContent,
@@ -529,6 +530,7 @@ export default function ManualCardDialog({
     onDone,
     onCopyLinkFallback,
 }: Props) {
+    const isMobile = useIsMobile();
     const sessionRef = useRef<ManualCardSession | null>(null);
     const popupHandleRef = useRef<CardEntryPopupHandle | null>(null);
     const submitLockRef = useRef(false);
@@ -854,7 +856,10 @@ export default function ManualCardDialog({
     };
 
     return (
-        <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+        // modal={!isMobile} (mirrors fb010aa9): a Radix MODAL dialog focus-traps, which
+        // yanks focus out of the pattern-A floating receipt-email input on mobile —
+        // the input went dead and the keyboard never rose (OB-45).
+        <Dialog open={open} onOpenChange={handleDialogOpenChange} modal={!isMobile}>
             <DialogContent
                 variant="panel"
                 // Charge/confirm content is short; floor the mobile sheet so it isn't a

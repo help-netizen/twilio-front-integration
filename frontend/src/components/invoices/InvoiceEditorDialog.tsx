@@ -97,8 +97,10 @@ export function InvoiceEditorDialog({
 
     const [items, setItems] = useState<LineItem[]>([]);
     const [taxRate, setTaxRate] = useState<string>('0');
-    const [discountActive, setDiscountActive] = useState(false);
-    const [discountAmount, setDiscountAmount] = useState<string>('0');
+    // OB-43: $ / % toggle mirrors EstimateEditorDialog. Invoices persist only the
+    // computed discount_amount (no discount_type column) — % is an input mode.
+    const [discountType, setDiscountType] = useState<'fixed' | 'percentage' | null>(null);
+    const [discountValue, setDiscountValue] = useState<string>('0');
 
     // Aside (document settings) — Due date is derived from the invoice template's
     // `default_due_days` on the backend, so it is not editable here at create time.
@@ -122,8 +124,8 @@ export function InvoiceEditorDialog({
         setSummaryOpen(false);
         setTaxRate(invoice?.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0');
         const initialDiscount = Number(invoice?.discount_amount) || 0;
-        setDiscountActive(initialDiscount > 0);
-        setDiscountAmount(initialDiscount > 0 ? String(initialDiscount) : '0');
+        setDiscountType(initialDiscount > 0 ? 'fixed' : null);
+        setDiscountValue(initialDiscount > 0 ? String(initialDiscount) : '0');
         setPaymentTerms(invoice?.payment_terms || '');
         setItems((invoice?.items || []).map(item => ({
             key: newKey(),
@@ -140,11 +142,20 @@ export function InvoiceEditorDialog({
     // ── Totals ───────────────────────────────────────────────────────────────
 
     const subtotal = useMemo(() => items.reduce((sum, item) => sum + amount(item), 0), [items]);
-    const discountVal = discountActive ? (Number(discountAmount) || 0) : 0;
+    const rawDiscountValue = Number(discountValue) || 0;
+    const discountVal = discountType === 'percentage'
+        ? subtotal * Math.min(Math.max(rawDiscountValue, 0), 100) / 100
+        : discountType === 'fixed'
+            ? rawDiscountValue
+            : 0;
     const taxableSubtotal = items.filter(item => item.taxable).reduce((sum, item) => sum + amount(item), 0);
     const taxAmount = Math.max(taxableSubtotal - discountVal, 0) * ((Number(taxRate) || 0) / 100);
     const total = subtotal - discountVal + taxAmount;
-    const discountError = discountActive && discountVal > subtotal ? 'Discount cannot exceed subtotal' : '';
+    const discountError = discountType === 'fixed' && discountVal > subtotal
+        ? 'Discount cannot exceed subtotal'
+        : discountType === 'percentage' && rawDiscountValue > 100
+            ? 'Discount percentage cannot exceed 100'
+            : '';
     const canSave = (items.length > 0 || summary.trim().length > 0) && !discountError;
 
     // ── Summary handlers ─────────────────────────────────────────────────────
@@ -464,24 +475,57 @@ export function InvoiceEditorDialog({
                                     <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
                                     <span className="font-mono text-[var(--blanc-ink-1)]">{money(subtotal)}</span>
                                 </div>
-                                {discountActive ? (
-                                    /* OB-24: wrap on narrow widths — the amount drops to its own
-                                       right-aligned line instead of overflowing the panel edge. */
+                                {discountType ? (
+                                    /* OB-24 wrap + OB-43 $/% toggle (mirrors EstimateEditorDialog). */
                                     <div className="flex flex-wrap items-center gap-2 text-sm">
                                         <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                        <span className="text-[var(--blanc-ink-3)]">$</span>
-                                        <MoneyInput
-                                            value={discountAmount}
-                                            onValueChange={setDiscountAmount}
-                                            className={`${CELL_INPUT} w-24 px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
-                                        />
-                                        <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountActive(false); setDiscountAmount('0'); }} title="Remove discount">
+                                        <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 shrink-0" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setDiscountType('fixed')}
+                                                className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
+                                                    discountType === 'fixed'
+                                                        ? 'bg-[var(--blanc-ink-1)] text-white'
+                                                        : 'text-[var(--blanc-ink-3)] hover:text-[var(--blanc-ink-1)]'
+                                                }`}
+                                            >
+                                                $
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setDiscountType('percentage')}
+                                                className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
+                                                    discountType === 'percentage'
+                                                        ? 'bg-[var(--blanc-ink-1)] text-white'
+                                                        : 'text-[var(--blanc-ink-3)] hover:text-[var(--blanc-ink-1)]'
+                                                }`}
+                                            >
+                                                %
+                                            </button>
+                                        </div>
+                                        {discountType === 'fixed' ? (
+                                            <MoneyInput
+                                                value={discountValue}
+                                                onValueChange={setDiscountValue}
+                                                className={`${CELL_INPUT} w-24 px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
+                                            />
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                inputMode="decimal"
+                                                value={discountValue}
+                                                onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))}
+                                                maxLength={6}
+                                                className={`${CELL_INPUT} w-24 px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
+                                            />
+                                        )}
+                                        <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }} title="Remove discount">
                                             <Trash2 className="size-4" />
                                         </Button>
                                         <span className="font-mono text-red-600 ml-auto">-{money(discountVal)}</span>
                                     </div>
                                 ) : (
-                                    <button type="button" className="text-sm text-blue-600" onClick={() => { setDiscountActive(true); setDiscountAmount('0'); }}>
+                                    <button type="button" className="text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>
                                         Add discount
                                     </button>
                                 )}
