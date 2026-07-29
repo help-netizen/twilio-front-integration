@@ -120,10 +120,10 @@ export function FullScreenTextEditor({
             </div>
 
             {/* Bottom action bar — rides above the keyboard (the layer ends at keyboardInset),
-                the text scrolls above it. Mirrors the search-picker's bottom dock. */}
-            {(onDone || onRepolish) && (
-                <div
-                    className="flex shrink-0 items-center gap-2 border-t"
+                the text scrolls above it. Mirrors the search-picker's bottom dock. Always
+                shown: onDone (Accept/Done) is required; Re-polish is added when provided. */}
+            <div
+                className="flex shrink-0 items-center gap-2 border-t"
                     style={{
                         borderColor: 'var(--blanc-line)',
                         background: 'var(--blanc-surface-strong)',
@@ -153,7 +153,6 @@ export function FullScreenTextEditor({
                         {doneLabel}
                     </button>
                 </div>
-            )}
         </div>,
         document.body,
     );
