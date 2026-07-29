@@ -187,7 +187,7 @@ describe('sendInvoice — email happy path', () => {
         expect(mockSendEmail).toHaveBeenCalledTimes(1);
         const [coId, payload] = mockSendEmail.mock.calls[0];
         expect(coId).toBe(COMPANY_A);
-        expect(payload.subject).toBe('Invoice #INVOICE L-519-1 from Boston Masters');
+        expect(payload.subject).toBe('Invoice L-519-1 from Boston Masters');
         // PAY page link, NOT the /i/<token> PDF short link
         expect(payload.body).toContain('https://app.albusto.com/pay/tok_invABCDE');
         expect(payload.body).not.toContain('/i/tok_invABCDE');
@@ -200,7 +200,7 @@ describe('sendInvoice — email happy path', () => {
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,
-            'Invoice #INVOICE L-519-1 sent to c@x.com',
+            'Invoice L-519-1 sent to c@x.com',
             [],
             'Agent',
             CRM_USER_ID,
@@ -242,7 +242,7 @@ describe('sendInvoice — sms happy path', () => {
             .toBeLessThan(mockUpdateInvoiceStatus.mock.invocationCallOrder[0]);
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,
-            'Invoice #INVOICE L-519-1 sent by SMS to +15551234567',
+            'Invoice L-519-1 sent by SMS to +15551234567',
             [],
             'Agent',
             CRM_USER_ID,

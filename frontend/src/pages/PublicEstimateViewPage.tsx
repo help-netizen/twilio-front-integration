@@ -31,9 +31,10 @@ interface EstimateInfo {
 const money = (v: number, cur = 'USD') =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(Number(v || 0));
 
-function statusLabel(status: string): string {
-    if (!status) return '';
-    return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, ' ');
+// Doc numbers are stored with the doc-type word inside ("ESTIMATE L-53-5");
+// strip it so headings don't read "Estimate ESTIMATE L-53-5".
+function shortDocNumber(value: string | null | undefined): string {
+    return String(value || '').replace(/^(?:ESTIMATE|INVOICE)\s+/i, '');
 }
 
 export default function PublicEstimateViewPage() {
@@ -66,11 +67,13 @@ export default function PublicEstimateViewPage() {
         <div style={wrap}>
             <div style={card}>
                 <div style={{ fontSize: 13, color: '#a99e8a', fontWeight: 600 }}>{info.company_name}</div>
-                <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 22, margin: '6px 0 4px', lineHeight: 1.3 }}>Estimate {info.estimate_number}</h1>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#8a7d68', background: 'rgba(25,25,25,0.06)', borderRadius: 999, padding: '3px 10px' }}>{statusLabel(info.status)}</span>
-                    {info.contact_name && <span style={{ fontSize: 13, color: '#a99e8a' }}>For {info.contact_name}</span>}
-                </div>
+                <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 22, margin: '6px 0 4px', lineHeight: 1.3 }}>Estimate {shortDocNumber(info.estimate_number)}</h1>
+                {/* Workflow status (draft/sent/viewed) is INTERNAL — the customer page names only the document. */}
+                {info.contact_name && (
+                    <div style={{ marginBottom: 18 }}>
+                        <span style={{ fontSize: 13, color: '#a99e8a' }}>For {info.contact_name}</span>
+                    </div>
+                )}
 
                 <div style={{ borderTop: '1px solid rgba(25,25,25,0.10)', paddingTop: 14 }}>
                     {info.items.map((it, i) => (

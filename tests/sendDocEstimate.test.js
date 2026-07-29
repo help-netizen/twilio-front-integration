@@ -193,7 +193,7 @@ describe('sendEstimate — email happy path', () => {
         const [coId, payload] = mockSendEmail.mock.calls[0];
         expect(coId).toBe(COMPANY_A);
         expect(payload.to).toBe('c@x.com');
-        expect(payload.subject).toBe('Estimate ESTIMATE 519-1 from Boston Masters');
+        expect(payload.subject).toBe('Estimate 519-1 from Boston Masters');
         expect(payload.body).toContain('https://app.albusto.com/e/tok_estABCDE');
         expect(payload.body).toContain('Hi there');
         expect(payload.files).toHaveLength(1);
@@ -210,7 +210,7 @@ describe('sendEstimate — email happy path', () => {
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,
-            'Estimate #ESTIMATE 519-1 sent to c@x.com',
+            'Estimate 519-1 sent to c@x.com',
             [],
             'Agent',
             CRM_USER_ID,
@@ -239,7 +239,7 @@ describe('sendEstimate — email happy path', () => {
     it('TC-SD-016: subject falls back to "Estimate <number>" when company name unavailable', async () => {
         mockGetCompanyById.mockResolvedValue(null);
         await request(appWith()).post(`/${EST_ID}/send`).send({ channel: 'email', recipient: 'c@x.com', message: 'm' });
-        expect(mockSendEmail.mock.calls[0][1].subject).toBe('Estimate ESTIMATE 519-1');
+        expect(mockSendEmail.mock.calls[0][1].subject).toBe('Estimate 519-1');
     });
 });
 
@@ -269,7 +269,7 @@ describe('sendEstimate — sms happy path', () => {
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,
-            'Estimate #ESTIMATE 519-1 sent by SMS to +15551234567',
+            'Estimate 519-1 sent by SMS to +15551234567',
             [],
             'Agent',
             CRM_USER_ID,

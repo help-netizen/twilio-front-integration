@@ -10,6 +10,7 @@ const invoicesQueries = require('../db/invoicesQueries');
 const estimatesQueries = require('../db/estimatesQueries');
 const paymentsService = require('./paymentsService');
 const { toE164 } = require('../utils/phoneUtils');
+const { shortDocNumber } = require('../utils/docNumber');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 const { logFinancialActivity } = require('./financialActivityService');
 const { buildEmailBody } = require('./documentEmailBody');
@@ -75,6 +76,65 @@ async function validateLinkedEntities(companyId, data = {}, client = null) {
         );
         if (!estimate) throw new InvoicesServiceError('NOT_FOUND', 'Estimate not found', 404);
     }
+}
+
+async function updateInvoicePaymentStatus(companyId, invoiceId, client = null) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
+    if (!invoice) {
+        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
+    }
+
+    if (Number(invoice.balance_due) <= 0) {
+        return invoicesQueries.updateInvoiceStatus(
+            invoiceId,
+            companyId,
+            'paid',
+            null,
+            client
+        );
+    }
+    if (Number(invoice.amount_paid) > 0) {
+        return invoicesQueries.updateInvoiceStatus(
+            invoiceId,
+            companyId,
+            'partial',
+            null,
+            client
+        );
+    }
+    return invoice;
+}
+
+/**
+ * Absorb eligible standalone payments from an invoice's Job.
+ * The ledger claim is idempotent; invoice aggregates are changed only for rows
+ * claimed by this invocation.
+ */
+async function absorbUnappliedJobPayments(companyId, invoiceId, client) {
+    const claimed = await invoicesQueries.claimUnappliedJobPayments(
+        companyId,
+        invoiceId,
+        client
+    );
+
+    if (claimed.count > 0) {
+        const updated = await invoicesQueries.recordPayment(
+            invoiceId,
+            companyId,
+            claimed.amount,
+            client
+        );
+        if (!updated) {
+            throw new InvoicesServiceError(
+                'NOT_FOUND',
+                `Invoice ${invoiceId} not found`,
+                404
+            );
+        }
+        await updateInvoicePaymentStatus(companyId, invoiceId, client);
+    }
+
+    return getInvoice(companyId, invoiceId, client);
 }
 
 /**
@@ -202,6 +262,10 @@ async function createInvoice(companyId, userId, data, client = null, activityAct
             await invoicesQueries.addInvoiceItem(companyId, invoice.id, item, client);
         }
         await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id, client);
+    }
+
+    if (invoice.job_id) {
+        await absorbUnappliedJobPayments(companyId, invoice.id, client);
     }
 
     // Log creation event
@@ -555,6 +619,8 @@ async function sendInvoice(
         throw new InvoicesServiceError('VALIDATION', 'Recipient is required.', 400);
     }
     const number = invoice.invoice_number || `invoice-${id}`;
+    // "INVOICE L-1439-1" → "L-1439-1" wherever we say the word "Invoice" ourselves.
+    const shortNumber = shortDocNumber(number) || number;
     let noteRecipient = to;
 
     try {
@@ -586,11 +652,11 @@ async function sendInvoice(
             senderName = asText(company?.settings?.email_sender_name);
         } catch { /* subject falls back to no company suffix */ }
         const subject = companyName
-            ? `Invoice #${number} from ${companyName}`
-            : `Invoice #${number}`;
+            ? `Invoice ${shortNumber} from ${companyName}`
+            : `Invoice ${shortNumber}`;
 
         const { buffer } = await generatePdf(companyId, id, client);
-        const safeFile = String(number).replace(/[^a-z0-9_-]+/gi, '_');
+        const safeFile = String(shortNumber).replace(/[^a-z0-9_-]+/gi, '_');
 
         const emailService = require('./emailService');
         try {
@@ -797,17 +863,7 @@ async function recordPayment(
         activityActor
     );
 
-    const updated = await invoicesQueries.getInvoiceById(companyId, id, client);
-    if (!updated) {
-        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
-    }
-
-    // Update status based on balance
-    if (updated.balance_due <= 0) {
-        await invoicesQueries.updateInvoiceStatus(id, companyId, 'paid', null, client);
-    } else if (updated.amount_paid > 0) {
-        await invoicesQueries.updateInvoiceStatus(id, companyId, 'partial', null, client);
-    }
+    await updateInvoicePaymentStatus(companyId, id, client);
 
     // Log event
     await invoicesQueries.createEvent(companyId, id, 'payment_recorded', 'user', userId, {
@@ -968,6 +1024,7 @@ module.exports = {
     listInvoices,
     getInvoice,
     createInvoice,
+    absorbUnappliedJobPayments,
     updateInvoice,
     deleteInvoice,
     addItem,

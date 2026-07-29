@@ -1,5 +1,7 @@
 'use strict';
 
+const { shortDocNumber } = require('../utils/docNumber');
+
 function escapeHtml(value) {
     return String(value ?? '')
         .replaceAll('&', '&amp;')
@@ -129,7 +131,7 @@ function buildPaymentReceiptEmail({
         ? `<img src="cid:${escapeHtml(logoContentId)}" alt="${escapeHtml(companyName)}" style="display:block;max-height:56px;max-width:180px;margin-bottom:16px">`
         : `<div style="margin-bottom:16px;color:#101828;font-size:20px;font-weight:700">${escapeHtml(companyName)}</div>`;
     const intro = invoice
-        ? `Your copy of Invoice #${escapeHtml(invoiceNumber)} is attached.`
+        ? `Your copy of Invoice ${escapeHtml(shortDocNumber(invoiceNumber) || invoiceNumber)} is attached.`
         : 'Here is the summary of your recent payment.';
 
     const html = `<div style="margin:0;padding:24px;background:#f2f4f7;font-family:Arial,sans-serif;color:#344054">`
@@ -155,7 +157,7 @@ function buildPaymentReceiptEmail({
         `Your payment receipt from ${companyName}`,
         `Hi${context.customer_name ? ` ${headerText(context.customer_name)}` : ''},`,
         'Thank you for your recent payment.',
-        invoice ? `Invoice #${headerText(invoiceNumber)} is attached.` : 'Payment summary:',
+        invoice ? `Invoice ${headerText(shortDocNumber(invoiceNumber) || invoiceNumber)} is attached.` : 'Payment summary:',
         `Payment date: ${formatDate(context.processed_at || context.created_at, context.company_timezone)}`,
         `Payment method: ${paymentMethodLabel(context)}`,
         `Amount: ${money(context.amount, currency)}`,

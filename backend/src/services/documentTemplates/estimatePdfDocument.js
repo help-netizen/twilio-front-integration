@@ -241,7 +241,7 @@ function renderSection(s, descriptor, estimate, tokens) {
                 e(P.Text, { style: { fontSize: tokens.estimateLabelSize, color: muted, letterSpacing: tokens.estimateLabelLetterSpacing, textTransform: 'uppercase' } }, 'Estimate'),
                 e(P.Text, { style: { fontSize: tokens.estimateNumberSize, color: accent, fontFamily: 'Helvetica-Bold' } }, (estimate.estimate_number || 'ESTIMATE').replace(/^ESTIMATE\s+/i, '')),
                 e(P.Text, { style: { fontSize: tokens.estimateMetaSize, color: muted, marginTop: 4 } }, 'Date: ', e(P.Text, { style: { color: ink } }, formatDate(estimate.updated_at || estimate.created_at))),
-                e(P.Text, { style: { fontSize: tokens.estimateMetaSize, color: muted } }, 'Status: ', e(P.Text, { style: { color: ink } }, estimate.status || 'draft')),
+                // Workflow status (draft/sent/viewed) is INTERNAL — never in the customer document.
             )
         );
     }
@@ -251,7 +251,7 @@ function renderSection(s, descriptor, estimate, tokens) {
             e(P.Text, { style: { fontSize: tokens.estimateLabelSize, color: muted, letterSpacing: tokens.estimateLabelLetterSpacing, textTransform: 'uppercase' } }, 'Estimate'),
             e(P.Text, { style: { fontSize: tokens.estimateNumberSize, color: accent, fontFamily: 'Helvetica-Bold' } }, (estimate.estimate_number || 'ESTIMATE').replace(/^ESTIMATE\s+/i, '')),
             e(P.Text, { style: { fontSize: tokens.estimateMetaSize, color: muted, marginTop: 6 } }, 'Date: ', e(P.Text, { style: { color: ink } }, formatDate(estimate.updated_at || estimate.created_at))),
-            e(P.Text, { style: { fontSize: tokens.estimateMetaSize, color: muted } }, 'Status: ', e(P.Text, { style: { color: ink } }, estimate.status || 'draft')),
+            // Workflow status (draft/sent/viewed) is INTERNAL — never in the customer document.
         );
     }
 

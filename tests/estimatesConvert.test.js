@@ -51,8 +51,10 @@ jest.mock('../backend/src/db/invoicesQueries', () => ({
 }));
 
 const mockGetInvoice = jest.fn();
+const mockAbsorbUnappliedJobPayments = jest.fn();
 jest.mock('../backend/src/services/invoicesService', () => ({
     getInvoice: (...args) => mockGetInvoice(...args),
+    absorbUnappliedJobPayments: (...args) => mockAbsorbUnappliedJobPayments(...args),
 }));
 jest.mock('../backend/src/services/documentTemplatesService', () => ({
     resolveTemplate: jest.fn(async () => ({
@@ -118,6 +120,7 @@ describe('estimatesService.convertToInvoice', () => {
         mockCreateEvent_est.mockResolvedValue({});
         mockCreateEvent_inv.mockResolvedValue({});
         mockGetInvoice.mockResolvedValue({ id: 99, status: 'draft' });
+        mockAbsorbUnappliedJobPayments.mockResolvedValue({});
     });
 
     it('TC-S4T1-01: creates invoice and copies line items from approved estimate', async () => {
@@ -211,5 +214,27 @@ describe('estimatesService.convertToInvoice', () => {
         await expect(convertToInvoice(COMPANY_ID, USER_ID, EST_ID)).resolves.toBeDefined();
         expect(mockAddInvoiceItem).not.toHaveBeenCalled();
         expect(mockRecalculateTotals).toHaveBeenCalledWith(COMPANY_ID, 99, mockClient);
+    });
+
+    it('absorbs standalone Job payments after converted invoice totals are calculated', async () => {
+        mockGetEstimateById.mockResolvedValue(makeEstimate({ job_id: 73 }));
+        mockGetEstimateItems.mockResolvedValue([makeItem()]);
+        mockCreateInvoice.mockResolvedValue({ id: 99, job_id: 73 });
+
+        await convertToInvoice(COMPANY_ID, USER_ID, EST_ID);
+
+        expect(mockRecalculateTotals).toHaveBeenCalledWith(
+            COMPANY_ID,
+            99,
+            mockClient
+        );
+        expect(mockAbsorbUnappliedJobPayments).toHaveBeenCalledWith(
+            COMPANY_ID,
+            99,
+            mockClient
+        );
+        expect(mockRecalculateTotals.mock.invocationCallOrder[0]).toBeLessThan(
+            mockAbsorbUnappliedJobPayments.mock.invocationCallOrder[0]
+        );
     });
 });

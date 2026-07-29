@@ -9,6 +9,7 @@ const estimatesQueries = require('../db/estimatesQueries');
 const estimateItemPresetsQueries = require('../db/estimateItemPresetsQueries');
 const { renderEstimatePdf } = require('./estimatePdfService');
 const { toE164 } = require('../utils/phoneUtils');
+const { shortDocNumber } = require('../utils/docNumber');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 const { logFinancialActivity } = require('./financialActivityService');
 const {
@@ -583,6 +584,8 @@ async function sendEstimate(
         throw new EstimatesServiceError('VALIDATION', 'Recipient is required.', 400);
     }
     const number = estimate.estimate_number || `estimate-${id}`;
+    // "ESTIMATE L-53-5" → "L-53-5" wherever we say the word "Estimate" ourselves.
+    const shortNumber = shortDocNumber(number) || number;
     let noteRecipient = to;
 
     try {
@@ -607,11 +610,11 @@ async function sendEstimate(
             senderName = asText(company?.settings?.email_sender_name);
         } catch { /* subject falls back to no company suffix */ }
         const subject = companyName
-            ? `Estimate ${number} from ${companyName}`
-            : `Estimate ${number}`;
+            ? `Estimate ${shortNumber} from ${companyName}`
+            : `Estimate ${shortNumber}`;
 
         const { buffer } = await generatePdf(companyId, id, client);
-        const safeFile = String(number).replace(/[^a-z0-9_-]+/gi, '_');
+        const safeFile = String(shortNumber).replace(/[^a-z0-9_-]+/gi, '_');
 
         const emailService = require('./emailService');
         try {
@@ -995,6 +998,13 @@ async function convertToInvoiceInTransaction(
     }
 
     await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id, client);
+    if (invoice.job_id) {
+        await invoicesService.absorbUnappliedJobPayments(
+            companyId,
+            invoice.id,
+            client
+        );
+    }
     await invoicesQueries.createEvent(
         companyId,
         invoice.id,

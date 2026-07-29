@@ -1,5 +1,7 @@
 'use strict';
 
+const { shortDocNumber } = require('../utils/docNumber');
+
 /**
  * DOC-SEND-NOTE-001 — best-effort job notes for successful document sends.
  * Recipient details belong in the note itself, never in application logs.
@@ -17,8 +19,8 @@ function documentLabel({ documentType, number, amount }) {
         const numericAmount = Number(amount);
         return `Receipt for $${(Number.isFinite(numericAmount) ? numericAmount : 0).toFixed(2)}`;
     }
-    if (documentType === 'invoice') return `Invoice #${number}`;
-    if (documentType === 'estimate') return `Estimate #${number}`;
+    if (documentType === 'invoice') return `Invoice ${shortDocNumber(number) || number}`;
+    if (documentType === 'estimate') return `Estimate ${shortDocNumber(number) || number}`;
     throw new Error(`Unsupported document note type: ${documentType}`);
 }
 

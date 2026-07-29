@@ -135,7 +135,7 @@ export default function PublicInvoicePayPage() {
                         )}
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, marginBottom: 4 }}>
-                            <span style={{ color: '#6b5f4c' }}>Invoice {info.invoice_number}</span>
+                            <span style={{ color: '#6b5f4c' }}>Invoice {String(info.invoice_number || '').replace(/^INVOICE\s+/i, '')}</span>
                             <span>{money(balance, info.currency)}</span>
                         </div>
 
