@@ -189,6 +189,79 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
         );
     });
 
+    test('digest front-loads a report-relevant item that is outside the most-used limit', async () => {
+        const mostUsedItems = Array.from(
+            { length: MAX_DIGEST_ITEMS },
+            (_, index) => item(index + 1, COMPANY_A, `Common item ${index + 1}`, {
+                usage_count: MAX_DIGEST_ITEMS - index,
+            }),
+        );
+        const relevantItem = item(
+            500,
+            COMPANY_A,
+            'Labor to replace evaporator fan motor',
+            { usage_count: 0 },
+        );
+        const itemQueries = {
+            listForManage: jest.fn(async () => [...mostUsedItems, relevantItem]),
+        };
+        const priceQueries = {
+            listCategories: jest.fn(async () => []),
+            listGroups: jest.fn(async () => []),
+            getGroupItems: jest.fn(async () => []),
+        };
+        const logger = { warn: jest.fn() };
+
+        const baseline = await buildPriceBookDigest(COMPANY_A, {
+            itemQueries,
+            priceQueries,
+            logger,
+        });
+        const relevantDigest = await buildPriceBookDigest(COMPANY_A, {
+            itemQueries,
+            priceQueries,
+            logger,
+            reportText: 'Replaced the failed evaporator fan motor and restored airflow.',
+        });
+
+        expect(baseline.ITEMS.map(row => row.item_id)).not.toContain(relevantItem.id);
+        expect(relevantDigest.ITEMS.map(row => row.item_id)).toContain(relevantItem.id);
+        expect(relevantDigest.ITEMS[0].item_id).toBe(relevantItem.id);
+    });
+
+    test('digest ranks groups by name/category without reading members of excluded groups', async () => {
+        const groups = Array.from(
+            { length: MAX_DIGEST_GROUPS + 1 },
+            (_, index) => group(index + 1, COMPANY_A, `Service group ${index + 1}`),
+        );
+        groups[groups.length - 1].category_name = 'Evaporator fan motor repair';
+        const relevantMember = item(700, COMPANY_A, 'Labor');
+        const priceQueries = {
+            listCategories: jest.fn(async () => []),
+            listGroups: jest.fn(async () => groups),
+            getGroupItems: jest.fn(async (_companyId, groupId) => (
+                groupId === groups.length ? [member(relevantMember)] : []
+            )),
+        };
+
+        const digest = await buildPriceBookDigest(COMPANY_A, {
+            itemQueries: { listForManage: jest.fn(async () => []) },
+            priceQueries,
+            logger: { warn: jest.fn() },
+            reportText: 'Replaced the evaporator fan motor.',
+        });
+
+        expect(digest.GROUPS[0]).toEqual(expect.objectContaining({
+            group_id: groups.length,
+            items: [expect.objectContaining({ item_id: relevantMember.id })],
+        }));
+        expect(priceQueries.getGroupItems).toHaveBeenCalledTimes(MAX_DIGEST_GROUPS);
+        expect(priceQueries.getGroupItems).not.toHaveBeenCalledWith(
+            COMPANY_A,
+            MAX_DIGEST_GROUPS,
+        );
+    });
+
     test('dynamic prompt includes the security preamble, default instruction, digest, and sanitized report', async () => {
         const catalogItem = item(11, COMPANY_A, 'Diagnostic', {
             description: 'Standard diagnostic',
@@ -244,6 +317,12 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
         );
         expect(prompt).toContain(
             'Never set unit_price on a group line',
+        );
+        expect(prompt).toContain(
+            'ALWAYS pick the closest catalog group or item',
+        );
+        expect(prompt).toContain(
+            'Put ALL report specifics (symptom, model, part number, and what was done) in the description.',
         );
         expect(h.instructionLoader).toHaveBeenCalledWith(COMPANY_A);
     });
@@ -510,6 +589,43 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
         expect(h.itemsService.create).not.toHaveBeenCalled();
     });
 
+    test('source new falls back to a matching Price Book item and preserves report specifics', async () => {
+        const catalogItem = item(45, COMPANY_A, 'Labor to replace evaporator fan motor', {
+            default_quantity: 1,
+            default_unit_price: '185.00',
+        });
+        const h = harness({
+            extracted: {
+                summary: 'Evaporator fan motor repair.',
+                lines: [{
+                    source: 'new',
+                    title: 'Labor to replace evaporator fan motor and restore airflow',
+                    description: 'Fan stalled intermittently on model RF28; replaced and tested.',
+                }],
+                order_list: [],
+            },
+            items: [catalogItem],
+        });
+
+        const result = await h.service.generateDraft({
+            companyId: COMPANY_A,
+            actorId: ACTOR_A,
+            reportText: 'Replaced the failed evaporator fan motor on model RF28.',
+            canManagePriceBook: true,
+        });
+
+        expect(result.line_items).toEqual([{
+            title: 'Labor to replace evaporator fan motor',
+            description: 'Fan stalled intermittently on model RF28; replaced and tested.',
+            qty: 1,
+            unit_price: 185,
+            price_source: 'price_book',
+            price_book_item_id: 45,
+            created: false,
+        }]);
+        expect(h.itemsService.create).not.toHaveBeenCalled();
+    });
+
     test('foreign and nonexistent group/item ids are dropped without writes', async () => {
         const ownItem = item(51, COMPANY_A, 'Own diagnostic', {
             default_unit_price: 60,
@@ -554,7 +670,7 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
         expect({ foreignItem, foreignGroup }).toEqual(foreignBefore);
     });
 
-    test('source new always remains an ad-hoc report line without a Price Book write', async () => {
+    test('source new with no catalog match remains an ad-hoc report line', async () => {
         const extracted = {
             summary: 'Custom work.',
             lines: [{
@@ -566,7 +682,10 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
             }],
             order_list: [],
         };
-        const h = harness({ extracted });
+        const h = harness({
+            extracted,
+            items: [item(54, COMPANY_A, 'Standard dishwasher diagnostic')],
+        });
         const result = await h.service.generateDraft({
             companyId: COMPANY_A,
             actorId: ACTOR_A,

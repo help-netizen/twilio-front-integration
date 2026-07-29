@@ -70,13 +70,14 @@ const AI_DRAFT_RESPONSE_SCHEMA = {
 
 const DEFAULT_INSTRUCTION = `**Report → Estimate** turns a service report into a draft **built from your Price Book** —
 your catalog is the source of truth for what you sell, how it's described, and what it costs.
-1. For every work item or part in the report, pick the matching Price Book **group or item** —
-   don't type free text. Propose a new item only when nothing in the book reasonably fits.
+1. For every work item or part in the report, **ALWAYS pick the closest Price Book group or item first**.
+   Use source "new" only when nothing in the book reasonably fits — this should be rare because the
+   Price Book covers most repairs.
 2. When the report describes a standard job, select the **Group** (service unit); it brings
    its labor + parts.
 3. Order each unit **labor first, then its parts**.
-4. Keep the catalog **name as the title**; put report specifics (model, symptom, part number,
-   what was done) in the **description**.
+4. Keep the catalog **name as the title**; put **ALL report specifics** (symptom, model,
+   part number, and what was done) in the **description**.
 5. Use **Price Book prices**; override a price only when the report explicitly quotes a
    different amount.
 6. Use the report's quantity when stated, otherwise the catalog default. Never invent work,
@@ -115,8 +116,10 @@ const FIXED_RESPONSE_INSTRUCTIONS = `Return ONLY valid JSON with exactly this st
 
 Rules:
 - Select only ids present in the supplied Price Book digest.
-- Prefer a matching group over individual items for a standard job.
-- Use source "new" only when no supplied group or item reasonably fits.
+- ALWAYS pick the closest catalog group or item; prefer a matching group for a standard job.
+- Put ALL report specifics (symptom, model, part number, and what was done) in the description.
+- Use source "new" ONLY when no supplied group or item reasonably fits. This should be rare because
+  the Price Book covers most repairs.
 - Return at most 40 lines.
 - Return at most 60 order_list rows.
 - Do not invent work, quantities, or prices.
@@ -418,10 +421,22 @@ function compareMostUsed(left, right) {
     });
 }
 
+function compareReportRelevantItems(reportText, left, right) {
+    const relevanceDifference = matchScore(reportText, right) - matchScore(reportText, left);
+    return relevanceDifference || compareMostUsed(left, right);
+}
+
 function compareGroupMembers(left, right) {
     const sortDifference = Number(left.sort_order || 0) - Number(right.sort_order || 0);
     if (sortDifference !== 0) return sortDifference;
     return Number(left.link_id || 0) - Number(right.link_id || 0);
+}
+
+function groupRelevance(reportText, group) {
+    return Math.max(
+        textScore(reportText, group.name),
+        textScore(reportText, group.category_name),
+    );
 }
 
 function compactDigestText(value, maxLength) {
@@ -437,6 +452,7 @@ async function buildPriceBookContext(companyId, {
     priceQueries = null,
     categoryQueries = priceBookQueries,
     logger = console,
+    reportText = '',
 } = {}) {
     const catalogQueries = priceQueries || categoryQueries;
     const [rawGroups, rawItems, rawCategories] = await Promise.all([
@@ -456,12 +472,21 @@ async function buildPriceBookContext(companyId, {
     const itemsById = new Map(items.map(item => [Number(item.id), item]));
     const groupItemsById = new Map();
     const digest = { GROUPS: [], ITEMS: [] };
+    const scoringReport = stripPromptInjectionLines(reportText);
     let truncated = false;
     let truncatedGroupMembers = 0;
 
-    for (const group of groups.slice(0, MAX_DIGEST_GROUPS)) {
-        const groupId = numericId(group.id);
-        if (groupId === null) continue;
+    const rankedGroups = groups.map((group, originalIndex) => ({
+        group,
+        groupId: numericId(group.id),
+        originalIndex,
+        relevance: groupRelevance(scoringReport, group),
+    })).filter(group => group.groupId !== null);
+    rankedGroups.sort((left, right) => (
+        right.relevance - left.relevance || left.originalIndex - right.originalIndex
+    ));
+
+    for (const { group, groupId } of rankedGroups.slice(0, MAX_DIGEST_GROUPS)) {
         const rawMembers = await catalogQueries.getGroupItems(companyId, groupId);
         const members = (rawMembers || [])
             .filter(member => !member.item_archived)
@@ -491,9 +516,11 @@ async function buildPriceBookContext(companyId, {
             break;
         }
     }
-    if (groups.length > digest.GROUPS.length) truncated = true;
+    if (rankedGroups.length > digest.GROUPS.length) truncated = true;
 
-    const prioritizedItems = [...items].sort(compareMostUsed);
+    const prioritizedItems = [...items].sort(
+        (left, right) => compareReportRelevantItems(scoringReport, left, right),
+    );
     for (const item of prioritizedItems) {
         if (digest.ITEMS.length >= MAX_DIGEST_ITEMS) {
             truncated = true;
@@ -657,6 +684,7 @@ function createAiEstimateService({
             itemQueries,
             priceQueries,
             logger,
+            reportText,
         });
 
         let extractedPayload;
@@ -742,7 +770,26 @@ function createAiEstimateService({
                 continue;
             }
 
-            const categoryText = [selection.title, selection.description].filter(Boolean).join(' ');
+            const selectionText = [selection.title, selection.description].filter(Boolean).join(' ');
+            const match = bestItemMatch(selectionText, context.items);
+            if (match) {
+                const catalogTitle = cleanText(match.name, MAX_TITLE_CHARS);
+                if (!catalogTitle) continue;
+                const catalogPrice = reportPrice(match.default_unit_price) ?? 0;
+                lineItems.push(responseLine({
+                    title: catalogTitle,
+                    description: selection.description,
+                    qty: selection.qty ?? positiveNumber(match.default_quantity, 1),
+                    unitPrice: selection.unitPrice ?? catalogPrice,
+                    priceSource: selection.unitPrice == null ? 'price_book' : 'report',
+                    priceBookItemId: match.id,
+                    created: false,
+                    path: categoryPath(context.categories, match.category_id),
+                }));
+                continue;
+            }
+
+            const categoryText = selectionText;
             const category = bestCategory(categoryText, context.categories, context.items);
             const path = category
                 ? categoryPath(context.categories, category.id)
