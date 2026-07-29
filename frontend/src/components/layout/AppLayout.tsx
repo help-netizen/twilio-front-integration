@@ -16,6 +16,7 @@ import { AutonomousModeBanner } from './AutonomousModeBanner';
 import { useAutonomousMode } from '../../hooks/useAutonomousMode';
 import { AutonomousModeProvider } from '../../contexts/AutonomousModeContext';
 import { FeedbackWidget, isFeedbackWidgetEnabled } from '../feedback/FeedbackWidget';
+import { isBareRoute } from './publicBareRoutes';
 import './AppLayout.css';
 
 interface AppLayoutProps { children: React.ReactNode; }
@@ -231,9 +232,11 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         catch (error) { console.error('Refresh failed:', error); alert('❌ Failed to refresh calls.'); } finally { setIsRefreshing(false); }
     };
 
-    // ALB-101: auth pages render bare — no header/nav/softphone chrome.
+    // ALB-101 + PUBLIC-BARE-001: auth pages AND public customer links (/r/, /e/,
+    // /pay/) render bare — no header/nav/Log out/softphone/feedback chrome. These
+    // links go to the company's CUSTOMERS; only the document may show.
     // (After all hooks to keep the hook order stable.)
-    if (location.pathname.startsWith('/signup') || location.pathname.startsWith('/onboarding') || location.pathname.startsWith('/r/')) {
+    if (isBareRoute(location.pathname)) {
         return <>{children}</>;
     }
 
