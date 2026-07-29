@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { pushFloatingOverlay, popFloatingOverlay } from '../../lib/floatingOverlayLock';
 
 /**
  * NOTE-COMPOSER-KEYBOARD — floating note composer docked directly above the iOS keyboard
@@ -49,6 +50,15 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [open, onClose]);
+
+    // Freeze the layer behind us while open: lock the background scroll AND stop the host
+    // bottom-sheet from lifting to the keyboard (the keyboard is ours, not the sheet's). Both
+    // are coordinated by floatingOverlayLock so nothing under the translucent scrim moves.
+    useEffect(() => {
+        if (!open) return;
+        pushFloatingOverlay();
+        return popFloatingOverlay;
+    }, [open]);
 
     if (!open) return null;
 

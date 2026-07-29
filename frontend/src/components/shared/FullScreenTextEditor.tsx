@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useKeyboardInset } from './NoteComposerOverlay';
+import { pushFloatingOverlay, popFloatingOverlay } from '../../lib/floatingOverlayLock';
 
 interface FullScreenTextEditorProps {
     open: boolean;
@@ -34,6 +35,15 @@ export function FullScreenTextEditor({
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [open, onCancel]);
+
+    // Freeze the layer behind us: lock background scroll + stop the host sheet lifting to the
+    // keyboard. This editor is opaque, so the freeze mainly guarantees the background is exactly
+    // where it was when we close — no scroll jump, no residual sheet-lift. See floatingOverlayLock.
+    useEffect(() => {
+        if (!open) return;
+        pushFloatingOverlay();
+        return popFloatingOverlay;
+    }, [open]);
 
     if (!open) return null;
 

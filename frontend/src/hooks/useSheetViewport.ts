@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type * as React from 'react';
+import { useFloatingOverlayActive } from '../lib/floatingOverlayLock';
 
 const DEFAULT_TOP_GAP = 16;
 const FOCUS_REVEAL_MARGIN = 8;
@@ -114,6 +115,11 @@ export function useSheetViewport({
     const geometryRef = useRef<SheetViewportGeometry | null>(null);
     const focusedControlRef = useRef<HTMLElement | null>(null);
     const focusRevealRafRef = useRef<number | null>(null);
+    // While a floating input overlay (NoteComposerOverlay / FullScreenTextEditor) is open, the
+    // keyboard belongs to IT, not to this sheet. The sheet is hidden behind the overlay and must
+    // stay at rest — so we report no geometry (its own fields are read-only triggers that never
+    // raise the keyboard, so it never legitimately needs to lift while an overlay is up).
+    const floatingOverlayActive = useFloatingOverlayActive();
 
     useEffect(() => {
         if (!open || !enabled || typeof window === 'undefined' || !window.visualViewport) {
@@ -200,7 +206,7 @@ export function useSheetViewport({
     }, [enabled, open]);
 
     return {
-        geometry: open && enabled ? geometry : null,
+        geometry: open && enabled && !floatingOverlayActive ? geometry : null,
         onFocusCapture,
     };
 }
