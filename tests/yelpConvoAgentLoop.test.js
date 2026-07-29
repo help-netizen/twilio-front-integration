@@ -172,7 +172,10 @@ describe('YELP-EARLY-SLOT-001 · deterministic TURN-0 offer from parsed ZIP', ()
         };
         mockRunSkill.mockImplementation(async (name) => {
             if (name === 'checkServiceArea') {
-                return { inServiceArea: true, area: 'Newton', city: 'Newton', state: 'MA', zip: '02467' };
+                // Real prod shape: `area` is the INTERNAL dispatch-zone label and can
+                // differ from the customer's city (zone "Norwood" covers Roslindale
+                // 02131). The greeting must name the CUSTOMER's city, never the zone.
+                return { inServiceArea: true, area: 'Norwood', city: 'Roslindale', state: 'MA', zip: '02467' };
             }
             if (name === 'recommendSlots') {
                 return {
@@ -216,8 +219,10 @@ describe('YELP-EARLY-SLOT-001 · deterministic TURN-0 offer from parsed ZIP', ()
         );
         const sent = mockSendEmail.mock.calls[0][1].textBody;
         expect(sent).toContain(
-            'Hi Kim, we can take care of your dishwasher repair. The earliest we can get to you in Newton is Tuesday, July 28, 9 AM to 11 AM — does that work?'
+            'Hi Kim, we can take care of your dishwasher repair. The earliest we can get to you in Roslindale, MA is Tuesday, July 28, 9 AM to 11 AM — does that work?'
         );
+        // The internal dispatch-zone label must never leak into the customer message.
+        expect(sent).not.toContain('Norwood');
         expect(sent).toContain("What's the best number to confirm?");
         expect(sent).not.toMatch(/^(?:thanks|thank you)/i);
         expect(mockUpdateState).toHaveBeenCalledWith(

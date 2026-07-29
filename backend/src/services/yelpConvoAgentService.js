@@ -693,10 +693,14 @@ async function runTurnInner(companyId, conv, inbound, deps) {
         const label = slotLabel(nearest);
         if (!label) return finishAsk('no_slots');
         offeredSlots = [nearest];
+        // `areaResult.area` is the INTERNAL dispatch-zone label (service_territories.area
+        // — e.g. the zone "Norwood" covers Roslindale 02131). It must never be shown to
+        // the customer as their location: name THEIR city, and fall back to the zone
+        // label only when no city is known at all.
         const area = cleanGreetingField(
-            areaResult.area
-                || [areaResult.city, areaResult.state].filter(Boolean).join(', ')
+            [areaResult.city, areaResult.state].filter(Boolean).join(', ')
                 || seed.city
+                || areaResult.area
                 || seed.zip,
             120
         ) || seed.zip;
