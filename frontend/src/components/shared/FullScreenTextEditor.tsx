@@ -70,49 +70,26 @@ export function FullScreenTextEditor({
             aria-modal="true"
             role="dialog"
         >
-            <div
-                className="flex items-center justify-between"
-                style={{ padding: 'calc(env(safe-area-inset-top) + 10px) 14px 10px', flexShrink: 0 }}
-            >
+            {/* Header — just close + title (FullScreenSearchPicker "Change provider" canon).
+                Actions live in the bottom bar so they float above the keyboard while the text
+                scrolls, and the top stays out of the way. */}
+            <div className="flex items-center gap-3" style={{ padding: 'calc(env(safe-area-inset-top) + 10px) 12px 8px', flexShrink: 0 }}>
                 <button
                     type="button"
                     onClick={onCancel}
                     aria-label="Close"
                     disabled={busy}
-                    className="flex items-center justify-center rounded-full disabled:opacity-40"
-                    style={{ width: 40, height: 40, background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)' }}
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full disabled:opacity-40"
+                    style={{ background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)' }}
                 >
                     <X className="size-5" />
                 </button>
                 {title && (
-                    <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{title}</span>
+                    <span className="truncate text-[17px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{title}</span>
                 )}
-                <div className="flex items-center gap-2">
-                    {onRepolish && (
-                        <button
-                            type="button"
-                            onClick={() => onRepolish(text)}
-                            disabled={busy || !text.trim()}
-                            className="flex items-center gap-1.5 rounded-full px-3.5 text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-40"
-                            style={{ height: 40, background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                            {repolishLabel}
-                        </button>
-                    )}
-                    <button
-                        type="button"
-                        onClick={() => onDone(text)}
-                        disabled={busy}
-                        className="rounded-full px-4 text-sm font-semibold disabled:opacity-40"
-                        style={{ height: 40, background: 'var(--blanc-accent)', color: '#fff' }}
-                    >
-                        {doneLabel}
-                    </button>
-                </div>
             </div>
 
-            <div className="relative flex flex-1 min-h-0">
+            <div className="relative flex flex-col flex-1 min-h-0">
                 <textarea
                     // Only autofocus when we open ready-to-edit. When we open in a busy/loading
                     // state (async polish), a mount-autofocus lands on the read-only textarea and
@@ -141,6 +118,42 @@ export function FullScreenTextEditor({
                     </div>
                 )}
             </div>
+
+            {/* Bottom action bar — rides above the keyboard (the layer ends at keyboardInset),
+                the text scrolls above it. Mirrors the search-picker's bottom dock. */}
+            {(onDone || onRepolish) && (
+                <div
+                    className="flex shrink-0 items-center gap-2 border-t"
+                    style={{
+                        borderColor: 'var(--blanc-line)',
+                        background: 'var(--blanc-surface-strong)',
+                        padding: '10px 12px',
+                        paddingBottom: 'calc(env(safe-area-inset-bottom) + 10px)',
+                    }}
+                >
+                    {onRepolish && (
+                        <button
+                            type="button"
+                            onClick={() => onRepolish(text)}
+                            disabled={busy || !text.trim()}
+                            className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-40"
+                            style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                            {repolishLabel}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => onDone(text)}
+                        disabled={busy}
+                        className="flex h-11 flex-1 items-center justify-center rounded-full text-sm font-semibold transition-opacity hover:opacity-85 disabled:opacity-40"
+                        style={{ background: 'var(--blanc-accent)', color: '#fff' }}
+                    >
+                        {doneLabel}
+                    </button>
+                </div>
+            )}
         </div>,
         document.body,
     );
