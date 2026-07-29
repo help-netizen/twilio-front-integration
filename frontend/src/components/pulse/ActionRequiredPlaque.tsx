@@ -10,7 +10,7 @@ import { useTaskMutations } from '../tasks/useTaskMutations';
 import { AssignOwnerDropdown } from './AssignOwnerDropdown';
 import { REASON_LABELS } from './PulseContactItem';
 import { SnoozeDropdown } from './SnoozeDropdown';
-import { remainingTasksAfterCompletion, shouldShowActionRequiredPlaque } from './actionRequiredHelpers';
+import { remainingTasksAfterCompletion, shouldShowActionRequiredPlaque, taskTitle } from './actionRequiredHelpers';
 
 interface Props {
     timelineId: number | null;
@@ -24,14 +24,6 @@ interface Props {
     onChanged: () => void | Promise<unknown>;
     onClearManual: () => void;
     onSnoozeManual: (until: string) => void;
-}
-
-function taskTitle(task: PulseTask): string {
-    const title = task.description || task.title;
-    if (task.kind === 'agent' && task.agent_output?.reason) {
-        return `${title}. ${task.agent_output.reason}`;
-    }
-    return title;
 }
 
 export function ActionRequiredPlaque({
@@ -49,6 +41,15 @@ export function ActionRequiredPlaque({
 }: Props) {
     const { user, hasPermission, hasAnyPermission } = useAuthz();
     const [visibleTasks, setVisibleTasks] = useState(tasks);
+    // Long (Mail-Secretary) task texts are single-line-clamped; tapping the text
+    // toggles the full multi-line copy — there is no other way to read it on mobile.
+    const [expandedTaskIds, setExpandedTaskIds] = useState<Set<number>>(new Set());
+    const toggleExpanded = (taskId: number) => setExpandedTaskIds(current => {
+        const next = new Set(current);
+        if (next.has(taskId)) next.delete(taskId);
+        else next.add(taskId);
+        return next;
+    });
 
     useEffect(() => setVisibleTasks(tasks), [tasks]);
 
@@ -80,10 +81,19 @@ export function ActionRequiredPlaque({
                 <div className="pulse-ar-task-list">
                     {visibleTasks.map(task => {
                         const canAct = canActOn(task);
+                        const expanded = expandedTaskIds.has(task.id);
                         return (
                             <div className="pulse-ar-task-item" key={task.id} data-task-id={task.id}>
                                 <div className="pulse-ar-task-row">
-                                    <span className="pulse-ar-task-copy" title={taskTitle(task)}>{taskTitle(task)}</span>
+                                    <span
+                                        className={`pulse-ar-task-copy${expanded ? ' pulse-ar-task-copy--expanded' : ''}`}
+                                        title={expanded ? undefined : taskTitle(task)}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-expanded={expanded}
+                                        onClick={() => toggleExpanded(task.id)}
+                                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(task.id); } }}
+                                    >{taskTitle(task)}</span>
                                     {task.due_at && (
                                         <span className="pulse-ar-task-due">Due {formatDeadline(task.due_at, companyTz)}</span>
                                     )}

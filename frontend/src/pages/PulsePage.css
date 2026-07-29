@@ -433,9 +433,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    cursor: pointer;
     color: var(--blanc-ink-1);
     font-size: 12px;
     font-weight: 600;
+}
+
+/* Tap-to-expand (mobile has no hover tooltip): the full task text wraps in place. */
+.pulse-ar-task-copy--expanded {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    line-height: 1.45;
 }
 
 .pulse-ar-task-due {
