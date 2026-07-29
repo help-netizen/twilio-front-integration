@@ -10,6 +10,8 @@ const {
     MAX_REPORT_CHARS,
     OEM_PARTS_NOTICE,
     SYSTEM_PROMPT,
+    aggregateLineItems,
+    bestItemMatch,
     buildPriceBookDigest,
     createAiEstimateService,
     createGeminiTransport,
@@ -18,6 +20,19 @@ const {
 const COMPANY_A = '00000000-0000-0000-0000-0000000000a1';
 const COMPANY_B = '00000000-0000-0000-0000-0000000000b2';
 const ACTOR_A = '10000000-0000-0000-0000-0000000000a1';
+const OWNER_REPORT = `Electric dryer LG
+Serial TEST-SERIAL
+MODEL :
+
+DLEX5000V
+
+Loud squeak noise during operaton. The drum support assembly worn out, whole assembly replacement recommended.
+Labor $245
+Parts to order
+Dryer Repair Kit Dryer Roller Kit for LG Kenmore Dryers Includes
+4 pieces of 4581EL2002C Dryer Drum Roller 39.21$ each
+ 4400EL2001A Dryer Belt 51.27$
+and 4561EL3002A Dryer Idler Pulley $26.94$`;
 
 function item(id, companyId, name, overrides = {}) {
     return {
@@ -594,6 +609,7 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
                         source: 'item',
                         item_id: 35,
                         description: `Already disclosed. ${OEM_PARTS_NOTICE}`,
+                        unit_price: 81,
                     },
                 ],
                 order_list: [],
@@ -691,6 +707,190 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
             created: false,
         }]);
         expect(h.itemsService.create).not.toHaveBeenCalled();
+    });
+
+    test('post-processing aggregates identical lines by catalog identity or title at the same price', () => {
+        expect(aggregateLineItems([
+            {
+                title: 'Dryer Drum Roller',
+                qty: 1,
+                unit_price: 39.21,
+                price_book_item_id: null,
+            },
+            {
+                title: ' dryer   drum roller ',
+                qty: 3,
+                unit_price: 39.21,
+                price_book_item_id: null,
+            },
+            {
+                title: 'Catalog title A',
+                qty: 1,
+                unit_price: 51.27,
+                price_book_item_id: 4400,
+            },
+            {
+                title: 'Catalog title B',
+                qty: 2,
+                unit_price: 51.27,
+                price_book_item_id: 4400,
+            },
+            {
+                title: 'Dryer Drum Roller',
+                qty: 1,
+                unit_price: 40,
+                price_book_item_id: null,
+            },
+        ])).toEqual([
+            {
+                title: 'Dryer Drum Roller',
+                qty: 4,
+                unit_price: 39.21,
+                price_book_item_id: null,
+            },
+            {
+                title: 'Catalog title A',
+                qty: 3,
+                unit_price: 51.27,
+                price_book_item_id: 4400,
+            },
+            {
+                title: 'Dryer Drum Roller',
+                qty: 1,
+                unit_price: 40,
+                price_book_item_id: null,
+            },
+        ]);
+    });
+
+    test('explicit part identity rejects a weak fuzzy catalog title but accepts matching part number', () => {
+        const wrongPulley = item(46, COMPANY_A, 'OEM dryer drum pulley', {
+            code: 'GENERIC-PULLEY',
+        });
+        const exactRoller = item(47, COMPANY_A, 'Dryer Drum Roller', {
+            code: '4581EL2002C',
+        });
+
+        expect(bestItemMatch(
+            '4581EL2002C Dryer Drum Roller',
+            [wrongPulley, exactRoller],
+            { explicitUnitPrice: true },
+        )).toBe(exactRoller);
+        expect(bestItemMatch(
+            'Dryer Drum Roller',
+            [wrongPulley],
+        )).toBe(wrongPulley);
+        expect(bestItemMatch(
+            'Dryer Drum Roller',
+            [wrongPulley],
+            { explicitUnitPrice: true },
+        )).toBeNull();
+        expect(bestItemMatch(
+            'OEM dryer drum pulley replacement',
+            [wrongPulley],
+            { explicitUnitPrice: true },
+        )).toBe(wrongPulley);
+    });
+
+    test('owner dryer report keeps real part titles, aggregates rollers, and preserves order list', async () => {
+        const wrongCatalogMatch = item(48, COMPANY_A, 'OEM dryer drum pulley', {
+            code: 'GENERIC-PULLEY',
+            default_unit_price: 99,
+            item_type: 'Product',
+        });
+        const rollerSelections = Array.from({ length: 4 }, () => ({
+            source: 'new',
+            title: 'Dryer Drum Roller',
+            description: '4581EL2002C dryer drum roller',
+            qty: 1,
+            unit_price: 39.21,
+        }));
+        const orderList = [
+            {
+                part_number: '4581EL2002C',
+                part_name: 'Dryer Drum Roller',
+                quantity: 4,
+            },
+            {
+                part_number: '4400EL2001A',
+                part_name: 'Dryer Belt',
+                quantity: 1,
+            },
+            {
+                part_number: '4561EL3002A',
+                part_name: 'Dryer Idler Pulley',
+                quantity: 1,
+            },
+        ];
+        const h = harness({
+            extracted: {
+                summary: 'LG electric dryer drum support repair.',
+                lines: [
+                    {
+                        source: 'new',
+                        title: 'Labor',
+                        qty: 1,
+                        unit_price: 245,
+                    },
+                    ...rollerSelections,
+                    {
+                        source: 'new',
+                        title: 'Dryer Belt',
+                        description: '4400EL2001A dryer belt',
+                        qty: 1,
+                        unit_price: 51.27,
+                    },
+                    {
+                        source: 'new',
+                        title: 'Dryer Idler Pulley',
+                        description: '4561EL3002A dryer idler pulley',
+                        qty: 1,
+                        unit_price: 26.94,
+                    },
+                ],
+                order_list: orderList,
+            },
+            items: [wrongCatalogMatch],
+        });
+
+        const result = await h.service.generateDraft({
+            companyId: COMPANY_A,
+            actorId: ACTOR_A,
+            reportText: OWNER_REPORT,
+        });
+
+        expect(result.line_items).toEqual([
+            expect.objectContaining({
+                title: 'Labor',
+                qty: 1,
+                unit_price: 245,
+                price_book_item_id: null,
+            }),
+            expect.objectContaining({
+                title: 'Dryer Drum Roller',
+                qty: 4,
+                unit_price: 39.21,
+                price_book_item_id: null,
+            }),
+            expect.objectContaining({
+                title: 'Dryer Belt',
+                qty: 1,
+                unit_price: 51.27,
+                price_book_item_id: null,
+            }),
+            expect.objectContaining({
+                title: 'Dryer Idler Pulley',
+                qty: 1,
+                unit_price: 26.94,
+                price_book_item_id: null,
+            }),
+        ]);
+        expect(result.line_items.reduce(
+            (total, line) => total + line.qty * line.unit_price,
+            0,
+        )).toBeCloseTo(480.05);
+        expect(new Set(result.line_items.slice(1).map(line => line.title)).size).toBe(3);
+        expect(result.order_list).toEqual(orderList);
     });
 
     test('foreign and nonexistent group/item ids are dropped without writes', async () => {
@@ -933,6 +1133,9 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
             );
             expect(SYSTEM_PROMPT).toContain(
                 'Never set unit_price on a group line',
+            );
+            expect(SYSTEM_PROMPT).toContain(
+                'return ONE line with qty N',
             );
         } finally {
             if (originalApiKey === undefined) delete process.env.GEMINI_API_KEY;

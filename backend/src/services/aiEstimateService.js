@@ -27,6 +27,7 @@ const MAX_DIGEST_GROUP_ITEMS = 20;
 const MAX_DIGEST_ITEMS = 80;
 const MAX_DIGEST_CHARS = 32000;
 const MATCH_THRESHOLD = 0.55;
+const STRONG_MATCH_THRESHOLD = 0.85;
 const CATEGORY_THRESHOLD = 0.25;
 const OEM_PARTS_NOTICE = 'We use only original OEM components and include shipping, handling, and applicable taxes.';
 
@@ -88,7 +89,8 @@ your catalog is the source of truth for what you sell, how it's described, and w
 6. Use **Price Book prices**; override a price only when the report explicitly quotes a
    different amount.
 7. Use the report's quantity when stated, otherwise the catalog default. Never invent work,
-   parts, or prices.
+   parts, or prices. When the report says "N pieces of" the same part (including "each" pricing),
+   return ONE line with qty N — never N duplicate qty-1 lines.
 8. When the report prices items separately (a materials price and a labor price), add them as
    INDIVIDUAL item lines, each with its OWN unit_price. Never put a combined or total amount on a line.
 9. Never set unit_price on a group line — a group keeps each item's own catalog price; when the
@@ -136,6 +138,8 @@ Rules:
 - Return at most 40 lines.
 - Return at most 60 order_list rows.
 - Do not invent work, quantities, or prices.
+- When the report says "N pieces of" the same part, return ONE line with qty N. Do not emit N
+  duplicate qty-1 lines, including when the report gives an "each" price.
 - Omit qty when it is not stated; the server will use the catalog or group-link default.
 - Omit unit_price when it is not stated.
 - A total for several units is not a unit price unless the report makes that clear.
@@ -372,7 +376,37 @@ function matchScore(description, item) {
     return Math.max(titleScore, keywordScore * 0.8);
 }
 
-function bestItemMatch(description, items) {
+function partIdentityTokens(value) {
+    const matches = String(value || '').toUpperCase().match(
+        /\b(?=[A-Z0-9-]{6,40}\b)(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g,
+    ) || [];
+    return [...new Set(matches.map(token => token.replace(/[^A-Z0-9]/g, '')))];
+}
+
+function itemIdentityText(item) {
+    return [item?.name, item?.code, item?.sku]
+        .filter(Boolean)
+        .join(' ')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '');
+}
+
+function bestItemMatch(description, items, { explicitUnitPrice = false } = {}) {
+    const identityTokens = partIdentityTokens(description);
+    if (identityTokens.length) {
+        const exactIdentityMatches = items.filter(item => {
+            const candidateIdentity = itemIdentityText(item);
+            return identityTokens.some(token => candidateIdentity.includes(token));
+        });
+        if (exactIdentityMatches.length) {
+            return exactIdentityMatches.reduce((best, item) => (
+                !best || matchScore(description, item) > matchScore(description, best)
+                    ? item
+                    : best
+            ), null);
+        }
+    }
+
     let best = null;
     let bestScore = 0;
     for (const item of items) {
@@ -382,7 +416,10 @@ function bestItemMatch(description, items) {
             bestScore = score;
         }
     }
-    return bestScore >= MATCH_THRESHOLD ? best : null;
+    const threshold = identityTokens.length || explicitUnitPrice
+        ? STRONG_MATCH_THRESHOLD
+        : MATCH_THRESHOLD;
+    return bestScore >= threshold ? best : null;
 }
 
 function categoryPath(categories, categoryId) {
@@ -645,6 +682,31 @@ function responseLine({
     return line;
 }
 
+function aggregateLineItems(lineItems) {
+    const aggregated = [];
+    const indexesByKey = new Map();
+
+    for (const line of lineItems) {
+        const priceBookIdentity = line.price_book_item_id == null
+            ? `title:${cleanText(line.title, MAX_TITLE_CHARS).toLowerCase()}`
+            : `item:${Number(line.price_book_item_id)}`;
+        const unitPrice = reportPrice(line.unit_price) ?? 0;
+        const key = `${priceBookIdentity}|price:${unitPrice}`;
+        const existingIndex = indexesByKey.get(key);
+
+        if (existingIndex === undefined) {
+            indexesByKey.set(key, aggregated.length);
+            aggregated.push({ ...line });
+            continue;
+        }
+
+        aggregated[existingIndex].qty = positiveNumber(aggregated[existingIndex].qty, 1)
+            + positiveNumber(line.qty, 1);
+    }
+
+    return aggregated;
+}
+
 async function defaultAppConnectionChecker(companyId, appKey) {
     // Lazy require avoids a module cycle: marketplaceService imports the single
     // DEFAULT_INSTRUCTION source for its settings response.
@@ -810,7 +872,9 @@ function createAiEstimateService({
             }
 
             const selectionText = [selection.title, selection.description].filter(Boolean).join(' ');
-            const match = bestItemMatch(selectionText, context.items);
+            const match = bestItemMatch(selectionText, context.items, {
+                explicitUnitPrice: selection.unitPrice !== null,
+            });
             if (match) {
                 const catalogTitle = cleanText(match.name, MAX_TITLE_CHARS);
                 if (!catalogTitle) continue;
@@ -848,7 +912,7 @@ function createAiEstimateService({
 
         return {
             summary: selections.summary,
-            line_items: lineItems,
+            line_items: aggregateLineItems(lineItems),
             order_list: selections.orderList,
         };
     }
@@ -875,7 +939,9 @@ module.exports = {
     MAX_REPORT_CHARS,
     OEM_PARTS_NOTICE,
     SECURITY_PREAMBLE,
+    STRONG_MATCH_THRESHOLD,
     SYSTEM_PROMPT,
+    aggregateLineItems,
     bestCategory,
     bestItemMatch,
     buildPriceBookDigest,
