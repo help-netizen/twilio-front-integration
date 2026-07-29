@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Search, X } from 'lucide-react';
+import { Check, Loader2, Search, X } from 'lucide-react';
 import { useKeyboardInset } from './NoteComposerOverlay';
 import { pushFloatingOverlay, popFloatingOverlay } from '../../lib/floatingOverlayLock';
 
@@ -11,7 +11,7 @@ interface FullScreenSearchPickerProps {
     query: string;
     onQueryChange: (q: string) => void;
     placeholder?: string;
-    /** Small eyebrow above the list for context (e.g. "Change provider"). Optional. */
+    /** Header title, shown next to the close X (e.g. "Change provider"). Optional. */
     title?: string;
     /**
      * Auto-focus the search box (raising the keyboard) on open. DEFAULT false — the owner's
@@ -19,8 +19,15 @@ interface FullScreenSearchPickerProps {
      * the whole list first and only summon the keyboard to narrow it.
      */
     autoFocusSearch?: boolean;
-    /** Sticky bottom bar (e.g. a multi-select "N selected · Save"). Rides above the keyboard. */
-    footer?: ReactNode;
+    /**
+     * Multi-select commit. When provided, a compact Save button sits beside the bottom search
+     * and the parent applies the selection on tap. OMIT for single-select — tapping a row is
+     * the commit (the row's onClick should pick & close). There is no Cancel button: the top
+     * X is the cancel/close affordance.
+     */
+    onSave?: () => void;
+    saving?: boolean;
+    saveLabel?: string;
     /** The list — already filtered by the parent against `query`. */
     children: ReactNode;
 }
@@ -31,19 +38,22 @@ interface FullScreenSearchPickerProps {
  * The owner's spec: a control that picks from a list which filters as you type. On mobile it
  * opens a FULL-SCREEN layer instead of a keyboard-covered dropdown / bottom sheet:
  *   1) full-page layer; the keyboard is NOT open by default (see autoFocusSearch);
- *   2) the search input is pinned at the TOP — you type RIGHT THERE, no floating hover input
- *      (unlike type A), because a top-anchored input is never covered by the bottom keyboard;
- *   3) the list sits below and scrolls independently;
+ *   2) the search input is docked at the BOTTOM (composer-style, thumb-reachable) — you type
+ *      RIGHT THERE, no floating hover input (unlike type A). A bottom-docked input rides just
+ *      above the keyboard, so it's never covered;
+ *   3) the list fills the space above and scrolls independently;
  *   4) the parent filters the list to the query.
  *
- * The layer's bottom edge tracks the keyboard (`bottom: keyboardInset`), so the list — and any
- * sticky footer — always end exactly at the keyboard's top edge; nothing is covered. While open
- * it freezes the layer behind it (floatingOverlayLock: body scroll-lock + host-sheet freeze) so
- * the background never jitters. Desktop is unaffected — callers gate this on `useIsMobile()` and
- * keep their existing popover/inline combobox.
+ * No Cancel and no selected-count — the top X is the only close affordance; multi-select gets a
+ * single Save beside the search. The layer's bottom edge tracks the keyboard (`bottom:
+ * keyboardInset`) so the search bar ends exactly at the keyboard's top edge. While open it
+ * freezes the layer behind it (floatingOverlayLock: body scroll-lock + host-sheet freeze) so the
+ * background never jitters. Desktop is unaffected — callers gate on `useIsMobile()` and keep
+ * their existing popover/inline combobox.
  */
 export function FullScreenSearchPicker({
-    open, onClose, query, onQueryChange, placeholder, title, autoFocusSearch = false, footer, children,
+    open, onClose, query, onQueryChange, placeholder, title, autoFocusSearch = false,
+    onSave, saving, saveLabel = 'Save', children,
 }: FullScreenSearchPickerProps) {
     const keyboardInset = useKeyboardInset(open);
 
@@ -70,7 +80,7 @@ export function FullScreenSearchPicker({
                 top: 0,
                 left: 0,
                 right: 0,
-                bottom: keyboardInset, // list + footer end exactly at the keyboard's top edge
+                bottom: keyboardInset, // the bottom search bar ends exactly at the keyboard's top edge
                 zIndex: 1000,
                 pointerEvents: 'auto', // re-enable taps when opened over a Radix modal (body pointer-events:none)
                 background: 'var(--blanc-surface-strong)',
@@ -80,8 +90,8 @@ export function FullScreenSearchPicker({
             role="dialog"
             aria-modal="true"
         >
-            {/* Header: close + the search input, pinned at the top. Type directly here. */}
-            <div className="flex items-center gap-2" style={{ padding: 'calc(env(safe-area-inset-top) + 10px) 12px 10px', flexShrink: 0 }}>
+            {/* Header: close X + title. The search is NOT here — it's docked at the bottom. */}
+            <div className="flex items-center gap-3" style={{ padding: 'calc(env(safe-area-inset-top) + 10px) 12px 8px', flexShrink: 0 }}>
                 <button
                     type="button"
                     onClick={onClose}
@@ -91,37 +101,49 @@ export function FullScreenSearchPicker({
                 >
                     <X className="size-5" />
                 </button>
+                {title && (
+                    <span className="truncate text-[17px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{title}</span>
+                )}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                {children}
+            </div>
+
+            {/* Bottom dock: the search input (+ optional Save), riding above the keyboard. */}
+            <div
+                className="flex shrink-0 items-center gap-2 border-t"
+                style={{
+                    borderColor: 'var(--blanc-line)',
+                    background: 'var(--blanc-surface-strong)',
+                    padding: '10px 12px',
+                    paddingBottom: 'calc(env(safe-area-inset-bottom) + 10px)',
+                }}
+            >
                 <div className="relative flex-1">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" style={{ color: 'var(--blanc-ink-3)' }} />
+                    <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2" style={{ color: 'var(--blanc-ink-3)' }} />
                     <input
                         type="text"
                         autoFocus={autoFocusSearch}
                         value={query}
                         placeholder={placeholder}
                         onChange={e => onQueryChange(e.target.value)}
-                        className="h-10 w-full rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field)] pl-9 pr-3 text-base text-[var(--blanc-ink-1)] outline-none focus-visible:border-[var(--blanc-ink-2)]"
+                        className="h-11 w-full rounded-full border-[1.5px] border-transparent bg-[var(--blanc-field)] pl-10 pr-3 text-base text-[var(--blanc-ink-1)] outline-none focus-visible:border-[var(--blanc-ink-2)]"
                     />
                 </div>
+                {onSave && (
+                    <button
+                        type="button"
+                        onClick={onSave}
+                        disabled={saving}
+                        aria-label={saveLabel}
+                        className="flex size-11 shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-50"
+                        style={{ background: 'var(--blanc-accent)', color: '#fff' }}
+                    >
+                        {saving ? <Loader2 className="size-5 animate-spin" /> : <Check className="size-5" />}
+                    </button>
+                )}
             </div>
-
-            {title && (
-                <div className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--blanc-ink-3)', flexShrink: 0 }}>
-                    {title}
-                </div>
-            )}
-
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ paddingBottom: footer ? 8 : 'env(safe-area-inset-bottom)' }}>
-                {children}
-            </div>
-
-            {footer && (
-                <div
-                    className="flex shrink-0 items-center justify-end gap-3 border-t px-4 py-3"
-                    style={{ borderColor: 'var(--blanc-line)', background: 'var(--blanc-bg,#F1F1F0)', paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
-                >
-                    {footer}
-                </div>
-            )}
         </div>,
         document.body,
     );

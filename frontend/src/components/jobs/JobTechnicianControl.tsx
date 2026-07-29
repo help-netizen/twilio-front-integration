@@ -179,17 +179,9 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
                             onQueryChange={setQuery}
                             placeholder="Search providers…"
                             title={assigned.length ? 'Change provider' : 'Assign provider'}
-                            footer={
-                                <>
-                                    <span className="mr-auto pl-1 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                                        {selected.size} selected
-                                    </span>
-                                    <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
-                                    <Button onClick={save} disabled={busy}>
-                                        {busy ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : null}Save
-                                    </Button>
-                                </>
-                            }
+                            onSave={save}
+                            saving={busy}
+                            saveLabel="Save providers"
                         >
                             {loading ? (
                                 <div className="flex justify-center py-10">

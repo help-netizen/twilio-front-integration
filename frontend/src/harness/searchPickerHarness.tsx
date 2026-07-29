@@ -71,13 +71,8 @@ function Harness() {
                 onQueryChange={setQuery}
                 placeholder="Search providers…"
                 title="Change provider"
-                footer={
-                    <>
-                        <span className="mr-auto pl-1 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>{selected.size} selected</span>
-                        <button type="button" onClick={() => setOpen(false)} className="rounded-full px-4 py-2 text-sm font-semibold" style={{ color: 'var(--blanc-ink-2)' }}>Cancel</button>
-                        <button type="button" onClick={save} className="rounded-full px-4 py-2 text-sm font-semibold" style={{ background: 'var(--blanc-accent)', color: '#fff' }}>Save</button>
-                    </>
-                }
+                onSave={save}
+                saveLabel="Save providers"
             >
                 {filtered.length === 0 ? (
                     <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No providers found.</div>
