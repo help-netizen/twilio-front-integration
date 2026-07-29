@@ -6,7 +6,7 @@
  * Mirrors slotEngineSettingsService (REC-SETTINGS-001): one row per company in
  * outbound_call_settings (company_id PK = FK). `resolve` NEVER throws — the retry worker
  * and startRobotCall must keep working even if the settings table is unreadable
- * (safe-failure parity). AGENT-CALL-WINDOW-001 adds the independent nullable
+ * (safe-failure parity). AGENT-CALL-WINDOW-001 adds the independent
  * parts-caller window surfaced by its marketplace app page.
  */
 const db = require('../db/connection');
@@ -16,13 +16,13 @@ const DEFAULTS = {
     backoff_schedule: ['immediate', '+2h', 'next_business_morning'],
     next_morning_hour: 9,
     enabled: true,
-    calling_window_mode: null,
+    calling_window_mode: 'company_schedule',
     custom_start_time: null,
     custom_end_time: null,
     calling_window_work_days: null,
 };
 
-const CALLING_WINDOW_MODES = ['custom'];
+const CALLING_WINDOW_MODES = ['company_schedule', 'office_hours', 'custom'];
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function isUsableCustomWindow(start, end, workDays) {
@@ -62,6 +62,10 @@ function coerceStored(row) {
         out.custom_start_time = row.custom_start_time;
         out.custom_end_time = row.custom_end_time;
         out.calling_window_work_days = [...new Set(row.calling_window_work_days)].sort((a, b) => a - b);
+    } else if (row.calling_window_mode == null
+        || row.calling_window_mode === 'company_schedule'
+        || row.calling_window_mode === 'office_hours') {
+        out.calling_window_mode = 'company_schedule';
     }
     if (row.updated_at !== undefined) out.updated_at = row.updated_at;
     return out;
@@ -111,9 +115,7 @@ async function resolve(companyId) {
 
 /** Persist only the parts robot's schedule override; retry settings are untouched. */
 async function saveCallingWindow(companyId, fields = {}) {
-    let mode = CALLING_WINDOW_MODES.includes(fields.calling_window_mode)
-        ? fields.calling_window_mode
-        : null;
+    let mode = fields.calling_window_mode === 'custom' ? 'custom' : null;
     let start = null;
     let end = null;
     let workDays = null;

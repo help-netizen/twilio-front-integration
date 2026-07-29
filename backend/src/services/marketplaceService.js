@@ -11,6 +11,7 @@ const rateMeQueries = require('../db/rateMeQueries');
 const { RELY_UNIT_TYPES, RELY_BRANDS } = require('./relyLeadsCatalog');
 const { parseZipList, resolveRelySettings } = require('./relyLeadFilterService');
 const outboundCallSettingsService = require('./outboundCallSettingsService');
+const scheduleService = require('./scheduleService');
 const inspectorSettingsService = require('./inspectorSettingsService');
 const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
 const {
@@ -961,8 +962,11 @@ function validateRateMeSettingsInput(body) {
 }
 
 function validateAgentCallingWindowInput(body) {
-    const mode = body?.calling_window_mode == null ? null : body.calling_window_mode;
-    if (mode !== null && mode !== 'custom') {
+    const requestedMode = body?.calling_window_mode == null
+        ? 'company_schedule'
+        : body.calling_window_mode;
+    const mode = requestedMode === 'office_hours' ? 'company_schedule' : requestedMode;
+    if (mode !== 'company_schedule' && mode !== 'custom') {
         throw new MarketplaceServiceError(
             'Calling window must use the company schedule or a custom schedule.',
             'INVALID_CALLING_WINDOW_MODE',
@@ -1059,10 +1063,19 @@ async function buildOutboundPartsSettingsResponse(
     _metadata,
     savedSettings = null
 ) {
+    let timezone = 'America/New_York';
+    try {
+        timezone = (await scheduleService.getDispatchSettings(companyId))?.timezone || timezone;
+    } catch {
+        // Keep settings readable with the same conservative timezone as the guard.
+    }
     return {
         app_key: appKey,
         installation_id: installation.id,
-        settings: savedSettings || await outboundCallSettingsService.get(companyId),
+        settings: {
+            ...(savedSettings || await outboundCallSettingsService.get(companyId)),
+            timezone,
+        },
     };
 }
 
@@ -1100,7 +1113,7 @@ const SETTINGS_HANDLERS = {
         ),
         buildEventPayload: (validated) => ({
             app_key: 'outbound-parts-caller',
-            calling_window_mode: validated.calling_window_mode || 'company',
+            calling_window_mode: validated.calling_window_mode,
             work_day_count: validated.calling_window_work_days?.length || 0,
         }),
     },

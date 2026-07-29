@@ -8,6 +8,7 @@ const {
     MAX_DIGEST_ITEMS,
     MAX_LINE_ITEMS,
     MAX_REPORT_CHARS,
+    OEM_PARTS_NOTICE,
     SYSTEM_PROMPT,
     buildPriceBookDigest,
     createAiEstimateService,
@@ -363,6 +364,7 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
         const part = item(22, COMPANY_A, 'Drain pump assembly', {
             default_quantity: 1,
             default_unit_price: '80.00',
+            item_type: 'Product',
         });
         const h = harness({
             extracted: {
@@ -403,7 +405,7 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
             },
             {
                 title: 'Drain pump assembly',
-                description: 'Model WTW5000; pump was seized.',
+                description: `Model WTW5000; pump was seized. ${OEM_PARTS_NOTICE}`,
                 qty: 2,
                 unit_price: 80,
                 price_source: 'price_book',
@@ -558,6 +560,68 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
             },
         ]);
         expect(h.itemsService.create).not.toHaveBeenCalled();
+    });
+
+    test('GEN-PARTS-OEM-001 adds the OEM notice only to Product lines and never duplicates it', async () => {
+        const partWithDescription = item(35, COMPANY_A, 'Drain pump assembly', {
+            item_type: 'Product',
+            default_unit_price: 80,
+        });
+        const partWithoutDescription = item(36, COMPANY_A, 'Mounting bracket', {
+            item_type: 'Product',
+            default_unit_price: 20,
+        });
+        const labor = item(37, COMPANY_A, 'Installation labor', {
+            item_type: 'Service',
+            default_unit_price: 125,
+        });
+        const h = harness({
+            extracted: {
+                summary: 'Pump repair.',
+                lines: [
+                    {
+                        source: 'item',
+                        item_id: 35,
+                        description: 'Pump for model WTW5000.',
+                    },
+                    { source: 'item', item_id: 36 },
+                    {
+                        source: 'item',
+                        item_id: 37,
+                        description: 'Removed and replaced the failed pump.',
+                    },
+                    {
+                        source: 'item',
+                        item_id: 35,
+                        description: `Already disclosed. ${OEM_PARTS_NOTICE}`,
+                    },
+                ],
+                order_list: [],
+            },
+            items: [partWithDescription, partWithoutDescription, labor],
+        });
+
+        const first = await h.service.generateDraft({
+            companyId: COMPANY_A,
+            actorId: ACTOR_A,
+            reportText: 'Replaced the drain pump and mounting bracket.',
+        });
+        const second = await h.service.generateDraft({
+            companyId: COMPANY_A,
+            actorId: ACTOR_A,
+            reportText: 'Replaced the drain pump and mounting bracket.',
+        });
+
+        expect(first.line_items[0].description)
+            .toBe(`Pump for model WTW5000. ${OEM_PARTS_NOTICE}`);
+        expect(first.line_items[1].description).toBe(OEM_PARTS_NOTICE);
+        expect(first.line_items[2].description)
+            .toBe('Removed and replaced the failed pump.');
+        expect(first.line_items[2].description).not.toContain(OEM_PARTS_NOTICE);
+        expect(first.line_items[3].description.match(
+            new RegExp(OEM_PARTS_NOTICE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+        )).toHaveLength(1);
+        expect(second.line_items).toEqual(first.line_items);
     });
 
     test('reuse by item id never word-matches or creates junk', async () => {

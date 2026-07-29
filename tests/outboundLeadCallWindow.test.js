@@ -289,10 +289,12 @@ describe('TC-OLC-012: effectiveWindow — inherit / legacy 24-7 / custom', () =>
         expect(svc.isWithinWorkWindow(new Date('2026-07-13T02:30:00Z'), eff)).toBe(false); // Sun 22:30 EDT — after end
     });
 
-    it('(d) malformed/legacy modes fail for the resolver to apply conservative fallback', () => {
+    it('(d) malformed custom fails; company_schedule and legacy office_hours inherit', () => {
         expect(() => svc.effectiveWindow({ calling_window_mode: 'custom', custom_start_time: '10:00' }, NY))
             .toThrow(/incomplete/);
-        expect(() => svc.effectiveWindow({ calling_window_mode: 'office_hours' }, NY))
-            .toThrow(/incomplete/);
+        expect(svc.effectiveWindow({ calling_window_mode: 'company_schedule' }, NY))
+            .toEqual(NY);
+        expect(svc.effectiveWindow({ calling_window_mode: 'office_hours' }, NY))
+            .toEqual(NY);
     });
 });

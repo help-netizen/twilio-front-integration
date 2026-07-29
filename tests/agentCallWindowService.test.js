@@ -18,7 +18,7 @@ const service = require('../backend/src/services/agentCallWindowService');
 
 const COMPANY = '00000000-0000-0000-0000-000000000001';
 const INHERIT = {
-    calling_window_mode: null,
+    calling_window_mode: 'company_schedule',
     custom_start_time: null,
     custom_end_time: null,
     calling_window_work_days: null,
@@ -41,13 +41,53 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 describe('AGENT-CALL-WINDOW-001 shared resolver', () => {
-    test('SAB-CW-INHERIT: null override inherits the company days, hours, and timezone', async () => {
+    test('SAB-CW-INHERIT: company_schedule inherits the company days, hours, and timezone', async () => {
         const now = new Date('2026-07-20T14:00:00.000Z'); // Mon 10:00 EDT
         const allowedAt = await service.nextAllowedAt(COMPANY, service.AGENT_KEYS.LEADS, now);
 
         expect(allowedAt).toBe(now);
         expect(mockLeadSettings).toHaveBeenCalledWith(COMPANY);
         expect(mockDispatch).toHaveBeenCalledWith(COMPANY);
+    });
+
+    test('SAB-CW-COMPANY-SCHEDULE: company hours open/close correctly and a closed day waits', async () => {
+        const open = new Date('2026-07-20T14:00:00.000Z'); // Mon 10:00 EDT
+        const beforeOpen = new Date('2026-07-20T10:59:00.000Z'); // Mon 06:59 EDT
+        const closedDay = new Date('2026-07-19T14:00:00.000Z'); // Sun 10:00 EDT
+
+        await expect(service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.LEADS,
+            open
+        )).resolves.toBe(open);
+        await expect(service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.LEADS,
+            beforeOpen
+        )).resolves.toEqual(new Date('2026-07-20T13:00:00.000Z'));
+        await expect(service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.LEADS,
+            closedDay
+        )).resolves.toEqual(new Date('2026-07-20T13:00:00.000Z'));
+    });
+
+    test('an all-week company closure never fabricates fallback office days', async () => {
+        mockDispatch.mockResolvedValue({
+            timezone: 'America/New_York',
+            work_start_time: '09:00',
+            work_end_time: '17:00',
+            work_days: [],
+        });
+        const monday = new Date('2026-07-20T14:00:00.000Z');
+
+        const allowedAt = await service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.PARTS,
+            monday
+        );
+
+        expect(allowedAt.getTime()).toBeGreaterThan(monday.getTime());
     });
 
     test('SAB-CW-OVERRIDE: a complete per-agent override wins over company hours', async () => {
@@ -93,6 +133,61 @@ describe('AGENT-CALL-WINDOW-001 shared resolver', () => {
 
         expect(service.nextWindowStart(beforeDstMonday, settings).toISOString())
             .toBe('2026-03-09T12:00:00.000Z');
+    });
+
+    test('custom 07:00–21:00 blocks 04:00–06:59 and opens at 07:00 company-local, not UTC', async () => {
+        mockPartsSettings.mockResolvedValue({
+            calling_window_mode: 'custom',
+            custom_start_time: '07:00',
+            custom_end_time: '21:00',
+            calling_window_work_days: [0, 1, 2, 3, 4, 5, 6],
+        });
+        const atFour = new Date('2026-07-20T08:00:00.000Z'); // 04:00 EDT
+        const atSixFiftyNine = new Date('2026-07-20T10:59:00.000Z'); // 06:59 EDT
+        const atSeven = new Date('2026-07-20T11:00:00.000Z'); // 07:00 EDT
+
+        await expect(service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.PARTS,
+            atFour
+        )).resolves.toEqual(atSeven);
+        await expect(service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.PARTS,
+            atSixFiftyNine
+        )).resolves.toEqual(atSeven);
+        await expect(service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.PARTS,
+            atSeven
+        )).resolves.toBe(atSeven);
+    });
+
+    test('the two robots resolve independent per-app windows', async () => {
+        mockPartsSettings.mockResolvedValue({
+            calling_window_mode: 'custom',
+            custom_start_time: '07:00',
+            custom_end_time: '21:00',
+            calling_window_work_days: [1],
+        });
+        mockLeadSettings.mockResolvedValue({
+            calling_window_mode: 'custom',
+            custom_start_time: '09:00',
+            custom_end_time: '17:00',
+            calling_window_work_days: [1],
+        });
+        const mondayAtEight = new Date('2026-07-20T12:00:00.000Z'); // 08:00 EDT
+
+        await expect(service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.PARTS,
+            mondayAtEight
+        )).resolves.toBe(mondayAtEight);
+        await expect(service.nextAllowedAt(
+            COMPANY,
+            service.AGENT_KEYS.LEADS,
+            mondayAtEight
+        )).resolves.toEqual(new Date('2026-07-20T13:00:00.000Z'));
     });
 
     test('SAB-CW-FAIL-CLOSED: resolver faults never throw and use 08:00–18:00 Mon–Fri', async () => {

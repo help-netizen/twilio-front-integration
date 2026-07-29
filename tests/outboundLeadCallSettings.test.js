@@ -118,7 +118,8 @@ describe('TC-OLC-002: coerceStored per-key overlay + get/resolve safe-fail', () 
 
 describe('TC-OLC-013: calling-window settings (OLC-WINDOW-001)', () => {
     it('coerceStored defaults window to company inheritance; reads a valid custom window', () => {
-        expect(svc.coerceStored({ enabled_sources: ['X'] }).calling_window_mode).toBeNull();
+        expect(svc.coerceStored({ enabled_sources: ['X'] }).calling_window_mode)
+            .toBe('company_schedule');
         const c = svc.coerceStored({
             calling_window_mode: 'custom', custom_start_time: '09:00', custom_end_time: '20:00',
             calling_window_work_days: [1, 2, 3, 4, 5],
@@ -131,10 +132,10 @@ describe('TC-OLC-013: calling-window settings (OLC-WINDOW-001)', () => {
     });
 
     it('coerceStored degrades an unusable custom mode to company inheritance', () => {
-        expect(svc.coerceStored({ calling_window_mode: 'custom', custom_start_time: '20:00', custom_end_time: '09:00' }).calling_window_mode).toBeNull();
-        expect(svc.coerceStored({ calling_window_mode: 'custom', custom_start_time: '9am', custom_end_time: '20:00' }).calling_window_mode).toBeNull();
-        expect(svc.coerceStored({ calling_window_mode: 'custom' }).calling_window_mode).toBeNull();
-        expect(svc.coerceStored({ calling_window_mode: 'bogus' }).calling_window_mode).toBeNull();
+        expect(svc.coerceStored({ calling_window_mode: 'custom', custom_start_time: '20:00', custom_end_time: '09:00' }).calling_window_mode).toBe('company_schedule');
+        expect(svc.coerceStored({ calling_window_mode: 'custom', custom_start_time: '9am', custom_end_time: '20:00' }).calling_window_mode).toBe('company_schedule');
+        expect(svc.coerceStored({ calling_window_mode: 'custom' }).calling_window_mode).toBe('company_schedule');
+        expect(svc.coerceStored({ calling_window_mode: 'bogus' }).calling_window_mode).toBe('company_schedule');
     });
 
     it('isUsableCustomWindow: HH:MM both ends, start < end', () => {

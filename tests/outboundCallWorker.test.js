@@ -213,22 +213,27 @@ describe('TC-OPC-U09: tick — claims only due pending rows with FOR UPDATE SKIP
 
 describe('TC-OPC-U10: processAttempt — outside business hours → reschedule, do NOT dial', () => {
     test('SAB-CW-PARTS-DEFER: guard future result → same attempt pending, no dial', async () => {
-        agentCallWindowService.nextAllowedAt.mockImplementation(async (_companyId, _agentKey, now) => (
-            new Date(now.getTime() + 60 * 60 * 1000)
-        ));
-        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
-        // resolveBusinessHoursGroup query + the push UPDATE
-        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS = 'yes';
+        try {
+            agentCallWindowService.nextAllowedAt.mockImplementation(async (_companyId, _agentKey, now) => (
+                new Date(now.getTime() + 60 * 60 * 1000)
+            ));
+            jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+            // resolveBusinessHoursGroup query + the push UPDATE
+            mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
 
-        await worker.processAttempt(mkAttempt());
+            await worker.processAttempt(mkAttempt());
 
-        expect(outboundCallService.placeCall).not.toHaveBeenCalled();
-        const pushCall = mockQuery.mock.calls.find((c) => /SET status = 'pending', scheduled_at = \$2/i.test(c[0]));
-        expect(pushCall).toBeTruthy();
-        expect(pushCall[1][0]).toBe(900);
-        expect(pushCall[0]).toMatch(/company_id = \$3/i);
-        expect(pushCall[1][2]).toBe(CO);
-        expect(pushCall[0]).not.toMatch(/attempt_no\s*=/i);
+            expect(outboundCallService.placeCall).not.toHaveBeenCalled();
+            const pushCall = mockQuery.mock.calls.find((c) => /SET status = 'pending', scheduled_at = \$2/i.test(c[0]));
+            expect(pushCall).toBeTruthy();
+            expect(pushCall[1][0]).toBe(900);
+            expect(pushCall[0]).toMatch(/company_id = \$3/i);
+            expect(pushCall[1][2]).toBe(CO);
+            expect(pushCall[0]).not.toMatch(/attempt_no\s*=/i);
+        } finally {
+            delete process.env.OUTBOUND_CALL_IGNORE_BUSINESS_HOURS;
+        }
     });
 });
 

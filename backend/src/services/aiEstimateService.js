@@ -28,6 +28,7 @@ const MAX_DIGEST_ITEMS = 80;
 const MAX_DIGEST_CHARS = 32000;
 const MATCH_THRESHOLD = 0.55;
 const CATEGORY_THRESHOLD = 0.25;
+const OEM_PARTS_NOTICE = 'We use only original OEM components and include shipping, handling, and applicable taxes.';
 
 const AI_DRAFT_RESPONSE_SCHEMA = {
     type: 'OBJECT',
@@ -604,7 +605,29 @@ function lineDescription(value) {
     return typeof value === 'string' ? value.slice(0, MAX_DESCRIPTION_CHARS) : '';
 }
 
-function responseLine({ title, qty, unitPrice, priceSource, priceBookItemId, created, path, description }) {
+function isPartCatalogItem(item) {
+    return String(item?.item_type || '').trim().toLowerCase() === 'product';
+}
+
+function appendOemPartsNotice(value) {
+    const description = lineDescription(value).trim();
+    if (description.includes(OEM_PARTS_NOTICE)) return description;
+    if (!description) return OEM_PARTS_NOTICE;
+    const maxPrefixLength = MAX_DESCRIPTION_CHARS - OEM_PARTS_NOTICE.length - 1;
+    return `${description.slice(0, maxPrefixLength).trimEnd()} ${OEM_PARTS_NOTICE}`;
+}
+
+function responseLine({
+    title,
+    qty,
+    unitPrice,
+    priceSource,
+    priceBookItemId,
+    created,
+    path,
+    description,
+    isPart = false,
+}) {
     const line = {
         title,
         qty,
@@ -614,7 +637,9 @@ function responseLine({ title, qty, unitPrice, priceSource, priceBookItemId, cre
         created,
     };
     // Only surface a description when the model found report-specific details.
-    const cleaned = lineDescription(description);
+    const cleaned = isPart
+        ? appendOemPartsNotice(description)
+        : lineDescription(description);
     if (cleaned) line.description = cleaned;
     if (path?.length) line.category_path = path;
     return line;
@@ -758,6 +783,7 @@ function createAiEstimateService({
                         priceBookItemId: catalogItem.id,
                         created: false,
                         path: categoryPath(context.categories, catalogItem.category_id),
+                        isPart: isPartCatalogItem(catalogItem),
                     }));
                 }
                 continue;
@@ -778,6 +804,7 @@ function createAiEstimateService({
                     priceBookItemId: catalogItem.id,
                     created: false,
                     path: categoryPath(context.categories, catalogItem.category_id),
+                    isPart: isPartCatalogItem(catalogItem),
                 }));
                 continue;
             }
@@ -797,6 +824,7 @@ function createAiEstimateService({
                     priceBookItemId: match.id,
                     created: false,
                     path: categoryPath(context.categories, match.category_id),
+                    isPart: isPartCatalogItem(match),
                 }));
                 continue;
             }
@@ -845,6 +873,7 @@ module.exports = {
     MAX_LINE_ITEMS,
     MAX_ORDER_LIST_ROWS,
     MAX_REPORT_CHARS,
+    OEM_PARTS_NOTICE,
     SECURITY_PREAMBLE,
     SYSTEM_PROMPT,
     bestCategory,
@@ -855,6 +884,8 @@ module.exports = {
     createAiEstimateService,
     createGeminiTransport,
     effectiveInstruction,
+    appendOemPartsNotice,
+    isPartCatalogItem,
     stripPromptInjectionLines,
     textScore,
 };

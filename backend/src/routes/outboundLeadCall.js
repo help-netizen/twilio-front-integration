@@ -13,6 +13,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const outboundLeadCallSettingsService = require('../services/outboundLeadCallSettingsService');
+const scheduleService = require('../services/scheduleService');
 
 const APP_KEY = 'outbound-lead-caller';
 
@@ -33,11 +34,21 @@ async function getInstallState(cid) {
     return rows[0]?.status || null;
 }
 
+async function settingsWithTimezone(cid, settings) {
+    let timezone = 'America/New_York';
+    try {
+        timezone = (await scheduleService.getDispatchSettings(cid))?.timezone || timezone;
+    } catch {
+        // Keep settings readable with the same conservative timezone as the guard.
+    }
+    return { ...settings, timezone };
+}
+
 // ── GET /settings — settings + install state + observed sources + 30d rollup ─
 router.get('/settings', async (req, res) => {
     try {
         const cid = companyId(req);
-        const [settings, installStatus, sourcesRes, recentRes] = await Promise.all([
+        const [storedSettings, installStatus, sourcesRes, recentRes] = await Promise.all([
             outboundLeadCallSettingsService.get(cid),
             getInstallState(cid),
             db.query(
@@ -56,6 +67,7 @@ router.get('/settings', async (req, res) => {
                 [cid]
             ),
         ]);
+        const settings = await settingsWithTimezone(cid, storedSettings);
         res.json({
             ok: true,
             data: {
@@ -95,14 +107,17 @@ router.put('/settings', async (req, res) => {
             }
         }
 
-        // AGENT-CALL-WINDOW-001: null means inherit; custom carries a complete
+        // ROBOT-CALL-WINDOWS-001: company_schedule is the explicit default;
+        // legacy null remains accepted. custom carries a complete
         // day set + same-day HH:MM range. 'always' remains API-compatible for
         // existing saved lead settings but is not exposed by the new UI.
-        const mode = body.calling_window_mode == null ? null : body.calling_window_mode;
-        if (mode !== null && !outboundLeadCallSettingsService.CALLING_WINDOW_MODES.includes(mode)) {
+        const mode = body.calling_window_mode == null
+            ? 'company_schedule'
+            : body.calling_window_mode;
+        if (!outboundLeadCallSettingsService.CALLING_WINDOW_MODES.includes(mode)) {
             return res.status(400).json({
                 ok: false,
-                error: { code: 'VALIDATION', message: "calling_window_mode must be null, 'always', or 'custom'" },
+                error: { code: 'VALIDATION', message: "calling_window_mode must be 'company_schedule', 'office_hours', 'always', or 'custom'" },
             });
         }
         let customStart = null;
@@ -144,13 +159,14 @@ router.put('/settings', async (req, res) => {
             deduped.push(item.trim());
         }
 
-        const settings = await outboundLeadCallSettingsService.saveSettings(cid, {
+        const storedSettings = await outboundLeadCallSettingsService.saveSettings(cid, {
             enabled_sources: deduped,
             calling_window_mode: mode,
             custom_start_time: customStart,
             custom_end_time: customEnd,
             calling_window_work_days: workDays,
         });
+        const settings = await settingsWithTimezone(cid, storedSettings);
         res.json({ ok: true, data: { settings } });
     } catch (err) {
         console.error('[OutboundLeadCall] PUT /settings failed:', err.message);

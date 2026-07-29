@@ -5,7 +5,8 @@
  *
  * Every robot asks nextAllowedAt(companyId, agentKey, instant) before creating
  * or starting a dial. Agent settings contain either a complete custom window or
- * nulls (inherit); inherited windows come from company dispatch settings.
+ * `company_schedule`; inherited windows come from company dispatch settings.
+ * Legacy null/office_hours values remain readable as company_schedule.
  * Resolver faults never escape into the dial path and never fail open.
  */
 const scheduleService = require('./scheduleService');
@@ -75,6 +76,27 @@ function sanitizeDispatchSettings(settings) {
     };
 }
 
+/**
+ * Company Schedule uses the same dispatch_settings row as the Schedule settings
+ * page. Unlike the generic corruption fallback above, an explicitly empty
+ * work_days array is meaningful here: the company is closed all week.
+ */
+function sanitizeCompanySchedule(settings) {
+    const src = settings && typeof settings === 'object' ? settings : {};
+    if (!Array.isArray(src.work_days)) return sanitizeDispatchSettings(src);
+    const days = [...new Set(
+        src.work_days.filter(day => Number.isInteger(day) && day >= 0 && day <= 6)
+    )];
+    if (days.length === 0 && src.work_days.length === 0) {
+        const fallback = sanitizeDispatchSettings({
+            ...src,
+            work_days: FALLBACK_WINDOW.work_days,
+        });
+        return { ...fallback, work_days: [], closed: true };
+    }
+    return sanitizeDispatchSettings({ ...src, work_days: days });
+}
+
 function localWallClock(date, timezone) {
     const parts = new Intl.DateTimeFormat('en-US', {
         timeZone: timezone,
@@ -92,6 +114,7 @@ function localWallClock(date, timezone) {
 
 function isWithinWindow(date, settings) {
     if (settings?.always === true) return true;
+    if (settings?.closed === true) return false;
     const window = sanitizeDispatchSettings(settings);
     const local = localWallClock(date, window.timezone);
     const start = parseTime(window.work_start_time).minutes;
@@ -141,6 +164,9 @@ function getTimezoneOffsetMs(timezone, year, month, day, hour) {
 
 function nextWindowStart(from, settings) {
     if (settings?.always === true) return new Date(from.getTime());
+    if (settings?.closed === true) {
+        return new Date(from.getTime() + 24 * 60 * 60 * 1000);
+    }
     const window = sanitizeDispatchSettings(settings);
     const start = parseTime(window.work_start_time);
     const base = localCalendarDate(from, window.timezone);
@@ -179,8 +205,9 @@ function hasAnyCustomField(settings) {
 
 function effectiveWindow(settings, companySettings) {
     if (settings?.calling_window_mode === 'always') return { always: true };
-    if (settings?.calling_window_mode == null && !hasAnyCustomField(settings)) {
-        return sanitizeDispatchSettings(companySettings);
+    if (['company_schedule', 'office_hours', null, undefined]
+        .includes(settings?.calling_window_mode) && !hasAnyCustomField(settings)) {
+        return sanitizeCompanySchedule(companySettings);
     }
     if (settings?.calling_window_mode !== 'custom'
         || !Array.isArray(settings.calling_window_work_days)
@@ -232,6 +259,7 @@ module.exports = {
     AGENT_KEYS,
     FALLBACK_WINDOW,
     sanitizeDispatchSettings,
+    sanitizeCompanySchedule,
     isWithinWindow,
     nextWindowStart,
     clampIntoWindow,

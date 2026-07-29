@@ -16,8 +16,7 @@ const DEFAULTS = {
     enabled_sources: ['ProReferral'],
     max_attempts: 3,
     backoff_schedule: ['immediate', '+30m', '+2h'],
-    // AGENT-CALL-WINDOW-001: null means inherit the company dispatch schedule.
-    calling_window_mode: null,
+    calling_window_mode: 'company_schedule',
     custom_start_time: null,
     custom_end_time: null,
     calling_window_work_days: null,
@@ -25,7 +24,7 @@ const DEFAULTS = {
 
 // 'always' is retained for existing saved lead-caller settings. The new UI
 // exposes inherit/custom only.
-const CALLING_WINDOW_MODES = ['always', 'custom'];
+const CALLING_WINDOW_MODES = ['company_schedule', 'office_hours', 'always', 'custom'];
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
@@ -94,6 +93,10 @@ function coerceStored(row) {
         out.custom_start_time = row.custom_start_time;
         out.custom_end_time = row.custom_end_time;
         out.calling_window_work_days = [...new Set(row.calling_window_work_days)].sort((a, b) => a - b);
+    } else if (row.calling_window_mode == null
+        || row.calling_window_mode === 'company_schedule'
+        || row.calling_window_mode === 'office_hours') {
+        out.calling_window_mode = 'company_schedule';
     }
 
     if (row.updated_at !== undefined) {
@@ -162,11 +165,11 @@ async function saveSources(companyId, enabledSources) {
 
 /**
  * saveSettings(companyId, fields) — OLC-WINDOW-001 upsert for the full settings
- * surface: enabled sources + calling-window override. Null mode/fields means
- * inherit. Existing 'always' rows remain supported; new UI writes null/custom.
+ * surface: enabled sources + calling-window override. company_schedule is stored
+ * as the existing NULL representation. Existing 'always' rows remain supported.
  */
 async function saveSettings(companyId, fields = {}) {
-    let mode = CALLING_WINDOW_MODES.includes(fields.calling_window_mode)
+    let mode = ['always', 'custom'].includes(fields.calling_window_mode)
         ? fields.calling_window_mode : null;
     let cs = null;
     let ce = null;

@@ -6,16 +6,17 @@ const db = require('../backend/src/db/connection');
 const service = require('../backend/src/services/outboundCallSettingsService');
 const marketplaceQueries = require('../backend/src/db/marketplaceQueries');
 const marketplaceService = require('../backend/src/services/marketplaceService');
+const scheduleService = require('../backend/src/services/scheduleService');
 
 afterEach(() => jest.clearAllMocks());
 
 describe('AGENT-CALL-WINDOW-001 parts settings persistence', () => {
-    test('SAB-CW-PARTS-INHERIT: missing row resolves to nullable company inheritance', async () => {
+    test('SAB-CW-PARTS-INHERIT: missing row resolves to explicit company_schedule', async () => {
         db.query.mockResolvedValue({ rows: [] });
 
         const settings = await service.get('company-a');
 
-        expect(settings.calling_window_mode).toBeNull();
+        expect(settings.calling_window_mode).toBe('company_schedule');
         expect(settings.calling_window_work_days).toBeNull();
         expect(db.query.mock.calls[0][0]).toMatch(/WHERE company_id = \$1/);
         expect(db.query.mock.calls[0][1]).toEqual(['company-a']);
@@ -66,11 +67,14 @@ describe('outbound-parts-caller marketplace settings contract', () => {
         expect(marketplaceService.validateAgentCallingWindowInput({
             calling_window_mode: null,
         })).toEqual({
-            calling_window_mode: null,
+            calling_window_mode: 'company_schedule',
             custom_start_time: null,
             custom_end_time: null,
             calling_window_work_days: null,
         });
+        expect(marketplaceService.validateAgentCallingWindowInput({
+            calling_window_mode: 'company_schedule',
+        }).calling_window_mode).toBe('company_schedule');
         expect(marketplaceService.validateAgentCallingWindowInput({
             calling_window_mode: 'custom',
             custom_start_time: '09:00',
@@ -96,6 +100,9 @@ describe('outbound-parts-caller marketplace settings contract', () => {
             metadata: {},
         });
         jest.spyOn(marketplaceQueries, 'writeEvent').mockResolvedValue({});
+        jest.spyOn(scheduleService, 'getDispatchSettings').mockResolvedValue({
+            timezone: 'America/Los_Angeles',
+        });
         const getSpy = jest.spyOn(service, 'get').mockResolvedValue({ ...service.DEFAULTS });
         const saveSpy = jest.spyOn(service, 'saveCallingWindow').mockResolvedValue({
             ...service.DEFAULTS,
@@ -105,8 +112,11 @@ describe('outbound-parts-caller marketplace settings contract', () => {
             calling_window_work_days: [1, 2, 3, 4, 5],
         });
 
-        await marketplaceService.getAppSettings('company-own', 'outbound-parts-caller');
-        await marketplaceService.updateAppSettings(
+        const getResult = await marketplaceService.getAppSettings(
+            'company-own',
+            'outbound-parts-caller'
+        );
+        const updateResult = await marketplaceService.updateAppSettings(
             'company-own',
             'crm-user-1',
             'outbound-parts-caller',
@@ -118,6 +128,11 @@ describe('outbound-parts-caller marketplace settings contract', () => {
             }
         );
 
+        expect(getResult.settings).toMatchObject({
+            calling_window_mode: 'company_schedule',
+            timezone: 'America/Los_Angeles',
+        });
+        expect(updateResult.settings.timezone).toBe('America/Los_Angeles');
         expect(getSpy).toHaveBeenCalledWith('company-own');
         expect(saveSpy).toHaveBeenCalledWith('company-own', expect.objectContaining({
             calling_window_mode: 'custom',

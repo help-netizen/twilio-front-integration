@@ -51,6 +51,8 @@ describe('TC-OLC-048/049: GET /settings', () => {
         expect(res.status).toBe(200);
         expect(res.body.ok).toBe(true);
         expect(res.body.data.settings.enabled_sources).toEqual(['ProReferral']); // defaults on first connect
+        expect(res.body.data.settings.calling_window_mode).toBe('company_schedule');
+        expect(res.body.data.settings.timezone).toBe('America/New_York');
         expect(res.body.data.installed).toBe(true);
         expect(res.body.data.install_status).toBe('connected');
         expect(res.body.data.company_sources).toEqual(['Pro Referral', 'Google']);
@@ -153,6 +155,8 @@ describe('TC-OLC-055: PUT /settings — calling-window mode (OLC-WINDOW-001)', (
         const res = await put({ enabled_sources: ['Pro Referral'] });
         expect(res.status).toBe(200);
         expect(insParams().slice(2)).toEqual([null, null, null, null]);
+        expect(res.body.data.settings.calling_window_mode).toBe('company_schedule');
+        expect(res.body.data.settings.timezone).toBe('America/New_York');
     });
 
     it.each([
