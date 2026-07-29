@@ -15,6 +15,8 @@ import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { FloatingField } from '../ui/floating-field';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { FullScreenSearchPicker, SearchPickerRow } from '../shared/FullScreenSearchPicker';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
@@ -74,6 +76,8 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
     const [candidates, setCandidates] = useState<DedupeCandidate[]>([]);
     const [searching, setSearching] = useState(false);
     const [selectedContact, setSelectedContact] = useState<{ id: number; name: string } | null>(null);
+    const [contactPickerOpen, setContactPickerOpen] = useState(false);
+    const isMobile = useIsMobile();
     const [newName, setNewName] = useState('');
     const [newPhone, setNewPhone] = useState('');
     const [newEmail, setNewEmail] = useState('');
@@ -201,6 +205,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
         }
         setCandidates([]);
         setContactQuery('');
+        setContactPickerOpen(false);
     };
     const clearContact = () => setSelectedContact(null);
 
@@ -288,55 +293,116 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                             </div>
                         ) : (
                             <div className="space-y-3.5">
-                                <div className="relative">
-                                    <Input
-                                        className="h-[50px] rounded-xl bg-transparent text-[15px]"
-                                        placeholder="Search an existing contact by name or phone…"
-                                        value={contactQuery}
-                                        onChange={(e) => handleQueryChange(e.target.value)}
-                                    />
-                                    {(searching || candidates.length > 0) && contactQuery.trim().length >= 2 && (
-                                        <div className="cld-candidates">
-                                            {searching && <div className="cld-candidates__header">Searching…</div>}
-                                            {!searching && candidates.length === 0 && (
-                                                <div className="cld-candidates__header">No matches — fill the fields below to create a new contact</div>
+                                {isMobile ? (
+                                    <>
+                                        {/* Type C — tap the field → full-screen contact search (bottom search,
+                                            keyboard-closed). Pick a match → badge; no match → close & fill below. */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setContactPickerOpen(true)}
+                                            className="flex h-[50px] w-full items-center rounded-xl border border-[var(--blanc-line)] bg-transparent px-3.5 text-left text-[15px] text-[var(--blanc-ink-3)]"
+                                        >
+                                            Search an existing contact by name or phone…
+                                        </button>
+                                        <FullScreenSearchPicker
+                                            open={contactPickerOpen}
+                                            onClose={() => setContactPickerOpen(false)}
+                                            query={contactQuery}
+                                            onQueryChange={handleQueryChange}
+                                            placeholder="Search by name or phone…"
+                                            title="Find a contact"
+                                        >
+                                            {contactQuery.trim().length < 2 ? (
+                                                <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
+                                                    Type at least 2 characters to search.
+                                                </div>
+                                            ) : searching ? (
+                                                <div className="flex justify-center py-10">
+                                                    <Loader2 className="size-5 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
+                                                </div>
+                                            ) : candidates.length === 0 ? (
+                                                <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
+                                                    No matches. Close and fill the fields below to create a new contact.
+                                                </div>
+                                            ) : (
+                                                candidates.flatMap((c) => {
+                                                    const name = c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Unnamed';
+                                                    if (c.addresses?.length) {
+                                                        return c.addresses.map((addr, addrIndex) => {
+                                                            const addrText = [addr.line1, [addr.city, addr.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+                                                            return (
+                                                                <SearchPickerRow key={`${c.id}-${addrIndex}`} onClick={() => pickContact(c, addr)}>
+                                                                    <span className="block truncate text-[15px]" style={{ color: 'var(--blanc-ink-1)' }}>{name}</span>
+                                                                    {addrText && <span className="block truncate text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>{addrText}</span>}
+                                                                </SearchPickerRow>
+                                                            );
+                                                        });
+                                                    }
+                                                    return [(
+                                                        <SearchPickerRow key={`${c.id}-0`} onClick={() => pickContact(c)}>
+                                                            <span className="block truncate text-[15px]" style={{ color: 'var(--blanc-ink-1)' }}>{name}</span>
+                                                            {(c.phone_e164 || c.email) && (
+                                                                <span className="block truncate text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                                                    {[c.phone_e164, c.email].filter(Boolean).join(' · ')}
+                                                                </span>
+                                                            )}
+                                                        </SearchPickerRow>
+                                                    )];
+                                                })
                                             )}
-                                            {candidates.flatMap((c) => {
-                                                const name = c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Unnamed';
-                                                const rows = c.addresses?.length
-                                                    ? c.addresses.map((addr, addrIndex) => {
-                                                        const addrText = [addr.line1, [addr.city, addr.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
-                                                        return (
-                                                            <div key={`${c.id}-${addrIndex}`} onClick={() => pickContact(c, addr)} className="cld-candidates__item">
+                                        </FullScreenSearchPicker>
+                                    </>
+                                ) : (
+                                    <div className="relative">
+                                        <Input
+                                            className="h-[50px] rounded-xl bg-transparent text-[15px]"
+                                            placeholder="Search an existing contact by name or phone…"
+                                            value={contactQuery}
+                                            onChange={(e) => handleQueryChange(e.target.value)}
+                                        />
+                                        {(searching || candidates.length > 0) && contactQuery.trim().length >= 2 && (
+                                            <div className="cld-candidates">
+                                                {searching && <div className="cld-candidates__header">Searching…</div>}
+                                                {!searching && candidates.length === 0 && (
+                                                    <div className="cld-candidates__header">No matches — fill the fields below to create a new contact</div>
+                                                )}
+                                                {candidates.flatMap((c) => {
+                                                    const name = c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Unnamed';
+                                                    const rows = c.addresses?.length
+                                                        ? c.addresses.map((addr, addrIndex) => {
+                                                            const addrText = [addr.line1, [addr.city, addr.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+                                                            return (
+                                                                <div key={`${c.id}-${addrIndex}`} onClick={() => pickContact(c, addr)} className="cld-candidates__item">
+                                                                    <div className="cld-candidates__info">
+                                                                        <div className="cld-candidates__name">
+                                                                            <span>{name}</span>
+                                                                        </div>
+                                                                        <div className="cld-candidates__meta">
+                                                                            {addrText && <span className="cld-candidates__meta-item">{addrText}</span>}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })
+                                                        : [(
+                                                            <div key={`${c.id}-0`} onClick={() => pickContact(c)} className="cld-candidates__item">
                                                                 <div className="cld-candidates__info">
                                                                     <div className="cld-candidates__name">
                                                                         <span>{name}</span>
                                                                     </div>
                                                                     <div className="cld-candidates__meta">
-                                                                        {addrText && <span className="cld-candidates__meta-item">{addrText}</span>}
+                                                                        {c.phone_e164 && <span className="cld-candidates__meta-item">{c.phone_e164}</span>}
+                                                                        {c.email && <span className="cld-candidates__meta-item">{c.email}</span>}
                                                                     </div>
                                                                 </div>
                                                             </div>
-                                                        );
-                                                    })
-                                                    : [(
-                                                        <div key={`${c.id}-0`} onClick={() => pickContact(c)} className="cld-candidates__item">
-                                                            <div className="cld-candidates__info">
-                                                                <div className="cld-candidates__name">
-                                                                    <span>{name}</span>
-                                                                </div>
-                                                                <div className="cld-candidates__meta">
-                                                                    {c.phone_e164 && <span className="cld-candidates__meta-item">{c.phone_e164}</span>}
-                                                                    {c.email && <span className="cld-candidates__meta-item">{c.email}</span>}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )];
-                                                return rows;
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
+                                                        )];
+                                                    return rows;
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                                     <FloatingField id="njd-name" label="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
                                     <FloatingField id="njd-phone" label="Phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
