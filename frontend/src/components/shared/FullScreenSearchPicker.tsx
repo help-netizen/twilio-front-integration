@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Loader2, Search, X } from 'lucide-react';
 import { useKeyboardInset } from './NoteComposerOverlay';
@@ -57,6 +57,25 @@ export function FullScreenSearchPicker({
 }: FullScreenSearchPickerProps) {
     const keyboardInset = useKeyboardInset(open);
     const inputRef = useRef<HTMLInputElement>(null);
+    // iOS shifts the VISUAL viewport down (offsetTop > 0) when the keyboard opens to reveal the
+    // focused input. A fixed layer pinned to top:0 (LAYOUT viewport) then has its top above the
+    // visible area → the header "flies off-screen" (owner). Pin the layer's top to the visual
+    // viewport's top instead so the layer stays put and the header is always visible.
+    const [viewportTop, setViewportTop] = useState(0);
+    useEffect(() => {
+        if (!open || typeof window === 'undefined' || !window.visualViewport) { setViewportTop(0); return; }
+        const vv = window.visualViewport;
+        const read = () => setViewportTop(vv.offsetTop);
+        read();
+        vv.addEventListener('resize', read);
+        vv.addEventListener('scroll', read);
+        const poll = window.setInterval(read, 250); // belt — iOS vv events can miss keyboard toggles
+        return () => {
+            vv.removeEventListener('resize', read);
+            vv.removeEventListener('scroll', read);
+            clearInterval(poll);
+        };
+    }, [open]);
 
     useEffect(() => {
         if (!open) return;
@@ -78,7 +97,7 @@ export function FullScreenSearchPicker({
         <div
             style={{
                 position: 'fixed',
-                top: 0,
+                top: viewportTop, // track the visual-viewport top so the layer never flies off-screen
                 left: 0,
                 right: 0,
                 bottom: keyboardInset, // the bottom search bar ends exactly at the keyboard's top edge
