@@ -114,7 +114,11 @@ export function FullScreenTextEditor({
 
             <div className="relative flex flex-1 min-h-0">
                 <textarea
-                    autoFocus
+                    // Only autofocus when we open ready-to-edit. When we open in a busy/loading
+                    // state (async polish), a mount-autofocus lands on the read-only textarea and
+                    // leaves it "focused" with no keyboard — then the user's later tap can't re-open
+                    // the iOS keyboard. Skipping it lets that tap be a fresh, keyboard-opening focus.
+                    autoFocus={!busy}
                     value={text}
                     onChange={e => setText(e.target.value)}
                     placeholder={placeholder}
