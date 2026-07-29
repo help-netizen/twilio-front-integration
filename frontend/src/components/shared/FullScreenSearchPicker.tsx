@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Loader2, Search, X } from 'lucide-react';
 import { useKeyboardInset } from './NoteComposerOverlay';
@@ -56,6 +56,7 @@ export function FullScreenSearchPicker({
     onSave, saving, saveLabel = 'Save', children,
 }: FullScreenSearchPickerProps) {
     const keyboardInset = useKeyboardInset(open);
+    const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         if (!open) return;
@@ -123,13 +124,26 @@ export function FullScreenSearchPicker({
                 <div className="relative flex-1">
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2" style={{ color: 'var(--blanc-ink-3)' }} />
                     <input
+                        ref={inputRef}
                         type="text"
                         autoFocus={autoFocusSearch}
                         value={query}
                         placeholder={placeholder}
                         onChange={e => onQueryChange(e.target.value)}
-                        className="h-11 w-full rounded-full border-[1.5px] border-transparent bg-[var(--blanc-field)] pl-10 pr-3 text-base text-[var(--blanc-ink-1)] outline-none focus-visible:border-[var(--blanc-ink-2)]"
+                        className="h-11 w-full rounded-full border-[1.5px] border-transparent bg-[var(--blanc-field)] pl-10 pr-11 text-base text-[var(--blanc-ink-1)] outline-none focus-visible:border-[var(--blanc-ink-2)]"
                     />
+                    {/* Clear — appears only while there's text; clears and keeps focus so the keyboard stays up. */}
+                    {query && (
+                        <button
+                            type="button"
+                            onClick={() => { onQueryChange(''); inputRef.current?.focus(); }}
+                            aria-label="Clear search"
+                            className="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full"
+                            style={{ background: 'rgba(25,25,25,0.12)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            <X className="size-4" />
+                        </button>
+                    )}
                 </div>
                 {onSave && (
                     <button
