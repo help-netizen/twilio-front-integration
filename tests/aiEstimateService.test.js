@@ -322,7 +322,10 @@ describe('REPORT-TO-ESTIMATE-001 generator core', () => {
             'ALWAYS pick the closest catalog group or item',
         );
         expect(prompt).toContain(
-            'Put ALL report specifics (symptom, model, part number, and what was done) in the description.',
+            'Keep the step-by-step procedure OUT of the summary.',
+        );
+        expect(prompt).toContain(
+            'a detailed labor description is strongly preferred',
         );
         expect(h.instructionLoader).toHaveBeenCalledWith(COMPANY_A);
     });
