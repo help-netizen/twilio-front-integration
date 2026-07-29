@@ -111,12 +111,11 @@ export function FullScreenSearchPicker({
                 {children}
             </div>
 
-            {/* Bottom dock: the search input (+ optional Save), riding above the keyboard. */}
+            {/* Bottom dock: the search input (+ optional Save) FLOAT above the list — no separator
+                line, no backdrop bar (owner: "should float like the Type A hover input"). */}
             <div
-                className="flex shrink-0 items-center gap-2 border-t"
+                className="flex shrink-0 items-center gap-2"
                 style={{
-                    borderColor: 'var(--blanc-line)',
-                    background: 'var(--blanc-surface-strong)',
                     padding: '10px 12px',
                     paddingBottom: 'calc(env(safe-area-inset-bottom) + 10px)',
                 }}
