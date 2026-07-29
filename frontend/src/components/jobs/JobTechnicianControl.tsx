@@ -8,7 +8,7 @@
  * on mobile it's the canonical bottom sheet.
  */
 
-import { useState, useEffect, type CSSProperties } from 'react';
+import { useState, useEffect, useMemo, type CSSProperties } from 'react';
 import { Pencil, Check, UserRound, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { LocalJob } from '../../services/jobsApi';
@@ -18,7 +18,7 @@ import { useProviders } from '../../hooks/useProviders';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from '../ui/command';
-import { BottomSheet } from '../ui/BottomSheet';
+import { FullScreenSearchPicker, SearchPickerRow } from '../shared/FullScreenSearchPicker';
 import { Button } from '../ui/button';
 
 interface JobTechnicianControlProps {
@@ -39,17 +39,24 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
     const [open, setOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [query, setQuery] = useState('');
 
     // Fetch the roster lazily — only for dispatchers, only once the picker opens.
     const { providers, loading } = useProviders(canAssign && open);
 
     const assigned = job.assigned_techs ?? [];
 
-    // Seed the selection from the job's current providers each time the picker opens.
+    // Seed the selection from the job's current providers each time the picker opens; clear search.
     useEffect(() => {
-        if (open) setSelected(new Set(assigned.map(t => String(t.id))));
+        if (open) { setSelected(new Set(assigned.map(t => String(t.id)))); setQuery(''); }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
+
+    // Mobile full-screen picker filters the roster client-side (the roster is small).
+    const filteredProviders = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        return q ? providers.filter(p => (p.name || '').toLowerCase().includes(q)) : providers;
+    }, [providers, query]);
 
     const toggle = (id: string) => {
         setSelected(prev => {
@@ -165,14 +172,41 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
                 {canAssign && isMobile && (
                     <>
                         {changeBtn}
-                        <BottomSheet
+                        <FullScreenSearchPicker
                             open={open}
                             onClose={() => setOpen(false)}
-                            size="auto"
+                            query={query}
+                            onQueryChange={setQuery}
+                            placeholder="Search providers…"
                             title={assigned.length ? 'Change provider' : 'Assign provider'}
+                            footer={
+                                <>
+                                    <span className="mr-auto pl-1 text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                        {selected.size} selected
+                                    </span>
+                                    <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
+                                    <Button onClick={save} disabled={busy}>
+                                        {busy ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : null}Save
+                                    </Button>
+                                </>
+                            }
                         >
-                            {picker}
-                        </BottomSheet>
+                            {loading ? (
+                                <div className="flex justify-center py-10">
+                                    <Loader2 className="size-5 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
+                                </div>
+                            ) : filteredProviders.length === 0 ? (
+                                <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    No providers found.
+                                </div>
+                            ) : (
+                                filteredProviders.map(p => (
+                                    <SearchPickerRow key={p.id} selected={selected.has(p.id)} onClick={() => toggle(p.id)}>
+                                        <span className="block truncate text-[15px]" style={{ color: 'var(--blanc-ink-1)' }}>{p.name}</span>
+                                    </SearchPickerRow>
+                                ))
+                            )}
+                        </FullScreenSearchPicker>
                     </>
                 )}
             </div>
