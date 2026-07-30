@@ -116,7 +116,7 @@ export function TechnicianSettingsPanel({
                                     No hours were fabricated. Close and reopen the panel to retry.
                                 </p>
                             </div>
-                        ) : settings ? (
+                        ) : settings && technician ? (
                             <>
                                 <div className="space-y-3.5">
                                     <label className="flex items-start gap-3">
@@ -179,7 +179,7 @@ export function TechnicianSettingsPanel({
                                 )}
 
                                 <TechnicianServiceAreasEditor
-                                    technicianId={technician!.tech_id}
+                                    technicianId={technician.tech_id}
                                     value={settings.service_areas}
                                     onSaved={serviceAreas => {
                                         const updated = { ...settings, service_areas: serviceAreas };
