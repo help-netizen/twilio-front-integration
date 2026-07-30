@@ -70,14 +70,12 @@ const PERMISSION_CATALOG = [
             { key: 'schedule.dispatch', label: 'Dispatch on schedule' },
         ],
     },
-    {
-        category: 'Tasks',
-        items: [
-            { key: 'tasks.view', label: 'View tasks' },
-            { key: 'tasks.create', label: 'Create tasks' },
-            { key: 'tasks.manage', label: 'Manage all tasks' },
-        ],
-    },
+    // ROLE-TASKS-SCOPE-001: Tasks is NOT an access-gated section — every role reaches
+    // it. Visibility is by CONTENT, enforced in the tasks routes: a user sees only tasks
+    // assigned to them or authored by them, EXCEPT holders of tasks.manage (dispatchers +
+    // managers) who see all. So the tasks.* permissions are intentionally omitted from
+    // this settings catalog (no toggles); they remain real permissions resolved from each
+    // role's DB grants (seed migration 050 — provider: view+create, offices: +manage).
     {
         category: 'Financial',
         items: [
