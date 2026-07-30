@@ -300,11 +300,12 @@ table tbody tr:hover {
     font-weight: 600;
 }
 
-/* Main content area: warm gradient background */
+/* Main content area: flat neutral canvas (PALETTE-V2). The old warm gradient
+   showed through wherever a page container's own #F1F1F0 ended — a full-width
+   band of slightly different grey above the mobile nav that shifted over
+   content when the iOS keyboard resized the viewport (BG-SEAM-001). */
 .app-main {
-    background:
-        radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 28%),
-        linear-gradient(180deg, #FBFBFB 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%) !important;
+    background: var(--blanc-bg) !important;
 }
 
 /* Logo */
