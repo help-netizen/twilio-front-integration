@@ -5,9 +5,11 @@
 -- bootstrap that re-reads 050 wholesale). Idempotent / re-runnable — existing
 -- roles never auto-inherit new permission keys, so each grant is explicit.
 --
---   A) provider (Technician): full self-serve finance — view/create/send
---      estimates & invoices, view payments, and collect via every surface
---      (online, offline, keyed, terminal). Deliberately NO payments.refund.
+--   A) provider (Technician): self-serve finance — view/create/send estimates &
+--      invoices, and collect via every surface (online, offline, keyed, terminal).
+--      Deliberately NO payments.refund. ROLE-PROVIDER-NO-PAYMENTS-001: also NO
+--      payments.view — the standalone Payments ledger is hidden from providers;
+--      the job finance panel reads payments under financial_data.view instead.
 --      (payments.collect_terminal was already granted to provider by mig 118;
 --       repeated here for a self-contained backfill — ON CONFLICT makes it a no-op.)
 --   B) NEW permission key lead_source.view → tenant_admin, manager, dispatcher.
@@ -23,7 +25,6 @@ CROSS JOIN (VALUES
     ('financial_data.view'),
     ('estimates.view'), ('estimates.create'), ('estimates.send'),
     ('invoices.view'), ('invoices.create'), ('invoices.send'),
-    ('payments.view'),
     ('payments.collect_online'), ('payments.collect_offline'),
     ('payments.collect_keyed'), ('payments.collect_terminal')
 ) AS p(key)

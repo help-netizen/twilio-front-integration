@@ -7,18 +7,52 @@
 const express = require('express');
 const router = express.Router();
 const paymentsService = require('../services/paymentsService');
+const jobsService = require('../services/jobsService');
 const { requirePermission } = require('../middleware/authorization');
+const { getProviderScope } = require('../middleware/providerScope');
 const { userActor } = require('../services/financialActivityService');
 const { withTransaction } = require('../services/transactionService');
+
+// ROLE-PROVIDER-NO-PAYMENTS-001 — decouple the standalone payments ledger from the
+// job-level payment view. The full ledger (any/unfiltered transactions) needs
+// payments.view; a caller with only financial_data.view (a Provider) may read
+// payments ONLY for a job assigned to them — the job-scoped reads the job finance
+// panel makes (GET /?job_id, GET /:id). Reuses the canonical provider record scope:
+// getJobById under an assigned_only scope returns null for a job that isn't theirs.
+function hasLedgerAccess(req) {
+    return !!req.user?._devMode || (req.authz?.permissions || []).includes('payments.view');
+}
+
+async function jobScopeError(req, jobId) {
+    if (hasLedgerAccess(req)) return null; // office: full ledger, no job scoping
+    if (jobId == null || jobId === '') {
+        return { status: 403, code: 'PAYMENTS_JOB_SCOPE_REQUIRED',
+            message: 'Payments are limited to your assigned jobs — open one from the job.' };
+    }
+    const companyId = req.companyFilter?.company_id;
+    const job = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
+    if (!job) {
+        return { status: 403, code: 'ACCESS_DENIED',
+            message: 'You can only view payments on jobs assigned to you.' };
+    }
+    return null;
+}
+
+function sendScopeError(res, err) {
+    return res.status(err.status).json({ ok: false, error: { code: err.code, message: err.message } });
+}
 
 // =============================================================================
 // Payment transactions
 // =============================================================================
 
 // GET /api/payments — List payment transactions
-router.get('/', requirePermission('payments.view'), async (req, res) => {
+router.get('/', requirePermission('payments.view', 'financial_data.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
+        // Non-ledger callers (Provider) may only list a job they're assigned to.
+        const scopeErr = await jobScopeError(req, req.query.job_id);
+        if (scopeErr) return sendScopeError(res, scopeErr);
         const {
             status,
             transaction_type,
@@ -195,10 +229,18 @@ router.post('/manual-card-sessions/:sessionId/receipt', requirePermission('payme
 });
 
 // GET /api/payments/:id — Get payment transaction by ID
-router.get('/:id', requirePermission('payments.view'), async (req, res) => {
+router.get('/:id', requirePermission('payments.view', 'financial_data.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const { id } = req.params;
+
+        // Non-ledger callers (Provider): the transaction must belong to a job
+        // assigned to them. Fail closed (403) for ledger-only / job-less payments.
+        if (!hasLedgerAccess(req)) {
+            const tx = await paymentsService.getTransaction(companyId, id);
+            const scopeErr = await jobScopeError(req, tx?.job_id ?? null);
+            if (scopeErr) return sendScopeError(res, scopeErr);
+        }
 
         const result = await paymentsService.getTransactionDetail(companyId, id);
         res.json({ ok: true, data: result });

@@ -109,11 +109,12 @@ CROSS JOIN (VALUES
     ('jobs.view'),
     ('jobs.done_pending_approval'),
     ('schedule.view'),
-    -- PROVIDER-FINANCE-001: full self-serve finance (no refund)
+    -- PROVIDER-FINANCE-001: self-serve finance (no refund). ROLE-PROVIDER-NO-PAYMENTS-001:
+    -- deliberately NO payments.view — the standalone Payments ledger section is hidden from
+    -- providers; job-level payment reads run under financial_data.view (see payments route).
     ('financial_data.view'),
     ('estimates.view'), ('estimates.create'), ('estimates.send'),
     ('invoices.view'), ('invoices.create'), ('invoices.send'),
-    ('payments.view'),
     ('payments.collect_online'), ('payments.collect_offline'),
     ('payments.collect_keyed'), ('payments.collect_terminal'),
     ('provider.enabled'),

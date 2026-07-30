@@ -8,9 +8,10 @@
  * the rest. A passing gate calls the (mocked) service → 2xx; a blocked gate
  * short-circuits → 403, so the service must NOT have been called.
  *
- * GOAL A: the provider role's NEW finance perm set PASSES estimates/invoices
- *         list+create, payments list, and an offline-collect route, but is
- *         BLOCKED from refund (refund needs payments.refund, provider lacks).
+ * GOAL A: the provider role's finance perm set PASSES estimates/invoices
+ *         list+create and an offline-collect route, is BLOCKED from refund
+ *         (needs payments.refund), and — ROLE-PROVIDER-NO-PAYMENTS-001 — is
+ *         refused the unfiltered payments ledger (needs payments.view).
  * GOAL B: a static assertion that 050 + the catalog grant lead_source.view to
  *         tenant_admin/manager/dispatcher and NOT to provider.
  */
@@ -82,12 +83,13 @@ function permBlockFor(roleKey) {
     return match[0];
 }
 
-// The provider's NEW finance perm set after PROVIDER-FINANCE-001 (no refund).
+// The provider's finance perm set after PROVIDER-FINANCE-001 (no refund) and
+// ROLE-PROVIDER-NO-PAYMENTS-001 (no payments.view — the standalone ledger is hidden;
+// job-level payment reads run under financial_data.view, scoped to assigned jobs).
 const PROVIDER_FINANCE = [
     'financial_data.view',
     'estimates.view', 'estimates.create', 'estimates.send',
     'invoices.view', 'invoices.create', 'invoices.send',
-    'payments.view',
     'payments.collect_online', 'payments.collect_offline',
     'payments.collect_keyed', 'payments.collect_terminal',
 ];
@@ -140,9 +142,15 @@ describe('PROVIDER-FINANCE-001 — provider finance perm set passes self-serve f
         expect(mockInvoices.createInvoice).toHaveBeenCalled();
     });
 
-    test('GET /api/payments is allowed (payments.view)', async () => {
-        expect((await request(appAs(paymentsRouter, PROVIDER_FINANCE)).get('/')).status).toBe(200);
-        expect(mockPayments.listTransactions).toHaveBeenCalled();
+    // ROLE-PROVIDER-NO-PAYMENTS-001: without payments.view the provider can't pull the
+    // company-wide ledger. The route guard still admits financial_data.view, but the
+    // in-handler job scope refuses an unfiltered list (job-scoped reads are covered by
+    // tests/paymentsProviderScope.test.js). So the service is never reached here.
+    test('GET /api/payments (unfiltered ledger) is refused for the provider set', async () => {
+        const res = await request(appAs(paymentsRouter, PROVIDER_FINANCE)).get('/');
+        expect(res.status).toBe(403);
+        expect(res.body.error.code).toBe('PAYMENTS_JOB_SCOPE_REQUIRED');
+        expect(mockPayments.listTransactions).not.toHaveBeenCalled();
     });
 
     test('POST /api/payments/manual (offline collect) is allowed (payments.collect_offline)', async () => {
