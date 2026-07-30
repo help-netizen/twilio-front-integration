@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Navigate } from 'react-router-dom';
 import { useAuth } from './AuthProvider';
 import { useAuthz } from '../hooks/useAuthz';
 
@@ -10,6 +11,12 @@ interface ProtectedRouteProps {
     permissions?: string[];
     /** Platform roles for platform-only routes (e.g. super_admin). */
     platformRoles?: string[];
+    /**
+     * Where to send the user when they lack access. Defaults to the inline
+     * "no access" page; set a path (e.g. "/jobs", always reachable) to redirect
+     * instead — used so a role without View Pulse lands on Jobs, not a dead end.
+     */
+    redirectTo?: string;
 }
 
 /**
@@ -23,12 +30,19 @@ interface ProtectedRouteProps {
  *
  * The backend stays authoritative — this guard only prevents loading hidden UI.
  */
-export function ProtectedRoute({ children, roles, permissions, platformRoles }: ProtectedRouteProps) {
-    const { authenticated, hasRole } = useAuth();
+export function ProtectedRoute({ children, roles, permissions, platformRoles, redirectTo }: ProtectedRouteProps) {
+    const { authenticated, hasRole, authzReady } = useAuth();
     const { hasAnyPermission, hasPlatformRole } = useAuthz();
 
     if (!authenticated) {
         return null; // AuthProvider handles redirect
+    }
+
+    // Don't decide access until permissions are resolved — otherwise a redirectTo
+    // route (e.g. /pulse → /jobs) could bounce a user who actually has access during
+    // the brief authz-loading window, and the replace-redirect would stick.
+    if (!authzReady) {
+        return null;
     }
 
     const checks: boolean[] = [];
@@ -48,6 +62,9 @@ export function ProtectedRoute({ children, roles, permissions, platformRoles }: 
     const hasAccess = checks.length === 0 ? true : checks.some(Boolean);
 
     if (!hasAccess) {
+        if (redirectTo) {
+            return <Navigate to={redirectTo} replace />;
+        }
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',

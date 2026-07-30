@@ -130,10 +130,10 @@ function App() {
               <Route path="/r/:token" element={<RatePage />} />
               <Route path="/onboarding" element={<OnboardingPage />} />
               <Route path="/" element={<Navigate to="/pulse" replace />} />
-              <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
-              <Route path="/welcome" element={<ProtectedRoute permissions={['pulse.view']}><WelcomePage /></ProtectedRoute>} />
-              <Route path="/pulse/contact/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
-              <Route path="/pulse/timeline/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
+              <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']} redirectTo="/jobs"><PulsePage /></ProtectedRoute>} />
+              <Route path="/welcome" element={<ProtectedRoute permissions={['pulse.view']} redirectTo="/jobs"><WelcomePage /></ProtectedRoute>} />
+              <Route path="/pulse/contact/:id" element={<ProtectedRoute permissions={['pulse.view']} redirectTo="/jobs"><PulsePage /></ProtectedRoute>} />
+              <Route path="/pulse/timeline/:id" element={<ProtectedRoute permissions={['pulse.view']} redirectTo="/jobs"><PulsePage /></ProtectedRoute>} />
               <Route path="/calls" element={<ProtectedRoute permissions={['messages.view_internal']}><HomePage /></ProtectedRoute>} />
               <Route path="/contact/:id" element={<ProtectedRoute permissions={['messages.view_internal']}><ConversationPage /></ProtectedRoute>} />
               <Route path="/calls/:callSid" element={<ProtectedRoute permissions={['messages.view_internal']}><ConversationPage /></ProtectedRoute>} />
