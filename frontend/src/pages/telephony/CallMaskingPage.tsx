@@ -201,6 +201,11 @@ export default function CallMaskingPage() {
                                 </p>
                             </div>
                         </div>
+                        <p className="text-[13px]" style={{ color: INK2, lineHeight: 1.5 }}>
+                            Callers are recognized by the mobile number saved in their team profile — make sure
+                            everyone who places masked calls has theirs filled in, or the call goes to your
+                            regular company line instead.
+                        </p>
                     </div>
                 </div>
             </section>

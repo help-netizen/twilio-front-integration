@@ -23,6 +23,8 @@ interface MaskedDial {
     code: string | null;
     display_number: string | null;
     tel_uri: string | null;
+    /** The VIEWER's team profile has no phone — the masked call can't route. */
+    caller_phone_missing?: boolean;
 }
 
 interface MaskedCallLineProps {
@@ -64,15 +66,22 @@ export function MaskedCallLine({ entityType, entityId, children }: MaskedCallLin
 
     if (dial?.enabled && dial.tel_uri) {
         return (
-            <a
-                href={dial.tel_uri}
-                className="inline-flex items-center gap-1.5 text-[13px] font-semibold hover:underline"
-                style={{ color: 'var(--blanc-accent)' }}
-                title="Call the customer through your company number — recorded, and your line stays private"
-            >
-                <ShieldCheck className="size-3.5 shrink-0" />
-                {formatPhone(dial.masking_number || '')} · {dial.code}
-            </a>
+            <span className="inline-flex flex-col items-start gap-0.5">
+                <a
+                    href={dial.tel_uri}
+                    className="inline-flex items-center gap-1.5 text-[13px] font-semibold hover:underline"
+                    style={{ color: 'var(--blanc-accent)' }}
+                    title="Call the customer through your company number — recorded, and your line stays private"
+                >
+                    <ShieldCheck className="size-3.5 shrink-0" />
+                    {formatPhone(dial.masking_number || '')} · {dial.code}
+                </a>
+                {dial.caller_phone_missing && (
+                    <span className="text-[12px] leading-snug" style={{ color: 'var(--blanc-danger)' }}>
+                        Add your mobile number to your team profile — masked calls only connect from it.
+                    </span>
+                )}
+            </span>
         );
     }
 

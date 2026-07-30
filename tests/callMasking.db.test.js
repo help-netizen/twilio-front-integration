@@ -392,4 +392,165 @@ describe('CALL-MASKING real PostgreSQL code isolation', () => {
             client.release();
         }
     });
+
+    // CALL-MASK-ROUTE-001: the inbound leg recognizes callers by the roles
+    // matrix (`call_masking.use`), not by the is_provider profile flag — a
+    // permitted dispatcher routes, a permission-less provider falls closed.
+    databaseTest('inbound recognition honors role permission, not is_provider', async () => {
+        const client = await db.pool.connect();
+        const schema = `call_masking_route_${randomUUID().replaceAll('-', '')}`;
+        const companyA = randomUUID();
+        const dispatcherUser = randomUUID();
+        const providerUser = randomUUID();
+        try {
+            await client.query('BEGIN');
+            await client.query(`CREATE SCHEMA "${schema}"`);
+            await client.query(`SET LOCAL search_path TO "${schema}", public`);
+            await client.query(`
+                CREATE TABLE companies (id UUID PRIMARY KEY);
+                CREATE TABLE crm_users (id UUID PRIMARY KEY);
+                CREATE TABLE contacts (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_id UUID NOT NULL REFERENCES companies(id),
+                    phone_e164 TEXT,
+                    secondary_phone TEXT
+                );
+                CREATE TABLE company_telephony (
+                    company_id UUID PRIMARY KEY REFERENCES companies(id),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                CREATE TABLE phone_number_settings (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_id UUID NOT NULL REFERENCES companies(id),
+                    phone_number TEXT NOT NULL
+                );
+                CREATE TABLE company_memberships (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    company_id UUID NOT NULL REFERENCES companies(id),
+                    user_id UUID NOT NULL,
+                    role TEXT,
+                    role_key TEXT,
+                    status TEXT NOT NULL DEFAULT 'active'
+                );
+                CREATE TABLE company_user_profiles (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    membership_id UUID NOT NULL REFERENCES company_memberships(id),
+                    phone TEXT,
+                    is_provider BOOLEAN NOT NULL DEFAULT false
+                );
+                CREATE TABLE company_role_configs (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    company_id UUID NOT NULL REFERENCES companies(id),
+                    role_key TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    description TEXT,
+                    is_locked BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    UNIQUE (company_id, role_key)
+                );
+                CREATE TABLE company_role_permissions (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    role_config_id UUID NOT NULL REFERENCES company_role_configs(id),
+                    permission_key TEXT NOT NULL,
+                    is_allowed BOOLEAN NOT NULL,
+                    UNIQUE (role_config_id, permission_key)
+                );
+                CREATE TABLE company_role_scopes (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    role_config_id UUID NOT NULL REFERENCES company_role_configs(id),
+                    scope_key TEXT NOT NULL,
+                    scope_json JSONB
+                );
+                CREATE TABLE company_membership_permission_overrides (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    membership_id UUID NOT NULL REFERENCES company_memberships(id),
+                    permission_key TEXT NOT NULL,
+                    override_mode TEXT NOT NULL
+                );
+                CREATE TABLE company_membership_scope_overrides (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    membership_id UUID NOT NULL REFERENCES company_memberships(id),
+                    scope_key TEXT NOT NULL,
+                    scope_json JSONB
+                );
+            `);
+            await client.query(MIGRATION);
+            await client.query(`INSERT INTO companies (id) VALUES ($1)`, [companyA]);
+            await client.query(
+                `INSERT INTO company_telephony (company_id, call_masking_enabled, call_masking_number)
+                 VALUES ($1, true, '+16174044425')`,
+                [companyA]
+            );
+            await client.query(
+                `INSERT INTO phone_number_settings (company_id, phone_number)
+                 VALUES ($1, '+16174044425')`,
+                [companyA]
+            );
+            await client.query(
+                `INSERT INTO company_role_configs (company_id, role_key)
+                 VALUES ($1, 'dispatcher'), ($1, 'provider')`,
+                [companyA]
+            );
+            // The roles matrix DELIBERATELY inverts the legacy assumption:
+            // dispatcher may mask, provider may not.
+            await client.query(
+                `INSERT INTO company_role_permissions (role_config_id, permission_key, is_allowed)
+                 SELECT id, 'call_masking.use', role_key = 'dispatcher'
+                 FROM company_role_configs
+                 WHERE company_id = $1`,
+                [companyA]
+            );
+            const memberships = await client.query(
+                `INSERT INTO company_memberships (company_id, user_id, role, role_key, status)
+                 VALUES
+                    ($1, $2, 'company_member', 'dispatcher', 'active'),
+                    ($1, $3, 'company_member', 'provider', 'active')
+                 RETURNING id, user_id`,
+                [companyA, dispatcherUser, providerUser]
+            );
+            const membershipByUser = new Map(memberships.rows.map(row => [row.user_id, row.id]));
+            await client.query(
+                `INSERT INTO company_user_profiles (membership_id, phone, is_provider)
+                 VALUES ($1, '(617) 555-1111', false), ($2, '+16175552222', true)`,
+                [membershipByUser.get(dispatcherUser), membershipByUser.get(providerUser)]
+            );
+
+            // Permitted dispatcher (no is_provider flag) is recognized by phone.
+            await expect(callMaskingService.getInboundMaskingContext(
+                companyA, '+16174044425', '+16175551111', client
+            )).resolves.toEqual({
+                company_id: companyA,
+                masking_number: '+16174044425',
+                provider_user_id: dispatcherUser,
+            });
+
+            // is_provider=true does NOT help when the role lacks the permission.
+            await expect(callMaskingService.getInboundMaskingContext(
+                companyA, '+16174044425', '+16175552222', client
+            )).resolves.toBeNull();
+
+            // Unknown caller-ID stays on the office route.
+            await expect(callMaskingService.getInboundMaskingContext(
+                companyA, '+16174044425', '+16175559999', client
+            )).resolves.toBeNull();
+
+            // A per-user allow override opens the inbound leg like the routes.
+            await client.query(
+                `INSERT INTO company_membership_permission_overrides (membership_id, permission_key, override_mode)
+                 VALUES ($1, 'call_masking.use', 'allow')`,
+                [membershipByUser.get(providerUser)]
+            );
+            await expect(callMaskingService.getInboundMaskingContext(
+                companyA, '+16174044425', '+16175552222', client
+            )).resolves.toEqual({
+                company_id: companyA,
+                masking_number: '+16174044425',
+                provider_user_id: providerUser,
+            });
+        } finally {
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
 });

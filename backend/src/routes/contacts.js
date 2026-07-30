@@ -238,7 +238,9 @@ router.get('/:id/call-masking', requirePermission('call_masking.use'), async (re
         const result = await callMaskingService.getMaskedDialForContact(
             req.companyFilter?.company_id,
             req.params.id,
-            getProviderScope(req)
+            getProviderScope(req),
+            undefined,
+            req.user?.crmUser?.id || null
         );
         if (!result) {
             return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));

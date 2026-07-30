@@ -185,7 +185,9 @@ describe('contact masking resolver route', () => {
         expect(mockGetMaskedDialForContact).toHaveBeenCalledWith(
             COMPANY_A,
             '42',
-            { assignedOnly: true, userId: ACTOR }
+            { assignedOnly: true, userId: ACTOR },
+            undefined,
+            ACTOR
         );
     });
 
@@ -240,7 +242,9 @@ describe('job masking resolver route', () => {
         expect(mockGetMaskedDialForJob).toHaveBeenCalledWith(
             COMPANY_A,
             '77',
-            { assignedOnly: true, userId: ACTOR }
+            { assignedOnly: true, userId: ACTOR },
+            undefined,
+            ACTOR
         );
     });
 

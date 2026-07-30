@@ -478,9 +478,9 @@ async function handleVoiceInbound(req, res) {
             }
 
             // CALL-MASKING-001: only an enabled company masking number called
-            // from exactly one active registered provider enters the code
-            // gather. Customers and unknown callers continue through the
-            // existing company IVR/group route below.
+            // from exactly one active member whose role holds `call_masking.use`
+            // (matched by profile phone) enters the code gather. Customers and
+            // unknown callers continue through the existing IVR/group route below.
             const maskingContext = await callMaskingService.getInboundMaskingContext(
                 companyId,
                 To,

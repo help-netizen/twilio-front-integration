@@ -1320,7 +1320,9 @@ router.get('/:id/call-masking', requirePermission('call_masking.use'), async (re
         const result = await require('../services/callMaskingService').getMaskedDialForJob(
             req.companyFilter?.company_id,
             req.params.id,
-            getProviderScope(req)
+            getProviderScope(req),
+            undefined,
+            req.user?.crmUser?.id || null
         );
         if (!result) {
             return res.status(404).json({ ok: false, error: 'Job not found', code: 'NOT_FOUND' });

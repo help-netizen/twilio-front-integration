@@ -11,6 +11,13 @@ jest.mock('../backend/src/db/connection', () => ({
 jest.mock('../backend/src/services/auditService', () => ({
     log: (...args) => mockAuditLog(...args),
 }));
+// Inbound recognition delegates the permission decision to the same effective-
+// permission computation the API routes use; the tests drive it directly.
+const mockResolvePerms = jest.fn(() => Promise.resolve({ permissions: ['call_masking.use'], scopes: {} }));
+jest.mock('../backend/src/services/authorizationService', () => ({
+    LEGACY_ROLE_MAPPING: { company_admin: 'tenant_admin', company_member: 'dispatcher' },
+    resolveEffectivePermissionsAndScopes: (...args) => mockResolvePerms(...args),
+}));
 
 const service = require('../backend/src/services/callMaskingService');
 
@@ -201,6 +208,7 @@ describe('callMaskingService resolver', () => {
             code: '000007',
             display_number: '+16174044425',
             tel_uri: 'tel:+16174044425,,000007',
+            caller_phone_missing: false,
         });
         expect(mockQuery.mock.calls[0][0]).toContain('visible_job.company_id = c.company_id');
         expect(mockQuery.mock.calls[0][0]).toContain('assigned_provider_user_ids @> $3::jsonb');
@@ -227,7 +235,7 @@ describe('callMaskingService resolver', () => {
     test('same provider phone and code are resolved only inside the supplied company', async () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ call_masking_number: '+16174044425' }] })
-            .mockResolvedValueOnce({ rows: [{ user_id: PROVIDER, phone: '(617) 555-0000' }] })
+            .mockResolvedValueOnce({ rows: [{ user_id: PROVIDER, membership_id: 'mem-1', role: null, role_key: 'provider', phone: '(617) 555-0000' }] })
             .mockResolvedValueOnce({ rows: [{ contact_id: 8, customer_phone: '+16175550999' }] });
 
         const resolved = await service.resolveCustomerForProviderCode(COMPANY_A, {
@@ -254,10 +262,43 @@ describe('callMaskingService resolver', () => {
             .mockResolvedValueOnce({ rows: [{ call_masking_number: '+16174044425' }] })
             .mockResolvedValueOnce({
                 rows: [
-                    { user_id: PROVIDER, phone: '+16175550000' },
-                    { user_id: 'other', phone: '617-555-0000' },
+                    { user_id: PROVIDER, membership_id: 'mem-1', role: null, role_key: 'provider', phone: '+16175550000' },
+                    { user_id: 'other', membership_id: 'mem-2', role: null, role_key: 'provider', phone: '617-555-0000' },
                 ],
             });
+        await expect(service.resolveCustomerForProviderCode(COMPANY_A, {
+            maskingNumber: '+16174044425',
+            providerPhone: '+16175550000',
+            code: '000123',
+        })).resolves.toBeNull();
+        expect(mockQuery).toHaveBeenCalledTimes(2);
+    });
+
+    test('a permitted member is recognized without an is_provider profile (CALL-MASK-ROUTE-001)', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ call_masking_number: '+16174044425' }] })
+            .mockResolvedValueOnce({ rows: [{ user_id: 'dispatcher-user', membership_id: 'mem-d', role: 'company_member', role_key: null, phone: '+16175551234' }] })
+            .mockResolvedValueOnce({ rows: [{ contact_id: 9, customer_phone: '+16175550999' }] });
+
+        const resolved = await service.resolveCustomerForProviderCode(COMPANY_A, {
+            maskingNumber: '+16174044425',
+            providerPhone: '+16175551234',
+            code: '000002',
+        });
+
+        expect(resolved).toMatchObject({ provider_user_id: 'dispatcher-user', contact_id: 9 });
+        // The candidate query must not gate on is_provider — the roles matrix decides.
+        expect(mockQuery.mock.calls[1][0]).not.toContain('is_provider');
+        // Legacy role rows resolve through LEGACY_ROLE_MAPPING before the permission check.
+        expect(mockResolvePerms).toHaveBeenCalledWith(COMPANY_A, 'dispatcher', 'mem-d', {});
+    });
+
+    test('a matching caller whose role lacks call_masking.use fails closed to the office route', async () => {
+        mockResolvePerms.mockResolvedValueOnce({ permissions: [], scopes: {} });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ call_masking_number: '+16174044425' }] })
+            .mockResolvedValueOnce({ rows: [{ user_id: PROVIDER, membership_id: 'mem-1', role: null, role_key: 'provider', phone: '+16175550000' }] });
+
         await expect(service.resolveCustomerForProviderCode(COMPANY_A, {
             maskingNumber: '+16174044425',
             providerPhone: '+16175550000',

@@ -3,6 +3,7 @@
 const db = require('../db/connection');
 const roleQueries = require('../db/roleQueries');
 const auditService = require('./auditService');
+const authorizationService = require('./authorizationService');
 const { toE164 } = require('../utils/phoneUtils');
 
 const DEFAULT_MASKING_NUMBER = '+16174044425';
@@ -282,7 +283,30 @@ function disabledDialResult() {
     };
 }
 
-async function getMaskedDialForContact(companyId, contactId, providerScope, queryable = db) {
+/**
+ * Inbound recognition works by caller-ID against the member's profile phone.
+ * A viewer without one gets a mask that dials but can never route — surface
+ * that as `caller_phone_missing` so the UI can warn instead of failing silently.
+ */
+async function callerPhoneMissing(companyId, requestingUserId, queryable) {
+    if (!requestingUserId) return false;
+    try {
+        const { rows } = await queryFor(queryable).query(
+            `SELECT p.phone
+             FROM company_user_profiles p
+             JOIN company_memberships m ON m.id = p.membership_id
+             WHERE m.company_id = $1
+               AND m.status = 'active'
+               AND m.user_id = $2`,
+            [companyId, requestingUserId]
+        );
+        return !rows.some(row => normalizePhone(row.phone));
+    } catch {
+        return false;
+    }
+}
+
+async function getMaskedDialForContact(companyId, contactId, providerScope, queryable = db, requestingUserId = null) {
     const contact = await getVisibleContact(companyId, contactId, providerScope, queryable);
     if (!contact) return null;
 
@@ -300,10 +324,11 @@ async function getMaskedDialForContact(companyId, contactId, providerScope, quer
         code,
         display_number: maskingNumber,
         tel_uri: `tel:${maskingNumber},,${code}`,
+        caller_phone_missing: await callerPhoneMissing(companyId, requestingUserId, queryable),
     };
 }
 
-async function getMaskedDialForJob(companyId, jobId, providerScope, queryable = db) {
+async function getMaskedDialForJob(companyId, jobId, providerScope, queryable = db, requestingUserId = null) {
     requireCompanyId(companyId);
     const params = [companyId, jobId];
     let visibility = '';
@@ -324,26 +349,55 @@ async function getMaskedDialForJob(companyId, jobId, providerScope, queryable = 
         params
     );
     if (!rows[0]) return null;
-    return getMaskedDialForContact(companyId, rows[0].contact_id, providerScope, queryable);
+    return getMaskedDialForContact(companyId, rows[0].contact_id, providerScope, queryable, requestingUserId);
+}
+
+/**
+ * Effective `call_masking.use` for one membership row — the SAME computation
+ * `requirePermission` runs for the API routes (role matrix + per-user
+ * overrides), so a member the settings page authorizes to place masked calls
+ * is also recognized on the inbound leg. Errors fail closed.
+ */
+async function membershipMayUseMasking(companyId, row, queryable) {
+    const roleKey = row.role_key || authorizationService.LEGACY_ROLE_MAPPING[row.role];
+    if (!roleKey) return false;
+    try {
+        const { permissions } = await authorizationService.resolveEffectivePermissionsAndScopes(
+            companyId,
+            roleKey,
+            row.membership_id,
+            queryable && queryable !== db ? { client: queryable } : {}
+        );
+        return permissions.includes('call_masking.use');
+    } catch {
+        return false;
+    }
 }
 
 async function resolveProviderByPhone(companyId, providerPhone, queryable = db) {
     requireCompanyId(companyId);
     const normalizedProviderPhone = normalizePhone(providerPhone);
     if (!normalizedProviderPhone) return null;
+    // Any ACTIVE member is a candidate — not only is_provider profiles. The
+    // masking settings page grants `call_masking.use` per role (admins and
+    // dispatchers included), and recognition must honor the same grant or an
+    // authorized caller silently falls through to the office route.
     const { rows } = await queryFor(queryable).query(
-        `SELECT m.user_id, p.phone
+        `SELECT m.user_id, m.id AS membership_id, m.role, m.role_key, p.phone
          FROM company_user_profiles p
          JOIN company_memberships m ON m.id = p.membership_id
          WHERE m.company_id = $1
            AND m.status = 'active'
-           AND p.is_provider = true
            AND p.phone IS NOT NULL`,
         [companyId]
     );
     const matches = rows.filter(row => normalizePhone(row.phone) === normalizedProviderPhone);
-    return matches.length === 1 && matches[0].user_id
-        ? { user_id: matches[0].user_id }
+    const allowed = [];
+    for (const row of matches) {
+        if (await membershipMayUseMasking(companyId, row, queryable)) allowed.push(row);
+    }
+    return allowed.length === 1 && allowed[0].user_id
+        ? { user_id: allowed[0].user_id }
         : null;
 }
 
