@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, Lock } from 'lucide-react';
+import { Loader2, ShieldCheck, Lock, Info } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Checkbox } from '../components/ui/checkbox';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
@@ -122,8 +122,11 @@ function GroupRows({
             </tr>
             {group.items.map(item => (
                 <tr key={item.key} style={{ borderTop: '1px solid var(--blanc-line)' }}>
-                    <td style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-1)' }}>
-                        {item.label}
+                    <td title={item.description || undefined} style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-1)', cursor: item.description ? 'help' : undefined }}>
+                        <span className="inline-flex items-center gap-1.5">
+                            {item.label}
+                            {item.description && <Info className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} aria-hidden />}
+                        </span>
                     </td>
                     {roles.map(role => {
                         const locked = isLockedRole(role);

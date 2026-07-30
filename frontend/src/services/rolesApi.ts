@@ -2,10 +2,12 @@ import { authedFetch } from './apiClient';
 
 const API_BASE = '/api/settings/roles';
 
-/** One permission row in the catalog (key + human label). */
+/** One permission row in the catalog (key + human label + optional hover hint). */
 export interface CatalogItem {
     key: string;
     label: string;
+    /** Optional clarification shown as a tooltip on the row (e.g. what a permission maps to). */
+    description?: string;
 }
 
 /** A category group of permissions in the catalog. */

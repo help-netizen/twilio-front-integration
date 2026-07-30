@@ -12,6 +12,15 @@
  * visibility degrades to NOTHING (deny-by-default), never to tenant-wide.
  */
 
+/**
+ * ROLE-PULSE-SCOPE-001 — a provider's Pulse is scoped to contacts on which they have an
+ * ACTIVE job (owner's decision). "Active" = these blanc_status values (NOT leads, NOT
+ * closed/canceled). Applied to the Pulse sidebar list + opening a Pulse timeline + SMS-
+ * conversation visibility. NOT applied to contact-detail access (a provider still opens a
+ * contact from any job they're assigned) or to Jobs/Schedule/etc.
+ */
+const PULSE_ACTIVE_JOB_STATUSES = ['Submitted', 'Rescheduled', 'Waiting for parts', 'Visit completed'];
+
 function resolveProviderScope(scopes, userId) {
     const visibility = scopes?.job_visibility;
     // `all` is the only value that may widen beyond the current actor. Missing,
@@ -29,4 +38,4 @@ function getProviderScope(req) {
     );
 }
 
-module.exports = { getProviderScope, resolveProviderScope };
+module.exports = { getProviderScope, resolveProviderScope, PULSE_ACTIVE_JOB_STATUSES };

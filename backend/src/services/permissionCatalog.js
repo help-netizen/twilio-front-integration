@@ -34,7 +34,7 @@ const PERMISSION_CATALOG = [
         category: 'Dashboard',
         items: [
             { key: 'dashboard.view', label: 'View dashboard' },
-            { key: 'pulse.view', label: 'View Pulse' },
+            { key: 'pulse.view', label: 'View Pulse', description: 'Pulse shows only timelines of contacts the user can access. A Provider sees contacts with an active job — Submitted, Rescheduled, Waiting for parts, or Visit completed — not leads.' },
         ],
     },
     {
