@@ -138,7 +138,10 @@ router.get('/by-contact', async (req, res) => {
         // ONE unified, SQL-ordered, offset/limit page across calls + SMS + email.
         // Ordering, unread rollup, dedup (one row per timeline) and `total` all
         // come from SQL — the route no longer over-fetches or re-sorts in JS.
-        const rows = await queries.getUnifiedTimelinePage({ limit, offset, companyId, search, mutedEmails, mutedDomains });
+        // ROLE-PULSE-LIST-SCOPE-002: scope the Pulse sidebar to the provider's active-job
+        // contacts (getUnifiedTimelinePage drops contactless/foreign-job timelines for an
+        // assigned_only provider; office roles are unaffected).
+        const rows = await queries.getUnifiedTimelinePage({ limit, offset, companyId, search, mutedEmails, mutedDomains, providerScope: getProviderScope(req) });
 
         // total = COUNT(*) OVER() on the unified set (0 rows ⇒ empty page ⇒ 0).
         const total = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;

@@ -514,6 +514,8 @@ describe('GET /api/calls/by-contact — route', () => {
         expect(mockGetUnifiedTimelinePage).toHaveBeenCalledWith({
             limit: 50, offset: 50, companyId: COMPANY_A, search: 'bob',
             mutedEmails: [], mutedDomains: [],
+            // ROLE-PULSE-LIST-SCOPE-002: the route now also forwards the provider scope.
+            providerScope: expect.any(Object),
         });
     });
 
@@ -727,6 +729,7 @@ describe('GET /api/calls/by-contact — route', () => {
         expect(mockGetUnifiedTimelinePage).toHaveBeenCalledWith({
             limit: 25, offset: 75, companyId: COMPANY_A, search: 'vendor',
             mutedEmails: emails, mutedDomains: domains,
+            providerScope: expect.any(Object),
         });
     });
 
