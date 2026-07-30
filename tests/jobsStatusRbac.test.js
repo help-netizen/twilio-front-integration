@@ -21,7 +21,14 @@
  * "visible to me" (rows) vs "not mine" (empty → 404).
  */
 
-jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+// getClient() backs transactionService.withTransaction (BEGIN/work/COMMIT). The
+// transaction client shares the SAME query mock as db.query, so a test's
+// db.query.mockResolvedValue(...) also drives the committed UPDATE inside the
+// transaction — otherwise every 200-path status change 500s on a missing client.
+jest.mock('../backend/src/db/connection', () => {
+    const query = jest.fn();
+    return { query, getClient: jest.fn(async () => ({ query, release: jest.fn() })) };
+});
 jest.mock('../backend/src/services/zenbookerClient', () => ({
     markJobEnroute: jest.fn(async () => {}),
     markJobInProgress: jest.fn(async () => {}),
@@ -39,6 +46,13 @@ jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     MAX_FILE_SIZE: 1024, MAX_FILES_PER_NOTE: 5, getAttachmentsForEntity: jest.fn(async () => []),
 }));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+// Keep the real actor factories (routes build actors with userActor); stub only the
+// activity WRITE so the committed transaction doesn't hit the crm_users.id validation
+// against a mocked DB. Orthogonal to the permission gate under test.
+jest.mock('../backend/src/services/jobActivityService', () => {
+    const actual = jest.requireActual('../backend/src/services/jobActivityService');
+    return { ...actual, logJobActivity: jest.fn(async () => {}) };
+});
 
 const http = require('http');
 const express = require('express');
@@ -180,6 +194,80 @@ describe('Provider status gates — 403 without either operational permission', 
             'PATCH', '/123/status', { blanc_status: 'Waiting for parts' }
         );
         expect(res.status).toBe(403);
+    });
+});
+
+// ROLE-JOB-CLOSE-PERMS-001 — the closing/terminal transitions must be gated on the
+// closing permissions on EVERY write path, not just POST /:id/complete. Owner semantics:
+//   'Job is Done'     → jobs.close
+//   'Visit completed' → jobs.done_pending_approval OR jobs.close
+//   'Canceled'        → jobs.close
+const { closePermissionError } = require('../backend/src/services/jobTransitionPerms');
+
+describe('closePermissionError — closing-transition permission map (single source of truth)', () => {
+    it('Job is Done requires jobs.close (NOT done_pending_approval)', () => {
+        expect(closePermissionError(['jobs.done_pending_approval'], 'Job is Done')).toEqual(
+            { status: 403, error: 'Insufficient permissions to close jobs' });
+        expect(closePermissionError(['jobs.close'], 'Job is Done')).toBeNull();
+    });
+    it('Visit completed requires done_pending_approval OR close', () => {
+        expect(closePermissionError(['jobs.done_pending_approval'], 'Visit completed')).toBeNull();
+        expect(closePermissionError(['jobs.close'], 'Visit completed')).toBeNull();
+        expect(closePermissionError(['jobs.edit'], 'Visit completed')).toEqual(
+            { status: 403, error: 'Insufficient permissions to mark a job visit-completed' });
+    });
+    it('Canceled requires jobs.close; non-terminal states are ungated here', () => {
+        expect(closePermissionError(['jobs.edit'], 'Canceled')).toEqual(
+            { status: 403, error: 'Insufficient permissions to cancel jobs' });
+        expect(closePermissionError([], 'Waiting for parts')).toBeNull();
+        expect(closePermissionError([], 'On the way')).toBeNull();
+    });
+});
+
+describe('PATCH /:id/status closing gates — Visit completed / Job is Done (ROLE-JOB-CLOSE-PERMS-001)', () => {
+    it('Visit completed with jobs.done_pending_approval → 200', async () => {
+        db.query.mockResolvedValue({ rows: [JOB_ROW] });
+        const res = await request(
+            appWithAuthz({ permissions: PROVIDER_PERMS }),
+            'PATCH', '/123/status', { blanc_status: 'Visit completed' });
+        expect(res.status).toBe(200);
+    });
+
+    it('Job is Done with only jobs.done_pending_approval → 403 (needs jobs.close now)', async () => {
+        db.query.mockResolvedValue({ rows: [JOB_ROW] });
+        const res = await request(
+            appWithAuthz({ permissions: PROVIDER_PERMS }),
+            'PATCH', '/123/status', { blanc_status: 'Job is Done' });
+        expect(res.status).toBe(403);
+        expect(res.body.error).toMatch(/close/i);
+    });
+
+    it('Job is Done with jobs.close (+jobs.edit to pass the route guard) → 200', async () => {
+        db.query.mockResolvedValue({ rows: [JOB_ROW] });
+        const res = await request(
+            appWithAuthz({ permissions: ['jobs.view', 'jobs.edit', 'jobs.close'] }),
+            'PATCH', '/123/status', { blanc_status: 'Job is Done' });
+        expect(res.status).toBe(200);
+    });
+
+    // The exact reported bug: a role WITH jobs.edit (so it passes the route's OR-guard)
+    // but WITHOUT any closing permission could still reach Visit completed / Job is Done.
+    it('jobs.edit but no closing perm → Visit completed is 403 (was the leak)', async () => {
+        db.query.mockResolvedValue({ rows: [JOB_ROW] });
+        const res = await request(
+            appWithAuthz({ permissions: ['jobs.view', 'jobs.edit'] }),
+            'PATCH', '/123/status', { blanc_status: 'Visit completed' });
+        expect(res.status).toBe(403);
+        expect(res.body.error).toMatch(/visit-completed/i);
+    });
+
+    it('jobs.edit but no closing perm → Job is Done is 403 (was the leak)', async () => {
+        db.query.mockResolvedValue({ rows: [JOB_ROW] });
+        const res = await request(
+            appWithAuthz({ permissions: ['jobs.view', 'jobs.edit'] }),
+            'PATCH', '/123/status', { blanc_status: 'Job is Done' });
+        expect(res.status).toBe(403);
+        expect(res.body.error).toMatch(/close/i);
     });
 });
 

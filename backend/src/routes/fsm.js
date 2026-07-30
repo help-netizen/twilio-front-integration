@@ -12,6 +12,7 @@ const jobsService = require('../services/jobsService');
 const eventService = require('../services/eventService');
 const { userActor } = require('../services/jobActivityService');
 const { getProviderScope } = require('../middleware/providerScope');
+const { closePermissionError } = require('../services/jobTransitionPerms');
 
 /**
  * Server-derived roles for FSM action filtering (PF007-HARDENING-001):
@@ -249,19 +250,12 @@ router.post('/:machineKey/apply', requirePermission('jobs.edit', 'jobs.done_pend
       return res.status(400).json({ ok: false, error: result.error || 'Transition not allowed' });
     }
 
-    // Closing transitions need a closing permission (PF007). Cancel is a dispatch
-    // decision → jobs.close only; "Done" may be marked by a field provider (pending
-    // approval) → jobs.close OR jobs.done_pending_approval. (Mirrors PATCH /jobs/:id/
-    // status so the FSM /apply side-door can't bypass the cancel guard — RBAC-FSM-FIX-001.)
+    // Closing/terminal transitions need a closing permission (PF007, RBAC-FSM-FIX-001,
+    // ROLE-JOB-CLOSE-PERMS-001). Same source of truth as PATCH /jobs/:id/status so this
+    // /apply side-door can't bypass any closing guard — including Visit completed.
     if (machineKey === 'job' && !req.user?._devMode) {
-      const perms = req.authz?.permissions || [];
-      if (result.targetState === 'Canceled' && !perms.includes('jobs.close')) {
-        return res.status(403).json({ ok: false, error: 'Insufficient permissions to cancel jobs' });
-      }
-      if (result.targetState === 'Job is Done'
-          && !perms.includes('jobs.close') && !perms.includes('jobs.done_pending_approval')) {
-        return res.status(403).json({ ok: false, error: 'Insufficient permissions to complete jobs' });
-      }
+      const permErr = closePermissionError(req.authz?.permissions || [], result.targetState);
+      if (permErr) return res.status(permErr.status).json({ ok: false, error: permErr.error });
     }
 
     let cancelReason = null;
@@ -407,6 +401,14 @@ router.get('/:machineKey/actions', requirePermission('jobs.view', 'fsm.viewer'),
       if (!a.roles) return true; // no role restriction
       return a.roles.some(r => userRoles.includes(r));
     });
+
+    // ROLE-JOB-CLOSE-PERMS-001: also drop closing/terminal actions the caller can't
+    // perform, so the picker never offers a Visit-completed / Job-is-Done / Cancel button
+    // that the /apply gate would then 403. Same source of truth as the gate itself.
+    if (machineKey === 'job' && !req.user?._devMode) {
+      const perms = req.authz?.permissions || [];
+      actions = actions.filter(a => !closePermissionError(perms, a.target));
+    }
 
     // Sort by order
     actions.sort((a, b) => {

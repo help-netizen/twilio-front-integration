@@ -18,6 +18,7 @@ const routeDistanceService = require('../services/routeDistanceService');
 const googlePlacesService = require('../services/googlePlacesService');
 const emailService = require('../services/emailService');
 const rateMeService = require('../services/rateMeService');
+const { closePermissionError } = require('../services/jobTransitionPerms');
 const companyQueries = require('../db/companyQueries');
 const rateMeQueries = require('../db/rateMeQueries');
 const db = require('../db/connection');
@@ -352,18 +353,12 @@ router.patch('/:id/status', requirePermission('jobs.edit', 'jobs.done_pending_ap
             if (parsedReason.error) return res.status(400).json({ ok: false, error: parsedReason.error });
             cancelReason = parsedReason.reason;
         }
-        // Closing transitions need a closing permission (PF007-HARDENING-001).
-        // Cancel is a dispatch decision → jobs.close only. Marking "Done" may be done
-        // by a field provider (pending approval) → jobs.close OR jobs.done_pending_approval.
+        // Closing/terminal transitions need a closing permission (PF007-HARDENING-001,
+        // ROLE-JOB-CLOSE-PERMS-001). Single source of truth in jobTransitionPerms so
+        // this can't drift from the FSM /apply side-door (see that module for the map).
         if (!req.user?._devMode) {
-            const perms = req.authz?.permissions || [];
-            if (blanc_status === 'Canceled' && !perms.includes('jobs.close')) {
-                return res.status(403).json({ ok: false, error: 'Insufficient permissions to cancel jobs' });
-            }
-            if (blanc_status === 'Job is Done'
-                && !perms.includes('jobs.close') && !perms.includes('jobs.done_pending_approval')) {
-                return res.status(403).json({ ok: false, error: 'Insufficient permissions to complete jobs' });
-            }
+            const permErr = closePermissionError(req.authz?.permissions || [], blanc_status);
+            if (permErr) return res.status(permErr.status).json({ ok: false, error: permErr.error });
         }
         const result = await jobsService.updateBlancStatus(
             parseInt(req.params.id, 10),
