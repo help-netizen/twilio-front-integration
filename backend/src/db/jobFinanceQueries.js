@@ -93,4 +93,42 @@ async function listJobPaymentRollups(companyId, jobIds, client = null) {
     return rows;
 }
 
-module.exports = { listJobPaymentRollups };
+/**
+ * JOBS-HEADER-QUICKFILTERS-001 — a correlated SQL scalar computing a single job's
+ * outstanding Due (dollars), with the SAME rules as listJobPaymentRollups' total_due:
+ * non-void invoice balance minus NON-zenbooker standalone payment offsets. Used as a
+ * filter predicate by the Jobs-list "Not Paid" quick filter (WHERE <expr> > 0) so the
+ * finance rollup participates in the paginated query rather than only post-page.
+ *
+ * @param {string} jobAlias    - the jobs-table alias in the outer query (e.g. 'j')
+ * @param {string} companyParam - the company_id parameter placeholder (e.g. '$1')
+ */
+function outstandingDueExpr(jobAlias, companyParam) {
+    return `(
+        COALESCE((
+            SELECT SUM(CASE WHEN i.status NOT IN ('void','voided','refunded')
+                            THEN COALESCE(i.total, 0) - COALESCE(i.amount_paid, 0) ELSE 0 END)
+            FROM invoices i
+            WHERE i.job_id = ${jobAlias}.id AND i.company_id = ${companyParam}
+        ), 0)
+        - COALESCE((
+            SELECT SUM(CASE
+                         WHEN pt.transaction_type = 'payment' AND pt.status IN ('completed','refunded') THEN pt.amount
+                         WHEN pt.transaction_type = 'refund'  AND pt.status = 'completed' THEN -ABS(pt.amount)
+                         ELSE 0 END)
+            FROM payment_transactions pt
+            LEFT JOIN payment_transactions refund_origin
+              ON pt.transaction_type = 'refund'
+             AND refund_origin.company_id = pt.company_id
+             AND refund_origin.transaction_type = 'payment'
+             AND refund_origin.id::TEXT = pt.metadata->>'original_transaction_id'
+            WHERE pt.job_id = ${jobAlias}.id AND pt.company_id = ${companyParam}
+              AND pt.invoice_id IS NULL AND pt.voided_at IS NULL
+              AND ((pt.transaction_type = 'payment' AND pt.status IN ('completed','refunded'))
+                OR (pt.transaction_type = 'refund'  AND pt.status = 'completed'))
+              AND COALESCE(NULLIF(pt.external_source, ''), refund_origin.external_source) IS DISTINCT FROM 'zenbooker'
+        ), 0)
+    )`;
+}
+
+module.exports = { listJobPaymentRollups, outstandingDueExpr };

@@ -789,7 +789,7 @@ function splitList(value) {
     return [...new Set(items.map(item => String(item).trim()).filter(Boolean))].sort();
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, cursor, companyId, contactId, sortBy = 'start_date', sortOrder = 'desc', onlyOpen, startDate, endDate, serviceName, jobSource, provider, tagIds, tagMatch, providerScope } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, cursor, companyId, contactId, sortBy = 'start_date', sortOrder = 'desc', onlyOpen, paymentStatus, startDate, endDate, serviceName, jobSource, provider, tagIds, tagMatch, providerScope } = {}) {
     if (!companyId) throw jobsListError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     if (!Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 500) {
         throw jobsListError('INVALID_QUERY', 'limit must be an integer from 1 to 500', 400);
@@ -841,6 +841,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
             search: normalizedSearch.toLocaleLowerCase('en-US'),
             contact_id: contactId == null ? null : String(contactId),
             only_open: Boolean(onlyOpen),
+            payment_status: paymentStatus === 'unpaid' ? 'unpaid' : null,
             start_date: startDate || null,
             end_date: endDate || null,
             service_name: serviceNames,
@@ -930,6 +931,11 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
     }
     if (onlyOpen) {
         conditions.push(`j.blanc_status NOT IN ('Job is Done', 'Canceled')`);
+    }
+    if (paymentStatus === 'unpaid') {
+        // JOBS-HEADER-QUICKFILTERS-001: only jobs whose outstanding Due (>0) — the finance
+        // rollup folded into the paginated WHERE (companyId is always $1).
+        conditions.push(`${jobFinanceQueries.outstandingDueExpr('j', '$1')} > 0`);
     }
     if (startDate) {
         idx++; conditions.push(`j.start_date >= $${idx}::timestamptz`); params.push(startDate);

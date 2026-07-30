@@ -101,6 +101,8 @@ export interface JobsListParams {
     sort_by?: string;
     sort_order?: 'asc' | 'desc';
     only_open?: boolean;
+    /** JOBS-HEADER-QUICKFILTERS-001: 'unpaid' → only jobs with an outstanding balance_due > 0. */
+    payment_status?: 'unpaid';
     start_date?: string;
     end_date?: string;
     service_name?: string;

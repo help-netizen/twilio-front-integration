@@ -21,6 +21,8 @@ export function useJobsData() {
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
     const [tagFilter, setTagFilter] = useState<number[]>([]);
     const [onlyOpen, setOnlyOpen] = useState(false);
+    // JOBS-HEADER-QUICKFILTERS-001: 'unpaid' filters to jobs with an outstanding Due (>0).
+    const [paymentStatus, setPaymentStatus] = useState<'unpaid' | undefined>(undefined);
     const [startDate, setStartDate] = useState<string | undefined>(undefined);
     const [endDate, setEndDate] = useState<string | undefined>(undefined);
     const [allTags, setAllTags] = useState<JobTag[]>([]);
@@ -75,6 +77,7 @@ export function useJobsData() {
             normalizedJobTypes,
             normalizedTagIds,
             onlyOpen,
+            paymentStatus ?? null,
             startDate ?? null,
             endDate ?? null,
             sortBy,
@@ -90,6 +93,7 @@ export function useJobsData() {
                 sort_by: sortBy,
                 sort_order: sortOrder,
                 only_open: onlyOpen || undefined,
+                payment_status: paymentStatus,
                 start_date: startDate,
                 end_date: endDate,
                 blanc_status: normalizedStatuses.length > 0 ? normalizedStatuses.join(',') : undefined,
@@ -154,6 +158,7 @@ export function useJobsData() {
         jobTypeFilter, setJobTypeFilter,
         tagFilter, setTagFilter,
         onlyOpen, setOnlyOpen,
+        paymentStatus, setPaymentStatus,
         startDate, setStartDate,
         endDate, setEndDate,
 

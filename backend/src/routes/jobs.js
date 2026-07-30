@@ -186,7 +186,7 @@ router.get('/', requirePermission('jobs.view'), async (req, res) => {
             });
         }
 
-        const { blanc_status, canceled, search, offset, limit, cursor, contact_id, sort_by, sort_order, only_open, start_date, end_date, service_name, job_source, provider, tag_ids, tag_match } = req.query;
+        const { blanc_status, canceled, search, offset, limit, cursor, contact_id, sort_by, sort_order, only_open, payment_status, start_date, end_date, service_name, job_source, provider, tag_ids, tag_match } = req.query;
         if (offset !== undefined && (!/^\d+$/.test(String(offset)) || !Number.isSafeInteger(Number(offset)))) {
             return res.status(400).json({ ok: false, error: 'offset must be a non-negative integer', code: 'INVALID_QUERY' });
         }
@@ -218,6 +218,7 @@ router.get('/', requirePermission('jobs.view'), async (req, res) => {
             sortBy: sort_by || 'start_date',
             sortOrder: sort_order || 'desc',
             onlyOpen: only_open === 'true' || undefined,
+            paymentStatus: payment_status === 'unpaid' ? 'unpaid' : undefined,
             startDate: start_date || undefined,
             endDate: end_date || undefined,
             serviceName: service_name || undefined,

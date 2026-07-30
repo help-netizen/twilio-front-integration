@@ -4,6 +4,8 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { useAuthz } from '../hooks/useAuthz';
 import { JobsFieldsButton } from '../components/jobs/JobsHeader';
 import { JobsFilters } from '../components/jobs/JobsFilters';
+import { JobsQuickFilters } from '../components/jobs/JobsQuickFilters';
+import type { QuickFilterState } from '../components/jobs/jobsQuickFilterPresets';
 import { JobsTable } from '../components/jobs/JobsTable';
 import { JobsMobileBar } from '../components/jobs/JobsMobileBar';
 import { JobsMobileList } from '../components/jobs/JobsMobileList';
@@ -41,6 +43,16 @@ export function JobsPage() {
         getJob(job.id)
             .then(full => setCopyFrom(buildCopyJobData(full)))
             .catch(() => setCopyFrom(buildCopyJobData(job)));
+    };
+
+    // JOBS-HEADER-QUICKFILTERS-001: a quick-filter chip applies its preset over the same
+    // filter state the Filters panel binds to, so it stays editable afterwards.
+    const applyQuickFilter = (preset: QuickFilterState) => {
+        page.setStatusFilter(preset.statusFilter);
+        page.setStartDate(preset.startDate);
+        page.setEndDate(preset.endDate);
+        page.setPaymentStatus(preset.paymentStatus);
+        page.handleSortChange(preset.sortBy, preset.sortOrder);
     };
 
     const detailAndDialogs = (
@@ -139,7 +151,18 @@ export function JobsPage() {
                                 className="blanc-search-input"
                             />
                         </div>
+                    </div>
 
+                    <div className="blanc-subheader">
+                        <JobsQuickFilters
+                            statusFilter={page.statusFilter}
+                            startDate={page.startDate}
+                            endDate={page.endDate}
+                            sortBy={page.sortBy}
+                            sortOrder={page.sortOrder}
+                            paymentStatus={page.paymentStatus}
+                            onApply={applyQuickFilter}
+                        />
                         <div className="blanc-controls-group">
                             {canCreateJob && (
                                 <button
@@ -168,6 +191,8 @@ export function JobsPage() {
                                 onTagFilterChange={page.setTagFilter}
                                 allTags={page.allTags}
                                 providerNames={page.providerNames}
+                                paymentStatus={page.paymentStatus}
+                                onPaymentStatusChange={page.setPaymentStatus}
                             />
                             <JobsFieldsButton
                                 visibleFields={page.visibleFields}

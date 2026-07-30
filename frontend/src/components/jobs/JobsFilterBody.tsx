@@ -25,6 +25,11 @@ interface JobsFilterBodyProps {
     providerNames: string[];
     /** Job-type names from lead-form settings. */
     dynamicJobTypes: string[];
+    /** JOBS-HEADER-QUICKFILTERS-001: 'unpaid' → jobs with an outstanding balance due.
+     * Optional — the PAYMENT toggle renders only where a change handler is wired (the
+     * desktop Filters popover); the mobile filter sheet omits it. */
+    paymentStatus?: 'unpaid';
+    onPaymentStatusChange?: (v: 'unpaid' | undefined) => void;
 }
 
 export function JobsFilterBody({
@@ -34,17 +39,28 @@ export function JobsFilterBody({
     jobTypeFilter, onJobTypeFilterChange,
     tagFilter, onTagFilterChange, allTags,
     statuses, providerNames, dynamicJobTypes,
+    paymentStatus, onPaymentStatusChange,
 }: JobsFilterBodyProps) {
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
     const toggle = (arr: string[], item: string, setter: (v: string[]) => void) => setter(arr.includes(item) ? arr.filter(s => s !== item) : [...arr, item]);
-    const activeFilterCount = statusFilter.length + providerFilter.length + sourceFilter.length + jobTypeFilter.length + tagFilter.length;
-    const clearAllFilters = () => { onStatusFilterChange([]); onProviderFilterChange([]); onSourceFilterChange([]); onJobTypeFilterChange([]); onTagFilterChange([]); };
+    const activeFilterCount = statusFilter.length + providerFilter.length + sourceFilter.length + jobTypeFilter.length + tagFilter.length + (paymentStatus ? 1 : 0);
+    const clearAllFilters = () => { onStatusFilterChange([]); onProviderFilterChange([]); onSourceFilterChange([]); onJobTypeFilterChange([]); onTagFilterChange([]); onPaymentStatusChange?.(undefined); };
     const toggleTag = (tagId: number) => onTagFilterChange(tagFilter.includes(tagId) ? tagFilter.filter(id => id !== tagId) : [...tagFilter, tagId]);
 
     return (
         <>
-            {activeFilterCount > 0 && <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">{statusFilter.map(s => <Badge key={`st-${s}`} variant="outline" className="gap-1 text-xs"><span className="size-2 rounded-full" style={{ backgroundColor: BLANC_STATUS_COLORS[s] || 'var(--blanc-ink-3)' }} />{s}<X className="size-3 cursor-pointer" onClick={() => toggle(statusFilter, s, onStatusFilterChange)} /></Badge>)}{providerFilter.map(s => <Badge key={`pr-${s}`} variant="outline" className="gap-1 text-xs"><User className="size-3" style={{ color: 'var(--blanc-ink-3)' }} />{s}<X className="size-3 cursor-pointer" onClick={() => toggle(providerFilter, s, onProviderFilterChange)} /></Badge>)}{canViewSource && sourceFilter.map(s => <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs"><Globe className="size-3" style={{ color: 'var(--blanc-ink-3)' }} />{s}<X className="size-3 cursor-pointer" onClick={() => toggle(sourceFilter, s, onSourceFilterChange)} /></Badge>)}{jobTypeFilter.map(t => <Badge key={`jt-${t}`} variant="outline" className="gap-1 text-xs"><Briefcase className="size-3" style={{ color: 'var(--blanc-ink-3)' }} />{t}<X className="size-3 cursor-pointer" onClick={() => toggle(jobTypeFilter, t, onJobTypeFilterChange)} /></Badge>)}{tagFilter.map(id => { const tag = allTags.find(t => t.id === id); return tag ? <Badge key={`tag-${id}`} variant="outline" className="gap-1 text-xs"><span className="size-2 rounded-full" style={{ backgroundColor: tag.color }} />{tag.name}<X className="size-3 cursor-pointer" onClick={() => toggleTag(id)} /></Badge> : null; })}<button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground ml-1">Clear all</button></div>}
+            {activeFilterCount > 0 && <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">{statusFilter.map(s => <Badge key={`st-${s}`} variant="outline" className="gap-1 text-xs"><span className="size-2 rounded-full" style={{ backgroundColor: BLANC_STATUS_COLORS[s] || 'var(--blanc-ink-3)' }} />{s}<X className="size-3 cursor-pointer" onClick={() => toggle(statusFilter, s, onStatusFilterChange)} /></Badge>)}{providerFilter.map(s => <Badge key={`pr-${s}`} variant="outline" className="gap-1 text-xs"><User className="size-3" style={{ color: 'var(--blanc-ink-3)' }} />{s}<X className="size-3 cursor-pointer" onClick={() => toggle(providerFilter, s, onProviderFilterChange)} /></Badge>)}{canViewSource && sourceFilter.map(s => <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs"><Globe className="size-3" style={{ color: 'var(--blanc-ink-3)' }} />{s}<X className="size-3 cursor-pointer" onClick={() => toggle(sourceFilter, s, onSourceFilterChange)} /></Badge>)}{jobTypeFilter.map(t => <Badge key={`jt-${t}`} variant="outline" className="gap-1 text-xs"><Briefcase className="size-3" style={{ color: 'var(--blanc-ink-3)' }} />{t}<X className="size-3 cursor-pointer" onClick={() => toggle(jobTypeFilter, t, onJobTypeFilterChange)} /></Badge>)}{tagFilter.map(id => { const tag = allTags.find(t => t.id === id); return tag ? <Badge key={`tag-${id}`} variant="outline" className="gap-1 text-xs"><span className="size-2 rounded-full" style={{ backgroundColor: tag.color }} />{tag.name}<X className="size-3 cursor-pointer" onClick={() => toggleTag(id)} /></Badge> : null; })}{paymentStatus === 'unpaid' && <Badge key="pay-unpaid" variant="outline" className="gap-1 text-xs"><span className="size-2 rounded-full" style={{ backgroundColor: 'var(--blanc-danger)' }} />Not paid<X className="size-3 cursor-pointer" onClick={() => onPaymentStatusChange?.(undefined)} /></Badge>}<button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground ml-1">Clear all</button></div>}
+            {onPaymentStatusChange && (
+                <div className="px-3 pt-3">
+                    <div className="text-xs font-semibold text-muted-foreground mb-2">PAYMENT</div>
+                    <label className={`inline-flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-sm transition-colors ${paymentStatus === 'unpaid' ? 'bg-primary/10 font-medium' : 'hover:bg-muted/50'}`}>
+                        <input type="checkbox" checked={paymentStatus === 'unpaid'} onChange={e => onPaymentStatusChange(e.target.checked ? 'unpaid' : undefined)} className="sr-only" />
+                        <span className={`size-3 rounded-full shrink-0 border ${paymentStatus === 'unpaid' ? 'ring-2 ring-primary ring-offset-1' : ''}`} style={{ backgroundColor: 'var(--blanc-danger)' }} />
+                        Not paid <span className="text-muted-foreground text-xs">(has balance due)</span>
+                    </label>
+                </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-5 p-3 gap-3 sm:gap-0">
                 <FilterColumn title="STATUS" items={statuses} selected={statusFilter} onToggle={item => toggle(statusFilter, item, onStatusFilterChange)} colorMap={BLANC_STATUS_COLORS} />
                 <FilterColumn title="PROVIDERS" items={providerNames} selected={providerFilter} onToggle={item => toggle(providerFilter, item, onProviderFilterChange)} />

@@ -20,9 +20,10 @@ interface JobsFiltersProps {
     endDate?: string; onEndDateChange: (d: string | undefined) => void;
     tagFilter: number[]; onTagFilterChange: (v: number[]) => void; allTags: JobTag[];
     providerNames: string[];
+    paymentStatus?: 'unpaid'; onPaymentStatusChange: (v: 'unpaid' | undefined) => void;
 }
 
-export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter, onProviderFilterChange, sourceFilter, onSourceFilterChange, jobTypeFilter, onJobTypeFilterChange, startDate, onStartDateChange, endDate, onEndDateChange, tagFilter, onTagFilterChange, allTags, providerNames }: JobsFiltersProps) {
+export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter, onProviderFilterChange, sourceFilter, onSourceFilterChange, jobTypeFilter, onJobTypeFilterChange, startDate, onStartDateChange, endDate, onEndDateChange, tagFilter, onTagFilterChange, allTags, providerNames, paymentStatus, onPaymentStatusChange }: JobsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
     const { data: fsmData } = useFsmStates('job', true);
@@ -30,7 +31,7 @@ export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter
 
     useEffect(() => { authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => { if (data.success && data.jobTypes?.length > 0) setDynamicJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name)); }).catch(() => { }); }, []);
 
-    const activeFilterCount = statusFilter.length + providerFilter.length + sourceFilter.length + jobTypeFilter.length + tagFilter.length;
+    const activeFilterCount = statusFilter.length + providerFilter.length + sourceFilter.length + jobTypeFilter.length + tagFilter.length + (paymentStatus ? 1 : 0);
 
     return (
         <>
@@ -53,6 +54,8 @@ export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter
                         statuses={statuses}
                         providerNames={providerNames}
                         dynamicJobTypes={dynamicJobTypes}
+                        paymentStatus={paymentStatus}
+                        onPaymentStatusChange={onPaymentStatusChange}
                     />
                 );
                 return (
