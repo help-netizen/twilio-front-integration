@@ -7,7 +7,7 @@
 
 const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
-const { PULSE_ACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const { PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
 const {
     createCursorFingerprint,
     encodeCursor,
@@ -115,7 +115,8 @@ async function listContacts({ search, offset, limit = 50, cursor, companyId, pro
 
     // assigned_only providers see only contacts linked to their visible jobs (PF007).
     // ROLE-PULSE-SCOPE-001: this list feeds the Pulse sidebar, so restrict to contacts with
-    // an ACTIVE job (PULSE_ACTIVE_JOB_STATUSES) — not every job the provider ever had.
+    // an ACTIVE job — every job the provider is on EXCEPT ones whose blanc_status is in
+    // PULSE_INACTIVE_JOB_STATUSES (Canceled / Job is Done) — not every job they ever had.
     if (providerScope?.assignedOnly) {
         if (!providerScope.userId) {
             conditions.push('FALSE');
@@ -129,10 +130,10 @@ async function listContacts({ search, offset, limit = 50, cursor, companyId, pro
                 WHERE pj.contact_id = c.id
                   AND pj.company_id = c.company_id
                   AND pj.assigned_provider_user_ids @> $${userParam}::jsonb
-                  AND pj.blanc_status = ANY($${statusParam}::text[])
+                  AND (pj.blanc_status IS NULL OR pj.blanc_status <> ALL($${statusParam}::text[]))
             )`);
             params.push(JSON.stringify([providerScope.userId]));
-            params.push(PULSE_ACTIVE_JOB_STATUSES);
+            params.push(PULSE_INACTIVE_JOB_STATUSES);
         }
     }
 

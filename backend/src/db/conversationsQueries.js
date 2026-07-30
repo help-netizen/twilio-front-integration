@@ -3,7 +3,7 @@
  * PostgreSQL CRUD for SMS Conversations tables.
  */
 const db = require('./connection');
-const { PULSE_ACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const { PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
 // ─── sms_conversations ───
@@ -81,10 +81,10 @@ async function isConversationVisibleToProvider(conversationId, companyId, userId
              SELECT 1 FROM jobs pj
              WHERE pj.contact_id = c.id AND pj.company_id = sc.company_id
                AND pj.assigned_provider_user_ids @> $3::jsonb
-               AND pj.blanc_status = ANY($4::text[])
+               AND (pj.blanc_status IS NULL OR pj.blanc_status <> ALL($4::text[]))
            )
          LIMIT 1`,
-        [conversationId, companyId, JSON.stringify([userId]), PULSE_ACTIVE_JOB_STATUSES]
+        [conversationId, companyId, JSON.stringify([userId]), PULSE_INACTIVE_JOB_STATUSES]
     );
     return r.rows.length > 0;
 }

@@ -13,7 +13,7 @@ const emailQueries = require('../db/emailQueries');
 const { projectEmailTimelineItem } = require('../services/email/emailTimelineItem');
 const timelinePage = require('../services/timelinePage');
 const { requirePermission } = require('../middleware/authorization');
-const { getProviderScope, PULSE_ACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const { getProviderScope, PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
 
 // All Pulse surfaces require pulse.view (PF007-HARDENING-001 / TASK-RBAC-009)
 router.use(requirePermission('pulse.view'));
@@ -34,9 +34,9 @@ async function isContactVisibleToProvider(req, contactId) {
         `SELECT 1 FROM jobs pj
          WHERE pj.contact_id = $1 AND pj.company_id = $2
            AND pj.assigned_provider_user_ids @> $3::jsonb
-           AND pj.blanc_status = ANY($4::text[])
+           AND (pj.blanc_status IS NULL OR pj.blanc_status <> ALL($4::text[]))
          LIMIT 1`,
-        [contactId, tenantCompanyId(req), JSON.stringify([scope.userId]), PULSE_ACTIVE_JOB_STATUSES]
+        [contactId, tenantCompanyId(req), JSON.stringify([scope.userId]), PULSE_INACTIVE_JOB_STATUSES]
     );
     return rows.length > 0;
 }

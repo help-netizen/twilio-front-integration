@@ -14,12 +14,13 @@
 
 /**
  * ROLE-PULSE-SCOPE-001 — a provider's Pulse is scoped to contacts on which they have an
- * ACTIVE job (owner's decision). "Active" = these blanc_status values (NOT leads, NOT
- * closed/canceled). Applied to the Pulse sidebar list + opening a Pulse timeline + SMS-
+ * ACTIVE job. Defined by exclusion (owner's decision): a job is INACTIVE only when its
+ * blanc_status is Canceled or Job is Done; every other status — and a new/unknown status —
+ * counts as active. Applied to the Pulse sidebar list + opening a Pulse timeline + SMS-
  * conversation visibility. NOT applied to contact-detail access (a provider still opens a
  * contact from any job they're assigned) or to Jobs/Schedule/etc.
  */
-const PULSE_ACTIVE_JOB_STATUSES = ['Submitted', 'Rescheduled', 'Waiting for parts', 'Visit completed'];
+const PULSE_INACTIVE_JOB_STATUSES = ['Canceled', 'Job is Done'];
 
 function resolveProviderScope(scopes, userId) {
     const visibility = scopes?.job_visibility;
@@ -38,4 +39,4 @@ function getProviderScope(req) {
     );
 }
 
-module.exports = { getProviderScope, resolveProviderScope, PULSE_ACTIVE_JOB_STATUSES };
+module.exports = { getProviderScope, resolveProviderScope, PULSE_INACTIVE_JOB_STATUSES };
