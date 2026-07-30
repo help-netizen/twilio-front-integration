@@ -28,6 +28,13 @@ export interface PulseContactBarProps {
     emailConnected: boolean;
     showNotes: boolean;
     openCount: number;
+    /**
+     * ROLE-TIMELINE-TECH-STICKY-001: whether the user may open the full contact card.
+     * A technician without contacts.view still sees the identity + reach actions, but
+     * the card-opening affordances (Notes, Leads & Jobs, Expand) are withheld — the
+     * bar becomes a read-only "who am I talking to" strip. Defaults to true.
+     */
+    canOpenCard?: boolean;
     onText: () => void;
     onEmail: () => void;
     onOpenNotes: () => void;
@@ -36,7 +43,7 @@ export interface PulseContactBarProps {
 }
 
 export function PulseContactBar({
-    name, address, phone, hasEmail, emailConnected, showNotes, openCount,
+    name, address, phone, hasEmail, emailConnected, showNotes, openCount, canOpenCard = true,
     onText, onEmail, onOpenNotes, onOpenLeadsJobs, onExpand,
 }: PulseContactBarProps) {
     // Exactly one primary (violet) action: Call when a phone exists, otherwise the
@@ -73,16 +80,18 @@ export function PulseContactBar({
                 )}
             </div>
 
-            <div className="pulse-contact-bar-summary">
-                {showNotes && (
-                    <button type="button" className="pulse-contact-bar-link" onClick={onOpenNotes}>Notes</button>
-                )}
-                <button type="button" className="pulse-contact-bar-link" onClick={onOpenLeadsJobs}>
-                    Leads &amp; Jobs <strong>{openCount}</strong>
-                </button>
-            </div>
+            {canOpenCard && (
+                <div className="pulse-contact-bar-summary">
+                    {showNotes && (
+                        <button type="button" className="pulse-contact-bar-link" onClick={onOpenNotes}>Notes</button>
+                    )}
+                    <button type="button" className="pulse-contact-bar-link" onClick={onOpenLeadsJobs}>
+                        Leads &amp; Jobs <strong>{openCount}</strong>
+                    </button>
+                </div>
+            )}
 
-            <PulsePinnedBarExpand label="Open full contact card" onClick={onExpand} />
+            {canOpenCard && <PulsePinnedBarExpand label="Open full contact card" onClick={onExpand} />}
         </PulsePinnedBar>
     );
 }

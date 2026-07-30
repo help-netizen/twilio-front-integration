@@ -27,6 +27,7 @@ import { PhoneOff, Activity, ChevronLeft } from 'lucide-react';
 import { callsApi } from '../services/api';
 import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
+import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useNavigate } from 'react-router-dom';
 import { isAnonymousPhone } from '../utils/phoneUtils';
@@ -58,6 +59,11 @@ function groupLabel(key: string, timezone: string): string {
 const PulsePageInner: React.FC = () => {
     const p = usePulsePage();
     const { company } = useAuth();
+    const { hasPermission } = useAuthz();
+    // ROLE-TIMELINE-TECH-STICKY-001: a technician without contacts.view still sees the
+    // pinned contact strip (identity + call/text/email on their own job's contact), but
+    // must not be able to open the full contact card.
+    const canViewContacts = hasPermission('contacts.view');
     const navigate = useNavigate();
     const isMobile = useIsMobile();
     const companyTz = company?.timezone || 'America/New_York';
@@ -295,7 +301,10 @@ const PulsePageInner: React.FC = () => {
                         // handles the email channel itself, so surface it whenever there's a phone
                         // OR an email reply is possible.
                         const canEmailReply = p.emailConnected && (p.contactEmails?.length ?? 0) > 0;
-                        const showContactBar = !isAnonTimeline && !p.lead && !p.leadLoading && !!p.contact?.id && !!p.contactDetail;
+                        // Office roles wait for the full contactDetail; a technician without
+                        // contacts.view can't load it (403 → null), so show the minimal bar for
+                        // them as soon as there's a contact (ROLE-TIMELINE-TECH-STICKY-001).
+                        const showContactBar = !isAnonTimeline && !p.lead && !p.leadLoading && !!p.contact?.id && (!!p.contactDetail || !canViewContacts);
                         const showLeadBar = !isAnonTimeline && !p.leadLoading && !!p.lead;
                         const smsTarget = p.messageTargets.find(t => t.channel === 'sms');
                         const emailTarget = p.messageTargets.find(t => t.channel === 'email');
@@ -336,13 +345,17 @@ const PulsePageInner: React.FC = () => {
 
                             {showContactBar && (
                                 <PulseContactBar
-                                    name={p.contactDetail!.contact.full_name || 'Unknown'}
-                                    address={pickBarAddress(p.contactJobs, p.contactDetail!.contact)}
-                                    phone={p.phone || p.contactDetail!.contact.phone_e164 || null}
+                                    // Null-safe: a technician (no contacts.view) has no contactDetail,
+                                    // so the identity falls back to the timeline contact + resolved phone,
+                                    // and the address comes from their own job(s). ROLE-TIMELINE-TECH-STICKY-001.
+                                    name={p.contactDetail?.contact.full_name || p.contact?.full_name || 'Unknown'}
+                                    address={pickBarAddress(p.contactJobs, p.contactDetail?.contact ?? null)}
+                                    phone={p.phone || p.contactDetail?.contact.phone_e164 || p.contact?.phone_e164 || null}
                                     hasEmail={(p.contactEmails?.length ?? 0) > 0}
                                     emailConnected={p.emailConnected}
-                                    showNotes={hasNotes(p.contactDetail!.contact)}
-                                    openCount={openLeadsJobsCount(p.contactDetail!.leads, p.contactJobs)}
+                                    showNotes={canViewContacts && hasNotes(p.contactDetail?.contact)}
+                                    openCount={p.contactDetail ? openLeadsJobsCount(p.contactDetail.leads, p.contactJobs) : 0}
+                                    canOpenCard={canViewContacts}
                                     onText={() => { if (smsTarget) { p.setSelectedTarget(smsTarget); setComposerFocusSignal(s => s + 1); } }}
                                     onEmail={() => {
                                         if (!p.emailConnected) {
@@ -355,9 +368,9 @@ const PulsePageInner: React.FC = () => {
                                         }
                                         if (emailTarget) { p.setSelectedTarget(emailTarget); setComposerFocusSignal(s => s + 1); }
                                     }}
-                                    onOpenNotes={() => { setContactCardSection('notes'); setContactCardOpen(true); }}
-                                    onOpenLeadsJobs={() => { setContactCardSection('leads-jobs'); setContactCardOpen(true); }}
-                                    onExpand={() => { setContactCardSection(null); setContactCardOpen(true); }}
+                                    onOpenNotes={() => { if (!canViewContacts) return; setContactCardSection('notes'); setContactCardOpen(true); }}
+                                    onOpenLeadsJobs={() => { if (!canViewContacts) return; setContactCardSection('leads-jobs'); setContactCardOpen(true); }}
+                                    onExpand={() => { if (!canViewContacts) return; setContactCardSection(null); setContactCardOpen(true); }}
                                 />
                             )}
                             {showLeadBar && (
@@ -448,8 +461,10 @@ const PulsePageInner: React.FC = () => {
 
                             {/* PULSE-CONTACT-PIN-001: the full contact card as a canonical panel
                                 (bottom sheet on mobile). Overlay, so opening it cannot disturb
-                                the timeline's scroll compensation. */}
-                            {showContactBar && (
+                                the timeline's scroll compensation. ROLE-TIMELINE-TECH-STICKY-001:
+                                only for users who may view contacts — a technician's bar has no
+                                expand affordance and this panel is never mounted for them. */}
+                            {showContactBar && canViewContacts && (
                                 <Dialog open={contactCardOpen} onOpenChange={(open) => { setContactCardOpen(open); if (!open) setContactCardSection(null); }}>
                                     <DialogContent variant="panel">
                                         <DialogTitle className="sr-only">Contact details</DialogTitle>
