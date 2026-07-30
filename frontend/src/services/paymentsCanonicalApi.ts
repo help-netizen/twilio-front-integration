@@ -178,6 +178,18 @@ export async function fetchTransaction(id: number): Promise<PaymentTransaction> 
     return paymentsRequest<PaymentTransaction>(`${PAYMENTS_BASE}/${id}`);
 }
 
+/** PROVIDER-CARD-COLLECT-001: Stripe collect-readiness reachable by any collector
+ * (the canonical /api/stripe-payments/status is admin-gated), so a Provider's Pay-by-Card
+ * button can render. Same shape as the admin status endpoint's `status`. */
+export interface StripeReadiness {
+    configured: boolean;
+    can_collect: boolean;
+    readiness?: string | null;
+}
+export async function fetchStripeReadiness(): Promise<StripeReadiness> {
+    return paymentsRequest<StripeReadiness>(`${PAYMENTS_BASE}/stripe-readiness`);
+}
+
 export async function createTransaction(data: CreateTransactionData): Promise<PaymentTransaction> {
     return paymentsRequest<PaymentTransaction>(PAYMENTS_BASE, {
         method: 'POST',

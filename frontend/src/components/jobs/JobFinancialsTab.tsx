@@ -8,7 +8,6 @@ import { Archive, Ban, Banknote, ChevronRight, CreditCard, FileText, Loader2, Lo
 import { CloudBanner } from '../ui/CloudBanner';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
 import { useAuthz } from '../../hooks/useAuthz';
-import { stripePaymentsApi } from '../../services/stripePaymentsApi';
 import { CollectPaymentDialog } from './CollectPaymentDialog';
 import { JobRecordPaymentDialog } from './JobRecordPaymentDialog';
 import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
@@ -27,7 +26,7 @@ import { toast } from 'sonner';
 import { calculateJobFinanceSummary, formatSignedCurrency } from './jobFinanceMath';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { voidTransaction, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
+import { voidTransaction, fetchStripeReadiness, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
 import { PaymentStatusChip, isVoidablePayment, isVoidedPayment, VOIDED_AMOUNT_CLASS } from '../payments/paymentStatus';
 import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 import { TransactionReview } from '../payments/TransactionReview';
@@ -111,8 +110,10 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
     const canRecordOffline = hasPermission('payments.collect_offline');
     // Only fetch Stripe readiness when the user could actually collect (FR-BTN-2: no perm → nothing).
     const { data: stripeStatus, isLoading: stripeLoading } = useQuery({
-        queryKey: ['stripe-payments-status'],
-        queryFn: () => stripePaymentsApi.getStatus().then(r => r.status),
+        queryKey: ['stripe-collect-readiness'],
+        // PROVIDER-CARD-COLLECT-001: collector-accessible readiness (the admin status
+        // endpoint 403s for a Provider, which hid their Pay-by-Card button).
+        queryFn: () => fetchStripeReadiness(),
         enabled: canCollect,
     });
     const canManageIntegrations = hasPermission('tenant.integrations.manage');

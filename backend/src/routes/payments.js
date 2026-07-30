@@ -134,6 +134,23 @@ router.get('/summary', requirePermission('payments.view'), async (req, res) => {
     }
 });
 
+// GET /api/payments/stripe-readiness — Stripe collect-readiness for the Pay-by-Card
+// affordance (PROVIDER-CARD-COLLECT-001). The canonical /api/stripe-payments/status is
+// gated on tenant.integrations.manage (admin), so a Provider who CAN collect (keyed/
+// online/terminal) couldn't read it and the card button never appeared. This mirrors the
+// same read for any collector. Read-only; the actual charge stays on its collect gate.
+router.get('/stripe-readiness',
+    requirePermission('payments.collect_online', 'payments.collect_keyed', 'payments.collect_terminal', 'payments.collect_offline', 'payments.view'),
+    async (req, res) => {
+        try {
+            const readiness = await require('../services/stripePaymentsService').getStatus(req.companyFilter?.company_id);
+            res.json({ ok: true, data: readiness });
+        } catch (err) {
+            console.error('[Payments] GET /stripe-readiness error:', err.message);
+            res.status(err.httpStatus || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+        }
+    });
+
 // POST /api/payments/manual — Record manual/offline payment (BEFORE /:id routes)
 router.post('/manual', requirePermission('payments.collect_offline'), async (req, res) => {
     try {
