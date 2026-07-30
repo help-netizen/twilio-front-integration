@@ -24,7 +24,12 @@ function projectEmailTimelineItem(row) {
         subject: row.subject || null,
         body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
         display_html: stripTimelineHtml(row.body_html),
-        sent_at: row.gmail_internal_at,
+        // EMAIL-TS-ORDER-001: for outbound rows our own insert time is the send
+        // moment and is trustworthy; provider dates on agent-path outbound have
+        // shown hour-scale timezone skew. Inbound keeps the provider date.
+        sent_at: isOutbound
+            ? (row.created_at || row.gmail_internal_at)
+            : (row.gmail_internal_at || row.created_at),
         thread_id: row.thread_id,
         sent_by_user_email: row.sent_by_user_email || null,
     };

@@ -744,11 +744,11 @@ async function getTimelineEmailPageByContact(companyId, contactId, { limit, curs
     let cursorClause = '';
     if (cursorPred?.mode === 'tuple') {
         params.push(cursorPred.ts, cursorPred.id);
-        cursorClause = `AND (COALESCE(gmail_internal_at, created_at), id) < ($3::timestamptz, $4::bigint)`;
+        cursorClause = `AND (CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END, id) < ($3::timestamptz, $4::bigint)`;
     } else if (cursorPred) {
         params.push(cursorPred.ts);
         const operator = cursorPred.mode === 'lte' ? '<=' : '<';
-        cursorClause = `AND COALESCE(gmail_internal_at, created_at) ${operator} $3::timestamptz`;
+        cursorClause = `AND CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END ${operator} $3::timestamptz`;
     }
     params.push(limit);
 
@@ -757,12 +757,13 @@ async function getTimelineEmailPageByContact(companyId, contactId, { limit, curs
                 to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
                 sent_by_user_email,
                 (direction = 'outbound') AS is_outbound,
-                to_char(COALESCE(gmail_internal_at, created_at) AT TIME ZONE 'UTC',
+                created_at,
+                to_char((CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END) AT TIME ZONE 'UTC',
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
          FROM email_messages
          WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true
            ${cursorClause}
-         ORDER BY COALESCE(gmail_internal_at, created_at) DESC, id DESC
+         ORDER BY CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END DESC, id DESC
          LIMIT $${params.length}`,
         params
     );
@@ -779,11 +780,11 @@ async function getTimelineEmailPageByTimeline(companyId, timelineId, { limit, cu
     let cursorClause = '';
     if (cursorPred?.mode === 'tuple') {
         params.push(cursorPred.ts, cursorPred.id);
-        cursorClause = `AND (COALESCE(gmail_internal_at, created_at), id) < ($3::timestamptz, $4::bigint)`;
+        cursorClause = `AND (CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END, id) < ($3::timestamptz, $4::bigint)`;
     } else if (cursorPred) {
         params.push(cursorPred.ts);
         const operator = cursorPred.mode === 'lte' ? '<=' : '<';
-        cursorClause = `AND COALESCE(gmail_internal_at, created_at) ${operator} $3::timestamptz`;
+        cursorClause = `AND CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END ${operator} $3::timestamptz`;
     }
     params.push(limit);
 
@@ -792,12 +793,13 @@ async function getTimelineEmailPageByTimeline(companyId, timelineId, { limit, cu
                 to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
                 sent_by_user_email,
                 (direction = 'outbound') AS is_outbound,
-                to_char(COALESCE(gmail_internal_at, created_at) AT TIME ZONE 'UTC',
+                created_at,
+                to_char((CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END) AT TIME ZONE 'UTC',
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
          FROM email_messages
          WHERE company_id = $1 AND timeline_id = $2 AND on_timeline = true
            ${cursorClause}
-         ORDER BY COALESCE(gmail_internal_at, created_at) DESC, id DESC
+         ORDER BY CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END DESC, id DESC
          LIMIT $${params.length}`,
         params
     );
