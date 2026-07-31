@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
-import { Archive, Ban, Banknote, ChevronRight, CreditCard, FileText, Loader2, Lock, MoreVertical, Plus, Receipt } from 'lucide-react';
+import { Archive, Ban, Banknote, ChevronRight, CreditCard, FileText, Loader2, Lock, MoreVertical, Plus, Receipt, Undo2 } from 'lucide-react';
 import { CloudBanner } from '../ui/CloudBanner';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
 import { useAuthz } from '../../hooks/useAuthz';
@@ -30,6 +30,7 @@ import { voidTransaction, fetchStripeReadiness, type PaymentTransaction } from '
 import { PaymentStatusChip, isVoidablePayment, isVoidedPayment, VOIDED_AMOUNT_CLASS } from '../payments/paymentStatus';
 import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 import { TransactionReview } from '../payments/TransactionReview';
+import { RefundDialog } from '../transactions/RefundDialog';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -102,12 +103,15 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
     const [receiptPayment, setReceiptPayment] = useState<PaymentTransaction | null>(null);
     // TXN-STATUS-VOID-001: the row targeted by the Void-payment confirm dialog.
     const [voidTarget, setVoidTarget] = useState<PaymentTransaction | null>(null);
+    // REFUND-IN-JOB-001: refund straight from the job's transaction kebab.
+    const [refundTarget, setRefundTarget] = useState<PaymentTransaction | null>(null);
 
     // ── STRIPE-ADHOC-PAY-001: collect-payment button/CTA gating ─────────────────
     const navigate = useNavigate();
     const { hasAnyPermission, hasPermission } = useAuthz();
     const canCollect = hasAnyPermission('payments.collect_online', 'payments.collect_offline', 'payments.collect_keyed');
     const canRecordOffline = hasPermission('payments.collect_offline');
+    const canRefund = hasPermission('payments.refund');
     // Only fetch Stripe readiness when the user could actually collect (FR-BTN-2: no perm → nothing).
     const { data: stripeStatus, isLoading: stripeLoading } = useQuery({
         queryKey: ['stripe-collect-readiness'],
@@ -258,6 +262,11 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                                             <DropdownMenuItem onSelect={() => setReceiptPayment(payment)}>
                                                 <Receipt className="size-4" />Review
                                             </DropdownMenuItem>
+                                            {canRefund && payment.status === 'completed' && payment.transaction_type === 'payment' && (
+                                                <DropdownMenuItem onSelect={() => setRefundTarget(payment)}>
+                                                    <Undo2 className="size-4" />Refund
+                                                </DropdownMenuItem>
+                                            )}
                                             {canRecordOffline && isVoidablePayment(payment) && (
                                                 <DropdownMenuItem
                                                     onSelect={() => setVoidTarget(payment)}
@@ -623,6 +632,37 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                 onConfirm={handleVoidPayment}
                 bodyText="This will remove the payment from the job balance and recalculate Paid and Due."
             />
+
+            {/* REFUND-IN-JOB-001: same refund flow as the Payments ledger — Stripe
+                payments refund THROUGH Stripe, everything else via the canonical path. */}
+            {refundTarget && (
+                <RefundDialog
+                    open={!!refundTarget}
+                    onOpenChange={open => { if (!open) setRefundTarget(null); }}
+                    transaction={refundTarget}
+                    onRefund={async data => {
+                        try {
+                            if (refundTarget.external_source === 'stripe') {
+                                const { invoiceStripeApi } = await import('../../services/stripePaymentsApi');
+                                await invoiceStripeApi.refund(
+                                    refundTarget.id,
+                                    data.amount != null ? Number(data.amount) : undefined,
+                                    data.reason
+                                );
+                                toast.success('Refund initiated via Stripe');
+                            } else {
+                                const { refundTransaction } = await import('../../services/paymentsCanonicalApi');
+                                await refundTransaction(refundTarget.id, data);
+                                toast.success('Refund initiated');
+                            }
+                            refresh();
+                        } catch (err: any) {
+                            toast.error(err?.message || 'Could not refund the payment');
+                            throw err;
+                        }
+                    }}
+                />
+            )}
 
             {/* Transaction "Review" — read-only receipt slide-over (JOBPANEL-REWORK-001) */}
             {receiptPayment && (
