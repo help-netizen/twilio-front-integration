@@ -29,6 +29,7 @@ import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
 import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useKeyboardInset } from '../components/shared/NoteComposerOverlay';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { isAnonymousPhone } from '../utils/phoneUtils';
 import { dateKeyInTZ, todayInTZ } from '../utils/companyTime';
@@ -64,13 +65,25 @@ const PulsePageInner: React.FC = () => {
     // full /welcome hub instead of Pulse (the embedded wizard card is gone). The
     // checklist is fail-quiet: loading or error keeps Pulse as-is.
     const { checklist } = useOnboardingChecklist();
-    const redirectToWelcome = isTenantAdmin() && checklist?.visible === true;
+    // Only the Pulse INDEX redirects — a deep link to a specific timeline/contact
+    // (notification, shared URL) must still open what it points at.
+    const redirectToWelcome = isTenantAdmin()
+        && checklist?.visible === true
+        && !p.timelineId && !p.contactId;
     // ROLE-TIMELINE-TECH-STICKY-001: a technician without contacts.view still sees the
     // pinned contact strip (identity + call/text/email on their own job's contact), but
     // must not be able to open the full contact card.
     const canViewContacts = hasPermission('contacts.view');
     const navigate = useNavigate();
     const isMobile = useIsMobile();
+    // COMPOSER-KBD-001: with the keyboard up, iOS shrinks the visual viewport and
+    // scrolls the layout to reveal the focused textarea — the composer flew to the
+    // top of the screen with the rest of the (still full-height) column showing as
+    // empty canvas below it. While the composer has focus on mobile it is docked to
+    // the VISUAL viewport bottom instead, so it sits directly above the keyboard.
+    const [composerFocused, setComposerFocused] = useState(false);
+    const composerKeyboardInset = useKeyboardInset(isMobile && composerFocused);
+    const composerFloating = isMobile && composerFocused && composerKeyboardInset > 0;
     const companyTz = company?.timezone || 'America/New_York';
 
     // Mobile panel state: 'list' shows sidebar, 'content' shows detail+timeline
@@ -442,7 +455,13 @@ const PulsePageInner: React.FC = () => {
                             {/* Reply card — hidden for anonymous timeline (no callback target).
                                 Shown when there's a phone OR an email reply is possible. */}
                             {(p.phone || canEmailReply) && !isAnonTimeline && (
-                                <div className="pulse-card pulse-reply-dock">
+                                <div
+                                    className="pulse-card pulse-reply-dock"
+                                    data-floating={composerFloating || undefined}
+                                    style={composerFloating ? { transform: `translateY(${-composerKeyboardInset}px)` } : undefined}
+                                    onFocusCapture={() => setComposerFocused(true)}
+                                    onBlurCapture={() => setComposerFocused(false)}
+                                >
                                     <SmsForm
                                         onSend={p.handleSendMessage}
                                         onAiFormat={p.handleAiFormat}

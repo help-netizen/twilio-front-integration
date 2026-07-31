@@ -683,6 +683,28 @@
         margin-top: auto;
     }
 
+    /* COMPOSER-KBD-001: while the composer holds focus it leaves the flow and docks
+       to the VISUAL viewport bottom, translated up by the live keyboard height (the
+       same technique NoteComposerOverlay uses). Without this iOS scrolls the layout
+       to reveal the textarea and the composer ends up at the top of the screen with
+       the rest of the full-height column showing as empty canvas underneath. */
+    .pulse-reply-dock[data-floating] {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 95; /* above the bottom nav (90) — the keyboard is ours while typing */
+        margin: 0;
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -8px 24px rgba(25, 25, 25, 0.10);
+    }
+
+    /* The fixed nav sits between the composer and the keyboard while typing; hide it
+       so the input really is the last thing above the keyboard. It returns on blur. */
+    body:has(.pulse-reply-dock[data-floating]) .app-bottom-nav {
+        display: none;
+    }
+
     .pulse-ar-plaque {
         padding: 8px 10px;
     }
