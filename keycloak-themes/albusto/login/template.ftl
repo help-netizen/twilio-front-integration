@@ -23,7 +23,7 @@
        path, so browsers keep a stale CSS for up to a month after a theme change
        (the Google button rendered as an unstyled link on phones that cached the
        pre-GOOGLE-SSO-FIX css). BUMP ?v= on EVERY albusto-login.css change. -->
-  <link rel="stylesheet" href="${url.resourcesPath}/css/albusto-login.css?v=3">
+  <link rel="stylesheet" href="${url.resourcesPath}/css/albusto-login.css?v=4">
   <#if properties.scripts?has_content>
     <#list properties.scripts?split(' ') as script>
       <script src="${url.resourcesPath}/${script}" type="text/javascript"></script>
@@ -37,7 +37,7 @@
     <div class="auth__form-col">
       <div class="brand">
         <img class="brand__logo" src="${url.resourcesPath}/img/albusto-wordmark.svg" alt="albusto" />
-        <div class="brand__sub">Contact center</div>
+        <div class="brand__sub">for field services</div>
       </div>
 
       <div class="form-wrap">

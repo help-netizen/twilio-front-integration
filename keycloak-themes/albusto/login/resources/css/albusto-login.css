@@ -194,13 +194,13 @@ a.btn:hover{text-decoration:none}
 @media (max-width:900px){
   .auth{grid-template-columns:1fr; height:auto; min-height:100vh; overflow:visible}
   .auth__news-col{display:none}
-  /* brand + form become one vertically-centered group (no top-pinned gap) */
+  /* logo pinned top-left; everything left-aligned to match the heading/body */
   .auth__form-col{
-    box-shadow:none; align-items:center; justify-content:center;
+    box-shadow:none; align-items:flex-start; justify-content:flex-start;
     min-height:100vh; min-height:100dvh;
     padding:clamp(24px,7vw,40px);
   }
-  .brand{align-items:center; margin-bottom:30px}
+  .brand{align-items:flex-start; margin-bottom:30px}
   .form-wrap{max-width:420px; margin:0; padding:0}
   .form-wrap h1{font-size:30px}
 }
