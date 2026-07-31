@@ -30,7 +30,7 @@ export default function CompanyUsersPage() {
             title="Users"
             description="Manage who can sign in, their role, and what they can do."
             actions={
-                <Button onClick={() => { h.setCreateForm(() => ({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false })); h.setTempPassword(null); h.setCreateOpen(true); }}>
+                <Button onClick={() => { h.setCreateForm(() => ({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: true, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false })); h.setTempPassword(null); h.setCreateOpen(true); }}>
                     <UserPlus className="size-4 mr-2" />Add user
                 </Button>
             }

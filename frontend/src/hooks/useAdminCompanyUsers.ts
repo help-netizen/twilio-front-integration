@@ -20,7 +20,7 @@ export function useAdminCompanyUsers(companyId: string) {
 
     // Create Mode
     const [createOpen, setCreateOpen] = useState(false);
-    const [createForm, setCreateForm] = useState({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false });
+    const [createForm, setCreateForm] = useState({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: true, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false });
     const [creating, setCreating] = useState(false);
     const [tempPassword, setTempPassword] = useState<string | null>(null);
 

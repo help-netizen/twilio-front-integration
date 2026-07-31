@@ -88,6 +88,22 @@ function ZenbookerLinkField({ value, onChange }: { value: string | null; onChang
 }
 
 type CreateForm = { full_name: string; email: string; phone: string; role_key: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; location_tracking_enabled: boolean };
+
+/**
+ * Sensible operational-setting defaults per role, applied when the role changes.
+ * Softphone is for office roles (everyone except a pure Field Provider); the
+ * Field-Provider flag + Location Tracking default on only for the Field Provider
+ * role. These are just defaults — any of them can still be toggled by hand
+ * afterwards (e.g. an admin who also runs jobs turns Field Provider on).
+ */
+export function roleOperationalDefaults(roleKey: string): Pick<CreateForm, 'phone_calls_allowed' | 'is_provider' | 'location_tracking_enabled'> {
+    const provider = roleKey === 'provider';
+    return {
+        phone_calls_allowed: !provider,
+        is_provider: provider,
+        location_tracking_enabled: provider,
+    };
+}
 interface CreateDialogProps { open: boolean; setOpen: (v: boolean) => void; createForm: CreateForm; setCreateForm: (fn: (f: CreateForm) => CreateForm) => void; creating: boolean; tempPassword: string | null; setTempPassword: (v: string | null) => void; handleCreate: () => void; }
 
 export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, creating, tempPassword, setTempPassword, handleCreate }: CreateDialogProps) {
@@ -128,7 +144,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                                     <FloatingField id="user-name" label="Full name" value={createForm.full_name} onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))} />
                                     <FloatingField id="user-email" label="Email" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
                                     <FloatingField id="user-phone" label="Phone (optional)" type="tel" value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} />
-                                    <FloatingSelect label="System role" value={createForm.role_key} onValueChange={v => setCreateForm(f => ({ ...f, role_key: v }))}>
+                                    <FloatingSelect label="System role" value={createForm.role_key} onValueChange={v => setCreateForm(f => ({ ...f, role_key: v, ...roleOperationalDefaults(v) }))}>
                                         <SelectItem value="tenant_admin">Admin</SelectItem>
                                         <SelectItem value="manager">Manager</SelectItem>
                                         <SelectItem value="dispatcher">Dispatcher</SelectItem>
@@ -161,7 +177,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                                     <div className="flex items-center justify-between">
                                         <div className="space-y-0.5">
                                             <Label>Field Provider</Label>
-                                            <div className="text-[13px] text-muted-foreground">Appears in scheduler and assignments</div>
+                                            <div className="text-[13px] text-muted-foreground">Assignable as a field tech in the schedule — any role (e.g. an admin who also runs jobs)</div>
                                         </div>
                                         <Switch checked={createForm.is_provider} onCheckedChange={v => setCreateForm(f => ({ ...f, is_provider: v }))} />
                                     </div>
@@ -284,7 +300,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                         {/* Role */}
-                        <FloatingSelect label="Role" value={form.role_key} onValueChange={v => setForm(f => ({ ...f, role_key: v }))}>
+                        <FloatingSelect label="Role" value={form.role_key} onValueChange={v => setForm(f => ({ ...f, role_key: v, ...roleOperationalDefaults(v) }))}>
                             <SelectItem value="tenant_admin">Admin</SelectItem>
                             <SelectItem value="manager">Manager</SelectItem>
                             <SelectItem value="dispatcher">Dispatcher</SelectItem>
@@ -315,7 +331,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                         <div className="flex items-center justify-between">
                             <div className="space-y-0.5">
                                 <Label>Field Provider</Label>
-                                <div className="text-[13px] text-muted-foreground">Appears in scheduler and assignments</div>
+                                <div className="text-[13px] text-muted-foreground">Assignable as a field tech in the schedule — any role (e.g. an admin who also runs jobs)</div>
                             </div>
                             <Switch checked={form.is_provider} onCheckedChange={v => setForm(f => ({ ...f, is_provider: v }))} />
                         </div>
