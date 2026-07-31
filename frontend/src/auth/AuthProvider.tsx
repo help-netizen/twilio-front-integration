@@ -473,11 +473,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     // PF007: Load full authorization context. ONBOARD-LOOP-FIX: a
                     // transient first-load failure must NOT leave company=null and
                     // trip the onboarding gate — retry once before releasing gates.
+                    // PAYMENTS-BLANK-001: if BOTH attempts fail (backend restart, flaky
+                    // mobile network on a direct deep link), keep retrying with backoff
+                    // in the background — every route guard waits on authzReady, and
+                    // healing used to depend on the 30s refresh tick alone.
                     if (kc.token) {
                         const ok = await fetchAuthzContext(kc.token);
                         if (!ok) {
                             await sleep(800);
-                            await fetchAuthzContext(kc.token);
+                            const okRetry = await fetchAuthzContext(kc.token);
+                            if (!okRetry) {
+                                void (async () => {
+                                    for (const delayMs of [2000, 4000, 8000, 16000]) {
+                                        await sleep(delayMs);
+                                        if (kc.token && await fetchAuthzContext(kc.token)) return;
+                                    }
+                                })();
+                            }
                         }
                     }
 

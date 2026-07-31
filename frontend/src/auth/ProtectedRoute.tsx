@@ -19,6 +19,22 @@ interface ProtectedRouteProps {
     redirectTo?: string;
 }
 
+/** Centered spinner shown while auth/authz are still resolving on a direct load. */
+function RouteLoading() {
+    return (
+        <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: '100vh', background: 'var(--blanc-bg, #F1F1F0)', color: 'var(--blanc-ink-2, #6E6E6E)',
+            fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
+        }}>
+            <div style={{ textAlign: 'center' }}>
+                <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(25,25,25,0.15))', borderTopColor: 'var(--blanc-ink-2, #6E6E6E)', borderRadius: '50%', margin: '0 auto 12px' }} />
+                <div style={{ fontSize: 14 }}>Loading your workspace…</div>
+            </div>
+        </div>
+    );
+}
+
 /**
  * Permission-aware route guard (PF007-HARDENING-001).
  *
@@ -35,14 +51,17 @@ export function ProtectedRoute({ children, roles, permissions, platformRoles, re
     const { hasAnyPermission, hasPlatformRole } = useAuthz();
 
     if (!authenticated) {
-        return null; // AuthProvider handles redirect
+        return <RouteLoading />; // AuthProvider handles the redirect meanwhile
     }
 
     // Don't decide access until permissions are resolved — otherwise a redirectTo
     // route (e.g. /pulse → /jobs) could bounce a user who actually has access during
     // the brief authz-loading window, and the replace-redirect would stick.
+    // PAYMENTS-BLANK-001: this used to render bare null — when the authz context
+    // fetch failed twice on a direct deep-link load, the user sat on an empty grey
+    // page until the 30s refresh healed it. Show progress instead.
     if (!authzReady) {
-        return null;
+        return <RouteLoading />;
     }
 
     const checks: boolean[] = [];
