@@ -240,12 +240,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                         surface only (the super-admin dialog omits onResetPassword). */}
                     {onResetPassword && (
                       <div className="space-y-3.5">
-                        <div className="blanc-eyebrow">Identity</div>
-                        <FloatingField id="edit-user-name" label="Full name" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                            <FloatingField id="edit-user-email" label="Email (sign-in)" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
-                            <FloatingField id="edit-user-phone" label="Phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
-                        </div>
+                        {/* Account actions pinned at the very top, before Identity. */}
                         <div className="flex flex-wrap items-center gap-2">
                             <Button type="button" variant="outline" size="sm" onClick={() => onResetPassword(user)}>
                                 <KeyRound className="size-4 mr-1.5" /> Send password-reset link
@@ -270,6 +265,13 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                                 <Trash2 className="size-3.5" /> Remove from company
                             </button>
                         )}
+
+                        <div className="blanc-eyebrow">Identity</div>
+                        <FloatingField id="edit-user-name" label="Full name" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            <FloatingField id="edit-user-email" label="Email (sign-in)" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+                            <FloatingField id="edit-user-phone" label="Phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+                        </div>
                       </div>
                     )}
 
