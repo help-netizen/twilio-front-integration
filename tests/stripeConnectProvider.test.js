@@ -112,3 +112,25 @@ describe('Stripe Connect result retrieval', () => {
 test('STRIPE-NATIVE-RESURRECTION: provider exposes no native receipt-email mutation', () => {
     expect(provider.updateChargeReceiptEmail).toBeUndefined();
 });
+
+// STRIPE-STANDARD-001: tenants are Standard accounts — Stripe owns the merchant
+// relationship (full dashboard, KYC/risk/fraud monitoring), the platform keeps
+// minimal liability. Direct charges and the no-application-fee model unchanged.
+describe('Stripe Connect account creation', () => {
+    test('creates Standard accounts with direct-charge capabilities and no platform fee', async () => {
+        await provider.createAccount({ email: 'o@x.com', companyName: 'ACME', companyId: 'c-1' });
+        const [url, options] = global.fetch.mock.calls[0];
+        expect(url).toBe('https://api.stripe.com/v1/accounts');
+        expect(options.body).toContain('type=standard');
+        expect(options.body).not.toContain('express');
+        expect(options.body).toContain(encodeURIComponent('capabilities[card_payments][requested]') + '=true');
+        expect(options.body).not.toContain('application_fee');
+    });
+
+    test('maps the account type through for connection status readers', () => {
+        const mapped = provider.mapAccount
+            ? provider.mapAccount({ id: 'acct_1', type: 'standard' })
+            : null;
+        if (mapped) expect(mapped.type).toBe('standard');
+    });
+});

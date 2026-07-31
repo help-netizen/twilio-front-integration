@@ -64,12 +64,17 @@ async function call(method, path, body, opts = {}) {
 }
 
 /**
- * Create a connected account (Express, direct-charge merchant of record).
- * No application fee / no platform-controlled pricing.
+ * Create a connected account (Standard, direct-charge merchant of record).
+ * No application fee / no platform-controlled pricing. Standard keeps the
+ * merchant relationship WITH STRIPE: the tenant gets the full
+ * dashboard.stripe.com, Stripe runs their KYC/risk/fraud monitoring and owns
+ * the merchant communications — the platform's exposure to tenant fraud is
+ * minimal (STRIPE-STANDARD-001, owner decision 2026-07-30). Existing Express
+ * accounts stay as they are until the tenant disconnects and re-onboards.
  */
 async function createAccount({ email, companyName, companyId } = {}) {
     return call('POST', '/accounts', {
-        type: 'express',
+        type: 'standard',
         email: email || undefined,
         business_profile: { name: companyName || undefined },
         capabilities: {
@@ -90,7 +95,12 @@ async function createAccountLink(accountId, { refreshUrl, returnUrl }) {
     });
 }
 
-/** Login link to the Express dashboard for a connected account. */
+/**
+ * Login link to the Express dashboard for a connected account.
+ * Express-era accounts only — Stripe rejects login_links for Standard
+ * accounts (their merchants sign in at dashboard.stripe.com directly).
+ * Currently unused by any route.
+ */
 async function createLoginLink(accountId) {
     return call('POST', `/accounts/${accountId}/login_links`, {});
 }
@@ -104,6 +114,8 @@ async function getAccount(accountId) {
 function mapAccount(acct) {
     return {
         id: acct.id,
+        // 'standard' for new connections; legacy connections may still be 'express'.
+        type: acct.type || null,
         livemode: Boolean(acct.livemode),
         charges_enabled: Boolean(acct.charges_enabled),
         payouts_enabled: Boolean(acct.payouts_enabled),
