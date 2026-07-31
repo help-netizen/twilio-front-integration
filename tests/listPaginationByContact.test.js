@@ -34,7 +34,9 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
     async function run(opts = {}) {
         db.query.mockResolvedValue({ rows: [] });
         await timelinesQueries.getUnifiedTimelinePage({
-            limit: 50, offset: 0, companyId: COMPANY_A, ...opts,
+            limit: 50, offset: 0, companyId: COMPANY_A,
+            taskContentScope: { canViewAll: true, userId: null },
+            ...opts,
         });
         return db.query.mock.calls[0]; // [sql, params]
     }
@@ -328,7 +330,9 @@ describe('getUnifiedTimelinePage — MAIL-MUTE-001 muted-set plumbing', () => {
     async function run(opts = {}) {
         db.query.mockResolvedValue({ rows: [] });
         await timelinesQueries.getUnifiedTimelinePage({
-            limit: 50, offset: 0, companyId: COMPANY_A, ...opts,
+            limit: 50, offset: 0, companyId: COMPANY_A,
+            taskContentScope: { canViewAll: true, userId: null },
+            ...opts,
         });
         return db.query.mock.calls[0]; // [sql, params]
     }
@@ -450,12 +454,17 @@ function request(app, method, path) {
     });
 }
 
-function callsApp({ permissions = ['pulse.view'], company = COMPANY_A } = {}) {
+function callsApp({
+    permissions = ['pulse.view', 'tasks.manage'],
+    company = COMPANY_A,
+    userId = 'u1',
+    scopes = { job_visibility: 'all' },
+} = {}) {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
-        req.user = { sub: 'kc-sub', email: 'p@x.com', crmUser: { id: 'u1' } };
-        req.authz = { scope: 'tenant', permissions, scopes: {}, membership: { role_key: 'manager' } };
+        req.user = { sub: 'kc-sub', email: 'p@x.com', crmUser: userId ? { id: userId } : null };
+        req.authz = { scope: 'tenant', permissions, scopes, membership: { role_key: 'manager' } };
         if (company) req.companyFilter = { company_id: company };
         next();
     });
@@ -516,7 +525,52 @@ describe('GET /api/calls/by-contact — route', () => {
             mutedEmails: [], mutedDomains: [],
             // ROLE-PULSE-LIST-SCOPE-002: the route now also forwards the provider scope.
             providerScope: expect.any(Object),
+            // AR-PROVIDER-SCOPE-001: office holder has the effective see-all capability.
+            taskContentScope: { canViewAll: true, userId: null },
         });
+    });
+
+    it('provider task content scope is actor-based, not role_key-based', async () => {
+        mockGetUnifiedTimelinePage.mockResolvedValue([]);
+        await request(callsApp({ permissions: ['pulse.view'] }), 'GET', '/api/calls/by-contact');
+
+        expect(mockGetUnifiedTimelinePage).toHaveBeenCalledWith(expect.objectContaining({
+            taskContentScope: { canViewAll: false, userId: 'u1' },
+        }));
+    });
+
+    it('restricted scope without crmUser.id fails closed at the query boundary', async () => {
+        mockGetUnifiedTimelinePage.mockResolvedValue([]);
+        await request(
+            callsApp({ permissions: ['pulse.view'], userId: null }),
+            'GET', '/api/calls/by-contact'
+        );
+
+        expect(mockGetUnifiedTimelinePage).toHaveBeenCalledWith(expect.objectContaining({
+            taskContentScope: { canViewAll: false, userId: null },
+        }));
+    });
+
+    it('provider DTO never revives a hidden task through legacy manual AR metadata', async () => {
+        mockGetUnifiedTimelinePage.mockResolvedValue([row(13, {
+            is_action_required: true,
+            action_required_reason: 'manual',
+            open_tasks: [],
+            open_task_count: 0,
+        })]);
+
+        const provider = await request(
+            callsApp({ permissions: ['pulse.view'] }),
+            'GET', '/api/calls/by-contact'
+        );
+        expect(provider.body.conversations[0]).toMatchObject({
+            is_action_required: false,
+            has_open_task: false,
+            open_tasks: [],
+        });
+
+        const office = await request(callsApp(), 'GET', '/api/calls/by-contact');
+        expect(office.body.conversations[0].is_action_required).toBe(true);
     });
 
     it('envelope keys are EXACTLY {conversations, leads_map, total, limit, offset}', async () => {
@@ -730,6 +784,7 @@ describe('GET /api/calls/by-contact — route', () => {
             limit: 25, offset: 75, companyId: COMPANY_A, search: 'vendor',
             mutedEmails: emails, mutedDomains: domains,
             providerScope: expect.any(Object),
+            taskContentScope: { canViewAll: true, userId: null },
         });
     });
 

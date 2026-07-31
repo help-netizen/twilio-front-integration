@@ -17,6 +17,7 @@
 
 const db = require('./connection');
 const { requireCompanyId, queryFor, clampLimit, clampOffset } = require('./crmUtils');
+const { buildTaskActorPredicate } = require('../middleware/taskContentScope');
 const {
     createCursorFingerprint,
     encodeCursor,
@@ -227,10 +228,7 @@ function buildTaskListFilters(companyId, filters = {}) {
     if (Object.prototype.hasOwnProperty.call(filters, 'scopeOwnerId')) {
         if (filters.scopeOwnerId) {
             params.push(filters.scopeOwnerId);
-            conditions.push(`(
-                t.owner_user_id = $${params.length}
-                OR t.author_user_id = $${params.length}
-            )`);
+            conditions.push(buildTaskActorPredicate('t', `$${params.length}`));
         } else {
             // A requested owner scope with no actor must never collapse into the
             // company-wide branch. Routes reject it; this is query-layer defense.

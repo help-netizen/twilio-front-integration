@@ -7,8 +7,8 @@
  *
  * Company scope is strictly req.companyFilter.company_id. author/owner FKs use
  * req.user.crmUser.id (FK → crm_users.id; NOT req.user.sub). Visibility:
- * tasks.manage → all company tasks; otherwise the global list is scoped to the
- * caller's own (assigned) tasks. Mutations require manage OR ownership/authorship.
+ * tasks.manage → all company tasks; otherwise the global list is scoped to tasks
+ * assigned to OR authored by the caller. Mutations use the same content rule.
  */
 
 const express = require('express');
@@ -21,6 +21,7 @@ const jobsService = require('../services/jobsService');
 const taskActions = require('../services/taskActions/registry');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
+const { getTaskContentScope } = require('../middleware/taskContentScope');
 
 function companyId(req) {
     return req.companyFilter?.company_id;
@@ -29,19 +30,20 @@ function actorId(req) {
     return req.user?.crmUser?.id || null;
 }
 function canManage(req) {
-    return !!req.user?._devMode || (req.authz?.permissions || []).includes('tasks.manage');
+    return getTaskContentScope(req).canViewAll;
 }
 function hasPermission(req, permission) {
     return !!req.user?._devMode || (req.authz?.permissions || []).includes(permission);
 }
 
 function applyListVisibility(req, filters) {
-    if (canManage(req)) {
+    const contentScope = getTaskContentScope(req);
+    if (contentScope.canViewAll) {
         if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id;
         return;
     }
 
-    const ownerId = actorId(req);
+    const ownerId = contentScope.userId;
     if (!ownerId) {
         const err = new Error('Authenticated request is missing req.user.crmUser.id');
         err.code = 'INVALID_AUTH_CONTEXT';

@@ -28,6 +28,7 @@ jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async ()
 const http = require('http');
 const express = require('express');
 const tasksQueries = require('../backend/src/db/tasksQueries');
+const { resolveTaskContentScope } = require('../backend/src/middleware/taskContentScope');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const PROVIDER_USER = '11111111-1111-1111-1111-111111111111';
@@ -72,6 +73,21 @@ function appWithAuthz({ permissions = ['tasks.view'], userId = PROVIDER_USER } =
 }
 
 describe('ROLE-TASKS-SCOPE-001 — list visibility', () => {
+    it('derives see-all from tasks.manage, never from a role_key literal', () => {
+        expect(resolveTaskContentScope(['tasks.view'], PROVIDER_USER)).toEqual({
+            canViewAll: false,
+            userId: PROVIDER_USER,
+        });
+        expect(resolveTaskContentScope(['tasks.view', 'tasks.manage'], PROVIDER_USER)).toEqual({
+            canViewAll: true,
+            userId: null,
+        });
+        expect(resolveTaskContentScope(['tasks.view'], null)).toEqual({
+            canViewAll: false,
+            userId: null,
+        });
+    });
+
     it('a non-manager (provider) is scoped to their own owned/authored tasks', async () => {
         const res = await request(appWithAuthz({ permissions: ['tasks.view'] }), 'GET', '/');
         expect(res.status).toBe(200);

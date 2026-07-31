@@ -20,7 +20,10 @@ async function sqlFor(opts) {
 
 describe('ROLE-PULSE-LIST-SCOPE-002 unified timeline page provider scope', () => {
     it('office (no providerScope / assignedOnly=false) applies NO provider filter', async () => {
-        const [sql] = await sqlFor({ providerScope: { assignedOnly: false, userId: null } });
+        const [sql] = await sqlFor({
+            providerScope: { assignedOnly: false, userId: null },
+            taskContentScope: { canViewAll: true, userId: null },
+        });
         expect(sql).not.toMatch(/pj\.assigned_provider_user_ids/);
         expect(sql).not.toMatch(/AND FALSE/);
     });
@@ -46,5 +49,47 @@ describe('ROLE-PULSE-LIST-SCOPE-002 unified timeline page provider scope', () =>
         const [sql] = await sqlFor({ providerScope: { assignedOnly: true, userId: null } });
         expect(sql).toMatch(/AND FALSE/);
         expect(sql).not.toMatch(/pj\.assigned_provider_user_ids/);
+    });
+});
+
+describe('AR-PROVIDER-SCOPE-001 task-derived Action Required scope', () => {
+    it('provider aggregate includes only tasks assigned to OR authored by the actor', async () => {
+        const [sql, params] = await sqlFor({
+            taskContentScope: { canViewAll: false, userId: 'user-1' },
+        });
+        const actorIndex = params.indexOf('user-1') + 1;
+
+        expect(actorIndex).toBeGreaterThan(0);
+        expect(sql).toContain(`ot.owner_user_id = $${actorIndex}`);
+        expect(sql).toContain(`ot.author_user_id = $${actorIndex}`);
+        expect(sql).toContain('ot.company_id = tl.company_id');
+        expect(sql).toContain('assignee.company_id = ot.company_id');
+        expect(sql).toContain('author.company_id = ot.company_id');
+        const code = sql.replace(/--[^\n]*/g, '');
+        const where = code.slice(code.indexOf('WHERE tl.company_id = $1'), code.lastIndexOf('ORDER BY'));
+        expect(where).not.toContain('tl.is_action_required = true');
+    });
+
+    it('tasks.manage leaves the task aggregate company-wide for office roles', async () => {
+        const [sql] = await sqlFor({
+            taskContentScope: { canViewAll: true, userId: null },
+        });
+
+        expect(sql).not.toMatch(/ot\.owner_user_id = \$\d+/);
+        expect(sql).not.toMatch(/ot\.author_user_id = \$\d+/);
+        const code = sql.replace(/--[^\n]*/g, '');
+        const where = code.slice(code.indexOf('WHERE tl.company_id = $1'), code.lastIndexOf('ORDER BY'));
+        expect(where).toContain('tl.is_action_required = true');
+    });
+
+    it('missing restricted actor and missing task scope both deny every AR task', async () => {
+        for (const options of [
+            { taskContentScope: { canViewAll: false, userId: null } },
+            {},
+        ]) {
+            const [sql] = await sqlFor(options);
+            const aggregate = sql.slice(sql.indexOf('FROM tasks ot'), sql.indexOf(') open_tasks ON true'));
+            expect(aggregate).toContain('AND FALSE');
+        }
     });
 });

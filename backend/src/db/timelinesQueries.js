@@ -7,6 +7,7 @@
 const db = require('./connection');
 const { toE164 } = require('../utils/phoneUtils');
 const { PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const { buildTaskActorPredicate } = require('../middleware/taskContentScope');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -421,10 +422,22 @@ async function resolveYelpTimeline(companyId, convId, msg, client = db) {
  * @param {number} opts.offset
  * @param {string} opts.companyId  MANDATORY — caller must reject a missing tenant.
  * @param {string|null} opts.search
+ * @param {{canViewAll:boolean,userId:string|null}|null} opts.taskContentScope
+ *   Effective Tasks content scope. Missing/restricted-without-user hides all
+ *   task-derived AR state; HTTP callers must derive it from authenticated authz.
  * @returns {Promise<Array>} unified rows (already ordered); each carries
  *   total_count for the envelope.
  */
-async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, search = null, mutedEmails = [], mutedDomains = [], providerScope = null } = {}) {
+async function getUnifiedTimelinePage({
+    limit = 50,
+    offset = 0,
+    companyId,
+    search = null,
+    mutedEmails = [],
+    mutedDomains = [],
+    providerScope = null,
+    taskContentScope = null,
+} = {}) {
     // $1 companyId, $2 limit, $3 offset. companyId is always param $1 so the
     // company scope is present on every code path (hard requirement).
     // MAIL-MUTE-001: $4 = mutedEmails (text[]), $5 = mutedDomains (text[]).
@@ -492,6 +505,25 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              )`;
         }
     }
+
+    // AR-PROVIDER-SCOPE-001: the task aggregate is the canonical AR source for
+    // plaque rows, sidebar pinning, task count, and route DTO flags. Apply the
+    // same content predicate as GET /api/tasks inside that aggregate so every
+    // downstream signal sees exactly the same visible task set. Missing scope
+    // context denies task visibility instead of widening to company-wide AR.
+    let taskContentFilter = 'AND FALSE';
+    const canViewAllTaskContent = taskContentScope?.canViewAll === true;
+    if (canViewAllTaskContent) {
+        taskContentFilter = '';
+    } else if (taskContentScope?.userId) {
+        params.push(String(taskContentScope.userId));
+        taskContentFilter = `AND ${buildTaskActorPredicate('ot', `$${params.length}`)}`;
+    }
+    // Taskless manual AR is an office compatibility surface. A restricted task
+    // scope counts a thread as AR only through its visible open-task aggregate.
+    const legacyActionRequiredSignal = canViewAllTaskContent
+        ? 'OR tl.is_action_required = true'
+        : '';
 
     const result = await db.query(
         `WITH email_by_contact AS (
@@ -660,11 +692,16 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
                     ) AS tasks,
                     COUNT(*)::int AS task_count
              FROM tasks ot
-             LEFT JOIN crm_users assignee ON assignee.id = ot.owner_user_id
-             LEFT JOIN crm_users author ON author.id = ot.author_user_id
+             LEFT JOIN crm_users assignee
+               ON assignee.id = ot.owner_user_id
+              AND assignee.company_id = ot.company_id
+             LEFT JOIN crm_users author
+               ON author.id = ot.author_user_id
+              AND author.company_id = ot.company_id
              WHERE ot.company_id = tl.company_id
                AND ot.thread_id = tl.id
                AND ot.status = 'open'
+               ${taskContentFilter}
          ) open_tasks ON true
          LEFT JOIN LATERAL (
              SELECT sc.last_message_at, sc.last_message_direction,
@@ -730,7 +767,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
                 -- its timeline-keyed email signal (no contact/call/SMS to lean on).
                 OR eml_tl.email_thread_id IS NOT NULL
                 OR COALESCE(open_tasks.task_count, 0) > 0
-                OR tl.is_action_required = true OR tl.has_unread = true)
+                ${legacyActionRequiredSignal} OR tl.has_unread = true)
            -- Orphan-shadow dedup (done in SQL, BEFORE the LIMIT, so the page stays
            -- exactly <= limit — a post-LIMIT JS dedup would shrink a page below the
            -- frontend "pageSize < limit => no more pages" threshold and break

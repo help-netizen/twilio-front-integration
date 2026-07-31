@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
+const { getTaskContentScope } = require('../middleware/taskContentScope');
 
 // PF007-HARDENING-002: calls surface requires call-history visibility
 // (reports.calls.view) or pulse access; telephony actions need phone perms.
@@ -141,7 +142,19 @@ router.get('/by-contact', async (req, res) => {
         // ROLE-PULSE-LIST-SCOPE-002: scope the Pulse sidebar to the provider's active-job
         // contacts (getUnifiedTimelinePage drops contactless/foreign-job timelines for an
         // assigned_only provider; office roles are unaffected).
-        const rows = await queries.getUnifiedTimelinePage({ limit, offset, companyId, search, mutedEmails, mutedDomains, providerScope: getProviderScope(req) });
+        const taskContentScope = getTaskContentScope(req);
+        const rows = await queries.getUnifiedTimelinePage({
+            limit,
+            offset,
+            companyId,
+            search,
+            mutedEmails,
+            mutedDomains,
+            providerScope: getProviderScope(req),
+            // AR-PROVIDER-SCOPE-001: use the same effective content scope as
+            // GET /api/tasks (tasks.manage = all; otherwise owner OR author).
+            taskContentScope,
+        });
 
         // total = COUNT(*) OVER() on the unified set (0 rows ⇒ empty page ⇒ 0).
         const total = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
@@ -226,7 +239,12 @@ router.get('/by-contact', async (req, res) => {
                 last_interaction_type,
                 last_interaction_phone,
                 // Action Required fields
-                is_action_required: c.is_action_required || false,
+                // Restricted task-content scopes derive AR only from their
+                // visible open tasks; never revive a hidden task as a legacy
+                // taskless-manual plaque. Office roles retain legacy metadata.
+                is_action_required: taskContentScope.canViewAll
+                    ? (c.is_action_required || false)
+                    : false,
                 action_required_reason: c.action_required_reason || null,
                 action_required_set_at: c.action_required_set_at || null,
                 snoozed_until: c.snoozed_until || null,
