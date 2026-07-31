@@ -149,7 +149,7 @@ export default function StripePaymentsSettingsPage() {
                                     </div>
                                 </div>
                                 <div className="mt-4 flex flex-wrap gap-2">
-                                    {['2.9% + 30¢ per card payment', '$0 monthly', '0% added by Albusto'].map(chip => (
+                                    {['2.9% + 50¢ per card payment', '$0 monthly', 'No hidden fees'].map(chip => (
                                         <span
                                             key={chip}
                                             className="rounded-full border border-[rgba(127,66,225,.2)] bg-white/70 px-3 py-1 text-[13px]"
