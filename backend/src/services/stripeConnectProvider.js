@@ -174,6 +174,17 @@ async function createCheckoutSession(accountId, {
     return call('POST', '/checkout/sessions', body, { stripeAccount: accountId, idempotencyKey });
 }
 
+/**
+ * Delete a connected account on Stripe (STRIPE-DISCONNECT-SWEEP-001).
+ * Express live accounts delete when balances are zero — the account leaves the
+ * platform's Connected accounts list. Standard live accounts are NOT deletable
+ * by the platform (Stripe is liable for them) — callers treat failure as
+ * best-effort and keep the local disconnect.
+ */
+async function deleteAccount(accountId) {
+    return call('DELETE', `/accounts/${encodeURIComponent(accountId)}`, undefined, {});
+}
+
 async function retrieveCheckoutSession(accountId, sessionId) {
     return call('GET', `/checkout/sessions/${sessionId}`, undefined, { stripeAccount: accountId });
 }
@@ -313,6 +324,7 @@ module.exports = {
     createAccount,
     createAccountLink,
     createLoginLink,
+    deleteAccount,
     getAccount,
     mapAccount,
     createCheckoutSession,

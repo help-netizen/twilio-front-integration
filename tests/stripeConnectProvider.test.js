@@ -179,3 +179,15 @@ describe('Stripe Connect platform application fee', () => {
         expect(global.fetch.mock.calls[1][1].body).not.toContain('application_fee_amount');
     });
 });
+
+// STRIPE-DISCONNECT-SWEEP-001: disconnect/reconnect remove the abandoned
+// connected account from the platform's Stripe list (best-effort).
+describe('Stripe Connect account deletion', () => {
+    test('deleteAccount issues DELETE /v1/accounts/:id', async () => {
+        global.fetch.mockResolvedValueOnce(stripeResponse({ id: 'acct_9', deleted: true }));
+        await provider.deleteAccount('acct_9');
+        const [url, options] = global.fetch.mock.calls[0];
+        expect(url).toBe('https://api.stripe.com/v1/accounts/acct_9');
+        expect(options.method).toBe('DELETE');
+    });
+});

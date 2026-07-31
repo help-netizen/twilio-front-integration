@@ -127,6 +127,18 @@ async function ensureAccountForCompany(companyId, company = {}) {
     let account = await q.getAccountByCompany(companyId);
     if (account && account.status !== 'disconnected') return account;
 
+    // STRIPE-DISCONNECT-SWEEP-001: a disconnected row means we are about to
+    // mint a fresh account — sweep the abandoned Stripe account first so it
+    // leaves the platform's Connected list (best-effort: Standard live
+    // accounts are not deletable and simply stay).
+    if (account && account.status === 'disconnected' && account.stripe_account_id) {
+        try {
+            await provider.deleteAccount(account.stripe_account_id);
+        } catch (err) {
+            console.warn('[StripePayments] stale account delete failed (continuing):', err.message);
+        }
+    }
+
     const stripeAccount = await provider.createAccount({
         email: company.contact_email,
         companyName: company.name,
@@ -203,7 +215,17 @@ async function disconnect(companyId, actor) {
     const account = await q.getAccountByCompany(companyId);
     if (!account) throw new StripePaymentsError('NOT_CONNECTED', 'Stripe account not connected', 400);
     await q.setAccountStatus(companyId, 'disconnected');
-    // Disconnect marketplace installation (history preserved; Stripe account NOT deleted).
+    // Best-effort: remove the connected account on Stripe too, so it leaves the
+    // platform's Connected accounts list (Express deletes when balances are
+    // zero; Standard live accounts are not deletable — local disconnect stands).
+    let stripeDeleted = false;
+    try {
+        const del = await provider.deleteAccount(account.stripe_account_id);
+        stripeDeleted = Boolean(del?.deleted);
+    } catch (err) {
+        console.warn('[StripePayments] Stripe account delete failed (continuing):', err.message);
+    }
+    // Disconnect marketplace installation (history preserved).
     try {
         const installations = await marketplaceQueries.listInstallations(companyId, true);
         const inst = installations.find(i => i.app_key === APP_KEY && i.status === 'connected');
@@ -211,7 +233,7 @@ async function disconnect(companyId, actor) {
     } catch (err) {
         console.warn('[StripePayments] marketplace disconnect failed (continuing):', err.message);
     }
-    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.disconnected', target_type: 'stripe_account', target_id: account.stripe_account_id, company_id: companyId, details: {} });
+    await auditService.log({ actor_id: actor?.id || null, action: 'stripe_payments.disconnected', target_type: 'stripe_account', target_id: account.stripe_account_id, company_id: companyId, details: { stripe_account_deleted: stripeDeleted } });
     return { disconnected: true };
 }
 
