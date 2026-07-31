@@ -19,7 +19,7 @@ import { Dialog, DialogContent, DialogBody, DialogTitle, DialogDescription } fro
 import { TaskFormDialog } from '../components/tasks/TaskFormDialog';
 import { createTask, type Task } from '../components/tasks/tasksApi';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
-import { OnboardingChecklistCard } from '../components/onboarding/OnboardingChecklistCard';
+import { useOnboardingChecklist } from '../hooks/useOnboardingChecklist';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Skeleton } from '../components/ui/skeleton';
@@ -29,7 +29,7 @@ import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
 import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { isAnonymousPhone } from '../utils/phoneUtils';
 import { dateKeyInTZ, todayInTZ } from '../utils/companyTime';
 import { PulsePlayerProvider } from '../components/pulse/pulsePlayer';
@@ -59,7 +59,12 @@ function groupLabel(key: string, timezone: string): string {
 const PulsePageInner: React.FC = () => {
     const p = usePulsePage();
     const { company } = useAuth();
-    const { hasPermission } = useAuthz();
+    const { hasPermission, isTenantAdmin } = useAuthz();
+    // ONB-WELCOME-FIRST-001: while onboarding is incomplete the admin lands on the
+    // full /welcome hub instead of Pulse (the embedded wizard card is gone). The
+    // checklist is fail-quiet: loading or error keeps Pulse as-is.
+    const { checklist } = useOnboardingChecklist();
+    const redirectToWelcome = isTenantAdmin() && checklist?.visible === true;
     // ROLE-TIMELINE-TECH-STICKY-001: a technician without contacts.view still sees the
     // pinned contact strip (identity + call/text/email on their own job's contact), but
     // must not be able to open the full contact card.
@@ -199,6 +204,8 @@ const PulsePageInner: React.FC = () => {
         );
     };
 
+    if (redirectToWelcome) return <Navigate to="/welcome" replace />;
+
     return (
         <div className="blanc-page-wrapper">
             {/* Unified header: title + search + controls in one row */}
@@ -237,12 +244,6 @@ const PulsePageInner: React.FC = () => {
                     ))}
                 </div>
             </div>
-
-            {/* Onboarding checklist (ONBTEL-001 Part A) — in-flow between the header
-                and the two-column layout; flex-shrink:0 inside the card pushes the
-                columns down instead of overlaying them. Renders null unless the
-                viewer is tenant_admin AND the server says visible. */}
-            <OnboardingChecklistCard />
 
             {/* Two-column layout: invisible sidebar column + right column (LAYOUT-CANON rule 7) */}
             <div className="pulse-layout" data-mobile-panel={mobilePanel}>
