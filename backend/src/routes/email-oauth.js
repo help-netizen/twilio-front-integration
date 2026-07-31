@@ -84,7 +84,26 @@ router.get('/google/callback', async (req, res) => {
             console.warn(`[EmailOAuth] startWatch (non-fatal) for company ${company_id}:`, watchErr.message);
         }
 
-        return res.redirect(`${SETTINGS_URL}?connected=1`);
+        // ONB-EMAIL-CONNECT-001: the first sync starts by itself — the owner should
+        // never have to find the Sync-now button after consenting. Fire-and-forget:
+        // the OAuth redirect must not wait on Gmail.
+        const emailSyncService = require('../services/emailSyncService');
+        emailSyncService.syncMailbox(company_id).catch(syncErr => {
+            console.error(`[EmailOAuth] initial sync (non-fatal) for company ${company_id}:`, syncErr.message);
+        });
+
+        // Mid-onboarding the browser goes back to the /welcome hub (the checklist
+        // ticks the email step off there); a finished company lands on settings as
+        // before. Fail-quiet: a checklist error keeps the settings redirect.
+        let redirectUrl = `${SETTINGS_URL}?connected=1`;
+        try {
+            const onboardingChecklistService = require('../services/onboardingChecklistService');
+            const checklist = await onboardingChecklistService.getChecklist(company_id);
+            if (checklist?.visible) redirectUrl = '/welcome?connected=google-email';
+        } catch (checklistErr) {
+            console.warn(`[EmailOAuth] checklist lookup (non-fatal) for company ${company_id}:`, checklistErr.message);
+        }
+        return res.redirect(redirectUrl);
     } catch (err) {
         console.error('[EmailOAuth] Callback error:', err.message);
         return res.redirect(`${SETTINGS_URL}?error=${encodeURIComponent('Failed to connect mailbox')}`);
