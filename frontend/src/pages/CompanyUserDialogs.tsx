@@ -4,13 +4,15 @@ import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogPanelHeader, DialogPanelFooter } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { FloatingField } from '../components/ui/floating-field';
-import { FloatingSelect } from '../components/ui/floating-select';
 import { Switch } from '../components/ui/switch';
 import { Copy, Link2, Unlink, KeyRound, Ban, Power, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { authedFetch } from '../services/apiClient';
 import type { CompanyUser, EditUserForm } from '../hooks/useCompanyUsers';
+import { TechnicianServiceAreasEditor } from '../components/settings/TechnicianServiceAreas';
+import { techniciansApi, type TechnicianServiceAreas } from '../services/techniciansApi';
+import { technicianBaseLocationsApi } from '../services/technicianBaseLocationsApi';
 
 // ─── Provider bridge (ALB-104) ───────────────────────────────────────────────
 // Maps a CRM user to a Zenbooker team member so the assigned-only provider
@@ -104,6 +106,173 @@ export function roleOperationalDefaults(roleKey: string): Pick<CreateForm, 'phon
         location_tracking_enabled: provider,
     };
 }
+// ─── Role cards (TEAM-FORM-002, Zenbooker-style) ─────────────────────────────
+// One card per role; the selected card expands. Field-provider is NESTED inside
+// each non-provider role («Also works in the field»); the Provider role is
+// field work by definition. Permissions themselves live in Settings → Roles.
+
+const ROLE_CARDS = [
+    { key: 'provider', name: 'Provider', desc: 'Field technician. Sees only jobs assigned to them.' },
+    { key: 'dispatcher', name: 'Dispatcher', desc: 'Runs the schedule: creates, assigns and reschedules jobs, talks to customers.' },
+    { key: 'manager', name: 'Manager', desc: 'Full access to operations, finances and reports.' },
+    { key: 'tenant_admin', name: 'Admin', desc: 'Everything — including team, roles, billing and integrations.' },
+];
+
+function RoleCards({ role, onRole, isProvider, onIsProvider, fieldContent }: {
+    role: string;
+    onRole: (key: string) => void;
+    isProvider: boolean;
+    onIsProvider: (v: boolean) => void;
+    /** Territories / start location block, rendered inside the expanded card when field work is on. */
+    fieldContent?: ReactNode;
+}) {
+    return (
+        <div className="space-y-2.5">
+            {ROLE_CARDS.map(r => {
+                const sel = role === r.key;
+                const fieldOn = r.key === 'provider' || isProvider;
+                return (
+                    <div
+                        key={r.key}
+                        className="rounded-2xl border overflow-hidden transition-colors"
+                        style={{ borderColor: sel ? 'var(--blanc-accent)' : 'var(--blanc-line)' }}
+                    >
+                        <button
+                            type="button"
+                            className="flex w-full items-start gap-3 px-4 py-3.5 text-left"
+                            onClick={() => { onRole(r.key); if (r.key === 'provider') onIsProvider(true); }}
+                        >
+                            <span
+                                className="mt-0.5 inline-block size-[18px] shrink-0 rounded-full transition-all"
+                                style={sel
+                                    ? { border: '6px solid var(--blanc-accent)' }
+                                    : { border: '1.5px solid var(--blanc-line-strong)' }}
+                            />
+                            <span>
+                                <span className="block text-[15px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{r.name}</span>
+                                <span className="mt-0.5 block text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-2)' }}>{r.desc}</span>
+                            </span>
+                        </button>
+                        {sel && (
+                            <div className="space-y-4 px-4 pb-4 pt-3.5" style={{ background: 'var(--blanc-surface-muted)' }}>
+                                {r.key === 'provider' ? (
+                                    <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                        What providers can see and do is defined by the role — manage it in Settings → Roles &amp; permissions.
+                                    </p>
+                                ) : (
+                                    <label className="flex cursor-pointer items-center justify-between gap-3">
+                                        <span>
+                                            <span className="block text-[14px] font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Also works in the field</span>
+                                            <span className="block text-[12.5px]" style={{ color: 'var(--blanc-ink-3)' }}>Can be assigned to jobs like a provider</span>
+                                        </span>
+                                        <Switch checked={isProvider} onCheckedChange={onIsProvider} />
+                                    </label>
+                                )}
+                                {fieldOn && fieldContent}
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+// Field-work details for an EXISTING user: ZB bridge, territories (reuses the
+// Scheduling-settings editor), start location (address or bare ZIP — geocoded
+// server-side on save), schedule color.
+function FieldWorkSection({ zbId, onZbChange, scheduleColor, onColorChange }: {
+    zbId: string | null;
+    onZbChange: (v: string | null) => void;
+    scheduleColor: string;
+    onColorChange: (v: string) => void;
+}) {
+    const [areas, setAreas] = useState<TechnicianServiceAreas | null>(null);
+    const [areasError, setAreasError] = useState(false);
+    const [baseInput, setBaseInput] = useState('');
+    const [baseSaved, setBaseSaved] = useState('');
+    const [savingBase, setSavingBase] = useState(false);
+
+    useEffect(() => {
+        setAreas(null); setAreasError(false); setBaseInput(''); setBaseSaved('');
+        if (!zbId) return;
+        let cancelled = false;
+        techniciansApi.getSettings(zbId)
+            .then(s => { if (!cancelled) setAreas(s.service_areas); })
+            .catch(() => { if (!cancelled) setAreasError(true); });
+        technicianBaseLocationsApi.list()
+            .then(list => {
+                if (cancelled) return;
+                const mine = list.find(b => String(b.tech_id) === String(zbId));
+                const label = mine?.address || mine?.zip || '';
+                setBaseInput(label); setBaseSaved(label);
+            })
+            .catch(() => { /* base stays editable from scratch */ });
+        return () => { cancelled = true; };
+    }, [zbId]);
+
+    const saveBase = async () => {
+        if (!zbId || !baseInput.trim()) return;
+        setSavingBase(true);
+        try {
+            const saved = await technicianBaseLocationsApi.upsert(zbId, { address: baseInput.trim() });
+            const label = saved.address || baseInput.trim();
+            setBaseInput(label); setBaseSaved(label);
+            toast.success('Start location saved');
+        } catch (e: any) {
+            toast.error(e?.message || 'Could not save the start location');
+        } finally {
+            setSavingBase(false);
+        }
+    };
+
+    return (
+        <div className="space-y-4">
+            <ZenbookerLinkField value={zbId} onChange={onZbChange} />
+            {zbId ? (
+                <>
+                    <div className="space-y-2">
+                        <div className="blanc-eyebrow">Territories</div>
+                        {areas ? (
+                            <TechnicianServiceAreasEditor technicianId={zbId} value={areas} onSaved={setAreas} />
+                        ) : (
+                            <p className="text-[12.5px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                {areasError
+                                    ? 'Couldn’t load territories — manage them in Settings → Scheduling & service areas.'
+                                    : 'Loading territories…'}
+                            </p>
+                        )}
+                    </div>
+                    <div className="space-y-1.5">
+                        <FloatingField id="tech-start-location" label="Start location" value={baseInput} onChange={e => setBaseInput(e.target.value)} />
+                        <div className="flex items-center justify-between gap-3">
+                            <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                Address or just a ZIP — drive time and slot suggestions count from here.
+                            </p>
+                            {baseInput.trim() !== '' && baseInput.trim() !== baseSaved.trim() && (
+                                <Button type="button" variant="outline" size="sm" onClick={saveBase} disabled={savingBase}>
+                                    {savingBase ? 'Saving…' : 'Save location'}
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                </>
+            ) : (
+                <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                    Link a Zenbooker team member to set territories and the start location.
+                </p>
+            )}
+            <div className="flex items-center justify-between gap-3">
+                <span className="text-[14px] font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Schedule color</span>
+                <div className="flex items-center gap-2.5">
+                    <Input type="color" className="w-12 h-8 p-1 cursor-pointer bg-transparent" value={scheduleColor} onChange={e => onColorChange(e.target.value)} />
+                    <span className="text-sm font-mono uppercase" style={{ color: 'var(--blanc-ink-3)' }}>{scheduleColor}</span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 interface CreateDialogProps { open: boolean; setOpen: (v: boolean) => void; createForm: CreateForm; setCreateForm: (fn: (f: CreateForm) => CreateForm) => void; creating: boolean; tempPassword: string | null; setTempPassword: (v: string | null) => void; handleCreate: () => void; }
 
 export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, creating, tempPassword, setTempPassword, handleCreate }: CreateDialogProps) {
@@ -142,53 +311,27 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                                 {/* Identity — one field per row (#84) */}
                                 <div className="space-y-3.5">
                                     <FloatingField id="user-name" label="Full name" value={createForm.full_name} onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))} />
-                                    <FloatingField id="user-email" label="Email" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
-                                    <FloatingField id="user-phone" label="Phone (optional)" type="tel" value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} />
-                                    <FloatingSelect label="System role" value={createForm.role_key} onValueChange={v => setCreateForm(f => ({ ...f, role_key: v, ...roleOperationalDefaults(v) }))}>
-                                        <SelectItem value="tenant_admin">Admin</SelectItem>
-                                        <SelectItem value="manager">Manager</SelectItem>
-                                        <SelectItem value="dispatcher">Dispatcher</SelectItem>
-                                        <SelectItem value="provider">Field Provider</SelectItem>
-                                    </FloatingSelect>
-
-                                    {/* Schedule color — mirrors Edit profile */}
-                                    <div className="space-y-2">
-                                        <div className="blanc-eyebrow">Schedule color</div>
-                                        <div className="flex items-center gap-3">
-                                            <Input type="color" className="w-14 h-9 p-1 cursor-pointer bg-transparent" value={createForm.schedule_color} onChange={e => setCreateForm(f => ({ ...f, schedule_color: e.target.value }))} />
-                                            <div className="text-sm font-mono text-muted-foreground uppercase">{createForm.schedule_color}</div>
-                                        </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                        <FloatingField id="user-email" label="Email" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
+                                        <FloatingField id="user-phone" label="Mobile phone" value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} />
                                     </div>
+                                    <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                        The phone gets SMS about new jobs — and masked calls are recognized by it.
+                                    </p>
                                 </div>
-
-                                {/* Operational settings — same toggles as Edit profile (Zenbooker
-                                    link is configured later, in Edit, once the provider exists). */}
-                                <div className="space-y-4">
-                                    <div className="blanc-eyebrow">Operational settings</div>
-
-                                    <div className="flex items-center justify-between">
-                                        <div className="space-y-0.5">
-                                            <Label>Softphone Access</Label>
-                                            <div className="text-[13px] text-muted-foreground">Can make/receive calls via browser</div>
-                                        </div>
-                                        <Switch checked={createForm.phone_calls_allowed} onCheckedChange={v => setCreateForm(f => ({ ...f, phone_calls_allowed: v }))} />
-                                    </div>
-
-                                    <div className="flex items-center justify-between">
-                                        <div className="space-y-0.5">
-                                            <Label>Field Provider</Label>
-                                            <div className="text-[13px] text-muted-foreground">Assignable as a field tech in the schedule — any role (e.g. an admin who also runs jobs)</div>
-                                        </div>
-                                        <Switch checked={createForm.is_provider} onCheckedChange={v => setCreateForm(f => ({ ...f, is_provider: v }))} />
-                                    </div>
-
-                                    <div className="flex items-center justify-between">
-                                        <div className="space-y-0.5">
-                                            <Label>Location Tracking</Label>
-                                            <div className="text-[13px] text-muted-foreground">Track via mobile app</div>
-                                        </div>
-                                        <Switch checked={createForm.location_tracking_enabled} onCheckedChange={v => setCreateForm(f => ({ ...f, location_tracking_enabled: v }))} />
-                                    </div>
+                                <div className="space-y-3">
+                                    <div className="blanc-eyebrow">Role</div>
+                                    <RoleCards
+                                        role={createForm.role_key}
+                                        onRole={k => setCreateForm(f => ({ ...f, role_key: k, ...roleOperationalDefaults(k) }))}
+                                        isProvider={createForm.is_provider}
+                                        onIsProvider={v => setCreateForm(f => ({ ...f, is_provider: v }))}
+                                        fieldContent={(
+                                            <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                                Territories and the start location are set in the user's profile right after creating.
+                                            </p>
+                                        )}
+                                    />
                                 </div>
                             </div>
                         </DialogBody>
@@ -217,14 +360,22 @@ interface EditUserDialogProps {
 }
 
 export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdate, loading, onResetPassword, onToggleStatus, onDeleteUser }: EditUserDialogProps) {
-    if (!user) return null;
-
-    const isActive = user.membership_status === 'active';
-    const busy = loading === user.id;
+    // The Provider role IS field work — keep the flag in sync so the PATCH
+    // never unlinks the ZB bridge for a provider-role user.
+    useEffect(() => {
+        if (open && form.role_key === 'provider' && !form.is_provider) {
+            setForm(f => ({ ...f, is_provider: true }));
+        }
+    }, [open, form.role_key, form.is_provider, setForm]);
 
     // In-app confirmation (never the browser's window.confirm) for destructive actions.
     const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; description: string; onConfirm: () => void }>({ open: false, title: '', description: '', onConfirm: () => { } });
     const closeConfirm = () => setConfirmDialog(p => ({ ...p, open: false }));
+
+    if (!user) return null;
+
+    const isActive = user.membership_status === 'active';
+    const busy = loading === user.id;
 
     const handleDisableToggle = () => {
         if (!onToggleStatus) return;
@@ -298,23 +449,22 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                       </div>
                     )}
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                        {/* Role */}
-                        <FloatingSelect label="Role" value={form.role_key} onValueChange={v => setForm(f => ({ ...f, role_key: v, ...roleOperationalDefaults(v) }))}>
-                            <SelectItem value="tenant_admin">Admin</SelectItem>
-                            <SelectItem value="manager">Manager</SelectItem>
-                            <SelectItem value="dispatcher">Dispatcher</SelectItem>
-                            <SelectItem value="provider">Field Provider</SelectItem>
-                        </FloatingSelect>
-
-                        {/* Schedule color — native color picker, kept as a labeled control */}
-                        <div className="space-y-2">
-                            <div className="blanc-eyebrow">Schedule color</div>
-                            <div className="flex items-center gap-3">
-                                <Input type="color" className="w-14 h-9 p-1 cursor-pointer bg-transparent" value={form.schedule_color} onChange={e => setForm(f => ({ ...f, schedule_color: e.target.value }))} />
-                                <div className="text-sm font-mono text-muted-foreground uppercase">{form.schedule_color}</div>
-                            </div>
-                        </div>
+                    <div className="space-y-3">
+                        <div className="blanc-eyebrow">Role</div>
+                        <RoleCards
+                            role={form.role_key}
+                            onRole={k => setForm(f => ({ ...f, role_key: k, ...roleOperationalDefaults(k) }))}
+                            isProvider={form.is_provider}
+                            onIsProvider={v => setForm(f => ({ ...f, is_provider: v }))}
+                            fieldContent={(
+                                <FieldWorkSection
+                                    zbId={form.zenbooker_team_member_id}
+                                    onZbChange={v => setForm(f => ({ ...f, zenbooker_team_member_id: v }))}
+                                    scheduleColor={form.schedule_color}
+                                    onColorChange={v => setForm(f => ({ ...f, schedule_color: v }))}
+                                />
+                            )}
+                        />
                     </div>
 
                     <div className="space-y-4">
@@ -327,21 +477,6 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                             </div>
                             <Switch checked={form.phone_calls_allowed} onCheckedChange={v => setForm(f => ({ ...f, phone_calls_allowed: v }))} />
                         </div>
-
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label>Field Provider</Label>
-                                <div className="text-[13px] text-muted-foreground">Assignable as a field tech in the schedule — any role (e.g. an admin who also runs jobs)</div>
-                            </div>
-                            <Switch checked={form.is_provider} onCheckedChange={v => setForm(f => ({ ...f, is_provider: v }))} />
-                        </div>
-
-                        {form.is_provider && (
-                            <ZenbookerLinkField
-                                value={form.zenbooker_team_member_id}
-                                onChange={v => setForm(f => ({ ...f, zenbooker_team_member_id: v }))}
-                            />
-                        )}
 
                         <div className="flex items-center justify-between">
                             <div className="space-y-0.5">

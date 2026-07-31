@@ -79,7 +79,7 @@ export function useAdminCompanyUsers(companyId: string) {
                     profile: {
                         ...(phone ? { phone } : {}),
                         phone_calls_allowed: createForm.phone_calls_allowed,
-                        is_provider: createForm.is_provider,
+                        is_provider: createForm.role_key === 'provider' ? true : createForm.is_provider,
                         schedule_color: createForm.schedule_color,
                         location_tracking_enabled: createForm.location_tracking_enabled,
                     },
