@@ -127,6 +127,24 @@ function mapAccount(acct) {
     };
 }
 
+
+/**
+ * STRIPE-PLATFORM-FEE-001 (owner decision 2026-07-30): flat platform
+ * application fee on every connected-account charge — default 20¢, tunable via
+ * STRIPE_PLATFORM_FEE_CENTS. On direct charges the fee moves from the
+ * merchant's gross to the platform balance; Stripe's own processing fee stays
+ * on the merchant. Skipped when the charge is too small to carry it.
+ */
+function platformFeeCents() {
+    const parsed = Number.parseInt(process.env.STRIPE_PLATFORM_FEE_CENTS ?? '20', 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 20;
+}
+
+function applicationFeeFor(amountCents) {
+    const fee = platformFeeCents();
+    return fee > 0 && amountCents > fee ? fee : undefined;
+}
+
 /**
  * Create a Checkout Session as a DIRECT charge on the connected account.
  * @param {string} accountId connected account id (Stripe-Account header)
@@ -146,7 +164,10 @@ async function createCheckoutSession(accountId, {
             },
             quantity: 1,
         }],
-        payment_intent_data: { metadata },
+        payment_intent_data: {
+            metadata,
+            application_fee_amount: applicationFeeFor(Math.round(Number(amount) * 100)),
+        },
         metadata,
     };
     if (expiresAt) body.expires_at = Math.floor(new Date(expiresAt).getTime() / 1000);
@@ -163,23 +184,27 @@ async function retrieveCheckoutSession(accountId, sessionId) {
  * The client confirms with the platform publishable key + { stripeAccount } option.
  */
 async function createPaymentIntent(accountId, { amount, currency = 'usd', metadata = {} }, { idempotencyKey } = {}) {
+    const amountCents = Math.round(Number(amount) * 100);
     return call('POST', '/payment_intents', {
-        amount: Math.round(Number(amount) * 100),
+        amount: amountCents,
         currency: String(currency).toLowerCase(),
         automatic_payment_methods: { enabled: true },
+        application_fee_amount: applicationFeeFor(amountCents),
         metadata,
     }, { stripeAccount: accountId, idempotencyKey });
 }
 
 /** Create a card-only PaymentIntent for the merchant keyed-card Card Element. */
 async function createCardPaymentIntent(accountId, { amount, currency = 'usd', metadata = {} }, { idempotencyKey } = {}) {
+    const amountCents = Math.round(Number(amount) * 100);
     return call('POST', '/payment_intents', {
-        amount: Math.round(Number(amount) * 100),
+        amount: amountCents,
         currency: String(currency).toLowerCase(),
         // The local form encoder handles nested objects; an indexed object emits
         // Stripe's required payment_method_types[0]=card without touching the
         // existing public or Terminal request serialization.
         payment_method_types: { 0: 'card' },
+        application_fee_amount: applicationFeeFor(amountCents),
         metadata,
     }, { stripeAccount: accountId, idempotencyKey });
 }
@@ -232,11 +257,13 @@ async function createTerminalLocation(accountId, { displayName, address }) {
  * the reader flow can capture after collection).
  */
 async function createTerminalPaymentIntent(accountId, { amount, currency = 'usd', metadata = {} }, { idempotencyKey } = {}) {
+    const amountCents = Math.round(Number(amount) * 100);
     return call('POST', '/payment_intents', {
-        amount: Math.round(Number(amount) * 100),
+        amount: amountCents,
         currency: String(currency).toLowerCase(),
         payment_method_types: ['card_present'],
         capture_method: 'automatic',
+        application_fee_amount: applicationFeeFor(amountCents),
         metadata,
     }, { stripeAccount: accountId, idempotencyKey });
 }

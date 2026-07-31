@@ -134,3 +134,48 @@ describe('Stripe Connect account creation', () => {
         if (mapped) expect(mapped.type).toBe('standard');
     });
 });
+
+// STRIPE-PLATFORM-FEE-001: flat 20¢ platform fee on every connected-account
+// charge (env-tunable), skipped when the amount can't carry it.
+describe('Stripe Connect platform application fee', () => {
+    afterEach(() => { delete process.env.STRIPE_PLATFORM_FEE_CENTS; });
+
+    test('payment intents carry the default 20 cent application fee', async () => {
+        await provider.createPaymentIntent('acct_1', { amount: 100 });
+        const [, options] = global.fetch.mock.calls[0];
+        expect(options.body).toContain('application_fee_amount=20');
+        expect(options.body).toContain('amount=10000');
+    });
+
+    test('checkout sessions put the fee in payment_intent_data', async () => {
+        await provider.createCheckoutSession('acct_1', {
+            amount: 50, successUrl: 'https://x/s', cancelUrl: 'https://x/c',
+        });
+        const [, options] = global.fetch.mock.calls[0];
+        expect(options.body).toContain(encodeURIComponent('payment_intent_data[application_fee_amount]') + '=20');
+    });
+
+    test('terminal and keyed-card intents carry the fee too', async () => {
+        await provider.createTerminalPaymentIntent('acct_1', { amount: 25 });
+        await provider.createCardPaymentIntent('acct_1', { amount: 25 });
+        for (const [, options] of global.fetch.mock.calls) {
+            expect(options.body).toContain('application_fee_amount=20');
+        }
+    });
+
+    test('a charge too small to carry the fee gets no application fee', async () => {
+        await provider.createPaymentIntent('acct_1', { amount: 0.20 });
+        const [, options] = global.fetch.mock.calls[0];
+        expect(options.body).not.toContain('application_fee_amount');
+    });
+
+    test('the fee is env-tunable and 0 disables it', async () => {
+        process.env.STRIPE_PLATFORM_FEE_CENTS = '50';
+        await provider.createPaymentIntent('acct_1', { amount: 100 });
+        expect(global.fetch.mock.calls[0][1].body).toContain('application_fee_amount=50');
+
+        process.env.STRIPE_PLATFORM_FEE_CENTS = '0';
+        await provider.createPaymentIntent('acct_1', { amount: 100 });
+        expect(global.fetch.mock.calls[1][1].body).not.toContain('application_fee_amount');
+    });
+});
