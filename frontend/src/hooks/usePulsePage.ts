@@ -48,6 +48,7 @@ export function usePulsePage() {
         isFetchingOlder,
         refreshNewestPage,
     } = usePulseTimeline(contactId, timelineId || undefined);
+    const maskedViewer = meta?.mask_viewer === true;
     const [scrollToBottomSignal, setScrollToBottomSignal] = useState(0);
 
     useRealtimeEvents({
@@ -79,7 +80,10 @@ export function usePulsePage() {
     const hasActiveCall = contactCalls.some((c: any) => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status));
 
     const { lead: fetchedLeadByPhone, isLoading: leadPhoneLoading } = useLeadByPhone(phone || undefined);
-    const { lead: fetchedLeadByContact, isLoading: leadContactLoading } = useLeadByContact(contact?.id);
+    const { lead: fetchedLeadByContact, isLoading: leadContactLoading } = useLeadByContact(
+        contact?.id,
+        !maskedViewer
+    );
     const [leadOverride, setLeadOverride] = useState<Lead | null>(null);
     const [editingLead, setEditingLead] = useState<Lead | null>(null);
     const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
@@ -88,7 +92,7 @@ export function usePulsePage() {
     const lead = leadOverride || fetchedLeadByPhone || fetchedLeadByContact;
     // Each query's `enabled` gate means a phone timeline never fires the contact query and vice-versa.
     const leadLoading = leadPhoneLoading || leadContactLoading;
-    React.useEffect(() => { setLeadOverride(null); setSelectedTarget(undefined); }, [phone, contact?.id]);
+    React.useEffect(() => { setLeadOverride(null); setSelectedTarget(undefined); }, [maskedViewer, phone, contact?.id]);
 
     // Company Gmail mailbox status — drives whether email targets are selectable or a connect-CTA.
     // Read via the lightweight timeline endpoint (needs only `messages.send`) so a send-only
@@ -102,22 +106,22 @@ export function usePulsePage() {
 
     const [contactDetail, setContactDetail] = useState<{ contact: any; leads: ContactLead[] } | null>(null);
     const [contactDetailLoading, setContactDetailLoading] = useState(false);
-    React.useEffect(() => { if (lead || leadLoading || !contact?.id) { setContactDetail(null); return; } let cancelled = false; setContactDetailLoading(true); contactsApi.getContact(contact.id).then(res => { if (!cancelled) setContactDetail({ contact: res.data.contact, leads: res.data.leads }); }).catch(() => { if (!cancelled) setContactDetail(null); }).finally(() => { if (!cancelled) setContactDetailLoading(false); }); return () => { cancelled = true; }; }, [lead, leadLoading, contact?.id]);
+    React.useEffect(() => { if (maskedViewer || lead || leadLoading || !contact?.id) { setContactDetail(null); return; } let cancelled = false; setContactDetailLoading(true); contactsApi.getContact(contact.id).then(res => { if (!cancelled) setContactDetail({ contact: res.data.contact, leads: res.data.leads }); }).catch(() => { if (!cancelled) setContactDetail(null); }).finally(() => { if (!cancelled) setContactDetailLoading(false); }); return () => { cancelled = true; }; }, [maskedViewer, lead, leadLoading, contact?.id]);
 
     // PULSE-CONTACT-PIN-001: the pinned bar needs the jobs (open count + freshest
     // address) BEFORE the full panel is expanded, so the fetch lives here — one
     // fetch shared by bar and panel instead of the panel's former mount-time fetch.
     const [contactJobs, setContactJobs] = useState<jobsApi.LocalJob[]>([]);
     React.useEffect(() => {
-        if (lead || leadLoading || !contact?.id) { setContactJobs([]); return; }
+        if (maskedViewer || lead || leadLoading || !contact?.id) { setContactJobs([]); return; }
         let cancelled = false;
         jobsApi.listJobs({ contact_id: contact.id, limit: 50 })
             .then(data => { if (!cancelled) setContactJobs(data.results); })
             .catch(() => { if (!cancelled) setContactJobs([]); });
         return () => { cancelled = true; };
-    }, [lead, leadLoading, contact?.id]);
+    }, [maskedViewer, lead, leadLoading, contact?.id]);
 
-    const secondaryPhone = lead?.SecondPhone || contact?.secondary_phone || '';
+    const secondaryPhone = maskedViewer ? '' : (lead?.SecondPhone || contact?.secondary_phone || '');
     const secondaryPhoneName = lead?.SecondPhoneName || contact?.secondary_phone_name || '';
     const normalizeDigits = (p: string) => (p || '').replace(/\D/g, '');
 
@@ -133,13 +137,24 @@ export function usePulsePage() {
     }, [contact, contactDetail]);
 
     // Composer targets: phones (SMS) + emails. Reused by the form and the default-channel logic.
-    const messageTargets = useMemo(
-        () => buildMessageTargets(phone, secondaryPhone, secondaryPhoneName, contactEmails),
-        [phone, secondaryPhone, secondaryPhoneName, contactEmails],
-    );
+    const messageTargets = useMemo(() => {
+        const emailTargets = buildMessageTargets(undefined, undefined, undefined, contactEmails);
+        if (!maskedViewer) {
+            return buildMessageTargets(phone, secondaryPhone, secondaryPhoneName, contactEmails);
+        }
+        const smsTargets: MessageTarget[] = (meta?.sms_targets || []).map(target => ({
+            channel: 'sms',
+            value: target.target_ref,
+            label: target.label,
+            targetRef: target.target_ref,
+            conversationId: target.conversation_id || undefined,
+        }));
+        return [...smsTargets, ...emailTargets];
+    }, [maskedViewer, meta?.sms_targets, phone, secondaryPhone, secondaryPhoneName, contactEmails]);
 
     // Last inbound *phone* (existing behavior): newest inbound SMS/call → that phone target value.
     const lastUsedPhone = useMemo(() => {
+        if (maskedViewer) return '';
         if (!phone || !secondaryPhone) return phone;
         const mainD = normalizeDigits(phone), secD = normalizeDigits(secondaryPhone);
         if (!secD || mainD === secD) return phone;
@@ -150,12 +165,13 @@ export function usePulsePage() {
         if (events.length === 0) return phone;
         events.sort((a, b) => b.time - a.time);
         return events[0].phone;
-    }, [phone, secondaryPhone, messages, contactCalls]);
+    }, [maskedViewer, phone, secondaryPhone, messages, contactCalls]);
 
     // Default target = last inbound channel. If the newest inbound timeline item is an email and
     // its address is a known contact email, preselect that email; otherwise the SMS phone default.
     const defaultTarget = useMemo<MessageTarget | undefined>(() => {
-        const phoneTarget = messageTargets.find(t => t.channel === 'sms' && normalizeDigits(t.value) === normalizeDigits(lastUsedPhone))
+        const phoneTarget = (maskedViewer ? messageTargets.find(t => t.channel === 'sms') : undefined)
+            || messageTargets.find(t => t.channel === 'sms' && normalizeDigits(t.value) === normalizeDigits(lastUsedPhone))
             || messageTargets.find(t => t.channel === 'sms');
         // newest inbound email
         let bestEmail: { value: string; time: number } | null = null;
@@ -176,7 +192,7 @@ export function usePulsePage() {
             return messageTargets.find(t => t.channel === 'email' && t.value === bestEmail!.value) || phoneTarget;
         }
         return phoneTarget;
-    }, [messageTargets, lastUsedPhone, emailMessages, contactEmails, messages, contactCalls, emailConnected]);
+    }, [maskedViewer, messageTargets, lastUsedPhone, emailMessages, contactEmails, messages, contactCalls, emailConnected]);
 
     React.useEffect(() => { if (defaultTarget && !selectedTarget) setSelectedTarget(defaultTarget); }, [defaultTarget, selectedTarget]);
 
@@ -187,6 +203,7 @@ export function usePulsePage() {
     const handleUpdateLead = async (updatedLead: Lead) => { setLeadOverride(updatedLead); setEditingLead(null); toast.success('Lead updated'); };
 
     const derivedProxy = useMemo(() => {
+        if (maskedViewer) return '';
         if (conversations.length) return conversations[0].proxy_e164 || '';
         // Find first call with a real phone number (skip client: URIs from WebRTC calls)
         const fc = contactCalls.find(c => {
@@ -195,12 +212,12 @@ export function usePulsePage() {
         });
         if (!fc) return '';
         return (fc.direction || '').includes('inbound') ? (fc.to_number || '') : (fc.from_number || '');
-    }, [conversations, contactCalls]);
+    }, [maskedViewer, conversations, contactCalls]);
     const [fallbackProxy, setFallbackProxy] = useState('');
     useEffect(() => { if (derivedProxy || !phone) return; const API_BASE = import.meta.env.VITE_API_URL || '/api'; authedFetch(`${API_BASE}/pulse/default-proxy`).then(r => r.json()).then(d => { if (d.proxy_e164) setFallbackProxy(d.proxy_e164); }).catch(() => { }); }, [derivedProxy, phone]);
     const proxyPhone = derivedProxy || fallbackProxy;
 
-    const handleSendMessage = async (message: string, files?: File[], target?: { channel: 'sms' | 'email'; value: string }) => {
+    const handleSendMessage = async (message: string, files?: File[], target?: MessageTarget) => {
         // Email branch (EMAIL-TIMELINE-001 / ET-10): send via the timeline email route.
         if (target?.channel === 'email') {
             const cid = contact?.id || contactId;
@@ -220,9 +237,37 @@ export function usePulsePage() {
             return;
         }
         // SMS branch (unchanged).
+        if (target?.conversationId) {
+            try {
+                await messagingApi.sendMessage(target.conversationId, { body: message }, files?.[0]);
+                await refreshNewestPage();
+                setScrollToBottomSignal(s => s + 1);
+            } catch (err: any) {
+                console.error('[SMS] Send failed:', err);
+                toast.error(err?.response?.data?.error || 'Failed to send message');
+            }
+            return;
+        }
+        if (target?.targetRef) {
+            const cid = contact?.id || contactId;
+            if (!cid) { toast.error('Cannot send SMS: contact not resolved'); return; }
+            try {
+                await messagingApi.startConversation({
+                    contactId: cid,
+                    targetRef: target.targetRef,
+                    initialMessage: message,
+                });
+                await refreshNewestPage();
+                setScrollToBottomSignal(s => s + 1);
+            } catch (err: any) {
+                console.error('[SMS] Send failed:', err);
+                toast.error(err?.response?.data?.error || 'Failed to send message');
+            }
+            return;
+        }
         const sendTo = target?.value || phone;
         try {
-            const targetConv = conversations.find(c => normalizeDigits(c.customer_e164) === normalizeDigits(sendTo));
+            const targetConv = conversations.find(c => normalizeDigits(c.customer_e164 || '') === normalizeDigits(sendTo));
             if (targetConv) { await messagingApi.sendMessage(targetConv.id, { body: message }, files?.[0]); }
             else if (sendTo && proxyPhone) { const toE164 = (p: string) => { const d = p.replace(/\D/g, ''); if (d.startsWith('1') && d.length === 11) return `+${d}`; if (d.length === 10) return `+1${d}`; return `+${d}`; }; await messagingApi.startConversation({ customerE164: toE164(sendTo), proxyE164: toE164(proxyPhone), initialMessage: message }); }
             else if (sendTo && !proxyPhone) { toast.error('Cannot send SMS: no proxy phone number available'); return; }
@@ -256,6 +301,7 @@ export function usePulsePage() {
         lead, leadLoading, contact, contactDetail, contactDetailLoading, contactJobs, selectedConv,
         editingLead, setEditingLead, convertingLead, setConvertingLead,
         secondaryPhone, secondaryPhoneName, contactEmails, emailConnected, selectedTarget, setSelectedTarget,
+        maskedViewer, hasSmsTarget: messageTargets.some(target => target.channel === 'sms'),
         messageTargets,
         handleUpdateStatus: actions.handleUpdateStatus, handleUpdateSource: actions.handleUpdateSource,
         handleUpdateComments: actions.handleUpdateComments, handleMarkLost: actions.handleMarkLost,
@@ -263,7 +309,7 @@ export function usePulsePage() {
         handleSendMessage, handleAiFormat, refetchContacts, refetchTimeline: refreshNewestPage,
         getLeadForPhone,
         refreshContactDetail: () => {
-            if (!contact?.id) return;
+            if (maskedViewer || !contact?.id) return;
             contactsApi.getContact(contact.id).then(res => setContactDetail({ contact: res.data.contact, leads: res.data.leads })).catch(() => { });
             jobsApi.listJobs({ contact_id: contact.id, limit: 50 }).then(data => setContactJobs(data.results)).catch(() => { });
         },

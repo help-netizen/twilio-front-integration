@@ -121,7 +121,10 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
         displayName: (call as any).display_name,
         formattedPhone: formatPhoneNumber(displayPhone),
     });
-    const showSecondaryPhone = !isAnon && !!(company || leadName || contactName);
+    const showSecondaryPhone = !isAnon
+        && (call as any).details_redacted !== true
+        && !!displayPhone
+        && !!(company || leadName || contactName);
 
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
     const interactionType = call.last_interaction_type || 'call';

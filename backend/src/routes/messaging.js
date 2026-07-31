@@ -6,7 +6,9 @@
 const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
-const { getProviderScope } = require('../middleware/providerScope');
+const { getProviderScope, PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const db = require('../db/connection');
+const { getMaskViewer, redactPulsePayload } = require('../services/pulseMaskingService');
 
 // Tenant + provider visibility for a conversation by id → null contract = 404
 async function loadVisibleConversation(req) {
@@ -27,6 +29,62 @@ const msgRead = requirePermission('messages.view_client', 'messages.view_interna
 const multer = require('multer');
 const convQueries = require('../db/conversationsQueries');
 const conversationsService = require('../services/conversationsService');
+
+async function resolveMaskedStartTarget(req, contactId, targetRef) {
+    if (!(await getMaskViewer(req))) return null;
+    if (!Number.isInteger(Number(contactId))) return null;
+
+    const slot = targetRef === 'contact:primary'
+        ? 'primary'
+        : targetRef === 'contact:secondary' ? 'secondary' : null;
+    if (!slot) return null;
+
+    const companyId = req.companyFilter?.company_id;
+    if (!companyId) return null;
+    const scope = getProviderScope(req);
+    const params = [Number(contactId), companyId];
+    let providerFilter = '';
+    if (scope.assignedOnly) {
+        if (!scope.userId) {
+            providerFilter = 'AND FALSE';
+        } else {
+            params.push(JSON.stringify([String(scope.userId)]), PULSE_INACTIVE_JOB_STATUSES);
+            providerFilter = `AND EXISTS (
+                SELECT 1
+                FROM jobs visible_job
+                WHERE visible_job.company_id = c.company_id
+                  AND visible_job.contact_id = c.id
+                  AND visible_job.assigned_provider_user_ids @> $3::jsonb
+                  AND (visible_job.blanc_status IS NULL OR visible_job.blanc_status <> ALL($4::text[]))
+            )`;
+        }
+    }
+
+    const { rows } = await db.query(
+        `SELECT c.phone_e164, c.secondary_phone
+         FROM contacts c
+         WHERE c.id = $1
+           AND c.company_id = $2
+           ${providerFilter}`,
+        params
+    );
+    const customerE164 = slot === 'primary' ? rows[0]?.phone_e164 : rows[0]?.secondary_phone;
+    if (!customerE164) return null;
+
+    const proxy = await db.query(
+        `SELECT proxy_e164
+         FROM sms_conversations
+         WHERE company_id = $1
+           AND proxy_e164 IS NOT NULL
+         ORDER BY
+           (regexp_replace(customer_e164, '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g')) DESC,
+           last_message_at DESC NULLS LAST
+         LIMIT 1`,
+        [companyId, customerE164]
+    );
+    if (!proxy.rows[0]?.proxy_e164) return null;
+    return { customerE164, proxyE164: proxy.rows[0].proxy_e164 };
+}
 
 // Multer: memory storage, 10 MB max
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -72,6 +130,7 @@ router.get('/:id/messages', msgRead, async (req, res) => {
         const messages = await convQueries.getMessages(req.params.id, {
             limit: parseInt(limit),
             cursor,
+            companyId: req.companyFilter?.company_id,
         });
         res.json({ messages, hasMore: messages.length === parseInt(limit) });
     } catch (err) {
@@ -158,7 +217,19 @@ router.post('/:id/mark-unread', msgRead, async (req, res) => {
 // POST /api/messaging/start — start new conversation
 router.post('/start', requirePermission('messages.send'), async (req, res) => {
     try {
-        const { customerE164, proxyE164, initialMessage } = req.body;
+        let { customerE164, proxyE164 } = req.body;
+        const { initialMessage, contactId, targetRef } = req.body;
+        const maskViewer = await getMaskViewer(req);
+        if (maskViewer && (targetRef == null || contactId == null)) {
+            return res.status(400).json({ error: 'Opaque message target required' });
+        }
+        if (targetRef != null || contactId != null) {
+            const resolved = await resolveMaskedStartTarget(req, contactId, targetRef);
+            if (!resolved) {
+                return res.status(404).json({ error: 'Message target not found' });
+            }
+            ({ customerE164, proxyE164 } = resolved);
+        }
         if (!customerE164 || !proxyE164) {
             return res.status(400).json({ error: 'customerE164 and proxyE164 required' });
         }
@@ -169,7 +240,7 @@ router.post('/start', requirePermission('messages.send'), async (req, res) => {
         if (initialMessage) {
             message = await conversationsService.sendMessage(conversation.id, { body: initialMessage });
         }
-        res.json({ conversation, message });
+        res.json(redactPulsePayload({ conversation, message }, maskViewer));
     } catch (err) {
         console.error('[Messaging] POST /start error:', err);
         res.status(500).json({ error: err.message || 'Failed to start conversation' });

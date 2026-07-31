@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getLeadByContact } from '../services/leadsApi';
 import type { Lead } from '../types/lead';
 
-export function useLeadByContact(contactId: number | undefined) {
+export function useLeadByContact(contactId: number | undefined, enabled = true) {
     const query = useQuery({
         queryKey: ['lead-by-contact', contactId],
         queryFn: async () => {
@@ -10,7 +10,7 @@ export function useLeadByContact(contactId: number | undefined) {
             const res = await getLeadByContact(contactId);
             return res.data.lead as Lead | null;
         },
-        enabled: !!contactId,
+        enabled: !!contactId && enabled,
         staleTime: 60_000,
         retry: false,
     });

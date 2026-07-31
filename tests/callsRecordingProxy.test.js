@@ -13,8 +13,14 @@ const fetch = require('node-fetch');
 
 // getCallMedia is the ONLY db access the recording route makes.
 const mockGetCallMedia = jest.fn();
+const mockGetCallByCallSid = jest.fn();
 jest.mock('../backend/src/db/queries', () => ({
     getCallMedia: (...args) => mockGetCallMedia(...args),
+    getCallByCallSid: (...args) => mockGetCallByCallSid(...args),
+}));
+const mockGetActiveSettings = jest.fn();
+jest.mock('../backend/src/services/callMaskingService', () => ({
+    getActiveSettings: (...args) => mockGetActiveSettings(...args),
 }));
 
 // Top-level requires in routes/calls.js — stub the heavy ones (mirror
@@ -39,6 +45,7 @@ function makeApp({ companyId = 'company-1', permissions = ['reports.calls.view']
     const app = express();
     app.use((req, _res, next) => {
         req.companyFilter = { company_id: companyId };
+        req.user = { crmUser: { id: 'viewer-1' } };
         req.authz = { scope: 'tenant', permissions, scopes: {} };
         next();
     });
@@ -71,6 +78,16 @@ describe('CT-03 recording proxy — Twilio-sid vs VAPI recording_url branching',
     beforeEach(() => {
         jest.clearAllMocks();
         process.env = { ...originalEnv };
+        mockGetActiveSettings.mockResolvedValue(null);
+        mockGetCallByCallSid.mockResolvedValue({
+            id: 1,
+            call_sid: 'CA_call_1',
+            direction: 'inbound',
+            from_number: '+15085550100',
+            to_number: '+16175550123',
+            status: 'completed',
+            duration_sec: 60,
+        });
     });
 
     afterAll(() => {
@@ -190,5 +207,66 @@ describe('CT-03 recording proxy — Twilio-sid vs VAPI recording_url branching',
         expect(res.status).toBe(404);
         expect(res.body).toEqual({ error: 'Recording not available' });
         expect(fetch).not.toHaveBeenCalled();
+    });
+
+    test('MASK-REDACTION-001: masked viewer receives collapsed call detail and no media bytes/JSON', async () => {
+        mockGetActiveSettings.mockResolvedValue({
+            call_masking_enabled: true,
+            call_masking_number: '+16175550123',
+        });
+        mockGetCallByCallSid.mockResolvedValue({
+            id: 9,
+            call_sid: 'CA-secret',
+            parent_call_sid: null,
+            direction: 'inbound',
+            from_number: '+15085550100',
+            to_number: '+16175550123',
+            status: 'completed',
+            started_at: '2026-07-31T12:00:00.000Z',
+            duration_sec: 73,
+            recording_sid: 'RE-secret',
+            recording_status: 'completed',
+            transcript_status: 'completed',
+            transcript_text: 'Private transcript',
+        });
+        const app = makeApp({ permissions: ['pulse.view', 'call_masking.use'] });
+
+        const detail = await request(app).get('/api/calls/CA-secret');
+        expect(detail.status).toBe(200);
+        expect(detail.body.call).toMatchObject({
+            id: 9,
+            direction: 'inbound',
+            duration_sec: 73,
+            details_redacted: true,
+        });
+        expect(JSON.stringify(detail.body)).not.toContain('+15085550100');
+        expect(JSON.stringify(detail.body)).not.toContain('Private transcript');
+        expect(detail.body.call).not.toHaveProperty('call_sid');
+        expect(detail.body.call).not.toHaveProperty('recording');
+        expect(detail.body.call).not.toHaveProperty('transcript');
+
+        mockGetCallMedia.mockClear();
+        expect((await request(app).get('/api/calls/CA-secret/media')).status).toBe(404);
+        expect((await request(app).get('/api/calls/CA-secret/recording.mp3')).status).toBe(404);
+        expect(mockGetCallMedia).not.toHaveBeenCalled();
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    test('MASK-REDACTION-001: masking off preserves provider detail; foreign company call is 404', async () => {
+        mockGetActiveSettings.mockResolvedValue(null);
+        const app = makeApp({ permissions: ['pulse.view', 'call_masking.use'] });
+        const own = await request(app).get('/api/calls/CA_call_1');
+        expect(own.status).toBe(200);
+        expect(own.body.call.from_number).toBe('+15085550100');
+
+        mockGetCallByCallSid.mockResolvedValueOnce(null);
+        const foreign = await request(app).get('/api/calls/CA_foreign');
+        expect(foreign.status).toBe(404);
+        expect(foreign.body).toEqual({ error: 'Call not found' });
+        expect(mockGetCallByCallSid).toHaveBeenLastCalledWith(
+            'CA_foreign',
+            'company-1',
+            expect.any(Object)
+        );
     });
 });

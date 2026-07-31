@@ -12,11 +12,30 @@ const contactsService = require('../services/contactsService');
 const emailQueries = require('../db/emailQueries');
 const { projectEmailTimelineItem } = require('../services/email/emailTimelineItem');
 const timelinePage = require('../services/timelinePage');
+const {
+    getMaskViewer,
+    redactPulsePayload,
+    buildMaskedSmsTargets,
+} = require('../services/pulseMaskingService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope, PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
 
 // All Pulse surfaces require pulse.view (PF007-HARDENING-001 / TASK-RBAC-009)
 router.use(requirePermission('pulse.view'));
+
+// MASK-REDACTION-001: one response boundary for every Pulse route. Timeline
+// builders still resolve the cached flag to add opaque SMS targets, but no
+// individual route is trusted to remember phone/call-internal redaction.
+router.use(async (req, res, next) => {
+    try {
+        const maskViewer = await getMaskViewer(req);
+        const sendJson = res.json.bind(res);
+        res.json = payload => sendJson(redactPulsePayload(payload, maskViewer));
+        next();
+    } catch (error) {
+        next(error);
+    }
+});
 
 // Tenant context comes only from requireCompanyAccess
 function tenantCompanyId(req) {
@@ -222,12 +241,15 @@ async function fetchTimelineCalls(timelineId, companyId, { window = null } = {})
                ${cursorClause}
              ${windowClause}
          ) c
-         LEFT JOIN contacts co ON c.contact_id = co.id
+         LEFT JOIN contacts co
+           ON c.contact_id = co.id
+          AND co.company_id = c.company_id
          -- Direct recording on this call
          LEFT JOIN LATERAL (
              SELECT recording_sid, status, duration_sec
              FROM recordings
              WHERE recordings.call_sid = c.call_sid
+               AND recordings.company_id = c.company_id
              ORDER BY completed_at DESC NULLS LAST, updated_at DESC
              LIMIT 1
          ) r ON true
@@ -235,8 +257,11 @@ async function fetchTimelineCalls(timelineId, companyId, { window = null } = {})
          LEFT JOIN LATERAL (
              SELECT rec.recording_sid, rec.status, rec.duration_sec
              FROM calls child
-             JOIN recordings rec ON rec.call_sid = child.call_sid
+             JOIN recordings rec
+               ON rec.call_sid = child.call_sid
+              AND rec.company_id = child.company_id
              WHERE child.parent_call_sid = c.call_sid
+               AND child.company_id = c.company_id
              ORDER BY rec.completed_at DESC NULLS LAST, rec.updated_at DESC
              LIMIT 1
          ) cr ON r.recording_sid IS NULL
@@ -245,6 +270,7 @@ async function fetchTimelineCalls(timelineId, companyId, { window = null } = {})
              SELECT status, text, raw_payload
              FROM transcripts
              WHERE transcripts.call_sid = c.call_sid
+               AND transcripts.company_id = c.company_id
              ORDER BY updated_at DESC
              LIMIT 1
          ) t ON true
@@ -252,8 +278,11 @@ async function fetchTimelineCalls(timelineId, companyId, { window = null } = {})
          LEFT JOIN LATERAL (
              SELECT tr.status, tr.text, tr.raw_payload
              FROM calls child
-             JOIN transcripts tr ON tr.call_sid = child.call_sid
+             JOIN transcripts tr
+               ON tr.call_sid = child.call_sid
+              AND tr.company_id = child.company_id
              WHERE child.parent_call_sid = c.call_sid
+               AND child.company_id = c.company_id
              ORDER BY tr.updated_at DESC
              LIMIT 1
          ) ct ON t.status IS NULL
@@ -429,6 +458,7 @@ async function buildTimelinePage(req, res, contact, timeline, { limit, before })
     }
 
     const companyId = tenantCompanyId(req);
+    const maskViewer = await getMaskViewer(req);
     const conversations = await discoverTimelineConversations(contact, timeline, companyId);
     const conversationById = new Map(conversations.map(conv => [String(conv.id), conv]));
     const legPromises = [];
@@ -527,7 +557,11 @@ async function buildTimelinePage(req, res, contact, timeline, { limit, before })
         let contactOut = contact || null;
         if (contact?.id) {
             try {
-                const contactEmails = await contactsService.getContactEmails(contact.id, contact.email);
+                const contactEmails = await contactsService.getContactEmails(
+                    contact.id,
+                    contact.email,
+                    companyId
+                );
                 contactOut = { ...contact, contact_emails: contactEmails };
             } catch (err) {
                 console.error('[Pulse] contact emails query error:', err.message);
@@ -539,6 +573,10 @@ async function buildTimelinePage(req, res, contact, timeline, { limit, before })
             external_source: timeline?.external_source || null,
             contact: contactOut,
             conversations,
+            ...(maskViewer ? {
+                mask_viewer: true,
+                sms_targets: buildMaskedSmsTargets(contact, conversations),
+            } : {}),
         };
     }
 
@@ -548,6 +586,7 @@ async function buildTimelinePage(req, res, contact, timeline, { limit, before })
 // Shared legacy timeline builder
 async function buildTimeline(req, res, contact, timeline) {
     const companyId = tenantCompanyId(req);
+    const maskViewer = await getMaskViewer(req);
 
     // Get calls by timeline_id with recordings + transcripts
     let callRows = [];
@@ -595,7 +634,7 @@ async function buildTimeline(req, res, contact, timeline) {
         conversations = convResult.rows;
 
         const allMsgs = await Promise.all(
-            conversations.map(conv => convQueries.getMessages(conv.id, { limit: 200 }))
+            conversations.map(conv => convQueries.getMessages(conv.id, { limit: 200, companyId }))
         );
         for (let i = 0; i < conversations.length; i++) {
             const conv = conversations[i];
@@ -660,14 +699,18 @@ async function buildTimeline(req, res, contact, timeline) {
     let contactOut = contact || null;
     if (contact?.id) {
         try {
-            const contactEmails = await contactsService.getContactEmails(contact.id, contact.email);
+            const contactEmails = await contactsService.getContactEmails(
+                contact.id,
+                contact.email,
+                companyId
+            );
             contactOut = { ...contact, contact_emails: contactEmails };
         } catch (err) {
             console.error('[Pulse] contact emails query error:', err.message);
         }
     }
 
-    res.json({
+    const response = {
         calls, messages, conversations,
         email_messages: emailMessages,
         financial_events: financialEvents,
@@ -677,7 +720,12 @@ async function buildTimeline(req, res, contact, timeline) {
         display_name: timeline?.display_name || null,
         external_source: timeline?.external_source || null,
         contact: contactOut,
-    });
+        ...(maskViewer ? {
+            mask_viewer: true,
+            sms_targets: buildMaskedSmsTargets(contact, conversations),
+        } : {}),
+    };
+    res.json(response);
 }
 
 // =============================================================================

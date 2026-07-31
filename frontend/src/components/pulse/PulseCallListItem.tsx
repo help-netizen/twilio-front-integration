@@ -88,35 +88,42 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                     >
                         <title>{iconLabel}</title>
                     </CallIcon>
-                    <span className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
-                        {formatPhoneNumber(otherPartyNumber)}
-                    </span>
+                    {!call.detailsRedacted && otherPartyNumber && (
+                        <span className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
+                            {formatPhoneNumber(otherPartyNumber)}
+                        </span>
+                    )}
                     <span
                         className="px-2 py-0.5 rounded-md text-xs font-semibold shrink-0"
                         style={{ backgroundColor: st.bg, color: st.color }}
                     >
                         {statusLabel}
                     </span>
+                    {call.detailsRedacted && call.duration != null && (
+                        <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
+                            {call.duration === 0 ? '0s' : formatDuration(call.duration)}
+                        </span>
+                    )}
                     <div className="flex-1" />
                     <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
                         {formatTime(call.startTime)}
                     </span>
-                    <button
+                    {!call.detailsRedacted && <button
                         onClick={() => setShowSystemInfo(!showSystemInfo)}
                         className="size-6 flex items-center justify-center rounded-lg transition-colors"
                         style={{ color: 'var(--blanc-ink-3)' }}
                         title="System info"
                     >
                         <Settings2 className={`size-3.5 transition-transform ${showSystemInfo ? 'rotate-90' : ''}`} />
-                    </button>
+                    </button>}
                 </div>
             </div>
 
             {/* Audio Player, Summary, Transcription */}
-            <PulseCallAudioPlayer call={call} />
+            {!call.detailsRedacted && <PulseCallAudioPlayer call={call} />}
 
             {/* System Info */}
-            {showSystemInfo && (
+            {!call.detailsRedacted && showSystemInfo && (
                 <div className="px-4 pb-3 space-y-1.5 text-sm" style={{ background: 'rgba(25,25,25,0.03)' }}>
                     <div className="flex items-center gap-2">
                         <Clock className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />

@@ -15,12 +15,16 @@ const mockEmailQueries = {
     getTimelineEmailPageByTimeline: jest.fn(),
 };
 const mockContactsService = { getContactEmails: jest.fn() };
+const mockGetActiveSettings = jest.fn();
 const mockJwt = { verify: jest.fn((_token, _key, _options, callback) => callback(new Error('invalid token'))) };
 
 jest.mock('../backend/src/db/connection', () => mockDb);
 jest.mock('../backend/src/db/conversationsQueries', () => mockConvQueries);
 jest.mock('../backend/src/db/emailQueries', () => mockEmailQueries);
 jest.mock('../backend/src/services/contactsService', () => mockContactsService);
+jest.mock('../backend/src/services/callMaskingService', () => ({
+    getActiveSettings: (...args) => mockGetActiveSettings(...args),
+}));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
 jest.mock('../backend/src/services/userService', () => ({ findOrCreateUser: jest.fn() }));
 jest.mock('../backend/src/services/authorizationService', () => ({
@@ -287,6 +291,10 @@ async function dispatchDb(sql, params = []) {
         recordEvent('company_number_lookup', text, params);
         return { rows: state.companyOwnNumbers.map(proxy_e164 => ({ proxy_e164 })) };
     }
+    if (/SELECT proxy_e164 FROM sms_conversations/i.test(text)) {
+        recordEvent('default_proxy', text, params);
+        return { rows: state.companyOwnNumbers.slice(0, 1).map(proxy_e164 => ({ proxy_e164 })) };
+    }
     if (/FROM sms_conversations/i.test(text)) {
         recordEvent('conversation_lookup', text, params);
         const phoneDigits = new Set(params[0]);
@@ -332,6 +340,7 @@ function stripTs(row) {
 }
 
 function configureMocks() {
+    mockGetActiveSettings.mockReset().mockResolvedValue(null);
     mockDb.query.mockReset().mockImplementation(dispatchDb);
     mockConvQueries.getMessages.mockReset().mockImplementation(async (conversationId, { limit }) => state.data.messages
         .filter(row => row.conversation_id === conversationId)
@@ -878,4 +887,96 @@ test('TC-TRP-036: answered_by=ai reaches both legacy and paged Pulse timeline ca
     expect(paged.status).toBe(200);
     const callItem = paged.body.page.items.find(item => item.src === 'call' && item.data.call_sid === 'CA-golden-new');
     expect(callItem.data.answered_by).toBe('ai');
+});
+
+test('MASK-REDACTION-001: provider timeline/contact/composer DTOs contain no digits or call internals', async () => {
+    mockGetActiveSettings.mockResolvedValue({
+        call_masking_enabled: true,
+        call_masking_number: CONVERSATION.proxy_e164,
+    });
+    const app = stubApp({
+        permissions: ['pulse.view', 'call_masking.use'],
+        scopes: { job_visibility: 'assigned_only' },
+    });
+
+    for (const suffix of ['', '?limit=20']) {
+        const response = await request(app)
+            .get(`/api/pulse/timeline-by-id/${TIMELINE.id}${suffix}`);
+        expect(response.status).toBe(200);
+        const json = JSON.stringify(response.body);
+        expect(json).not.toContain(CONTACT.phone_e164);
+        expect(json).not.toContain(CONTACT.secondary_phone);
+        expect(json).not.toContain(CONVERSATION.proxy_e164);
+        expect(json).not.toContain('Golden transcript');
+        expect(json).not.toContain('Golden summary');
+        expect(json).not.toContain('RE-golden');
+
+        const meta = response.body.meta || response.body;
+        expect(meta.contact).not.toHaveProperty('phone_e164');
+        expect(meta.contact).not.toHaveProperty('secondary_phone');
+        expect(meta.conversations[0]).not.toHaveProperty('customer_e164');
+        expect(meta.sms_targets.map(target => target.label)).toEqual(['Main number', 'Secondary number']);
+        expect(meta.mask_viewer).toBe(true);
+
+        const calls = response.body.calls
+            || response.body.page.items.filter(item => item.src === 'call').map(item => item.data);
+        expect(calls[0]).toMatchObject({ details_redacted: true, duration_sec: 117 });
+        expect(calls[0]).not.toHaveProperty('recording');
+        expect(calls[0]).not.toHaveProperty('transcript');
+    }
+});
+
+test('MASK-REDACTION-001: admin and masking-off provider keep the existing full DTO', async () => {
+    const admin = await request(stubApp())
+        .get(`/api/pulse/timeline-by-id/${TIMELINE.id}?limit=20`);
+    expect(admin.status).toBe(200);
+    expect(admin.body.meta.contact.phone_e164).toBe(CONTACT.phone_e164);
+    expect(admin.body.meta.conversations[0].customer_e164).toBe(CONTACT.phone_e164);
+    expect(admin.body.page.items.find(item => item.src === 'call').data.transcript.text)
+        .toBe('Golden transcript');
+
+    mockGetActiveSettings.mockResolvedValue(null);
+    const provider = await request(stubApp({
+        permissions: ['pulse.view', 'call_masking.use'],
+        scopes: { job_visibility: 'assigned_only' },
+    })).get(`/api/pulse/timeline-by-id/${TIMELINE.id}?limit=20`);
+    expect(provider.status).toBe(200);
+    expect(provider.body.meta.contact.phone_e164).toBe(CONTACT.phone_e164);
+    expect(provider.body.page.items.find(item => item.src === 'call').data.recording.recording_sid)
+        .toBe('RE-golden');
+});
+
+test('MASK-REDACTION-001: ancillary Pulse responses also cross the shared redaction boundary', async () => {
+    mockGetActiveSettings.mockResolvedValue({
+        call_masking_enabled: true,
+        call_masking_number: CONVERSATION.proxy_e164,
+    });
+    const masked = await request(stubApp({
+        permissions: ['pulse.view', 'call_masking.use'],
+        scopes: { job_visibility: 'assigned_only' },
+    })).get('/api/pulse/default-proxy');
+    expect(masked.status).toBe(200);
+    expect(masked.body).toEqual({});
+    expect(JSON.stringify(masked.body)).not.toContain(CONVERSATION.proxy_e164);
+
+    const admin = await request(stubApp()).get('/api/pulse/default-proxy');
+    expect(admin.status).toBe(200);
+    expect(admin.body).toEqual({ proxy_e164: CONVERSATION.proxy_e164 });
+});
+
+test('MASK-REDACTION-001 T-foreign: masked viewer gets 404 and no foreign feed query runs', async () => {
+    mockGetActiveSettings.mockResolvedValue({
+        call_masking_enabled: true,
+        call_masking_number: CONVERSATION.proxy_e164,
+    });
+    state.timelineExists = false;
+
+    const response = await request(stubApp({
+        permissions: ['pulse.view', 'call_masking.use'],
+        scopes: { job_visibility: 'assigned_only' },
+    })).get('/api/pulse/timeline-by-id/999?limit=20');
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: 'Timeline not found' });
+    expectNoFeedLegs();
 });

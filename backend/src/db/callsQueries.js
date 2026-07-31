@@ -63,12 +63,26 @@ async function upsertCall(data) {
     return result.rows[0];
 }
 
-async function getCallByCallSid(callSid, companyId = null) {
+async function getCallByCallSid(callSid, companyId = null, providerScope = null) {
     const conditions = ['c.call_sid = $1'];
     const params = [callSid];
     if (companyId) {
         conditions.push(`c.company_id = $2`);
         params.push(companyId);
+    }
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) {
+            conditions.push('FALSE');
+        } else {
+            params.push(JSON.stringify([String(providerScope.userId)]));
+            conditions.push(`EXISTS (
+                SELECT 1
+                FROM jobs visible_job
+                WHERE visible_job.company_id = c.company_id
+                  AND visible_job.contact_id = c.contact_id
+                  AND visible_job.assigned_provider_user_ids @> $${params.length}::jsonb
+            )`);
+        }
     }
     const result = await db.query(
         `SELECT c.*,
@@ -79,11 +93,14 @@ async function getCallByCallSid(callSid, companyId = null) {
                 cfe.status AS flow_execution_status,
                 cfe.context_json AS flow_context_json
          FROM calls c
-         LEFT JOIN contacts co ON c.contact_id = co.id
+         LEFT JOIN contacts co
+           ON c.contact_id = co.id
+          AND co.company_id = c.company_id
          LEFT JOIN LATERAL (
              SELECT *
              FROM call_flow_executions cfe
              WHERE cfe.call_sid = c.call_sid
+               AND cfe.company_id = c.company_id
              ORDER BY cfe.created_at DESC
              LIMIT 1
          ) cfe ON true
@@ -146,11 +163,14 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
                 cfe.status AS flow_execution_status,
                 cfe.context_json AS flow_context_json
          FROM calls c
-         LEFT JOIN contacts co ON c.contact_id = co.id
+         LEFT JOIN contacts co
+           ON c.contact_id = co.id
+          AND co.company_id = c.company_id
          LEFT JOIN LATERAL (
              SELECT *
              FROM call_flow_executions cfe
              WHERE cfe.call_sid = c.call_sid
+               AND cfe.company_id = c.company_id
              ORDER BY cfe.created_at DESC
              LIMIT 1
          ) cfe ON true
@@ -249,7 +269,24 @@ async function getContactsWithCallsCount(companyId = null) {
     return parseInt(result.rows[0].count, 10);
 }
 
-async function getCallsByContactId(contactId) {
+async function getCallsByContactId(contactId, companyId, providerScope = null) {
+    if (!companyId) throw new Error('companyId is required');
+    const params = [contactId, companyId];
+    let providerFilter = '';
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) {
+            providerFilter = 'AND FALSE';
+        } else {
+            params.push(JSON.stringify([String(providerScope.userId)]));
+            providerFilter = `AND EXISTS (
+                SELECT 1
+                FROM jobs visible_job
+                WHERE visible_job.company_id = c.company_id
+                  AND visible_job.contact_id = c.contact_id
+                  AND visible_job.assigned_provider_user_ids @> $3::jsonb
+            )`;
+        }
+    }
     const result = await db.query(
         `SELECT c.*, to_json(co) as contact,
             COALESCE(r.recording_sid, cr.recording_sid) as recording_sid,
@@ -259,19 +296,25 @@ async function getCallsByContactId(contactId) {
             COALESCE(t.text, ct.text) as transcript_text,
             COALESCE(t.raw_payload, ct.raw_payload) as transcript_raw_payload
          FROM calls c
-         LEFT JOIN contacts co ON c.contact_id = co.id
+         LEFT JOIN contacts co
+           ON c.contact_id = co.id
+          AND co.company_id = c.company_id
          LEFT JOIN LATERAL (
              SELECT recording_sid, status, duration_sec
              FROM recordings
              WHERE recordings.call_sid = c.call_sid
+               AND recordings.company_id = c.company_id
              ORDER BY completed_at DESC NULLS LAST, updated_at DESC
              LIMIT 1
          ) r ON true
          LEFT JOIN LATERAL (
              SELECT rec.recording_sid, rec.status, rec.duration_sec
              FROM calls child
-             JOIN recordings rec ON rec.call_sid = child.call_sid
+             JOIN recordings rec
+               ON rec.call_sid = child.call_sid
+              AND rec.company_id = child.company_id
              WHERE child.parent_call_sid = c.call_sid
+               AND child.company_id = c.company_id
              ORDER BY rec.completed_at DESC NULLS LAST, rec.updated_at DESC
              LIMIT 1
          ) cr ON r.recording_sid IS NULL
@@ -279,21 +322,27 @@ async function getCallsByContactId(contactId) {
              SELECT status, text, raw_payload
              FROM transcripts
              WHERE transcripts.call_sid = c.call_sid
+               AND transcripts.company_id = c.company_id
              ORDER BY updated_at DESC
              LIMIT 1
          ) t ON true
          LEFT JOIN LATERAL (
              SELECT tr.status, tr.text, tr.raw_payload
              FROM calls child
-             JOIN transcripts tr ON tr.call_sid = child.call_sid
+             JOIN transcripts tr
+               ON tr.call_sid = child.call_sid
+              AND tr.company_id = child.company_id
              WHERE child.parent_call_sid = c.call_sid
+               AND child.company_id = c.company_id
              ORDER BY tr.updated_at DESC
              LIMIT 1
          ) ct ON t.status IS NULL
          WHERE c.contact_id = $1
+           AND c.company_id = $2
            AND c.parent_call_sid IS NULL
+           ${providerFilter}
          ORDER BY c.started_at DESC NULLS LAST`,
-        [contactId]
+        params
     );
     return result.rows;
 }
@@ -304,7 +353,9 @@ async function getActiveCalls(companyId = null) {
     const result = await db.query(
         `SELECT c.*, to_json(co) as contact
          FROM calls c
-         LEFT JOIN contacts co ON c.contact_id = co.id
+         LEFT JOIN contacts co
+           ON c.contact_id = co.id
+          AND co.company_id = c.company_id
          WHERE c.is_final = false ${companyFilter}
          ORDER BY c.started_at DESC NULLS LAST`,
         params
@@ -369,10 +420,14 @@ async function upsertRecording(data) {
     return result.rows[0];
 }
 
-async function getRecordingsByCallSid(callSid) {
+async function getRecordingsByCallSid(callSid, companyId = null) {
+    const companyFilter = companyId ? 'AND company_id = $2' : '';
+    const params = companyId ? [callSid, companyId] : [callSid];
     const result = await db.query(
-        `SELECT * FROM recordings WHERE call_sid = $1 ORDER BY started_at DESC`,
-        [callSid]
+        `SELECT * FROM recordings
+         WHERE call_sid = $1 ${companyFilter}
+         ORDER BY started_at DESC`,
+        params
     );
     return result.rows;
 }
@@ -413,10 +468,14 @@ async function upsertTranscript(data) {
     return result.rows[0];
 }
 
-async function getTranscriptsByCallSid(callSid) {
+async function getTranscriptsByCallSid(callSid, companyId = null) {
+    const companyFilter = companyId ? 'AND company_id = $2' : '';
+    const params = companyId ? [callSid, companyId] : [callSid];
     const result = await db.query(
-        `SELECT * FROM transcripts WHERE call_sid = $1 ORDER BY sequence_no ASC NULLS LAST, created_at ASC`,
-        [callSid]
+        `SELECT * FROM transcripts
+         WHERE call_sid = $1 ${companyFilter}
+         ORDER BY sequence_no ASC NULLS LAST, created_at ASC`,
+        params
     );
     return result.rows;
 }
@@ -435,10 +494,14 @@ async function appendCallEvent(callSid, eventType, eventTime, payload, source = 
     return result.rows[0];
 }
 
-async function getCallEvents(callSid) {
+async function getCallEvents(callSid, companyId = null) {
+    const companyFilter = companyId ? 'AND company_id = $2' : '';
+    const params = companyId ? [callSid, companyId] : [callSid];
     const result = await db.query(
-        `SELECT * FROM call_events WHERE call_sid = $1 ORDER BY event_time DESC`,
-        [callSid]
+        `SELECT * FROM call_events
+         WHERE call_sid = $1 ${companyFilter}
+         ORDER BY event_time DESC`,
+        params
     );
     return result.rows;
 }
@@ -447,24 +510,33 @@ async function getCallEvents(callSid) {
 // Media aggregation (recordings + transcripts for a call)
 // =============================================================================
 
-async function getCallMedia(callSid) {
+async function getCallMedia(callSid, companyId = null) {
+    if (companyId) {
+        const owned = await db.query(
+            `SELECT 1 FROM calls WHERE call_sid = $1 AND company_id = $2`,
+            [callSid, companyId]
+        );
+        if (owned.rows.length === 0) return { recordings: [], transcripts: [] };
+    }
     let [recordings, transcripts] = await Promise.all([
-        getRecordingsByCallSid(callSid),
-        getTranscriptsByCallSid(callSid),
+        getRecordingsByCallSid(callSid, companyId),
+        getTranscriptsByCallSid(callSid, companyId),
     ]);
 
     if (recordings.length === 0 || transcripts.length === 0) {
         const childResult = await db.query(
-            `SELECT call_sid FROM calls WHERE parent_call_sid = $1`,
-            [callSid]
+            `SELECT call_sid FROM calls
+             WHERE parent_call_sid = $1
+               ${companyId ? 'AND company_id = $2' : ''}`,
+            companyId ? [callSid, companyId] : [callSid]
         );
         for (const child of childResult.rows) {
             if (recordings.length === 0) {
-                const childRecs = await getRecordingsByCallSid(child.call_sid);
+                const childRecs = await getRecordingsByCallSid(child.call_sid, companyId);
                 if (childRecs.length > 0) recordings = childRecs;
             }
             if (transcripts.length === 0) {
-                const childTrans = await getTranscriptsByCallSid(child.call_sid);
+                const childTrans = await getTranscriptsByCallSid(child.call_sid, companyId);
                 if (childTrans.length > 0) transcripts = childTrans;
             }
             if (recordings.length > 0 && transcripts.length > 0) break;

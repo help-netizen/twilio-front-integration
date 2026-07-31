@@ -274,7 +274,7 @@ router.get('/:id', requirePermission('contacts.view'), async (req, res) => {
 
         // Surface ALL email addresses (primary + contact_emails) so the Pulse
         // composer's "To" dropdown can offer each one (EMAIL-TIMELINE-001 / TASK-ET-14).
-        contact.contact_emails = await contactsService.getContactEmails(id, contact.email);
+        contact.contact_emails = await contactsService.getContactEmails(id, contact.email, companyId);
 
         // CONTACT-EMAIL-MERGE-001: richer {email,is_primary}[] shape (primary-first,
         // exactly one primary = the scalar) for the multi-email editor (T3). Purely

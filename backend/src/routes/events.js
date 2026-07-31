@@ -3,6 +3,7 @@ const router = express.Router();
 const realtimeService = require('../services/realtimeService');
 const { authenticate, requireCompanyAccess } = require('../middleware/keycloakAuth');
 const { requirePermission } = require('../middleware/authorization');
+const { getMaskViewer } = require('../services/pulseMaskingService');
 
 /**
  * SSE endpoint for call updates
@@ -17,11 +18,12 @@ const { requirePermission } = require('../middleware/authorization');
  * - connected: Initial connection confirmation
  * - keepalive: Heartbeat (every 30s)
  */
-router.get('/calls', authenticate, requireCompanyAccess, requirePermission('pulse.view'), (req, res) => {
+router.get('/calls', authenticate, requireCompanyAccess, requirePermission('pulse.view'), async (req, res) => {
     console.log(`[Events] SSE connection from user ${req.user?.sub || 'unknown'}`);
 
     // Add client to realtime service
-    const connectionId = realtimeService.addClient(req, res);
+    const maskViewer = await getMaskViewer(req);
+    realtimeService.addClient(req, res, { maskViewer });
 });
 
 /**

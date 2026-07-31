@@ -34,6 +34,7 @@ export interface CallData {
     transcription?: string;
     transcriptStatus?: 'processing' | 'completed' | 'failed';
     answeredBy?: string;
+    detailsRedacted?: boolean;
 }
 
 export const STATUS_CONFIG: Record<string, { label: string; iconColor: string; iconBg: string; badgeBg: string; badgeText: string }> = {

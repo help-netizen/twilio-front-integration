@@ -181,11 +181,13 @@ async function upsertMessage(data) {
     return result.rows[0];
 }
 
-async function getMessages(conversationId, { limit = 50, cursor } = {}) {
-    const params = [conversationId];
+async function getMessages(conversationId, { limit = 50, cursor, companyId = null } = {}) {
+    if (!companyId) throw new Error('companyId is required');
+    const params = [conversationId, limit];
     let cursorClause = '';
-    if (cursor) { cursorClause = `AND created_at < $3`; params.push(limit, cursor); }
-    else { params.push(limit); }
+    if (cursor) { cursorClause = `AND m.created_at < $3`; params.push(cursor); }
+    params.push(companyId);
+    const companyClause = `AND m.company_id = $${params.length}`;
 
     const result = await db.query(`
         SELECT m.*, COALESCE(
@@ -196,7 +198,7 @@ async function getMessages(conversationId, { limit = 50, cursor } = {}) {
             )) FROM sms_media md WHERE md.message_id = m.id), '[]'
         ) AS media
         FROM sms_messages m
-        WHERE m.conversation_id = $1 ${cursorClause}
+        WHERE m.conversation_id = $1 ${cursorClause} ${companyClause}
         ORDER BY m.created_at ASC
         LIMIT $2
     `, params);

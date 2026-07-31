@@ -262,6 +262,41 @@ describe('realtime SSE delivery and isolation', () => {
         expect(warn).toHaveBeenCalledWith('[SSE] Dropped unscoped call.updated event');
     });
 
+    test('MASK-REDACTION-001: masked SSE client gets redacted call events and no transcript frames', () => {
+        const connection = fakeConnection(COMPANY_A);
+        realtimeService.addClient(connection.req, connection.res, { maskViewer: true });
+        const before = bytes(connection);
+
+        realtimeService.broadcast('call.updated', {
+            company_id: COMPANY_A,
+            call_sid: 'CA-secret',
+            direction: 'inbound',
+            from_number: '+15085550100',
+            to_number: '+16175550123',
+            duration_sec: 42,
+            transcript: { text: 'Private transcript' },
+        });
+        const callFrame = bytes(connection).slice(before.length);
+        expect(callFrame).toContain('event: call.updated\n');
+        expect(callFrame).toContain('"details_redacted":true');
+        expect(callFrame).not.toContain('+15085550100');
+        expect(callFrame).not.toContain('+16175550123');
+        expect(callFrame).not.toContain('Private transcript');
+
+        const afterCall = bytes(connection);
+        realtimeService.broadcast('transcript.delta', {
+            company_id: COMPANY_A,
+            callSid: 'CA-secret',
+            text: 'Live private words',
+        });
+        realtimeService.broadcast('transcript.ready', {
+            company_id: COMPANY_A,
+            call_sid: 'CA-secret',
+            text: 'Persisted private words',
+        });
+        expect(bytes(connection)).toBe(afterCall);
+    });
+
     test.each([
         [
             'publishCallUpdate',

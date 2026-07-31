@@ -16,9 +16,10 @@ const { generateCallSummary } = require('./callSummaryService');
  * @param {string} callSid - Twilio call SID
  * @param {string} recordingSid - Twilio recording SID
  * @param {string} [traceId] - optional trace ID for logging
+ * @param {string|null} [companyId] - explicit tenant for HTTP/manual callers
  * @returns {Promise<{status: string, transcript?: string, gemini_summary?: string, gemini_entities?: Array, sentimentScore?: number}>}
  */
-async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`) {
+async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`, companyId = null) {
     const apiKey = process.env.ASSEMBLYAI_API_KEY;
     if (!apiKey) {
         throw new Error('ASSEMBLYAI_API_KEY not configured');
@@ -31,7 +32,7 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
     }
 
     // Check if transcript already exists
-    const media = await queries.getCallMedia(callSid);
+    const media = await queries.getCallMedia(callSid, companyId);
     if (media.transcripts?.length > 0 && media.transcripts[0].status === 'completed') {
         console.log(`[${traceId}] Transcript already exists for ${callSid}, skipping`);
         return { status: 'already_exists', transcript: media.transcripts[0].text };
@@ -200,13 +201,18 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
             gemini_used_fallback_model: geminiUsedFallbackModel,
             gemini_primary_error: geminiPrimaryError,
         },
+        companyId,
     });
 
     // 9. Clean up stale "processing" placeholder
     try {
         await db.query(
-            `DELETE FROM transcripts WHERE call_sid = $1 AND transcription_sid IS NULL AND status = 'processing'`,
-            [callSid]
+            `DELETE FROM transcripts
+             WHERE call_sid = $1
+               AND transcription_sid IS NULL
+               AND status = 'processing'
+               ${companyId ? 'AND company_id = $2' : ''}`,
+            companyId ? [callSid, companyId] : [callSid]
         );
     } catch (e) { /* ignore cleanup errors */ }
 

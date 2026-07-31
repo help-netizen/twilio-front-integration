@@ -303,7 +303,7 @@ async function getContactLeads(contactId, companyId = null) {
 // additional emails ordered (is_primary, created_at), de-duplicated
 // case-insensitively, [] when the contact has none.
 // =============================================================================
-async function getContactEmails(contactId, primaryEmail = null) {
+async function getContactEmails(contactId, primaryEmail = null, companyId = null) {
     const out = [];
     const seen = new Set();
     const push = (e) => {
@@ -316,9 +316,21 @@ async function getContactEmails(contactId, primaryEmail = null) {
     };
     push(primaryEmail);
     if (contactId) {
+        if (!companyId) {
+            const error = new Error('Company context is required');
+            error.code = 'TENANT_CONTEXT_REQUIRED';
+            error.httpStatus = 403;
+            throw error;
+        }
         const { rows } = await db.query(
-            'SELECT email FROM contact_emails WHERE contact_id = $1 ORDER BY is_primary DESC, created_at',
-            [contactId]
+            `SELECT ce.email
+             FROM contact_emails ce
+             JOIN contacts c
+               ON c.id = ce.contact_id
+              AND c.company_id = $2
+             WHERE ce.contact_id = $1
+             ORDER BY ce.is_primary DESC, ce.created_at`,
+            [contactId, companyId]
         );
         for (const r of rows) push(r.email);
     }

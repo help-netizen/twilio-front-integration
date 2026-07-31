@@ -8,10 +8,13 @@ export interface MessageTarget {
     channel: MessageChannel;
     value: string; // phone (E.164) or email address
     label: string; // human label shown in the dropdown
+    /** Opaque server-resolved target used when the viewer must not receive digits. */
+    targetRef?: 'contact:primary' | 'contact:secondary';
+    conversationId?: string;
 }
 
 export interface SmsFormProps {
-    onSend: (message: string, files: File[] | undefined, target: { channel: MessageChannel; value: string }) => void;
+    onSend: (message: string, files: File[] | undefined, target: MessageTarget) => void;
     onAiFormat?: (message: string) => Promise<string>;
     disabled?: boolean;
     lead?: Lead | null;
@@ -24,6 +27,8 @@ export interface SmsFormProps {
     emailConnected?: boolean;
     /** Currently selected target (phone or email). */
     selectedTarget?: MessageTarget;
+    /** Server-projected targets (used when SMS phone values are opaque). */
+    targets?: MessageTarget[];
     onTargetChange?: (target: MessageTarget) => void;
     /** PULSE-CONTACT-PIN-001: increment to focus the composer textarea (the pinned
      *  bar's Text / Email actions land the user ready to type). */

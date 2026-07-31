@@ -16,7 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
-export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, secondaryPhone, secondaryPhoneName, emails, emailConnected, selectedTarget, onTargetChange, focusSignal }: SmsFormProps) {
+export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, secondaryPhone, secondaryPhoneName, emails, emailConnected, selectedTarget, targets: providedTargets, onTargetChange, focusSignal }: SmsFormProps) {
     const [message, setMessage] = useState('');
     const [isPresetsOpen, setIsPresetsOpen] = useState(false);
     const [isAiFormatting, setIsAiFormatting] = useState(false);
@@ -41,8 +41,8 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
     useEffect(() => { fetchQuickMessages(); }, [fetchQuickMessages]);
 
     const targets = useMemo(
-        () => buildMessageTargets(mainPhone, secondaryPhone, secondaryPhoneName, emails),
-        [mainPhone, secondaryPhone, secondaryPhoneName, emails],
+        () => providedTargets ?? buildMessageTargets(mainPhone, secondaryPhone, secondaryPhoneName, emails),
+        [providedTargets, mainPhone, secondaryPhone, secondaryPhoneName, emails],
     );
     const activeTarget: MessageTarget | undefined = selectedTarget
         ?? targets.find(t => t.channel === 'sms')
@@ -56,7 +56,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
     const handleSend = () => {
         if (!activeTarget) return;
         if (message.trim() || (!isEmail && attachedFiles.length > 0)) {
-            onSend(message, isEmail ? undefined : attachedFiles, { channel: activeTarget.channel, value: activeTarget.value });
+            onSend(message, isEmail ? undefined : attachedFiles, activeTarget);
             setMessage('');
             setAttachedFiles([]);
         }

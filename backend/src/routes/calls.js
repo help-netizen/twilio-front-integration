@@ -3,6 +3,7 @@ const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 const { getTaskContentScope } = require('../middleware/taskContentScope');
+const { getMaskViewer, redactPulsePayload } = require('../services/pulseMaskingService');
 
 // PF007-HARDENING-002: calls surface requires call-history visibility
 // (reports.calls.view) or pulse access; telephony actions need phone perms.
@@ -59,11 +60,12 @@ router.get('/', async (req, res) => {
             providerScope: getProviderScope(req),
         });
 
-        res.json({
+        const maskViewer = await getMaskViewer(req);
+        res.json(redactPulsePayload({
             calls: result.calls.map(formatCall),
             next_cursor: result.nextCursor,
             count: result.calls.length,
-        });
+        }, maskViewer));
     } catch (error) {
         console.error('Error fetching calls:', error);
         res.status(500).json({ error: 'Failed to fetch calls' });
@@ -76,10 +78,11 @@ router.get('/', async (req, res) => {
 router.get('/active', async (req, res) => {
     try {
         const calls = await queries.getActiveCalls(req.companyFilter?.company_id);
-        res.json({
+        const maskViewer = await getMaskViewer(req);
+        res.json(redactPulsePayload({
             active_calls: calls.map(formatCall),
             count: calls.length,
-        });
+        }, maskViewer));
     } catch (error) {
         console.error('Error fetching active calls:', error);
         res.status(500).json({ error: 'Failed to fetch active calls' });
@@ -95,7 +98,8 @@ router.get('/operations-dashboard', async (req, res) => {
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
 
         const data = await operationsDashboard.getOperationsDashboard(companyId);
-        res.json({ ok: true, data });
+        const maskViewer = await getMaskViewer(req);
+        res.json(redactPulsePayload({ ok: true, data }, maskViewer));
     } catch (error) {
         console.error('Error fetching operations dashboard:', error);
         res.status(500).json({ ok: false, error: 'Failed to fetch operations dashboard' });
@@ -113,6 +117,7 @@ router.get('/by-contact', async (req, res) => {
         if (!companyId) {
             return res.status(401).json({ error: 'No company context' });
         }
+        const maskViewer = await getMaskViewer(req);
 
         const limit = parseInt(req.query.limit) || 50;
         const offset = parseInt(req.query.offset) || 0;
@@ -271,13 +276,13 @@ router.get('/by-contact', async (req, res) => {
             console.warn('[by-contact] Leads enrichment failed (non-blocking):', leadsErr.message);
         }
 
-        res.json({
+        res.json(redactPulsePayload({
             conversations,
             leads_map,
             total,
             limit,
             offset,
-        });
+        }, maskViewer));
     } catch (error) {
         console.error('Error fetching calls by contact:', error);
         res.status(500).json({ error: 'Failed to fetch calls by contact' });
@@ -421,8 +426,18 @@ router.post('/timeline/:timelineId/mark-unread', requirePermission('pulse.view',
 // =============================================================================
 router.get('/contact/:contactId', async (req, res) => {
     try {
-        const calls = await queries.getCallsByContactId(parseInt(req.params.contactId));
-        res.json({ calls: calls.map(formatCall), count: calls.length });
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) return res.status(401).json({ error: 'No company context' });
+        const calls = await queries.getCallsByContactId(
+            parseInt(req.params.contactId),
+            companyId,
+            getProviderScope(req)
+        );
+        const maskViewer = await getMaskViewer(req);
+        res.json(redactPulsePayload({
+            calls: calls.map(formatCall),
+            count: calls.length,
+        }, maskViewer));
     } catch (error) {
         console.error('Error fetching contact calls:', error);
         res.status(500).json({ error: 'Failed to fetch contact calls' });
@@ -539,11 +554,16 @@ router.post('/:callSid/transfer', requirePermission('phone_calls.use'), async (r
 // =============================================================================
 router.get('/:callSid', async (req, res) => {
     try {
-        const call = await queries.getCallByCallSid(req.params.callSid, req.companyFilter?.company_id);
+        const call = await queries.getCallByCallSid(
+            req.params.callSid,
+            req.companyFilter?.company_id,
+            getProviderScope(req)
+        );
         if (!call) {
             return res.status(404).json({ error: 'Call not found' });
         }
-        res.json({ call: formatCall(call) });
+        const maskViewer = await getMaskViewer(req);
+        res.json(redactPulsePayload({ call: formatCall(call) }, maskViewer));
     } catch (error) {
         console.error('Error fetching call:', error);
         res.status(500).json({ error: 'Failed to fetch call' });
@@ -555,7 +575,17 @@ router.get('/:callSid', async (req, res) => {
 // =============================================================================
 router.get('/:callSid/recording.mp3', async (req, res) => {
     try {
-        const media = await queries.getCallMedia(req.params.callSid);
+        if (await getMaskViewer(req)) {
+            return res.status(404).json({ error: 'Recording not available' });
+        }
+        const companyId = req.companyFilter?.company_id;
+        const visibleCall = await queries.getCallByCallSid(
+            req.params.callSid,
+            companyId,
+            getProviderScope(req)
+        );
+        if (!visibleCall) return res.status(404).json({ error: 'Recording not available' });
+        const media = await queries.getCallMedia(req.params.callSid, companyId);
         const recording = media.recordings?.[0];
 
         if (!recording || recording.status !== 'completed') {
@@ -640,7 +670,17 @@ router.get('/:callSid/recording.mp3', async (req, res) => {
 router.get('/:callSid/media', async (req, res) => {
     try {
         const callSid = req.params.callSid;
-        const media = await queries.getCallMedia(callSid);
+        if (await getMaskViewer(req)) {
+            return res.status(404).json({ error: 'Call media not available' });
+        }
+        const companyId = req.companyFilter?.company_id;
+        const visibleCall = await queries.getCallByCallSid(
+            callSid,
+            companyId,
+            getProviderScope(req)
+        );
+        if (!visibleCall) return res.status(404).json({ error: 'Call media not available' });
+        const media = await queries.getCallMedia(callSid, companyId);
         const recording = media.recordings?.[0];
         // Prefer the completed transcript over processing/enqueued ones
         const transcript = media.transcripts?.find(t => t.status === 'completed') || media.transcripts?.[0];
@@ -691,10 +731,16 @@ router.get('/:callSid/media', async (req, res) => {
 router.delete('/:callSid/transcript', requirePermission('reports.calls.view'), async (req, res) => {
     try {
         const callSid = req.params.callSid;
+        if (await getMaskViewer(req)) {
+            return res.status(404).json({ error: 'Transcript not available' });
+        }
+        const companyId = req.companyFilter?.company_id;
+        const visibleCall = await queries.getCallByCallSid(callSid, companyId, getProviderScope(req));
+        if (!visibleCall) return res.status(404).json({ error: 'Transcript not available' });
         const db = require('../db/connection');
         const result = await db.query(
-            `DELETE FROM transcripts WHERE call_sid = $1`,
-            [callSid]
+            `DELETE FROM transcripts WHERE call_sid = $1 AND company_id = $2`,
+            [callSid, companyId]
         );
 
         console.log(`🗑️ Deleted ${result.rowCount} transcript(s) for ${callSid}`);
@@ -711,15 +757,26 @@ router.delete('/:callSid/transcript', requirePermission('reports.calls.view'), a
 router.post('/:callSid/transcribe', requirePermission('reports.calls.view', 'pulse.view'), async (req, res) => {
     const callSid = req.params.callSid;
     try {
+        if (await getMaskViewer(req)) {
+            return res.status(404).json({ error: 'Call media not available' });
+        }
+        const companyId = req.companyFilter?.company_id;
+        const visibleCall = await queries.getCallByCallSid(callSid, companyId, getProviderScope(req));
+        if (!visibleCall) return res.status(404).json({ error: 'Call media not available' });
         // Get recording for this call
-        const media = await queries.getCallMedia(callSid);
+        const media = await queries.getCallMedia(callSid, companyId);
         const recording = media.recordings?.[0];
         if (!recording || recording.status !== 'completed') {
             return res.status(404).json({ error: 'No completed recording found for this call' });
         }
 
         const { transcribeCall } = require('../services/transcriptionService');
-        const result = await transcribeCall(callSid, recording.recording_sid, `manual-${callSid}`);
+        const result = await transcribeCall(
+            callSid,
+            recording.recording_sid,
+            `manual-${callSid}`,
+            companyId
+        );
         res.json(result);
     } catch (error) {
         console.error(`Error transcribing call ${callSid}:`, error);
@@ -733,8 +790,14 @@ router.post('/:callSid/transcribe', requirePermission('reports.calls.view', 'pul
 router.post('/:callSid/summarize', requirePermission('reports.calls.view', 'pulse.view'), async (req, res) => {
     const callSid = req.params.callSid;
     try {
+        if (await getMaskViewer(req)) {
+            return res.status(404).json({ error: 'Transcript not available' });
+        }
+        const companyId = req.companyFilter?.company_id;
+        const visibleCall = await queries.getCallByCallSid(callSid, companyId, getProviderScope(req));
+        if (!visibleCall) return res.status(404).json({ error: 'Transcript not available' });
         // 1. Load existing transcript
-        const media = await queries.getCallMedia(callSid);
+        const media = await queries.getCallMedia(callSid, companyId);
         const transcript = media.transcripts?.[0];
         if (!transcript || transcript.status !== 'completed' || !transcript.text) {
             return res.status(404).json({ error: 'No completed transcript found for this call' });
@@ -779,6 +842,7 @@ router.post('/:callSid/summarize', requirePermission('reports.calls.view', 'puls
                     text: transcript.text,
                     isFinal: true,
                     rawPayload: existingPayload,
+                    companyId,
                 });
             } catch (persistErr) {
                 console.error(`Failed to persist gemini_error for ${callSid}:`, persistErr.message);
@@ -812,6 +876,7 @@ router.post('/:callSid/summarize', requirePermission('reports.calls.view', 'puls
             text: transcript.text,
             isFinal: true,
             rawPayload: existingPayload,
+            companyId,
         });
 
         console.log(`✅ Gemini summary (re-)generated for ${callSid}: ${summaryResult.summary?.length} chars, ${summaryResult.entities.length} entities${summaryResult.used_fallback_model ? ` (via fallback ${summaryResult.used_fallback_model})` : ''}`);
@@ -833,7 +898,17 @@ router.post('/:callSid/summarize', requirePermission('reports.calls.view', 'puls
 // =============================================================================
 router.get('/:callSid/events', async (req, res) => {
     try {
-        const events = await queries.getCallEvents(req.params.callSid);
+        if (await getMaskViewer(req)) {
+            return res.status(404).json({ error: 'Call events not available' });
+        }
+        const companyId = req.companyFilter?.company_id;
+        const visibleCall = await queries.getCallByCallSid(
+            req.params.callSid,
+            companyId,
+            getProviderScope(req)
+        );
+        if (!visibleCall) return res.status(404).json({ error: 'Call events not available' });
+        const events = await queries.getCallEvents(req.params.callSid, companyId);
         res.json({ events, count: events.length });
     } catch (error) {
         console.error('Error fetching call events:', error);

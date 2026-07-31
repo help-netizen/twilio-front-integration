@@ -28,9 +28,16 @@ export interface SmsMessage {
 
 export interface SmsConversation {
     id: string;
-    customer_e164: string;
-    proxy_e164: string;
+    customer_e164?: string;
+    proxy_e164?: string;
     state: string;
+}
+
+export interface MaskedSmsTarget {
+    channel: 'sms';
+    target_ref: 'contact:primary' | 'contact:secondary';
+    conversation_id: string | null;
+    label: string;
 }
 
 export type TimelineItemType = 'call' | 'sms' | 'financial' | 'email';
@@ -103,6 +110,8 @@ export interface PulseTimelineMeta {
     external_source: string | null;
     contact: any | null;
     conversations: SmsConversation[];
+    mask_viewer?: boolean;
+    sms_targets?: MaskedSmsTarget[];
 }
 
 export interface PulseTimelinePageResponse {

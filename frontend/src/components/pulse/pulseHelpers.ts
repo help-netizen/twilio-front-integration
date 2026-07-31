@@ -42,7 +42,7 @@ export function getPulsePrimaryText({
     formattedPhone: string;
 }): string {
     if (isAnonymous) return 'Anonymous';
-    return company || leadName || contactName || displayName || formattedPhone;
+    return company || leadName || contactName || displayName || formattedPhone || 'Contact';
 }
 
 // =============================================================================
@@ -69,7 +69,7 @@ export function callToCallData(call: any): CallData {
         from: call.from_number || '', to: call.to_number || '',
         duration: call.duration_sec, status, startTime, endTime,
         cost: call.price ? parseFloat(call.price) : undefined,
-        callSid: call.call_sid, queueTime: 0,
+        callSid: call.call_sid || '', queueTime: 0,
         parentCall: call.parent_call_sid || undefined,
         twilioDirection: call.direction,
         audioUrl: call.recording?.playback_url || undefined,
@@ -78,6 +78,7 @@ export function callToCallData(call: any): CallData {
         transcriptStatus: call.transcript?.status as CallData['transcriptStatus'] || undefined,
         summary: call.transcript?.gemini_summary || undefined,
         answeredBy: call.answered_by || undefined,
+        detailsRedacted: call.details_redacted === true,
     };
 }
 

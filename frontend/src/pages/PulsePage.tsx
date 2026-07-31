@@ -318,7 +318,8 @@ const PulsePageInner: React.FC = () => {
                         // Office roles wait for the full contactDetail; a technician without
                         // contacts.view can't load it (403 → null), so show the minimal bar for
                         // them as soon as there's a contact (ROLE-TIMELINE-TECH-STICKY-001).
-                        const showContactBar = !isAnonTimeline && !p.lead && !p.leadLoading && !!p.contact?.id && (!!p.contactDetail || !canViewContacts);
+                        const showContactBar = !isAnonTimeline && !p.lead && !p.leadLoading && !!p.contact?.id
+                            && (p.maskedViewer || !!p.contactDetail || !canViewContacts);
                         const showLeadBar = !isAnonTimeline && !p.leadLoading && !!p.lead;
                         const smsTarget = p.messageTargets.find(t => t.channel === 'sms');
                         const emailTarget = p.messageTargets.find(t => t.channel === 'email');
@@ -363,8 +364,10 @@ const PulsePageInner: React.FC = () => {
                                     // so the identity falls back to the timeline contact + resolved phone,
                                     // and the address comes from their own job(s). ROLE-TIMELINE-TECH-STICKY-001.
                                     name={p.contactDetail?.contact.full_name || p.contact?.full_name || 'Unknown'}
-                                    address={pickBarAddress(p.contactJobs, p.contactDetail?.contact ?? null)}
+                                    address={pickBarAddress(p.contactJobs, p.contactDetail?.contact ?? p.contact ?? null)}
                                     phone={p.phone || p.contactDetail?.contact.phone_e164 || p.contact?.phone_e164 || null}
+                                    contactId={p.contact!.id}
+                                    canCall={p.hasSmsTarget}
                                     hasEmail={(p.contactEmails?.length ?? 0) > 0}
                                     emailConnected={p.emailConnected}
                                     showNotes={canViewContacts && hasNotes(p.contactDetail?.contact)}
@@ -454,7 +457,7 @@ const PulsePageInner: React.FC = () => {
 
                             {/* Reply card — hidden for anonymous timeline (no callback target).
                                 Shown when there's a phone OR an email reply is possible. */}
-                            {(p.phone || canEmailReply) && !isAnonTimeline && (
+                            {(p.hasSmsTarget || canEmailReply) && !isAnonTimeline && (
                                 <div
                                     className="pulse-card pulse-reply-dock"
                                     data-floating={composerFloating || undefined}
@@ -465,7 +468,7 @@ const PulsePageInner: React.FC = () => {
                                     <SmsForm
                                         onSend={p.handleSendMessage}
                                         onAiFormat={p.handleAiFormat}
-                                        disabled={!p.phone && !canEmailReply}
+                                        disabled={!p.hasSmsTarget && !canEmailReply}
                                         lead={p.lead}
                                         mainPhone={p.phone}
                                         secondaryPhone={p.secondaryPhone}
@@ -473,6 +476,7 @@ const PulsePageInner: React.FC = () => {
                                         emails={p.contactEmails}
                                         emailConnected={p.emailConnected}
                                         selectedTarget={p.selectedTarget}
+                                        targets={p.messageTargets}
                                         onTargetChange={p.setSelectedTarget}
                                         focusSignal={composerFocusSignal}
                                     />

@@ -15,6 +15,7 @@
  */
 import { Mail, MessageSquare } from 'lucide-react';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
+import { MaskedCallLine } from '../shared/MaskedCallLine';
 import { PulsePinnedBar, PulsePinnedBarAction, PulsePinnedBarExpand } from '../pulse/PulsePinnedBar';
 import type { BarAddress } from './contactBarHelpers';
 
@@ -22,6 +23,8 @@ export interface PulseContactBarProps {
     name: string;
     address: BarAddress | null;
     phone: string | null;
+    contactId: number;
+    canCall: boolean;
     /** Contact has at least one email address (button presence). */
     hasEmail: boolean;
     /** Mailbox connected (button intent: compose vs connect guidance). */
@@ -43,12 +46,12 @@ export interface PulseContactBarProps {
 }
 
 export function PulseContactBar({
-    name, address, phone, hasEmail, emailConnected, showNotes, openCount, canOpenCard = true,
+    name, address, phone, contactId, canCall, hasEmail, emailConnected, showNotes, openCount, canOpenCard = true,
     onText, onEmail, onOpenNotes, onOpenLeadsJobs, onExpand,
 }: PulseContactBarProps) {
     // Exactly one primary (violet) action: Call when a phone exists, otherwise the
     // first reachable channel — an email-only contact promotes Email.
-    const emailIsPrimary = !phone && hasEmail;
+    const emailIsPrimary = !canCall && hasEmail;
 
     return (
         <PulsePinnedBar entityLabel="Contact" accent="var(--blanc-success)" className="pulse-contact-bar">
@@ -63,9 +66,13 @@ export function PulseContactBar({
             </div>
 
             <div className="pulse-contact-bar-actions">
-                {phone && (
+                {canCall && (
                     <>
-                        <span className="pulse-pinned-bar-call pulse-contact-bar-call"><ClickToCallButton phone={phone} contactName={name} /></span>
+                        <span className="pulse-pinned-bar-call pulse-contact-bar-call">
+                            <MaskedCallLine entityType="contact" entityId={contactId} maskedLabel="Call">
+                                {phone ? <ClickToCallButton phone={phone} contactName={name} /> : null}
+                            </MaskedCallLine>
+                        </span>
                         <PulsePinnedBarAction label="Text" icon={<MessageSquare aria-hidden />} onClick={onText} />
                     </>
                 )}

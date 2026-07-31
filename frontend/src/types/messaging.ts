@@ -71,8 +71,10 @@ export interface SendMessageRequest {
 }
 
 export interface StartConversationRequest {
-    customerE164: string;
-    proxyE164: string;
+    customerE164?: string;
+    proxyE164?: string;
+    contactId?: number;
+    targetRef?: 'contact:primary' | 'contact:secondary';
     initialMessage?: string;
 }
 

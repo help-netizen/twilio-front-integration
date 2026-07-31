@@ -6,6 +6,7 @@
  */
 
 const EventEmitter = require('events');
+const { redactPulsePayload } = require('./pulseMaskingService');
 
 class RealtimeService extends EventEmitter {
     constructor() {
@@ -29,7 +30,7 @@ class RealtimeService extends EventEmitter {
     /**
      * Add SSE client connection
      */
-    addClient(req, res) {
+    addClient(req, res, { maskViewer = false } = {}) {
         const connectionId = ++this.stats.totalConnections;
         const companyId = req.companyFilter?.company_id || null;
         if (!companyId) {
@@ -51,6 +52,7 @@ class RealtimeService extends EventEmitter {
         this.clients.set(connectionId, {
             res,
             companyId,
+            maskViewer: maskViewer === true,
             connectedAt: new Date(),
             lastEventAt: new Date(),
             ip: req.ip || req.connection.remoteAddress
@@ -132,7 +134,12 @@ class RealtimeService extends EventEmitter {
 
         for (const [connectionId, client] of this.clients.entries()) {
             if (String(client.companyId) !== String(companyId)) continue;
-            const success = this.sendEvent(client.res, eventType, data);
+            // Transcript events are not events a masked viewer may receive at
+            // all. Other tenant events use the same response-boundary projector
+            // as Pulse REST DTOs.
+            if (client.maskViewer && eventType.startsWith('transcript.')) continue;
+            const clientData = redactPulsePayload(data, client.maskViewer);
+            const success = this.sendEvent(client.res, eventType, clientData);
             if (success) {
                 client.lastEventAt = new Date();
                 sent++;

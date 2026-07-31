@@ -32,9 +32,11 @@ interface MaskedCallLineProps {
     entityId: string | number;
     /** The normal real-number row, shown when masking does not apply to this viewer. */
     children: ReactNode;
+    /** Digits-free label for compact actions such as the Pulse contact bar. */
+    maskedLabel?: ReactNode;
 }
 
-export function MaskedCallLine({ entityType, entityId, children }: MaskedCallLineProps) {
+export function MaskedCallLine({ entityType, entityId, children, maskedLabel }: MaskedCallLineProps) {
     const { hasPermission } = useAuthz();
     const canMask = hasPermission('call_masking.use');
     const [dial, setDial] = useState<MaskedDial | null>(null);
@@ -45,6 +47,7 @@ export function MaskedCallLine({ entityType, entityId, children }: MaskedCallLin
     useEffect(() => {
         if (!canMask || entityId == null) { setResolved(true); return; }
         let alive = true;
+        setDial(null);
         setResolved(false);
         (async () => {
             try {
@@ -74,7 +77,7 @@ export function MaskedCallLine({ entityType, entityId, children }: MaskedCallLin
                     title="Call the customer through your company number — recorded, and your line stays private"
                 >
                     <ShieldCheck className="size-3.5 shrink-0" />
-                    {formatPhone(dial.masking_number || '')} · {dial.code}
+                    {maskedLabel ?? `${formatPhone(dial.masking_number || '')} · ${dial.code}`}
                 </a>
                 {dial.caller_phone_missing && (
                     <span className="text-[12px] leading-snug" style={{ color: 'var(--blanc-danger)' }}>
