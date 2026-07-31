@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2, ShieldCheck, Lock, Info } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Checkbox } from '../components/ui/checkbox';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
@@ -19,6 +20,34 @@ import {
 const LOCKED_ROLE_KEY = 'tenant_admin';
 
 /** A role column is locked if it's the admin role or its config is_locked. */
+/**
+ * ROLES-HINT-001: the ⓘ next to a permission opens its description on CLICK/TAP —
+ * a Popover on desktop, the canonical BottomSheet on mobile. The old native
+ * `title` tooltip was invisible on touch and easy to miss on desktop; `title`
+ * stays on the trigger as a desktop hover bonus.
+ */
+function PermissionHint({ label, description }: { label: string; description: string }) {
+    return (
+        <Popover sheetTitle={label}>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    aria-label={`About: ${label}`}
+                    title={description}
+                    className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full"
+                    style={{ color: 'var(--blanc-ink-3)' }}
+                >
+                    <Info className="size-3.5 shrink-0" />
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-auto max-w-[300px] rounded-xl px-3.5 py-3">
+                <div className="text-[13px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{label}</div>
+                <p className="mt-1 text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-2)' }}>{description}</p>
+            </PopoverContent>
+        </Popover>
+    );
+}
+
 function isLockedRole(role: RoleMatrixRole): boolean {
     return role.role_key === LOCKED_ROLE_KEY || role.is_locked;
 }
@@ -122,10 +151,10 @@ function GroupRows({
             </tr>
             {group.items.map(item => (
                 <tr key={item.key} style={{ borderTop: '1px solid var(--blanc-line)' }}>
-                    <td title={item.description || undefined} style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-1)', cursor: item.description ? 'help' : undefined }}>
+                    <td style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-1)' }}>
                         <span className="inline-flex items-center gap-1.5">
                             {item.label}
-                            {item.description && <Info className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} aria-hidden />}
+                            {item.description && <PermissionHint label={item.label} description={item.description} />}
                         </span>
                     </td>
                     {roles.map(role => {
