@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import {
-    CheckCircle2, AlertCircle, Loader2, Unplug, ExternalLink, RefreshCw,
+    CheckCircle2, AlertCircle, Loader2, Unplug, ExternalLink,
     CreditCard, Banknote, ShieldCheck, Lock,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
@@ -83,6 +83,18 @@ export default function StripePaymentsSettingsPage() {
         if (p === 'return' || p === 'refresh') refreshMut.mutate();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Every visit with a connected account silently re-syncs from Stripe (and
+    // trips the revoked-account self-heal) — no manual "Refresh status" button.
+    const [syncedOnVisit, setSyncedOnVisit] = useState(false);
+    useEffect(() => {
+        if (syncedOnVisit || !status?.connected) return;
+        setSyncedOnVisit(true);
+        stripePaymentsApi.refreshStatus()
+            .then(({ status: next }) => qc.setQueryData(['stripe-payments-status'], next))
+            .catch(() => { /* background sync — stored status stands */ });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [status?.connected, syncedOnVisit]);
 
     const readiness = status?.readiness ?? 'not_connected';
     const connected = status?.connected;
@@ -217,9 +229,6 @@ export default function StripePaymentsSettingsPage() {
                     {/* Actions — Connect/Resume primaries live in the clouds above; row renders only when connected */}
                     {connected && (
                         <div className="flex flex-wrap items-center gap-2.5">
-                            <Button variant="outline" onClick={() => refreshMut.mutate()} disabled={refreshMut.isPending}>
-                                <RefreshCw className={`h-4 w-4 mr-2 ${refreshMut.isPending ? 'animate-spin' : ''}`} /> Refresh status
-                            </Button>
                             <Button variant="outline" onClick={() => window.open('https://dashboard.stripe.com/', '_blank')}>
                                 <ExternalLink className="h-4 w-4 mr-2" /> Open Stripe Dashboard
                             </Button>
