@@ -529,16 +529,21 @@ async function getUserDetail(userId, companyId) {
  * Update membership status (active/inactive) with reason.
  */
 async function updateMembershipStatus(userId, companyId, status, reason = null) {
+    // $1 (status) must NOT also be compared against text literals in the CASE arms —
+    // `status = $1` fixes $1 to the membership status enum while `$1 = 'inactive'` wants
+    // text, so Postgres throws "inconsistent types deduced for parameter $1" and every
+    // enable/disable fails (DISABLE-BUG). Pass the inactive flag as its own boolean param.
+    const isInactive = status === 'inactive';
     const { rows } = await db.query(
         `UPDATE company_memberships
-         SET status = $1, 
-             disabled_at = CASE WHEN $1 = 'inactive' THEN NOW() ELSE NULL END,
-             activated_at = CASE WHEN $1 = 'active' THEN NOW() ELSE activated_at END,
+         SET status = $1,
+             disabled_at = CASE WHEN $5 THEN NOW() ELSE NULL END,
+             activated_at = CASE WHEN $5 THEN activated_at ELSE NOW() END,
              disabled_reason = $3,
              updated_at = NOW()
          WHERE user_id = $2 AND company_id = $4
          RETURNING *`,
-        [status, userId, reason, companyId]
+        [status, userId, reason, companyId, isInactive]
     );
     if (rows.length === 0) throw new Error('Membership not found');
 
