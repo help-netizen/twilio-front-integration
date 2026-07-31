@@ -80,7 +80,7 @@ describe('buildConfigOverride', () => {
                 fallback_max_distance_miles: 25,
             },
             overlap: { max_timeframe_overlap_minutes: 0 },
-            feasibility: { min_required_slack_minutes: 15 },
+            feasibility: { min_required_slack_minutes: 0 },
             planning: { horizon_days: 3 },
             ranking: { top_n: 3 },
             workload: { max_day_utilization: 0.95 },
@@ -331,7 +331,7 @@ describe('resolve / get', () => {
     it('TC-RS-012: missing individual key → that key falls back to default', async () => {
         db.query.mockImplementation(async (sql) => /SELECT config/.test(String(sql)) ? configRow({ max_distance_miles: 20 }) : { rows: [] });
         await expect(svc.resolve(COMPANY_A)).resolves.toEqual({
-            max_distance_miles: 20, overlap_minutes: 0, min_buffer_minutes: 15, horizon_days: 3, recommendations_shown: 3,
+            max_distance_miles: 20, overlap_minutes: 0, min_buffer_minutes: 0, horizon_days: 3, recommendations_shown: 3,
         });
     });
 
@@ -339,7 +339,7 @@ describe('resolve / get', () => {
         db.query.mockImplementation(async (sql) =>
             /SELECT config/.test(String(sql)) ? configRow({ max_distance_miles: 'abc', overlap_minutes: null, horizon_days: 7 }) : { rows: [] });
         await expect(svc.resolve(COMPANY_A)).resolves.toEqual({
-            max_distance_miles: 10, overlap_minutes: 0, min_buffer_minutes: 15, horizon_days: 7, recommendations_shown: 3,
+            max_distance_miles: 10, overlap_minutes: 0, min_buffer_minutes: 0, horizon_days: 7, recommendations_shown: 3,
         });
     });
 

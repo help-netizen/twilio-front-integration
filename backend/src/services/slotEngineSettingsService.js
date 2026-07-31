@@ -13,7 +13,7 @@ const queries = require('../db/slotEngineSettingsQueries');
 const DEFAULTS = {
     max_distance_miles: 10,
     overlap_minutes: 0,
-    min_buffer_minutes: 15,
+    min_buffer_minutes: 0,
     horizon_days: 3,
     recommendations_shown: 3,
 };
