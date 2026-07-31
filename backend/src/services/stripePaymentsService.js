@@ -172,6 +172,15 @@ async function connect(companyId, actor, company = {}) {
     try {
         link = await getOnboardingLink(companyId, account);
     } catch (err) {
+        // STRIPE-REVOKED-HEAL-001: the stored account may have been deleted on
+        // Stripe's side — mark it disconnected and mint a fresh one in the same
+        // click instead of stranding the tenant on a dead row.
+        if (isRevokedAccountError(err)) {
+            await markAccountRevoked(companyId, account);
+            account = await ensureAccountForCompany(companyId, company);
+            link = await getOnboardingLink(companyId, account);
+            return { account_id: account.stripe_account_id, onboarding_url: link.url };
+        }
         err.message = `creating onboarding link: ${err.message}`;
         throw err;
     }
@@ -189,10 +198,45 @@ async function getOnboardingLink(companyId, account = null) {
     return { url: link.url };
 }
 
+/**
+ * STRIPE-REVOKED-HEAL-001: the merchant can delete their connected account (or
+ * revoke platform access) directly on Stripe — the platform key then gets
+ * 403 account_invalid for every call. Treat that as a disconnect: flip the
+ * local row, audit it, and let the UI offer a clean re-connect instead of
+ * surfacing a raw Stripe error at login.
+ */
+function isRevokedAccountError(err) {
+    if (!err) return false;
+    if (err.stripeCode === 'account_invalid') return true;
+    return err.httpStatus === 403
+        && /does not have access to account|access may have been revoked/i.test(String(err.message || ''));
+}
+
+async function markAccountRevoked(companyId, account) {
+    await q.setAccountStatus(companyId, 'disconnected');
+    await auditService.log({
+        actor_id: null,
+        action: 'stripe_payments.account_revoked',
+        target_type: 'stripe_account',
+        target_id: account?.stripe_account_id || null,
+        company_id: companyId,
+        details: { reason: 'account deleted or platform access revoked on Stripe' },
+    }).catch(() => {});
+}
+
 async function refreshStatus(companyId) {
     const account = await q.getAccountByCompany(companyId);
     if (!account) throw new StripePaymentsError('NOT_CONNECTED', 'Stripe account not connected', 400);
-    const mapped = await provider.getAccount(account.stripe_account_id);
+    let mapped;
+    try {
+        mapped = await provider.getAccount(account.stripe_account_id);
+    } catch (err) {
+        if (isRevokedAccountError(err)) {
+            await markAccountRevoked(companyId, account);
+            return publicStatus(await q.getAccountByCompany(companyId));
+        }
+        throw err;
+    }
     const prevReadiness = computeReadiness(account);
     const updated = await q.updateAccountStatus(companyId, {
         livemode: mapped.livemode,

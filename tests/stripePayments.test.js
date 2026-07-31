@@ -1053,3 +1053,56 @@ describe('refunds (Phase 5)', () => {
         expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, -100, null);
     });
 });
+
+// STRIPE-REVOKED-HEAL-001: the merchant deleted their connected account on
+// Stripe (or revoked platform access) — the platform key gets 403
+// account_invalid. The service must flip the local row to disconnected and
+// re-connect must mint a fresh account in the same click.
+describe('STRIPE-REVOKED-HEAL-001 revoked/deleted connected account', () => {
+    const staleRow = {
+        stripe_account_id: 'acct_dead', status: 'connected_ready',
+        charges_enabled: true, payouts_enabled: true, details_submitted: true,
+        requirements_past_due: [], capabilities: { card_payments: 'active' },
+    };
+    const revokedErr = Object.assign(
+        new Error("The provided key 'sk_live_x' does not have access to account 'acct_dead' (or that account does not exist). Application access may have been revoked."),
+        { httpStatus: 403 }
+    );
+
+    it('refresh-status flips a revoked account to disconnected instead of throwing', async () => {
+        q.getAccountByCompany
+            .mockResolvedValueOnce(staleRow)
+            .mockResolvedValueOnce({ ...staleRow, status: 'disconnected' });
+        provider.getAccount = jest.fn().mockRejectedValue(revokedErr);
+        const status = await svc.refreshStatus('c-1');
+        expect(q.setAccountStatus).toHaveBeenCalledWith('c-1', 'disconnected');
+        expect(status.readiness).toBe('disconnected');
+        expect(status.can_collect).toBe(false);
+    });
+
+    it('non-revoked provider errors still surface from refresh-status', async () => {
+        q.getAccountByCompany.mockResolvedValueOnce(staleRow);
+        provider.getAccount = jest.fn().mockRejectedValue(Object.assign(new Error('rate limited'), { httpStatus: 429 }));
+        await expect(svc.refreshStatus('c-1')).rejects.toThrow('rate limited');
+        expect(q.setAccountStatus).not.toHaveBeenCalled();
+    });
+
+    it('connect self-heals a dead account and mints a fresh one in the same click', async () => {
+        provider.isConfigured = jest.fn(() => true);
+        q.getAccountByCompany
+            .mockResolvedValueOnce(staleRow)
+            .mockResolvedValueOnce({ ...staleRow, status: 'disconnected' });
+        provider.createAccountLink = jest.fn()
+            .mockRejectedValueOnce(revokedErr)
+            .mockResolvedValueOnce({ url: 'https://connect.stripe.com/setup/new' });
+        provider.deleteAccount = jest.fn().mockRejectedValue(Object.assign(new Error('gone'), { httpStatus: 403 }));
+        provider.createAccount = jest.fn().mockResolvedValue({ id: 'acct_new' });
+        q.insertAccount.mockResolvedValue({ stripe_account_id: 'acct_new', status: 'onboarding_incomplete' });
+
+        const result = await svc.connect('c-1', { id: 'u-1' }, { name: 'ACME' });
+        expect(q.setAccountStatus).toHaveBeenCalledWith('c-1', 'disconnected');
+        expect(provider.createAccount).toHaveBeenCalled();
+        expect(result.account_id).toBe('acct_new');
+        expect(result.onboarding_url).toContain('connect.stripe.com/setup/new');
+    });
+});
