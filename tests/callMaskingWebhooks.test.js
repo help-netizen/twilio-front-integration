@@ -142,7 +142,9 @@ describe('CALL-MASKING Twilio webhook flow', () => {
         expect(twiml).toContain('<Gather');
         expect(twiml).toContain('numDigits="6"');
         expect(twiml).toContain('/voice-mask-code?attempt=1');
-        expect(twiml).toContain('This call may be recorded');
+        expect(twiml).toContain('Enter the six digit customer code');
+        // CALL-MASK-SILENT-001: no recording announcement on either leg.
+        expect(twiml).not.toContain('may be recorded');
         expect(twiml).not.toContain(CUSTOMER_PHONE);
         expect(mockInsertInboxEvent).not.toHaveBeenCalled();
     });
@@ -216,14 +218,16 @@ describe('CALL-MASKING Twilio webhook flow', () => {
         expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1);
     });
 
-    test('called-party notice endpoint is signature-gated', async () => {
+    test('called-party hook answers with an empty document and stays signature-gated', async () => {
         const req = makeReq({
             AccountSid: ACCOUNT_SID,
             CallSid: 'CA_child',
         }, '/webhooks/twilio/voice-mask-consent');
         const res = makeRes();
         await handleMaskingConsent(req, res);
-        expect(res.send.mock.calls[0][0]).toContain('This call may be recorded');
+        // CALL-MASK-SILENT-001: the customer hears a plain call — nothing is said.
+        expect(res.send.mock.calls[0][0]).toContain('<Response />');
+        expect(res.send.mock.calls[0][0]).not.toContain('<Say');
 
         mockValidateRequest.mockReturnValue(false);
         const denied = makeRes();

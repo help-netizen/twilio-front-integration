@@ -185,7 +185,7 @@ function buildMaskingGatherTwiml(baseUrl, attempt = 1, invalid = false) {
             actionOnEmptyResult="true"
             action="${actionUrl}"
             method="POST">${invalidXml}
-        <Say language="en-US">This call may be recorded. Enter the six digit customer code.</Say>
+        <Say language="en-US">Enter the six digit customer code.</Say>
     </Gather>
     <Hangup />
 </Response>`;
@@ -198,7 +198,6 @@ function buildMaskingDialTwiml({ baseUrl, maskingNumber, customerPhone }) {
     const consentUrl = `${baseUrl}/webhooks/twilio/voice-mask-consent`;
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say language="en-US">This call may be recorded.</Say>
     <Dial answerOnBridge="true"
           callerId="${maskingNumber}"
           action="${dialActionUrl}"
@@ -625,10 +624,11 @@ async function handleMaskingConsent(req, res) {
         return res.status(403).send('<Response><Reject/></Response>');
     }
     res.type('text/xml');
+    // CALL-MASK-SILENT-001: the customer answers a plain call from the company
+    // number — no announcement. Kept as an endpoint so calls already bridged
+    // through an older TwiML during a deploy still get a valid (empty) document.
     res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say language="en-US">This call may be recorded.</Say>
-</Response>`);
+<Response />`);
 }
 
 // =============================================================================
