@@ -94,7 +94,7 @@ import TelephonyLayout from './components/telephony/TelephonyLayout';
 import SettingsLayout from './components/settings/SettingsLayout';
 import { SettingsLandingRedirect } from './components/settings/SettingsLandingRedirect';
 import { EventNotification } from './components/EventNotification';
-import NotificationReminderBanner from './components/NotificationReminderBanner';
+import InstallOnboardingSheet from './components/InstallOnboardingSheet';
 import SSEPushBridge from './components/SSEPushBridge';
 import { Toaster } from './components/ui/sonner';
 import { OverlayStackProvider } from './components/ui/OverlayStack';
@@ -236,7 +236,7 @@ function App() {
             </Routes>
           </AppLayout>
           <EventNotification />
-          <NotificationReminderBanner />
+          <InstallOnboardingSheet />
           <SSEPushBridge />
           <Toaster />
           </OverlayStackProvider>
