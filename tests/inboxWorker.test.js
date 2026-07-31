@@ -4,6 +4,10 @@
 // factory is allowed to close over it.
 const mockDbQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockDbQuery }));
+const mockResolveCompanyByAccountSid = jest.fn();
+jest.mock('../backend/src/services/telephonyTenantService', () => ({
+    resolveCompanyByAccountSid: (...args) => mockResolveCompanyByAccountSid(...args),
+}));
 
 const {
     normalizeVoiceEvent,
@@ -124,6 +128,8 @@ describe('Inbox Worker', () => {
         beforeEach(() => {
             mockDbQuery.mockReset();
             mockDbQuery.mockResolvedValue({ rows: [{ id: 1 }] });
+            mockResolveCompanyByAccountSid.mockReset();
+            mockResolveCompanyByAccountSid.mockResolvedValue('00000000-0000-0000-0000-00000000000a');
             mockDb = { query: mockDbQuery };
         });
 
@@ -133,6 +139,7 @@ describe('Inbox Worker', () => {
                 source: 'voice',
                 event_type: 'call-status',
                 payload: {
+                    AccountSid: 'AC-company-a',
                     CallSid: 'CA123',
                     CallStatus: 'completed',
                     Timestamp: '1675000000',
@@ -145,7 +152,53 @@ describe('Inbox Worker', () => {
             const result = await processEvent(inboxEvent);
 
             expect(result.success).toBe(true);
+            expect(mockResolveCompanyByAccountSid).toHaveBeenCalledWith('AC-company-a');
             expect(mockDb.query).toHaveBeenCalled();
+        });
+
+        it('T-foreign/T-blast: unmapped AccountSid is quarantined before any write', async () => {
+            mockResolveCompanyByAccountSid.mockResolvedValue(null);
+            const foreignBefore = { company_id: '00000000-0000-0000-0000-00000000000b', calls: 3 };
+            const inboxEvent = {
+                id: 124,
+                source: 'voice',
+                event_type: 'call-status',
+                payload: {
+                    AccountSid: 'AC-unmapped',
+                    CallSid: 'CA-foreign',
+                    CallStatus: 'ringing',
+                    From: '+15551234567',
+                    To: '+15559876543',
+                },
+            };
+
+            await expect(processEvent(inboxEvent)).rejects.toMatchObject({
+                code: 'TWILIO_TENANT_UNRESOLVED',
+            });
+            expect(mockDb.query).not.toHaveBeenCalled();
+            expect(foreignBefore).toEqual({
+                company_id: '00000000-0000-0000-0000-00000000000b',
+                calls: 3,
+            });
+        });
+
+        it('lookup failure retries instead of writing to the default company', async () => {
+            mockResolveCompanyByAccountSid.mockRejectedValue(new Error('telephony binding DB unavailable'));
+            const inboxEvent = {
+                id: 125,
+                source: 'voice',
+                event_type: 'call-status',
+                payload: {
+                    AccountSid: 'AC-company-a',
+                    CallSid: 'CA-retry',
+                    CallStatus: 'ringing',
+                    From: '+15551234567',
+                    To: '+15559876543',
+                },
+            };
+
+            await expect(processEvent(inboxEvent)).rejects.toThrow('telephony binding DB unavailable');
+            expect(mockDb.query).not.toHaveBeenCalled();
         });
 
         it('should handle unknown event source', async () => {

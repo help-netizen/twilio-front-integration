@@ -4,15 +4,20 @@
  */
 const db = require('./connection');
 const { PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+
+function requireCompanyId(companyId) {
+    if (!companyId) throw new Error('companyId is required');
+    return companyId;
+}
 
 // ─── sms_conversations ───
 async function upsertConversation(data) {
     const {
         twilio_conversation_sid, service_sid, channel_type = 'sms', state = 'active',
         customer_e164, proxy_e164, friendly_name, attributes = {}, source = 'twilio',
-        company_id = DEFAULT_COMPANY_ID,
+        company_id,
     } = data;
+    requireCompanyId(company_id);
 
     const customer_digits = customer_e164 ? customer_e164.replace(/\D/g, '') : null;
 
@@ -27,6 +32,7 @@ async function upsertConversation(data) {
             attributes = sms_conversations.attributes || EXCLUDED.attributes,
             customer_digits = COALESCE(EXCLUDED.customer_digits, sms_conversations.customer_digits),
             updated_at = now()
+        WHERE sms_conversations.company_id = EXCLUDED.company_id
         RETURNING *
     `, [twilio_conversation_sid, service_sid, channel_type, state,
         customer_e164, proxy_e164, friendly_name, JSON.stringify(attributes), source, company_id, customer_digits]);
@@ -34,11 +40,11 @@ async function upsertConversation(data) {
 }
 
 async function getConversations({ limit = 30, cursor, state, company_id } = {}) {
-    const params = [];
-    const conditions = [];
-    let idx = 1;
+    requireCompanyId(company_id);
+    const params = [company_id];
+    const conditions = ['company_id = $1'];
+    let idx = 2;
 
-    if (company_id) { conditions.push(`company_id = $${idx++}`); params.push(company_id); }
     if (state) { conditions.push(`state = $${idx++}`); params.push(state); }
     if (cursor) { conditions.push(`last_message_at < $${idx++}`); params.push(cursor); }
 
@@ -53,13 +59,12 @@ async function getConversations({ limit = 30, cursor, state, company_id } = {}) 
     return result.rows;
 }
 
-async function getConversationById(id, companyId = null) {
-    // Tenant scope (PF007-HARDENING-002): foreign conversations read as missing
-    if (companyId) {
-        const r = await db.query('SELECT * FROM sms_conversations WHERE id = $1 AND company_id = $2', [id, companyId]);
-        return r.rows[0] || null;
-    }
-    const result = await db.query('SELECT * FROM sms_conversations WHERE id = $1', [id]);
+async function getConversationById(id, companyId) {
+    requireCompanyId(companyId);
+    const result = await db.query(
+        'SELECT * FROM sms_conversations WHERE id = $1 AND company_id = $2',
+        [id, companyId]
+    );
     return result.rows[0] || null;
 }
 
@@ -89,21 +94,35 @@ async function isConversationVisibleToProvider(conversationId, companyId, userId
     return r.rows.length > 0;
 }
 
-async function getConversationBySid(sid) {
-    const result = await db.query('SELECT * FROM sms_conversations WHERE twilio_conversation_sid = $1', [sid]);
+async function resolveCompanyByConversationSid(sid) {
+    const result = await db.query(
+        'SELECT company_id FROM sms_conversations WHERE twilio_conversation_sid = $1',
+        [sid]
+    );
+    return result.rows[0]?.company_id || null;
+}
+
+async function getConversationBySid(sid, companyId) {
+    requireCompanyId(companyId);
+    const result = await db.query(
+        'SELECT * FROM sms_conversations WHERE twilio_conversation_sid = $1 AND company_id = $2',
+        [sid, companyId]
+    );
     return result.rows[0] || null;
 }
 
-async function findActiveConversation(customer_e164, proxy_e164) {
+async function findActiveConversation(customer_e164, proxy_e164, companyId) {
+    requireCompanyId(companyId);
     const result = await db.query(`
         SELECT * FROM sms_conversations
-        WHERE customer_e164 = $1 AND proxy_e164 = $2 AND state = 'active'
+        WHERE customer_e164 = $1 AND proxy_e164 = $2 AND company_id = $3 AND state = 'active'
         LIMIT 1
-    `, [customer_e164, proxy_e164]);
+    `, [customer_e164, proxy_e164, companyId]);
     return result.rows[0] || null;
 }
 
-async function updateConversationPreview(conversationId, { body, direction, timestamp, isInbound = false }) {
+async function updateConversationPreview(conversationId, companyId, { body, direction, timestamp, isInbound = false }) {
+    requireCompanyId(companyId);
     const extraSets = isInbound
         ? ', has_unread = true, last_incoming_at = $4'
         : '';
@@ -115,39 +134,44 @@ async function updateConversationPreview(conversationId, { body, direction, time
             first_message_at = COALESCE(first_message_at, $4)
             ${extraSets},
             updated_at = now()
-        WHERE id = $1
-    `, [conversationId, body, direction, timestamp]);
+        WHERE id = $1 AND company_id = $5
+    `, [conversationId, body, direction, timestamp, companyId]);
 }
 
-async function markConversationRead(conversationId) {
+async function markConversationRead(conversationId, companyId) {
+    requireCompanyId(companyId);
     const result = await db.query(`
         UPDATE sms_conversations SET
             has_unread = false,
             last_read_at = now(),
             updated_at = now()
-        WHERE id = $1
+        WHERE id = $1 AND company_id = $2
         RETURNING *
-    `, [conversationId]);
+    `, [conversationId, companyId]);
     return result.rows[0] || null;
 }
 
-async function markConversationUnread(conversationId) {
+async function markConversationUnread(conversationId, companyId) {
+    requireCompanyId(companyId);
     const result = await db.query(`
         UPDATE sms_conversations SET
             has_unread = true,
             updated_at = now()
-        WHERE id = $1
+        WHERE id = $1 AND company_id = $2
         RETURNING *
-    `, [conversationId]);
+    `, [conversationId, companyId]);
     return result.rows[0] || null;
 }
 
-async function updateConversationState(conversationId, state) {
+async function updateConversationState(conversationId, companyId, state) {
+    requireCompanyId(companyId);
     const closedAt = state === 'closed' ? new Date().toISOString() : null;
-    await db.query(`
-        UPDATE sms_conversations SET state = $2, closed_at = COALESCE($3::timestamptz, closed_at), updated_at = now()
-        WHERE id = $1
-    `, [conversationId, state, closedAt]);
+    const result = await db.query(`
+        UPDATE sms_conversations SET state = $3, closed_at = COALESCE($4::timestamptz, closed_at), updated_at = now()
+        WHERE id = $1 AND company_id = $2
+        RETURNING *
+    `, [conversationId, companyId, state, closedAt]);
+    return result.rows[0] || null;
 }
 
 // ─── sms_messages ───
@@ -157,8 +181,9 @@ async function upsertMessage(data) {
         direction, transport = 'sms', body, attributes = {}, delivery_status,
         error_code, error_message, index_in_conversation,
         date_created_remote, date_updated_remote, date_sent_remote,
-        company_id = DEFAULT_COMPANY_ID,
+        company_id,
     } = data;
+    requireCompanyId(company_id);
 
     const result = await db.query(`
         INSERT INTO sms_messages
@@ -173,6 +198,7 @@ async function upsertMessage(data) {
             error_message = COALESCE(EXCLUDED.error_message, sms_messages.error_message),
             date_updated_remote = COALESCE(EXCLUDED.date_updated_remote, sms_messages.date_updated_remote),
             updated_at = now()
+        WHERE sms_messages.company_id = EXCLUDED.company_id
         RETURNING *
     `, [twilio_message_sid, conversation_id, conversation_sid, author, author_type,
         direction, transport, body, JSON.stringify(attributes), delivery_status,
@@ -246,12 +272,21 @@ async function getMessagesPageDesc(conversationIds, companyId, { limit, cursorPr
     return result.rows;
 }
 
-async function updateDeliveryStatus(messageSid, status, errorCode, errorMessage) {
+async function resolveCompanyByMessageSid(messageSid) {
+    const result = await db.query(
+        'SELECT company_id FROM sms_messages WHERE twilio_message_sid = $1',
+        [messageSid]
+    );
+    return result.rows[0]?.company_id || null;
+}
+
+async function updateDeliveryStatus(messageSid, companyId, status, errorCode, errorMessage) {
+    requireCompanyId(companyId);
     const result = await db.query(`
-        UPDATE sms_messages SET delivery_status = $2, error_code = $3, error_message = $4, updated_at = now()
-        WHERE twilio_message_sid = $1
+        UPDATE sms_messages SET delivery_status = $3, error_code = $4, error_message = $5, updated_at = now()
+        WHERE twilio_message_sid = $1 AND company_id = $2
         RETURNING company_id
-    `, [messageSid, status, errorCode, errorMessage]);
+    `, [messageSid, companyId, status, errorCode, errorMessage]);
     return result.rows[0] || null;
 }
 
@@ -259,19 +294,39 @@ async function updateDeliveryStatus(messageSid, status, errorCode, errorMessage)
 async function insertMedia(data) {
     const {
         message_id, twilio_media_sid, category = 'media', filename,
-        content_type, size_bytes, preview_kind, storage_provider = 'twilio', metadata = {},
+        content_type, size_bytes, preview_kind, storage_provider = 'twilio', metadata = {}, company_id,
     } = data;
+    requireCompanyId(company_id);
     const result = await db.query(`
         INSERT INTO sms_media (message_id, twilio_media_sid, category, filename, content_type, size_bytes, preview_kind, storage_provider, metadata)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9
+        FROM sms_messages message
+        JOIN sms_conversations conversation
+          ON conversation.id = message.conversation_id
+         AND conversation.company_id = message.company_id
+        WHERE message.id = $1
+          AND message.company_id = $10
+          AND conversation.company_id = $10
         ON CONFLICT (twilio_media_sid) DO NOTHING
         RETURNING *
-    `, [message_id, twilio_media_sid, category, filename, content_type, size_bytes, preview_kind, storage_provider, JSON.stringify(metadata)]);
-    return result.rows[0];
+    `, [message_id, twilio_media_sid, category, filename, content_type, size_bytes, preview_kind, storage_provider, JSON.stringify(metadata), company_id]);
+    return result.rows[0] || null;
 }
 
 async function getMediaById(id) {
-    const result = await db.query('SELECT * FROM sms_media WHERE id = $1', [id]);
+    // Public <img> requests have no JWT company context. Preserve the crypto-random
+    // UUID contract, but return only media whose message and conversation agree on
+    // the owning company so an orphaned/cross-linked row cannot escape its tenant.
+    const result = await db.query(
+        `SELECT media.*, message.company_id, message.conversation_sid, message.twilio_message_sid
+         FROM sms_media media
+         JOIN sms_messages message ON message.id = media.message_id
+         JOIN sms_conversations conversation
+           ON conversation.id = message.conversation_id
+          AND conversation.company_id = message.company_id
+         WHERE media.id = $1`,
+        [id]
+    );
     return result.rows[0] || null;
 }
 
@@ -299,9 +354,10 @@ async function markEventProcessed(eventId, error = null) {
 }
 
 module.exports = {
-    upsertConversation, getConversations, getConversationById, isConversationVisibleToProvider, getConversationBySid,
+    upsertConversation, getConversations, getConversationById, isConversationVisibleToProvider,
+    resolveCompanyByConversationSid, getConversationBySid,
     findActiveConversation, updateConversationPreview, updateConversationState, markConversationRead, markConversationUnread,
-    upsertMessage, getMessages, updateDeliveryStatus,
+    upsertMessage, getMessages, resolveCompanyByMessageSid, updateDeliveryStatus,
     getMessagesPageDesc,
     insertMedia, getMediaById,
     insertEvent, markEventProcessed,

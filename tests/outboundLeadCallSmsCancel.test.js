@@ -49,7 +49,9 @@ jest.mock('../backend/src/services/stateMachine', () => ({
 
 const mockConvQueries = {
     insertEvent: jest.fn(),
+    resolveCompanyByConversationSid: jest.fn(),
     getConversationBySid: jest.fn(),
+    upsertConversation: jest.fn(),
     upsertMessage: jest.fn(),
     insertMedia: jest.fn(),
     updateConversationPreview: jest.fn(),
@@ -74,13 +76,19 @@ jest.mock('../backend/src/services/realtimeService', () => ({
     publishConversationUpdate: jest.fn(),
     broadcast: jest.fn(),
 }));
-jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
-jest.mock('../backend/src/services/twilioClient', () => ({ getTwilioClient: jest.fn() }));
+const mockDbQuery = jest.fn();
+jest.mock('../backend/src/db/connection', () => ({ query: (...args) => mockDbQuery(...args) }));
+const mockGetTwilioClient = jest.fn();
+jest.mock('../backend/src/services/twilioClient', () => ({ getTwilioClient: () => mockGetTwilioClient() }));
 jest.mock('../backend/src/services/arConfigHelper', () => ({
     getTriggerConfig: jest.fn(async () => ({ enabled: false })),
 }));
 jest.mock('../backend/src/services/pushService', () => ({
     sendPushToCompany: jest.fn(async () => {}),
+}));
+const mockAssertServiceActive = jest.fn(async () => {});
+jest.mock('../backend/src/services/walletService', () => ({
+    assertServiceActive: (...args) => mockAssertServiceActive(...args),
 }));
 
 const eventSubscribers = require('../backend/src/services/eventSubscribers');
@@ -117,7 +125,9 @@ beforeAll(() => {
 beforeEach(() => {
     jest.clearAllMocks();
     mockConvQueries.insertEvent.mockResolvedValue({ id: 900 });
+    mockConvQueries.resolveCompanyByConversationSid.mockResolvedValue(CO);
     mockConvQueries.getConversationBySid.mockResolvedValue(CONVERSATION);
+    mockConvQueries.upsertConversation.mockResolvedValue(CONVERSATION);
     mockConvQueries.upsertMessage.mockResolvedValue({ id: 700, direction: 'inbound' });
     mockConvQueries.updateConversationPreview.mockResolvedValue(undefined);
     mockConvQueries.getConversationById.mockResolvedValue(CONVERSATION);
@@ -133,6 +143,7 @@ beforeEach(() => {
         from_number: CUSTOMER, to_number: PROXY,
     });
     mockQueries.appendCallEvent.mockResolvedValue(undefined);
+    mockDbQuery.mockResolvedValue({ rows: [] });
     mockNormalizeVoiceEvent.mockReturnValue({
         callSid: 'CA1',
         parentCallSid: null,
@@ -161,6 +172,7 @@ describe('SMS direction invariant at webhook ingestion', () => {
             author_type: 'external',
             direction: 'inbound',
         }));
+        expect(mockConvQueries.getConversationBySid).toHaveBeenCalledWith('CH1', CO);
         expect(mockEventEmit).toHaveBeenCalledWith(
             CO,
             'sms.inbound',
@@ -189,6 +201,115 @@ describe('SMS direction invariant at webhook ingestion', () => {
         }));
         expect(mockEventEmit).not.toHaveBeenCalled();
         expect(mockConvQueries.markEventProcessed).toHaveBeenCalledWith(900);
+    });
+
+    test('T-own: unknown Twilio conversation resolves the proxy owner before insert', async () => {
+        mockConvQueries.resolveCompanyByConversationSid.mockResolvedValue(null);
+        mockConvQueries.getConversationBySid.mockResolvedValue(null);
+        mockDbQuery.mockResolvedValue({ rows: [{ company_id: CO }] });
+        const conversationApi = {
+            fetch: jest.fn(async () => ({ attributes: '{}', friendlyName: 'Inbound SMS' })),
+            participants: {
+                list: jest.fn(async () => [{
+                    messagingBinding: { address: CUSTOMER, proxy_address: PROXY },
+                }]),
+            },
+        };
+        const conversations = jest.fn(() => conversationApi);
+        mockGetTwilioClient.mockReturnValue({
+            conversations: { v1: { services: jest.fn(() => ({ conversations })) } },
+        });
+
+        await conversationsService.processWebhookEvent('onMessageAdded', messagePayload(CUSTOMER));
+
+        expect(mockDbQuery).toHaveBeenCalledWith(expect.stringContaining('phone_number_settings'), [PROXY]);
+        expect(mockConvQueries.upsertConversation).toHaveBeenCalledWith(expect.objectContaining({
+            twilio_conversation_sid: 'CH1',
+            customer_e164: CUSTOMER,
+            proxy_e164: PROXY,
+            company_id: CO,
+        }));
+        expect(mockConvQueries.upsertMessage).toHaveBeenCalledWith(expect.objectContaining({ company_id: CO }));
+        expect(mockConvQueries.markEventProcessed).toHaveBeenCalledWith(900);
+    });
+
+    test('T-foreign/T-blast: unmapped proxy is quarantined and foreign state is unchanged', async () => {
+        const foreignBefore = { company_id: 'foreign-company', messages: 7 };
+        mockConvQueries.resolveCompanyByConversationSid.mockResolvedValue(null);
+        mockConvQueries.getConversationBySid.mockResolvedValue(null);
+        mockDbQuery.mockResolvedValue({ rows: [] });
+        const conversationApi = {
+            fetch: jest.fn(async () => ({ attributes: '{}', friendlyName: 'Unknown SMS' })),
+            participants: {
+                list: jest.fn(async () => [{
+                    messagingBinding: { address: CUSTOMER, proxy_address: '+16175550999' },
+                }]),
+            },
+        };
+        const conversations = jest.fn(() => conversationApi);
+        mockGetTwilioClient.mockReturnValue({
+            conversations: { v1: { services: jest.fn(() => ({ conversations })) } },
+        });
+
+        await conversationsService.processWebhookEvent('onMessageAdded', messagePayload(CUSTOMER));
+
+        expect(mockConvQueries.upsertConversation).not.toHaveBeenCalled();
+        expect(mockConvQueries.upsertMessage).not.toHaveBeenCalled();
+        expect(mockConvQueries.updateConversationPreview).not.toHaveBeenCalled();
+        expect(mockConvQueries.markEventProcessed).toHaveBeenCalledWith(
+            900,
+            expect.stringContaining('Unable to resolve SMS tenant')
+        );
+        expect(foreignBefore).toEqual({ company_id: 'foreign-company', messages: 7 });
+    });
+});
+
+describe('tenant-scoped outbound conversation send', () => {
+    test('T-own: lookup, preview update, and reload all retain the company', async () => {
+        const twilioCreate = jest.fn(async () => ({
+            sid: 'IM-own',
+            dateCreated: '2026-07-18T12:05:00.000Z',
+        }));
+        const conversations = jest.fn(() => ({ messages: { create: twilioCreate } }));
+        mockGetTwilioClient.mockReturnValue({
+            conversations: { v1: { services: jest.fn(() => ({ conversations })) } },
+        });
+        mockConvQueries.getConversationById.mockResolvedValue(CONVERSATION);
+        mockConvQueries.upsertMessage.mockResolvedValue({ id: 701, company_id: CO });
+
+        await conversationsService.sendMessage(CONVERSATION.id, {
+            companyId: CO,
+            body: 'Tenant-owned send',
+        });
+
+        expect(mockConvQueries.getConversationById).toHaveBeenNthCalledWith(1, CONVERSATION.id, CO);
+        expect(mockConvQueries.updateConversationPreview).toHaveBeenCalledWith(
+            CONVERSATION.id,
+            CO,
+            expect.objectContaining({ body: 'Tenant-owned send', direction: 'outbound' })
+        );
+        expect(mockAssertServiceActive).toHaveBeenCalledWith(CO);
+        expect(twilioCreate).toHaveBeenCalledWith({ author: 'agent', body: 'Tenant-owned send' });
+    });
+
+    test('T-foreign/T-blast: foreign conversation is not sent or changed', async () => {
+        const foreign = { id: 43, company_id: '00000000-0000-0000-0000-00000000000b', messages: 5 };
+        const before = { ...foreign };
+        mockConvQueries.getConversationById.mockImplementation(async (id, companyId) => (
+            id === foreign.id && companyId === foreign.company_id ? foreign : null
+        ));
+
+        await expect(conversationsService.sendMessage(foreign.id, {
+            companyId: CO,
+            body: 'Cross-tenant send',
+        })).rejects.toThrow(`Conversation ${foreign.id} not found`);
+
+        expect(mockConvQueries.getConversationById).toHaveBeenCalledWith(foreign.id, CO);
+        expect(mockAssertServiceActive).not.toHaveBeenCalled();
+        expect(mockGetTwilioClient).not.toHaveBeenCalled();
+        expect(mockConvQueries.upsertMessage).not.toHaveBeenCalled();
+        expect(mockConvQueries.updateConversationPreview).not.toHaveBeenCalled();
+        expect(foreign).toEqual(before);
     });
 });
 

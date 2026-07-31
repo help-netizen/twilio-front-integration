@@ -383,7 +383,10 @@ describe('sendJobPaymentLink', () => {
         conversationsService.sendMessage.mockResolvedValue({});
         primeLink();
         const res = await svc.sendJobPaymentLink(COMPANY, { id: 'u1' }, 'job-1', { channel: 'sms', amount: 180 });
-        expect(conversationsService.sendMessage).toHaveBeenCalledWith(99, { body: expect.stringContaining('https://checkout/1') });
+        expect(conversationsService.sendMessage).toHaveBeenCalledWith(99, {
+            companyId: COMPANY,
+            body: expect.stringContaining('https://checkout/1'),
+        });
         expect(res).toMatchObject({ sent: true, channel: 'sms' });
         expect(emailService.sendEmail).not.toHaveBeenCalled();
     });

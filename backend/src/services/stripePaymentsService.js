@@ -576,7 +576,7 @@ async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, me
         const conversationsService = require('./conversationsService');
         const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
         // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
-        await conversationsService.sendMessage(conv.id, { body });
+        await conversationsService.sendMessage(conv.id, { companyId, body });
         sentRecipient = customerE164;
     }
 

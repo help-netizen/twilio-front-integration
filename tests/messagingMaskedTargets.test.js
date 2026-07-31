@@ -31,13 +31,13 @@ jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async ()
 
 const messagingRouter = require('../backend/src/routes/messaging');
 
-function app() {
+function app({ masked = true } = {}) {
     const server = express();
     server.use(express.json());
     server.use((req, _res, next) => {
         req.user = { crmUser: { id: 'provider-1' } };
         req.authz = {
-            permissions: ['messages.send', 'call_masking.use'],
+            permissions: ['messages.send', ...(masked ? ['call_masking.use'] : [])],
             scopes: { job_visibility: 'assigned_only' },
         };
         req.companyFilter = { company_id: COMPANY_A };
@@ -60,6 +60,9 @@ beforeEach(() => {
         if (String(sql).includes('FROM sms_conversations')) {
             return { rows: [{ proxy_e164: PROXY }] };
         }
+        if (String(sql).includes('FROM phone_number_settings')) {
+            return { rows: [{ exists: 1 }] };
+        }
         return { rows: [] };
     });
     mockGetOrCreateConversation.mockResolvedValue({
@@ -71,7 +74,7 @@ beforeEach(() => {
     mockSendMessage.mockResolvedValue({ id: 'message-1', body: 'On my way' });
 });
 
-test('masked composer target resolves server-side and response contains no phone digits', async () => {
+test('T-own: masked composer resolves an owned proxy and response contains no phone digits', async () => {
     const response = await request(app())
         .post('/api/messaging/start')
         .send({
@@ -90,8 +93,12 @@ test('masked composer target resolves server-side and response contains no phone
         expect.any(Array),
     ]);
     expect(mockDbQuery.mock.calls[1][1]).toEqual([COMPANY_A, CUSTOMER]);
+    expect(mockDbQuery.mock.calls[2][1]).toEqual([PROXY, COMPANY_A]);
     expect(mockGetOrCreateConversation).toHaveBeenCalledWith(CUSTOMER, PROXY, COMPANY_A);
-    expect(mockSendMessage).toHaveBeenCalledWith('conversation-1', { body: 'On my way' });
+    expect(mockSendMessage).toHaveBeenCalledWith('conversation-1', {
+        companyId: COMPANY_A,
+        body: 'On my way',
+    });
     expect(JSON.stringify(response.body)).not.toContain(CUSTOMER);
     expect(JSON.stringify(response.body)).not.toContain(PROXY);
     expect(JSON.stringify(response.body)).not.toContain('+19999999999');
@@ -121,4 +128,35 @@ test('masked viewer cannot bypass the scoped target resolver with raw phone inpu
     expect(mockDbQuery).not.toHaveBeenCalled();
     expect(mockGetOrCreateConversation).not.toHaveBeenCalled();
     expect(mockSendMessage).not.toHaveBeenCalled();
+});
+
+test('T-foreign/T-blast: raw foreign proxy is 403 and creates or sends nothing', async () => {
+    const foreignProxy = '+16175550999';
+    const foreignBefore = { company_id: COMPANY_B, proxy_e164: foreignProxy, messages: 4 };
+    mockGetActiveSettings.mockResolvedValue({ call_masking_enabled: false });
+    mockDbQuery.mockImplementation(async (sql, params) => {
+        if (String(sql).includes('FROM phone_number_settings')) {
+            return { rows: params[0] === PROXY && params[1] === COMPANY_A ? [{ exists: 1 }] : [] };
+        }
+        return { rows: [] };
+    });
+
+    const response = await request(app({ masked: false }))
+        .post('/api/messaging/start')
+        .send({
+            company_id: COMPANY_B,
+            customerE164: CUSTOMER,
+            proxyE164: foreignProxy,
+            initialMessage: 'Cross-tenant attempt',
+        });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: 'Sending number is not owned by this company' });
+    expect(mockDbQuery).toHaveBeenCalledWith(expect.stringContaining('phone_number_settings'), [
+        foreignProxy,
+        COMPANY_A,
+    ]);
+    expect(mockGetOrCreateConversation).not.toHaveBeenCalled();
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(foreignBefore).toEqual({ company_id: COMPANY_B, proxy_e164: foreignProxy, messages: 4 });
 });

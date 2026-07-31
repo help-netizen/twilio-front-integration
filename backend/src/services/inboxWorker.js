@@ -7,7 +7,6 @@ const { reconcileStaleCalls } = require('./reconcileStale');
 const { getTwilioClient } = require('./twilioClient');
 const callMaskingService = require('./callMaskingService');
 
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 const AI_ANSWERED_BY = 'ai';
 
 function isVapiSipTarget(value) {
@@ -15,13 +14,18 @@ function isVapiSipTarget(value) {
 }
 
 async function resolveEventCompanyId(accountSid) {
-    try {
-        const telephonyTenantService = require('./telephonyTenantService');
-        return await telephonyTenantService.resolveCompanyByAccountSid(accountSid)
-            || DEFAULT_COMPANY_ID;
-    } catch (_) {
-        return DEFAULT_COMPANY_ID;
+    if (!accountSid) {
+        const err = new Error('Twilio event is missing AccountSid; tenant unresolved');
+        err.code = 'TWILIO_TENANT_UNRESOLVED';
+        throw err;
     }
+    const telephonyTenantService = require('./telephonyTenantService');
+    const companyId = await telephonyTenantService.resolveCompanyByAccountSid(accountSid);
+    if (companyId) return companyId;
+
+    const err = new Error(`No company binding for Twilio AccountSid ${accountSid}`);
+    err.code = 'TWILIO_TENANT_UNRESOLVED';
+    throw err;
 }
 
 /**
@@ -165,8 +169,8 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     const normalized = normalizeVoiceEvent(payload);
 
     // ALB-107: attribute the event to a tenant by the Twilio AccountSid
-    // (subaccount per company). Unknown/legacy accounts stay inside the legacy
-    // default tenant instead of falling through to unscoped worker SQL.
+    // (subaccount per company). Unknown bindings and lookup failures throw before
+    // any write so the inbox retry/quarantine path owns recovery.
     const eventCompanyId = await resolveEventCompanyId(payload.AccountSid);
     const maskedSession = await callMaskingService.getSessionForCallEvent(
         eventCompanyId,
@@ -647,7 +651,7 @@ async function processDialEvent(payload, traceId) {
 // When child legs complete, update the parent with the winner's metadata
 // =============================================================================
 
-async function reconcileParentCall(parentCallSid, traceId, companyId = DEFAULT_COMPANY_ID) {
+async function reconcileParentCall(parentCallSid, traceId, companyId) {
     try {
         // Guard: don't overwrite voicemail / missed-call statuses
         // These are set by handleDialAction and must be preserved — Twilio child legs
@@ -906,7 +910,7 @@ async function processTranscriptionEvent(payload, traceId, source = 'webhook') {
 // Twilio API enrichment on final call status
 // =============================================================================
 
-async function enrichFromTwilioApi(callSid, existingCall, traceId, companyId = DEFAULT_COMPANY_ID) {
+async function enrichFromTwilioApi(callSid, existingCall, traceId, companyId) {
     try {
         const client = getTwilioClient();
         const details = await client.calls(callSid).fetch();

@@ -9,6 +9,7 @@ const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope, PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
 const db = require('../db/connection');
 const { getMaskViewer, redactPulsePayload } = require('../services/pulseMaskingService');
+const { toE164 } = require('../utils/phoneUtils');
 
 // Tenant + provider visibility for a conversation by id → null contract = 404
 async function loadVisibleConversation(req) {
@@ -162,13 +163,14 @@ router.post('/:id/messages', requirePermission('messages.send'), upload.single('
         // Twilio Conversations drops body from SMS when mediaSid is set,
         // so send media and text as separate messages.
         let message;
+        const companyId = req.companyFilter?.company_id;
         if (mediaSid && body) {
             // 1) media-only message
-            message = await conversationsService.sendMessage(req.params.id, { body: null, mediaSid, fileInfo });
+            message = await conversationsService.sendMessage(req.params.id, { companyId, body: null, mediaSid, fileInfo });
             // 2) text-only message
-            message = await conversationsService.sendMessage(req.params.id, { body });
+            message = await conversationsService.sendMessage(req.params.id, { companyId, body });
         } else {
-            message = await conversationsService.sendMessage(req.params.id, { body: body || null, mediaSid, fileInfo });
+            message = await conversationsService.sendMessage(req.params.id, { companyId, body: body || null, mediaSid, fileInfo });
         }
 
         res.json({ message });
@@ -186,7 +188,7 @@ router.post('/:id/mark-read', msgRead, async (req, res) => {
     try {
         const owned = await loadVisibleConversation(req);
         if (!owned) return res.status(404).json({ error: 'Conversation not found' });
-        const conv = await convQueries.markConversationRead(req.params.id);
+        const conv = await convQueries.markConversationRead(req.params.id, req.companyFilter?.company_id);
         if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         // SSE push updated conversation
         const realtimeService = require('../services/realtimeService');
@@ -203,7 +205,7 @@ router.post('/:id/mark-unread', msgRead, async (req, res) => {
     try {
         const owned = await loadVisibleConversation(req);
         if (!owned) return res.status(404).json({ error: 'Conversation not found' });
-        const conv = await convQueries.markConversationUnread(req.params.id);
+        const conv = await convQueries.markConversationUnread(req.params.id, req.companyFilter?.company_id);
         if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         const realtimeService = require('../services/realtimeService');
         realtimeService.publishConversationUpdate(conv);
@@ -233,12 +235,25 @@ router.post('/start', requirePermission('messages.send'), async (req, res) => {
         if (!customerE164 || !proxyE164) {
             return res.status(400).json({ error: 'customerE164 and proxyE164 required' });
         }
+        const companyId = req.companyFilter?.company_id;
+        proxyE164 = toE164(proxyE164) || proxyE164;
+        const proxyOwner = await db.query(
+            `SELECT 1
+             FROM phone_number_settings
+             WHERE phone_number = $1
+               AND company_id = $2
+             LIMIT 1`,
+            [proxyE164, companyId]
+        );
+        if (proxyOwner.rows.length === 0) {
+            return res.status(403).json({ error: 'Sending number is not owned by this company' });
+        }
         const conversation = await conversationsService.getOrCreateConversation(
-            customerE164, proxyE164, req.companyFilter?.company_id
+            customerE164, proxyE164, companyId
         );
         let message = null;
         if (initialMessage) {
-            message = await conversationsService.sendMessage(conversation.id, { body: initialMessage });
+            message = await conversationsService.sendMessage(conversation.id, { companyId, body: initialMessage });
         }
         res.json(redactPulsePayload({ conversation, message }, maskViewer));
     } catch (err) {

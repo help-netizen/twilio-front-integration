@@ -17,15 +17,50 @@ const client = new Proxy({}, {
 });
 const SERVICE_SID = process.env.TWILIO_CONVERSATIONS_SERVICE_SID;
 
+function requireCompanyId(companyId) {
+    if (!companyId) {
+        const err = new Error('companyId is required');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        throw err;
+    }
+    return companyId;
+}
+
+function unresolvedWebhookTenant(reference) {
+    const err = new Error(`Unable to resolve SMS tenant for ${reference}`);
+    err.code = 'SMS_TENANT_UNRESOLVED';
+    return err;
+}
+
+async function resolveCompanyIdForProxy(proxyE164) {
+    const normalizedProxy = toE164(proxyE164) || proxyE164;
+    if (!normalizedProxy) return null;
+    const { rows } = await db.query(
+        `SELECT company_id
+         FROM phone_number_settings
+         WHERE phone_number = $1
+         LIMIT 1`,
+        [normalizedProxy]
+    );
+    return rows[0]?.company_id || null;
+}
+
+async function getPersistedWebhookConversation(conversationSid) {
+    const companyId = await convQueries.resolveCompanyByConversationSid(conversationSid);
+    if (!companyId) return null;
+    return convQueries.getConversationBySid(conversationSid, companyId);
+}
+
 /**
  * Create or find a Twilio Conversation for a customer↔proxy pair.
  */
 async function getOrCreateConversation(customerE164, proxyE164, companyId) {
+    requireCompanyId(companyId);
     // Normalize phones to E.164 (defense-in-depth)
     customerE164 = toE164(customerE164) || customerE164;
     proxyE164 = toE164(proxyE164) || proxyE164;
     // Check DB first
-    let dbConv = await convQueries.findActiveConversation(customerE164, proxyE164);
+    let dbConv = await convQueries.findActiveConversation(customerE164, proxyE164, companyId);
     if (dbConv) return dbConv;
 
     // Create in Twilio
@@ -54,6 +89,7 @@ async function getOrCreateConversation(customerE164, proxyE164, companyId) {
         friendly_name: `SMS ${customerE164}`,
         company_id: companyId,
     });
+    if (!dbConv) throw new Error('Conversation belongs to another company');
 
     return dbConv;
 }
@@ -101,8 +137,9 @@ async function uploadMediaToMCS(buffer, contentType, filename) {
 /**
  * Send a message in a conversation.
  */
-async function sendMessage(conversationId, { body, author = 'agent', mediaSid, fileInfo }) {
-    const conv = await convQueries.getConversationById(conversationId);
+async function sendMessage(conversationId, { companyId, body, author = 'agent', mediaSid, fileInfo }) {
+    requireCompanyId(companyId);
+    const conv = await convQueries.getConversationById(conversationId, companyId);
     if (!conv) throw new Error(`Conversation ${conversationId} not found`);
 
     // Wallet gate: block outbound SMS when the balance is at/below the grace floor.
@@ -141,13 +178,14 @@ async function sendMessage(conversationId, { body, author = 'agent', mediaSid, f
             content_type: fileInfo.contentType,
             size_bytes: fileInfo.size,
             preview_kind: guessPreviewKind(fileInfo.contentType),
+            company_id: companyId,
         });
         dbMsg.media = mediaRecord ? [mediaRecord] : [];
     } else {
         dbMsg.media = [];
     }
 
-    await convQueries.updateConversationPreview(conv.id, {
+    await convQueries.updateConversationPreview(conv.id, companyId, {
         body: body || '[media]',
         direction: 'outbound',
         timestamp: twilioMsg.dateCreated || new Date().toISOString(),
@@ -175,7 +213,7 @@ async function sendMessage(conversationId, { body, author = 'agent', mediaSid, f
 
     // SSE push
     realtimeService.publishMessageAdded(dbMsg, conv);
-    const updatedConv = await convQueries.getConversationById(conv.id);
+    const updatedConv = await convQueries.getConversationById(conv.id, companyId);
     if (updatedConv) realtimeService.publishConversationUpdate(updatedConv);
 
     return dbMsg;
@@ -226,7 +264,7 @@ async function handleMessageAdded(payload) {
     const conversationSid = payload.ConversationSid;
 
     // Ensure conversation exists in DB
-    let conv = await convQueries.getConversationBySid(conversationSid);
+    let conv = await getPersistedWebhookConversation(conversationSid);
     if (!conv) {
         // Fetch from Twilio
         const twilioConv = await client.conversations.v1
@@ -262,13 +300,20 @@ async function handleMessageAdded(payload) {
             }
         }
 
+        const companyId = await resolveCompanyIdForProxy(proxyE164);
+        if (!companyId) {
+            throw unresolvedWebhookTenant(`proxy ${proxyE164 || 'missing'}`);
+        }
+
         conv = await convQueries.upsertConversation({
             twilio_conversation_sid: conversationSid,
             service_sid: SERVICE_SID,
             customer_e164: customerE164,
             proxy_e164: proxyE164,
             friendly_name: customerE164 ? `SMS ${customerE164}` : twilioConv.friendlyName,
+            company_id: companyId,
         });
+        if (!conv) throw unresolvedWebhookTenant(`conversation ${conversationSid}`);
     }
 
     // If conversation still has no customer_e164, try to backfill from participants
@@ -340,6 +385,7 @@ async function handleMessageAdded(payload) {
                     content_type: item.ContentType,
                     size_bytes: item.Size,
                     preview_kind: guessPreviewKind(item.ContentType),
+                    company_id: conv.company_id,
                 });
                 console.log(`[ConvService] Saved media ${item.Sid} for message ${msg.id}`);
             }
@@ -348,7 +394,7 @@ async function handleMessageAdded(payload) {
         }
     }
 
-    await convQueries.updateConversationPreview(conv.id, {
+    await convQueries.updateConversationPreview(conv.id, conv.company_id, {
         body: payload.Body || '[media]',
         direction,
         timestamp: payload.DateCreated || new Date().toISOString(),
@@ -463,16 +509,20 @@ async function handleMessageAdded(payload) {
 
     // SSE push (include timelineId for deep-linking)
     realtimeService.publishMessageAdded(msg, conv, timelineId);
-    const updatedConv = await convQueries.getConversationById(conv.id);
+    const updatedConv = await convQueries.getConversationById(conv.id, conv.company_id);
     if (updatedConv) realtimeService.publishConversationUpdate(updatedConv);
 }
 
 async function handleDeliveryUpdated(payload) {
     if (payload.MessageSid) {
+        const companyId = payload.ConversationSid
+            ? await convQueries.resolveCompanyByConversationSid(payload.ConversationSid)
+            : await convQueries.resolveCompanyByMessageSid(payload.MessageSid);
+        if (!companyId) throw unresolvedWebhookTenant(`message ${payload.MessageSid}`);
         const status = payload.DeliveryStatus || payload.Status;
         const errorCode = payload.ErrorCode ? parseInt(payload.ErrorCode) : null;
         const updatedMessage = await convQueries.updateDeliveryStatus(
-            payload.MessageSid, status, errorCode, payload.ErrorMessage
+            payload.MessageSid, companyId, status, errorCode, payload.ErrorMessage
         );
         realtimeService.publishMessageDelivery(
             payload.MessageSid, status, errorCode, updatedMessage?.company_id
@@ -481,11 +531,13 @@ async function handleDeliveryUpdated(payload) {
 }
 
 async function handleConversationStateUpdated(payload) {
-    const conv = await convQueries.getConversationBySid(payload.ConversationSid);
+    const conv = await getPersistedWebhookConversation(payload.ConversationSid);
     if (conv) {
-        await convQueries.updateConversationState(conv.id, payload.StateTo || 'closed');
-        const updated = await convQueries.getConversationById(conv.id);
+        await convQueries.updateConversationState(conv.id, conv.company_id, payload.StateTo || 'closed');
+        const updated = await convQueries.getConversationById(conv.id, conv.company_id);
         if (updated) realtimeService.publishConversationUpdate(updated);
+    } else {
+        throw unresolvedWebhookTenant(`conversation ${payload.ConversationSid || 'missing'}`);
     }
 }
 
@@ -511,11 +563,7 @@ async function getMediaTemporaryUrl(mediaId, forceRefresh = false) {
         return { url: media.temporary_url, expiresAt: media.temporary_url_expires_at, contentType: media.content_type };
     }
 
-    // Get the message to find the conversation sid
-    const message = await db.query('SELECT conversation_sid, twilio_message_sid FROM sms_messages WHERE id = $1', [media.message_id]);
-    if (!message.rows[0]) throw new Error(`Message not found for media ${mediaId}`);
-
-    const { conversation_sid, twilio_message_sid } = message.rows[0];
+    const { conversation_sid, twilio_message_sid } = media;
 
     // Fetch media list from Twilio Conversations API
     const mediaList = await client.conversations.v1
@@ -563,8 +611,17 @@ async function getMediaTemporaryUrl(mediaId, forceRefresh = false) {
     // Cache for 4 hours
     const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
     await db.query(
-        'UPDATE sms_media SET temporary_url = $2, temporary_url_expires_at = $3, updated_at = now() WHERE id = $1',
-        [mediaId, tempUrl, expiresAt]
+        `UPDATE sms_media media
+         SET temporary_url = $2, temporary_url_expires_at = $3, updated_at = now()
+         FROM sms_messages message
+         JOIN sms_conversations conversation
+           ON conversation.id = message.conversation_id
+          AND conversation.company_id = message.company_id
+         WHERE media.id = $1
+           AND media.message_id = message.id
+           AND message.company_id = $4
+           AND conversation.company_id = $4`,
+        [mediaId, tempUrl, expiresAt, media.company_id]
     );
 
     return { url: tempUrl, expiresAt, contentType: media.content_type };

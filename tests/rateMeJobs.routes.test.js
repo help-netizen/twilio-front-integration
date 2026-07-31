@@ -218,6 +218,7 @@ describe('POST /api/jobs/:id/rate-link', () => {
             COMPANY_X
         );
         expect(mockSendMessage).toHaveBeenCalledWith('conv-1', {
+            companyId: COMPANY_X,
             body: expect.stringContaining(RATE_URL),
             author: 'agent',
         });

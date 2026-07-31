@@ -40,7 +40,11 @@ const REGISTRY = {
         const proxy = params.from || process.env.SOFTPHONE_CALLER_ID;
         if (!to) throw new Error('send_sms requires "to"');
         const conv = await conversationsService.getOrCreateConversation(to, proxy, companyId);
-        const msg = await conversationsService.sendMessage(conv.id, { body: params.body || '', author: 'automation' });
+        const msg = await conversationsService.sendMessage(conv.id, {
+            companyId,
+            body: params.body || '',
+            author: 'automation',
+        });
         return { conversation_id: conv.id, message_sid: msg?.twilio_message_sid || null };
     },
 

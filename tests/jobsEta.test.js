@@ -360,10 +360,10 @@ describe('POST /api/jobs/:id/eta/notify', () => {
         expect(proxyArg).toBe('+16175550000'); // MRU hit
         expect(compArg).toBe(COMPANY);
 
-        // sendMessage('conv-uuid', { body: <EXACT>, author: 'agent' }).
+        // sendMessage('conv-uuid', { companyId: COMPANY, body: <EXACT>, author: 'agent' }).
         expect(mockSendMessage).toHaveBeenCalledTimes(1);
         expect(mockSendMessage.mock.calls[0][0]).toBe('conv-uuid');
-        expect(mockSendMessage.mock.calls[0][1]).toEqual({ body: EXACT_SMS, author: 'agent' });
+        expect(mockSendMessage.mock.calls[0][1]).toEqual({ companyId: COMPANY, body: EXACT_SMS, author: 'agent' });
 
         // updateBlancStatus(5, 'On the way', COMPANY, CRM actor).
         expect(mockUpdateBlancStatus).toHaveBeenCalledTimes(1);

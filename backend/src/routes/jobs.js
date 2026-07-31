@@ -998,7 +998,7 @@ router.post('/:id/eta/notify', requirePermission('messages.send'), async (req, r
         try {
             const conv = await conversationsService.getOrCreateConversation(customerE164, proxyE164, companyId);
             conversationId = conv.id;
-            await conversationsService.sendMessage(conv.id, { body, author: 'agent' });
+            await conversationsService.sendMessage(conv.id, { companyId, body, author: 'agent' });
         } catch (sendErr) {
             if (sendErr.code === 'WALLET_BLOCKED') {
                 return res.status(sendErr.httpStatus || 402).json({
@@ -1091,6 +1091,7 @@ router.post('/:id/rate-link', requirePermission('messages.send'), async (req, re
                     companyId
                 );
                 await conversationsService.sendMessage(conv.id, {
+                    companyId,
                     body: `How did we do? Please rate your recent service: ${url}`,
                     author: 'agent',
                 });

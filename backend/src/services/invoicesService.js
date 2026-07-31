@@ -702,7 +702,7 @@ async function sendInvoice(
         const conversationsService = require('./conversationsService');
         const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
         // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
-            await conversationsService.sendMessage(conv.id, { body: buildSmsBody(message, link) });
+            await conversationsService.sendMessage(conv.id, { companyId, body: buildSmsBody(message, link) });
         }
     } catch (err) {
         if (activityActor) {
