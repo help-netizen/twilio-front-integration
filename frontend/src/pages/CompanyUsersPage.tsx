@@ -23,7 +23,7 @@ export default function CompanyUsersPage() {
             title="Users"
             description="Manage who can sign in, their role, and what they can do."
             actions={
-                <Button onClick={() => { h.setCreateForm(() => ({ full_name: '', email: '', role_key: 'dispatcher' })); h.setTempPassword(null); h.setCreateOpen(true); }}>
+                <Button onClick={() => { h.setCreateForm(() => ({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false })); h.setTempPassword(null); h.setCreateOpen(true); }}>
                     <UserPlus className="size-4 mr-2" />Add user
                 </Button>
             }
@@ -56,7 +56,7 @@ export default function CompanyUsersPage() {
             </div>
 
             <CreateUserDialog open={h.createOpen} setOpen={h.setCreateOpen} createForm={h.createForm} setCreateForm={h.setCreateForm} creating={h.creating} tempPassword={h.tempPassword} setTempPassword={h.setTempPassword} handleCreate={h.handleCreate} />
-            <EditUserDialog open={h.editOpen} setOpen={h.setEditOpen} user={h.editUser} form={h.editForm} setForm={h.setEditForm} handleUpdate={h.handleUpdateUser} loading={h.actionLoading} onResetPassword={h.resetPassword} />
+            <EditUserDialog open={h.editOpen} setOpen={h.setEditOpen} user={h.editUser} form={h.editForm} setForm={h.setEditForm} handleUpdate={h.handleUpdateUser} loading={h.actionLoading} onResetPassword={h.resetPassword} onToggleStatus={h.toggleStatus} onDeleteUser={h.deleteUser} />
             <ConfirmActionDialog confirmDialog={h.confirmDialog} setConfirmDialog={h.setConfirmDialog} />
         </SettingsPageShell>
     );

@@ -6,6 +6,7 @@ import type {
 } from '../types/telephony';
 
 import { authedFetch } from './apiClient';
+import type { CompanyUser } from '../hooks/useCompanyUsers';
 
 // ─── API Base ─────────────────────────────────────────────────────────────────
 
@@ -160,6 +161,13 @@ export const telephonyApi = {
             method: 'PUT',
             body: JSON.stringify(payload),
         }),
+    /** #83 — active members of the given roles with no phone on file (they can't
+     *  place masked calls until a number is added). Rows are CompanyUser-shaped so
+     *  the settings page can open the standard edit dialog directly. */
+    getMaskingMissingPhone: async (roles: string[]): Promise<CompanyUser[]> =>
+        maskingFetch<CompanyUser[]>(
+            `/telephony/numbers/masking-settings/missing-phone?roles=${encodeURIComponent(roles.join(','))}`,
+        ),
 
     // Audio — still mock (no backend yet)
     listAudio: async (): Promise<AudioAsset[]> => { await delay(); return MOCK_AUDIO; },

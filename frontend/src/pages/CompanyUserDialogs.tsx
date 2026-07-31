@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { FloatingField } from '../components/ui/floating-field';
 import { FloatingSelect } from '../components/ui/floating-select';
 import { Switch } from '../components/ui/switch';
-import { Copy, Link2, Unlink, KeyRound } from 'lucide-react';
+import { Copy, Link2, Unlink, KeyRound, Ban, Power, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { authedFetch } from '../services/apiClient';
@@ -87,7 +87,8 @@ function ZenbookerLinkField({ value, onChange }: { value: string | null; onChang
     );
 }
 
-interface CreateDialogProps { open: boolean; setOpen: (v: boolean) => void; createForm: { full_name: string; email: string; role_key: string }; setCreateForm: (fn: (f: { full_name: string; email: string; role_key: string }) => { full_name: string; email: string; role_key: string }) => void; creating: boolean; tempPassword: string | null; setTempPassword: (v: string | null) => void; handleCreate: () => void; }
+type CreateForm = { full_name: string; email: string; phone: string; role_key: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; location_tracking_enabled: boolean };
+interface CreateDialogProps { open: boolean; setOpen: (v: boolean) => void; createForm: CreateForm; setCreateForm: (fn: (f: CreateForm) => CreateForm) => void; creating: boolean; tempPassword: string | null; setTempPassword: (v: string | null) => void; handleCreate: () => void; }
 
 export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, creating, tempPassword, setTempPassword, handleCreate }: CreateDialogProps) {
     return (
@@ -122,17 +123,56 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                     <>
                         <DialogBody className="md:px-8 md:py-7">
                             <div className="mx-auto w-full max-w-[740px] space-y-6">
+                                {/* Identity — one field per row (#84) */}
                                 <div className="space-y-3.5">
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                        <FloatingField id="user-name" label="Full name" value={createForm.full_name} onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))} />
-                                        <FloatingField id="user-email" label="Email" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
-                                    </div>
+                                    <FloatingField id="user-name" label="Full name" value={createForm.full_name} onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))} />
+                                    <FloatingField id="user-email" label="Email" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
+                                    <FloatingField id="user-phone" label="Phone (optional)" type="tel" value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} />
                                     <FloatingSelect label="System role" value={createForm.role_key} onValueChange={v => setCreateForm(f => ({ ...f, role_key: v }))}>
                                         <SelectItem value="tenant_admin">Admin</SelectItem>
                                         <SelectItem value="manager">Manager</SelectItem>
                                         <SelectItem value="dispatcher">Dispatcher</SelectItem>
                                         <SelectItem value="provider">Field Provider</SelectItem>
                                     </FloatingSelect>
+
+                                    {/* Schedule color — mirrors Edit profile */}
+                                    <div className="space-y-2">
+                                        <div className="blanc-eyebrow">Schedule color</div>
+                                        <div className="flex items-center gap-3">
+                                            <Input type="color" className="w-14 h-9 p-1 cursor-pointer bg-transparent" value={createForm.schedule_color} onChange={e => setCreateForm(f => ({ ...f, schedule_color: e.target.value }))} />
+                                            <div className="text-sm font-mono text-muted-foreground uppercase">{createForm.schedule_color}</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Operational settings — same toggles as Edit profile (Zenbooker
+                                    link is configured later, in Edit, once the provider exists). */}
+                                <div className="space-y-4">
+                                    <div className="blanc-eyebrow">Operational settings</div>
+
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-0.5">
+                                            <Label>Softphone Access</Label>
+                                            <div className="text-[13px] text-muted-foreground">Can make/receive calls via browser</div>
+                                        </div>
+                                        <Switch checked={createForm.phone_calls_allowed} onCheckedChange={v => setCreateForm(f => ({ ...f, phone_calls_allowed: v }))} />
+                                    </div>
+
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-0.5">
+                                            <Label>Field Provider</Label>
+                                            <div className="text-[13px] text-muted-foreground">Appears in scheduler and assignments</div>
+                                        </div>
+                                        <Switch checked={createForm.is_provider} onCheckedChange={v => setCreateForm(f => ({ ...f, is_provider: v }))} />
+                                    </div>
+
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-0.5">
+                                            <Label>Location Tracking</Label>
+                                            <div className="text-[13px] text-muted-foreground">Track via mobile app</div>
+                                        </div>
+                                        <Switch checked={createForm.location_tracking_enabled} onCheckedChange={v => setCreateForm(f => ({ ...f, location_tracking_enabled: v }))} />
+                                    </div>
                                 </div>
                             </div>
                         </DialogBody>
@@ -156,10 +196,28 @@ interface EditUserDialogProps {
     handleUpdate: () => void;
     loading: string | null;
     onResetPassword?: (user: CompanyUser) => void;
+    onToggleStatus?: (user: CompanyUser) => void;
+    onDeleteUser?: (user: CompanyUser) => void;
 }
 
-export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdate, loading, onResetPassword }: EditUserDialogProps) {
+export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdate, loading, onResetPassword, onToggleStatus, onDeleteUser }: EditUserDialogProps) {
     if (!user) return null;
+
+    const isActive = user.membership_status === 'active';
+    const busy = loading === user.id;
+
+    const handleDisableToggle = () => {
+        if (!onToggleStatus) return;
+        if (isActive && !window.confirm(`Disable ${user.full_name || user.email}? They will lose access to the company.`)) return;
+        onToggleStatus(user);
+        setOpen(false);
+    };
+
+    const handleDelete = () => {
+        if (!onDeleteUser) return;
+        if (!window.confirm(`Permanently remove ${user.full_name || user.email} from the company? This unlinks their account and cannot be undone.`)) return;
+        onDeleteUser(user);
+    };
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -188,9 +246,30 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                             <FloatingField id="edit-user-email" label="Email (sign-in)" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
                             <FloatingField id="edit-user-phone" label="Phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
                         </div>
-                        <Button type="button" variant="outline" size="sm" onClick={() => onResetPassword(user)}>
-                            <KeyRound className="size-4 mr-1.5" /> Send password-reset link
-                        </Button>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={() => onResetPassword(user)}>
+                                <KeyRound className="size-4 mr-1.5" /> Send password-reset link
+                            </Button>
+                            {onToggleStatus && (
+                                <Button type="button" variant="outline" size="sm" disabled={busy} onClick={handleDisableToggle}>
+                                    {isActive
+                                        ? <><Ban className="size-4 mr-1.5" /> Disable user</>
+                                        : <><Power className="size-4 mr-1.5" /> Enable user</>}
+                                </Button>
+                            )}
+                        </div>
+                        {/* #86: fully unlink a disabled user from the company (destructive). */}
+                        {!isActive && onDeleteUser && (
+                            <button
+                                type="button"
+                                disabled={busy}
+                                onClick={handleDelete}
+                                className="inline-flex items-center gap-1.5 text-[13px] font-medium disabled:opacity-50"
+                                style={{ color: 'var(--blanc-danger)' }}
+                            >
+                                <Trash2 className="size-3.5" /> Remove from company
+                            </button>
+                        )}
                       </div>
                     )}
 
@@ -245,14 +324,6 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                                 <div className="text-[13px] text-muted-foreground">Track via mobile app</div>
                             </div>
                             <Switch checked={form.location_tracking_enabled} onCheckedChange={v => setForm(f => ({ ...f, location_tracking_enabled: v }))} />
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label>Call Masking</Label>
-                                <div className="text-[13px] text-muted-foreground">Proxy via Twilio proxy numbers</div>
-                            </div>
-                            <Switch checked={form.call_masking_enabled} onCheckedChange={v => setForm(f => ({ ...f, call_masking_enabled: v }))} />
                         </div>
                     </div>
                   </div>

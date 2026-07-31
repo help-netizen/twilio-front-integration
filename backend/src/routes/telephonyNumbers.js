@@ -10,6 +10,7 @@ const svc = require('../services/telephonyTenantService');
 const territoryGeoService = require('../services/territoryGeoService');
 const callBlacklistService = require('../services/callBlacklistService');
 const callMaskingService = require('../services/callMaskingService');
+const userService = require('../services/userService');
 const { requirePermission } = require('../middleware/authorization');
 
 function companyId(req) {
@@ -203,6 +204,21 @@ router.put('/masking-settings', requirePermission('tenant.telephony.manage'), as
         );
         res.json({ ok: true, data: settings });
     } catch (err) { fail(res, err, 'Failed to save call masking settings'); }
+});
+
+// GET /api/telephony/numbers/masking-settings/missing-phone?roles=provider,dispatcher
+//   Active members of the given roles who have no phone on file (#83). They can't
+//   place masked calls until a number is added to their profile. Same audience as
+//   the masking settings themselves (tenant.telephony.manage).
+router.get('/masking-settings/missing-phone', requirePermission('tenant.telephony.manage'), async (req, res) => {
+    try {
+        const roles = String(req.query.roles || '')
+            .split(',')
+            .map(r => r.trim())
+            .filter(Boolean);
+        const users = await userService.listActiveUsersMissingPhone(companyId(req), roles);
+        res.json({ ok: true, data: users });
+    } catch (err) { fail(res, err, 'Failed to load users missing a phone number'); }
 });
 
 // POST /api/telephony/numbers/blacklist — add a blocked inbound caller

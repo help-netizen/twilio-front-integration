@@ -78,7 +78,7 @@ export default function AdminCompanyDetailPage() {
                     <Badge variant={company.status === 'active' ? 'default' : company.status === 'suspended' ? 'destructive' : 'secondary'}>
                         {company.status}
                     </Badge>
-                    <Button onClick={() => { h.setCreateForm(() => ({ full_name: '', email: '', role_key: 'dispatcher' })); h.setTempPassword(null); h.setCreateOpen(true); }}>
+                    <Button onClick={() => { h.setCreateForm(() => ({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false })); h.setTempPassword(null); h.setCreateOpen(true); }}>
                         <UserPlus className="size-4 mr-2" />Add user
                     </Button>
                 </>

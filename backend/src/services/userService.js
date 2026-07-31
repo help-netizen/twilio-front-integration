@@ -141,10 +141,9 @@ async function listUsers(companyId, opts = {}) {
                 COALESCE(p.phone_calls_allowed, false) as phone_calls_allowed,
                 COALESCE(p.is_provider, false) as is_provider,
                 p.schedule_color,
-                COALESCE(p.call_masking_enabled, false) as call_masking_enabled,
                 COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled,
                 p.zenbooker_team_member_id
-         FROM crm_users u 
+         FROM crm_users u
          ${join}
          LEFT JOIN company_user_profiles p ON p.membership_id = m.id
          ${where}
@@ -154,6 +153,45 @@ async function listUsers(companyId, opts = {}) {
     );
 
     return { users: rows, total, page, limit };
+}
+
+/**
+ * Active members whose profile has no phone number, optionally restricted to a
+ * set of role_keys. Returns the SAME row shape as listUsers so the caller can
+ * feed a row straight into the edit dialog. Used by the Call Masking settings
+ * page (#83) to surface techs who can't place masked calls until a number is on
+ * file. Not paginated — the set is small (people missing a phone).
+ */
+async function listActiveUsersMissingPhone(companyId, roleKeys = []) {
+    if (!companyId) return [];
+    const params = [companyId];
+    let i = 2;
+    let roleFilter = '';
+    if (Array.isArray(roleKeys) && roleKeys.length > 0) {
+        roleFilter = `AND COALESCE(m.role_key, CASE WHEN m.role = 'company_admin' THEN 'tenant_admin' ELSE 'dispatcher' END) = ANY($${i++}::text[])`;
+        params.push(roleKeys);
+    }
+    const { rows } = await db.query(
+        `SELECT u.id, u.email, u.full_name, u.last_login_at, u.created_at,
+                COALESCE(m.role_key, m.role) as membership_role, m.role_key, m.role as legacy_role, m.status as membership_status,
+                m.id as membership_id, m.company_id,
+                p.phone,
+                COALESCE(p.phone_calls_allowed, false) as phone_calls_allowed,
+                COALESCE(p.is_provider, false) as is_provider,
+                p.schedule_color,
+                COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled,
+                p.zenbooker_team_member_id
+         FROM crm_users u
+         JOIN company_memberships m ON m.user_id = u.id
+         LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+         WHERE m.company_id = $1
+           AND m.status = 'active'
+           AND (p.phone IS NULL OR btrim(p.phone) = '')
+           ${roleFilter}
+         ORDER BY COALESCE(m.role_key, 'dispatcher'), u.full_name`,
+        params
+    );
+    return rows;
 }
 
 /**
@@ -221,14 +259,13 @@ async function createUserWithMembership(data) {
         const p = data.profile || {};
         await client.query(
             `INSERT INTO company_user_profiles (
-                membership_id, phone, phone_calls_allowed, is_provider, schedule_color, call_masking_enabled, location_tracking_enabled
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                membership_id, phone, phone_calls_allowed, is_provider, schedule_color, location_tracking_enabled
+             ) VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (membership_id) DO UPDATE SET
                 phone = EXCLUDED.phone,
                 phone_calls_allowed = EXCLUDED.phone_calls_allowed,
                 is_provider = EXCLUDED.is_provider,
                 schedule_color = EXCLUDED.schedule_color,
-                call_masking_enabled = EXCLUDED.call_masking_enabled,
                 location_tracking_enabled = EXCLUDED.location_tracking_enabled,
                 updated_at = NOW()`,
              [
@@ -236,10 +273,9 @@ async function createUserWithMembership(data) {
                  p.phone === null || p.phone === undefined || String(p.phone).trim() === ''
                      ? null
                      : String(p.phone).trim(),
-                 p.phone_calls_allowed || false, 
-                 p.is_provider || false, 
-                 p.schedule_color || '#3B82F6', 
-                 p.call_masking_enabled || false, 
+                 p.phone_calls_allowed || false,
+                 p.is_provider || false,
+                 p.schedule_color || '#3B82F6',
                  p.location_tracking_enabled || false
              ]
         );
@@ -384,7 +420,6 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
             if (typeof p.phone_calls_allowed === 'boolean') { fields.push(`phone_calls_allowed = $${i++}`); values.push(p.phone_calls_allowed); }
             if (typeof p.is_provider === 'boolean') { fields.push(`is_provider = $${i++}`); values.push(p.is_provider); }
             if (p.schedule_color) { fields.push(`schedule_color = $${i++}`); values.push(p.schedule_color); }
-            if (typeof p.call_masking_enabled === 'boolean') { fields.push(`call_masking_enabled = $${i++}`); values.push(p.call_masking_enabled); }
             if (typeof p.location_tracking_enabled === 'boolean') { fields.push(`location_tracking_enabled = $${i++}`); values.push(p.location_tracking_enabled); }
 
             // Provider bridge (PF007-HARDENING-001): external Zenbooker team member id.
@@ -516,7 +551,6 @@ async function getUserDetail(userId, companyId) {
             phone: row.phone,
             schedule_color: row.schedule_color,
             is_provider: row.is_provider,
-            call_masking_enabled: row.call_masking_enabled,
             location_tracking_enabled: row.location_tracking_enabled,
             phone_calls_allowed: row.phone_calls_allowed,
             job_close_mode: row.job_close_mode,
@@ -547,13 +581,107 @@ async function updateMembershipStatus(userId, companyId, status, reason = null) 
     );
     if (rows.length === 0) throw new Error('Membership not found');
 
-    // Also sync the fallback crm_users status
+    // Sync the fallback crm_users status — but the two tables use DIFFERENT
+    // vocabularies: company_memberships.status is 'active'/'inactive', while
+    // crm_users has CHECK (status IN ('active','disabled')). Writing 'inactive'
+    // straight through violates crm_users_status_check and makes the whole
+    // disable throw "Failed to change user status" (DISABLE-BUG, layer 2 — the
+    // param-type fix only unmasked this). Map the membership status to the
+    // crm_users domain.
+    const crmUserStatus = status === 'active' ? 'active' : 'disabled';
     await db.query(
         `UPDATE crm_users SET status = $1, updated_at = NOW() WHERE id = $2`,
-        [status, userId]
+        [crmUserStatus, userId]
     );
 
     return rows[0];
+}
+
+/**
+ * Remove (fully unlink) a member from a company (#86 DELETE-DISABLED-USER).
+ * Only permitted on an already-inactive membership; callers enforce the last-admin
+ * invariant beforehand. The Keycloak identity + crm_users row are preserved (the
+ * person may belong to other companies); we sever only this company's links.
+ *
+ * Deletion order respects the FK web:
+ *   1. NULL crm_users.primary_membership_id pointing at this membership (045 FK is RESTRICT).
+ *   2. Delete chatgpt_mcp_bindings for (user, company) (200 FK is ON DELETE RESTRICT).
+ *   3. DELETE the membership → company_user_profiles / _service_areas / _skills /
+ *      permission_overrides cascade (047/048 ON DELETE CASCADE).
+ *   4. Re-point crm_users.company_id / primary_membership_id at a remaining membership,
+ *      or NULL when none is left — so a single-company user is fully detached and a
+ *      multi-company user keeps a valid primary.
+ *
+ * @throws Error with .code 'MEMBERSHIP_NOT_FOUND' | 'USER_STILL_ACTIVE'
+ */
+async function removeMembership(userId, companyId) {
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows } = await client.query(
+            `SELECT id, status FROM company_memberships
+             WHERE user_id = $1 AND company_id = $2 FOR UPDATE`,
+            [userId, companyId]
+        );
+        if (rows.length === 0) {
+            const e = new Error('Membership not found');
+            e.code = 'MEMBERSHIP_NOT_FOUND';
+            throw e;
+        }
+        if (rows[0].status === 'active') {
+            const e = new Error('User is still active — disable before removing');
+            e.code = 'USER_STILL_ACTIVE';
+            throw e;
+        }
+        const membershipId = rows[0].id;
+
+        await client.query(
+            `UPDATE crm_users SET primary_membership_id = NULL, updated_at = NOW()
+             WHERE primary_membership_id = $1`,
+            [membershipId]
+        );
+
+        await client.query(
+            `DELETE FROM chatgpt_mcp_bindings WHERE owner_user_id = $1 AND company_id = $2`,
+            [userId, companyId]
+        );
+
+        await client.query(`DELETE FROM company_memberships WHERE id = $1`, [membershipId]);
+
+        // Re-point the identity's legacy fallbacks at a surviving membership (or NULL).
+        await client.query(
+            `UPDATE crm_users u SET
+                company_id = rem.company_id,
+                primary_membership_id = rem.membership_id,
+                updated_at = NOW()
+             FROM (
+                SELECT m.company_id, m.id AS membership_id
+                FROM company_memberships m
+                WHERE m.user_id = $1
+                ORDER BY m.is_primary DESC, m.created_at ASC
+                LIMIT 1
+             ) rem
+             WHERE u.id = $1`,
+            [userId]
+        );
+        // If no membership survived, the correlated UPDATE above is a no-op; clear the
+        // stale pointer at this company explicitly.
+        await client.query(
+            `UPDATE crm_users SET company_id = NULL, updated_at = NOW()
+             WHERE id = $1 AND company_id = $2
+               AND NOT EXISTS (SELECT 1 FROM company_memberships m WHERE m.user_id = $1)`,
+            [userId, companyId]
+        );
+
+        await client.query('COMMIT');
+        return { removed: true };
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 /**
@@ -572,9 +700,11 @@ module.exports = {
     findOrCreateUser,
     getUserBySub,
     listUsers,
+    listActiveUsersMissingPhone,
     createUserWithMembership,
     updateMembershipAndProfile,
     updateMembershipStatus,
+    removeMembership,
     countCompanyAdmins,
     getUserDetail,
     getManagedUser,

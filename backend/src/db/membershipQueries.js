@@ -177,7 +177,6 @@ async function getMembershipWithProfile(userId, companyId) {
                 u.email, u.full_name, u.last_login_at, u.created_at as user_created_at,
                 p.phone, p.schedule_color,
                 COALESCE(p.is_provider, false) as is_provider,
-                COALESCE(p.call_masking_enabled, false) as call_masking_enabled,
                 COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled,
                 COALESCE(p.phone_calls_allowed, false) as phone_calls_allowed,
                 p.job_close_mode,

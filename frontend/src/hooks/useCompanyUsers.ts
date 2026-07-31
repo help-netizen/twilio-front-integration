@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
-export interface CompanyUser { id: string; email: string; full_name: string; phone: string | null; membership_role: string; role_key: string; legacy_role: string; membership_status: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; call_masking_enabled: boolean; location_tracking_enabled: boolean; zenbooker_team_member_id: string | null; last_login_at: string | null; created_at: string; }
+export interface CompanyUser { id: string; email: string; full_name: string; phone: string | null; membership_role: string; role_key: string; legacy_role: string; membership_status: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; location_tracking_enabled: boolean; zenbooker_team_member_id: string | null; last_login_at: string | null; created_at: string; }
 interface PaginatedResponse { ok: boolean; users: CompanyUser[]; total: number; page: number; limit: number; }
 
 export type EditUserForm = {
@@ -15,7 +15,6 @@ export type EditUserForm = {
     phone_calls_allowed: boolean;
     is_provider: boolean;
     schedule_color: string;
-    call_masking_enabled: boolean;
     location_tracking_enabled: boolean;
     zenbooker_team_member_id: string | null;
 };
@@ -31,14 +30,14 @@ export function useCompanyUsers() {
     
     // Create Mode
     const [createOpen, setCreateOpen] = useState(false);
-    const [createForm, setCreateForm] = useState({ full_name: '', email: '', role_key: 'dispatcher' });
+    const [createForm, setCreateForm] = useState({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false });
     const [creating, setCreating] = useState(false);
     const [tempPassword, setTempPassword] = useState<string | null>(null);
     
     // Edit Mode
     const [editOpen, setEditOpen] = useState(false);
     const [editUser, setEditUser] = useState<CompanyUser | null>(null);
-    const [editForm, setEditForm] = useState<EditUserForm>({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false, zenbooker_team_member_id: null });
+    const [editForm, setEditForm] = useState<EditUserForm>({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false, zenbooker_team_member_id: null });
 
     // Status / Misc
     const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; description: string; onConfirm: () => void }>({ open: false, title: '', description: '', onConfirm: () => { } });
@@ -53,11 +52,23 @@ export function useCompanyUsers() {
         if (!createForm.full_name || !createForm.email) { toast.error('Please fill in the required fields'); return; } 
         setCreating(true); 
         try { 
-            const res = await authedFetch(`${API_BASE}/users`, { 
-                method: 'POST', 
-                headers: { 'Content-Type': 'application/json' }, 
-                body: JSON.stringify({ ...createForm }) 
-            }); 
+            const phone = createForm.phone.trim();
+            const res = await authedFetch(`${API_BASE}/users`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    full_name: createForm.full_name,
+                    email: createForm.email,
+                    role_key: createForm.role_key,
+                    profile: {
+                        ...(phone ? { phone } : {}),
+                        phone_calls_allowed: createForm.phone_calls_allowed,
+                        is_provider: createForm.is_provider,
+                        schedule_color: createForm.schedule_color,
+                        location_tracking_enabled: createForm.location_tracking_enabled,
+                    },
+                })
+            });
             const json = await res.json(); 
             if (!res.ok) { 
                 if (json.code === 'USER_EXISTS') toast.error('A user with this email already exists'); 
@@ -88,7 +99,6 @@ export function useCompanyUsers() {
                         phone_calls_allowed: editForm.phone_calls_allowed,
                         is_provider: editForm.is_provider,
                         schedule_color: editForm.schedule_color,
-                        call_masking_enabled: editForm.call_masking_enabled,
                         location_tracking_enabled: editForm.location_tracking_enabled,
                         // Provider bridge: null when not a provider or unlinked
                         zenbooker_team_member_id: editForm.is_provider ? (editForm.zenbooker_team_member_id || null) : null
@@ -135,10 +145,31 @@ export function useCompanyUsers() {
                 body: JSON.stringify({ status, reason }) 
             }); 
             const json = await res.json(); 
-            if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') toast.error('Cannot disable the last company admin'); 
-            else if (!res.ok) toast.error(json.message || 'Failed to change status'); 
-            else { toast.success(isActive ? 'User disabled' : 'User enabled'); fetchUsers(); } 
-        } catch { toast.error('Connection error'); } finally { setActionLoading(null); } 
+            if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') toast.error('Cannot disable the last company admin');
+            else if (!res.ok) toast.error(json.message || 'Failed to change status');
+            else { toast.success(isActive ? 'User disabled' : 'User enabled'); fetchUsers(); }
+        } catch { toast.error('Connection error'); } finally { setActionLoading(null); }
+    };
+
+    // #86 DELETE-DISABLED-USER: fully unlink a disabled user from the company
+    // (removes the membership). Backend re-checks the user is inactive and not the
+    // last admin, and audit-logs the removal. Frontend only exposes this on
+    // already-disabled users; the confirm here is a UX guard, not the security gate.
+    const deleteUser = async (user: CompanyUser) => {
+        setActionLoading(user.id);
+        try {
+            const res = await authedFetch(`${API_BASE}/users/${user.id}`, { method: 'DELETE' });
+            const json = await res.json().catch(() => ({}));
+            if (res.ok) {
+                toast.success(`${user.full_name || user.email} removed from the company`);
+                setEditOpen(false);
+                fetchUsers();
+                return;
+            }
+            if (res.status === 409 && json.code === 'USER_STILL_ACTIVE') toast.error('Disable the user before removing them');
+            else if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') toast.error('Cannot remove the last company admin');
+            else toast.error(json.message || 'Failed to remove user');
+        } catch { toast.error('Connection error'); } finally { setActionLoading(null); }
     };
 
     const fmtDate = (d: string | null) => { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
@@ -155,7 +186,6 @@ export function useCompanyUsers() {
             phone_calls_allowed: !!u.phone_calls_allowed,
             is_provider: !!u.is_provider,
             schedule_color: u.schedule_color || '#3B82F6',
-            call_masking_enabled: !!u.call_masking_enabled,
             location_tracking_enabled: !!u.location_tracking_enabled,
             zenbooker_team_member_id: u.zenbooker_team_member_id || null
         });
@@ -167,6 +197,6 @@ export function useCompanyUsers() {
         searchInput, setSearchInput, fetchUsers, totalPages, data, limit, fmtDate,
         createOpen, setCreateOpen, createForm, setCreateForm, creating, tempPassword, setTempPassword, handleCreate,
         editOpen, setEditOpen, editUser, editForm, setEditForm, handleUpdateUser, openEditDialog, resetPassword,
-        confirmDialog, setConfirmDialog, actionLoading, toggleStatus
+        confirmDialog, setConfirmDialog, actionLoading, toggleStatus, deleteUser
     };
 }

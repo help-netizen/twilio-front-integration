@@ -20,14 +20,14 @@ export function useAdminCompanyUsers(companyId: string) {
 
     // Create Mode
     const [createOpen, setCreateOpen] = useState(false);
-    const [createForm, setCreateForm] = useState({ full_name: '', email: '', role_key: 'dispatcher' });
+    const [createForm, setCreateForm] = useState({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false });
     const [creating, setCreating] = useState(false);
     const [tempPassword, setTempPassword] = useState<string | null>(null);
 
     // Edit Mode
     const [editOpen, setEditOpen] = useState(false);
     const [editUser, setEditUser] = useState<CompanyUser | null>(null);
-    const [editForm, setEditForm] = useState<EditUserForm>({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false, zenbooker_team_member_id: null });
+    const [editForm, setEditForm] = useState<EditUserForm>({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false, zenbooker_team_member_id: null });
 
     // Reset Password
     const [resetPasswordOpen, setResetPasswordOpen] = useState(false);
@@ -68,10 +68,22 @@ export function useAdminCompanyUsers(companyId: string) {
         if (!createForm.full_name || !createForm.email) { toast.error('Please fill in the required fields'); return; }
         setCreating(true);
         try {
+            const phone = createForm.phone.trim();
             const res = await authedFetch(apiBase, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...createForm })
+                body: JSON.stringify({
+                    full_name: createForm.full_name,
+                    email: createForm.email,
+                    role_key: createForm.role_key,
+                    profile: {
+                        ...(phone ? { phone } : {}),
+                        phone_calls_allowed: createForm.phone_calls_allowed,
+                        is_provider: createForm.is_provider,
+                        schedule_color: createForm.schedule_color,
+                        location_tracking_enabled: createForm.location_tracking_enabled,
+                    },
+                })
             });
             const json = await res.json();
             if (!res.ok) {
@@ -99,7 +111,6 @@ export function useAdminCompanyUsers(companyId: string) {
                         phone_calls_allowed: editForm.phone_calls_allowed,
                         is_provider: editForm.is_provider,
                         schedule_color: editForm.schedule_color,
-                        call_masking_enabled: editForm.call_masking_enabled,
                         location_tracking_enabled: editForm.location_tracking_enabled,
                         zenbooker_team_member_id: editForm.is_provider ? (editForm.zenbooker_team_member_id || null) : null
                     }
@@ -165,7 +176,6 @@ export function useAdminCompanyUsers(companyId: string) {
             phone_calls_allowed: !!u.phone_calls_allowed,
             is_provider: !!u.is_provider,
             schedule_color: u.schedule_color || '#3B82F6',
-            call_masking_enabled: !!u.call_masking_enabled,
             location_tracking_enabled: !!u.location_tracking_enabled,
             zenbooker_team_member_id: u.zenbooker_team_member_id || null
         });

@@ -607,6 +607,79 @@ router.patch('/:id/status', async (req, res) => {
     }
 });
 
+/**
+ * DELETE /:id — Fully unlink a DISABLED user from the company (#86).
+ * Admin-only + destructive. The user must already be inactive; the Keycloak
+ * identity is preserved (they may belong to other companies) — only this
+ * company's membership + profile are removed. Audit-logged.
+ */
+router.delete('/:id', requireTenantAdmin, async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const companyId = getTenantCompanyId(req, res);
+        if (!companyId) return;
+
+        if (userId === req.user.crmUser?.id) {
+            return res.status(409).json({
+                code: 'CANNOT_REMOVE_SELF',
+                message: 'You cannot remove your own account',
+                trace_id: req.traceId,
+            });
+        }
+
+        // Defense-in-depth: never strand a company without an active admin.
+        const targetAdmins = await userService.listUsers(companyId, { role: 'tenant_admin' });
+        const target = targetAdmins.users.find(u => u.id === userId);
+        if (target && target.membership_status === 'active') {
+            const adminCount = await userService.countCompanyAdmins(companyId);
+            if (adminCount <= 1) {
+                return res.status(409).json({
+                    code: 'LAST_ADMIN_REQUIRED',
+                    message: 'Cannot remove the last company admin',
+                    trace_id: req.traceId,
+                });
+            }
+        }
+
+        await userService.removeMembership(userId, companyId);
+
+        await auditService.log({
+            actor_id: req.user.crmUser?.id,
+            actor_email: req.user.email,
+            actor_ip: req.ip,
+            action: 'user_removed_from_company',
+            target_type: 'user',
+            target_id: userId,
+            company_id: companyId,
+            details: {},
+            trace_id: req.traceId,
+        });
+
+        res.json({ ok: true, message: 'User removed from company' });
+    } catch (err) {
+        console.error('[Users] Remove failed:', err.message);
+        if (err.code === 'MEMBERSHIP_NOT_FOUND' || err.code === '22P02') {
+            return res.status(404).json({
+                code: 'NOT_FOUND',
+                message: 'User not found',
+                trace_id: req.traceId,
+            });
+        }
+        if (err.code === 'USER_STILL_ACTIVE') {
+            return res.status(409).json({
+                code: 'USER_STILL_ACTIVE',
+                message: 'Disable the user before removing them',
+                trace_id: req.traceId,
+            });
+        }
+        res.status(500).json({
+            code: 'INTERNAL_ERROR',
+            message: 'Failed to remove user',
+            trace_id: req.traceId,
+        });
+    }
+});
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // Delegate to shared keycloakService helper
