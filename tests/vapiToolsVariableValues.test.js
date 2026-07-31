@@ -1,11 +1,8 @@
 /**
  * OUTBOUND-PARTS-CALL-001 — buildSkillInput variableValues anti-spoof precedence.
  *
- * Binding: spec §C / arch — the server-injected, model-untrusted identity in
- * `call.assistantOverrides.variableValues` MUST override any same-named field the
- * model re-sent in tool `args`, so an outbound skill's ownership pre-check keys on
- * identity the model cannot spoof. Inbound Sara calls carry NO assistantOverrides,
- * so variableValues threading is a pure no-op (Sara/legacy behavior byte-identical).
+ * The public body (including assistantOverrides.variableValues) is untrusted.
+ * Server-correlated trustedValues MUST override both echoed values and model args.
  *
  * We import `buildSkillInput` directly (exported additively from the route) and
  * assert the merge order without any HTTP/DB/skill dispatch.
@@ -13,22 +10,20 @@
 
 const { buildSkillInput } = require('../backend/src/routes/vapi-tools');
 
-describe('buildSkillInput — variableValues override model args (anti-spoof)', () => {
-    test('outbound: assistantOverrides.variableValues WIN over model-sent same-named args', () => {
-        // The model tries to spoof identity via args (jobId:'SPOOF') and sends its
-        // own field (foo). The server injected the real identity at call-open.
+describe('buildSkillInput — correlated values override public body identity', () => {
+    test('outbound: trusted correlation wins over model args and echoed variableValues', () => {
         const args = { jobId: 'SPOOF', foo: 1 };
         const call = {
-            assistantOverrides: { variableValues: { jobId: 'REAL', contactId: 'C1' } },
+            assistantOverrides: { variableValues: { jobId: 'ECHOED', companyId: 'FOREIGN' } },
         };
 
-        const input = buildSkillInput('confirmPartsVisit', args, call);
+        const input = buildSkillInput('confirmPartsVisit', args, call, {
+            jobId: 'REAL', contactId: 'C1', companyId: 'COMPANY-A',
+        });
 
-        // Server-injected identity wins — the model cannot spoof jobId.
         expect(input.jobId).toBe('REAL');
-        // …and its other injected fields are threaded in.
         expect(input.contactId).toBe('C1');
-        // Non-conflicting model args are preserved.
+        expect(input.companyId).toBe('COMPANY-A');
         expect(input.foo).toBe(1);
     });
 

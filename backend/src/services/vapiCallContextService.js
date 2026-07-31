@@ -7,7 +7,7 @@ function looksLikeOutbound(call) {
     return Boolean(
         call?.id &&
         values &&
-        (values.scenario || values.jobId || values.leadUuid),
+        (values.companyId || values.scenario || values.jobId || values.leadUuid),
     );
 }
 
@@ -49,12 +49,11 @@ async function resolve(call) {
             },
         };
     } catch (err) {
-        // Existing outbound booking flows retain their server-injected variable
-        // fallback if the correlation read is temporarily unavailable.
+        // Outbound correlation errors fail closed at the public tool route.
         console.error(
             `[vapi-tools] outbound context lookup failed: ${err && err.message ? err.message : 'unknown error'}`,
         );
-        return { matched: false, ambiguous: false };
+        return { matched: false, ambiguous: true };
     }
 }
 

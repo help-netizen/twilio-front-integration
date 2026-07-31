@@ -125,6 +125,13 @@ describe('mapVapiEndedReasonToCallStatus (TC-CT-004)', () => {
 // resolveFinalSid — re-key / merge (TC-CT-006 + S4/S6 no-op)
 // =============================================================================
 describe('resolveFinalSid re-key/merge (S4)', () => {
+    it('missing company context rejects before any read or write', async () => {
+        await expect(svc.resolveFinalSid({
+            syntheticSid: 'vapi:v-1', realSid: 'CA1',
+        })).rejects.toMatchObject({ code: 'TENANT_CONTEXT_REQUIRED' });
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
     it('no realSid → returns the synthetic sid, touches no rows (S6/TC-CT-011)', async () => {
         const out = await svc.resolveFinalSid({ companyId: 'co-1', syntheticSid: 'vapi:v-1', realSid: null });
         expect(out).toBe('vapi:v-1');
@@ -253,6 +260,16 @@ describe('recordPlacement (S1)', () => {
         expect(out).toBeNull();
         expect(mockUpsertCall).not.toHaveBeenCalled();
     });
+
+    it('missing company context fails closed before timeline or call writes', async () => {
+        const out = await svc.recordPlacement({
+            vapiCallId: 'v-unscoped', dialedNumber: '+16175550100',
+        });
+        expect(out).toBeNull();
+        expect(mockFindOrCreateTimeline).not.toHaveBeenCalled();
+        expect(mockUpsertCall).not.toHaveBeenCalled();
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
 });
 
 // =============================================================================
@@ -300,6 +317,15 @@ describe('applyStatusUpdate (S2 / TC-CT-011)', () => {
         expect(dbCall('UPDATE calls SET call_sid')).toBeFalsy(); // no re-key
         expect(mockUpsertCall.mock.calls[0][0].callSid).toBe('vapi:v-123');
     });
+
+    it('missing company context fails closed before status reads or writes', async () => {
+        const out = await svc.applyStatusUpdate({
+            message: { status: 'ringing', call: { id: 'v-unscoped' } },
+        });
+        expect(out).toBeNull();
+        expect(mockUpsertCall).not.toHaveBeenCalled();
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
 });
 
 // =============================================================================
@@ -317,6 +343,15 @@ describe('finalizeFromEndOfCallReport (S3)', () => {
         transcript: 'AI: hello … Customer: yes',
         recordingUrl: 'https://storage.vapi.ai/rec.wav',
     };
+
+    it('missing company context fails closed before final call or child writes', async () => {
+        const out = await svc.finalizeFromEndOfCallReport({ message: fullMsg });
+        expect(out).toBeNull();
+        expect(mockUpsertCall).not.toHaveBeenCalled();
+        expect(mockUpsertTranscript).not.toHaveBeenCalled();
+        expect(mockUpsertRecording).not.toHaveBeenCalled();
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
 
     it('TC-CT-005: re-key → final call, transcript(gemini_summary), recording; children ONLY after re-key; SSE last', async () => {
         await svc.finalizeFromEndOfCallReport({ attempt: { company_id: 'co-1' }, message: fullMsg });

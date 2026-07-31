@@ -155,10 +155,17 @@ async function correlateAttempt(vapiCallId) {
                 scenario, lead_uuid
          FROM outbound_call_attempts
          WHERE vapi_call_id = $1
-         LIMIT 1`,
+         ORDER BY id DESC
+         LIMIT 2`,
         [vapiCallId]
     );
-    return rows[0] || null;
+    if (rows.length !== 1) {
+        if (rows.length > 1) {
+            console.warn(`[vapiCallStatus] ambiguous vapi_call_id correlation; refusing callId=${vapiCallId}`);
+        }
+        return null;
+    }
+    return rows[0];
 }
 
 // ─── Handler ─────────────────────────────────────────────────────────────────

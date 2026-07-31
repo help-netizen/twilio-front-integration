@@ -34,9 +34,13 @@ const { requirePermission } = require('../middleware/authorization');
 // (RBAC-AUDIT-001 R3). Mounted alongside authenticate + requireCompanyAccess in server.js.
 router.use(requirePermission('tenant.integrations.manage'));
 
-// Default tenant for single-tenant mode
-const DEFAULT_TENANT = 'default';
 const VAPI_DISPLAY_NAME = 'VAPI AI';
+
+function getCompanyId(req) {
+    const companyId = req.companyFilter?.company_id;
+    if (!companyId) throw new Error('companyId is required');
+    return companyId;
+}
 
 // ─── Ensure tables ───────────────────────────────────────────────────────────
 let tablesEnsured = false;
@@ -47,6 +51,7 @@ async function ensureTables() {
             CREATE TABLE IF NOT EXISTS provider_connections (
                 id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
+                company_id UUID REFERENCES companies(id),
                 provider TEXT NOT NULL DEFAULT 'vapi',
                 environment TEXT NOT NULL DEFAULT 'prod',
                 status TEXT NOT NULL DEFAULT 'connecting',
@@ -60,6 +65,7 @@ async function ensureTables() {
             CREATE TABLE IF NOT EXISTS vapi_tenant_resources (
                 id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
+                company_id UUID REFERENCES companies(id),
                 provider_connection_id TEXT NOT NULL,
                 environment TEXT NOT NULL DEFAULT 'prod',
                 vapi_phone_number_id TEXT,
@@ -75,6 +81,7 @@ async function ensureTables() {
             CREATE TABLE IF NOT EXISTS vapi_assistant_profiles (
                 id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
+                company_id UUID REFERENCES companies(id),
                 provider_connection_id TEXT NOT NULL,
                 slug TEXT NOT NULL,
                 purpose TEXT,
@@ -90,6 +97,7 @@ async function ensureTables() {
             CREATE TABLE IF NOT EXISTS call_flow_node_configs (
                 id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
+                company_id UUID REFERENCES companies(id),
                 flow_id TEXT NOT NULL,
                 node_id TEXT NOT NULL,
                 node_kind TEXT NOT NULL DEFAULT 'vapi_agent',
@@ -104,6 +112,7 @@ async function ensureTables() {
             CREATE TABLE IF NOT EXISTS call_ai_runs (
                 id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
+                company_id UUID REFERENCES companies(id),
                 call_id TEXT,
                 call_sid TEXT,
                 flow_id TEXT,
@@ -144,12 +153,14 @@ function genId(prefix = 'vapi') {
 router.get('/connections', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const result = await db.query(
-            `SELECT id, tenant_id, provider, environment, status, display_name, created_at, updated_at
+            `SELECT id, tenant_id, company_id, provider, environment, status, display_name, created_at, updated_at
              FROM provider_connections
-             WHERE tenant_id = $1
+             WHERE company_id = $1
+               AND provider = 'vapi'
              ORDER BY created_at DESC`,
-            [DEFAULT_TENANT]
+            [companyId]
         );
         res.json({ ok: true, data: result.rows });
     } catch (err) {
@@ -161,6 +172,7 @@ router.get('/connections', async (req, res) => {
 router.post('/connections', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const { environment, api_key } = req.body;
 
         if (!api_key) {
@@ -185,18 +197,16 @@ router.post('/connections', async (req, res) => {
             return res.status(400).json({ ok: false, error: 'Could not verify API key' });
         }
 
-        await db.query(
-            `INSERT INTO provider_connections (id, tenant_id, provider, environment, status, encrypted_credentials_json, display_name)
-             VALUES ($1, $2, 'vapi', $3, 'active', $4, $5)`,
-            [id, DEFAULT_TENANT, environment || 'prod', JSON.stringify({ api_key }), VAPI_DISPLAY_NAME]
+        const result = await db.query(
+            `INSERT INTO provider_connections
+                (id, tenant_id, company_id, provider, environment, status, encrypted_credentials_json, display_name)
+             VALUES ($1, $2, $2, 'vapi', $3, 'active', $4, $5)
+             RETURNING id, tenant_id, company_id, provider, environment, status,
+                       display_name, created_at, updated_at`,
+            [id, companyId, environment || 'prod', JSON.stringify({ api_key }), VAPI_DISPLAY_NAME]
         );
 
-        const result = await db.query('SELECT * FROM provider_connections WHERE id = $1', [id]);
-        // Remove credentials from response
-        const row = result.rows[0];
-        delete row.encrypted_credentials_json;
-
-        res.json({ ok: true, data: row });
+        res.json({ ok: true, data: result.rows[0] });
     } catch (err) {
         console.error('[Vapi] POST connection error:', err.message);
         res.status(500).json({ ok: false, error: 'Failed to create connection' });
@@ -206,15 +216,17 @@ router.post('/connections', async (req, res) => {
 router.put('/connections/:id', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const { id } = req.params;
         const { status } = req.body;
 
         const result = await db.query(
             `UPDATE provider_connections
              SET status = COALESCE($1, status), display_name = $2
-             WHERE id = $3 AND tenant_id = $4
-             RETURNING id, tenant_id, provider, environment, status, display_name, created_at, updated_at`,
-            [status, VAPI_DISPLAY_NAME, id, DEFAULT_TENANT]
+             WHERE id = $3 AND company_id = $4 AND provider = 'vapi'
+             RETURNING id, tenant_id, company_id, provider, environment, status,
+                       display_name, created_at, updated_at`,
+            [status, VAPI_DISPLAY_NAME, id, companyId]
         );
 
         if (result.rows.length === 0) {
@@ -231,11 +243,14 @@ router.put('/connections/:id', async (req, res) => {
 router.delete('/connections/:id', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const { id } = req.params;
 
         const result = await db.query(
-            'DELETE FROM provider_connections WHERE id = $1 AND tenant_id = $2 RETURNING id',
-            [id, DEFAULT_TENANT]
+            `DELETE FROM provider_connections
+             WHERE id = $1 AND company_id = $2 AND provider = 'vapi'
+             RETURNING id`,
+            [id, companyId]
         );
 
         if (result.rows.length === 0) {
@@ -256,9 +271,17 @@ router.delete('/connections/:id', async (req, res) => {
 router.get('/resources', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const result = await db.query(
-            `SELECT * FROM vapi_tenant_resources WHERE tenant_id = $1 ORDER BY created_at DESC`,
-            [DEFAULT_TENANT]
+            `SELECT resource.*
+             FROM vapi_tenant_resources resource
+             JOIN provider_connections connection
+               ON connection.id = resource.provider_connection_id
+              AND connection.company_id = resource.company_id
+              AND connection.provider = 'vapi'
+             WHERE resource.company_id = $1
+             ORDER BY resource.created_at DESC`,
+            [companyId]
         );
         res.json({ ok: true, data: result.rows });
     } catch (err) {
@@ -270,6 +293,7 @@ router.get('/resources', async (req, res) => {
 router.post('/resources', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const { provider_connection_id, environment, vapi_phone_number_id, sip_uri, server_url } = req.body;
 
         if (!provider_connection_id || !sip_uri) {
@@ -277,13 +301,21 @@ router.post('/resources', async (req, res) => {
         }
 
         const id = genId('res');
-        await db.query(
-            `INSERT INTO vapi_tenant_resources (id, tenant_id, provider_connection_id, environment, vapi_phone_number_id, sip_uri, server_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [id, DEFAULT_TENANT, provider_connection_id, environment || 'prod', vapi_phone_number_id, sip_uri, server_url]
+        const result = await db.query(
+            `INSERT INTO vapi_tenant_resources
+                (id, tenant_id, company_id, provider_connection_id, environment,
+                 vapi_phone_number_id, sip_uri, server_url)
+             SELECT $1, $2, $2, connection.id, $4, $5, $6, $7
+             FROM provider_connections connection
+             WHERE connection.id = $3
+               AND connection.company_id = $2
+               AND connection.provider = 'vapi'
+             RETURNING *`,
+            [id, companyId, provider_connection_id, environment || 'prod', vapi_phone_number_id, sip_uri, server_url]
         );
-
-        const result = await db.query('SELECT * FROM vapi_tenant_resources WHERE id = $1', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Connection not found' });
+        }
         res.json({ ok: true, data: result.rows[0] });
     } catch (err) {
         console.error('[Vapi] POST resource error:', err.message);
@@ -298,9 +330,18 @@ router.post('/resources', async (req, res) => {
 router.get('/assistant-profiles', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const result = await db.query(
-            `SELECT * FROM vapi_assistant_profiles WHERE tenant_id = $1 AND is_active = true ORDER BY created_at DESC`,
-            [DEFAULT_TENANT]
+            `SELECT profile.*
+             FROM vapi_assistant_profiles profile
+             JOIN provider_connections connection
+               ON connection.id = profile.provider_connection_id
+              AND connection.company_id = profile.company_id
+              AND connection.provider = 'vapi'
+             WHERE profile.company_id = $1
+               AND profile.is_active = true
+             ORDER BY profile.created_at DESC`,
+            [companyId]
         );
         res.json({ ok: true, data: result.rows });
     } catch (err) {
@@ -312,6 +353,7 @@ router.get('/assistant-profiles', async (req, res) => {
 router.post('/assistant-profiles', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const { provider_connection_id, slug, purpose, base_config_json, vapi_assistant_id, version } = req.body;
 
         if (!provider_connection_id || !slug) {
@@ -319,13 +361,21 @@ router.post('/assistant-profiles', async (req, res) => {
         }
 
         const id = genId('prof');
-        await db.query(
-            `INSERT INTO vapi_assistant_profiles (id, tenant_id, provider_connection_id, slug, purpose, base_config_json, vapi_assistant_id, version)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [id, DEFAULT_TENANT, provider_connection_id, slug, purpose, base_config_json || '{}', vapi_assistant_id, version || '1.0.0']
+        const result = await db.query(
+            `INSERT INTO vapi_assistant_profiles
+                (id, tenant_id, company_id, provider_connection_id, slug, purpose,
+                 base_config_json, vapi_assistant_id, version)
+             SELECT $1, $2, $2, connection.id, $4, $5, $6, $7, $8
+             FROM provider_connections connection
+             WHERE connection.id = $3
+               AND connection.company_id = $2
+               AND connection.provider = 'vapi'
+             RETURNING *`,
+            [id, companyId, provider_connection_id, slug, purpose, base_config_json || '{}', vapi_assistant_id, version || '1.0.0']
         );
-
-        const result = await db.query('SELECT * FROM vapi_assistant_profiles WHERE id = $1', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Connection not found' });
+        }
         res.json({ ok: true, data: result.rows[0] });
     } catch (err) {
         console.error('[Vapi] POST profile error:', err.message);
@@ -336,6 +386,7 @@ router.post('/assistant-profiles', async (req, res) => {
 router.put('/assistant-profiles/:id', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const { id } = req.params;
         const { slug, purpose, base_config_json, vapi_assistant_id, version, is_active } = req.body;
 
@@ -346,9 +397,9 @@ router.put('/assistant-profiles/:id', async (req, res) => {
                  vapi_assistant_id = COALESCE($4, vapi_assistant_id),
                  version = COALESCE($5, version),
                  is_active = COALESCE($6, is_active)
-             WHERE id = $7 AND tenant_id = $8
+             WHERE id = $7 AND company_id = $8
              RETURNING *`,
-            [slug, purpose, base_config_json, vapi_assistant_id, version, is_active, id, DEFAULT_TENANT]
+            [slug, purpose, base_config_json, vapi_assistant_id, version, is_active, id, companyId]
         );
 
         if (result.rows.length === 0) {
@@ -369,12 +420,14 @@ router.put('/assistant-profiles/:id', async (req, res) => {
 router.get('/node-configs/:flowId/:nodeId', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const { flowId, nodeId } = req.params;
 
         const result = await db.query(
             `SELECT * FROM call_flow_node_configs
-             WHERE tenant_id = $1 AND flow_id = $2 AND node_id = $3 AND is_active = true`,
-            [DEFAULT_TENANT, flowId, nodeId]
+             WHERE company_id = $1 AND flow_id = $2 AND node_id = $3
+               AND node_kind = 'vapi_agent' AND is_active = true`,
+            [companyId, flowId, nodeId]
         );
 
         if (result.rows.length === 0) {
@@ -393,6 +446,7 @@ router.get('/node-configs/:flowId/:nodeId', async (req, res) => {
 router.put('/node-configs/:flowId/:nodeId', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const { flowId, nodeId } = req.params;
         const { config, node_kind } = req.body;
 
@@ -401,14 +455,15 @@ router.put('/node-configs/:flowId/:nodeId', async (req, res) => {
 
         // Upsert
         const result = await db.query(
-            `INSERT INTO call_flow_node_configs (id, tenant_id, flow_id, node_id, node_kind, config_json)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (tenant_id, flow_id, node_id) DO UPDATE
+            `INSERT INTO call_flow_node_configs
+                (id, tenant_id, company_id, flow_id, node_id, node_kind, config_json)
+             VALUES ($1, $2, $2, $3, $4, $5, $6)
+             ON CONFLICT (company_id, flow_id, node_id) DO UPDATE
              SET config_json = EXCLUDED.config_json,
                  node_kind = COALESCE(EXCLUDED.node_kind, call_flow_node_configs.node_kind),
                  version = (CAST(call_flow_node_configs.version AS INTEGER) + 1)::TEXT
              RETURNING *`,
-            [id, DEFAULT_TENANT, flowId, nodeId, node_kind || 'vapi_agent', configJson]
+            [id, companyId, flowId, nodeId, node_kind || 'vapi_agent', configJson]
         );
 
         const row = result.rows[0];
@@ -427,14 +482,26 @@ router.put('/node-configs/:flowId/:nodeId', async (req, res) => {
 router.get('/ai-runs', async (req, res) => {
     try {
         await ensureTables();
+        const companyId = getCompanyId(req);
         const limit = parseInt(req.query.limit) || 50;
 
         const result = await db.query(
-            `SELECT * FROM call_ai_runs
-             WHERE tenant_id = $1
+            `SELECT run.*
+             FROM call_ai_runs run
+             WHERE run.company_id = $1
+               AND run.provider = 'vapi'
+               AND (
+                 run.provider_connection_id IS NULL
+                 OR EXISTS (
+                   SELECT 1 FROM provider_connections connection
+                   WHERE connection.id = run.provider_connection_id
+                     AND connection.company_id = run.company_id
+                     AND connection.provider = 'vapi'
+                 )
+               )
              ORDER BY created_at DESC
              LIMIT $2`,
-            [DEFAULT_TENANT, limit]
+            [companyId, limit]
         );
 
         res.json({ ok: true, data: result.rows });

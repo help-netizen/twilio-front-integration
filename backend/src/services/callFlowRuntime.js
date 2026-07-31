@@ -398,12 +398,12 @@ const VAPI_MAX_DURATION_SECONDS = 900;
 
 async function resolveVapiSipUri(node, context, companyId) {
     const cfg = node.config || {};
+    if (!companyId) return null;
     const configuredSipUri = cfg.sip_uri || cfg.sipUri;
     if (configuredSipUri) return String(configuredSipUri);
 
-    const tenantIds = [...new Set([companyId, context.companyId, 'default'].filter(Boolean).map(String))];
     const environment = String(cfg.environment || process.env.VAPI_ENVIRONMENT || 'prod');
-    const params = [tenantIds, environment];
+    const params = [companyId, environment];
     let scopedFilter = '';
     if (cfg.vapi_resource_id || cfg.resource_id) {
         params.push(String(cfg.vapi_resource_id || cfg.resource_id));
@@ -417,24 +417,25 @@ async function resolveVapiSipUri(node, context, companyId) {
         const result = await db.query(
             `SELECT NULLIF(BTRIM(r.sip_uri), '') AS sip_uri
              FROM vapi_tenant_resources r
-             JOIN provider_connections pc ON pc.id = r.provider_connection_id
-             WHERE r.tenant_id = ANY($1::text[])
+             JOIN provider_connections pc
+               ON pc.id = r.provider_connection_id
+              AND pc.company_id = r.company_id
+             WHERE r.company_id = $1
                AND r.is_active = true
                AND pc.provider = 'vapi'
                AND pc.status = 'active'
                AND NULLIF(BTRIM(r.sip_uri), '') IS NOT NULL
                ${scopedFilter}
              ORDER BY
-               array_position($1::text[], r.tenant_id),
                CASE WHEN r.environment = $2 THEN 0 ELSE 1 END,
                r.created_at DESC
              LIMIT 1`,
             params
         );
-        return result.rows[0]?.sip_uri || process.env.VAPI_SIP_URI || null;
+        return result.rows[0]?.sip_uri || null;
     } catch (err) {
         console.error('[CallFlowRuntime] Failed to resolve VAPI SIP resource:', err.message);
-        return process.env.VAPI_SIP_URI || null;
+        return null;
     }
 }
 

@@ -68,32 +68,35 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 describe('TC-OLC-041: injected identity precedence', () => {
-    it('(a) model-sent EVIL identity is clobbered by injected variableValues', async () => {
+    it('(a) model-sent EVIL identity cannot override correlated lead or transport company', async () => {
         const input = buildInput(
             { leadUuid: 'EVIL', companyId: 'EVIL', slotKey: 'EVIL', chosenSlot: { ...SLOT } },
             injectedVars(),
         );
-        const out = await skill.run('transport-co', {}, input);
+        const out = await skill.run(CO, {}, input);
         expect(out.success).toBe(true);
         expect(leadsService.getLeadByUUID).toHaveBeenCalledWith('LD-1', CO);
         expect(JSON.stringify(leadsService.updateLead.mock.calls)).not.toContain('EVIL');
     });
 
-    it.each([
-        ['no leadUuid', injectedVars({ leadUuid: undefined })],
-        ['no companyId', injectedVars({ companyId: undefined })],
-    ])('(b/c) %s → refusal, zero reads/writes', async (_l, injected) => {
-        const out = await skill.run(CO, {}, buildInput({ chosenSlot: { ...SLOT } }, injected));
+    it('(b) no leadUuid → refusal, zero reads/writes', async () => {
+        const out = await skill.run(CO, {}, buildInput(
+            { chosenSlot: { ...SLOT } },
+            injectedVars({ leadUuid: undefined })
+        ));
         expect(out.speak).toBe("I couldn't pull up your request to book — let me have a teammate follow up with you.");
         expect(out.success).not.toBe(true);
         expect(leadsService.getLeadByUUID).not.toHaveBeenCalled();
         expect(leadsService.updateLead).not.toHaveBeenCalled();
     });
 
-    it('(d) transport companyId argument is never used for scoping', async () => {
-        await skill.run('DEFAULT-COMPANY-FROM-TRANSPORT', {},
-            buildInput({ chosenSlot: { ...SLOT } }, injectedVars()));
-        expect(leadsService.getLeadByUUID).toHaveBeenCalledWith('LD-1', CO);
+    it('(c) input companyId cannot override the trusted transport company', async () => {
+        const transportCompany = 'transport-company';
+        await skill.run(transportCompany, {}, buildInput(
+            { chosenSlot: { ...SLOT } },
+            injectedVars({ companyId: 'attacker-company' })
+        ));
+        expect(leadsService.getLeadByUUID).toHaveBeenCalledWith('LD-1', transportCompany);
     });
 });
 

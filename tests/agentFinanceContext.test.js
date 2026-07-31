@@ -317,4 +317,20 @@ describe('shared schemas and trusted outbound context', () => {
         });
         expect(context).toEqual({ matched: false, ambiguous: true });
     });
+
+    test('outbound correlation DB failure is ambiguous and fails closed', async () => {
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        db.query.mockRejectedValue(new Error('database unavailable'));
+        const call = {
+            id: 'vapi-call-db-error',
+            assistantOverrides: { variableValues: { companyId: CO } },
+        };
+
+        expect(vapiCallContextService.looksLikeOutbound(call)).toBe(true);
+        await expect(vapiCallContextService.resolve(call)).resolves.toEqual({
+            matched: false,
+            ambiguous: true,
+        });
+        errorSpy.mockRestore();
+    });
 });

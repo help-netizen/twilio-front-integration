@@ -34,9 +34,9 @@ const agentSkills = require('../services/agentSkills');
 const resultShapes = require('../services/agentSkills/resultShapes');
 const vapiCallContextService = require('../services/vapiCallContextService');
 
-// Company is hardwired for the VAPI (voice) transport — never taken from the
-// client payload. The authed MCP transport (contract B) supplies its own scope.
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+// Owner-confirmed single Vapi tenant. A valid VAPI_TOOLS_SECRET authenticates
+// this exact transport binding; company scope is never read from the body.
+const VAPI_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
 // The 5 relocated legacy L0 tools keep byte-identical behavior (AC-11): they read
 // their OWN `phone` from `args` and must NOT be perturbed by the silent caller-ID
@@ -63,6 +63,7 @@ function vapiSecretAuth(req, res, next) {
     if (header !== secret) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
+    req.vapiCompanyId = VAPI_COMPANY_ID;
     next();
 }
 
@@ -75,14 +76,11 @@ function vapiSecretAuth(req, res, next) {
  * 5 legacy L0 tools are excluded so their observable output stays byte-identical
  * to the pre-refactor handlers (they never saw the raw caller-ID before).
  *
- * OUTBOUND-PARTS-CALL-001: for the server-initiated outbound call, the call's
- * pre-bound identity (`jobId`, `contactId`, `taskId`, `companyId`, slot fields) is
- * injected at call-open into `call.assistantOverrides.variableValues` — NOT a
- * caller/model claim. Those variableValues are threaded into the skill input and
- * OVERRIDE any same-named model `args`, so an outbound skill's ownership pre-check
- * (e.g. `confirmPartsVisit`) keys on server-injected identity the model cannot
- * spoof. Inbound Sara calls carry NO `assistantOverrides.variableValues`, so this
- * is a pure no-op for the inbound path (Sara/legacy tools untouched).
+ * OUTBOUND-PARTS-CALL-001: Vapi echoes pre-bound identity in
+ * `call.assistantOverrides.variableValues`, but the public request body is not an
+ * authorization source. The route repairs identity from the correlated attempt
+ * and passes it as trustedValues, which wins over both model args and echoed
+ * variableValues. Inbound Sara calls use the secret-bound transport company.
  *
  * @param {string} name The tool/skill name.
  * @param {object} args Parsed tool arguments.
@@ -90,21 +88,20 @@ function vapiSecretAuth(req, res, next) {
  * @returns {object} The skill input (identity block + skill-specific fields).
  */
 function buildSkillInput(name, args, call, trustedValues = null) {
-    // Server-injected, model-untrusted identity for outbound calls (empty for
-    // inbound Sara). Overrides same-named model args → identity can't be spoofed.
+    // Echoed outbound values are body data, not authorization. Correlated
+    // trustedValues are spread last and repair every ownership field.
     const variableValues =
         (call && call.assistantOverrides && call.assistantOverrides.variableValues) || null;
 
     const callerNumber = call && call.customer && call.customer.number;
     if (LEGACY_TOOLS.has(name) || !callerNumber) {
-        // Legacy L0 tools stay byte-identical (no silent phone); but outbound
-        // variableValues (absent for inbound) still take precedence when present.
+        // Legacy L0 tools stay byte-identical except for the additive trusted
+        // tenant/subject values supplied by the transport.
         return trustedValues
             ? { ...args, ...(variableValues || {}), ...trustedValues }
             : (variableValues ? { ...args, ...variableValues } : args);
     }
-    // Silent caller-ID is a FALLBACK (args win); variableValues are AUTHORITATIVE
-    // (server-injected) so they are spread LAST to override any model-sent field.
+    // Silent caller-ID is a fallback; correlated trustedValues are authoritative.
     return {
         phone: callerNumber,
         ...args,
@@ -125,8 +122,14 @@ router.post('/', vapiSecretAuth, async (req, res) => {
         const toolCallList = message.toolCallList || [];
         const results = [];
         const callContext = await vapiCallContextService.resolve(message.call);
+        const transportCompanyId = req.vapiCompanyId;
+        const outboundClaimed = vapiCallContextService.looksLikeOutbound(message.call);
 
-        if (callContext.ambiguous) {
+        if (
+            callContext.ambiguous
+            || (outboundClaimed && !callContext.matched)
+            || (callContext.matched && callContext.companyId !== transportCompanyId)
+        ) {
             const refusal = resultShapes.safeFallback();
             return res.json({
                 results: toolCallList.map((toolCall) => ({
@@ -156,11 +159,14 @@ router.post('/', vapiSecretAuth, async (req, res) => {
                 name,
                 args,
                 message.call,
-                callContext.matched ? callContext.values : null,
+                {
+                    ...(callContext.matched ? callContext.values : {}),
+                    companyId: transportCompanyId,
+                },
             );
             const result = await agentSkills.runSkill(
                 name,
-                callContext.matched ? callContext.companyId : DEFAULT_COMPANY_ID,
+                transportCompanyId,
                 { source: 'vapi', call: message.call },
                 input,
             );

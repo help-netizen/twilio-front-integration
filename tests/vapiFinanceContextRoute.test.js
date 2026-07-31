@@ -8,13 +8,15 @@ jest.mock('../backend/src/services/agentSkills', () => ({
 }));
 jest.mock('../backend/src/services/vapiCallContextService', () => ({
     resolve: jest.fn(),
+    looksLikeOutbound: jest.fn(),
 }));
 
 const agentSkills = require('../backend/src/services/agentSkills');
 const callContextService = require('../backend/src/services/vapiCallContextService');
 const router = require('../backend/src/routes/vapi-tools');
 
-const COMPANY = '00000000-0000-0000-0000-000000000099';
+const COMPANY = '00000000-0000-0000-0000-000000000001';
+const FOREIGN_COMPANY = '00000000-0000-0000-0000-000000000099';
 
 function makeApp() {
     const app = express();
@@ -53,6 +55,7 @@ function payload() {
 beforeEach(() => {
     jest.clearAllMocks();
     process.env.VAPI_TOOLS_SECRET = 'test-vapi-secret';
+    callContextService.looksLikeOutbound.mockReturnValue(true);
 });
 
 afterAll(() => {
@@ -106,4 +109,60 @@ test('duplicate VAPI call id across companies fails closed before skill dispatch
     const result = JSON.parse(response.body.results[0].result);
     expect(result).toMatchObject({ ok: false });
     expect(JSON.stringify(result)).not.toMatch(/spoof|invoice-1|101|501/);
+});
+
+test('T-foreign/T-blast: a correlated non-Vapi company is refused without dispatch', async () => {
+    callContextService.resolve.mockResolvedValue({
+        matched: true,
+        ambiguous: false,
+        companyId: FOREIGN_COMPANY,
+        values: { companyId: FOREIGN_COMPANY, jobId: 202 },
+    });
+
+    const response = await request(makeApp())
+        .post('/api/vapi-tools')
+        .set('x-vapi-secret', 'test-vapi-secret')
+        .send(payload());
+
+    expect(response.status).toBe(200);
+    expect(agentSkills.runSkill).not.toHaveBeenCalled();
+    expect(JSON.parse(response.body.results[0].result)).toMatchObject({ ok: false });
+});
+
+test('T-own/T-blast: uncorrelated inbound body company cannot override the secret-bound company', async () => {
+    callContextService.resolve.mockResolvedValue({ matched: false, ambiguous: false });
+    callContextService.looksLikeOutbound.mockReturnValue(false);
+    const body = payload();
+    body.message.call.assistantOverrides.variableValues = { companyId: FOREIGN_COMPANY };
+    body.message.toolCallList[0].function.arguments = JSON.stringify({
+        companyId: FOREIGN_COMPANY,
+        invoiceId: 'invoice-1',
+    });
+
+    const response = await request(makeApp())
+        .post('/api/vapi-tools')
+        .set('x-vapi-secret', 'test-vapi-secret')
+        .send(body);
+
+    expect(response.status).toBe(200);
+    expect(agentSkills.runSkill).toHaveBeenCalledWith(
+        'getInvoiceSummary',
+        COMPANY,
+        expect.objectContaining({ source: 'vapi' }),
+        expect.objectContaining({ companyId: COMPANY, invoiceId: 'invoice-1' })
+    );
+    expect(JSON.stringify(agentSkills.runSkill.mock.calls[0][3])).not.toContain(FOREIGN_COMPANY);
+});
+
+test('uncorrelated outbound identity is refused before dispatch', async () => {
+    callContextService.resolve.mockResolvedValue({ matched: false, ambiguous: false });
+    callContextService.looksLikeOutbound.mockReturnValue(true);
+
+    const response = await request(makeApp())
+        .post('/api/vapi-tools')
+        .set('x-vapi-secret', 'test-vapi-secret')
+        .send(payload());
+
+    expect(response.status).toBe(200);
+    expect(agentSkills.runSkill).not.toHaveBeenCalled();
 });

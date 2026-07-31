@@ -133,6 +133,10 @@ function withAttempt(row = attemptRow()) {
     mockQuery.mockResolvedValueOnce({ rows: row ? [row] : [] }); // correlation SELECT
 }
 
+function withAttemptRows(rows) {
+    mockQuery.mockResolvedValueOnce({ rows });
+}
+
 // ── S9/S10 — secret auth (fail-closed) ────────────────────────────────────────
 describe('secret auth (U18, S10)', () => {
     test('no configured secret → 503', async () => {
@@ -193,6 +197,23 @@ describe('company derived from attempt row, not body (S10)', () => {
         expect(res.body).toEqual({ ok: true });
         // Only the correlation SELECT ran; no UPDATE/INSERT.
         expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
+    test('ambiguous call.id → 200 no-op with no cross-company read or write', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        withAttemptRows([
+            attemptRow({ id: 100, company_id: COMPANY }),
+            attemptRow({ id: 200, company_id: '00000000-0000-0000-0000-000000000099' }),
+        ]);
+
+        const res = await post(endReport('duplicate-id', 'customer-did-not-answer'));
+
+        expect(res.status).toBe(200);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(mockFinalize).not.toHaveBeenCalled();
+        expect(mockResolveSettings).not.toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ambiguous vapi_call_id'));
+        warnSpy.mockRestore();
     });
 
     test('no call.id in body → 200 no-op, not even a correlation query', async () => {

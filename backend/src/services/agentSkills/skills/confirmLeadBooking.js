@@ -6,10 +6,9 @@
  * analog — the end-of-call webhook then no-ops idempotently).
  *
  * L0 on the outbound surface (confirmPartsVisit "Deviation 1" pattern): an
- * outbound robo-call has no caller-claimed identity to verify — identity
- * (leadUuid/companyId) is SERVER-INJECTED via assistantOverrides.variableValues,
- * which vapi-tools.buildSkillInput spreads LAST over the model args, so the
- * model can never override them. All isolation is in-skill.
+ * outbound robo-call has no caller-claimed identity to verify. The lead UUID is
+ * repaired from server-side call correlation, while company scope comes only
+ * from runSkill's trusted transport argument. All isolation is in-skill.
  *
  * bookOnLead is deliberately NOT reused: it is L1 contact-gated and targets
  * "the newest open lead of the verified contact" — wrong for contactless
@@ -30,10 +29,10 @@ const { aiActor } = require('../../leadContactActivityService');
 async function run(companyId, _verifiedContext, input) {
     const src = input && typeof input === 'object' ? input : {};
 
-    // 1. Identity — server-injected wins; the transport companyId ARGUMENT
-    // (DEFAULT_COMPANY_ID on the VAPI seam) is never used for scoping.
+    // 1. Identity — leadUuid is repaired by transport correlation; tenant scope
+    // always comes from runSkill's trusted argument, never input.companyId.
     const leadUuid = src.leadUuid;
-    const cid = src.companyId;
+    const cid = companyId;
     if (!leadUuid || !cid) {
         return resultShapes.refusal(
             "I couldn't pull up your request to book — let me have a teammate follow up with you."

@@ -114,6 +114,7 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
 
         const client = await db.pool.connect();
         const originalQuery = db.query;
+        const originalGetClient = db.getClient;
         const companyId = randomUUID();
         const foreignCompanyId = randomUUID();
         const leadUuid = `AB${process.pid}${Date.now()}`.slice(-20);
@@ -122,6 +123,17 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
         try {
             await client.query('BEGIN');
             db.query = (text, params) => client.query(text, params);
+            // Keep service-layer transactions on the fixture connection so they
+            // can see the uncommitted tenant rows without committing test data.
+            db.getClient = async () => ({
+                query: (text, params) => {
+                    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(String(text).trim())) {
+                        return Promise.resolve({ rows: [], rowCount: 0 });
+                    }
+                    return client.query(text, params);
+                },
+                release: () => {},
+            });
             await seedIncident(client, companyId, leadUuid);
             await seedIncident(client, foreignCompanyId, foreignLeadUuid);
 
@@ -143,7 +155,7 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
                  FROM leads WHERE company_id = $1 AND uuid = $2`,
                 [foreignCompanyId, foreignLeadUuid]
             );
-            const foreign = await skill.run('transport-company', {}, {
+            const foreign = await skill.run(companyId, {}, {
                 ...input,
                 leadUuid: foreignLeadUuid,
             });
@@ -159,7 +171,7 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
 
             // This is the production regression: the Review state exists, but
             // Submitted has no inbound edge to it, so the atomic hold is refused.
-            const before = await skill.run('transport-company', {}, input);
+            const before = await skill.run(companyId, {}, input);
             expect(before).toMatchObject({
                 ok: false,
                 speak: 'I had trouble locking that time in — let me have a teammate confirm it with you.',
@@ -215,7 +227,7 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
             expect(replayed.rows[0].active_version_id)
                 .toBe(migrated.rows[0].active_version_id);
 
-            const out = await skill.run('transport-company', {}, input);
+            const out = await skill.run(companyId, {}, input);
 
             expect(out.success).toBe(true);
             const stored = await client.query(
@@ -239,6 +251,7 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
             )).toMatchObject({ valid: false });
         } finally {
             db.query = originalQuery;
+            db.getClient = originalGetClient;
             fsmService.invalidateCache(companyId, 'lead');
             fsmService.invalidateCache(foreignCompanyId, 'lead');
             try {

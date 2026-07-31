@@ -12,8 +12,8 @@
  *
  *   async function run(companyId, verifiedContext, input) -> resultObject
  *
- *   - companyId:        string — the tenant scope. ALWAYS the hardwired
- *                       DEFAULT_COMPANY_ID on voice/public-MCP, or
+ *   - companyId:        string — the tenant scope. ALWAYS the secret-bound
+ *                       Vapi transport company on voice, or
  *                       req.companyFilter.company_id on the authed MCP route.
  *                       NEVER taken from the client payload.
  *   - verifiedContext:  server-built object from verificationGate.deriveLevel,
@@ -101,7 +101,7 @@ function isVerificationRequired(err) {
  *      factor. NEVER re-throw, NEVER leak err.message / stack / SQL / PII.
  *
  * @param {string} name The skill name (VAPI tool name or the mapped MCP name).
- * @param {string} companyId Tenant scope (DEFAULT_COMPANY_ID or req company).
+ * @param {string} companyId Tenant scope (trusted Vapi binding or req company).
  * @param {object} rawContext Transport context ({ source:'vapi'|'mcp', call?, req? }) — LOGGING only, never authorization.
  * @param {object} input The identity block + skill-specific fields.
  * @returns {Promise<object>} A provider-neutral, speech-safe result (or a safe fallback / refusal).

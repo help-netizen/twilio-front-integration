@@ -369,6 +369,12 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
         expect(twiml).toContain('statusCallbackMethod="POST">sip:assistant@sip.vapi.ai?');
         expect(twiml).toContain('x-blanc-company-id=company-1');
         expect(twiml).toContain('x-blanc-group-id=ug-1');
+        const resourceRead = mockQuery.mock.calls.find(([sql]) =>
+            sql.includes('FROM vapi_tenant_resources r'));
+        expect(resourceRead[0]).toContain('r.company_id = $1');
+        expect(resourceRead[0]).toContain('pc.company_id = r.company_id');
+        expect(resourceRead[1][0]).toBe('company-1');
+        expect(JSON.stringify(resourceRead)).not.toContain('default');
     });
 
     test('routes unconfigured VAPI node through its outgoing edge before audible failure', async () => {

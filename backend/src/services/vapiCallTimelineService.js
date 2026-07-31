@@ -13,9 +13,8 @@
  *     `console.warn('[vapiCallTimeline] … (non-fatal)')` + return null. Callers
  *     never branch on the result.
  *   - Company-scoped: companyId ALWAYS derives from the caller's attempt row
- *     (never a webhook body). Every SQL statement carries company_id, normalized
- *     to DEFAULT_COMPANY_ID exactly like callsQueries.upsertCall so the WHEREs
- *     match the row that upsert created.
+ *     (never a webhook body). Missing company context fails closed before any
+ *     read or write; every SQL statement carries company_id.
  *   - Synthetic sid `vapi:<vapiCallId>` at placement, re-keyed to the real Twilio
  *     CallSid (message.call.phoneCallProviderId) the moment it is learned.
  *   - NO transcripts/recordings rows before sid resolution — their FKs
@@ -30,10 +29,6 @@
 const queries = require('../db/queries');
 const db = require('../db/connection');
 const realtimeService = require('./realtimeService');
-
-// Mirror callsQueries.js so our raw-SQL WHEREs target the same company_id the
-// upsert stored when the caller passed a null/absent companyId.
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
 const AI_ANSWERED_BY = 'ai';
 
@@ -91,6 +86,15 @@ function coerceDuration(value) {
     if (value == null) return null;
     const n = Math.round(Number(value));
     return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function requireCompanyId(companyId) {
+    if (!companyId) {
+        const err = new Error('companyId is required');
+        err.code = 'TENANT_CONTEXT_REQUIRED';
+        throw err;
+    }
+    return companyId;
 }
 
 // =============================================================================
@@ -178,7 +182,7 @@ async function mergeSyntheticIntoReal({ cid, syntheticSid, realSid }) {
  * no child row is ever created under an unresolved sid.
  */
 async function resolveFinalSid({ companyId, syntheticSid, realSid, phoneCallProviderId } = {}) {
-    const cid = companyId || DEFAULT_COMPANY_ID;
+    const cid = requireCompanyId(companyId);
     const real = firstDefined(realSid, phoneCallProviderId);
 
     // 1. No real sid learned → keep the synthetic row (S6 lifecycle).
@@ -226,7 +230,7 @@ async function resolveFinalSid({ companyId, syntheticSid, realSid, phoneCallProv
 async function recordPlacement(opts = {}) {
     try {
         const attempt = opts.attempt || {};
-        const cid = opts.companyId || attempt.company_id || DEFAULT_COMPANY_ID;
+        const cid = requireCompanyId(opts.companyId || attempt.company_id);
         const vapiCallId = opts.vapiCallId;
         const dialedNumber = firstDefined(opts.dialedNumber, opts.phone, attempt.phone);
         const callerId = firstDefined(opts.callerId, opts.from);
@@ -312,7 +316,7 @@ async function applyStatusUpdate(opts = {}) {
         const attempt = opts.attempt || {};
         const message = opts.message || {};
         const call = message.call || {};
-        const cid = opts.companyId || attempt.company_id || DEFAULT_COMPANY_ID;
+        const cid = requireCompanyId(opts.companyId || attempt.company_id);
         const vapiCallId = firstDefined(opts.vapiCallId, call.id, attempt.vapi_call_id);
         const realSid = firstDefined(opts.phoneCallProviderId, opts.realSid, call.phoneCallProviderId);
         const rawStatus = firstDefined(opts.status, message.status, call.status);
@@ -387,7 +391,7 @@ async function finalizeFromEndOfCallReport(opts = {}) {
         const artifact = message.artifact || {};
         const analysis = message.analysis || {};
 
-        const cid = opts.companyId || attempt.company_id || DEFAULT_COMPANY_ID;
+        const cid = requireCompanyId(opts.companyId || attempt.company_id);
         const vapiCallId = firstDefined(opts.vapiCallId, call.id, attempt.vapi_call_id);
         const realSid = firstDefined(opts.phoneCallProviderId, opts.realSid, call.phoneCallProviderId);
         const endedReason = firstDefined(opts.endedReason, message.endedReason, call.endedReason);

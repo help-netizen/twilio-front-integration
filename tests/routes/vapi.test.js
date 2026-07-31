@@ -6,10 +6,9 @@
 const express = require('express');
 const request = require('supertest');
 
-// Mock node-fetch — vapi.js uses dynamic import('node-fetch').default
-// We mock the whole module with a default export that is a jest.fn()
+// Mock node-fetch — dynamic import('node-fetch').default resolves this function.
 const mockFetch = jest.fn();
-jest.mock('node-fetch', () => ({ default: mockFetch, __esModule: true }));
+jest.mock('node-fetch', () => mockFetch);
 
 // Mock db
 jest.mock('../../backend/src/db/connection', () => ({
@@ -110,7 +109,7 @@ describe('POST /api/vapi/connections', () => {
     // TC-F016-001 (partial): successful connection creation — no key in response
     test('does not expose api_key in response on success', async () => {
         mockFetch.mockResolvedValue({ ok: true, status: 200 });
-        const created = { id: 'conn_abc', status: 'active', display_name: 'Test', environment: 'prod', created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+        const created = { id: 'conn_abc', company_id: 'company-1', status: 'active', display_name: 'Test', environment: 'prod', created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
         db.query
             .mockResolvedValue({ rows: [] })    // ensureTables (all CREATE queries)
             .mockResolvedValueOnce({ rows: [created] }); // SELECT after insert
@@ -119,6 +118,8 @@ describe('POST /api/vapi/connections', () => {
             .post('/api/vapi/connections')
             .send({ api_key: 'vapi-valid-key', display_name: 'Test', environment: 'prod' });
 
+        expect(res.status).toBe(200);
+        expect(res.body.data.company_id).toBe('company-1');
         // API key must NOT appear in the response body
         expect(JSON.stringify(res.body)).not.toContain('vapi-valid-key');
     });
