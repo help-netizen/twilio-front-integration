@@ -18,6 +18,13 @@ export default function CompanyUsersPage() {
         onConfirm: () => { h.setConfirmDialog((prev: any) => ({ ...prev, open: false })); h.toggleStatus(u); },
     });
 
+    const requestDelete = (u: CompanyUser) => h.setConfirmDialog({
+        open: true,
+        title: 'Remove from company',
+        description: `Permanently remove ${u.full_name || u.email} from the company? This unlinks their account and cannot be undone.`,
+        onConfirm: () => { h.setConfirmDialog((prev: any) => ({ ...prev, open: false })); h.deleteUser(u); },
+    });
+
     return (
         <SettingsPageShell
             title="Users"
@@ -41,7 +48,7 @@ export default function CompanyUsersPage() {
                     users={h.users} loading={h.loading}
                     filtered={!!h.search || h.roleFilter !== 'all' || h.statusFilter !== 'all'}
                     fmtDate={h.fmtDate} actionLoading={h.actionLoading}
-                    onEdit={h.openEditDialog} onToggleStatus={requestToggle} onResetPassword={h.resetPassword}
+                    onEdit={h.openEditDialog} onToggleStatus={requestToggle} onResetPassword={h.resetPassword} onDeleteUser={requestDelete}
                 />
 
                 {h.totalPages > 1 && (

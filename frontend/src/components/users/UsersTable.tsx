@@ -3,7 +3,7 @@ import { Button } from '../ui/button';
 import { Skeleton } from '../ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { Users, ShieldCheck, User, Truck, Phone, MapPin, MoreHorizontal, Settings, KeyRound, Ban, CheckCircle2 } from 'lucide-react';
+import { Users, ShieldCheck, User, Truck, Phone, MapPin, MoreHorizontal, Settings, KeyRound, Ban, CheckCircle2, Trash2 } from 'lucide-react';
 import type { CompanyUser } from '../../hooks/useCompanyUsers';
 
 // Single source of truth for role display — the modern role_key vocabulary.
@@ -31,6 +31,8 @@ interface UsersTableProps {
     onToggleStatus: (u: CompanyUser) => void;
     /** Optional — only super-admin can reset passwords. */
     onResetPassword?: (u: CompanyUser) => void;
+    /** Optional — remove (fully unlink) a disabled user from the company. */
+    onDeleteUser?: (u: CompanyUser) => void;
     emptyHint?: string;
 }
 
@@ -39,7 +41,7 @@ interface UsersTableProps {
  * (overflow menu), used by both the company-admin and super-admin surfaces so
  * the two never drift apart again.
  */
-export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, onEdit, onToggleStatus, onResetPassword, emptyHint }: UsersTableProps) {
+export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, onEdit, onToggleStatus, onResetPassword, onDeleteUser, emptyHint }: UsersTableProps) {
     if (loading) {
         return <div className="space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>;
     }
@@ -130,6 +132,15 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                                             >
                                                 {active ? <><Ban className="size-4 mr-2" /> Disable</> : <><CheckCircle2 className="size-4 mr-2" /> Enable</>}
                                             </DropdownMenuItem>
+                                            {/* Remove-from-company: disabled users only (#86). */}
+                                            {!active && onDeleteUser && (
+                                                <DropdownMenuItem
+                                                    onClick={() => onDeleteUser(u)}
+                                                    className="text-[var(--blanc-danger)]"
+                                                >
+                                                    <Trash2 className="size-4 mr-2" /> Remove from company
+                                                </DropdownMenuItem>
+                                            )}
                                         </DropdownMenuContent>
                                     </DropdownMenu>
                                 </TableCell>

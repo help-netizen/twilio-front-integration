@@ -206,20 +206,33 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
     const isActive = user.membership_status === 'active';
     const busy = loading === user.id;
 
+    // In-app confirmation (never the browser's window.confirm) for destructive actions.
+    const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; description: string; onConfirm: () => void }>({ open: false, title: '', description: '', onConfirm: () => { } });
+    const closeConfirm = () => setConfirmDialog(p => ({ ...p, open: false }));
+
     const handleDisableToggle = () => {
         if (!onToggleStatus) return;
-        if (isActive && !window.confirm(`Disable ${user.full_name || user.email}? They will lose access to the company.`)) return;
-        onToggleStatus(user);
-        setOpen(false);
+        if (!isActive) { onToggleStatus(user); setOpen(false); return; } // enabling needs no confirmation
+        setConfirmDialog({
+            open: true,
+            title: 'Disable user',
+            description: `Disable ${user.full_name || user.email}? They will lose access to the company.`,
+            onConfirm: () => { closeConfirm(); onToggleStatus(user); setOpen(false); },
+        });
     };
 
     const handleDelete = () => {
         if (!onDeleteUser) return;
-        if (!window.confirm(`Permanently remove ${user.full_name || user.email} from the company? This unlinks their account and cannot be undone.`)) return;
-        onDeleteUser(user);
+        setConfirmDialog({
+            open: true,
+            title: 'Remove from company',
+            description: `Permanently remove ${user.full_name || user.email} from the company? This unlinks their account and cannot be undone.`,
+            onConfirm: () => { closeConfirm(); onDeleteUser(user); },
+        });
     };
 
     return (
+        <>
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogContent variant="panel">
                 <DialogPanelHeader>
@@ -252,19 +265,13 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                                         : <><Power className="size-4 mr-1.5" /> Enable user</>}
                                 </Button>
                             )}
+                            {/* #86: fully unlink a disabled user (destructive) — same row. */}
+                            {!isActive && onDeleteUser && (
+                                <Button type="button" variant="outline" size="sm" disabled={busy} onClick={handleDelete} style={{ color: 'var(--blanc-danger)' }}>
+                                    <Trash2 className="size-4 mr-1.5" /> Remove from company
+                                </Button>
+                            )}
                         </div>
-                        {/* #86: fully unlink a disabled user from the company (destructive). */}
-                        {!isActive && onDeleteUser && (
-                            <button
-                                type="button"
-                                disabled={busy}
-                                onClick={handleDelete}
-                                className="inline-flex items-center gap-1.5 text-[13px] font-medium disabled:opacity-50"
-                                style={{ color: 'var(--blanc-danger)' }}
-                            >
-                                <Trash2 className="size-3.5" /> Remove from company
-                            </button>
-                        )}
 
                         <div className="blanc-eyebrow">Identity</div>
                         <FloatingField id="edit-user-name" label="Full name" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />
@@ -339,6 +346,8 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                 </DialogPanelFooter>
             </DialogContent>
         </Dialog>
+        <ConfirmActionDialog confirmDialog={confirmDialog} setConfirmDialog={setConfirmDialog} />
+        </>
     );
 }
 
