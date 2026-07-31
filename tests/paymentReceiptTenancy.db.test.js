@@ -59,7 +59,11 @@ test('RECEIPT-TENANCY-DB: detail/history/claim/complete/release isolate two tena
                 company_id UUID NOT NULL,
                 contact_id BIGINT,
                 job_id BIGINT,
-                invoice_number TEXT
+                invoice_number TEXT,
+                -- Mirrors the real table: the receipt context picks a job's newest
+                -- non-void invoice when the payment carries none (RECEIPT-INVOICE-PDF-001).
+                status TEXT NOT NULL DEFAULT 'sent',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             ) ON COMMIT DROP;
             CREATE TEMP TABLE stripe_connected_accounts (
                 company_id UUID PRIMARY KEY,

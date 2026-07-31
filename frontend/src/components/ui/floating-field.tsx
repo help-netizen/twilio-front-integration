@@ -22,6 +22,8 @@ interface FloatingFieldProps {
      *  overlay) — readOnly stops iOS raising the keyboard in place; onClick opens the overlay. */
     readOnly?: boolean
     onClick?: React.MouseEventHandler<HTMLInputElement | HTMLTextAreaElement>
+    /** Defaults to "off" — pass a token only where browser autofill genuinely helps. */
+    autoComplete?: string
 }
 
 /**
@@ -38,7 +40,7 @@ interface FloatingFieldProps {
  */
 function FloatingField({
     label, id, textarea, rows = 3, className, containerClassName,
-    onBlur, onFocus, onKeyDown, ...field
+    onBlur, onFocus, onKeyDown, autoComplete, ...field
 }: FloatingFieldProps) {
     const reactId = React.useId()
     const fieldId = id || reactId
@@ -58,7 +60,7 @@ function FloatingField({
                 <textarea
                     id={fieldId}
                     placeholder=" "
-                    autoComplete="off"
+                    autoComplete={autoComplete ?? "off"}
                     data-lpignore="true"
                     data-1p-ignore="true"
                     rows={rows}
@@ -88,7 +90,7 @@ function FloatingField({
             <input
                 id={fieldId}
                 placeholder=" "
-                autoComplete="off"
+                autoComplete={autoComplete ?? "off"}
                 data-lpignore="true"
                 data-1p-ignore="true"
                 className={cn(fieldBase, "h-[50px] px-3.5 pt-[22px] pb-[6px]", className)}

@@ -736,7 +736,8 @@ function receiptNumber() {
 }
 
 function invoiceFileName(invoiceNumber) {
-    const safe = String(invoiceNumber || 'invoice').replace(/[^A-Za-z0-9._-]/g, '-');
+    const { shortDocNumber } = require('../utils/docNumber');
+    const safe = String(shortDocNumber(invoiceNumber) || 'invoice').replace(/[^A-Za-z0-9._-]/g, '-');
     return `Invoice-${safe}.pdf`;
 }
 
@@ -761,19 +762,24 @@ async function buildReceiptDelivery(companyId, context) {
         }
     }
 
+    // The receipt carries the invoice PDF whenever one exists: the payment's own
+    // invoice, or — for an ad-hoc job payment — the job's current invoice.
     let invoice = null;
-    if (context.receipt_invoice_id || context.invoice_id) {
+    const invoiceIdForPdf = context.receipt_invoice_id || context.invoice_id || context.job_invoice_id;
+    if (invoiceIdForPdf) {
         const invoicesService = require('./invoicesService');
-        const generated = await invoicesService.generatePdf(
-            companyId,
-            context.receipt_invoice_id || context.invoice_id
-        );
-        invoice = generated.invoice;
-        files.push({
-            originalname: invoiceFileName(invoice.invoice_number),
-            mimetype: 'application/pdf',
-            buffer: generated.buffer,
-        });
+        try {
+            const generated = await invoicesService.generatePdf(companyId, invoiceIdForPdf);
+            invoice = generated.invoice;
+            files.push({
+                originalname: invoiceFileName(invoice.invoice_number),
+                mimetype: 'application/pdf',
+                buffer: generated.buffer,
+            });
+        } catch (err) {
+            // A receipt must still reach the customer if the invoice PDF fails to render.
+            console.error('[PaymentReceipt] invoice PDF skipped:', err.message);
+        }
     }
 
     const { buildPaymentReceiptEmail } = require('./paymentReceiptTemplate');

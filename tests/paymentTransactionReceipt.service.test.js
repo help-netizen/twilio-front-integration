@@ -334,6 +334,61 @@ describe('paymentsService.emailTransactionReceipt', () => {
         ]);
     });
 
+    test('ad-hoc job payment attaches the job invoice PDF (RECEIPT-INVOICE-PDF-001)', async () => {
+        paymentsQueries.getTransactionReceiptContext.mockResolvedValue(receiptContext({
+            invoice_id: null,
+            receipt_invoice_id: null,
+            job_invoice_id: 91,
+            invoice_number: 'INVOICE J-1597-1',
+            amount: '1.00',
+        }));
+        invoicesService.generatePdf.mockResolvedValue({
+            invoice: {
+                id: 91,
+                invoice_number: 'INVOICE J-1597-1',
+                currency: 'USD',
+                subtotal: '120.00',
+                discount_amount: '0',
+                tax_amount: '0',
+                total: '120.00',
+                items: [],
+            },
+            buffer: Buffer.from('job invoice pdf'),
+        });
+
+        await paymentsService.emailTransactionReceipt(
+            COMPANY_A, 71, 'customer@example.com', ACTOR, null, null, 'adhoc-job-invoice',
+        );
+
+        expect(invoicesService.generatePdf).toHaveBeenCalledWith(COMPANY_A, 91);
+        const message = emailService.sendEmail.mock.calls[0][1];
+        // The doc word is not repeated in the file name (Invoice-J-1597-1, not Invoice-INVOICE-…).
+        expect(message.files).toEqual([
+            {
+                originalname: 'Invoice-J-1597-1.pdf',
+                mimetype: 'application/pdf',
+                buffer: Buffer.from('job invoice pdf'),
+            },
+        ]);
+    });
+
+    test('a failing invoice PDF never blocks the receipt itself', async () => {
+        paymentsQueries.getTransactionReceiptContext.mockResolvedValue(receiptContext({
+            invoice_id: null,
+            receipt_invoice_id: null,
+            job_invoice_id: 92,
+            amount: '1.00',
+        }));
+        invoicesService.generatePdf.mockRejectedValue(new Error('render exploded'));
+
+        await paymentsService.emailTransactionReceipt(
+            COMPANY_A, 71, 'customer@example.com', ACTOR, null, null, 'adhoc-pdf-failure',
+        );
+
+        expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+        expect(emailService.sendEmail.mock.calls[0][1].files).toEqual([]);
+    });
+
     test('writes successful history only after Gmail accepts the email', async () => {
         paymentsQueries.getTransactionReceiptContext.mockResolvedValue(receiptContext());
 

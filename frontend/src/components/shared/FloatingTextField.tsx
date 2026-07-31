@@ -15,6 +15,11 @@ interface FloatingTextFieldProps {
     disabled?: boolean;
     name?: string;
     /**
+     * Pass "off" for fields a tech fills with SOMEONE ELSE's data (customer email on a
+     * receipt): iOS otherwise offers the tech's own saved address on every job.
+     */
+    autoComplete?: string;
+    /**
      * Optional primary action rendered INSIDE the mobile overlay (e.g. "send receipt"): a round
      * violet send button that runs this then closes. Omit → a plain "Done" that just closes
      * (the value is already written live through onChange, so the parent form keeps it).
@@ -34,7 +39,7 @@ interface FloatingTextFieldProps {
  * the plain inline FloatingField (no keyboard problem there).
  */
 export function FloatingTextField({
-    label, value, onChange, type, inputMode, textarea, rows, disabled, name,
+    label, value, onChange, type, inputMode, textarea, rows, disabled, name, autoComplete,
     onSubmit, submitting, canSubmit,
 }: FloatingTextFieldProps) {
     const isMobile = useIsMobile();
@@ -45,6 +50,7 @@ export function FloatingTextField({
             <FloatingField
                 label={label} value={value} onChange={onChange} type={type}
                 inputMode={inputMode} textarea={textarea} rows={rows} disabled={disabled} name={name}
+                autoComplete={autoComplete}
             />
         );
     }
@@ -64,6 +70,7 @@ export function FloatingTextField({
             <FloatingField
                 label={label} value={value} type={type} inputMode={inputMode}
                 textarea={textarea} rows={rows} disabled={disabled} name={name}
+                autoComplete={autoComplete}
                 readOnly
                 onClick={disabled ? undefined : () => setOpen(true)}
             />
@@ -79,6 +86,10 @@ export function FloatingTextField({
                         ) : (
                             <input
                                 autoFocus type={type} inputMode={inputMode} value={value} onChange={onChange} placeholder={label}
+                                autoComplete={autoComplete}
+                                autoCorrect={autoComplete === 'off' ? 'off' : undefined}
+                                autoCapitalize={autoComplete === 'off' ? 'none' : undefined}
+                                spellCheck={autoComplete === 'off' ? false : undefined}
                                 className="flex-1 bg-transparent outline-none"
                                 style={{ border: 'none', fontSize: 16, color: 'var(--blanc-ink-1)', height: 36, padding: '0 2px' }}
                                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); doSubmit(); } }}

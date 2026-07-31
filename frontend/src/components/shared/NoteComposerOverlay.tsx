@@ -70,7 +70,9 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
             />
             {/* No sheet chrome — the card is transparent so ONLY the inner input floats above the
                 keyboard (owner: "don't show that the input is in a bottom sheet"). Minimal padding:
-                side margins + a small lift off the keyboard, no big bottom gap. */}
+                side margins + a small lift off the keyboard, no big bottom gap.
+                With the keyboard DOWN there is nothing under us, so the card must clear the home
+                indicator itself — otherwise its bottom edge runs off the screen. */}
             <div
                 style={{
                     position: 'absolute',
@@ -79,7 +81,9 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
                     bottom: 0,
                     transform: `translateY(${-keyboardInset}px)`,
                     background: 'transparent',
-                    padding: '0 10px 8px',
+                    padding: keyboardInset > 0
+                        ? '0 10px 8px'
+                        : '0 10px calc(8px + env(safe-area-inset-bottom))',
                 }}
             >
                 {children}

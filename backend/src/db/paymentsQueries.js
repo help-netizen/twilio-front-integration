@@ -223,7 +223,10 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
                     AS receipt_job_id,
                 COALESCE(t.invoice_id, stripe_session.invoice_id)
                     AS receipt_invoice_id,
-                i.invoice_number,
+                -- RECEIPT-INVOICE-PDF-001: an ad-hoc job payment carries no invoice_id,
+                -- but the job may still have one — the receipt attaches its PDF.
+                job_invoice.id AS job_invoice_id,
+                COALESCE(i.invoice_number, job_invoice.invoice_number) AS invoice_number,
                 j.job_number,
                 j.service_name,
                 COALESCE(NULLIF(j.territory, ''), NULLIF(j.city, ''))
@@ -249,6 +252,16 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
          LEFT JOIN jobs j
            ON j.id = COALESCE(t.job_id, stripe_session.job_id, i.job_id)
           AND j.company_id = t.company_id
+         LEFT JOIN LATERAL (
+             SELECT ji.id, ji.invoice_number
+             FROM invoices ji
+             WHERE ji.company_id = t.company_id
+               AND ji.job_id = j.id
+               AND COALESCE(t.invoice_id, stripe_session.invoice_id) IS NULL
+               AND ji.status NOT IN ('void', 'voided')
+             ORDER BY ji.created_at DESC, ji.id DESC
+             LIMIT 1
+         ) job_invoice ON TRUE
          LEFT JOIN contacts c
            ON c.id = COALESCE(t.contact_id, stripe_session.contact_id, i.contact_id, j.contact_id)
           AND c.company_id = t.company_id

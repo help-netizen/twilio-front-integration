@@ -262,8 +262,8 @@ export function ManualCardSuccessView({
                     <>
                         <FloatingTextField
                             label="Customer email"
-                            type="email"
                             inputMode="email"
+                            autoComplete="off"
                             value={receiptState.email}
                             onChange={event => onReceiptEmailChange(event.target.value)}
                             disabled={receiptLocked}
