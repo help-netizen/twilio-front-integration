@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
 import { useAuthz } from './useAuthz';
 import { useDebouncedSearch } from './useDebouncedSearch';
@@ -13,8 +14,37 @@ import {
 export const LIMIT = 50;
 const jobKey = (job: LocalJob) => job.id;
 
+export interface JobsUrlFilters {
+    search: string;
+    contactId?: number;
+}
+
+export function readJobsUrlFilters(search: string): JobsUrlFilters {
+    const params = new URLSearchParams(search);
+    const rawContactId = params.get('contact_id');
+    const parsedContactId = rawContactId ? Number(rawContactId) : NaN;
+    return {
+        search: params.get('search') || '',
+        contactId: Number.isSafeInteger(parsedContactId) && parsedContactId > 0
+            ? parsedContactId
+            : undefined,
+    };
+}
+
+export function replaceJobsSearchParam(currentSearch: string, searchQuery: string): string {
+    const params = new URLSearchParams(currentSearch);
+    if (searchQuery) params.set('search', searchQuery);
+    else params.delete('search');
+    params.delete('contact_id');
+    const nextSearch = params.toString();
+    return nextSearch ? `?${nextSearch}` : '';
+}
+
 export function useJobsData() {
-    const [searchQuery, setSearchQuery] = useState('');
+    const location = useLocation();
+    const navigate = useNavigate();
+    const urlFilters = readJobsUrlFilters(location.search);
+    const searchQuery = urlFilters.search;
     const [statusFilter, setStatusFilter] = useState<string[]>([]);
     const [providerFilter, setProviderFilter] = useState<string[]>([]);
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
@@ -71,6 +101,7 @@ export function useJobsData() {
             user?.sub ?? null,
             membership?.role_key ?? null,
             debouncedSearch,
+            urlFilters.contactId ?? null,
             normalizedStatuses,
             normalizedProviders,
             normalizedSources,
@@ -90,6 +121,7 @@ export function useJobsData() {
                 limit,
                 cursor: cursor ?? undefined,
                 search: debouncedSearch || undefined,
+                contact_id: urlFilters.contactId,
                 sort_by: sortBy,
                 sort_order: sortOrder,
                 only_open: onlyOpen || undefined,
@@ -114,6 +146,13 @@ export function useJobsData() {
         },
         getItemKey: jobKey,
     });
+
+    const setSearchQuery = useCallback((nextSearch: string) => {
+        navigate({
+            pathname: location.pathname,
+            search: replaceJobsSearchParam(location.search, nextSearch),
+        }, { replace: true });
+    }, [location.pathname, location.search, navigate]);
 
     useEffect(() => {
         if (!canManageCompany) return;

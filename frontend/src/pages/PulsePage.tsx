@@ -15,6 +15,7 @@ import { PulseLeadBar } from '../components/leads/PulseLeadBar';
 import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
 import { PulseContactBar } from '../components/contacts/PulseContactBar';
 import { openLeadsJobsCount, pickBarAddress, hasNotes } from '../components/contacts/contactBarHelpers';
+import { buildContactJobsUrl } from '../components/contacts/contactJobsNavigation';
 import { Dialog, DialogContent, DialogBody, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { TaskFormDialog } from '../components/tasks/TaskFormDialog';
 import { createTask, type Task } from '../components/tasks/tasksApi';
@@ -323,6 +324,7 @@ const PulsePageInner: React.FC = () => {
                         const showLeadBar = !isAnonTimeline && !p.leadLoading && !!p.lead;
                         const smsTarget = p.messageTargets.find(t => t.channel === 'sms');
                         const emailTarget = p.messageTargets.find(t => t.channel === 'email');
+                        const contactName = p.contactDetail?.contact.full_name || p.contact?.full_name || 'Unknown';
                         return (
                         <>
                             {/* PULSE-CONTACT/LEAD-PIN-001: ONE sticky stack for the AR plaque and
@@ -363,7 +365,7 @@ const PulsePageInner: React.FC = () => {
                                     // Null-safe: a technician (no contacts.view) has no contactDetail,
                                     // so the identity falls back to the timeline contact + resolved phone,
                                     // and the address comes from their own job(s). ROLE-TIMELINE-TECH-STICKY-001.
-                                    name={p.contactDetail?.contact.full_name || p.contact?.full_name || 'Unknown'}
+                                    name={contactName}
                                     address={pickBarAddress(p.contactJobs, p.contactDetail?.contact ?? p.contact ?? null)}
                                     phone={p.phone || p.contactDetail?.contact.phone_e164 || p.contact?.phone_e164 || null}
                                     contactId={p.contact!.id}
@@ -388,6 +390,9 @@ const PulsePageInner: React.FC = () => {
                                     onOpenNotes={() => { if (!canViewContacts) return; setContactCardSection('notes'); setContactCardOpen(true); }}
                                     onOpenLeadsJobs={() => { if (!canViewContacts) return; setContactCardSection('leads-jobs'); setContactCardOpen(true); }}
                                     onExpand={() => { if (!canViewContacts) return; setContactCardSection(null); setContactCardOpen(true); }}
+                                    onOpenJobs={!canViewContacts
+                                        ? () => navigate(buildContactJobsUrl(contactName, p.contact?.id))
+                                        : undefined}
                                 />
                             )}
                             {showLeadBar && (

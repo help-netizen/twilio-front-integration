@@ -13,7 +13,7 @@
  * Notes only when notes exist; open Leads & Jobs count. Tasks are NOT here — the
  * AR plaque above already lists them.
  */
-import { Mail, MessageSquare } from 'lucide-react';
+import { ChevronRight, Mail, MessageSquare } from 'lucide-react';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { MaskedCallLine } from '../shared/MaskedCallLine';
 import { PulsePinnedBar, PulsePinnedBarAction, PulsePinnedBarExpand } from '../pulse/PulsePinnedBar';
@@ -34,8 +34,8 @@ export interface PulseContactBarProps {
     /**
      * ROLE-TIMELINE-TECH-STICKY-001: whether the user may open the full contact card.
      * A technician without contacts.view still sees the identity + reach actions, but
-     * the card-opening affordances (Notes, Leads & Jobs, Expand) are withheld — the
-     * bar becomes a read-only "who am I talking to" strip. Defaults to true.
+     * the card-opening affordances (Notes, Leads & Jobs, Expand) are withheld. Its
+     * identity may instead link to that customer's scoped Jobs list. Defaults to true.
      */
     canOpenCard?: boolean;
     onText: () => void;
@@ -43,26 +43,42 @@ export interface PulseContactBarProps {
     onOpenNotes: () => void;
     onOpenLeadsJobs: () => void;
     onExpand: () => void;
+    onOpenJobs?: () => void;
 }
 
 export function PulseContactBar({
     name, address, phone, contactId, canCall, hasEmail, emailConnected, showNotes, openCount, canOpenCard = true,
-    onText, onEmail, onOpenNotes, onOpenLeadsJobs, onExpand,
+    onText, onEmail, onOpenNotes, onOpenLeadsJobs, onExpand, onOpenJobs,
 }: PulseContactBarProps) {
     // Exactly one primary (violet) action: Call when a phone exists, otherwise the
     // first reachable channel — an email-only contact promotes Email.
     const emailIsPrimary = !canCall && hasEmail;
+    const jobsLinkEnabled = !canOpenCard && !!onOpenJobs;
+    const handleIdentityKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (!jobsLinkEnabled || (event.key !== 'Enter' && event.key !== ' ')) return;
+        event.preventDefault();
+        onOpenJobs?.();
+    };
 
     return (
         <PulsePinnedBar entityLabel="Contact" accent="var(--blanc-success)" className="pulse-contact-bar">
-            <div className="pulse-contact-bar-identity">
-                <h2 className="pulse-contact-bar-name" style={{ fontFamily: 'var(--blanc-font-heading)' }}>{name}</h2>
-                {address && (
-                    <p className="pulse-contact-bar-address">
-                        {address.street && <span className="pulse-contact-bar-street">{address.street}</span>}
-                        <span>{address.cityLine}</span>
-                    </p>
-                )}
+            <div
+                className={`pulse-contact-bar-identity${jobsLinkEnabled ? ' is-jobs-link' : ''}`}
+                role={jobsLinkEnabled ? 'button' : undefined}
+                tabIndex={jobsLinkEnabled ? 0 : undefined}
+                onClick={jobsLinkEnabled ? onOpenJobs : undefined}
+                onKeyDown={jobsLinkEnabled ? handleIdentityKeyDown : undefined}
+            >
+                <div className="pulse-contact-bar-identity-copy">
+                    <h2 className="pulse-contact-bar-name" style={{ fontFamily: 'var(--blanc-font-heading)' }}>{name}</h2>
+                    {address && (
+                        <p className="pulse-contact-bar-address">
+                            {address.street && <span className="pulse-contact-bar-street">{address.street}</span>}
+                            <span>{address.cityLine}</span>
+                        </p>
+                    )}
+                </div>
+                {jobsLinkEnabled && <ChevronRight className="pulse-contact-bar-jobs-chevron" aria-hidden />}
             </div>
 
             <div className="pulse-contact-bar-actions">

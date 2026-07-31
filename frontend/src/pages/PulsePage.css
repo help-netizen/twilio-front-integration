@@ -178,6 +178,24 @@
 }
 .pulse-pinned-bar > * { min-width: 0; }
 .pulse-contact-bar { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+.pulse-contact-bar-identity-copy { min-width: 0; }
+.pulse-contact-bar-identity.is-jobs-link {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+.pulse-contact-bar-identity.is-jobs-link:focus-visible {
+    outline: 2px solid var(--blanc-accent);
+    outline-offset: 3px;
+    border-radius: 8px;
+}
+.pulse-contact-bar-jobs-chevron {
+    width: 16px;
+    height: 16px;
+    color: var(--blanc-ink-3);
+}
 .pulse-lead-bar {
     grid-template-columns: minmax(0, 1fr) auto auto;
     height: 68px;

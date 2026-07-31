@@ -79,6 +79,34 @@ describe('jobsService.listJobs provider scope', () => {
         expect(sql).not.toContain('assigned_provider_user_ids');
         expect(sql).toContain('j.company_id = $1');
     });
+
+    it('combines provider scope, display-name search, and exact contact pin for namesake isolation', async () => {
+        db.query.mockResolvedValueOnce({ rows: [{ total: '0' }] }).mockResolvedValueOnce({ rows: [] });
+
+        await jobsService.listJobs({
+            companyId: COMPANY_A,
+            search: 'Jane Doe',
+            contactId: 731,
+            providerScope: { assignedOnly: true, userId: PROVIDER_USER },
+        });
+
+        const [metadataSql, metadataParams] = db.query.mock.calls[0];
+        expect(metadataSql).toContain('j.company_id = $1');
+        expect(metadataSql).toContain('j.assigned_provider_user_ids @> $2::jsonb');
+        expect(metadataSql).toContain('COALESCE(c.full_name, j.customer_name) ILIKE $3');
+        expect(metadataSql).toContain('j.contact_id = $4');
+        expect(metadataParams).toEqual([
+            COMPANY_A,
+            JSON.stringify([PROVIDER_USER]),
+            '%Jane Doe%',
+            731,
+        ]);
+
+        const [pageSql, pageParams] = db.query.mock.calls[1];
+        expect(pageSql).toContain('j.assigned_provider_user_ids @> $2::jsonb');
+        expect(pageSql).toContain('j.contact_id = $4');
+        expect(pageParams.slice(0, 4)).toEqual(metadataParams);
+    });
 });
 
 describe('jobsService.getJobById provider scope', () => {
@@ -137,6 +165,40 @@ function appWithAuthz({ permissions = [], scopes = {}, userId = PROVIDER_USER } 
     app.use('/', require('../backend/src/routes/jobs'));
     return app;
 }
+
+describe('GET /api/jobs list contact passthrough', () => {
+    it('forwards both filters with the provider assigned-only scope', async () => {
+        const listSpy = jest.spyOn(jobsService, 'listJobs').mockResolvedValue({
+            results: [],
+            total: 0,
+            offset: 0,
+            limit: 50,
+            has_more: false,
+            facets: { providers: [] },
+            pagination: {
+                mode: 'cursor', limit: 50, returned: 0, has_more: false,
+                next_cursor: null, total: 0,
+            },
+        });
+
+        try {
+            const res = await request(
+                appWithAuthz({ permissions: ['jobs.view'], scopes: { job_visibility: 'assigned_only' } }),
+                'GET', '/?search=Jane%20Doe&contact_id=731'
+            );
+
+            expect(res.status).toBe(200);
+            expect(listSpy).toHaveBeenCalledWith(expect.objectContaining({
+                companyId: COMPANY_A,
+                search: 'Jane Doe',
+                contactId: '731',
+                providerScope: { assignedOnly: true, userId: PROVIDER_USER },
+            }));
+        } finally {
+            listSpy.mockRestore();
+        }
+    });
+});
 
 describe('GET /api/jobs/:id route contract', () => {
     it('403 without jobs.view', async () => {
