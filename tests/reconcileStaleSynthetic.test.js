@@ -96,6 +96,7 @@ function mockDbQuery(sql, params = []) {
                 status: r.status,
                 direction: r.direction,
                 started_at: r.started_at,
+                company_id: r.company_id,
             })),
         });
     }
@@ -135,6 +136,11 @@ const mockFetch = jest.fn((sid) => {
 });
 jest.mock('../backend/src/services/twilioClient', () => ({
     getTwilioClient: () => ({ calls: (sid) => ({ fetch: () => mockFetch(sid) }) }),
+}));
+jest.mock('../backend/src/services/telephonyTenantService', () => ({
+    getClientForCompany: jest.fn(async () => ({
+        client: { calls: (sid) => ({ fetch: () => mockFetch(sid) }) },
+    })),
 }));
 
 const mockPublish = jest.fn();

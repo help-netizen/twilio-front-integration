@@ -17,7 +17,7 @@ const agentPresence = require('../services/agentPresence');
 const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
 const walletService = require('../services/walletService');
 const { requirePermission } = require('../middleware/authorization');
-const { validateTwilioSignature } = require('../webhooks/twilioWebhooks');
+const { validateTwilioSignature, ingestToInbox } = require('../webhooks/twilioWebhooks');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -454,27 +454,21 @@ twimlRouter.post('/twiml/inbound', async (req, res) => {
     // ── Ingest parent call into webhook_inbox (same as handleVoiceInbound) ──
     // This ensures the call record has the correct From (caller) number.
     try {
-        const queries = require('../db/queries');
         const { CallSid } = req.body;
         if (CallSid) {
-            const eventKey = `voice:${CallSid}:inbound-softphone:${Date.now()}`;
-            await queries.insertInboxEvent({
-                eventKey,
+            await ingestToInbox({
                 source: 'voice',
                 eventType: 'call.inbound',
-                eventTime: new Date(),
-                callSid: CallSid,
-                recordingSid: null,
-                transcriptionSid: null,
                 payload: req.body,
-                headers: {
-                    'x-twilio-signature': req.headers['x-twilio-signature'],
-                    'i-twilio-idempotency-token': req.headers['i-twilio-idempotency-token'],
-                },
+                req,
+                traceId: `softphone_${CallSid}`,
             });
             console.log('[Voice TwiML] Inbound call ingested into webhook_inbox:', CallSid);
         }
     } catch (ingestErr) {
+        if (ingestErr.code === 'TWILIO_TENANT_UNRESOLVED') {
+            return res.status(403).type('text/xml').send('<Response><Reject/></Response>');
+        }
         // Non-blocking — still return TwiML even if ingestion fails
         console.error('[Voice TwiML] Ingestion error (non-blocking):', ingestErr.message);
     }

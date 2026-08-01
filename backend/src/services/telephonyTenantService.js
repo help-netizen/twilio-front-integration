@@ -178,7 +178,12 @@ async function connectTelephony(companyId, { actorId, companyName } = {}) {
 const clientCache = new Map(); // companyId → { client, sid }
 
 async function getClientForCompany(companyId) {
-    if (!companyId || companyId === DEFAULT_COMPANY_ID) {
+    if (!companyId) {
+        const err = new Error('companyId is required for telephony access');
+        err.code = 'TWILIO_TENANT_UNRESOLVED'; err.httpStatus = 403;
+        throw err;
+    }
+    if (companyId === DEFAULT_COMPANY_ID) {
         return { client: masterClient(), accountSid: process.env.TWILIO_ACCOUNT_SID, mode: 'master' };
     }
     const cached = clientCache.get(companyId);
@@ -221,7 +226,8 @@ async function resolveCompanyByAccountSid(accountSid) {
 
 /** Auth token used to validate webhook signatures for a given AccountSid. */
 async function getAuthTokenForAccountSid(accountSid) {
-    if (!accountSid || accountSid === process.env.TWILIO_ACCOUNT_SID) {
+    if (!accountSid) return null;
+    if (accountSid === process.env.TWILIO_ACCOUNT_SID) {
         return process.env.TWILIO_AUTH_TOKEN;
     }
     const { rows } = await db.query(

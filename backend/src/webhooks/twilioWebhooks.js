@@ -1,4 +1,5 @@
 const twilio = require('twilio');
+const crypto = require('crypto');
 const queries = require('../db/queries');
 const groupRouting = require('../services/groupRouting');
 const callFlowRuntime = require('../services/callFlowRuntime');
@@ -6,21 +7,44 @@ const walletService = require('../services/walletService');
 const telephonyTenantService = require('../services/telephonyTenantService');
 const callBlacklistService = require('../services/callBlacklistService');
 const callMaskingService = require('../services/callMaskingService');
-const db = require('../db/connection');
+const { mintStreamToken } = require('../services/mediaStreamTokenService');
 
-/** Resolve the owning company for one of our Twilio numbers (inbound `To`). */
-async function companyIdForNumber(toNumber) {
-    if (!toNumber) return null;
-    const { rows } = await db.query(
-        'SELECT company_id FROM phone_number_settings WHERE phone_number = $1 LIMIT 1',
-        [toNumber]
-    );
-    return rows[0]?.company_id || null;
+function recordTenantResolutionFailure(surface, reason) {
+    console.warn('[TwilioSecurity]', {
+        event: 'twilio.tenant_unresolved',
+        surface,
+        reason,
+        metric: 'twilio_tenant_unresolved_total',
+        increment: 1,
+    });
 }
 
-async function resolveWebhookCompanyId(payload) {
-    return await telephonyTenantService.resolveCompanyByAccountSid(payload?.AccountSid).catch(() => null)
-        || await companyIdForNumber(payload?.To).catch(() => null);
+function tenantUnresolvedError(reason) {
+    const err = new Error('Twilio tenant could not be resolved');
+    err.code = 'TWILIO_TENANT_UNRESOLVED';
+    err.reason = reason;
+    return err;
+}
+
+async function resolveWebhookCompanyId(payload, surface = 'webhook') {
+    const accountSid = payload?.AccountSid;
+    if (!accountSid) {
+        recordTenantResolutionFailure(surface, 'missing_account_sid');
+        throw tenantUnresolvedError('missing_account_sid');
+    }
+
+    let companyId;
+    try {
+        companyId = await telephonyTenantService.resolveCompanyByAccountSid(accountSid);
+    } catch {
+        recordTenantResolutionFailure(surface, 'resolution_error');
+        throw tenantUnresolvedError('resolution_error');
+    }
+    if (!companyId) {
+        recordTenantResolutionFailure(surface, 'unbound_account_sid');
+        throw tenantUnresolvedError('unbound_account_sid');
+    }
+    return companyId;
 }
 
 /**
@@ -95,34 +119,45 @@ async function recordBlockedInbound({ callSid, from, to, companyId, payload }) {
 /**
  * Validate Twilio webhook signature
  */
-async function validateTwilioSignature(req) {
-    const signature = req.headers['x-twilio-signature'];
+async function validateTwilioSignature(req, options = {}) {
+    const signature = req.headers?.['x-twilio-signature'];
     if (!signature) {
         console.error('Missing Twilio signature');
         return false;
     }
 
-    // ALB-107: webhooks may come from a tenant SUBACCOUNT — each is signed
-    // with its own auth token, resolved by the AccountSid in the payload.
-    let authToken = process.env.TWILIO_AUTH_TOKEN;
-    const accountSid = req.body?.AccountSid;
-    if (accountSid && accountSid !== process.env.TWILIO_ACCOUNT_SID) {
-        try {
-            const telephonyTenantService = require('../services/telephonyTenantService');
-            const subToken = await telephonyTenantService.getAuthTokenForAccountSid(accountSid);
-            if (subToken) authToken = subToken;
-        } catch (err) {
-            console.error('Subaccount token lookup failed:', err.message);
-        }
+    const accountSid = options.accountSid || req.body?.AccountSid;
+    try {
+        await resolveWebhookCompanyId({ AccountSid: accountSid }, 'signature_validation');
+    } catch {
+        return false;
+    }
+
+    let authToken;
+    try {
+        authToken = await telephonyTenantService.getAuthTokenForAccountSid(accountSid);
+    } catch {
+        return false;
     }
     if (!authToken) return false;
 
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.get('host');
-    const url = `${protocol}://${host}${req.originalUrl}`;
+    let url = options.url;
+    if (!url) {
+        const protocol = req.headers?.['x-forwarded-proto']
+            || req.protocol
+            || (req.socket?.encrypted ? 'https' : 'http');
+        const host = req.headers?.['x-forwarded-host']
+            || (typeof req.get === 'function' ? req.get('host') : req.headers?.host);
+        const originalUrl = req.originalUrl || req.url;
+        if (!protocol || !host || !originalUrl) return false;
+        url = `${protocol}://${host}${originalUrl}`;
+    }
+    const params = Object.prototype.hasOwnProperty.call(options, 'params')
+        ? options.params
+        : req.body;
 
     try {
-        return twilio.validateRequest(authToken, signature, url, req.body);
+        return twilio.validateRequest(authToken, signature, url, params);
     } catch (error) {
         console.error('Signature validation error:', error);
         return false;
@@ -133,24 +168,28 @@ async function validateTwilioSignature(req) {
  * Generate event_key for deduplication.
  * Uses I-Twilio-Idempotency-Token if available, else builds a canonical key.
  */
-function generateEventKey(source, payload, req) {
-    const idempotencyToken = req.headers['i-twilio-idempotency-token'];
-    if (idempotencyToken) return idempotencyToken;
-
-    const { CallSid, CallStatus, RecordingSid, RecordingStatus, TranscriptionSid, TranscriptionStatus, Timestamp } = payload;
-
-    switch (source) {
-        case 'voice':
-            return `voice:${CallSid}:${CallStatus}:${Timestamp || Date.now()}`;
-        case 'dial':
-            return `dial:${CallSid}:${payload.DialCallStatus}:${Date.now()}`;
-        case 'recording':
-            return `recording:${RecordingSid}:${RecordingStatus}:${Timestamp || Date.now()}`;
-        case 'transcription':
-            return `transcription:${TranscriptionSid}:${TranscriptionStatus}:${Date.now()}`;
-        default:
-            return `${source}:${CallSid}:${Date.now()}`;
-    }
+function generateEventKey(source, eventType, payload, req) {
+    const idempotencyToken = req.headers?.['i-twilio-idempotency-token'];
+    const stableFields = idempotencyToken
+        ? { accountSid: payload.AccountSid || '', eventType, idempotencyToken }
+        : {
+            accountSid: payload.AccountSid || '',
+            eventType,
+            callSid: payload.CallSid || '',
+            parentCallSid: payload.ParentCallSid || '',
+            recordingSid: payload.RecordingSid || '',
+            transcriptionSid: payload.TranscriptionSid || '',
+            callStatus: payload.CallStatus || '',
+            dialCallStatus: payload.DialCallStatus || '',
+            recordingStatus: payload.RecordingStatus || '',
+            transcriptionStatus: payload.TranscriptionStatus || '',
+            sequence: payload.SequenceNumber || payload.Sequence || '',
+            timestamp: payload.Timestamp || '',
+        };
+    const digest = crypto.createHash('sha256')
+        .update(JSON.stringify(stableFields))
+        .digest('hex');
+    return `twilio:${source}:${idempotencyToken ? 'idem' : 'event'}:${digest}`;
 }
 
 function generateTraceId() {
@@ -170,6 +209,10 @@ function buildBlacklistRejectTwiml() {
 
 function webhookBaseUrl() {
     return process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
+}
+
+function mediaStreamUrl() {
+    return webhookBaseUrl().replace(/^http/, 'ws') + '/ws/twilio-media';
 }
 
 function buildMaskingGatherTwiml(baseUrl, attempt = 1, invalid = false) {
@@ -219,7 +262,8 @@ function buildMaskingDialTwiml({ baseUrl, maskingNumber, customerPhone }) {
  * Generic webhook handler that pushes to webhook_inbox
  */
 async function ingestToInbox({ source, eventType, payload, req, traceId }) {
-    const eventKey = generateEventKey(source, payload, req);
+    const companyId = await resolveWebhookCompanyId(payload, `inbox.${source}`);
+    const eventKey = generateEventKey(source, eventType, payload, req);
     const eventTime = payload.Timestamp && !isNaN(parseInt(payload.Timestamp))
         ? new Date(parseInt(payload.Timestamp) * 1000)
         : new Date();
@@ -232,10 +276,11 @@ async function ingestToInbox({ source, eventType, payload, req, traceId }) {
         callSid: payload.CallSid || null,
         recordingSid: payload.RecordingSid || null,
         transcriptionSid: payload.TranscriptionSid || null,
+        companyId,
         payload,
         headers: {
-            'x-twilio-signature': req.headers['x-twilio-signature'],
-            'i-twilio-idempotency-token': req.headers['i-twilio-idempotency-token'],
+            'x-twilio-signature': req.headers?.['x-twilio-signature'],
+            'i-twilio-idempotency-token': req.headers?.['i-twilio-idempotency-token'],
         },
     });
 
@@ -253,7 +298,7 @@ async function ingestToInbox({ source, eventType, payload, req, traceId }) {
 // =============================================================================
 async function handleVoiceStatus(req, res) {
     const traceId = generateTraceId();
-    console.log(`[${traceId}] Voice status webhook`, { callSid: req.body.CallSid, status: req.body.CallStatus });
+    console.log(`[${traceId}] Voice status webhook received`);
 
     try {
         if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
@@ -276,6 +321,9 @@ async function handleVoiceStatus(req, res) {
         res.status(204).send();
     } catch (error) {
         console.error(`[${traceId}] Error:`, error.message);
+        if (error.code === 'TWILIO_TENANT_UNRESOLVED') {
+            return res.status(403).json({ error: 'Twilio tenant unresolved' });
+        }
         res.status(500).json({ error: 'Internal server error' });
     }
 }
@@ -285,7 +333,7 @@ async function handleVoiceStatus(req, res) {
 // =============================================================================
 async function handleRecordingStatus(req, res) {
     const traceId = generateTraceId();
-    console.log(`[${traceId}] Recording status webhook`, { recordingSid: req.body.RecordingSid, status: req.body.RecordingStatus });
+    console.log(`[${traceId}] Recording status webhook received`);
 
     try {
         if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
@@ -308,6 +356,9 @@ async function handleRecordingStatus(req, res) {
         res.status(204).send();
     } catch (error) {
         console.error(`[${traceId}] Error:`, error.message);
+        if (error.code === 'TWILIO_TENANT_UNRESOLVED') {
+            return res.status(403).json({ error: 'Twilio tenant unresolved' });
+        }
         res.status(500).json({ error: 'Internal server error' });
     }
 }
@@ -317,10 +368,7 @@ async function handleRecordingStatus(req, res) {
 // =============================================================================
 async function handleTranscriptionStatus(req, res) {
     const traceId = generateTraceId();
-    console.log(`[${traceId}] Transcription status webhook`, {
-        transcriptionSid: req.body.TranscriptionSid,
-        status: req.body.TranscriptionStatus
-    });
+    console.log(`[${traceId}] Transcription status webhook received`);
 
     try {
         if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
@@ -343,6 +391,9 @@ async function handleTranscriptionStatus(req, res) {
         res.status(204).send();
     } catch (error) {
         console.error(`[${traceId}] Error:`, error.message);
+        if (error.code === 'TWILIO_TENANT_UNRESOLVED') {
+            return res.status(403).json({ error: 'Twilio tenant unresolved' });
+        }
         res.status(500).json({ error: 'Internal server error' });
     }
 }
@@ -352,9 +403,7 @@ async function handleTranscriptionStatus(req, res) {
 // =============================================================================
 async function handleVoiceInbound(req, res) {
     const traceId = generateTraceId();
-    console.log(`[${traceId}] Voice inbound - NEW CALL`, {
-        callSid: req.body.CallSid, from: req.body.From, to: req.body.To
-    });
+    console.log(`[${traceId}] Voice inbound webhook received`);
 
     try {
         if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
@@ -376,7 +425,7 @@ async function handleVoiceInbound(req, res) {
 
         // Realtime transcription: build <Start><Stream> block if enabled
         const realtimeEnabled = process.env.FEATURE_REALTIME_TRANSCRIPTION === 'true';
-        const mediaStreamUrl = baseUrl.replace(/^http/, 'ws') + '/ws/twilio-media';
+        const streamUrl = mediaStreamUrl();
 
         const isOutbound = From && From.startsWith('sip:');
         let twiml;
@@ -385,9 +434,6 @@ async function handleVoiceInbound(req, res) {
             const outboundCompanyId = realtimeEnabled
                 ? await resolveWebhookCompanyId(req.body)
                 : null;
-            if (realtimeEnabled && !outboundCompanyId) {
-                console.warn(`[${traceId}] Realtime transcription skipped: company context required`);
-            }
             await ingestToInbox({
                 source: 'voice',
                 eventType: 'call.inbound',
@@ -407,12 +453,29 @@ async function handleVoiceInbound(req, res) {
 
             const outboundCallerId = process.env.OUTBOUND_CALLER_ID || '+16175006181';
             const outboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-            const outboundStreamXml = realtimeEnabled && outboundCompanyId ? `
+            let streamToken = null;
+            if (realtimeEnabled && outboundCompanyId) {
+                try {
+                    streamToken = mintStreamToken({
+                        companyId: outboundCompanyId,
+                        callSid: CallSid,
+                        accountSid: req.body.AccountSid,
+                        direction: 'outbound',
+                    });
+                } catch {
+                    console.warn('[MediaStreamSecurity]', {
+                        event: 'twilio.media_stream.disabled',
+                        reason: 'token_mint_failed',
+                        metric: 'twilio_media_stream_token_mint_failed_total',
+                        increment: 1,
+                    });
+                }
+            }
+            const outboundStreamXml = streamToken ? `
     <Start>
-        <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
-            <Parameter name="callSid" value="${CallSid}" />
+        <Stream name="realtime-transcript" url="${streamUrl}" track="both_tracks">
             <Parameter name="direction" value="outbound" />
-            <Parameter name="companyId" value="${outboundCompanyId}" />
+            <Parameter name="streamToken" value="${streamToken}" />
         </Stream>
     </Start>` : '';
 
@@ -432,29 +495,10 @@ async function handleVoiceInbound(req, res) {
     </Dial>
 </Response>`;
         } else {
-            // C1 (ONBTEL-001): resolve the owning company exactly ONCE —
-            // AccountSid first (master account → DEFAULT company, connected
-            // subaccount → its company), then fall back to the inbound `To`
-            // number (ALB-107 "AccountSid → To" canon). The short-circuit `||`
-            // means a SID hit skips the To lookup entirely; a DB error in
-            // either lookup counts as null for that lookup only.
-            const companyId = await resolveWebhookCompanyId(req.body);
-
-            if (companyId === null) {
-                // Unknown account AND unknown number → fail-closed Reject: a
-                // company-less call must never reach the generic voicemail.
-                // No recordMissedInbound (no company → no orphan timeline).
-                await ingestToInbox({
-                    source: 'voice',
-                    eventType: 'call.inbound',
-                    payload: req.body,
-                    req,
-                    traceId
-                });
-                console.warn(`[${traceId}] inbound_call.rejected`, { event: 'inbound_call.rejected', reason: 'unknown_number', call_sid: CallSid, account_sid: req.body.AccountSid, to: To, from: From });
-                res.type('text/xml');
-                return res.send('<Response><Reject/></Response>');
-            }
+            // TWILIO-TENANT-FIX-001: AccountSid is the only tenant binding.
+            // Master maps explicitly to ABC Homes; connected subaccounts map
+            // through company_telephony; missing/unknown bindings fail closed.
+            const companyId = await resolveWebhookCompanyId(req.body, 'voice_inbound');
 
             // CALL-BLACKLIST-001: this is the pre-routing hook. Both lookup and
             // persistence are fail-open so blacklist availability can never be
@@ -552,6 +596,10 @@ async function handleVoiceInbound(req, res) {
         res.type('text/xml');
         res.send(twiml);
     } catch (error) {
+        if (error.code === 'TWILIO_TENANT_UNRESOLVED') {
+            res.type('text/xml');
+            return res.send('<Response><Reject/></Response>');
+        }
         console.error(`[${traceId}] Error:`, error);
         res.status(500).send('<Response><Reject/></Response>');
     }
@@ -682,9 +730,7 @@ async function handleMaskingDialAction(req, res) {
 async function handleDialAction(req, res) {
     const traceId = generateTraceId();
     const dialStatus = String(req.body.DialCallStatus || '').toLowerCase();
-    console.log(`[${traceId}] Dial action`, {
-        callSid: req.body.CallSid, dialStatus, from: req.body.From
-    });
+    console.log(`[${traceId}] Dial action webhook received`, { dialStatus });
 
     try {
         if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
@@ -724,6 +770,9 @@ async function handleDialAction(req, res) {
                 traceId
             });
         } catch (ingestErr) {
+            if (ingestErr.code === 'TWILIO_TENANT_UNRESOLVED') {
+                return res.status(403).type('text/xml').send(buildHangupTwiml());
+            }
             console.error(`[${traceId}] Inbox ingestion failed (non-blocking):`, ingestErr.message);
         }
 
@@ -801,10 +850,7 @@ async function handleDialAction(req, res) {
 // =============================================================================
 async function handleVoicemailComplete(req, res) {
     const traceId = generateTraceId();
-    console.log(`[${traceId}] Voicemail complete`, {
-        callSid: req.body.CallSid,
-        recordingSid: req.body.RecordingSid,
-    });
+    console.log(`[${traceId}] Voicemail complete webhook received`);
 
     try {
         if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
@@ -834,14 +880,6 @@ async function handleVoiceFallback(req, res) {
     if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
         return res.status(403).json({ error: 'Invalid signature' });
     }
-    console.error(`[${traceId}] ⚠️ VOICE FALLBACK triggered`, {
-        callSid: req.body.CallSid,
-        from: req.body.From,
-        to: req.body.To,
-        errorCode: req.body.ErrorCode,
-        errorUrl: req.body.ErrorUrl
-    });
-
     try {
         // Store fallback event in inbox for monitoring
         await ingestToInbox({
@@ -852,8 +890,14 @@ async function handleVoiceFallback(req, res) {
             traceId
         });
     } catch (e) {
+        if (e.code === 'TWILIO_TENANT_UNRESOLVED') {
+            return res.status(403).type('text/xml').send('<Response><Reject/></Response>');
+        }
         console.error(`[${traceId}] Fallback inbox error:`, e.message);
     }
+    console.error(`[${traceId}] VOICE FALLBACK triggered`, {
+        errorCode: req.body.ErrorCode || null,
+    });
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -877,6 +921,10 @@ module.exports = {
     handleMaskingConsent,
     handleMaskingDialAction,
     validateTwilioSignature,
+    resolveWebhookCompanyId,
+    ingestToInbox,
+    generateEventKey,
+    mediaStreamUrl,
     buildBlacklistRejectTwiml,
     buildMaskingGatherTwiml,
     buildMaskingDialTwiml,

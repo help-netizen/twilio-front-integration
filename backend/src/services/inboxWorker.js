@@ -4,7 +4,6 @@ const { isFinalStatus } = require('./stateMachine');
 const CallProcessor = require('./callProcessor');
 const { extractPhoneFromSIP } = require('./callProcessor');
 const { reconcileStaleCalls } = require('./reconcileStale');
-const { getTwilioClient } = require('./twilioClient');
 const callMaskingService = require('./callMaskingService');
 const eventBus = require('./eventBus');
 
@@ -15,18 +14,30 @@ function isVapiSipTarget(value) {
 }
 
 async function resolveEventCompanyId(accountSid) {
-    if (!accountSid) {
-        const err = new Error('Twilio event is missing AccountSid; tenant unresolved');
+    const unresolved = (reason) => {
+        console.warn('[TwilioSecurity]', {
+            event: 'twilio.tenant_unresolved',
+            surface: 'inbox_worker',
+            reason,
+            metric: 'twilio_tenant_unresolved_total',
+            increment: 1,
+        });
+        const err = new Error('Twilio tenant could not be resolved');
         err.code = 'TWILIO_TENANT_UNRESOLVED';
-        throw err;
+        return err;
+    };
+    if (!accountSid) {
+        throw unresolved('missing_account_sid');
     }
     const telephonyTenantService = require('./telephonyTenantService');
-    const companyId = await telephonyTenantService.resolveCompanyByAccountSid(accountSid);
+    let companyId;
+    try {
+        companyId = await telephonyTenantService.resolveCompanyByAccountSid(accountSid);
+    } catch {
+        throw unresolved('resolution_error');
+    }
     if (companyId) return companyId;
-
-    const err = new Error(`No company binding for Twilio AccountSid ${accountSid}`);
-    err.code = 'TWILIO_TENANT_UNRESOLVED';
-    throw err;
+    throw unresolved('unbound_account_sid');
 }
 
 /**
@@ -136,7 +147,7 @@ async function processEvent(inboxEvent) {
     const { id, source, event_type, payload } = inboxEvent;
     const traceId = `worker_${id}`;
 
-    console.log(`[${traceId}] Processing`, { source, event_type, callSid: payload.CallSid });
+    console.log(`[${traceId}] Processing`, { source, event_type });
 
     try {
         if (source === 'dial' && event_type === 'dial.action') {
@@ -905,6 +916,7 @@ async function processRecordingEvent(payload, traceId, source = 'webhook') {
 
 async function processTranscriptionEvent(payload, traceId, source = 'webhook') {
     const normalized = normalizeTranscriptionEvent(payload);
+    const eventCompanyId = await resolveEventCompanyId(payload.AccountSid);
 
     const transcript = await queries.upsertTranscript({
         transcriptionSid: normalized.transcriptionSid,
@@ -917,6 +929,7 @@ async function processTranscriptionEvent(payload, traceId, source = 'webhook') {
         text: normalized.text,
         isFinal: true,
         rawPayload: payload,
+        companyId: eventCompanyId,
     });
 
     console.log(`[${traceId}] Transcript upserted`, {
@@ -930,7 +943,8 @@ async function processTranscriptionEvent(payload, traceId, source = 'webhook') {
         'transcript.updated',
         normalized.eventTime,
         { ...normalized, raw: payload },
-        source
+        source,
+        eventCompanyId
     );
 
     // Publish realtime event
@@ -945,7 +959,7 @@ async function processTranscriptionEvent(payload, traceId, source = 'webhook') {
 
 async function enrichFromTwilioApi(callSid, existingCall, traceId, companyId) {
     try {
-        const client = getTwilioClient();
+        const { client } = await require('./telephonyTenantService').getClientForCompany(companyId);
         const details = await client.calls(callSid).fetch();
         const db = require('../db/connection');
 

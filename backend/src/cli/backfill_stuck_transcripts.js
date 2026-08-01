@@ -22,9 +22,11 @@ async function main() {
     console.log('🔍 Finding stuck transcripts (status=processing, no text)...');
 
     const result = await db.query(`
-        SELECT t.call_sid, t.recording_sid, r.duration_sec
+        SELECT t.call_sid, t.recording_sid, t.company_id, r.duration_sec
         FROM transcripts t
-        JOIN recordings r ON r.recording_sid = t.recording_sid
+        JOIN recordings r
+          ON r.recording_sid = t.recording_sid
+         AND r.company_id = t.company_id
         WHERE t.status = 'processing' AND t.text IS NULL
           AND COALESCE(r.duration_sec, 0) <= $1
         ORDER BY t.created_at ASC
@@ -37,12 +39,12 @@ async function main() {
     let skipped = 0;
 
     for (let i = 0; i < result.rows.length; i++) {
-        const { call_sid, recording_sid, duration_sec } = result.rows[i];
+        const { call_sid, recording_sid, company_id, duration_sec } = result.rows[i];
         const progress = `[${i + 1}/${result.rows.length}]`;
 
         try {
             console.log(`${progress} Transcribing ${call_sid} (recording: ${recording_sid}, duration: ${duration_sec}s)...`);
-            const res = await transcribeCall(call_sid, recording_sid, `backfill-${i}`);
+            const res = await transcribeCall(call_sid, recording_sid, `backfill-${i}`, company_id);
             if (res.status === 'already_exists') {
                 console.log(`${progress} ⏭️  Already exists, skipped`);
                 skipped++;

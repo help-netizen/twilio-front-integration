@@ -20,9 +20,10 @@ jest.mock('../backend/src/db/connection', () => ({
 }));
 
 const mockResolveCompany = jest.fn();
+const mockGetAuthToken = jest.fn();
 jest.mock('../backend/src/services/telephonyTenantService', () => ({
     resolveCompanyByAccountSid: (...args) => mockResolveCompany(...args),
-    getAuthTokenForAccountSid: jest.fn(),
+    getAuthTokenForAccountSid: (...args) => mockGetAuthToken(...args),
 }));
 
 const mockInboundContext = jest.fn();
@@ -105,6 +106,7 @@ beforeEach(() => {
     process.env.WEBHOOK_BASE_URL = 'https://api.example.test';
     mockValidateRequest.mockReturnValue(true);
     mockResolveCompany.mockResolvedValue(COMPANY_A);
+    mockGetAuthToken.mockResolvedValue('auth-token');
     mockIsServiceBlocked.mockResolvedValue(false);
     mockInsertInboxEvent.mockResolvedValue({ id: 1 });
     mockResolveGroup.mockResolvedValue(null);

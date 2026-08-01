@@ -6,7 +6,12 @@
  */
 const db = require('./connection');
 
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+function requireCompanyId(companyId) {
+    if (companyId) return companyId;
+    const err = new Error('companyId is required for Twilio webhook ingestion');
+    err.code = 'TWILIO_TENANT_UNRESOLVED';
+    throw err;
+}
 
 // =============================================================================
 // Webhook inbox
@@ -19,19 +24,20 @@ async function insertInboxEvent(data) {
         payload, headers
     } = data;
 
+    const companyId = requireCompanyId(data.companyId);
     const result = await db.query(
         `INSERT INTO webhook_inbox (
             event_key, source, event_type, event_time,
             call_sid, recording_sid, transcription_sid,
             payload, headers, company_id
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-        ON CONFLICT (event_key) DO NOTHING
+        ON CONFLICT (company_id, event_key) DO NOTHING
         RETURNING *`,
         [
             eventKey, source, eventType, eventTime,
             callSid, recordingSid, transcriptionSid,
             JSON.stringify(payload), JSON.stringify(headers || {}),
-            data.companyId || DEFAULT_COMPANY_ID
+            companyId
         ]
     );
     return result.rows[0];

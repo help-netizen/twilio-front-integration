@@ -3,6 +3,16 @@ const queries = require('../db/queries');
 const { normalizeVoiceEvent } = require('./inboxWorker');
 const CallProcessor = require('./callProcessor');
 const { extractPhoneFromSIP } = require('./callProcessor');
+const telephonyTenantService = require('./telephonyTenantService');
+
+const DEFAULT_COMPANY_ID = telephonyTenantService.DEFAULT_COMPANY_ID;
+
+function requireCompanyId(companyId) {
+    if (companyId) return companyId;
+    const err = new Error('companyId is required for Twilio reconciliation');
+    err.code = 'TWILIO_TENANT_UNRESOLVED';
+    throw err;
+}
 
 /**
  * Reconciliation Service (v3)
@@ -56,15 +66,18 @@ function twilioCallToPayload(call) {
     };
 }
 
-async function fetchCallFromTwilio(callSid) {
-    const call = await twilioClient.calls(callSid).fetch();
+async function fetchCallFromTwilio(callSid, companyId) {
+    const scopedCompanyId = requireCompanyId(companyId);
+    const { client } = await telephonyTenantService.getClientForCompany(scopedCompanyId);
+    const call = await client.calls(callSid).fetch();
     return twilioCallToPayload(call);
 }
 
 /**
  * Reconcile a single call from Twilio API data
  */
-async function reconcileCall(twilioPayload, source, companyId = null) {
+async function reconcileCall(twilioPayload, source, companyId) {
+    const scopedCompanyId = requireCompanyId(companyId);
     const normalized = normalizeVoiceEvent(twilioPayload);
 
     // Resolve contact
@@ -82,7 +95,7 @@ async function reconcileCall(twilioPayload, source, companyId = null) {
     let contactId = null;
     let timelineId = null;
     if (externalParty?.formatted && processed.direction !== 'internal') {
-        const timeline = await queries.findOrCreateTimeline(externalParty.formatted, companyId || undefined);
+        const timeline = await queries.findOrCreateTimeline(externalParty.formatted, scopedCompanyId);
         timelineId = timeline.id;
         contactId = timeline.contact_id || null;
     }
@@ -95,7 +108,7 @@ async function reconcileCall(twilioPayload, source, companyId = null) {
         parentCallSid: normalized.parentCallSid,
         contactId,
         timelineId,
-        companyId: companyId || undefined,
+        companyId: scopedCompanyId,
         direction: processed.direction,
         fromNumber: (() => {
             const extracted = extractPhoneFromSIP(normalized.fromNumber);
@@ -122,7 +135,9 @@ async function reconcileCall(twilioPayload, source, companyId = null) {
         normalized.callSid,
         'call.status_changed',
         normalized.eventTime,
-        { ...normalized, source }
+        { ...normalized, source },
+        source,
+        scopedCompanyId
     );
 
     // Publish SSE event for real-time UI updates
@@ -179,8 +194,8 @@ async function hotReconcile() {
 
         for (const dbCall of calls) {
             try {
-                const twilioPayload = await fetchCallFromTwilio(dbCall.call_sid);
-                const result = await reconcileCall(twilioPayload, 'reconcile_hot');
+                const twilioPayload = await fetchCallFromTwilio(dbCall.call_sid, dbCall.company_id);
+                const result = await reconcileCall(twilioPayload, 'reconcile_hot', dbCall.company_id);
 
                 if (result && result.status !== dbCall.status) {
                     console.log(`   ✓ ${dbCall.call_sid}: ${dbCall.status} → ${result.status}`);
@@ -232,8 +247,8 @@ async function coldReconcile(startDate, endDate, pageSize = RECONCILE_CONFIG.COL
             for (const call of calls) {
                 try {
                     const twilioPayload = twilioCallToPayload(call);
-                    const existing = await queries.getCallByCallSid(call.sid);
-                    await reconcileCall(twilioPayload, 'reconcile_cold');
+                    const existing = await queries.getCallByCallSid(call.sid, DEFAULT_COMPANY_ID);
+                    await reconcileCall(twilioPayload, 'reconcile_cold', DEFAULT_COMPANY_ID);
 
                     if (existing) { updated++; } else { created++; }
                     processed++;

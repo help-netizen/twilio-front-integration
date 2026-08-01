@@ -1,175 +1,234 @@
 /**
  * Twilio Media Stream WebSocket Server
  *
- * Accepts WebSocket connections from Twilio Media Streams,
- * parses the stream protocol (connected/start/media/stop),
- * and routes audio to the realtime transcription service.
- *
- * Mounts on the existing HTTP server via upgrade event.
- * Path: /ws/twilio-media
+ * The HTTP upgrade is quarantined because Twilio custom parameters arrive only
+ * in the first `start` frame. No session or audio is accepted until that frame's
+ * short-lived HMAC token and AccountSid binding have both been verified.
  */
 const { WebSocketServer } = require('ws');
 const transcriptService = require('./realtimeTranscriptService');
+const telephonyTenantService = require('./telephonyTenantService');
+const { verifyStreamToken } = require('./mediaStreamTokenService');
 
+const AUTHENTICATION_TIMEOUT_MS = 5000;
 let wss = null;
 
-/**
- * Initialize the Media Stream WebSocket server
- * @param {import('http').Server} httpServer — the Express HTTP server
- */
-function initMediaStreamServer(httpServer) {
-    wss = new WebSocketServer({ noServer: true });
-
-    // Handle HTTP → WS upgrade for our specific path
-    httpServer.on('upgrade', (request, socket, head) => {
-        const { pathname } = new URL(request.url, `http://${request.headers.host}`);
-
-        if (pathname === '/ws/twilio-media') {
-            wss.handleUpgrade(request, socket, head, (ws) => {
-                wss.emit('connection', ws, request);
-            });
-        } else {
-            // Not our path — let it fall through (or destroy if nothing else handles it)
-            socket.destroy();
-        }
-    });
-
-    wss.on('connection', handleConnection);
-
-    console.log('[MediaStream] WebSocket server initialized on /ws/twilio-media');
-}
-
-/**
- * Handle a single Twilio Media Stream WebSocket connection
- * @param {import('ws').WebSocket} ws
- */
-function handleConnection(ws) {
-    // Per-connection state
-    const state = {
-        callSid: null,
-        streamSid: null,
-        customParameters: {},
-        tracks: new Set(),
-        packetCount: 0
-    };
-
-    console.log('[MediaStream] New Twilio connection');
-
-    ws.on('message', (raw) => {
-        try {
-            const msg = JSON.parse(raw.toString());
-            handleTwilioEvent(msg, state, ws);
-        } catch (e) {
-            console.error('[MediaStream] Parse error:', e.message);
-        }
-    });
-
-    ws.on('close', (code) => {
-        console.log(`[MediaStream] Connection closed (code=${code}) callSid=${state.callSid} packets=${state.packetCount}`);
-
-        // Ensure transcript session is terminated
-        if (state.callSid) {
-            transcriptService.terminateSession(state.callSid).catch(err => {
-                console.error(`[MediaStream] Terminate error for ${state.callSid}:`, err.message);
-            });
-        }
-    });
-
-    ws.on('error', (err) => {
-        console.error(`[MediaStream] WebSocket error (callSid=${state.callSid}):`, err.message);
+function securityMetric(event, reason) {
+    console.warn('[MediaStreamSecurity]', {
+        event,
+        reason,
+        metric: 'twilio_media_stream_auth_rejected_total',
+        increment: 1,
     });
 }
 
-/**
- * Handle individual Twilio Media Stream protocol events
- *
- * Events:
- *   - connected: initial handshake
- *   - start: stream metadata (callSid, streamSid, customParameters, tracks)
- *   - media: audio data (base64 payload, track name, timestamp)
- *   - stop: stream ended
- *   - dtmf: DTMF digit (ignored for transcription)
- */
-function handleTwilioEvent(msg, state, ws) {
-    switch (msg.event) {
-        case 'connected':
-            console.log('[MediaStream] Twilio connected', { protocol: msg.protocol });
-            break;
+function rejectConnection(ws, state, reason) {
+    if (state.rejected) return;
+    state.rejected = true;
+    securityMetric('twilio.media_stream.rejected', reason);
+    try { ws.close(1008, 'Unauthorized media stream'); } catch { /* socket already closed */ }
+}
 
-        case 'start': {
-            state.callSid = msg.start.callSid;
-            state.streamSid = msg.streamSid;
-            state.customParameters = msg.start.customParameters || {};
-
-            // Collect track names
-            if (msg.start.tracks) {
-                msg.start.tracks.forEach(t => state.tracks.add(t));
-            }
-
-            console.log(`[MediaStream] Stream started`, {
-                callSid: state.callSid,
-                streamSid: state.streamSid,
-                tracks: [...state.tracks],
-                params: state.customParameters
-            });
-
-            // Create transcription session for this call
-            const effectiveCallSid = state.customParameters.callSid || state.callSid;
-            transcriptService.createSession(effectiveCallSid, {
-                streamSid: state.streamSid,
-                companyId: state.customParameters.companyId || null,
-                direction: state.customParameters.direction || 'unknown',
-                tracks: [...state.tracks]
-            });
-
-            break;
-        }
-
-        case 'media': {
-            state.packetCount++;
-
-            // msg.media.payload is base64-encoded mulaw audio
-            // msg.media.track is 'inbound' or 'outbound'
-            const track = msg.media.track;
-            const audioBuffer = Buffer.from(msg.media.payload, 'base64');
-
-            const effectiveCallSid = state.customParameters.callSid || state.callSid;
-            transcriptService.routeAudio(effectiveCallSid, track, audioBuffer);
-            break;
-        }
-
-        case 'stop': {
-            console.log(`[MediaStream] Stream stopped`, {
-                callSid: state.callSid,
-                streamSid: state.streamSid,
-                reason: msg.stop?.reason,
-                packets: state.packetCount
-            });
-
-            const effectiveCallSid = state.customParameters.callSid || state.callSid;
-            transcriptService.terminateSession(effectiveCallSid).catch(err => {
-                console.error(`[MediaStream] Terminate error:`, err.message);
-            });
-            break;
-        }
-
-        case 'dtmf':
-            // DTMF digits — not relevant for transcription, ignore
-            break;
-
-        default:
-            console.log(`[MediaStream] Unknown event: ${msg.event}`);
+async function validateUpgradeSignature(request, accountSid) {
+    if (!request?.headers?.['x-twilio-signature']) return false;
+    try {
+        // Reuse the established validator with the exact WSS URL emitted in
+        // TwiML, avoiding proxy reconstruction differences behind Caddy.
+        const { validateTwilioSignature, mediaStreamUrl } = require('../webhooks/twilioWebhooks');
+        return await validateTwilioSignature(request, {
+            accountSid,
+            params: {},
+            url: mediaStreamUrl(),
+        });
+    } catch {
+        return false;
     }
 }
 
 /**
- * Get server stats for monitoring
+ * Initialize the Media Stream WebSocket server.
+ * @param {import('http').Server} httpServer
  */
+function initMediaStreamServer(httpServer) {
+    wss = new WebSocketServer({ noServer: true });
+
+    httpServer.on('upgrade', (request, socket, head) => {
+        const { pathname } = new URL(request.url, `http://${request.headers.host}`);
+        if (pathname !== '/ws/twilio-media') {
+            socket.destroy();
+            return;
+        }
+
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+        });
+    });
+
+    wss.on('connection', handleConnection);
+    console.log('[MediaStream] WebSocket server initialized on /ws/twilio-media');
+}
+
+/**
+ * Handle a quarantined Twilio Media Stream connection.
+ * @param {import('ws').WebSocket} ws
+ * @param {import('http').IncomingMessage} request
+ */
+function handleConnection(ws, request = null) {
+    const state = {
+        authenticated: false,
+        rejected: false,
+        companyId: null,
+        callSid: null,
+        accountSid: null,
+        streamSid: null,
+        direction: 'unknown',
+        tracks: new Set(),
+        packetCount: 0,
+    };
+
+    const authenticationTimer = setTimeout(() => {
+        if (!state.authenticated) rejectConnection(ws, state, 'start_timeout');
+    }, AUTHENTICATION_TIMEOUT_MS);
+    authenticationTimer.unref?.();
+
+    let messageChain = Promise.resolve();
+    ws.on('message', (raw) => {
+        messageChain = messageChain.then(async () => {
+            let msg;
+            try {
+                msg = JSON.parse(raw.toString());
+            } catch {
+                rejectConnection(ws, state, 'invalid_json');
+                return;
+            }
+            await handleTwilioEvent(msg, state, ws, request);
+        }).catch(() => rejectConnection(ws, state, 'event_processing_failed'));
+    });
+
+    ws.on('close', (code) => {
+        clearTimeout(authenticationTimer);
+        console.log(`[MediaStream] Connection closed (code=${code}) packets=${state.packetCount}`);
+        if (state.authenticated && state.companyId && state.callSid) {
+            transcriptService.terminateSession(state.companyId, state.callSid).catch(() => {
+                securityMetric('twilio.media_stream.terminate_failed', 'session_error');
+            });
+        }
+    });
+
+    ws.on('error', () => {
+        securityMetric('twilio.media_stream.socket_error', 'socket_error');
+    });
+}
+
+async function handleTwilioEvent(msg, state, ws, request) {
+    if (state.rejected) return;
+
+    switch (msg.event) {
+        case 'connected':
+            break;
+
+        case 'start': {
+            if (state.authenticated) {
+                rejectConnection(ws, state, 'duplicate_start');
+                return;
+            }
+
+            const customParameters = msg.start?.customParameters || {};
+            let claims;
+            try {
+                claims = verifyStreamToken(customParameters.streamToken);
+            } catch {
+                claims = null;
+            }
+            if (!claims) {
+                rejectConnection(ws, state, 'invalid_token');
+                return;
+            }
+
+            const startCallSid = msg.start?.callSid;
+            const startAccountSid = msg.start?.accountSid;
+            if (startCallSid !== claims.call_sid || startAccountSid !== claims.account_sid) {
+                rejectConnection(ws, state, 'token_context_mismatch');
+                return;
+            }
+
+            let resolvedCompanyId;
+            try {
+                resolvedCompanyId = await telephonyTenantService.resolveCompanyByAccountSid(startAccountSid);
+            } catch {
+                resolvedCompanyId = null;
+            }
+            if (!resolvedCompanyId || resolvedCompanyId !== claims.company_id) {
+                rejectConnection(ws, state, 'account_binding_mismatch');
+                return;
+            }
+
+            const signatureValid = await validateUpgradeSignature(request, startAccountSid);
+            if (!signatureValid) {
+                rejectConnection(ws, state, 'invalid_twilio_signature');
+                return;
+            }
+
+            state.authenticated = true;
+            state.companyId = claims.company_id;
+            state.callSid = claims.call_sid;
+            state.accountSid = claims.account_sid;
+            state.direction = claims.direction || 'unknown';
+            state.streamSid = msg.streamSid || msg.start?.streamSid || null;
+            for (const track of msg.start?.tracks || []) state.tracks.add(track);
+
+            transcriptService.createSession(state.companyId, state.callSid, {
+                streamSid: state.streamSid,
+                direction: state.direction,
+                tracks: [...state.tracks],
+            });
+            break;
+        }
+
+        case 'media': {
+            if (!state.authenticated) {
+                rejectConnection(ws, state, 'media_before_start');
+                return;
+            }
+            state.packetCount++;
+            const audioBuffer = Buffer.from(msg.media?.payload || '', 'base64');
+            transcriptService.routeAudio(
+                state.companyId,
+                state.callSid,
+                msg.media?.track,
+                audioBuffer
+            );
+            break;
+        }
+
+        case 'stop':
+            if (!state.authenticated) {
+                rejectConnection(ws, state, 'stop_before_start');
+                return;
+            }
+            await transcriptService.terminateSession(state.companyId, state.callSid);
+            break;
+
+        case 'dtmf':
+            if (!state.authenticated) rejectConnection(ws, state, 'dtmf_before_start');
+            break;
+
+        default:
+            rejectConnection(ws, state, 'unknown_event');
+    }
+}
+
 function getStats() {
     return {
         connections: wss ? wss.clients.size : 0,
-        activeSessions: transcriptService.getActiveSessions()
+        activeSessions: transcriptService.getActiveSessions(),
     };
 }
 
-module.exports = { initMediaStreamServer, getStats };
+module.exports = {
+    initMediaStreamServer,
+    getStats,
+    handleConnection,
+    handleTwilioEvent,
+    AUTHENTICATION_TIMEOUT_MS,
+};

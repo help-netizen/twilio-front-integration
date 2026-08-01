@@ -355,7 +355,7 @@ describe('all-outbound-agents sms.inbound subscriber', () => {
 
 describe('reconciliation voice trigger', () => {
     test('passes the persisted call row to the same completed-human-call detector', async () => {
-        await reconcileService.reconcileCall({ CallSid: 'CA1' }, 'webhook');
+        await reconcileService.reconcileCall({ CallSid: 'CA1' }, 'webhook', CO);
 
         expect(mockCompletedCallCancel).toHaveBeenCalledWith(expect.objectContaining({
             call_sid: 'CA1',

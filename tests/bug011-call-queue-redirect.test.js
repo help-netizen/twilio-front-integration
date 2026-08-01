@@ -42,6 +42,7 @@ function makeDialActionReq(bodyOverrides = {}, queryOverrides = {}) {
     return {
         headers: { 'x-twilio-signature': 'valid' },
         body: {
+            AccountSid: 'ACtest',
             CallSid: 'CA_parent_001',
             From: '+15551112222',
             To: '+15553334444',
@@ -73,6 +74,8 @@ const { handleDialAction, handleVoicemailComplete } = require('../backend/src/we
 beforeEach(() => {
     jest.clearAllMocks();
     process.env.NODE_ENV = 'development';
+    process.env.TWILIO_ACCOUNT_SID = 'ACtest';
+    process.env.TWILIO_AUTH_TOKEN = 'test_token';
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 

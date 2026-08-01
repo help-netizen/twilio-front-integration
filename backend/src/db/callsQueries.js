@@ -6,7 +6,12 @@
  */
 const db = require('./connection');
 
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+function requireCompanyId(companyId) {
+    if (companyId) return companyId;
+    const err = new Error('companyId is required for telephony persistence');
+    err.code = 'TWILIO_TENANT_UNRESOLVED';
+    throw err;
+}
 
 // =============================================================================
 // Call operations (snapshot model)
@@ -21,6 +26,7 @@ async function upsertCall(data) {
         timelineId
     } = data;
 
+    const companyId = requireCompanyId(data.companyId);
     const result = await db.query(
         `INSERT INTO calls (
             call_sid, parent_call_sid, contact_id, direction,
@@ -56,7 +62,7 @@ async function upsertCall(data) {
             startedAt, answeredAt, endedAt, durationSec,
             price, priceUnit, lastEventTime,
             JSON.stringify(rawLastPayload || {}),
-            data.companyId || DEFAULT_COMPANY_ID,
+            companyId,
             timelineId || null
         ]
     );
@@ -391,6 +397,7 @@ async function upsertRecording(data) {
         startedAt, completedAt, rawPayload
     } = data;
 
+    const companyId = requireCompanyId(data.companyId);
     const result = await db.query(
         `INSERT INTO recordings (
             recording_sid, call_sid, status, recording_url,
@@ -414,7 +421,7 @@ async function upsertRecording(data) {
             durationSec, channels || null, track || null, source || null,
             startedAt, completedAt,
             JSON.stringify(rawPayload || {}),
-            data.companyId || DEFAULT_COMPANY_ID
+            companyId
         ]
     );
     return result.rows[0];
@@ -443,13 +450,14 @@ async function upsertTranscript(data) {
         isFinal, sequenceNo, rawPayload
     } = data;
 
+    const companyId = requireCompanyId(data.companyId);
     const result = await db.query(
         `INSERT INTO transcripts (
             transcription_sid, call_sid, recording_sid, mode,
             status, language_code, confidence, text,
             is_final, sequence_no, raw_payload, company_id
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-        ON CONFLICT (transcription_sid) DO UPDATE SET
+        ON CONFLICT (company_id, transcription_sid) DO UPDATE SET
             status        = EXCLUDED.status,
             text          = COALESCE(EXCLUDED.text, transcripts.text),
             confidence    = COALESCE(EXCLUDED.confidence, transcripts.confidence),
@@ -462,7 +470,7 @@ async function upsertTranscript(data) {
             isFinal !== undefined ? isFinal : true,
             sequenceNo,
             JSON.stringify(rawPayload || {}),
-            data.companyId || DEFAULT_COMPANY_ID
+            companyId
         ]
     );
     return result.rows[0];
@@ -485,11 +493,12 @@ async function getTranscriptsByCallSid(callSid, companyId = null) {
 // =============================================================================
 
 async function appendCallEvent(callSid, eventType, eventTime, payload, source = 'webhook', companyId = null) {
+    const scopedCompanyId = requireCompanyId(companyId);
     const result = await db.query(
         `INSERT INTO call_events (call_sid, event_type, event_time, payload, source, company_id)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [callSid, eventType, eventTime, JSON.stringify(payload), source, companyId || DEFAULT_COMPANY_ID]
+        [callSid, eventType, eventTime, JSON.stringify(payload), source, scopedCompanyId]
     );
     return result.rows[0];
 }

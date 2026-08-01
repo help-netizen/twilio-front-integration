@@ -17,9 +17,14 @@ const client = new Proxy({}, {
 
 async function getSyncClient(companyId) {
     if (!companyId) {
-        return { client, accountSid: process.env.TWILIO_ACCOUNT_SID || null };
+        return {
+            client,
+            accountSid: process.env.TWILIO_ACCOUNT_SID || null,
+            companyId: require('./telephonyTenantService').DEFAULT_COMPANY_ID,
+        };
     }
-    return require('./telephonyTenantService').getClientForCompany(companyId);
+    const tenant = await require('./telephonyTenantService').getClientForCompany(companyId);
+    return { ...tenant, companyId };
 }
 
 /**
@@ -70,7 +75,7 @@ async function syncRecentCalls(companyId = null) {
                     PriceUnit: call.priceUnit,
                     AccountSid: tenant.accountSid,
                 };
-                await reconcileCall(twilioPayload, 'sync_recent', companyId);
+                await reconcileCall(twilioPayload, 'sync_recent', tenant.companyId);
                 synced++;
                 await new Promise(r => setTimeout(r, 100));
             } catch (error) {
@@ -126,7 +131,7 @@ async function syncTodayCalls(companyId = null) {
                     PriceUnit: call.priceUnit,
                     AccountSid: tenant.accountSid,
                 };
-                await reconcileCall(twilioPayload, 'sync_today', companyId);
+                await reconcileCall(twilioPayload, 'sync_today', tenant.companyId);
                 synced++;
                 await new Promise(r => setTimeout(r, 100));
             } catch (error) {

@@ -158,6 +158,7 @@ describe('Inbox Worker', () => {
 
         it('T-foreign/T-blast: unmapped AccountSid is quarantined before any write', async () => {
             mockResolveCompanyByAccountSid.mockResolvedValue(null);
+            const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
             const foreignBefore = { company_id: '00000000-0000-0000-0000-00000000000b', calls: 3 };
             const inboxEvent = {
                 id: 124,
@@ -180,6 +181,15 @@ describe('Inbox Worker', () => {
                 company_id: '00000000-0000-0000-0000-00000000000b',
                 calls: 3,
             });
+            const securityPayload = warn.mock.calls.find(([label]) => label === '[TwilioSecurity]')?.[1];
+            expect(securityPayload).toMatchObject({
+                event: 'twilio.tenant_unresolved',
+                surface: 'inbox_worker',
+                reason: 'unbound_account_sid',
+                metric: 'twilio_tenant_unresolved_total',
+            });
+            expect(JSON.stringify(warn.mock.calls)).not.toContain('AC-unmapped');
+            warn.mockRestore();
         });
 
         it('lookup failure retries instead of writing to the default company', async () => {
@@ -197,8 +207,102 @@ describe('Inbox Worker', () => {
                 },
             };
 
-            await expect(processEvent(inboxEvent)).rejects.toThrow('telephony binding DB unavailable');
+            await expect(processEvent(inboxEvent)).rejects.toMatchObject({
+                code: 'TWILIO_TENANT_UNRESOLVED',
+            });
             expect(mockDb.query).not.toHaveBeenCalled();
+        });
+
+        it('T-own transcription: resolves AccountSid and tenant-pairs every write', async () => {
+            const companyId = '00000000-0000-0000-0000-00000000000a';
+            mockResolveCompanyByAccountSid.mockResolvedValue(companyId);
+            mockDbQuery
+                .mockResolvedValueOnce({ rows: [{ transcription_sid: 'TR-shared', status: 'completed' }] })
+                .mockResolvedValueOnce({ rows: [{ id: 99 }] });
+
+            await expect(processEvent({
+                id: 126,
+                source: 'transcription',
+                event_type: 'transcript.updated',
+                payload: {
+                    AccountSid: 'AC-company-a',
+                    CallSid: 'CA-shared',
+                    RecordingSid: 'RE-shared',
+                    TranscriptionSid: 'TR-shared',
+                    TranscriptionStatus: 'completed',
+                    TranscriptionText: 'tenant A text',
+                },
+            })).resolves.toEqual({ success: true });
+
+            expect(mockResolveCompanyByAccountSid).toHaveBeenCalledWith('AC-company-a');
+            expect(mockDbQuery.mock.calls[0][0])
+                .toContain('ON CONFLICT (company_id, transcription_sid)');
+            expect(mockDbQuery.mock.calls[0][1][11]).toBe(companyId);
+            expect(mockDbQuery.mock.calls[1][0]).toContain('INSERT INTO call_events');
+            expect(mockDbQuery.mock.calls[1][1][5]).toBe(companyId);
+        });
+
+        it('SAB-TW-RESOLUTION T-blast: same transcript SID stays isolated by resolved company', async () => {
+            const companyA = '00000000-0000-0000-0000-000000000001';
+            const companyB = '00000000-0000-0000-0000-00000000000b';
+            const rows = new Map();
+            mockResolveCompanyByAccountSid.mockImplementation(async accountSid => (
+                accountSid === 'AC-master' ? companyA : companyB
+            ));
+            mockDbQuery.mockImplementation(async (sql, params) => {
+                if (String(sql).includes('INSERT INTO transcripts')) {
+                    const key = `${params[11]}:${params[0]}`;
+                    const row = {
+                        company_id: params[11],
+                        transcription_sid: params[0],
+                        call_sid: params[1],
+                        status: params[4],
+                        text: params[7],
+                    };
+                    rows.set(key, row);
+                    return { rows: [row] };
+                }
+                return { rows: [{ id: 1 }] };
+            });
+
+            const event = (accountSid, text) => ({
+                id: text === 'master' ? 127 : 128,
+                source: 'transcription',
+                event_type: 'transcript.updated',
+                payload: {
+                    AccountSid: accountSid,
+                    CallSid: 'CA-collision',
+                    TranscriptionSid: 'TR-collision',
+                    TranscriptionStatus: 'completed',
+                    TranscriptionText: text,
+                },
+            });
+
+            await processEvent(event('AC-master', 'master'));
+            const beforeMaster = JSON.stringify(rows.get(`${companyA}:TR-collision`));
+            await processEvent(event('AC-sub-b', 'tenant B'));
+
+            expect(JSON.stringify(rows.get(`${companyA}:TR-collision`))).toBe(beforeMaster);
+            expect(rows.get(`${companyB}:TR-collision`)).toMatchObject({
+                company_id: companyB,
+                text: 'tenant B',
+            });
+        });
+
+        it('T-foreign transcription: unmapped AccountSid writes nothing', async () => {
+            mockResolveCompanyByAccountSid.mockResolvedValue(null);
+            await expect(processEvent({
+                id: 129,
+                source: 'transcription',
+                event_type: 'transcript.updated',
+                payload: {
+                    AccountSid: 'AC-foreign',
+                    CallSid: 'CA-collision',
+                    TranscriptionSid: 'TR-collision',
+                    TranscriptionStatus: 'completed',
+                },
+            })).rejects.toMatchObject({ code: 'TWILIO_TENANT_UNRESOLVED' });
+            expect(mockDbQuery).not.toHaveBeenCalled();
         });
 
         it('should handle unknown event source', async () => {

@@ -13,7 +13,7 @@
 
 - **A** — онбординг-чеклист новой tenant-компании на `/pulse`: полноширинная карточка В ПОТОКЕ страницы, derived-статус пунктов, write-once `completed_at`, только `tenant_admin`.
 - **B** — Marketplace-приложение «Telephony — Twilio»: seed-плитка (mig 145), derived-connected overlay (install-строка НЕ создаётся никогда), страница-визард из 3 шагов (Connect → Тариф, включая новый план Pay-as-you-go mig 146 → Номер), redirect неподключённых из Settings → Telephony.
-- **C** — 5 фиксов изоляции Twilio: C1 Reject неизвестного номера + структурный лог; C2 NOT NULL + backfill `phone_number_settings.company_id` (mig 147) + C2b master-sync биндит DEFAULT; C3 guarded UNIQUE ×2 (mig 148); C4 wallet-гейт на резолвнутой компании; C5 fail-closed softphone-токен (409 `SOFTPHONE_NOT_PROVISIONED`).
+- **C** — 5 фиксов изоляции Twilio: C1 Reject неизвестного AccountSid + редактированный security-log; C2 NOT NULL + backfill `phone_number_settings.company_id` (mig 147) + C2b master-sync биндит DEFAULT; C3 guarded UNIQUE ×2 (mig 148); C4 wallet-гейт на резолвнутой компании; C5 fail-closed softphone-токен (409 `SOFTPHONE_NOT_PROVISIONED`). C1 superseded by `TWILIO-TENANT-FIX-001`: `To` больше не является tenant-binding.
 
 `src/server.js` не меняется (все mounts существуют). Boston Masters (seed `00000000-0000-0000-0000-000000000001`, далее DEFAULT) — поведение байт-в-байт.
 
@@ -288,18 +288,22 @@ Rollback 146: `UPDATE … SET is_active=false` (НЕ DELETE — возможен
 
 ## 3. Часть C — фиксы изоляции Twilio
 
-### 3.1 C1 — Reject неизвестного номера (`twilioWebhooks.js handleVoiceInbound`)
+### 3.1 C1 — Reject неизвестного AccountSid (`twilioWebhooks.js handleVoiceInbound`)
+
+> **Superseded 2026-08-01 by TWILIO-TENANT-FIX-001.** Twilio AccountSid is the
+> only tenant binding. The historical `AccountSid → To` fallback below is
+> removed because a master-account number cannot distinguish subaccount tenants.
 
 Изменения только в inbound-ветке (`else` после `isOutbound`; SIP-outbound не трогается). Порядок обработчика:
 
-1. Без изменений: невалидная подпись → **403** `<Response><Reject/></Response>`; нет `CallSid` → **400**; `ingestToInbox` — ДО резолва (аудит-след в `webhook_inbox` сохраняется для любых звонков, включая отклоняемые).
-2. **Резолв компании ровно один раз:** `companyId = resolveCompanyByAccountSid(AccountSid)`, при null — fallback `companyIdForNumber(To)` (канон ALB-107 «AccountSid → To»). Ошибка БД в любом lookup'е трактуется как null этого lookup'а.
-3. `companyId === null` → структурный лог + ответ **200 `text/xml`** `<Response><Reject/></Response>` (default reason `rejected` — отличим от wallet-гейта `reason="busy"`). `recordMissedInbound` НЕ вызывается (нет компании — не создаём orphan-timeline). Generic voicemail для company-less звонка более недостижим.
+1. Невалидная подпись → **403** `<Response><Reject/></Response>`; нет `CallSid` → **400**.
+2. **Резолв только по AccountSid:** `companyId = resolveCompanyByAccountSid(AccountSid)`. MASTER SID → DEFAULT; connected subaccount SID → его company; отсутствующий/неизвестный/suspended SID и ошибка lookup → fail-closed.
+3. Нерезолвлённый tenant → редактированный security-log/metric + ответ **200 `text/xml`** `<Response><Reject/></Response>`. `ingestToInbox` и `recordMissedInbound` НЕ вызываются: raw PII без tenant-binding не сохраняется.
 4. Далее — C4-гейт и существующий роутинг (см. 3.2).
 
 **Форма лога — одна строка, warn, JSON-поля (нормативно):**
 ```
-console.warn(`[${traceId}] inbound_call.rejected`, { event:'inbound_call.rejected', reason:'unknown_number', call_sid:<CallSid>, account_sid:<AccountSid>, to:<To>, from:<From> })
+console.warn('[TwilioSecurity]', { event:'twilio.tenant_unresolved', surface:'voice_inbound', reason:<redacted reason>, metric:'twilio_tenant_unresolved_total', increment:1 })
 ```
 
 **Матрица резолва/Reject:**
@@ -308,13 +312,9 @@ console.warn(`[${traceId}] inbound_call.rejected`, { event:'inbound_call.rejecte
 |---|---|---|
 | master (`TWILIO_ACCOUNT_SID`) | любой, даже без строки в `phone_number_settings` | → DEFAULT; **Reject НЕВОЗМОЖЕН**; дальше как сегодня (гейт → группа/флоу или generic voicemail) — Boston Masters байт-в-байт |
 | известный субаккаунт, `status='connected'` | любой | → его компания (To не важен) |
-| неизвестный/отсутствует | известный (есть строка) | → компания по To (fallback) |
-| неизвестный | неизвестный | → **Reject + лог** `reason:'unknown_number'` |
-| субаккаунт со `status≠'connected'` (suspended) | известный | резолв по SID даёт null → fallback To → компания (поведение ALB-107 сохранено) |
-| субаккаунт suspended | неизвестный | → **Reject + лог** |
-| ошибка БД в обоих lookup'ах | — | null → **Reject** (fail-closed) |
-
-Residue: status-callback'и отклонённых unknown-звонков продолжают попадать в `webhook_inbox` (pre-existing конвейер) — осознанно вне скоупа.
+| неизвестный/отсутствует | любой | → **Reject + redacted security metric**, без inbox row |
+| субаккаунт со `status≠'connected'` (suspended) | любой | → **Reject + redacted security metric**, без inbox row |
+| ошибка DB resolver | любой | → **Reject** (fail-closed), без inbox row |
 
 ### 3.2 C4 — wallet-гейт до роутинга без null-обхода
 
@@ -450,9 +450,9 @@ Rollback `rollback_148`: DROP только объектов с именами `u
 | # | Случай | Ожидаемое поведение |
 |---|---|---|
 | E-C1 | Master AccountSid, номер без строки pns | → DEFAULT, Reject НЕВОЗМОЖЕН; generic voicemail как сегодня (byte-identical) |
-| E-C2 | Неизвестный AccountSid + неизвестный To | 200 `<Response><Reject/></Response>` + warn-лог указанной формы; recordMissedInbound НЕ вызывается; ingestToInbox — вызван |
-| E-C3 | Ошибка БД при резолве (оба lookup'а) | null → Reject (fail-closed) |
-| E-C4 | Suspended субаккаунт, To известен | fallback по To → компания → нормальный роутинг (канон ALB-107) |
+| E-C2 | Неизвестный AccountSid + любой To | 200 `<Response><Reject/></Response>` + redacted warn/metric; recordMissedInbound и ingestToInbox НЕ вызываются |
+| E-C3 | Ошибка DB при `resolveCompanyByAccountSid` | Reject (fail-closed), raw payload не сохраняется |
+| E-C4 | Suspended субаккаунт, To известен | Reject; `To` fallback запрещён |
 | E-C5 | Wallet blocked у резолвнутой компании | `<Reject reason="busy"/>` + missed call (как сейчас); null-обход невозможен |
 | E-C6 | Ошибка `isServiceBlocked` | false → маршрутизация продолжается (fail-open защищает легитимные звонки) |
 | E-C7 | DEFAULT-компания с кошельком ≤ −5 (гипотетически) | теперь Reject busy (ранее — обход гейта у номеров без pns-строки); при штатном балансе 0 — поведение неотличимо |
@@ -478,7 +478,7 @@ Rollback `rollback_148`: DROP только объектов с именами `u
 - `IntegrationsPage` → `marketplaceApi.fetchMarketplaceApps` → `GET /api/marketplace/apps` → `marketplaceService.listApps` → overlay из `telephonyTenantService.getTelephonyState`.
 - `TelephonyTwilioSettingsPage` → authedFetch → `/api/telephony/numbers/status|connect|search|buy|softphone/setup`, `/api/billing`, `/api/billing/checkout`, `/api/telephony/numbers` → `telephonyTenantService` / `billingService` → Twilio (subaccounts, AvailablePhoneNumbers, IncomingPhoneNumbers) / Stripe (hosted checkout только для пакетов).
 - Stripe → `POST /api/billing/webhook` (raw-body mount, НЕ меняется) → `handleProviderWebhook` → активация плана по `metadata.plan_id`.
-- Twilio → `POST /webhooks/twilio/voice-inbound` → C1 резолв (`resolveCompanyByAccountSid` → `companyIdForNumber`) → C4 `walletService.isServiceBlocked` → `groupRouting`/`callFlowRuntime` (untouched).
+- Twilio → `POST /webhooks/twilio/voice-inbound` → C1 резолв только через `resolveCompanyByAccountSid` → C4 `walletService.isServiceBlocked` → `groupRouting`/`callFlowRuntime` (untouched).
 - Softphone: `useTwilioDevice` → `GET /api/voice/token` → `voiceService.generateTokenForCompany` (C5).
 - **SSE: не используется и не добавляется** (чеклист — refetch on focus/mount; `useRealtimeEvents` не трогается).
 
@@ -488,7 +488,7 @@ Rollback `rollback_148`: DROP только объектов с именами `u
 
 - `company_id` во всех новых/изменённых обработчиках — ТОЛЬКО из `req.companyFilter?.company_id`; чеклист и `subscribe` не принимают company от клиента вовсе; в новых endpoint'ах нет id-параметров → чужие сущности недостижимы by construction.
 - Каждый SQL фильтрует по `company_id` (чеклист: `EXISTS … WHERE company_id=$1`, `UPDATE companies WHERE id=$1`; subscribe: `WHERE company_id=$1`; overlay: `getTelephonyState(companyId)`).
-- Webhook-путь: компания по `AccountSid`→`To` (модель ALB-107), подпись — токеном соответствующего субаккаунта — без изменений.
+- Webhook-путь: компания только по `AccountSid`; MASTER SID явно маппится в DEFAULT, subaccount SID — в свою company. `To` fallback запрещён; подпись проверяется токеном соответствующего аккаунта.
 - `return_path` — path-only (анти-open-redirect, матрица §2.4); subaccount SID наружу в marketplace-overlay не отдаётся.
 - Fail-closed: C1 Reject при нерезолвнутой компании (вкл. DB-ошибку), C5 409 вместо master-creds, mig 148 dedup NULL-ит поздний дубль SID. Fail-open сохранён только где защищает легитимную маршрутизацию (ошибка `isServiceBlocked`) и в autonomous-mode (protected).
 - Гейт tenant_admin чеклиста — на фронте (`isTenantAdmin()`) И на backend (inline `role_key`); `requireRole('company_admin')` не используется (пропускает manager).

@@ -1,7 +1,7 @@
 const db = require('../db/connection');
 const queries = require('../db/queries');
 const { isFinalStatus } = require('./stateMachine');
-const { getTwilioClient } = require('./twilioClient');
+const { getClientForCompany } = require('./telephonyTenantService');
 const eventBus = require('./eventBus');
 
 /**
@@ -197,7 +197,7 @@ async function reconcileOneCall(call, traceId) {
 
 async function fetchAndUpdateFromTwilio(callSid, traceId, companyId) {
     try {
-        const client = getTwilioClient();
+        const { client } = await getClientForCompany(companyId);
         const details = await client.calls(callSid).fetch();
 
         const apiStatus = details.status?.toLowerCase();

@@ -8,7 +8,7 @@
  *
  * Strategy (Docs/test-cases/ONBTEL-001.md §7): direct handleVoiceInbound(req,res)
  * calls with res.type/send/status mocks, NODE_ENV=development except TC-C-11a;
- * telephonyTenantService / db.connection / walletService / groupRouting /
+ * telephonyTenantService / walletService / groupRouting /
  * callFlowRuntime / inbox+missed-call infrastructure all mocked;
  * console.warn spied for the normative rejection-log shape.
  */
@@ -152,7 +152,7 @@ function pnsLookups() {
 }
 
 function rejectionWarns() {
-    return console.warn.mock.calls.filter(([first]) => String(first).includes('inbound_call.rejected'));
+    return console.warn.mock.calls.filter(([, payload]) => payload?.event === 'twilio.tenant_unresolved');
 }
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
@@ -180,6 +180,7 @@ beforeEach(() => {
     mockDbQuery.mockResolvedValue({ rows: [] });
     mockInsertInboxEvent.mockResolvedValue({ id: 1 });
     mockResolveCompanyByAccountSid.mockResolvedValue(null);
+    mockGetAuthTokenForAccountSid.mockResolvedValue('master_auth_token');
     mockIsCallerBlocked.mockResolvedValue(false);
     mockIsServiceBlocked.mockResolvedValue(false);
     mockResolveGroupForNumber.mockResolvedValue(null);
@@ -222,7 +223,7 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(rejectionWarns()).toHaveLength(0);
     });
 
-    test('TC-C-02: unknown AccountSid + unknown To → bare <Reject/> (no reason), 6-field warn log, no missed-call record, audit ingest', async () => {
+    test('TC-C-02: unknown AccountSid + any To → bare Reject, redacted metric, no raw ingest', async () => {
         mockResolveCompanyByAccountSid.mockResolvedValue(null);
         mockDbQuery.mockResolvedValue({ rows: [] }); // no pns row either
 
@@ -238,36 +239,34 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(res.send).toHaveBeenCalledTimes(1);
         expect(res.send).toHaveBeenCalledWith('<Response><Reject/></Response>');
 
-        // Normative log shape: one warn, first arg tags the event, second arg
-        // carries ALL six fields
+        // Security telemetry contains classification only — never callback PII.
         const warns = rejectionWarns();
         expect(warns).toHaveLength(1);
+        expect(warns[0][0]).toBe('[TwilioSecurity]');
         expect(warns[0][1]).toEqual({
-            event: 'inbound_call.rejected',
-            reason: 'unknown_number',
-            call_sid: 'CA_unknown_1',
-            account_sid: GHOST_SID,
-            to: '+15085559999',
-            from: '+16175551000',
+            event: 'twilio.tenant_unresolved',
+            surface: 'voice_inbound',
+            reason: 'unbound_account_sid',
+            metric: 'twilio_tenant_unresolved_total',
+            increment: 1,
         });
+        expect(JSON.stringify(warns[0][1])).not.toContain(GHOST_SID);
+        expect(JSON.stringify(warns[0][1])).not.toContain('+15085559999');
 
         // No company → no orphan timeline / missed-call record
         expect(mockFindOrCreateTimeline).not.toHaveBeenCalled();
         expect(mockUpsertCall).not.toHaveBeenCalled();
 
-        // Audit trail preserved after both ownership lookups fail.
-        expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1);
-        expect(mockInsertInboxEvent.mock.invocationCallOrder[0])
-            .toBeGreaterThan(mockResolveCompanyByAccountSid.mock.invocationCallOrder[0]);
+        expect(mockInsertInboxEvent).not.toHaveBeenCalled();
+        expect(pnsLookups()).toHaveLength(0);
 
         // Routing never reached
         expect(mockResolveGroupForNumber).not.toHaveBeenCalled();
         expect(mockStartExecution).not.toHaveBeenCalled();
     });
 
-    test('TC-C-03: BOTH lookups throwing → fail-closed Reject (not 500)', async () => {
+    test('TC-C-03: AccountSid resolver failure → fail-closed Reject without To lookup or raw write', async () => {
         mockResolveCompanyByAccountSid.mockRejectedValue(new Error('company_telephony down'));
-        mockDbQuery.mockRejectedValue(new Error('phone_number_settings down'));
 
         const res = makeRes();
         await handleVoiceInbound(makeReq(inboundBody({ AccountSid: GHOST_SID })), res);
@@ -276,7 +275,9 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(res.send).toHaveBeenCalledWith('<Response><Reject/></Response>');
         const warns = rejectionWarns();
         expect(warns).toHaveLength(1);
-        expect(warns[0][1]).toMatchObject({ reason: 'unknown_number' });
+        expect(warns[0][1]).toMatchObject({ reason: 'resolution_error' });
+        expect(pnsLookups()).toHaveLength(0);
+        expect(mockInsertInboxEvent).not.toHaveBeenCalled();
     });
 
     test('TC-C-04: connected subaccount resolves by SID — To fallback NEVER queried (short-circuit), normal group routing', async () => {
@@ -301,20 +302,19 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(rejectionWarns()).toHaveLength(0);
     });
 
-    test('TC-C-05: suspended subaccount (SID resolve → null) + known To → falls back to the number owner → normal routing (ALB-107 canon)', async () => {
+    test('TC-C-05: suspended/unbound subaccount + known To is rejected; To cannot bind a tenant', async () => {
         mockResolveCompanyByAccountSid.mockResolvedValue(null); // status != connected
         mockDbQuery.mockResolvedValue({ rows: [{ company_id: COMPANY_A }] });
 
         const res = makeRes();
         await handleVoiceInbound(makeReq(inboundBody({ AccountSid: SUB_SID, To: '+15085550001' })), res);
 
-        const lookups = pnsLookups();
-        expect(lookups).toHaveLength(1);
-        expect(lookups[0][1]).toEqual(['+15085550001']);
-        expect(mockIsServiceBlocked).toHaveBeenCalledWith(COMPANY_A);
-        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085550001');
-        expect(res.send).toHaveBeenCalledWith(VOICEMAIL_TWIML);
-        expect(rejectionWarns()).toHaveLength(0);
+        expect(res.send).toHaveBeenCalledWith('<Response><Reject/></Response>');
+        expect(pnsLookups()).toHaveLength(0);
+        expect(mockIsServiceBlocked).not.toHaveBeenCalled();
+        expect(mockResolveGroupForNumber).not.toHaveBeenCalled();
+        expect(mockInsertInboxEvent).not.toHaveBeenCalled();
+        expect(rejectionWarns()).toHaveLength(1);
     });
 
     test('TC-C-06: suspended subaccount + unknown To → Reject with unknown_number warn', async () => {
@@ -327,7 +327,8 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(res.send).toHaveBeenCalledWith('<Response><Reject/></Response>');
         const warns = rejectionWarns();
         expect(warns).toHaveLength(1);
-        expect(warns[0][1]).toMatchObject({ reason: 'unknown_number', account_sid: SUB_SID });
+        expect(warns[0][1]).toMatchObject({ reason: 'unbound_account_sid' });
+        expect(JSON.stringify(warns[0][1])).not.toContain(SUB_SID);
         expect(mockResolveGroupForNumber).not.toHaveBeenCalled();
     });
 
@@ -360,7 +361,7 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(mockStartExecution).not.toHaveBeenCalled();
     });
 
-    test('TC-C-07b: wallet-blocked company resolved via To fallback → companyIdForNumber SQL runs EXACTLY once for the whole request', async () => {
+    test('TC-C-07b T-foreign: a phone row cannot rescue an unbound AccountSid', async () => {
         mockResolveCompanyByAccountSid.mockResolvedValue(null);
         mockDbQuery.mockResolvedValue({ rows: [{ company_id: COMPANY_A }] });
         mockIsServiceBlocked.mockResolvedValue(true);
@@ -368,11 +369,10 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         const res = makeRes();
         await handleVoiceInbound(makeReq(inboundBody({ AccountSid: SUB_SID, To: '+15085550001' })), res);
 
-        expect(res.send).toHaveBeenCalledWith('<Response><Reject reason="busy"/></Response>');
-        // At most one lookup per request — the old duplicate lookup inside the
-        // missed-call branch is gone
-        expect(pnsLookups()).toHaveLength(1);
-        expect(mockFindOrCreateTimeline).toHaveBeenCalledWith('+16175551000', COMPANY_A);
+        expect(res.send).toHaveBeenCalledWith('<Response><Reject/></Response>');
+        expect(pnsLookups()).toHaveLength(0);
+        expect(mockFindOrCreateTimeline).not.toHaveBeenCalled();
+        expect(mockInsertInboxEvent).not.toHaveBeenCalled();
     });
 
     test('TC-C-08: isServiceBlocked throwing → .catch(false) fail-open → routing continues', async () => {
@@ -471,14 +471,15 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(mockResolveGroupForNumber).not.toHaveBeenCalled();
     });
 
-    test('TC-C-10: SIP outbound branch untouched — <Dial> TwiML, company resolution / reject logic never invoked', async () => {
+    test('TC-C-10: SIP outbound is resolved by AccountSid before tenant-paired ingest', async () => {
+        mockResolveCompanyByAccountSid.mockResolvedValue(DEFAULT_COMPANY_ID);
         const res = makeRes();
         await handleVoiceInbound(
             makeReq(inboundBody({ From: 'sip:agent7@blanc.sip.twilio.com', To: '+15085551234' })),
             res
         );
 
-        expect(mockResolveCompanyByAccountSid).not.toHaveBeenCalled();
+        expect(mockResolveCompanyByAccountSid).toHaveBeenCalledWith(MASTER_SID);
         expect(mockIsServiceBlocked).not.toHaveBeenCalled();
         expect(pnsLookups()).toHaveLength(0);
         expect(mockResolveGroupForNumber).not.toHaveBeenCalled();
@@ -488,10 +489,14 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(sent).toContain('+15085551234</Number>');
         expect(sent).not.toContain('<Reject');
         expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1); // ingest still runs
+        expect(mockInsertInboxEvent).toHaveBeenCalledWith(expect.objectContaining({
+            companyId: DEFAULT_COMPANY_ID,
+        }));
     });
 
     test('TC-C-11a: production + invalid signature → 403 BEFORE ingest (regression, handler order §3.1)', async () => {
         process.env.NODE_ENV = 'production';
+        mockResolveCompanyByAccountSid.mockResolvedValue(DEFAULT_COMPANY_ID);
         mockValidateRequest.mockReturnValue(false);
 
         const res = makeRes();
@@ -501,7 +506,7 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(res.status).toHaveBeenCalledWith(403);
         expect(res.send).toHaveBeenCalledWith('<Response><Reject/></Response>');
         expect(mockInsertInboxEvent).not.toHaveBeenCalled();
-        expect(mockResolveCompanyByAccountSid).not.toHaveBeenCalled();
+        expect(mockResolveCompanyByAccountSid).toHaveBeenCalledWith(MASTER_SID);
     });
 
     test('TC-C-11b: missing CallSid → 400 before ingest (regression)', async () => {

@@ -49,6 +49,7 @@ function makeReq(bodyOverrides = {}, queryOverrides = {}) {
     return {
         headers: { 'x-twilio-signature': 'valid' },
         body: {
+            AccountSid: 'ACtest',
             CallSid: 'CA_parent_001',
             From: '+15551112222',
             To: '+15553334444',
@@ -95,9 +96,8 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             mockQuery.mockImplementation((sql) => {
                 if (sql.includes('phone_number_settings')) {
-                    // ONBTEL-001 C1: a "known number" now means it resolves to a
-                    // company — company-less inbound is fail-closed rejected
-                    // (covered by tests/twilioInboundIsolation.test.js).
+                    // Routing metadata is still number-based after the master
+                    // AccountSid resolves ABC Homes as the owning tenant.
                     return { rows: [{ company_id: 'company_1', routing_mode: 'client', client_identity: 'user_1', group_id: null }] };
                 }
                 return { rows: [] };
@@ -123,7 +123,7 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             mockQuery.mockImplementation((sql) => {
                 if (sql.includes('phone_number_settings')) {
-                    // ONBTEL-001 C1: see the client-mode test above.
+                    // Tenant binding still comes from the master AccountSid.
                     return { rows: [{ company_id: 'company_1', routing_mode: 'sip', client_identity: null, group_id: null }] };
                 }
                 return { rows: [] };

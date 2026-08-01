@@ -16,7 +16,7 @@ const { generateCallSummary } = require('./callSummaryService');
  * @param {string} callSid - Twilio call SID
  * @param {string} recordingSid - Twilio recording SID
  * @param {string} [traceId] - optional trace ID for logging
- * @param {string|null} [companyId] - explicit tenant for HTTP/manual callers
+ * @param {string} companyId - explicit tenant for HTTP/manual/worker callers
  * @returns {Promise<{status: string, transcript?: string, gemini_summary?: string, gemini_entities?: Array, sentimentScore?: number}>}
  */
 async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`, companyId = null) {
@@ -25,10 +25,17 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
         throw new Error('ASSEMBLYAI_API_KEY not configured');
     }
 
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!companyId) {
+        const err = new Error('companyId is required for Twilio transcription');
+        err.code = 'TWILIO_TENANT_UNRESOLVED';
+        throw err;
+    }
+
+    const telephonyTenantService = require('./telephonyTenantService');
+    const { accountSid } = await telephonyTenantService.getClientForCompany(companyId);
+    const authToken = await telephonyTenantService.getAuthTokenForAccountSid(accountSid);
     if (!accountSid || !authToken) {
-        throw new Error('TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN not configured');
+        throw new Error('Twilio credentials are not configured for this company');
     }
 
     // Check if transcript already exists
@@ -211,8 +218,8 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
              WHERE call_sid = $1
                AND transcription_sid IS NULL
                AND status = 'processing'
-               ${companyId ? 'AND company_id = $2' : ''}`,
-            companyId ? [callSid, companyId] : [callSid]
+               AND company_id = $2`,
+            [callSid, companyId]
         );
     } catch (e) { /* ignore cleanup errors */ }
 

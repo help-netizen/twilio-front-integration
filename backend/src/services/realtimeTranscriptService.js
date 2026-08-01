@@ -9,7 +9,7 @@ const { AssemblyAISession } = require('./assemblyAIBridge');
 const realtimeService = require('./realtimeService');
 const db = require('../db/connection');
 
-// Active transcription sessions: callSid → session object
+// Active transcription sessions: (companyId, callSid) → session object
 const activeSessions = new Map();
 
 // Global turn counter per call to interleave turns from both tracks
@@ -19,14 +19,20 @@ let globalTurnCounter = 0;
  * Create dual-channel transcription sessions for a call.
  * Each track (inbound/outbound) gets its own AssemblyAI session.
  *
+ * @param {string} companyId
  * @param {string} callSid
  * @param {Object} meta — { direction, streamSid }
  */
-function createSession(callSid, meta = {}) {
-    if (!meta.companyId) {
+function sessionKey(companyId, callSid) {
+    return `${companyId}:${callSid}`;
+}
+
+function createSession(companyId, callSid, meta = {}) {
+    if (!companyId || !callSid) {
         console.warn(`[TranscriptSvc:${callSid}] Company context required, skipping`);
         return null;
     }
+    const key = sessionKey(companyId, callSid);
 
     const apiKey = process.env.ASSEMBLYAI_API_KEY;
     if (!apiKey) {
@@ -34,9 +40,9 @@ function createSession(callSid, meta = {}) {
         return null;
     }
 
-    if (activeSessions.has(callSid)) {
+    if (activeSessions.has(key)) {
         console.warn(`[TranscriptSvc:${callSid}] Session already exists, reusing`);
-        return activeSessions.get(callSid);
+        return activeSessions.get(key);
     }
 
     console.log(`[TranscriptSvc:${callSid}] Creating dual-channel sessions`);
@@ -44,7 +50,7 @@ function createSession(callSid, meta = {}) {
     const session = {
         callSid,
         meta,
-        companyId: meta.companyId,
+        companyId,
         segments: [],           // merged transcript segments from both tracks
         aaiInbound: null,       // AssemblyAI session for inbound (customer)
         aaiOutbound: null,      // AssemblyAI session for outbound (agent)
@@ -93,7 +99,7 @@ function createSession(callSid, meta = {}) {
 
         // Finalize when both sessions are closed (or after first if only one track)
         if (session.closedCount >= 2 && !session.finalized) {
-            finalizeSession(callSid);
+            finalizeSession(companyId, callSid);
         }
     };
 
@@ -119,7 +125,7 @@ function createSession(callSid, meta = {}) {
     });
     session.aaiOutbound.connect();
 
-    activeSessions.set(callSid, session);
+    activeSessions.set(key, session);
     return session;
 }
 
@@ -127,12 +133,13 @@ function createSession(callSid, meta = {}) {
  * Route audio chunk to the correct AssemblyAI session.
  * inbound → customer session, outbound → agent session
  *
+ * @param {string} companyId
  * @param {string} callSid
  * @param {string} track — 'inbound' | 'outbound'
  * @param {Buffer} audioChunk — raw mulaw audio bytes
  */
-function routeAudio(callSid, track, audioChunk) {
-    const session = activeSessions.get(callSid);
+function routeAudio(companyId, callSid, track, audioChunk) {
+    const session = activeSessions.get(sessionKey(companyId, callSid));
     if (!session) return;
 
     if (track === 'inbound' && session.aaiInbound) {
@@ -144,10 +151,11 @@ function routeAudio(callSid, track, audioChunk) {
 
 /**
  * Terminate transcription for a call (called on stream stop)
+ * @param {string} companyId
  * @param {string} callSid
  */
-async function terminateSession(callSid) {
-    const session = activeSessions.get(callSid);
+async function terminateSession(companyId, callSid) {
+    const session = activeSessions.get(sessionKey(companyId, callSid));
     if (!session) return;
 
     console.log(`[TranscriptSvc:${callSid}] Terminating sessions`);
@@ -160,16 +168,18 @@ async function terminateSession(callSid) {
 
     // If finalize hasn't been triggered by close handlers, do it now
     if (!session.finalized) {
-        await finalizeSession(callSid);
+        await finalizeSession(companyId, callSid);
     }
 }
 
 /**
  * Finalize the transcript: merge segments, persist to DB, broadcast event
+ * @param {string} companyId
  * @param {string} callSid
  */
-async function finalizeSession(callSid) {
-    const session = activeSessions.get(callSid);
+async function finalizeSession(companyId, callSid) {
+    const key = sessionKey(companyId, callSid);
+    const session = activeSessions.get(key);
     if (!session || session.finalized) return;
 
     session.finalized = true;
@@ -199,7 +209,7 @@ async function finalizeSession(callSid) {
                      is_final, sequence_no, speaker, track, raw_payload, company_id)
                  VALUES ($1, $2, 'realtime', 'completed', $3,
                          true, $4, $5, $6, $7, $8)
-                 ON CONFLICT (transcription_sid) DO NOTHING`,
+                 ON CONFLICT (company_id, transcription_sid) DO NOTHING`,
                 [
                     transcriptionSid,
                     callSid,
@@ -227,7 +237,7 @@ async function finalizeSession(callSid) {
                  is_final, sequence_no, raw_payload, company_id)
              VALUES ($1, $2, 'realtime', 'completed', $3,
                      true, 0, $4, $5)
-             ON CONFLICT (transcription_sid) DO UPDATE SET
+             ON CONFLICT (company_id, transcription_sid) DO UPDATE SET
                  text = EXCLUDED.text,
                  status = 'completed',
                  updated_at = now()`,
@@ -255,7 +265,7 @@ async function finalizeSession(callSid) {
     } catch (err) {
         console.error(`[TranscriptSvc:${callSid}] Finalize error:`, err.message);
     } finally {
-        activeSessions.delete(callSid);
+        activeSessions.delete(key);
     }
 }
 
@@ -264,9 +274,10 @@ async function finalizeSession(callSid) {
  */
 function getActiveSessions() {
     const result = [];
-    for (const [callSid, session] of activeSessions) {
+    for (const [, session] of activeSessions) {
         result.push({
-            callSid,
+            callSid: session.callSid,
+            companyId: session.companyId,
             segments: session.segments.length,
             inboundReady: session.aaiInbound?.ready || false,
             outboundReady: session.aaiOutbound?.ready || false,

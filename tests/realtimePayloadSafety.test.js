@@ -124,7 +124,7 @@ describe('company SSE payload safety', () => {
     test('realtime transcript sessions fail closed without company context', () => {
         const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-        expect(realtimeTranscriptService.createSession('CA-unscoped', {})).toBeNull();
+        expect(realtimeTranscriptService.createSession(null, 'CA-unscoped', {})).toBeNull();
         expect(realtimeTranscriptService.getActiveSessions()).toEqual([]);
         expect(warn).toHaveBeenCalledWith(
             '[TranscriptSvc:CA-unscoped] Company context required, skipping'

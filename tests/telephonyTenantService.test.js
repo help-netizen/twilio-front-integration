@@ -41,6 +41,12 @@ describe('getTelephonyState', () => {
 });
 
 describe('getClientForCompany', () => {
+    it('fails closed when company context is absent', async () => {
+        await expect(svc.getClientForCompany())
+            .rejects.toMatchObject({ code: 'TWILIO_TENANT_UNRESOLVED', httpStatus: 403 });
+        expect(db.query).not.toHaveBeenCalled();
+    });
+
     it('throws TELEPHONY_NOT_CONNECTED for an unconnected tenant', async () => {
         db.query.mockResolvedValueOnce({ rows: [] });
         await expect(svc.getClientForCompany(COMPANY))
@@ -79,6 +85,11 @@ describe('resolveCompanyByAccountSid', () => {
 });
 
 describe('getAuthTokenForAccountSid', () => {
+    it('missing sid does not fall back to the master token', async () => {
+        expect(await svc.getAuthTokenForAccountSid()).toBeNull();
+        expect(db.query).not.toHaveBeenCalled();
+    });
+
     it('master sid → master token; subaccount sid → decrypted token', async () => {
         expect(await svc.getAuthTokenForAccountSid(process.env.TWILIO_ACCOUNT_SID)).toBe('master-token');
         db.query.mockResolvedValueOnce({ rows: [{ twilio_auth_token_enc: svc._encryptToken('sub-token') }] });
