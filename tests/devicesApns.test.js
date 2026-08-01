@@ -15,7 +15,7 @@
  * (spec §3.7, §4.2, §8.T2, §10, C9/C13)
  */
 
-jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), getClient: jest.fn() }));
 
 const express = require('express');
 const http = require('http');
@@ -81,7 +81,18 @@ function request(app, method, path, body = null) {
     });
 }
 
-beforeEach(() => { db.query.mockReset(); });
+let releaseClient;
+
+beforeEach(() => {
+    db.query.mockReset();
+    db.getClient.mockReset();
+    releaseClient = jest.fn();
+    db.getClient.mockResolvedValue({ query: db.query, release: releaseClient });
+});
+
+function registrationInsertCall() {
+    return db.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO device_tokens'));
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // A) POST /api/devices
@@ -97,8 +108,8 @@ describe('POST /api/devices (MTECH-T2)', () => {
         expect(res.status).toBe(201);
         expect(res.body).toEqual({ ok: true, data: { registered: true } });
 
-        expect(db.query).toHaveBeenCalledTimes(1);
-        const [sql, params] = db.query.mock.calls[0];
+        expect(db.query).toHaveBeenCalledTimes(5);
+        const [sql, params] = registrationInsertCall();
         expect(sql).toMatch(/INSERT INTO device_tokens/i);
         expect(sql).toMatch(/ON CONFLICT \(company_id, crm_user_id, apns_token\) DO UPDATE/i);
         expect(sql).not.toMatch(/company_id\s*=\s*EXCLUDED\.company_id/i);
@@ -110,6 +121,14 @@ describe('POST /api/devices (MTECH-T2)', () => {
         expect(params[3]).toBe('ios');
         expect(params[4]).toBe('1.0.0');
         expect(params[5]).toBe('iPhone15,2');
+        const ownershipDelete = db.query.mock.calls.find(([statement]) => (
+            String(statement).includes('DELETE FROM device_tokens')
+        ));
+        expect(ownershipDelete[1]).toEqual([TOKEN_A, COMPANY_A, USER_A]);
+        expect(db.query.mock.calls[0][0]).toBe('BEGIN');
+        expect(db.query.mock.calls[1][0]).toContain('pg_advisory_xact_lock');
+        expect(db.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+        expect(releaseClient).toHaveBeenCalledTimes(1);
     });
 
     it('re-registering an EXISTING token → 200 (upsert idempotent, no duplicate)', async () => {
@@ -122,7 +141,7 @@ describe('POST /api/devices (MTECH-T2)', () => {
     it('defaults platform to ios and passes null for optional fields', async () => {
         db.query.mockResolvedValue({ rows: [{ inserted: true }] });
         await request(makeApp(), 'POST', '/', { apns_token: TOKEN_A });
-        const [, params] = db.query.mock.calls[0];
+        const [, params] = registrationInsertCall();
         expect(params[3]).toBe('ios');   // platform default
         expect(params[4]).toBeNull();    // app_version
         expect(params[5]).toBeNull();    // device_model
@@ -131,7 +150,7 @@ describe('POST /api/devices (MTECH-T2)', () => {
     it('trims the token before persisting', async () => {
         db.query.mockResolvedValue({ rows: [{ inserted: true }] });
         await request(makeApp(), 'POST', '/', { apns_token: `  ${TOKEN_A}  ` });
-        expect(db.query.mock.calls[0][1][2]).toBe(TOKEN_A);
+        expect(registrationInsertCall()[1][2]).toBe(TOKEN_A);
     });
 
     it('missing token → 400 (db not touched)', async () => {
@@ -139,12 +158,14 @@ describe('POST /api/devices (MTECH-T2)', () => {
         expect(res.status).toBe(400);
         expect(res.body.ok).toBe(false);
         expect(db.query).not.toHaveBeenCalled();
+        expect(db.getClient).not.toHaveBeenCalled();
     });
 
     it('blank / whitespace token → 400 (db not touched)', async () => {
         const res = await request(makeApp(), 'POST', '/', { apns_token: '   ' });
         expect(res.status).toBe(400);
         expect(db.query).not.toHaveBeenCalled();
+        expect(db.getClient).not.toHaveBeenCalled();
     });
 
     it('no crm_user → 409 NO_CRM_USER (db not touched)', async () => {
@@ -152,30 +173,33 @@ describe('POST /api/devices (MTECH-T2)', () => {
         expect(res.status).toBe(409);
         expect(res.body.code).toBe('NO_CRM_USER');
         expect(db.query).not.toHaveBeenCalled();
+        expect(db.getClient).not.toHaveBeenCalled();
     });
 
     it('401 when unauthenticated (db not touched)', async () => {
         const res = await request(makeApp({ authed: false }), 'POST', '/', { apns_token: TOKEN_A });
         expect(res.status).toBe(401);
         expect(db.query).not.toHaveBeenCalled();
+        expect(db.getClient).not.toHaveBeenCalled();
     });
 
     it('403 when authed but no company (db not touched)', async () => {
         const res = await request(makeApp({ company: null }), 'POST', '/', { apns_token: TOKEN_A });
         expect(res.status).toBe(403);
         expect(db.query).not.toHaveBeenCalled();
+        expect(db.getClient).not.toHaveBeenCalled();
     });
 
     it('cross-tenant: company_id is taken from authz, never from the body', async () => {
         db.query.mockResolvedValue({ rows: [{ inserted: true }] });
         await request(makeApp({ company: COMPANY_A }), 'POST', '/', { apns_token: TOKEN_A, company_id: COMPANY_B });
-        expect(db.query.mock.calls[0][1][0]).toBe(COMPANY_A);
+        expect(registrationInsertCall()[1][0]).toBe(COMPANY_A);
     });
 
     it('cross-tenant: a company-B token registers under company B (its own authz)', async () => {
         db.query.mockResolvedValue({ rows: [{ inserted: true }] });
         await request(makeApp({ company: COMPANY_B, crmUser: { id: USER_B } }), 'POST', '/', { apns_token: TOKEN_B });
-        const [, params] = db.query.mock.calls[0];
+        const [, params] = registrationInsertCall();
         expect(params[0]).toBe(COMPANY_B);
         expect(params[1]).toBe(USER_B);
     });

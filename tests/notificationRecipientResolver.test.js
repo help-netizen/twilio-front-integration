@@ -374,7 +374,7 @@ describe('resolveNotificationRecipients fail-closed pipeline', () => {
         const financialInsert = client.query.mock.calls.find(([sql]) => (
             String(sql).includes('INSERT INTO notification_deliveries')
         ));
-        expect(financialInsert[1].slice(5, 8)).toEqual(['job', '10', false]);
+        expect(financialInsert[1].slice(5, 8)).toEqual([null, null, false]);
 
         const deniedClient = fakeClient({
             candidateIds: [OFFICE], ...rows, eventDataById: { '103': {} },
@@ -385,6 +385,48 @@ describe('resolveNotificationRecipients fail-closed pipeline', () => {
         await expect(resolveNotificationRecipients(COMPANY, {
             ...financialEvent, id: '103',
         }, { client: deniedClient })).resolves.toEqual([]);
+    });
+
+    test('financial parent identity is claimed only with the live parent-route view permission', async () => {
+        const paymentRows = {
+            '30': {
+                id: 30, job_id: 10, contact_id: null, estimate_id: null,
+                invoice_id: null, recorded_by: null,
+            },
+        };
+        const financialEvent = event({
+            event_type: 'payment.succeeded',
+            aggregate_type: 'payment',
+            aggregate_id: '30',
+            payload: {},
+        });
+
+        const genericClient = fakeClient({
+            candidateIds: [OFFICE], paymentRows, eventDataById: { '101': {} },
+        });
+        authorizationService.resolveCompanyUserAuthz.mockResolvedValue(
+            authz('dispatcher', ['notifications.financial.receive'])
+        );
+        await expect(resolveNotificationRecipients(COMPANY, financialEvent, { client: genericClient }))
+            .resolves.toHaveLength(1);
+        const genericInsert = genericClient.query.mock.calls.find(([sql]) => (
+            String(sql).includes('INSERT INTO notification_deliveries')
+        ));
+        expect(genericInsert[1].slice(5, 8)).toEqual([null, null, false]);
+
+        const linkedClient = fakeClient({
+            candidateIds: [OFFICE], paymentRows, eventDataById: { '103': {} },
+        });
+        authorizationService.resolveCompanyUserAuthz.mockResolvedValue(
+            authz('dispatcher', ['notifications.financial.receive', 'jobs.view'])
+        );
+        await expect(resolveNotificationRecipients(COMPANY, {
+            ...financialEvent, id: '103',
+        }, { client: linkedClient })).resolves.toHaveLength(1);
+        const linkedInsert = linkedClient.query.mock.calls.find(([sql]) => (
+            String(sql).includes('INSERT INTO notification_deliveries')
+        ));
+        expect(linkedInsert[1].slice(5, 8)).toEqual(['job', '10', false]);
     });
 
     test('assigned-only financial access requires the exact parent job, not another job for its contact', async () => {

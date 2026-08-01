@@ -32,8 +32,8 @@ function getCompanyId(req) {
 }
 
 // ─── POST /api/devices ───────────────────────────────────────────────────────
-// Register or re-register a device token. A token may appear under separate
-// tenant memberships, but no registration may move another tenant/user's row.
+// Register or re-register a device token. Physical possession is the ownership
+// proof: the most recent registration atomically replaces any previous owner.
 router.post('/', async (req, res) => {
     try {
         const companyId = getCompanyId(req);
@@ -55,19 +55,44 @@ router.post('/', async (req, res) => {
         const token = apns_token.trim();
         const plat = (typeof platform === 'string' && platform.trim()) ? platform.trim() : 'ios';
 
-        // Insert new full key → 201; same tenant/user/token heartbeat → 200.
-        const { rows } = await db.query(
-            `INSERT INTO device_tokens
-                (company_id, crm_user_id, apns_token, platform, app_version, device_model, last_seen_at, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, now(), now())
-             ON CONFLICT (company_id, crm_user_id, apns_token) DO UPDATE SET
-                platform    = EXCLUDED.platform,
-                app_version = EXCLUDED.app_version,
-                device_model= EXCLUDED.device_model,
-                last_seen_at= now()
-             RETURNING (xmax = 0) AS inserted`,
-            [companyId, crmUserId, token, plat, app_version || null, device_model || null]
-        );
+        const client = await db.getClient();
+        let rows;
+        try {
+            await client.query('BEGIN');
+            // Serialize handoffs for this physical token. Without the lock, two
+            // first-time registrations could both pass DELETE before either INSERT.
+            await client.query(
+                'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+                [token]
+            );
+            // Deliberately token-global: current device possession supersedes a
+            // stale owner in any tenant. Request identity still comes only from
+            // companyFilter + crmUser, never from the body.
+            await client.query(
+                `DELETE FROM device_tokens
+                 WHERE apns_token = $1
+                   AND (company_id <> $2 OR crm_user_id <> $3)`,
+                [token, companyId, crmUserId]
+            );
+            ({ rows } = await client.query(
+                `INSERT INTO device_tokens
+                    (company_id, crm_user_id, apns_token, platform, app_version, device_model, last_seen_at, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, now(), now())
+                 ON CONFLICT (company_id, crm_user_id, apns_token) DO UPDATE SET
+                    platform    = EXCLUDED.platform,
+                    app_version = EXCLUDED.app_version,
+                    device_model= EXCLUDED.device_model,
+                    last_seen_at= now()
+                 RETURNING (xmax = 0) AS inserted`,
+                [companyId, crmUserId, token, plat, app_version || null, device_model || null]
+            ));
+            await client.query('COMMIT');
+        } catch (error) {
+            try { await client.query('ROLLBACK'); } catch { /* preserve original error */ }
+            throw error;
+        } finally {
+            client.release();
+        }
 
         const inserted = rows[0]?.inserted === true;
         console.log(`[Devices] Registered device for user=${crmUserId} company=${companyId} (${inserted ? 'new' : 'updated'})`);

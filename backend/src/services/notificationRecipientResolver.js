@@ -28,6 +28,11 @@ const IMPORTANT_JOB_STATUSES = new Set([
 ]);
 const PRE_CHANGE_EVENTS = new Set(['job.unassigned', 'lead.unassigned', 'task.reassigned']);
 const MAX_PREVIOUS_RECIPIENTS = 100;
+const FINANCIAL_PARENT_VIEW_PERMISSIONS = Object.freeze({
+    job: 'jobs.view',
+    lead: 'leads.view',
+    contact: 'pulse.view',
+});
 
 class NotificationRecipientResolutionError extends Error {
     constructor(code, message) {
@@ -593,10 +598,13 @@ function financialOperationalParent(context) {
     return null;
 }
 
-function deliveryRecordRef(entry, context) {
+function deliveryRecordRef(entry, context, authz) {
     if (entry.record_scope.includes('financial')) {
         const parent = financialOperationalParent(context);
-        return parent ? { type: parent.ref.type, id: String(parent.ref.id) } : null;
+        const parentViewPermission = FINANCIAL_PARENT_VIEW_PERMISSIONS[parent?.ref.type];
+        if (!parent || !parentViewPermission
+            || !authz.permissions.includes(parentViewPermission)) return null;
+        return { type: parent.ref.type, id: String(parent.ref.id) };
     }
     const preferredTypes = entry.record_scope.startsWith('task_')
         ? ['task']
@@ -614,9 +622,9 @@ function deliveryRecordRef(entry, context) {
     return null;
 }
 
-async function claimDelivery(companyId, event, entry, candidate, channel, context, query) {
+async function claimDelivery(companyId, event, entry, candidate, authz, channel, context, query) {
     const preChangeRecipient = snapshotRecipientIds(event).has(String(candidate.user_id));
-    const recordRef = preChangeRecipient ? null : deliveryRecordRef(entry, context);
+    const recordRef = preChangeRecipient ? null : deliveryRecordRef(entry, context, authz);
     const { rows } = await query(
         `INSERT INTO notification_deliveries
             (company_id, domain_event_id, user_id, event_type, channel,
@@ -705,6 +713,7 @@ async function resolveNotificationRecipients(companyId, event, { client = null }
                     verifiedEvent,
                     entry,
                     candidate,
+                    authz,
                     channel,
                     context,
                     query

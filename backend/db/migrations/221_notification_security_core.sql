@@ -21,13 +21,39 @@ ALTER TABLE push_subscriptions
 CREATE UNIQUE INDEX IF NOT EXISTS uq_push_subscriptions_company_user_endpoint
     ON push_subscriptions(company_id, user_id, endpoint);
 
--- Native device tokens follow the same full-owner rule as browser endpoints.
--- Re-registering in another tenant/user inserts a separate row; it never moves
--- or rewrites the existing owner's row.
-ALTER TABLE device_tokens
-    DROP CONSTRAINT IF EXISTS device_tokens_apns_token_key;
+-- Keep both identities: the full owner key supports an idempotent heartbeat,
+-- while global token uniqueness guarantees one current physical-device owner.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_device_tokens_company_user_apns_token
     ON device_tokens(company_id, crm_user_id, apns_token);
+
+-- Converge databases that ran an earlier unreleased 221 revision. The most
+-- recently seen binding is the best available current-owner signal.
+WITH ranked_device_tokens AS (
+    SELECT id,
+           ROW_NUMBER() OVER (
+               PARTITION BY apns_token
+               ORDER BY last_seen_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+           ) AS owner_rank
+    FROM device_tokens
+)
+DELETE FROM device_tokens d
+USING ranked_device_tokens ranked
+WHERE d.id = ranked.id
+  AND ranked.owner_rank > 1;
+
+DO $migration$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'device_tokens'::regclass
+          AND conname = 'device_tokens_apns_token_key'
+    ) THEN
+        ALTER TABLE device_tokens
+            ADD CONSTRAINT device_tokens_apns_token_key UNIQUE (apns_token);
+    END IF;
+END
+$migration$;
 
 -- These two T1/T2 policy tables existed only on the unreleased local version of
 -- migration 221. Remove them so an already-run development database converges

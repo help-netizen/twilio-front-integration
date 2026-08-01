@@ -107,13 +107,31 @@ describe('notification lock-screen payload safety', () => {
             url: '/jobs/42',
         });
 
+        for (const [recordType, recordId] of [
+            [null, null],
+            ['payment', 'private-payment-99'],
+        ]) {
+            const generic = buildNotificationPayload({
+                eventType: 'payment.succeeded',
+                deliveryId: `delivery-financial-${recordType || 'no-parent'}`,
+                recordType,
+                recordId,
+            });
+            expect(generic).not.toHaveProperty('deep_link_kind');
+            expect(generic).not.toHaveProperty('record_ref');
+            expect(generic).not.toHaveProperty('url');
+            expect(JSON.stringify(generic)).not.toContain(String(recordId));
+        }
+
         const rawLedger = buildNotificationPayload({
             eventType: 'payment.succeeded',
             deliveryId: 'delivery-financial-raw',
             recordType: 'payment',
             recordId: 'private-payment-99',
         });
-        expect(rawLedger).toMatchObject({ deep_link_kind: 'home', record_ref: null, url: '/' });
+        expect(rawLedger).not.toHaveProperty('deep_link_kind');
+        expect(rawLedger).not.toHaveProperty('record_ref');
+        expect(rawLedger).not.toHaveProperty('url');
         expect(JSON.stringify(rawLedger)).not.toContain('private-payment-99');
     });
 });

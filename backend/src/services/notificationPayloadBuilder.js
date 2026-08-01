@@ -58,11 +58,10 @@ function buildNotificationPayload({
     if (isPreChangeRecipient) return base;
 
     const normalizedRecordRef = normalizeRecordRef(recordType, recordId);
-    const recordRef = entry.category_key === 'finance'
-        && normalizedRecordRef
-        && !['job', 'contact', 'lead'].includes(normalizedRecordRef.type)
-        ? null
-        : normalizedRecordRef;
+    if (entry.category_key === 'finance'
+        && (!normalizedRecordRef
+            || !['job', 'contact', 'lead'].includes(normalizedRecordRef.type))) return base;
+    const recordRef = normalizedRecordRef;
     const deepLink = deepLinkFor(recordRef);
     return {
         ...base,
