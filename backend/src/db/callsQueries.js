@@ -100,7 +100,7 @@ async function getCallByCallSid(callSid, companyId = null, providerScope = null)
              SELECT *
              FROM call_flow_executions cfe
              WHERE cfe.call_sid = c.call_sid
-               AND cfe.company_id = c.company_id
+               AND cfe.company_id = c.company_id::text
              ORDER BY cfe.created_at DESC
              LIMIT 1
          ) cfe ON true
@@ -170,7 +170,7 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
              SELECT *
              FROM call_flow_executions cfe
              WHERE cfe.call_sid = c.call_sid
-               AND cfe.company_id = c.company_id
+               AND cfe.company_id = c.company_id::text
              ORDER BY cfe.created_at DESC
              LIMIT 1
          ) cfe ON true
