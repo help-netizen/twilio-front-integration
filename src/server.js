@@ -98,7 +98,6 @@ app.use('/api/email/push', express.raw({ type: '*/*', limit: '1mb' }),
     require('../backend/src/routes/emailPush'));
 app.use('/internal/app-runtime', appRuntimeGatewayRouter);
 app.use('/api/platform/app-runtime', appRuntimeDevTokensRouter);
-app.use('/api/app-studio', appStudioRouter);
 
 // Middleware
 // 2mb limit covers document-template descriptors that may embed a base64 logo
@@ -166,6 +165,7 @@ app.get('/api/messaging/media/:mediaId/temporary-url', async (req, res, next) =>
     }
 });
 app.use('/api/messaging', authenticate, requireCompanyAccess, messagingRouter);
+app.use('/api/app-studio', authenticate, requireCompanyAccess, appStudioRouter);
 app.use('/api/pulse', authenticate, requireCompanyAccess, pulseRouter);
 app.use('/api/quick-messages', authenticate, requireCompanyAccess, quickMessagesRouter);
 app.use('/api/text/polish', authenticate, requireCompanyAccess, textPolishRouter);

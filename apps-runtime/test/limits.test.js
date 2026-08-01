@@ -1,8 +1,7 @@
 'use strict';
 
-const { runApplication } = require('../src/runner');
 const { LIMITS } = require('../src/config');
-const { TEST_TOKEN, GATEWAY_BASE_URL, app, response } = require('./helpers');
+const { TEST_TOKEN, GATEWAY_BASE_URL, app, response, runApplication } = require('./helpers');
 
 describe('APP-RUN-001 resource limits', () => {
     test('an infinite loop is terminated by the 100 ms CPU limit', async () => {

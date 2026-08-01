@@ -5,6 +5,9 @@ const REDACTIONS = Object.freeze({
     apiKey: '[REDACTED_API_KEY]',
     password: '[REDACTED_PASSWORD]',
     base64: '[REDACTED_BASE64_SECRET]',
+    email: '[REDACTED_EMAIL]',
+    phone: '[REDACTED_PHONE]',
+    number: '[REDACTED_NUMBER]',
 });
 
 function scrubSecrets(value) {
@@ -25,6 +28,22 @@ function scrubSecrets(value) {
     text = text.replace(
         /(?<![A-Za-z0-9+/_-])(?:[A-Za-z0-9+/]{64,}={0,2}|[A-Za-z0-9_-]{64,})(?![A-Za-z0-9+/_-])/g,
         REDACTIONS.base64
+    );
+    text = text.replace(
+        /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+        REDACTIONS.email
+    );
+    text = text.replace(
+        /(?<![\d+])\+[1-9]\d{7,14}(?!\d)/g,
+        REDACTIONS.phone
+    );
+    text = text.replace(
+        /(?<!\d)(?:(?:\(\d{3}\)|\d{3})[-.\s]\d{3}[-.\s]\d{4}|\d{3}[-.\s]\d{4})(?!\d)/g,
+        REDACTIONS.phone
+    );
+    text = text.replace(
+        /(?<!\d)\d{7,}(?!\d)/g,
+        REDACTIONS.number
     );
 
     return text;

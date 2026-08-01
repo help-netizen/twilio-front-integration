@@ -1,7 +1,6 @@
 'use strict';
 
-const { runApplication } = require('../src/runner');
-const { TEST_TOKEN, GATEWAY_BASE_URL, app } = require('./helpers');
+const { TEST_TOKEN, GATEWAY_BASE_URL, app, runApplication } = require('./helpers');
 
 describe('APP-RUN-001 isolate capability boundary', () => {
     test.each([

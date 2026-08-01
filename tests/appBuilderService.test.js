@@ -163,6 +163,40 @@ describe('APP-BUILD-001 generation pipeline', () => {
         expect(prompt).not.toContain('supersecret-api-value');
     });
 
+    test('F3 scrubs PII before storage and re-scrubs legacy history before model use', async () => {
+        const rawPii = [
+            'customer@example.com',
+            '+16175550101',
+            '(617) 555-0102',
+            '9988776655443322',
+        ];
+        const { repository, provider, service } = harness({
+            repository: {
+                getGenerationContext: jest.fn().mockResolvedValue({
+                    id: CHAT_ID,
+                    app_id: '77',
+                    current_source: null,
+                    history: [{ role: 'user', text: `Legacy ${rawPii.join(' ')}` }],
+                }),
+            },
+        });
+        await service.generateMessage({
+            companyId: COMPANY_ID,
+            actorId: ACTOR_ID,
+            chatId: CHAT_ID,
+            text: `New ${rawPii.join(' ')}`,
+        });
+
+        const stored = repository.appendUserMessage.mock.calls[0][3];
+        const prompt = provider.generate.mock.calls[0][0];
+        for (const value of rawPii) {
+            expect(stored).not.toContain(value);
+            expect(prompt).not.toContain(value);
+        }
+        expect(stored).toMatch(/REDACTED_(EMAIL|PHONE|NUMBER)/);
+        expect(prompt).toMatch(/REDACTED_(EMAIL|PHONE|NUMBER)/);
+    });
+
     test('SAB APP-BUILD-001 quota gate: exhausted quota returns 429 without invoking the LLM', async () => {
         const { repository, provider, dryRunner, service } = harness({
             repository: { reserveDailyGeneration: jest.fn().mockResolvedValue(null) },

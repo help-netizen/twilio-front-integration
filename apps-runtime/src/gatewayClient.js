@@ -1,6 +1,6 @@
 'use strict';
 
-const { GATEWAY_TOOLS } = require('./config');
+const { GATEWAY_TOOLS, LIMITS } = require('./config');
 const { AppRunnerError, GatewayError } = require('./errors');
 
 const TOOL_NAMES = new Set(GATEWAY_TOOLS);
@@ -61,6 +61,52 @@ class GatewayClient {
         this.fetchImpl = fetchImpl;
     }
 
+    async fetchJson(url, options, signal) {
+        const controller = new AbortController();
+        let timedOut = false;
+        const forwardAbort = () => controller.abort();
+        if (signal?.aborted) controller.abort();
+        else signal?.addEventListener('abort', forwardAbort, { once: true });
+        let rejectTimeout;
+        const timeout = new Promise((_, reject) => {
+            rejectTimeout = reject;
+        });
+        const timer = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+            rejectTimeout(new AppRunnerError(
+                'APP_RUNTIME_GATEWAY_TIMEOUT',
+                'Gateway request exceeded the host timeout.'
+            ));
+        }, LIMITS.gatewayRequestTimeoutMs);
+
+        try {
+            const operation = (async () => {
+                const response = await this.fetchImpl(url, {
+                    ...options,
+                    signal: controller.signal,
+                });
+                const payload = await readBoundedJson(
+                    response,
+                    LIMITS.maxGatewayResponseBytes
+                );
+                return { response, payload };
+            })();
+            return await Promise.race([operation, timeout]);
+        } catch (error) {
+            if (timedOut) {
+                throw new AppRunnerError(
+                    'APP_RUNTIME_GATEWAY_TIMEOUT',
+                    'Gateway request exceeded the host timeout.'
+                );
+            }
+            throw error;
+        } finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', forwardAbort);
+        }
+    }
+
     async callTool(toolName, args, signal) {
         if (!TOOL_NAMES.has(toolName)) {
             throw new GatewayError('TOOL_NOT_FOUND', 'Tool not found.', 404);
@@ -83,26 +129,14 @@ class GatewayClient {
             `/internal/app-runtime/v1/tools/${encodeURIComponent(toolName)}`,
             this.baseUrl
         );
-        const response = await this.fetchImpl(url, {
+        const { response, payload } = await this.fetchJson(url, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${this.runToken}`,
                 'Content-Type': 'application/json',
             },
             body,
-            signal,
-        });
-
-        let payload;
-        try {
-            payload = await response.json();
-        } catch (_error) {
-            throw new GatewayError(
-                'APP_RUNTIME_GATEWAY_INVALID_RESPONSE',
-                'Gateway returned an invalid response.',
-                502
-            );
-        }
+        }, signal);
 
         if (containsSecret(payload, this.runToken)) {
             throw new AppRunnerError(
@@ -121,10 +155,72 @@ class GatewayClient {
         }
         return payload.data;
     }
+
+    async recordRunCompletion(metrics, signal) {
+        const url = new URL('/internal/app-runtime/v1/runs/complete', this.baseUrl);
+        const { response, payload } = await this.fetchJson(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${this.runToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(metrics),
+        }, signal);
+        if (!response.ok || payload?.ok !== true) {
+            throw new AppRunnerError(
+                'APP_RUNTIME_USAGE_REPORT_FAILED',
+                'App runtime usage could not be recorded.'
+            );
+        }
+    }
+}
+
+async function readBoundedJson(response, maxBytes) {
+    let text;
+    try {
+        if (response?.body && typeof response.body.getReader === 'function') {
+            const reader = response.body.getReader();
+            const chunks = [];
+            let bytes = 0;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                bytes += value.byteLength;
+                if (bytes > maxBytes) {
+                    await reader.cancel().catch(() => {});
+                    throw new AppRunnerError(
+                        'APP_RUNTIME_GATEWAY_RESPONSE_TOO_LARGE',
+                        'Gateway response exceeded the host byte limit.'
+                    );
+                }
+                chunks.push(Buffer.from(value));
+            }
+            text = Buffer.concat(chunks, bytes).toString('utf8');
+        } else if (typeof response?.text === 'function') {
+            text = await response.text();
+            if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+                throw new AppRunnerError(
+                    'APP_RUNTIME_GATEWAY_RESPONSE_TOO_LARGE',
+                    'Gateway response exceeded the host byte limit.'
+                );
+            }
+        } else {
+            throw new Error('response body unavailable');
+        }
+        return JSON.parse(text);
+    } catch (error) {
+        if (error instanceof AppRunnerError) throw error;
+        throw new GatewayError(
+            'APP_RUNTIME_GATEWAY_INVALID_RESPONSE',
+            'Gateway returned an invalid response.',
+            502
+        );
+    }
 }
 
 module.exports = {
     GatewayClient,
     gatewayOrigin,
     containsSecret,
+    readBoundedJson,
 };

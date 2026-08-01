@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const ivm = require('isolated-vm');
 const { LIMITS } = require('./config');
 const { AppRunnerError, GatewayError } = require('./errors');
@@ -229,7 +230,29 @@ function remainingCpuMs(isolate, baseline) {
     return Math.max(1, LIMITS.cpuTimeoutMs - elapsedMs);
 }
 
-async function runApplication({ source, input, gatewayBaseUrl, runToken, fetchImpl }) {
+function sourceSha256(source) {
+    return crypto.createHash('sha256').update(source, 'utf8').digest('hex');
+}
+
+function sourceMatchesExpected(source, expectedSourceSha256) {
+    if (typeof expectedSourceSha256 !== 'string'
+        || !/^[0-9a-f]{64}$/.test(expectedSourceSha256)) return false;
+    return crypto.timingSafeEqual(
+        Buffer.from(sourceSha256(source), 'hex'),
+        Buffer.from(expectedSourceSha256, 'hex')
+    );
+}
+
+async function runApplication({
+    source,
+    expectedSourceSha256,
+    input,
+    gatewayBaseUrl,
+    runToken,
+    fetchImpl,
+    reportRunUsage = true,
+}) {
+    const startedAt = Date.now();
     if (typeof runToken !== 'string' || runToken.length === 0) {
         throw new AppRunnerError(
             'APP_RUNTIME_RUN_TOKEN_REQUIRED',
@@ -248,17 +271,41 @@ async function runApplication({ source, input, gatewayBaseUrl, runToken, fetchIm
             'Application source may not contain the run token.'
         );
     }
+    if (typeof expectedSourceSha256 !== 'string'
+        || !/^[0-9a-f]{64}$/.test(expectedSourceSha256)) {
+        throw new AppRunnerError(
+            'APP_RUNTIME_SOURCE_HASH_REQUIRED',
+            'An approved source SHA-256 is required.'
+        );
+    }
     const inputJson = jsonInput(input, runToken);
     const gateway = new GatewayClient({
         baseUrl: gatewayBaseUrl,
         runToken,
         fetchImpl,
     });
+    if (!sourceMatchesExpected(source, expectedSourceSha256)) {
+        const mismatch = new AppRunnerError(
+            'APP_RUNTIME_SOURCE_MISMATCH',
+            'Application source does not match the approved artifact.'
+        );
+        if (reportRunUsage) {
+            await gateway.recordRunCompletion({
+                wall_ms: Date.now() - startedAt,
+                gateway_calls: 0,
+                result_bytes: null,
+                error_code: mismatch.code,
+            }).catch(() => {});
+        }
+        throw mismatch;
+    }
     const isolate = new ivm.Isolate({ memoryLimit: LIMITS.memoryMb });
     const controllers = new Set();
     let gatewayCalls = 0;
     let terminationError = null;
     let applicationCpuBaseline = null;
+    let resultBytes = null;
+    let completionErrorCode = null;
 
     const terminate = error => {
         if (!terminationError) terminationError = error;
@@ -279,14 +326,14 @@ async function runApplication({ source, input, gatewayBaseUrl, runToken, fetchIm
                 ));
                 return { ok: false };
             }
-            gatewayCalls += 1;
-            if (gatewayCalls > LIMITS.gatewayCallLimit) {
+            if (gatewayCalls >= LIMITS.gatewayCallLimit) {
                 terminate(new AppRunnerError(
                     'APP_RUNTIME_GATEWAY_CALL_LIMIT',
                     'Application exceeded the gateway call limit.'
                 ));
                 return { ok: false };
             }
+            gatewayCalls += 1;
 
             const controller = new AbortController();
             controllers.add(controller);
@@ -369,10 +416,15 @@ async function runApplication({ source, input, gatewayBaseUrl, runToken, fetchIm
             ));
             throw terminationError;
         }
+        resultBytes = Buffer.byteLength(outputJson, 'utf8');
         return JSON.parse(outputJson);
     } catch (error) {
-        if (terminationError) throw terminationError;
+        if (terminationError) {
+            completionErrorCode = terminationError.code;
+            throw terminationError;
+        }
         const normalized = normalizeExecutionError(error);
+        completionErrorCode = normalized.code;
         if (normalized.code === 'APP_RUNTIME_CPU_LIMIT'
             || normalized.code === 'APP_RUNTIME_MEMORY_LIMIT') {
             terminate(normalized);
@@ -382,10 +434,20 @@ async function runApplication({ source, input, gatewayBaseUrl, runToken, fetchIm
         for (const controller of controllers) controller.abort();
         controllers.clear();
         if (!isolate.isDisposed) isolate.dispose();
+        if (reportRunUsage) {
+            await gateway.recordRunCompletion({
+                wall_ms: Date.now() - startedAt,
+                gateway_calls: gatewayCalls,
+                result_bytes: resultBytes,
+                error_code: completionErrorCode,
+            });
+        }
     }
 }
 
 module.exports = {
     runApplication,
     normalizeExecutionError,
+    sourceSha256,
+    sourceMatchesExpected,
 };

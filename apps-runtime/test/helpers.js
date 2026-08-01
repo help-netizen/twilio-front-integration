@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const runner = require('../src/runner');
 
 const TEST_TOKEN = 'run-token-secret-value-that-must-stay-on-host';
 const GATEWAY_BASE_URL = 'https://crm.albusto.test';
@@ -11,18 +12,27 @@ function app(body, parameters = 'ctx') {
 }
 
 function response(data, { ok = true, status = 200, code, message } = {}) {
+    const payload = ok
+        ? { ok: true, data, request_id: 'app-gw-test' }
+        : {
+            ok: false,
+            code: code || 'APP_RUNTIME_GATEWAY_ERROR',
+            message: message || 'Gateway call failed.',
+            request_id: 'app-gw-test',
+        };
     return {
         ok,
         status,
-        json: async () => ok
-            ? { ok: true, data, request_id: 'app-gw-test' }
-            : {
-                ok: false,
-                code: code || 'APP_RUNTIME_GATEWAY_ERROR',
-                message: message || 'Gateway call failed.',
-                request_id: 'app-gw-test',
-            },
+        text: async () => JSON.stringify(payload),
     };
+}
+
+function runApplication(options) {
+    return runner.runApplication({
+        ...options,
+        expectedSourceSha256: runner.sourceSha256(options.source),
+        reportRunUsage: false,
+    });
 }
 
 function referenceSource() {
@@ -38,4 +48,5 @@ module.exports = {
     app,
     response,
     referenceSource,
+    runApplication,
 };

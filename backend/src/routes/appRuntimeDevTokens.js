@@ -80,6 +80,7 @@ router.post('/dev-tokens', async (req, res) => {
             token: minted.token,
             run_id: minted.runId,
             expires_at: minted.expiresAt,
+            source_sha256: minted.artifactSha256,
             request_id: req.requestId,
         });
     } catch (error) {

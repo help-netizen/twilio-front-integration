@@ -5,6 +5,24 @@ const appBuilderService = require('../services/appBuilderService');
 const { requirePermission } = require('../middleware/authorization');
 
 const router = express.Router();
+
+// APP-STUDIO gate (gap audit P0-04): the builder's dry run currently spawns a
+// native isolated-vm child INSIDE the CRM boundary, which APP-RUN-001 forbids
+// ("the runner process must never be colocated with the CRM"). Until the remote
+// runner service exists (Ф4/Ф5), the whole surface stays off unless explicitly
+// enabled — and it is never enabled in production. Fail-closed by default.
+router.use((req, res, next) => {
+    const enabled = String(process.env.APP_STUDIO_ENABLED || '').trim() === 'true';
+    if (!enabled || process.env.NODE_ENV === 'production') {
+        return res.status(404).json({
+            code: 'APP_STUDIO_DISABLED',
+            message: 'App Studio is not available.',
+            request_id: req.requestId,
+        });
+    }
+    return next();
+});
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function requireTenantAdmin(req, res, next) {

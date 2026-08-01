@@ -152,6 +152,22 @@ async function mintRunToken({ installationId, versionId, ttlSeconds }) {
             installationId,
         }, client);
         const { installation, principal } = provisioned;
+        const control = await client.query(
+            `SELECT suspended_at, suspension_reason
+             FROM app_runtime_installation_controls
+             WHERE company_id = $1
+               AND app_id = $2
+               AND installation_id = $3
+             FOR UPDATE`,
+            [installation.company_id, installation.app_id, installation.installation_id]
+        );
+        if (control.rows.length !== 1 || control.rows[0].suspended_at) {
+            throw appRuntimeError(
+                'APP_RUNTIME_SUSPENDED',
+                'App runtime installation is suspended.',
+                403
+            );
+        }
         const { rows } = await client.query(
             `SELECT version.id,
                     version.app_id,
@@ -244,6 +260,7 @@ async function mintRunToken({ installationId, versionId, ttlSeconds }) {
             token,
             runId,
             expiresAt: expiresAt.toISOString(),
+            artifactSha256: version.source_sha256,
         };
     } catch (error) {
         if (!committed) await client.query('ROLLBACK').catch(() => {});
@@ -380,15 +397,94 @@ async function resolveRunContext(claims) {
 async function consumeRunCall(context) {
     const { rows } = await db.query(
         `WITH candidate AS MATERIALIZED (
-             SELECT id, status, revoked_at, expires_at,
-                    gateway_calls_used, gateway_call_limit
-             FROM app_runs
-             WHERE id = $1
-               AND company_id = $2
-               AND app_id = $3
-               AND installation_id = $4
-               AND version_id = $5
-               AND nonce_sha256 = $6
+             SELECT run.id,
+                    run.status,
+                    run.revoked_at,
+                    run.expires_at,
+                    run.gateway_calls_used,
+                    run.gateway_call_limit,
+                    control.daily_gateway_call_limit,
+                    control.suspended_at AS control_suspended_at,
+                    (
+                        run.status IN ('issued', 'exhausted')
+                        AND run.revoked_at IS NULL
+                        AND run.expires_at > NOW()
+                        AND principal.status = 'active'
+                        AND principal.revoked_at IS NULL
+                        AND agent.kind = 'agent'
+                        AND agent.status = 'active'
+                        AND agent.onboarding_status = 'active'
+                        AND installation.status = 'connected'
+                        AND app.status = 'published'
+                        AND version.status = 'published'
+                        AND company.status = 'active'
+                        AND delegator.kind = 'user'
+                        AND delegator.status = 'active'
+                        AND delegator.onboarding_status = 'active'
+                        AND membership.status = 'active'
+                        AND installation.installed_by = principal.delegated_by_user_id
+                        AND run.artifact_sha256 = version.source_sha256
+                    ) AS authority_live
+             FROM app_runs run
+             LEFT JOIN marketplace_installations installation
+               ON installation.id = run.installation_id
+              AND installation.company_id = run.company_id
+              AND installation.app_id = run.app_id
+             LEFT JOIN marketplace_apps app
+               ON app.id = run.app_id
+              AND app.id = installation.app_id
+             LEFT JOIN app_versions version
+               ON version.id = run.version_id
+              AND version.app_id = run.app_id
+             LEFT JOIN app_installation_principals principal
+               ON principal.id = run.principal_id
+              AND principal.company_id = run.company_id
+              AND principal.app_id = run.app_id
+              AND principal.installation_id = run.installation_id
+             LEFT JOIN crm_users agent
+               ON agent.id = principal.agent_user_id
+              AND agent.company_id = run.company_id
+             LEFT JOIN crm_users delegator
+               ON delegator.id = principal.delegated_by_user_id
+              AND delegator.company_id = run.company_id
+             LEFT JOIN company_memberships membership
+               ON membership.user_id = principal.delegated_by_user_id
+              AND membership.company_id = run.company_id
+             LEFT JOIN companies company
+               ON company.id = run.company_id
+             JOIN app_runtime_installation_controls control
+               ON control.company_id = run.company_id
+              AND control.app_id = run.app_id
+              AND control.installation_id = run.installation_id
+             WHERE run.id = $1
+               AND run.company_id = $2
+               AND run.app_id = $3
+               AND run.installation_id = $4
+               AND run.version_id = $5
+               AND run.nonce_sha256 = $6
+             FOR UPDATE OF run, control
+         ), usage AS (
+             INSERT INTO app_runtime_usage
+                (company_id, app_id, installation_id, usage_date,
+                 gateway_calls_used, daily_gateway_call_limit, updated_at)
+             SELECT $2, $3, $4, (NOW() AT TIME ZONE 'UTC')::date,
+                    1, candidate.daily_gateway_call_limit, NOW()
+             FROM candidate
+             WHERE candidate.authority_live
+               AND candidate.status = 'issued'
+               AND candidate.revoked_at IS NULL
+               AND candidate.expires_at > NOW()
+               AND candidate.gateway_calls_used < candidate.gateway_call_limit
+               AND candidate.control_suspended_at IS NULL
+             ON CONFLICT (company_id, app_id, installation_id, usage_date) DO UPDATE
+             SET gateway_calls_used = app_runtime_usage.gateway_calls_used + 1,
+                 daily_gateway_call_limit = EXCLUDED.daily_gateway_call_limit,
+                 updated_at = NOW()
+             WHERE app_runtime_usage.company_id = $2
+               AND app_runtime_usage.app_id = $3
+               AND app_runtime_usage.installation_id = $4
+               AND app_runtime_usage.gateway_calls_used < EXCLUDED.daily_gateway_call_limit
+             RETURNING gateway_calls_used, daily_gateway_call_limit
          ), consumed AS (
              UPDATE app_runs run
              SET gateway_calls_used = run.gateway_calls_used + 1,
@@ -398,7 +494,7 @@ async function consumeRunCall(context) {
                      ELSE 'issued'
                  END,
                  updated_at = NOW()
-             FROM candidate
+             FROM candidate, usage
              WHERE run.id = candidate.id
                AND run.company_id = $2
                AND run.status = 'issued'
@@ -406,10 +502,37 @@ async function consumeRunCall(context) {
                AND run.expires_at > NOW()
                AND run.gateway_calls_used < run.gateway_call_limit
              RETURNING run.gateway_calls_used AS call_ordinal
+         ), suspended AS (
+             UPDATE app_runtime_installation_controls control
+             SET suspended_at = NOW(),
+                 suspension_reason = 'DAILY_GATEWAY_CALL_LIMIT',
+                 updated_at = NOW()
+             FROM candidate
+             WHERE control.company_id = $2
+               AND control.app_id = $3
+               AND control.installation_id = $4
+               AND candidate.authority_live
+               AND candidate.status = 'issued'
+               AND candidate.revoked_at IS NULL
+               AND candidate.expires_at > NOW()
+               AND candidate.gateway_calls_used < candidate.gateway_call_limit
+               AND candidate.control_suspended_at IS NULL
+               AND (
+                    NOT EXISTS (SELECT 1 FROM usage)
+                    OR EXISTS (
+                        SELECT 1 FROM usage
+                        WHERE usage.gateway_calls_used >= usage.daily_gateway_call_limit
+                    )
+               )
+             RETURNING true AS suspended_now
          )
-         SELECT candidate.*, consumed.call_ordinal
+         SELECT candidate.*,
+                consumed.call_ordinal,
+                usage.gateway_calls_used AS daily_calls_used,
+                COALESCE((SELECT bool_or(suspended_now) FROM suspended), false) AS suspended_now
          FROM candidate
-         LEFT JOIN consumed ON true`,
+         LEFT JOIN consumed ON true
+         LEFT JOIN usage ON true`,
         [
             context.run_id,
             context.company_id,
@@ -426,6 +549,20 @@ async function consumeRunCall(context) {
             403
         );
     }
+    if (!rows[0].authority_live) {
+        throw appRuntimeError(
+            'APP_RUNTIME_INACTIVE',
+            'App runtime authorization is not active.',
+            403
+        );
+    }
+    if (rows[0].control_suspended_at) {
+        throw appRuntimeError(
+            'APP_RUNTIME_SUSPENDED',
+            'App runtime installation is suspended.',
+            403
+        );
+    }
     if (!rows[0].call_ordinal) {
         if (rows[0].status === 'revoked'
             || rows[0].revoked_at
@@ -436,11 +573,103 @@ async function consumeRunCall(context) {
                 403
             );
         }
+        if (rows[0].suspended_now) {
+            throw appRuntimeError(
+                'APP_RUNTIME_DAILY_CALL_LIMIT',
+                'Daily app runtime call limit reached.',
+                429,
+                { callOrdinal: Number(rows[0].gateway_calls_used) + 1 }
+            );
+        }
         throw appRuntimeError('RUN_CALL_LIMIT', 'Run call limit reached.', 429, {
             callOrdinal: Number(rows[0].gateway_calls_used) + 1,
         });
     }
     return Number(rows[0].call_ordinal);
+}
+
+function validateRunMetrics(metrics) {
+    const keys = Object.keys(metrics || {}).sort();
+    const expectedKeys = ['error_code', 'gateway_calls', 'result_bytes', 'wall_ms'];
+    if (keys.length !== expectedKeys.length
+        || keys.some((key, index) => key !== expectedKeys[index])
+        || !Number.isInteger(metrics.wall_ms)
+        || metrics.wall_ms < 0
+        || metrics.wall_ms > 24 * 60 * 60 * 1000
+        || !Number.isInteger(metrics.gateway_calls)
+        || metrics.gateway_calls < 0
+        || metrics.gateway_calls > RUN_CALL_LIMIT
+        || (metrics.result_bytes !== null && (
+            !Number.isInteger(metrics.result_bytes)
+            || metrics.result_bytes < 0
+            || metrics.result_bytes > 64 * 1024
+        ))
+        || (metrics.error_code !== null && (
+            typeof metrics.error_code !== 'string'
+            || !/^[A-Z][A-Z0-9_]{0,99}$/.test(metrics.error_code)
+        ))) {
+        throw appRuntimeError('INVALID_REQUEST', 'Run metrics are invalid.', 400);
+    }
+    if ((metrics.error_code === null) !== (metrics.result_bytes !== null)) {
+        throw appRuntimeError('INVALID_REQUEST', 'Run metrics are invalid.', 400);
+    }
+    return metrics;
+}
+
+async function recordRunCompletion(claims, rawMetrics) {
+    const metrics = validateRunMetrics(rawMetrics);
+    const nonceSha256 = sha256(claims.nonce);
+    const binding = await db.query(
+        `SELECT id, company_id, app_id, installation_id, version_id, nonce_sha256
+         FROM app_runs
+         WHERE id = $1
+           AND installation_id = $2
+           AND version_id = $3`,
+        [claims.run_id, claims.installation_id, claims.version_id]
+    );
+    if (binding.rows.length !== 1
+        || !sameDigest(nonceSha256, binding.rows[0].nonce_sha256)) {
+        throw appRuntimeError('APP_RUNTIME_TOKEN_INVALID', 'Invalid app runtime token.', 401);
+    }
+    const run = binding.rows[0];
+    const { rows } = await db.query(
+        `UPDATE app_runs
+         SET wall_ms = $7,
+             gateway_calls_made = $8,
+             result_bytes = $9,
+             error_code = $10,
+             completed_at = NOW(),
+             status = CASE WHEN $10::text IS NULL THEN 'completed' ELSE 'failed' END,
+             updated_at = NOW()
+         WHERE id = $1
+           AND company_id = $2
+           AND app_id = $3
+           AND installation_id = $4
+           AND version_id = $5
+           AND nonce_sha256 = $6
+           AND completed_at IS NULL
+         RETURNING id, status, wall_ms, gateway_calls_made, result_bytes, error_code, completed_at`,
+        [
+            run.id,
+            run.company_id,
+            run.app_id,
+            run.installation_id,
+            run.version_id,
+            nonceSha256,
+            metrics.wall_ms,
+            metrics.gateway_calls,
+            metrics.result_bytes,
+            metrics.error_code,
+        ]
+    );
+    if (rows.length !== 1) {
+        throw appRuntimeError(
+            'APP_RUNTIME_INACTIVE',
+            'App runtime authorization is not active.',
+            403
+        );
+    }
+    return rows[0];
 }
 
 module.exports = {
@@ -458,4 +687,6 @@ module.exports = {
     mintRunToken,
     resolveRunContext,
     consumeRunCall,
+    validateRunMetrics,
+    recordRunCompletion,
 };

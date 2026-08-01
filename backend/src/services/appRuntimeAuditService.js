@@ -1,6 +1,19 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const db = require('../db/connection');
+const catalog = require('./appRuntimeToolCatalog');
+
+const KNOWN_TOOLS = new Set(catalog.TOOL_NAMES);
+
+function safeToolIdentity(toolName) {
+    const normalized = typeof toolName === 'string' ? toolName : '';
+    if (KNOWN_TOOLS.has(normalized)) {
+        return { targetId: normalized, unknownTool: false };
+    }
+    const digest = crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
+    return { targetId: `unknown:${digest.slice(0, 24)}`, unknownTool: true };
+}
 
 async function recordToolCall(context, {
     toolName,
@@ -10,12 +23,14 @@ async function recordToolCall(context, {
     callOrdinal,
     requestId,
 }) {
+    const toolIdentity = safeToolIdentity(toolName);
     const details = {
         version_id: String(context.version_id),
         outcome,
         error_code: errorCode,
         response_class: `${Math.floor(Number(httpStatus) / 100)}xx`,
         run_call_ordinal: Number(callOrdinal),
+        unknown_tool: toolIdentity.unknownTool,
     };
     const { rows } = await db.query(
         `INSERT INTO audit_log
@@ -26,7 +41,7 @@ async function recordToolCall(context, {
          RETURNING id`,
         [
             context.agent_user_id,
-            String(toolName || '').slice(0, 255),
+            toolIdentity.targetId,
             context.company_id,
             JSON.stringify(details),
             String(requestId || '').slice(0, 64) || null,
@@ -41,4 +56,5 @@ async function recordToolCall(context, {
 
 module.exports = {
     recordToolCall,
+    safeToolIdentity,
 };

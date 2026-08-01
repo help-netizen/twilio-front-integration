@@ -11,6 +11,8 @@ const tokenService = require('../backend/src/services/appRuntimeTokenService');
 
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '220_app_runtime_gateway.sql'), 'utf8');
+const BUILDER_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '221_app_studio_builder.sql'), 'utf8');
+const GAP_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '222_app_studio_gap_fixes.sql'), 'utf8');
 const ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_220_app_runtime_gateway.sql'),
     'utf8'
@@ -371,6 +373,8 @@ describe('APP-GW-001 schema and principal lifecycle', () => {
         try {
             await client.query('BEGIN');
             await client.query(SCHEMA);
+            await client.query(BUILDER_SCHEMA);
+            await client.query(GAP_SCHEMA);
             const companyA = await insertCompany(client, 'Mint A');
             const humanA = await insertHuman(client, companyA, 'mint-a');
             const appA = await insertApp(client, 'mint-a');
@@ -458,6 +462,7 @@ describe('APP-GW-001 schema and principal lifecycle', () => {
                 run_id: minted.runId,
             });
             expect(Object.keys(claims).sort()).toEqual(tokenService.CLAIM_KEYS);
+            expect(minted.artifactSha256).toBe(digest(source));
             const stored = await client.query(
                 `SELECT company_id, app_id, installation_id, version_id,
                         nonce_sha256, artifact_sha256
@@ -481,6 +486,22 @@ describe('APP-GW-001 schema and principal lifecycle', () => {
                 versionId: versionB.rows[0].id,
                 ttlSeconds: 120,
             })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
+
+            await client.query(
+                `UPDATE app_runtime_installation_controls
+                 SET suspended_at = NOW(),
+                     suspension_reason = 'DAILY_GATEWAY_CALL_LIMIT',
+                     updated_at = NOW()
+                 WHERE company_id = $1
+                   AND app_id = $2
+                   AND installation_id = $3`,
+                [companyA, appA, installationA]
+            );
+            await expect(tokenService.mintRunToken({
+                installationId: installationA,
+                versionId: versionA.rows[0].id,
+                ttlSeconds: 120,
+            })).rejects.toMatchObject({ code: 'APP_RUNTIME_SUSPENDED', httpStatus: 403 });
         } finally {
             connectSpy?.mockRestore();
             if (previousSecret === undefined) delete process.env.APP_RUNTIME_RUN_TOKEN_SECRET;

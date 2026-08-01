@@ -63,4 +63,19 @@ describe('APP-BUILD-001 dependency-free source policy', () => {
             'export async function run(ctx) { const callTool = ctx.callTool; return callTool(ctx.input.name, {}); }'
         )).toThrow(expect.objectContaining({ code: 'CALL_TOOL_INVALID' }));
     });
+
+    test.each([
+        [
+            'Reflect.get',
+            "export async function run(ctx) { return Reflect.get(ctx, 'callTool')('svc.list_tasks', {}); }",
+        ],
+        [
+            'Object.values',
+            "export async function run(ctx) { return Object.values(ctx)[0]('svc.list_tasks', {}); }",
+        ],
+    ])('F8 rejects reflective capability access through %s', (_label, source) => {
+        expect(() => validateSourcePolicy(source)).toThrow(expect.objectContaining({
+            code: 'CALL_TOOL_INVALID',
+        }));
+    });
 });

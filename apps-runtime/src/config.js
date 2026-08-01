@@ -5,6 +5,8 @@ const LIMITS = Object.freeze({
     cpuTimeoutMs: 100,
     gatewayCallLimit: 5,
     maxOutputBytes: 64 * 1024,
+    gatewayRequestTimeoutMs: 5000,
+    maxGatewayResponseBytes: 256 * 1024,
 });
 
 const GATEWAY_TOOLS = Object.freeze([

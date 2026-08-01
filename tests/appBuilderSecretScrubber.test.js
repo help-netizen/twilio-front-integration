@@ -24,4 +24,19 @@ describe('APP-BUILD-001 input secret scrubbing', () => {
         const text = 'List open tasks, group them by due date, and return a short summary.';
         expect(scrubSecrets(text)).toBe(text);
     });
+
+    test('F3 masks obvious email, E.164/local phones, and long digit sequences', () => {
+        const values = [
+            'customer@example.com',
+            '+16175550101',
+            '(617) 555-0102',
+            '555-0103',
+            '9988776655443322',
+        ];
+        const scrubbed = scrubSecrets(values.join(' / '));
+        expect(scrubbed).toContain('[REDACTED_EMAIL]');
+        expect(scrubbed.match(/\[REDACTED_PHONE\]/g)).toHaveLength(3);
+        expect(scrubbed).toContain('[REDACTED_NUMBER]');
+        for (const value of values) expect(scrubbed).not.toContain(value);
+    });
 });

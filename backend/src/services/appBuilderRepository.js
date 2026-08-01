@@ -1,6 +1,8 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const db = require('../db/connection');
+const retentionPolicy = require('./appBuilderRetentionPolicy');
 
 class AppBuilderRepositoryError extends Error {
     constructor(code, message, httpStatus) {
@@ -140,10 +142,10 @@ async function appendUserMessage(companyId, actorId, chatId, text) {
         if (!chat.rows[0]) throw notFound();
         const message = await client.query(
             `INSERT INTO app_build_messages
-                (company_id, chat_id, role, text, token_usage)
-             VALUES ($1, $2, 'user', $3, '{}'::jsonb)
+                (company_id, chat_id, role, text, token_usage, retention_expires_at)
+             VALUES ($1, $2, 'user', $3, '{}'::jsonb, $4)
              RETURNING id, role, text, created_at`,
-            [companyId, chatId, text]
+            [companyId, chatId, text, retentionPolicy.retentionExpiresAt()]
         );
         await client.query(
             `UPDATE app_build_chats
@@ -274,10 +276,17 @@ async function persistFailure({
         if (!chat.rows[0]) throw notFound();
         const message = await client.query(
             `INSERT INTO app_build_messages
-                (company_id, chat_id, role, text, model, token_usage)
-             VALUES ($1, $2, 'assistant', $3, $4, $5::jsonb)
+                (company_id, chat_id, role, text, model, token_usage, retention_expires_at)
+             VALUES ($1, $2, 'assistant', $3, $4, $5::jsonb, $6)
              RETURNING id, role, text, model, token_usage, version_id, created_at`,
-            [companyId, chatId, text, model, JSON.stringify(tokenUsage || {})]
+            [
+                companyId,
+                chatId,
+                text,
+                model,
+                JSON.stringify(tokenUsage || {}),
+                retentionPolicy.retentionExpiresAt(),
+            ]
         );
         await insertAudit(client, {
             companyId,
@@ -312,6 +321,18 @@ async function persistSuccess({
     newApp,
     requestId = null,
 }) {
+    const computedSha256 = typeof source === 'string'
+        ? crypto.createHash('sha256').update(source, 'utf8').digest('hex')
+        : null;
+    if (scannerReport?.dry_run?.ok !== true
+        || typeof sourceSha256 !== 'string'
+        || sourceSha256 !== computedSha256) {
+        throw new AppBuilderRepositoryError(
+            'APP_BUILDER_GATE_ATTESTATION_INVALID',
+            'App builder gate attestation is invalid.',
+            422
+        );
+    }
     return withTransaction(async client => {
         const chatResult = await client.query(
             `SELECT id, app_id, title
@@ -414,9 +435,10 @@ async function persistSuccess({
         }
         const message = await client.query(
             `INSERT INTO app_build_messages
-                (company_id, chat_id, app_id, role, text, model, token_usage, version_id)
+                (company_id, chat_id, app_id, role, text, model, token_usage,
+                 version_id, retention_expires_at)
              SELECT chat.company_id, chat.id, chat.app_id, 'assistant',
-                    $3, $4, $5::jsonb, $6
+                    $3, $4, $5::jsonb, $6, $7
              FROM app_build_chats chat
              JOIN app_studio_apps owned
                ON owned.company_id = chat.company_id
@@ -431,6 +453,7 @@ async function persistSuccess({
                 model,
                 JSON.stringify(tokenUsage || {}),
                 version.rows[0].id,
+                retentionPolicy.retentionExpiresAt(),
             ]
         );
         await insertAudit(client, {
@@ -457,6 +480,34 @@ async function persistSuccess({
     });
 }
 
+async function deleteExpiredMessages(companyId, { now = new Date(), batchSize = 1000 } = {}) {
+    if (!companyId || !Number.isInteger(batchSize) || batchSize < 1 || batchSize > 5000) {
+        throw new AppBuilderRepositoryError(
+            'INVALID_REQUEST',
+            'Builder retention cleanup parameters are invalid.',
+            400
+        );
+    }
+    const { rows } = await db.query(
+        `WITH expired AS MATERIALIZED (
+             SELECT message.id
+             FROM app_build_messages message
+             WHERE message.company_id = $1
+               AND message.retention_expires_at <= $2
+             ORDER BY message.retention_expires_at, message.id
+             LIMIT $3
+             FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM app_build_messages message
+         USING expired
+         WHERE message.company_id = $1
+           AND message.id = expired.id
+         RETURNING message.id`,
+        [companyId, now, batchSize]
+    );
+    return rows.length;
+}
+
 module.exports = {
     AppBuilderRepositoryError,
     createChat,
@@ -468,4 +519,5 @@ module.exports = {
     reserveDailyGeneration,
     persistFailure,
     persistSuccess,
+    deleteExpiredMessages,
 };

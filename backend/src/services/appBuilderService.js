@@ -64,7 +64,7 @@ function buildPrompt(context) {
     }));
     const history = (context.history || []).slice(-20).map(message => ({
         role: message.role === 'assistant' ? 'assistant' : 'user',
-        text: String(message.text || '').slice(0, 4000),
+        text: scrubSecrets(String(message.text || '')).slice(0, 4000),
     }));
     const currentSource = typeof context.current_source === 'string'
         ? context.current_source

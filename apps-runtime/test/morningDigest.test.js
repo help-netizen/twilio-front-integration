@@ -1,11 +1,11 @@
 'use strict';
 
-const { runApplication } = require('../src/runner');
 const {
     TEST_TOKEN,
     GATEWAY_BASE_URL,
     response,
     referenceSource,
+    runApplication,
 } = require('./helpers');
 
 describe('APP-RUN-001 morning digest reference app', () => {

@@ -15,6 +15,8 @@ const mockTokenService = {
     verifyRunToken: jest.fn(),
     resolveRunContext: jest.fn(),
     consumeRunCall: jest.fn(),
+    validateRunMetrics: jest.fn(),
+    recordRunCompletion: jest.fn(),
 };
 const mockReadExecute = jest.fn();
 const mockResolveCompanyUserAuthz = jest.fn();
@@ -26,6 +28,8 @@ jest.mock('../backend/src/services/appRuntimeTokenService', () => ({
     verifyRunToken: mockTokenService.verifyRunToken,
     resolveRunContext: mockTokenService.resolveRunContext,
     consumeRunCall: mockTokenService.consumeRunCall,
+    validateRunMetrics: mockTokenService.validateRunMetrics,
+    recordRunCompletion: mockTokenService.recordRunCompletion,
     parseConsent: (metadata) => {
         const runtime = metadata?.app_runtime;
         return runtime && Array.isArray(runtime.consented_tools)
@@ -106,6 +110,8 @@ beforeEach(() => {
     });
     mockTokenService.resolveRunContext.mockResolvedValue(context());
     mockTokenService.consumeRunCall.mockResolvedValue(1);
+    mockTokenService.validateRunMetrics.mockImplementation(value => value);
+    mockTokenService.recordRunCompletion.mockResolvedValue({ id: RUN_ID });
     mockResolveCompanyUserAuthz.mockResolvedValue({
         role_key: 'manager',
         membership: { id: 'member-a', role_key: 'manager', status: 'active' },
@@ -332,6 +338,27 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         expect(invalid.status).toBe(401);
         expect(invalid.body.code).toBe('APP_RUNTIME_TOKEN_INVALID');
         expect(mockAuditRecord).not.toHaveBeenCalled();
+    });
+
+    test('F2 completion endpoint records bounded run metrics without resolving live authority', async () => {
+        const metrics = {
+            wall_ms: 37,
+            gateway_calls: 2,
+            result_bytes: 18,
+            error_code: null,
+        };
+        const response = await request(buildApp())
+            .post('/internal/app-runtime/v1/runs/complete')
+            .set('Authorization', 'Bearer valid-token')
+            .send(metrics);
+        expect(response.status).toBe(200);
+        expect(mockTokenService.validateRunMetrics).toHaveBeenCalledWith(metrics);
+        expect(mockTokenService.recordRunCompletion).toHaveBeenCalledWith(
+            expect.objectContaining({ run_id: RUN_ID }),
+            metrics
+        );
+        expect(mockTokenService.resolveRunContext).not.toHaveBeenCalled();
+        expect(mockReadExecute).not.toHaveBeenCalled();
     });
 });
 

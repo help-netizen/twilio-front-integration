@@ -1,6 +1,6 @@
 'use strict';
 
-const { runApplication } = require('./runner');
+const { runApplication, sourceSha256 } = require('./runner');
 const { validateApplicationSource } = require('./builderValidator');
 
 const DRY_RUN_INPUT = Object.freeze({ today: '2026-07-31' });
@@ -37,16 +37,18 @@ const TOOL_FIXTURES = Object.freeze({
 function fixtureResponse(toolName) {
     const data = TOOL_FIXTURES[toolName];
     if (!data) {
+        const payload = { ok: false, code: 'TOOL_NOT_FOUND', message: 'Tool not found.' };
         return {
             ok: false,
             status: 404,
-            json: async () => ({ ok: false, code: 'TOOL_NOT_FOUND', message: 'Tool not found.' }),
+            text: async () => JSON.stringify(payload),
         };
     }
+    const payload = { ok: true, data, request_id: 'app-builder-dry-run' };
     return {
         ok: true,
         status: 200,
-        json: async () => ({ ok: true, data, request_id: 'app-builder-dry-run' }),
+        text: async () => JSON.stringify(payload),
     };
 }
 
@@ -54,10 +56,12 @@ async function validateAndDryRun(source) {
     const validation = await validateApplicationSource(source);
     const result = await runApplication({
         source,
+        expectedSourceSha256: sourceSha256(source),
         input: DRY_RUN_INPUT,
         gatewayBaseUrl: DRY_RUN_GATEWAY,
         runToken: DRY_RUN_TOKEN,
         fetchImpl: async (url) => fixtureResponse(decodeURIComponent(url.pathname.split('/').pop())),
+        reportRunUsage: false,
     });
     return {
         source_bytes: validation.sourceBytes,

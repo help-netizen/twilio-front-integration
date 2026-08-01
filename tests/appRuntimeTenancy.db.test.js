@@ -15,6 +15,8 @@ const callMaskingService = require('../backend/src/services/callMaskingService')
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const MASKING_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '208_call_masking.sql'), 'utf8');
 const SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '220_app_runtime_gateway.sql'), 'utf8');
+const BUILDER_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '221_app_studio_builder.sql'), 'utf8');
+const GAP_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '222_app_studio_gap_fixes.sql'), 'utf8');
 const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
 const TOOLS = ['svc.list_jobs', 'svc.get_job', 'svc.list_tasks'];
 const SHARED_SEARCH = `blast-${randomUUID()}`;
@@ -168,6 +170,8 @@ async function configureConsent(client, installationId, versionId) {
 async function setupFixture(client) {
     await client.query(MASKING_SCHEMA);
     await client.query(SCHEMA);
+    await client.query(BUILDER_SCHEMA);
+    await client.query(GAP_SCHEMA);
     const companyA = await insertCompany(client, 'A');
     const companyB = await insertCompany(client, 'B');
     const humanA = await insertHuman(client, companyA, 'owner-a', 'manager');
@@ -555,7 +559,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
         }
     });
 
-    databaseTest('SAB run tuple/nonce + atomic five-call ceiling + live kill states', async () => {
+    databaseTest('SAB APP-GAP-F5 consume-time revocation + run/daily ceilings + live kill states', async () => {
         const client = await db.pool.connect();
         let dbSpy;
         try {
@@ -595,6 +599,82 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
             expect(stored.rows[0]).toEqual({
                 status: 'exhausted', gateway_calls_used: 5, gateway_call_limit: 5,
             });
+
+            const completed = await createRunContext(client, fixture);
+            await tokenService.recordRunCompletion({
+                installation_id: String(fixture.installationA),
+                version_id: String(fixture.versionId),
+                run_id: completed.run_id,
+                nonce: completed.nonce_for_test,
+            }, {
+                wall_ms: 41,
+                gateway_calls: 0,
+                result_bytes: 17,
+                error_code: null,
+            });
+            const storedCompletion = await client.query(
+                `SELECT status, wall_ms, gateway_calls_made, result_bytes, error_code,
+                        completed_at IS NOT NULL AS has_completed_at
+                 FROM app_runs
+                 WHERE id = $1 AND company_id = $2`,
+                [completed.run_id, fixture.companyA]
+            );
+            expect(storedCompletion.rows[0]).toEqual({
+                status: 'completed',
+                wall_ms: '41',
+                gateway_calls_made: 0,
+                result_bytes: 17,
+                error_code: null,
+                has_completed_at: true,
+            });
+
+            await client.query(
+                `DELETE FROM app_runtime_usage
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            await client.query(
+                `UPDATE app_runtime_installation_controls
+                 SET daily_gateway_call_limit = 2,
+                     suspended_at = NULL,
+                     suspension_reason = NULL,
+                     updated_at = NOW()
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            const dailyLimited = await createRunContext(client, fixture);
+            await expect(tokenService.consumeRunCall(dailyLimited)).resolves.toBe(1);
+            await expect(tokenService.consumeRunCall(dailyLimited)).resolves.toBe(2);
+            await expect(tokenService.consumeRunCall(dailyLimited)).rejects.toMatchObject({
+                code: 'APP_RUNTIME_SUSPENDED', httpStatus: 403,
+            });
+            const dailyUsage = await client.query(
+                `SELECT usage.gateway_calls_used, usage.daily_gateway_call_limit,
+                        control.suspension_reason
+                 FROM app_runtime_usage usage
+                 JOIN app_runtime_installation_controls control
+                   ON control.company_id = usage.company_id
+                  AND control.app_id = usage.app_id
+                  AND control.installation_id = usage.installation_id
+                 WHERE usage.company_id = $1
+                   AND usage.installation_id = $2
+                   AND usage.usage_date = (NOW() AT TIME ZONE 'UTC')::date`,
+                [fixture.companyA, fixture.installationA]
+            );
+            expect(dailyUsage.rows[0]).toEqual({
+                gateway_calls_used: 2,
+                daily_gateway_call_limit: 2,
+                suspension_reason: 'DAILY_GATEWAY_CALL_LIMIT',
+            });
+            await client.query(
+                `UPDATE app_runtime_installation_controls
+                 SET daily_gateway_call_limit = 1000,
+                     suspended_at = NULL,
+                     suspension_reason = NULL,
+                     updated_at = NOW()
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
 
             const killCases = [
                 {
@@ -663,6 +743,9 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 const live = await createRunContext(client, fixture);
                 const params = killCase.params(live);
                 await client.query(killCase.breakSql, params);
+                await expect(tokenService.consumeRunCall(live)).rejects.toMatchObject({
+                    code: 'APP_RUNTIME_INACTIVE', httpStatus: 403,
+                });
                 await expect(tokenService.resolveRunContext({
                     installation_id: String(fixture.installationA),
                     version_id: String(fixture.versionId),
@@ -672,6 +755,114 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
                 await client.query(killCase.restoreSql, params);
             }
+
+        } finally {
+            dbSpy?.mockRestore();
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
+    databaseTest('F6 membership deletion succeeds and the already-resolved next call fails closed', async () => {
+        const client = await db.pool.connect();
+        let dbSpy;
+        try {
+            await client.query('BEGIN');
+            const fixture = await setupFixture(client);
+            dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => client.query(text, params));
+            const live = await createRunContext(client, fixture);
+            const deleted = await client.query(
+                `DELETE FROM company_memberships
+                 WHERE id = $1 AND company_id = $2
+                 RETURNING id`,
+                [fixture.humanA.membershipId, fixture.companyA]
+            );
+            expect(deleted.rows).toHaveLength(1);
+            await expect(tokenService.consumeRunCall(live)).rejects.toMatchObject({
+                code: 'APP_RUNTIME_INACTIVE', httpStatus: 403,
+            });
+            const orphanedPrincipal = await client.query(
+                `SELECT delegated_by_user_id
+                 FROM app_installation_principals
+                 WHERE id = $1 AND company_id = $2`,
+                [fixture.principalA.principal.id, fixture.companyA]
+            );
+            expect(orphanedPrincipal.rows[0].delegated_by_user_id).toBe(fixture.humanA.id);
+        } finally {
+            dbSpy?.mockRestore();
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
+    databaseTest('F2 PostgreSQL usage ceiling auto-suspends and app_runs stores completion metrics', async () => {
+        const client = await db.pool.connect();
+        let dbSpy;
+        try {
+            await client.query('BEGIN');
+            const fixture = await setupFixture(client);
+            dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => client.query(text, params));
+            await client.query(
+                `UPDATE app_runtime_installation_controls
+                 SET daily_gateway_call_limit = 2,
+                     suspended_at = NULL,
+                     suspension_reason = NULL,
+                     updated_at = NOW()
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            const metered = await createRunContext(client, fixture);
+            const completed = await createRunContext(client, fixture);
+            await expect(tokenService.consumeRunCall(metered)).resolves.toBe(1);
+            await expect(tokenService.consumeRunCall(metered)).resolves.toBe(2);
+            await expect(tokenService.consumeRunCall(metered)).rejects.toMatchObject({
+                code: 'APP_RUNTIME_SUSPENDED', httpStatus: 403,
+            });
+            await tokenService.recordRunCompletion({
+                installation_id: String(fixture.installationA),
+                version_id: String(fixture.versionId),
+                run_id: completed.run_id,
+                nonce: completed.nonce_for_test,
+            }, {
+                wall_ms: 29,
+                gateway_calls: 0,
+                result_bytes: null,
+                error_code: 'APP_RUNTIME_SUSPENDED',
+            });
+            const accounting = await client.query(
+                `SELECT usage.gateway_calls_used,
+                        usage.daily_gateway_call_limit,
+                        control.suspension_reason,
+                        run.wall_ms,
+                        run.gateway_calls_made,
+                        run.result_bytes,
+                        run.error_code,
+                        run.status
+                 FROM app_runtime_usage usage
+                 JOIN app_runtime_installation_controls control
+                   ON control.company_id = usage.company_id
+                  AND control.app_id = usage.app_id
+                  AND control.installation_id = usage.installation_id
+                 JOIN app_runs run
+                   ON run.company_id = usage.company_id
+                  AND run.app_id = usage.app_id
+                  AND run.installation_id = usage.installation_id
+                  AND run.id = $3
+                 WHERE usage.company_id = $1
+                   AND usage.installation_id = $2
+                   AND usage.usage_date = (NOW() AT TIME ZONE 'UTC')::date`,
+                [fixture.companyA, fixture.installationA, completed.run_id]
+            );
+            expect(accounting.rows[0]).toEqual({
+                gateway_calls_used: 2,
+                daily_gateway_call_limit: 2,
+                suspension_reason: 'DAILY_GATEWAY_CALL_LIMIT',
+                wall_ms: '29',
+                gateway_calls_made: 0,
+                result_bytes: null,
+                error_code: 'APP_RUNTIME_SUSPENDED',
+                status: 'failed',
+            });
         } finally {
             dbSpy?.mockRestore();
             await client.query('ROLLBACK').catch(() => {});

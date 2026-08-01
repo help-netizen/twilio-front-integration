@@ -52,6 +52,7 @@ beforeEach(() => {
             token: 'raw-run-token',
             runId: '30000000-0000-4000-8000-000000000001',
             expiresAt: '2026-08-01T00:00:00.000Z',
+            artifactSha256: 'a'.repeat(64),
         };
     });
 });
@@ -98,6 +99,7 @@ describe('APP-GW-001 development token route', () => {
             token: 'raw-run-token',
             run_id: '30000000-0000-4000-8000-000000000001',
             expires_at: '2026-08-01T00:00:00.000Z',
+            source_sha256: 'a'.repeat(64),
         });
         expect(mockMintRunToken).toHaveBeenCalledWith({
             installationId: '1',

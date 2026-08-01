@@ -7,6 +7,8 @@ const COMPANY_A = '10000000-0000-4000-8000-000000000001';
 const COMPANY_B = '10000000-0000-4000-8000-000000000002';
 const ACTOR_ID = '20000000-0000-4000-8000-000000000001';
 const CHAT_ID = '30000000-0000-4000-8000-000000000001';
+const ORIGINAL_ENABLED = process.env.APP_STUDIO_ENABLED;
+const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 
 const mockService = {
     createChat: jest.fn(),
@@ -49,6 +51,8 @@ function buildApp({
 
 beforeEach(() => {
     jest.clearAllMocks();
+    process.env.APP_STUDIO_ENABLED = 'true';
+    process.env.NODE_ENV = 'test';
     mockService.createChat.mockResolvedValue({
         id: CHAT_ID,
         company_id: COMPANY_A,
@@ -69,7 +73,26 @@ beforeEach(() => {
     mockService.listVersions.mockResolvedValue({ app: { app_id: '91' }, versions: [] });
 });
 
+afterAll(() => {
+    if (ORIGINAL_ENABLED === undefined) delete process.env.APP_STUDIO_ENABLED;
+    else process.env.APP_STUDIO_ENABLED = ORIGINAL_ENABLED;
+    if (ORIGINAL_NODE_ENV === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+});
+
 describe('APP-BUILD-001 tenant admin API', () => {
+    test.each([
+        ['disabled by default', 'false', 'test'],
+        ['always disabled in production', 'true', 'production'],
+    ])('P0-04 gate is %s', async (_label, enabled, nodeEnv) => {
+        process.env.APP_STUDIO_ENABLED = enabled;
+        process.env.NODE_ENV = nodeEnv;
+        const response = await request(buildApp()).get('/api/app-studio/chats');
+        expect(response.status).toBe(404);
+        expect(response.body.code).toBe('APP_STUDIO_DISABLED');
+        expect(mockService.listChats).not.toHaveBeenCalled();
+    });
+
     test('T-own: tenant admin creates an app-less chat from companyFilter and CRM actor', async () => {
         const response = await request(buildApp())
             .post('/api/app-studio/chats')

@@ -1,7 +1,12 @@
 'use strict';
 
 const express = require('express');
-const { requestId, authenticateAppRuntime } = require('../middleware/appRuntimeAuth');
+const {
+    requestId,
+    authenticateAppRuntime,
+    authenticateAppRuntimeClaims,
+} = require('../middleware/appRuntimeAuth');
+const tokenService = require('../services/appRuntimeTokenService');
 const requestValidator = require('../services/appRuntimeRequestValidator');
 const gatewayService = require('../services/appRuntimeGatewayService');
 const { AppRuntimeError, appRuntimeError } = require('../services/appRuntimeErrors');
@@ -41,6 +46,34 @@ function validateTransport(req, res, next) {
         sendFailure(req, res, error);
     }
 }
+
+function validateCompletionTransport(req, res, next) {
+    try {
+        if (Object.keys(req.query || {}).length > 0) {
+            throw appRuntimeError('INVALID_REQUEST', 'Query parameters are not accepted.', 400);
+        }
+        requestValidator.requireArgumentsObject(req.body);
+        tokenService.validateRunMetrics(req.body);
+        next();
+    } catch (error) {
+        sendFailure(req, res, error);
+    }
+}
+
+// tenant-safety-allow R-route-permission: signed run-token identity can only finalize its exact DB-bound run tuple
+router.post(
+    '/v1/runs/complete',
+    validateCompletionTransport,
+    authenticateAppRuntimeClaims,
+    async (req, res) => {
+        try {
+            await tokenService.recordRunCompletion(req.appRuntimeClaims, req.body);
+            return res.json({ ok: true, request_id: req.requestId });
+        } catch (error) {
+            return sendFailure(req, res, error);
+        }
+    }
+);
 
 // tenant-safety-allow R-route-permission: short-lived run-token auth plus live delegated permission checks gate every allowlisted tool call
 router.post('/v1/tools/:toolName', validateTransport, authenticateAppRuntime, async (req, res) => {

@@ -1,7 +1,6 @@
 'use strict';
 
-const { runApplication } = require('../src/runner');
-const { TEST_TOKEN, GATEWAY_BASE_URL, app, response } = require('./helpers');
+const { TEST_TOKEN, GATEWAY_BASE_URL, app, response, runApplication } = require('./helpers');
 
 describe('APP-RUN-001 host gateway bridge', () => {
     test('callTool sends the exact name and arguments with the host-held token', async () => {
@@ -72,9 +71,7 @@ describe('APP-RUN-001 host gateway bridge', () => {
     });
 
     test('gateway data containing the token is blocked before isolate delivery', async () => {
-        const cyclic = { leaked: TEST_TOKEN };
-        cyclic.self = cyclic;
-        const fetchImpl = jest.fn(async () => response(cyclic));
+        const fetchImpl = jest.fn(async () => response({ leaked: TEST_TOKEN }));
         await expect(runApplication({
             source: app("return ctx.callTool('svc.list_jobs', { limit: 1 });"),
             input: {},

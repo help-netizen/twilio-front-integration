@@ -21,6 +21,14 @@ const BUILDER_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_221_app_studio_builder.sql'),
     'utf8'
 );
+const GAP_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '222_app_studio_gap_fixes.sql'),
+    'utf8'
+);
+const GAP_ROLLBACK = fs.readFileSync(
+    path.join(MIGRATIONS, 'rollback_222_app_studio_gap_fixes.sql'),
+    'utf8'
+);
 
 jest.setTimeout(60000);
 
@@ -218,6 +226,61 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
         }
     });
 
+    databaseTest('APP-GAP-FIX-001 migration 222 applies twice and has a matching rollback', async () => {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(RUNTIME_SCHEMA);
+            await client.query(BUILDER_SCHEMA);
+            await client.query(GAP_SCHEMA);
+            await client.query(GAP_SCHEMA);
+            const applied = await client.query(
+                `SELECT to_regclass('app_runtime_usage')::text AS usage,
+                        to_regclass('app_runtime_installation_controls')::text AS controls,
+                        EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_runs' AND column_name = 'wall_ms'
+                        ) AS run_metrics,
+                        EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_build_messages'
+                              AND column_name = 'retention_expires_at'
+                        ) AS retention`
+            );
+            expect(applied.rows[0]).toEqual({
+                usage: 'app_runtime_usage',
+                controls: 'app_runtime_installation_controls',
+                run_metrics: true,
+                retention: true,
+            });
+            await client.query(GAP_ROLLBACK);
+            await client.query(GAP_ROLLBACK);
+            const rolledBack = await client.query(
+                `SELECT to_regclass('app_runtime_usage')::text AS usage,
+                        to_regclass('app_runtime_installation_controls')::text AS controls,
+                        EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_runs' AND column_name = 'wall_ms'
+                        ) AS run_metrics,
+                        EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_build_messages'
+                              AND column_name = 'retention_expires_at'
+                        ) AS retention`
+            );
+            expect(rolledBack.rows[0]).toEqual({
+                usage: null,
+                controls: null,
+                run_metrics: false,
+                retention: false,
+            });
+            await client.query(GAP_SCHEMA);
+        } finally {
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
     databaseTest('T-own/T-foreign/T-blast: chats and versions are invisible and immutable across companies', async () => {
         const client = await db.pool.connect();
         let connectSpy;
@@ -227,6 +290,7 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
             await client.query(RUNTIME_SCHEMA);
             await client.query(BUILDER_SCHEMA);
             await client.query(BUILDER_SCHEMA);
+            await client.query(GAP_SCHEMA);
             const companyA = await insertCompany(client, 'A');
             const companyB = await insertCompany(client, 'B');
             const actorA = await insertAdmin(client, companyA, 'admin-a');
@@ -235,6 +299,12 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
             const appB = await insertOwnedApp(client, companyB, actorB, 'b');
             const fixtureA = await insertChatVersion(client, companyA, actorA, appA);
             const fixtureB = await insertChatVersion(client, companyB, actorB, appB);
+            await client.query(
+                `UPDATE app_build_messages
+                 SET retention_expires_at = NOW() - INTERVAL '1 day'
+                 WHERE company_id IN ($1, $2)`,
+                [companyA, companyB]
+            );
             const usageDate = new Date().toISOString().slice(0, 10);
             await client.query(
                 `INSERT INTO app_builder_usage_counters
@@ -295,6 +365,15 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
                 'Shared generated description'
             )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
 
+            await expect(repository.deleteExpiredMessages(companyA, {
+                now: new Date(),
+                batchSize: 100,
+            })).resolves.toBe(1);
+            const retainedChat = await repository.getMessages(companyA, fixtureA.chatId);
+            expect(retainedChat.chat.id).toBe(fixtureA.chatId);
+            expect(retainedChat.messages).toHaveLength(0);
+            expect(await snapshotCompany(client, companyB)).toStrictEqual(beforeB);
+
             await repository.appendUserMessage(
                 companyA,
                 actorA,
@@ -305,6 +384,50 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
                 return ctx.callTool('svc.list_tasks', { limit: 1 });
             }`;
             const generatedSha = crypto.createHash('sha256').update(generatedSource).digest('hex');
+            const versionCountBeforeBypass = await client.query(
+                `SELECT COUNT(*)::integer AS count
+                 FROM app_versions
+                 WHERE app_id = $1`,
+                [appA]
+            );
+            await expect(repository.persistSuccess({
+                companyId: companyA,
+                actorId: actorA,
+                chatId: fixtureA.chatId,
+                source: generatedSource,
+                sourceSha256: generatedSha,
+                scannerReport: { parsed: true, tools: ['svc.list_tasks'] },
+                tools: ['svc.list_tasks'],
+                description: 'Must not persist.',
+                model: 'test-model',
+                tokenUsage: {},
+                newApp: { appKey: 'unused', name: 'Unused', metadata: {} },
+            })).rejects.toMatchObject({
+                code: 'APP_BUILDER_GATE_ATTESTATION_INVALID', httpStatus: 422,
+            });
+            await expect(repository.persistSuccess({
+                companyId: companyA,
+                actorId: actorA,
+                chatId: fixtureA.chatId,
+                source: generatedSource,
+                sourceSha256: '0'.repeat(64),
+                scannerReport: { parsed: true, dry_run: { ok: true }, tools: [] },
+                tools: [],
+                description: 'Must not persist either.',
+                model: 'test-model',
+                tokenUsage: {},
+                newApp: { appKey: 'unused-2', name: 'Unused', metadata: {} },
+            })).rejects.toMatchObject({
+                code: 'APP_BUILDER_GATE_ATTESTATION_INVALID', httpStatus: 422,
+            });
+            const versionCountAfterBypass = await client.query(
+                `SELECT COUNT(*)::integer AS count
+                 FROM app_versions
+                 WHERE app_id = $1`,
+                [appA]
+            );
+            expect(versionCountAfterBypass.rows[0].count)
+                .toBe(versionCountBeforeBypass.rows[0].count);
             const created = await repository.persistSuccess({
                 companyId: companyA,
                 actorId: actorA,

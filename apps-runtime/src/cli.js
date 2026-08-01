@@ -5,8 +5,12 @@ const path = require('path');
 const { runApplication } = require('./runner');
 
 async function main(argv = process.argv.slice(2), env = process.env) {
-    const [sourcePath, inputJson = '{}'] = argv;
-    if (!sourcePath) throw new Error('Usage: npm start -- <application.js> [input-json]');
+    const [sourcePath, inputJson = '{}', hashArgument] = argv;
+    if (!sourcePath) {
+        throw new Error(
+            'Usage: npm start -- <application.js> [input-json] [expected-source-sha256]'
+        );
+    }
     const source = await fs.readFile(path.resolve(sourcePath), 'utf8');
     let input;
     try {
@@ -16,6 +20,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     }
     const result = await runApplication({
         source,
+        expectedSourceSha256: hashArgument || env.APP_RUNTIME_EXPECTED_SOURCE_SHA256,
         input,
         gatewayBaseUrl: env.APP_RUNTIME_GATEWAY_BASE_URL,
         runToken: env.APP_RUNTIME_RUN_TOKEN,

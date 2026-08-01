@@ -62,9 +62,32 @@ async function authenticateAppRuntime(req, res, next) {
     }
 }
 
+function authenticateAppRuntimeClaims(req, res, next) {
+    requestId(req);
+    const token = bearerToken(req);
+    if (!token) {
+        return sendError(
+            req,
+            res,
+            appRuntimeError(
+                'APP_RUNTIME_AUTH_REQUIRED',
+                'Bearer token required.',
+                401
+            )
+        );
+    }
+    try {
+        req.appRuntimeClaims = tokenService.verifyRunToken(token);
+        return next();
+    } catch (error) {
+        return sendError(req, res, error);
+    }
+}
+
 module.exports = {
     bearerToken,
     requestId,
     sendError,
     authenticateAppRuntime,
+    authenticateAppRuntimeClaims,
 };

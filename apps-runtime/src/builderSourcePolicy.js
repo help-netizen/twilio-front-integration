@@ -227,6 +227,18 @@ function validateSourcePolicy(source) {
     const tools = [];
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
+        if (token.type === 'identifier' && ['Reflect', 'Object'].includes(token.value)) {
+            fail(
+                'CALL_TOOL_INVALID',
+                'Reflective object access is not allowed in App Studio source.'
+            );
+        }
+        if (token.type === 'string' && token.value === 'callTool') {
+            fail(
+                'CALL_TOOL_INVALID',
+                'Tool capabilities may not be accessed by a computed property name.'
+            );
+        }
         if (token.type === 'identifier' && token.value === 'ctx'
             && tokens[index + 1]?.value === '[') {
             fail('CALL_TOOL_INVALID', 'Computed ctx property access is not allowed.');
