@@ -9,7 +9,7 @@ const db = require('../backend/src/db/connection');
 const { sendNativePushToUser } = require('../backend/src/services/pushService');
 
 const migration = fs.readFileSync(
-    path.join(__dirname, '..', 'backend', 'db', 'migrations', '221_notification_security_core.sql'),
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '225_notification_security_core.sql'),
     'utf8'
 );
 

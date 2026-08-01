@@ -1,5 +1,5 @@
 -- =============================================================================
--- 221: NOTIF-REWORK-001 M1 security core
+-- 225: NOTIF-REWORK-001 M1 security core
 -- Tenant-paired natural keys, per-user category preferences, the delivery
 -- ledger, and the financial-alert permission backfill.
 -- Idempotent / re-runnable.
@@ -26,7 +26,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_push_subscriptions_company_user_endpoint
 CREATE UNIQUE INDEX IF NOT EXISTS uq_device_tokens_company_user_apns_token
     ON device_tokens(company_id, crm_user_id, apns_token);
 
--- Converge databases that ran an earlier unreleased 221 revision. The most
+-- Converge databases that ran an earlier unreleased 225 revision. The most
 -- recently seen binding is the best available current-owner signal.
 WITH ranked_device_tokens AS (
     SELECT id,
@@ -56,7 +56,7 @@ END
 $migration$;
 
 -- These two T1/T2 policy tables existed only on the unreleased local version of
--- migration 221. Remove them so an already-run development database converges
+-- migration 225. Remove them so an already-run development database converges
 -- to the simplified model when this migration is reapplied.
 DROP TABLE IF EXISTS role_notification_delivery CASCADE;
 DROP TABLE IF EXISTS company_notification_policies CASCADE;
@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
         UNIQUE (company_id, domain_event_id, user_id, channel)
 );
 
--- Reapplying migration 221 must also upgrade databases that created the table
+-- Reapplying migration 225 must also upgrade databases that created the table
 -- before pre-change recipient payload isolation was added.
 ALTER TABLE notification_deliveries
     ADD COLUMN IF NOT EXISTS is_pre_change_recipient BOOLEAN NOT NULL DEFAULT false;

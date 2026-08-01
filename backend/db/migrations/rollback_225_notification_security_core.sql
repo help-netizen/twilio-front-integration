@@ -1,5 +1,5 @@
 -- =============================================================================
--- Rollback 221: NOTIF-REWORK-001 M1 security core
+-- Rollback 225: NOTIF-REWORK-001 M1 security core
 -- Refuses to restore former global uniqueness when tenant-local duplicates now
 -- exist. It never deletes or merges subscription/event data to make rollback fit.
 -- =============================================================================
@@ -22,7 +22,7 @@ BEGIN
         HAVING COUNT(*) > 1
     ) THEN
         RAISE EXCEPTION
-            'ROLLBACK_221_BLOCKED: cross-company domain_events idempotency keys prevent restoring global uniqueness';
+            'ROLLBACK_225_BLOCKED: cross-company domain_events idempotency keys prevent restoring global uniqueness';
     END IF;
     IF EXISTS (
         SELECT endpoint
@@ -31,7 +31,7 @@ BEGIN
         HAVING COUNT(*) > 1
     ) THEN
         RAISE EXCEPTION
-            'ROLLBACK_221_BLOCKED: cross-company push endpoints prevent restoring global uniqueness';
+            'ROLLBACK_225_BLOCKED: cross-company push endpoints prevent restoring global uniqueness';
     END IF;
     IF EXISTS (
         SELECT apns_token
@@ -40,7 +40,7 @@ BEGIN
         HAVING COUNT(*) > 1
     ) THEN
         RAISE EXCEPTION
-            'ROLLBACK_221_BLOCKED: cross-company APNs tokens prevent restoring global uniqueness';
+            'ROLLBACK_225_BLOCKED: cross-company APNs tokens prevent restoring global uniqueness';
     END IF;
 END
 $rollback$;

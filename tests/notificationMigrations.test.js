@@ -8,8 +8,8 @@ const {
 const { ALL_PERMISSION_KEYS } = require('../backend/src/services/permissionCatalog');
 
 const root = path.join(__dirname, '..');
-const migration = fs.readFileSync(path.join(root, 'backend/db/migrations/221_notification_security_core.sql'), 'utf8');
-const rollback = fs.readFileSync(path.join(root, 'backend/db/migrations/rollback_221_notification_security_core.sql'), 'utf8');
+const migration = fs.readFileSync(path.join(root, 'backend/db/migrations/225_notification_security_core.sql'), 'utf8');
+const rollback = fs.readFileSync(path.join(root, 'backend/db/migrations/rollback_225_notification_security_core.sql'), 'utf8');
 const roleSeed = fs.readFileSync(path.join(root, 'backend/db/migrations/050_seed_role_configs.sql'), 'utf8');
 const notificationRoute = fs.readFileSync(path.join(root, 'backend/src/routes/notification-settings.js'), 'utf8');
 const notificationPoliciesRoute = fs.readFileSync(path.join(root, 'backend/src/routes/notification-policies.js'), 'utf8');
@@ -18,15 +18,15 @@ const pushRoute = fs.readFileSync(path.join(root, 'backend/src/routes/push-subsc
 const pushService = fs.readFileSync(path.join(root, 'backend/src/services/pushService.js'), 'utf8');
 const notificationPolicyService = fs.readFileSync(path.join(root, 'backend/src/services/notificationPolicyService.js'), 'utf8');
 
-describe('NOTIF-REWORK-001 migration 221 contract', () => {
+describe('NOTIF-REWORK-001 migration 225 contract', () => {
     test('uses tenant-paired idempotency and endpoint identities', () => {
         expect(migration).toContain('ON domain_events(company_id, idempotency_key)');
         expect(migration).toContain('ON push_subscriptions(company_id, user_id, endpoint)');
         expect(migration).toContain('ON device_tokens(company_id, crm_user_id, apns_token)');
         expect(migration).toContain('UNIQUE (company_id, domain_event_id, user_id, channel)');
-        expect(rollback).toContain('ROLLBACK_221_BLOCKED: cross-company domain_events');
-        expect(rollback).toContain('ROLLBACK_221_BLOCKED: cross-company push endpoints');
-        expect(rollback).toContain('ROLLBACK_221_BLOCKED: cross-company APNs tokens');
+        expect(rollback).toContain('ROLLBACK_225_BLOCKED: cross-company domain_events');
+        expect(rollback).toContain('ROLLBACK_225_BLOCKED: cross-company push endpoints');
+        expect(rollback).toContain('ROLLBACK_225_BLOCKED: cross-company APNs tokens');
     });
 
     test('creates only per-user category preferences and the delivery ledger', () => {

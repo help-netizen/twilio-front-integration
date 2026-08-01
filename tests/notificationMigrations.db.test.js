@@ -7,11 +7,11 @@ const db = require('../backend/src/db/connection');
 const notificationPolicyService = require('../backend/src/services/notificationPolicyService');
 
 const migration = fs.readFileSync(
-    path.join(__dirname, '..', 'backend', 'db', 'migrations', '221_notification_security_core.sql'),
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '225_notification_security_core.sql'),
     'utf8'
 );
 const rollback = fs.readFileSync(
-    path.join(__dirname, '..', 'backend', 'db', 'migrations', 'rollback_221_notification_security_core.sql'),
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', 'rollback_225_notification_security_core.sql'),
     'utf8'
 );
 
@@ -31,7 +31,7 @@ async function preferenceSnapshot(client, companyId) {
     return rows[0].snapshot;
 }
 
-describe('migration 221 real PostgreSQL isolation', () => {
+describe('migration 225 real PostgreSQL isolation', () => {
     test('double apply preserves category preferences and tenant-pairs natural keys', async () => {
         const client = await db.pool.connect();
         const companyA = randomUUID();
@@ -165,7 +165,7 @@ describe('migration 221 real PostgreSQL isolation', () => {
             await client.query('ROLLBACK TO SAVEPOINT duplicate_domain_event');
 
             await client.query('SAVEPOINT rollback_preflight');
-            await expect(client.query(rollback)).rejects.toThrow(/ROLLBACK_221_BLOCKED/);
+            await expect(client.query(rollback)).rejects.toThrow(/ROLLBACK_225_BLOCKED/);
             await client.query('ROLLBACK TO SAVEPOINT rollback_preflight');
             const rollbackSafety = await client.query(
                 `SELECT to_regclass('user_notification_preferences') AS preferences,
