@@ -76,12 +76,13 @@ describe('NOTIF-REWORK-001 migration 221 contract', () => {
         expect(pushRoute).toContain('ON CONFLICT (company_id, user_id, endpoint)');
         expect(pushRoute).toMatch(/WHERE company_id = \$1 AND user_id = \$2 AND endpoint = \$3/);
         expect(pushRoute).toMatch(/WHERE id = \$1 AND company_id = \$2 AND user_id = \$3/);
-        expect(pushService).toMatch(/WHERE company_id = \$1 AND id = ANY\(\$2::uuid\[\]\)/);
+        expect(pushService).toMatch(/UPDATE push_subscriptions\s+SET is_active = false\s+WHERE company_id = \$1\s+AND user_id = \$2\s+AND id = ANY\(\$3::uuid\[\]\)/);
     });
 
     test('legacy company push config is no longer an authorization source', () => {
         expect(pushService).not.toContain('browser_push_config');
         expect(pushService).not.toContain('company_settings WHERE company_id');
-        expect(pushService).toMatch(/async function isEventEnabled\(\) \{\s+return false;/);
+        expect(pushService).not.toContain('isEventEnabled');
+        expect(pushService).toContain('async function sendWebPushToUser(companyId, userId, payload, options = {})');
     });
 });

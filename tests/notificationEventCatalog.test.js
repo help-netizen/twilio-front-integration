@@ -51,8 +51,9 @@ describe('notification event catalog', () => {
     test('truthfully marks producer gaps', () => {
         expect(getNotificationCatalogEntry('lead.created').producer_available).toBe(true);
         expect(getNotificationCatalogEntry('sms.inbound').producer_available).toBe(true);
-        expect(getNotificationCatalogEntry('call.voicemail_received').producer_available).toBe(false);
-        expect(getNotificationCatalogEntry('call.missed').producer_available).toBe(false);
+        expect(getNotificationCatalogEntry('call.voicemail_received').producer_available).toBe(true);
+        expect(getNotificationCatalogEntry('call.missed').producer_available).toBe(true);
+        expect(getNotificationCatalogEntry('job.updated').producer_available).toBe(false);
     });
 
     test('financial event family uses the notification-only permission', () => {
