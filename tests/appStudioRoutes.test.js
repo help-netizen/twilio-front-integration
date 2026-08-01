@@ -118,6 +118,22 @@ describe('APP-BUILD-001 tenant admin API', () => {
         expect(mockService.listChats).not.toHaveBeenCalled();
     });
 
+    test('SAB non-admin authorization runs before feature and runner configuration disclosure', async () => {
+        process.env.APP_STUDIO_ENABLED = 'false';
+        delete process.env.APP_RUNNER_BASE_URL;
+        const roleDenied = await request(buildApp({ roleKey: 'manager' }))
+            .get('/api/app-studio/chats');
+        expect(roleDenied.status).toBe(403);
+        expect(roleDenied.body.code).toBe('TENANT_ADMIN_ONLY');
+        expect(JSON.stringify(roleDenied.body)).not.toMatch(/disabled|runner/i);
+
+        const permissionDenied = await request(buildApp({ permissions: [] }))
+            .get('/api/app-studio/chats');
+        expect(permissionDenied.status).toBe(403);
+        expect(permissionDenied.body.code).toBe('ACCESS_DENIED');
+        expect(JSON.stringify(permissionDenied.body)).not.toMatch(/disabled|runner/i);
+    });
+
     test('enabled and configured App Studio works in production', async () => {
         process.env.NODE_ENV = 'production';
         const response = await request(buildApp()).get('/api/app-studio/chats');

@@ -67,6 +67,10 @@ async function readJsonBody(req) {
 
 function validEnvelope(body, endpoint) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+    const allowedKeys = endpoint === 'dry-run'
+        ? new Set(['source', 'expectedSourceSha256', 'input', 'fixtures', 'seed'])
+        : new Set(['source', 'expectedSourceSha256', 'runToken', 'input']);
+    if (Object.keys(body).some(key => !allowedKeys.has(key))) return false;
     if (typeof body.source !== 'string' || body.source.length === 0) return false;
     if (typeof body.expectedSourceSha256 !== 'string'
         || !/^[0-9a-f]{64}$/.test(body.expectedSourceSha256)) return false;
@@ -94,6 +98,7 @@ function usageFor(error, startedAt) {
 
 function responseStatus(error) {
     if (error instanceof RunnerHttpError) return error.status;
+    if (Number.isInteger(error?.httpStatus)) return error.httpStatus;
     if (error?.code === 'APP_RUNTIME_REQUEST_TIMEOUT') return 504;
     if (error?.code === 'APP_RUNTIME_GATEWAY_CONFIG_INVALID') return 503;
     if (error?.code === 'APP_RUNTIME_GATEWAY_UNAVAILABLE') return 502;
@@ -179,6 +184,7 @@ function createRequestHandler({
                         runToken: body.runToken,
                         input: body.input,
                         gatewayBaseUrl,
+                        executionMode: 'live',
                         onUsage: value => { usage = value; },
                         signal,
                     });

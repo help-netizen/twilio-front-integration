@@ -168,13 +168,47 @@ describe('APP-SVC-001 runner HTTP service', () => {
             runApplicationImpl,
         });
         const response = await post(baseUrl, '/v1/run', {
-            body: { ...DRY_RUN_BODY, runToken: 'host-only-run-token' },
+            body: {
+                source: DRY_RUN_BODY.source,
+                expectedSourceSha256: DRY_RUN_BODY.expectedSourceSha256,
+                input: DRY_RUN_BODY.input,
+                runToken: 'host-only-run-token',
+            },
         });
         expect(response.status).toBe(200);
         expect(runApplicationImpl).toHaveBeenCalledWith(expect.objectContaining({
             expectedSourceSha256: DRY_RUN_BODY.expectedSourceSha256,
             runToken: 'host-only-run-token',
             gatewayBaseUrl: 'https://crm.albusto.test',
+            executionMode: 'live',
         }));
+    });
+
+    test('SAB APP-FINAL sandbox and live envelopes cannot cross fixture or run-token fields', async () => {
+        const dryRunImpl = jest.fn().mockResolvedValue({
+            result: null,
+            validation: { source_bytes: 1, tools: [], entry_point: 'run', returned_type: 'null' },
+            usage: { wall_ms: 1, gateway_calls: 0, result_bytes: 4, error_code: null },
+            fixturesSummary: {},
+        });
+        const runApplicationImpl = jest.fn();
+        const baseUrl = await startServer({ dryRunImpl, runApplicationImpl });
+        const fixtureIntoLive = await post(baseUrl, '/v1/run', {
+            body: {
+                source: SOURCE,
+                expectedSourceSha256: sourceSha256(SOURCE),
+                runToken: 'host-only-run-token',
+                input: {},
+                fixtures: { 'svc.list_jobs': { results: [] } },
+            },
+        });
+        expect(fixtureIntoLive.status).toBe(400);
+        expect(runApplicationImpl).not.toHaveBeenCalled();
+
+        const tokenIntoDryRun = await post(baseUrl, '/v1/dry-run', {
+            body: { ...DRY_RUN_BODY, runToken: 'must-not-reach-sandbox' },
+        });
+        expect(tokenIntoDryRun.status).toBe(400);
+        expect(dryRunImpl).not.toHaveBeenCalled();
     });
 });

@@ -8,6 +8,9 @@ const { requirePermission } = require('../middleware/authorization');
 
 const router = express.Router();
 
+router.use(requirePermission('tenant.integrations.manage'));
+router.use(requireTenantAdmin);
+
 // APP-SVC-001: explicit product flag plus a complete remote-runner configuration.
 // There is no local execution fallback; missing service settings fail closed.
 router.use((req, res, next) => {
@@ -67,9 +70,6 @@ function handleError(error, req, res) {
     if (error?.botMessage) payload.message_record = error.botMessage;
     return res.status(status).json(payload);
 }
-
-router.use(requirePermission('tenant.integrations.manage'));
-router.use(requireTenantAdmin);
 
 router.post('/chats', async (req, res) => {
     if (!validObject(req.body, ['app_id', 'title'])) {

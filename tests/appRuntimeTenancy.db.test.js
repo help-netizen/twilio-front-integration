@@ -18,6 +18,14 @@ const MASKING_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '208_call_masking.s
 const SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '220_app_runtime_gateway.sql'), 'utf8');
 const BUILDER_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '221_app_studio_builder.sql'), 'utf8');
 const GAP_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '222_app_studio_gap_fixes.sql'), 'utf8');
+const EXECUTION_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '224_app_runtime_execution_authorization.sql'),
+    'utf8'
+);
+const EXECUTION_ROLLBACK = fs.readFileSync(
+    path.join(MIGRATIONS, 'rollback_224_app_runtime_execution_authorization.sql'),
+    'utf8'
+);
 const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
 const TOOLS = ['svc.list_jobs', 'svc.get_job', 'svc.list_tasks'];
 const SHARED_SEARCH = `blast-${randomUUID()}`;
@@ -173,6 +181,7 @@ async function setupFixture(client) {
     await client.query(SCHEMA);
     await client.query(BUILDER_SCHEMA);
     await client.query(GAP_SCHEMA);
+    await client.query(EXECUTION_SCHEMA);
     const companyA = await insertCompany(client, 'A');
     const companyB = await insertCompany(client, 'B');
     const humanA = await insertHuman(client, companyA, 'owner-a', 'manager');
@@ -299,7 +308,7 @@ async function setupFixture(client) {
     };
 }
 
-async function createRunContext(client, fixture, side = 'A') {
+async function createRunContext(client, fixture, side = 'A', authorize = true) {
     const principal = side === 'A' ? fixture.principalA : fixture.principalB;
     const companyId = side === 'A' ? fixture.companyA : fixture.companyB;
     const installationId = side === 'A' ? fixture.installationA : fixture.installationB;
@@ -328,6 +337,9 @@ async function createRunContext(client, fixture, side = 'A') {
         exp: Math.floor(Date.now() / 1000) + 300,
         nonce,
     });
+    if (authorize) {
+        await tokenService.authorizeRunExecution(resolved, fixture.artifactSha256);
+    }
     return { ...resolved, nonce_for_test: nonce };
 }
 
@@ -365,6 +377,50 @@ async function snapshotCompanyB(client, fixture) {
 }
 
 describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
+    databaseTest('migration 224 applies twice and rollback/forward preserves the execution-admission schema', async () => {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(SCHEMA);
+            await client.query(BUILDER_SCHEMA);
+            await client.query(GAP_SCHEMA);
+            await client.query(EXECUTION_SCHEMA);
+            await client.query(EXECUTION_SCHEMA);
+            const applied = await client.query(
+                `SELECT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_runs'
+                              AND column_name = 'execution_authorized_at'
+                        ) AS run_admission,
+                        EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_runtime_usage'
+                              AND column_name = 'wall_ms_used'
+                        ) AS wall_usage`
+            );
+            expect(applied.rows[0]).toEqual({ run_admission: true, wall_usage: true });
+            await client.query(EXECUTION_ROLLBACK);
+            await client.query(EXECUTION_ROLLBACK);
+            const rolledBack = await client.query(
+                `SELECT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_runs'
+                              AND column_name = 'execution_authorized_at'
+                        ) AS run_admission,
+                        EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_runtime_usage'
+                              AND column_name = 'wall_ms_used'
+                        ) AS wall_usage`
+            );
+            expect(rolledBack.rows[0]).toEqual({ run_admission: false, wall_usage: false });
+            await client.query(EXECUTION_SCHEMA);
+        } finally {
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
     databaseTest('SAB company binding + delegator scopes: per-tool T-own/T-foreign/T-blast and R-matrix', async () => {
         const client = await db.pool.connect();
         let dbSpy;
@@ -864,6 +920,191 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 error_code: 'APP_RUNTIME_SUSPENDED',
                 status: 'failed',
             });
+        } finally {
+            dbSpy?.mockRestore();
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
+    databaseTest('SAB APP-FINAL-P0 DB admission is hash-pinned, one-time, consent-live, metered, and required by calls/completion', async () => {
+        const client = await db.pool.connect();
+        let dbSpy;
+        try {
+            await client.query('BEGIN');
+            const fixture = await setupFixture(client);
+            dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => client.query(text, params));
+
+            const unstarted = await createRunContext(client, fixture, 'A', false);
+            await expect(tokenService.consumeRunCall(unstarted)).rejects.toMatchObject({
+                code: 'APP_RUNTIME_INACTIVE', httpStatus: 403,
+            });
+            await expect(tokenService.recordRunCompletion({
+                installation_id: String(fixture.installationA),
+                version_id: String(fixture.versionId),
+                run_id: unstarted.run_id,
+                nonce: unstarted.nonce_for_test,
+            }, {
+                wall_ms: 1, gateway_calls: 0, result_bytes: 4, error_code: null,
+            })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
+            await expect(tokenService.authorizeRunExecution(
+                unstarted,
+                '0'.repeat(64)
+            )).rejects.toMatchObject({ code: 'APP_RUNTIME_SOURCE_MISMATCH', httpStatus: 403 });
+
+            await client.query(
+                `UPDATE marketplace_installations
+                 SET metadata = jsonb_set(
+                     metadata,
+                     '{app_runtime,consented_tools}',
+                     '[]'::jsonb,
+                     true
+                 )
+                 WHERE id = $1 AND company_id = $2`,
+                [fixture.installationA, fixture.companyA]
+            );
+            const noConsent = await tokenService.resolveRunContext({
+                installation_id: String(fixture.installationA),
+                version_id: String(fixture.versionId),
+                run_id: unstarted.run_id,
+                exp: Math.floor(Date.now() / 1000) + 300,
+                nonce: unstarted.nonce_for_test,
+            });
+            await expect(tokenService.authorizeRunExecution(
+                noConsent,
+                fixture.artifactSha256
+            )).rejects.toMatchObject({ code: 'TOOL_NOT_CONSENTED', httpStatus: 403 });
+            await client.query(
+                `UPDATE marketplace_installations
+                 SET metadata = jsonb_set(
+                     metadata,
+                     '{app_runtime,consented_tools}',
+                     $3::jsonb,
+                     true
+                 )
+                 WHERE id = $1 AND company_id = $2`,
+                [fixture.installationA, fixture.companyA, JSON.stringify(TOOLS)]
+            );
+
+            const live = await tokenService.resolveRunContext({
+                installation_id: String(fixture.installationA),
+                version_id: String(fixture.versionId),
+                run_id: unstarted.run_id,
+                exp: Math.floor(Date.now() / 1000) + 300,
+                nonce: unstarted.nonce_for_test,
+            });
+            await expect(tokenService.authorizeRunExecution(
+                live,
+                fixture.artifactSha256
+            )).resolves.toMatchObject({ runs_started: 1, wall_ms_used: 0 });
+            await expect(tokenService.authorizeRunExecution(
+                live,
+                fixture.artifactSha256
+            )).rejects.toMatchObject({ code: 'APP_RUNTIME_ALREADY_STARTED', httpStatus: 409 });
+            await expect(tokenService.consumeRunCall(live)).resolves.toBe(1);
+
+            await client.query(
+                `DELETE FROM app_runtime_usage
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            await client.query(
+                `UPDATE app_runtime_installation_controls
+                 SET daily_run_limit = 1,
+                     daily_wall_ms_limit = 600000,
+                     suspended_at = NULL,
+                     suspension_reason = NULL,
+                     updated_at = NOW()
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            const admitted = await createRunContext(client, fixture, 'A', false);
+            await expect(tokenService.authorizeRunExecution(
+                admitted,
+                fixture.artifactSha256
+            )).resolves.toMatchObject({ runs_started: 1 });
+            const overLimit = await createRunContext(client, fixture, 'A', false);
+            await expect(tokenService.authorizeRunExecution(
+                overLimit,
+                fixture.artifactSha256
+            )).rejects.toMatchObject({ code: 'APP_RUNTIME_DAILY_RUN_LIMIT', httpStatus: 429 });
+            const runSuspension = await client.query(
+                `SELECT suspension_reason
+                 FROM app_runtime_installation_controls
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            expect(runSuspension.rows[0].suspension_reason).toBe('DAILY_RUN_LIMIT');
+
+            await client.query(
+                `DELETE FROM app_runtime_usage
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            await client.query(
+                `UPDATE app_runtime_installation_controls
+                 SET daily_run_limit = 10,
+                     daily_wall_ms_limit = 1,
+                     suspended_at = NULL,
+                     suspension_reason = NULL,
+                     updated_at = NOW()
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            const wallMetered = await createRunContext(client, fixture, 'A', false);
+            await tokenService.authorizeRunExecution(wallMetered, fixture.artifactSha256);
+            await tokenService.recordRunCompletion({
+                installation_id: String(fixture.installationA),
+                version_id: String(fixture.versionId),
+                run_id: wallMetered.run_id,
+                nonce: wallMetered.nonce_for_test,
+            }, {
+                wall_ms: 2, gateway_calls: 0, result_bytes: 4, error_code: null,
+            });
+            const wallSuspension = await client.query(
+                `SELECT control.suspension_reason, usage.runs_started, usage.wall_ms_used
+                 FROM app_runtime_installation_controls control
+                 JOIN app_runtime_usage usage
+                   ON usage.company_id = control.company_id
+                  AND usage.app_id = control.app_id
+                  AND usage.installation_id = control.installation_id
+                 WHERE control.company_id = $1
+                   AND control.installation_id = $2
+                   AND usage.usage_date = (NOW() AT TIME ZONE 'UTC')::date`,
+                [fixture.companyA, fixture.installationA]
+            );
+            expect(wallSuspension.rows[0]).toEqual({
+                suspension_reason: 'DAILY_WALL_MS_LIMIT', runs_started: 1, wall_ms_used: '2',
+            });
+
+            await client.query(
+                `UPDATE app_runtime_installation_controls
+                 SET daily_wall_ms_limit = 600000,
+                     suspended_at = NULL,
+                     suspension_reason = NULL,
+                     updated_at = NOW()
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            const revoked = await createRunContext(client, fixture);
+            await client.query(
+                `UPDATE app_runs
+                 SET status = 'revoked', revoked_at = NOW()
+                 WHERE id = $1 AND company_id = $2`,
+                [revoked.run_id, fixture.companyA]
+            );
+            await expect(tokenService.recordRunCompletion({
+                installation_id: String(fixture.installationA),
+                version_id: String(fixture.versionId),
+                run_id: revoked.run_id,
+                nonce: revoked.nonce_for_test,
+            }, {
+                wall_ms: 2, gateway_calls: 0, result_bytes: 4, error_code: null,
+            })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
+            expect(await client.query(
+                `SELECT status FROM app_runs WHERE id = $1 AND company_id = $2`,
+                [revoked.run_id, fixture.companyA]
+            )).toMatchObject({ rows: [{ status: 'revoked' }] });
         } finally {
             dbSpy?.mockRestore();
             await client.query('ROLLBACK').catch(() => {});

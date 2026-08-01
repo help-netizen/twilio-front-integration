@@ -31,7 +31,7 @@ function runApplication(options) {
     return runner.runApplication({
         ...options,
         expectedSourceSha256: runner.sourceSha256(options.source),
-        reportRunUsage: false,
+        executionMode: 'sandbox',
     });
 }
 

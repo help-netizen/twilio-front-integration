@@ -50,6 +50,31 @@ function requireBusinessPermission(authz, permission) {
     }
 }
 
+function requireExecutionAuthorization(context, authz) {
+    const consent = tokenService.parseConsent(context.installation_metadata);
+    const allowedTools = new Set(context.allowed_tools || []);
+    const consentedTools = catalog.TOOL_NAMES.filter(toolName => (
+        consent?.versionId === String(context.version_id)
+        && consent.tools.has(toolName)
+        && allowedTools.has(toolName)
+    ));
+    if (consentedTools.length === 0) {
+        throw appRuntimeError(
+            'TOOL_NOT_CONSENTED',
+            'No app runtime tools are consented.',
+            403
+        );
+    }
+    const permissions = new Set(authz?.permissions || []);
+    const effectiveTools = consentedTools.filter(toolName => (
+        permissions.has(catalog.requireTool(toolName).businessPermission)
+    ));
+    if (effectiveTools.length === 0) {
+        throw appRuntimeError('ACCESS_DENIED', 'Access denied.', 403);
+    }
+    return effectiveTools;
+}
+
 function buildReadContext(context, authz) {
     if (!context?.delegated_by_user_id) {
         throw appRuntimeError(
@@ -80,6 +105,7 @@ module.exports = {
     resolveLiveAuthorization,
     requireToolConsent,
     requireBusinessPermission,
+    requireExecutionAuthorization,
     buildReadContext,
     execute,
 };

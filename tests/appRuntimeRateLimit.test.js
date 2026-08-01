@@ -36,12 +36,22 @@ describe('APP-GW-001 process-local rate limiter', () => {
         expect(limiter.consumeInstallation('install-a', 1100).allowed).toBe(true);
     });
 
-    test('unauthenticated failures share an IP budget and isolate different IPs', () => {
+    test('SAB spoofed X-Forwarded-For cannot split an unauthenticated IP budget', () => {
         const requestA = { headers: { 'x-forwarded-for': '192.0.2.1, 10.0.0.1' }, ip: '10.0.0.1' };
         const requestB = { headers: { 'x-forwarded-for': '192.0.2.2' }, ip: '10.0.0.1' };
+        const requestC = { headers: { 'x-forwarded-for': '192.0.2.1' }, ip: '10.0.0.2' };
         expect(limiter.consumeUnauthenticated(requestA, 1000).allowed).toBe(true);
         expect(limiter.consumeUnauthenticated(requestA, 1001).allowed).toBe(true);
-        expect(limiter.consumeUnauthenticated(requestA, 1002).allowed).toBe(false);
-        expect(limiter.consumeUnauthenticated(requestB, 1002).allowed).toBe(true);
+        expect(limiter.consumeUnauthenticated(requestB, 1002).allowed).toBe(false);
+        expect(limiter.consumeUnauthenticated(requestC, 1002).allowed).toBe(true);
+    });
+
+    test('expired attacker-controlled rate keys are swept from both stores', () => {
+        limiter.consumeInstallation('expired-a', 1000);
+        limiter.consumeUnauthenticated({ ip: '10.0.0.1' }, 1000);
+        expect(limiter.storeSizesForTests()).toEqual({ installations: 1, unauthenticated: 1 });
+        limiter.consumeInstallation('current-b', 1100);
+        limiter.consumeUnauthenticated({ ip: '10.0.0.2' }, 1100);
+        expect(limiter.storeSizesForTests()).toEqual({ installations: 1, unauthenticated: 1 });
     });
 });

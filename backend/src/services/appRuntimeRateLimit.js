@@ -27,7 +27,14 @@ const WINDOW_MS = positiveInteger(
 const installationWindows = new Map();
 const unauthenticatedWindows = new Map();
 
+function sweepExpired(store, now) {
+    for (const [key, window] of store) {
+        if (window.resetAt <= now) store.delete(key);
+    }
+}
+
 function consume(store, key, limit, now = Date.now()) {
+    sweepExpired(store, now);
     const current = store.get(key);
     const window = !current || current.resetAt <= now
         ? { count: 0, resetAt: now + WINDOW_MS }
@@ -46,10 +53,9 @@ function installationKey(installationId) {
 }
 
 function requestIp(req) {
-    const forwarded = req.headers?.['x-forwarded-for'];
-    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-    const first = typeof value === 'string' ? value.split(',')[0].trim() : '';
-    return first || req.ip || req.socket?.remoteAddress || 'unknown';
+    // Express derives req.ip from its configured trust-proxy boundary. Raw XFF is
+    // attacker-controlled when no trusted proxy is configured and must not key auth limits.
+    return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
 function consumeInstallation(installationId, now) {
@@ -75,6 +81,13 @@ function resetForTests() {
     unauthenticatedWindows.clear();
 }
 
+function storeSizesForTests() {
+    return {
+        installations: installationWindows.size,
+        unauthenticated: unauthenticatedWindows.size,
+    };
+}
+
 module.exports = {
     DEFAULT_INSTALLATION_LIMIT,
     DEFAULT_UNAUTHENTICATED_LIMIT,
@@ -85,4 +98,5 @@ module.exports = {
     consumeInstallation,
     consumeUnauthenticated,
     resetForTests,
+    storeSizesForTests,
 };

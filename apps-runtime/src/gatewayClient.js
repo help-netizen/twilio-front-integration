@@ -61,6 +61,35 @@ class GatewayClient {
         this.fetchImpl = fetchImpl;
     }
 
+    async authorizeRunSource(sourceSha256, signal) {
+        const url = new URL('/internal/app-runtime/v1/runs/authorize', this.baseUrl);
+        const { response, payload } = await this.fetchJson(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${this.runToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ source_sha256: sourceSha256 }),
+        }, signal);
+        if (containsSecret(payload, this.runToken)) {
+            throw new AppRunnerError(
+                'APP_RUNTIME_TOKEN_EXPOSURE_BLOCKED',
+                'Gateway response was blocked by secret hygiene.'
+            );
+        }
+        if (!response.ok || payload?.ok !== true) {
+            throw new GatewayError(
+                typeof payload?.code === 'string'
+                    ? payload.code
+                    : 'APP_RUNTIME_AUTHORIZATION_FAILED',
+                typeof payload?.message === 'string'
+                    ? payload.message
+                    : 'App runtime execution was not authorized.',
+                Number.isInteger(response.status) ? response.status : 502
+            );
+        }
+    }
+
     async fetchJson(url, options, signal) {
         const controller = new AbortController();
         let timedOut = false;
@@ -100,7 +129,13 @@ class GatewayClient {
                     'Gateway request exceeded the host timeout.'
                 );
             }
-            throw error;
+            if (error instanceof AppRunnerError || error instanceof GatewayError) {
+                throw error;
+            }
+            throw new AppRunnerError(
+                'APP_RUNTIME_GATEWAY_UNAVAILABLE',
+                'Gateway request failed.'
+            );
         } finally {
             clearTimeout(timer);
             signal?.removeEventListener('abort', forwardAbort);

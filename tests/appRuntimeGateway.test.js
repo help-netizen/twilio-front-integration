@@ -14,6 +14,7 @@ const ALL_TOOLS = ['svc.list_jobs', 'svc.get_job', 'svc.list_tasks'];
 const mockTokenService = {
     verifyRunToken: jest.fn(),
     resolveRunContext: jest.fn(),
+    authorizeRunExecution: jest.fn(),
     consumeRunCall: jest.fn(),
     validateRunMetrics: jest.fn(),
     recordRunCompletion: jest.fn(),
@@ -21,12 +22,14 @@ const mockTokenService = {
 const mockReadExecute = jest.fn();
 const mockResolveCompanyUserAuthz = jest.fn();
 const mockAuditRecord = jest.fn();
+const mockAuthorizationAuditRecord = jest.fn();
 const mockGetMaskViewer = jest.fn();
 const mockConsumeInstallation = jest.fn();
 
 jest.mock('../backend/src/services/appRuntimeTokenService', () => ({
     verifyRunToken: mockTokenService.verifyRunToken,
     resolveRunContext: mockTokenService.resolveRunContext,
+    authorizeRunExecution: mockTokenService.authorizeRunExecution,
     consumeRunCall: mockTokenService.consumeRunCall,
     validateRunMetrics: mockTokenService.validateRunMetrics,
     recordRunCompletion: mockTokenService.recordRunCompletion,
@@ -45,6 +48,7 @@ jest.mock('../backend/src/services/authorizationService', () => ({
 }));
 jest.mock('../backend/src/services/appRuntimeAuditService', () => ({
     recordToolCall: mockAuditRecord,
+    recordRunAuthorization: mockAuthorizationAuditRecord,
 }));
 jest.mock('../backend/src/services/appRuntimeRateLimit', () => ({
     consumeInstallation: mockConsumeInstallation,
@@ -70,6 +74,7 @@ function context(overrides = {}) {
         app_id: '91',
         installation_id: '101',
         version_id: VERSION_ID,
+        artifact_sha256: 'a'.repeat(64),
         principal_id: '60000000-0000-4000-8000-000000000001',
         agent_user_id: AGENT_ID,
         delegated_by_user_id: DELEGATOR_ID,
@@ -110,6 +115,9 @@ beforeEach(() => {
     });
     mockTokenService.resolveRunContext.mockResolvedValue(context());
     mockTokenService.consumeRunCall.mockResolvedValue(1);
+    mockTokenService.authorizeRunExecution.mockResolvedValue({
+        execution_authorized_at: new Date().toISOString(), runs_started: 1, wall_ms_used: 0,
+    });
     mockTokenService.validateRunMetrics.mockImplementation(value => value);
     mockTokenService.recordRunCompletion.mockResolvedValue({ id: RUN_ID });
     mockResolveCompanyUserAuthz.mockResolvedValue({
@@ -121,6 +129,7 @@ beforeEach(() => {
     mockConsumeInstallation.mockReturnValue({ allowed: true, retryAfterSeconds: 1 });
     mockGetMaskViewer.mockResolvedValue(false);
     mockAuditRecord.mockResolvedValue({ id: 1 });
+    mockAuthorizationAuditRecord.mockResolvedValue({ id: 2 });
     mockReadExecute.mockImplementation(async (handler) => ({
         listJobs: {
             results: [{ id: 11, customer_phone: '+16175550101', nested: { phone: '+16175550102' } }],
@@ -270,6 +279,58 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         expect(response.body.code).toBe('ACCESS_DENIED');
         expect(mockResolveCompanyUserAuthz).toHaveBeenCalledWith(COMPANY_ID, DELEGATOR_ID);
         expect(mockReadExecute).not.toHaveBeenCalled();
+    });
+
+    test('SAB APP-FINAL-P0 run authorization requires the exact hash, live consent, and live RBAC', async () => {
+        const sourceSha256 = 'a'.repeat(64);
+        const authorized = await request(buildApp())
+            .post('/internal/app-runtime/v1/runs/authorize')
+            .set('Authorization', 'Bearer valid-token')
+            .send({ source_sha256: sourceSha256 });
+        expect(authorized.status).toBe(200);
+        expect(mockResolveCompanyUserAuthz).toHaveBeenCalledWith(COMPANY_ID, DELEGATOR_ID);
+        expect(mockTokenService.authorizeRunExecution).toHaveBeenCalledWith(
+            context(),
+            sourceSha256
+        );
+        expect(mockAuthorizationAuditRecord).toHaveBeenCalledWith(context(), expect.objectContaining({
+            outcome: 'succeeded', errorCode: null,
+        }));
+
+        mockTokenService.authorizeRunExecution.mockClear();
+        mockResolveCompanyUserAuthz.mockResolvedValue({
+            role_key: 'custom', membership: { id: 'member-a' }, permissions: [], scopes: {},
+        });
+        const denied = await request(buildApp())
+            .post('/internal/app-runtime/v1/runs/authorize')
+            .set('Authorization', 'Bearer valid-token')
+            .send({ source_sha256: sourceSha256 });
+        expect(denied.status).toBe(403);
+        expect(denied.body.code).toBe('ACCESS_DENIED');
+        expect(mockTokenService.authorizeRunExecution).not.toHaveBeenCalled();
+
+        mockTokenService.resolveRunContext.mockResolvedValue(context({
+            installation_metadata: {
+                app_runtime: { version_id: VERSION_ID, consented_tools: [] },
+            },
+        }));
+        const noConsent = await request(buildApp())
+            .post('/internal/app-runtime/v1/runs/authorize')
+            .set('Authorization', 'Bearer valid-token')
+            .send({ source_sha256: sourceSha256 });
+        expect(noConsent.status).toBe(403);
+        expect(noConsent.body.code).toBe('TOOL_NOT_CONSENTED');
+        expect(mockTokenService.authorizeRunExecution).not.toHaveBeenCalled();
+    });
+
+    test('run authorization transport rejects caller-controlled fields before token resolution', async () => {
+        const response = await request(buildApp())
+            .post('/internal/app-runtime/v1/runs/authorize')
+            .set('Authorization', 'Bearer valid-token')
+            .send({ source_sha256: 'a'.repeat(64), company_id: COMPANY_ID });
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe('INVALID_REQUEST');
+        expect(mockTokenService.verifyRunToken).not.toHaveBeenCalled();
     });
 
     test('SAB all output crosses masking seam: recursive customer phones are absent', async () => {

@@ -508,6 +508,34 @@ async function deleteExpiredMessages(companyId, { now = new Date(), batchSize = 
     return rows.length;
 }
 
+// tenant-safety-allow T-global-maintenance: ID-only scheduler discovery; every
+// content mutation is subsequently invoked with the explicit company id.
+async function listCompaniesWithExpiredMessages({
+    now = new Date(),
+    afterCompanyId = null,
+    batchSize = 1000,
+} = {}) {
+    if ((afterCompanyId !== null && typeof afterCompanyId !== 'string')
+        || !Number.isInteger(batchSize) || batchSize < 1 || batchSize > 5000) {
+        throw new AppBuilderRepositoryError(
+            'INVALID_REQUEST',
+            'Builder retention cleanup parameters are invalid.',
+            400
+        );
+    }
+    const { rows } = await db.query(
+        `SELECT message.company_id
+         FROM app_build_messages message
+         WHERE message.retention_expires_at <= $1
+           AND ($2::uuid IS NULL OR message.company_id > $2)
+         GROUP BY message.company_id
+         ORDER BY message.company_id
+         LIMIT $3`,
+        [now, afterCompanyId, batchSize]
+    );
+    return rows.map(row => row.company_id);
+}
+
 module.exports = {
     AppBuilderRepositoryError,
     createChat,
@@ -520,4 +548,5 @@ module.exports = {
     persistFailure,
     persistSuccess,
     deleteExpiredMessages,
+    listCompaniesWithExpiredMessages,
 };

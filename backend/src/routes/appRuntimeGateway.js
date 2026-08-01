@@ -60,6 +60,39 @@ function validateCompletionTransport(req, res, next) {
     }
 }
 
+function validateAuthorizationTransport(req, res, next) {
+    try {
+        if (Object.keys(req.query || {}).length > 0) {
+            throw appRuntimeError('INVALID_REQUEST', 'Query parameters are not accepted.', 400);
+        }
+        requestValidator.requireArgumentsObject(req.body);
+        if (Object.keys(req.body).length !== 1
+            || typeof req.body.source_sha256 !== 'string'
+            || !/^[0-9a-f]{64}$/.test(req.body.source_sha256)) {
+            throw appRuntimeError('INVALID_REQUEST', 'Source SHA-256 is invalid.', 400);
+        }
+        next();
+    } catch (error) {
+        sendFailure(req, res, error);
+    }
+}
+
+// tenant-safety-allow R-route-permission: live token, consent, and delegated RBAC
+// are re-resolved before the exact DB-pinned artifact receives one execution slot
+router.post(
+    '/v1/runs/authorize',
+    validateAuthorizationTransport,
+    authenticateAppRuntime,
+    async (req, res) => {
+        try {
+            await gatewayService.authorizeExecution(req, req.body.source_sha256);
+            return res.json({ ok: true, request_id: req.requestId });
+        } catch (error) {
+            return sendFailure(req, res, error);
+        }
+    }
+);
+
 // tenant-safety-allow R-route-permission: signed run-token identity can only finalize its exact DB-bound run tuple
 router.post(
     '/v1/runs/complete',

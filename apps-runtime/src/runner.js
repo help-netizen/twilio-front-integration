@@ -250,7 +250,7 @@ async function runApplication({
     gatewayBaseUrl,
     runToken,
     fetchImpl,
-    reportRunUsage = true,
+    executionMode = 'live',
     onUsage,
     signal,
 }) {
@@ -259,6 +259,12 @@ async function runApplication({
         throw new AppRunnerError(
             'APP_RUNTIME_RUN_TOKEN_REQUIRED',
             'A run token is required.'
+        );
+    }
+    if (!['live', 'sandbox'].includes(executionMode)) {
+        throw new AppRunnerError(
+            'APP_RUNTIME_EXECUTION_MODE_INVALID',
+            'Application execution mode is invalid.'
         );
     }
     if (typeof source !== 'string' || source.trim().length === 0) {
@@ -298,10 +304,21 @@ async function runApplication({
             error_code: mismatch.code,
         };
         if (typeof onUsage === 'function') onUsage(usage);
-        if (reportRunUsage) {
-            await gateway.recordRunCompletion(usage).catch(() => {});
-        }
         throw mismatch;
+    }
+    if (executionMode === 'live') {
+        try {
+            await gateway.authorizeRunSource(expectedSourceSha256, signal);
+        } catch (error) {
+            const usage = {
+                wall_ms: Date.now() - startedAt,
+                gateway_calls: 0,
+                result_bytes: null,
+                error_code: error?.code || 'APP_RUNTIME_AUTHORIZATION_FAILED',
+            };
+            if (typeof onUsage === 'function') onUsage(usage);
+            throw error;
+        }
     }
     const isolate = new ivm.Isolate({ memoryLimit: LIMITS.memoryMb });
     const controllers = new Set();
@@ -453,7 +470,7 @@ async function runApplication({
             error_code: completionErrorCode,
         };
         if (typeof onUsage === 'function') onUsage(usage);
-        if (reportRunUsage) {
+        if (executionMode === 'live') {
             await gateway.recordRunCompletion(usage);
         }
     }

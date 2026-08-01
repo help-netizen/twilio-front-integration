@@ -51,5 +51,20 @@ describe('APP-GAP-FIX-001 safe runtime audit identity', () => {
         expect(params[1]).toBe('svc.list_jobs');
         expect(JSON.parse(params[3]).unknown_tool).toBe(false);
     });
-});
 
+    test('execution admission audit uses only DB-bound identifiers and the pinned hash', async () => {
+        const context = { ...CONTEXT, artifact_sha256: 'a'.repeat(64) };
+        await auditService.recordRunAuthorization(context, {
+            outcome: 'succeeded', errorCode: null, httpStatus: 200, requestId: 'req-authz',
+        });
+        const params = mockQuery.mock.calls[0][1];
+        expect(params[1]).toBe(CONTEXT.run_id);
+        expect(JSON.parse(params[3])).toEqual({
+            version_id: CONTEXT.version_id,
+            source_sha256: 'a'.repeat(64),
+            outcome: 'succeeded',
+            error_code: null,
+            response_class: '2xx',
+        });
+    });
+});

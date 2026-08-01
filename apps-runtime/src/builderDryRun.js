@@ -99,6 +99,7 @@ async function validateAndDryRun({
             input,
             gatewayBaseUrl: DRY_RUN_GATEWAY,
             runToken: DRY_RUN_TOKEN,
+            executionMode: 'sandbox',
             fetchImpl: async (url, options) => {
                 let args;
                 try {
@@ -112,7 +113,6 @@ async function validateAndDryRun({
                     activeFixtures
                 );
             },
-            reportRunUsage: false,
             onUsage: value => { usage = value; },
             signal,
         });

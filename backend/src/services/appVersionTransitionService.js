@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../db/connection');
+const { scrubSecrets } = require('./appBuilderSecretScrubber');
 
 const ALLOWED_TRANSITIONS = Object.freeze({
     draft: Object.freeze(['submitted']),
@@ -45,7 +46,8 @@ function cleanReason(value) {
             422
         );
     }
-    const reason = value.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
+    const reason = scrubSecrets(value)
+        .replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
     if (!reason || reason.length > 2000) {
@@ -56,6 +58,23 @@ function cleanReason(value) {
         );
     }
     return reason;
+}
+
+function versionResponse(version) {
+    return {
+        id: version.id,
+        app_id: version.app_id,
+        version_number: version.version_number,
+        source_sha256: version.source_sha256,
+        scanner_report: version.scanner_report,
+        status: version.status,
+        created_at: version.created_at,
+        updated_at: version.updated_at,
+        submitted_at: version.submitted_at,
+        reviewed_at: version.reviewed_at,
+        published_at: version.published_at,
+        rejection_reason: version.rejection_reason,
+    };
 }
 
 function createAppVersionTransitionService({
@@ -287,7 +306,9 @@ function createAppVersionTransitionService({
     }) {
         return withTransaction(async client => {
             const version = await lockVersion(client, { versionId, appId, companyId });
-            if (idempotentStatus && version.status === idempotentStatus) return version;
+            if (idempotentStatus && version.status === idempotentStatus) {
+                return versionResponse(version);
+            }
             if (!ALLOWED_TRANSITIONS[version.status]?.includes(toStatus)) {
                 throw conflict(version.status, toStatus);
             }
@@ -312,7 +333,7 @@ function createAppVersionTransitionService({
                 reason: rejectionReason,
                 traceId,
             });
-            return updated;
+            return versionResponse(updated);
         });
     }
 
@@ -388,7 +409,7 @@ function createAppVersionTransitionService({
                 ]
             );
             if (auditRows.length !== 1) throw new Error('App version fork audit insert failed');
-            return fork.rows[0];
+            return versionResponse(fork.rows[0]);
         });
     }
 
@@ -415,5 +436,6 @@ module.exports = {
     ALLOWED_TRANSITIONS,
     AppVersionTransitionError,
     cleanReason,
+    versionResponse,
     createAppVersionTransitionService,
 };

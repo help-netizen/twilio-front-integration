@@ -48,6 +48,37 @@ function installRequestContext(req, context, authz) {
     };
 }
 
+async function authorizeExecution(req, sourceSha256) {
+    const context = req.appRuntimeContext;
+    let failure = null;
+    let result;
+    try {
+        const authz = await executor.resolveLiveAuthorization(context);
+        executor.requireExecutionAuthorization(context, authz);
+        result = await tokenService.authorizeRunExecution(context, sourceSha256);
+    } catch (error) {
+        failure = normalizeError(error);
+    }
+
+    try {
+        await auditService.recordRunAuthorization(context, {
+            outcome: outcomeFor(failure),
+            errorCode: failure?.code || null,
+            httpStatus: failure?.httpStatus || 200,
+            requestId: req.requestId,
+        });
+    } catch (_auditError) {
+        throw appRuntimeError(
+            'AUDIT_UNAVAILABLE',
+            'App runtime audit is unavailable.',
+            503
+        );
+    }
+
+    if (failure) throw failure;
+    return result;
+}
+
 async function execute(req, toolName, args) {
     const context = req.appRuntimeContext;
     let authz;
@@ -99,5 +130,6 @@ async function execute(req, toolName, args) {
 module.exports = {
     normalizeError,
     installRequestContext,
+    authorizeExecution,
     execute,
 };

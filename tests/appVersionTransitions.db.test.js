@@ -263,7 +263,7 @@ describe('APP-MOD-001 migration and transition matrix', () => {
         }
     });
 
-    databaseTest('allowed/forbidden matrix, immutability, audit, rejection chat, and T-own/T-foreign/T-blast', async () => {
+    databaseTest('SAB APP-FINAL-P1 transition responses omit source and rejection sinks are scrubbed across the full matrix', async () => {
         const client = await db.pool.connect();
         let querySpy;
         let getClientSpy;
@@ -306,6 +306,10 @@ describe('APP-MOD-001 migration and transition matrix', () => {
                     ...(toStatus === 'rejected' ? { reason: 'Unsafe reflection path.' } : {}),
                 });
                 expect(result.status).toBe(toStatus);
+                expect(result).not.toHaveProperty('source_code');
+                expect(result).not.toHaveProperty('created_by');
+                expect(result).not.toHaveProperty('reviewed_by');
+                expect(result).not.toHaveProperty('company_id');
                 expect(await versionStatus(client, fixture.id, appA)).toBe(toStatus);
             }
 
@@ -358,6 +362,8 @@ describe('APP-MOD-001 migration and transition matrix', () => {
                 versionId: rejected.id,
             });
             expect(fork.status).toBe('draft');
+            expect(fork).not.toHaveProperty('source_code');
+            expect(fork).not.toHaveProperty('created_by');
             const forkTools = await client.query(
                 `SELECT tool_name FROM app_version_tools WHERE version_id = $1 ORDER BY tool_name`,
                 [fork.id]
@@ -386,6 +392,10 @@ describe('APP-MOD-001 migration and transition matrix', () => {
             const immutable = await insertDraft(client, appA, actorA);
             await service.submitVersion({ ...contextA, versionId: immutable.id });
             await service.startReview({ ...contextA, versionId: immutable.id });
+            const idempotentReview = await service.startReview({
+                ...contextA, versionId: immutable.id,
+            });
+            expect(idempotentReview).not.toHaveProperty('source_code');
             expect(await versionStatus(client, immutable.id, appA)).toBe('in_review');
             await client.query('SAVEPOINT immutable_source');
             await expect(client.query(
@@ -428,6 +438,48 @@ describe('APP-MOD-001 migration and transition matrix', () => {
                 [directStatus.id, appA]
             )).rejects.toThrow(/APP_VERSION_TRANSITION_SERVICE_REQUIRED/);
             await client.query('ROLLBACK TO SAVEPOINT direct_status');
+
+            const sensitive = await insertDraft(client, appA, actorA);
+            await service.submitVersion({ ...contextA, versionId: sensitive.id });
+            await service.startReview({ ...contextA, versionId: sensitive.id });
+            const rawReason = 'Bearer abcdefghijklmnop for customer@example.com at +16175550101';
+            const rejectedSensitive = await service.rejectVersion({
+                ...contextA,
+                versionId: sensitive.id,
+                reason: rawReason,
+            });
+            expect(rejectedSensitive.rejection_reason).toContain('[REDACTED_BEARER_TOKEN]');
+            expect(rejectedSensitive.rejection_reason).toContain('[REDACTED_EMAIL]');
+            expect(rejectedSensitive.rejection_reason).toContain('[REDACTED_PHONE]');
+            expect(rejectedSensitive).not.toHaveProperty('source_code');
+            const sensitiveSinks = await client.query(
+                `SELECT version.rejection_reason,
+                        (SELECT details
+                         FROM audit_log audit
+                         WHERE audit.company_id = owned.company_id
+                           AND audit.action = 'app_version.transition'
+                           AND audit.target_id = version.id::text
+                         ORDER BY audit.id DESC
+                         LIMIT 1) AS audit_details,
+                        (SELECT message.text
+                         FROM app_build_messages message
+                         WHERE message.company_id = owned.company_id
+                           AND message.app_id = version.app_id
+                           AND message.version_id = version.id
+                         ORDER BY message.id DESC
+                         LIMIT 1) AS author_message
+                 FROM app_versions version
+                 JOIN app_studio_apps owned
+                   ON owned.app_id = version.app_id
+                  AND owned.company_id = $2
+                 WHERE version.id = $1
+                   AND version.app_id = owned.app_id`,
+                [sensitive.id, companyA]
+            );
+            const serializedSinks = JSON.stringify(sensitiveSinks.rows[0]);
+            expect(serializedSinks).not.toContain('abcdefghijklmnop');
+            expect(serializedSinks).not.toContain('customer@example.com');
+            expect(serializedSinks).not.toContain('+16175550101');
 
             const foreign = await insertDraft(client, appB, actorB);
             await service.submitVersion({

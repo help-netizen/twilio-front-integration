@@ -374,6 +374,19 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
             expect(retainedChat.messages).toHaveLength(0);
             expect(await snapshotCompany(client, companyB)).toStrictEqual(beforeB);
 
+            await expect(repository.listCompaniesWithExpiredMessages({
+                now: new Date(),
+                batchSize: 100,
+            })).resolves.toContain(companyB);
+            await expect(repository.deleteExpiredMessages(companyB, {
+                now: new Date(),
+                batchSize: 100,
+            })).resolves.toBe(1);
+            const globallyRetainedChat = await repository.getMessages(companyB, fixtureB.chatId);
+            expect(globallyRetainedChat.chat.id).toBe(fixtureB.chatId);
+            expect(globallyRetainedChat.messages).toHaveLength(0);
+            const afterRetentionB = await snapshotCompany(client, companyB);
+
             await repository.appendUserMessage(
                 companyA,
                 actorA,
@@ -524,7 +537,7 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
                     gotchas: [],
                 },
             });
-            expect(await snapshotCompany(client, companyB)).toStrictEqual(beforeB);
+            expect(await snapshotCompany(client, companyB)).toStrictEqual(afterRetentionB);
 
         } finally {
             querySpy?.mockRestore();

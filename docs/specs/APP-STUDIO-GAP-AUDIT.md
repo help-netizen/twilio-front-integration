@@ -1,4 +1,181 @@
-# APP-STUDIO Ф1–Ф3 — gap audit
+# APP-STUDIO Ф1–Ф6 — final gap audit
+
+## FINAL Ф1–Ф6 CLOSURE (2026-08-01, master `752cee72`)
+
+This closure re-ran the original adversarial spec↔code method across
+`APP-STUDIO-001`, `APP-GW-001`, `APP-RUN-001`, `APP-BUILD-001`,
+`APP-SVC-001`, `APP-SANDBOX-001`, and `APP-MOD-001`, with emphasis on changes
+after the first audit and the seams between phases. The older point-in-time
+registry remains below as historical evidence; this section is authoritative
+for the final Ф1–Ф6 state.
+
+| Final finding class | Found | Fixed now | Open |
+|---|---:|---:|---:|
+| P0 | 3 | 3 | 0 |
+| P1 | 5 | 5 | 0 |
+| P2 | 3 | 0 | 3 |
+| Deferred to Ф7/Ф8 | 2 groups | 0 | 2 groups |
+| Spec contradiction requiring owner/architect decision | 1 | 0 | 1 |
+
+### Seam verdicts
+
+1. **CRM→runner HTTP is fail closed and preserves the in-process guarantees.**
+   A live runner now calls the fixed CRM
+   `/internal/app-runtime/v1/runs/authorize` endpoint before creating an
+   isolate. CRM binds the caller-supplied hash to the run's DB-pinned artifact,
+   re-resolves the full active chain, live consent, and current delegated RBAC,
+   and atomically consumes a one-time execution slot. An unavailable/denying
+   CRM prevents compilation; there is no runner-local authorization fallback
+   and no CRM-local execution fallback.
+2. **No real-run path reaches source compilation without the live gate.** The
+   standalone CLI and `/v1/run` both use `executionMode: live`. The only bypass
+   is the explicit `executionMode: sandbox` used by `/v1/dry-run`, where draft
+   execution against synthetic fixtures is the required product behavior.
+   Completion requires prior execution admission and cannot turn a revoked run
+   back into `completed`/`failed`.
+3. **Moderation owns all production status writes.** A repository-wide search
+   finds production `UPDATE app_versions ... status` only in
+   `appVersionTransitionService`; the other matches are migrations/rollback and
+   adversarial tests. Migration 223 still rejects direct status writes at the
+   database boundary.
+4. **Sandbox and live data planes remain disjoint.** `/v1/dry-run` alone passes
+   an in-memory synthetic fixture projector and never creates a CRM gateway
+   client. `/v1/run` is explicitly live, receives no fixture fields, preflights
+   CRM, and uses only the real gateway bridge. Exact endpoint-specific envelope
+   keys reject fixture/seed fields on live runs and run-token fields on dry runs.
+5. **App Studio remains tenant-admin-only and tenant-scoped.** Permission and
+   exact `tenant_admin` checks now run before feature/configuration checks, so a
+   non-admin cannot learn enablement or runner configuration state. The real
+   protected mount remains `src/server.js:168`; tenant repository queries remain
+   company-scoped and foreign chat/version actions remain indistinguishable 404s.
+6. **Prior closure controls F1–F8 remain effective.** Artifact byte pinning,
+   aggregate controls, PII/secret scrubbing and retention deadlines, remote-only
+   runner use, consume-time revocation, membership deletion fail-closed, safe
+   audit identities, and reflective scanner rejection all remain covered. This
+   closure strengthened F1/F2/F3 rather than replacing them.
+7. **No Node 24/native dependency remains in the CRM container.** Root
+   `package.json` has no `isolated-vm`; the CRM builder calls the runner over
+   HTTP. Node 24 and `isolated-vm` remain intentionally isolated to
+   `apps-runtime/Dockerfile` and `apps-runtime/package.json`.
+
+### Final P0 findings
+
+#### FINAL-P0-01 — Caller-controlled hash could authorize arbitrary live source — FIXED
+
+Before this closure, `/v1/run` compared source bytes only with a hash supplied
+in the same service request. A service-token holder could therefore provide
+arbitrary source plus its own hash, and a zero-tool app never forced validation
+of the run token/live authority. **FIXED** by the pre-compilation CRM admission
+endpoint, `GatewayClient.authorizeRunSource`, live consent/RBAC intersection,
+and DB comparison with `app_runs.artifact_sha256`. Test:
+`SAB APP-FINAL-P0 live execution requires CRM-authoritative artifact authorization before compile`.
+
+#### FINAL-P0-02 — Run token replay and zero-tool apps bypassed aggregate resource controls — FIXED
+
+Before this closure, one valid token could be submitted to `/v1/run` more than
+once, and `app_runtime_usage` counted only gateway calls, so a zero-tool app had
+no per-installation execution ceiling. **FIXED** by migration 224's one-time
+`execution_authorized_at`, UTC daily `runs_started` and `wall_ms_used` budgets,
+and atomic `DAILY_RUN_LIMIT`/`DAILY_WALL_MS_LIMIT` auto-suspension. Gateway calls
+and completion both require the admitted run, and completion preserves revoked
+status. Test:
+`SAB APP-FINAL-P0 DB admission is hash-pinned, one-time, consent-live, metered, and required by calls/completion`.
+
+#### FINAL-P0-03 — Retention expiry existed but no production cleanup called it — FIXED
+
+Before this closure, expired builder-message deletion was reachable only from a
+test/helper. **FIXED** by ID-only company discovery followed by explicit
+company-scoped batch deletion in the already production-started daily retention
+scheduler (`src/server.js:491`, unchanged), which drains all expired batches
+while preserving chat rows. Tests:
+`SAB APP-FINAL-P0 production retention tick drains every expired builder-message batch`
+plus the real-PostgreSQL builder tenant/blast test.
+
+### Final P1 findings
+
+#### FINAL-P1-01 — Transition mutation responses leaked source and internal columns — FIXED
+
+`UPDATE ... RETURNING *`, the idempotent review path, and rejected-version fork
+returned raw `source_code` through tenant and platform mutation APIs, bypassing
+the moderation detail page's “Show code” audit. **FIXED** with an exact response
+projection shared by every transition/fork return path. Real-PostgreSQL test:
+`SAB APP-FINAL-P1 transition responses omit source and rejection sinks are scrubbed across the full matrix`.
+
+#### FINAL-P1-02 — Feature/runner configuration leaked before tenant-admin denial — FIXED
+
+Product/config middleware ran before permission and role middleware, allowing a
+non-admin to distinguish 404 disabled from 503 misconfigured. **FIXED** by
+running `tenant.integrations.manage` and exact tenant-admin checks first. Test:
+`SAB non-admin authorization runs before feature and runner configuration disclosure`.
+
+#### FINAL-P1-03 — Moderation rejection reason created three secret/PII sinks — FIXED
+
+The raw super-admin reason was stored in `app_versions.rejection_reason`, audit
+details, and an author-visible builder message. **FIXED** by applying the shared
+secret/email/phone/long-number scrubber before length validation and before any
+of those writes. The full-matrix real-PostgreSQL test asserts all three sinks.
+
+#### P1-09 — Raw X-Forwarded-For trust and stale in-memory rate keys — FIXED
+
+`requestIp` now uses Express's trust-boundary-derived `req.ip`/socket address,
+never raw XFF, and every consume sweep removes expired keys from both maps.
+Tests: `SAB spoofed X-Forwarded-For cannot split an unauthenticated IP budget`
+and `expired attacker-controlled rate keys are swept from both stores`.
+
+#### P1-08 — Fresh attack-only review/sabotage evidence — FIXED
+
+This Ф1–Ф6 audit is the fresh cross-phase review. Its critical controls have
+named tests and recorded BREAK→red→restore evidence in the verification log
+below; no weakened test or production bypass remains after restore.
+
+### P2 remaining after final closure
+
+1. **Builder audit outage edge:** quota reservation followed by a failure in
+   `getGenerationContext` can still miss the failure message/audit, and
+   `insertAudit` does not assert one inserted row. This cannot create or execute
+   an artifact (historical P2-01).
+2. **Semantic free-text PII:** deterministic scrubbing covers secrets, email,
+   phone, and long numeric identifiers, but cannot reliably identify every
+   human name or prose address without a product DLP policy. Retention is now
+   operational; no newly added queue/service/page sink remains raw.
+3. **Deployment attestation:** the repository proves the separate Node 24 image
+   and CRM package boundary, but cannot attest the live app server's read-only
+   rootfs, cap-drop, pids/CPU/memory limits, absence of docker.sock, or network
+   ACL. Those remain an operations acceptance check, not a CRM-container native
+   dependency.
+
+Historical P2-02 (host byte ceilings) is **FIXED** by the 256 KiB runner request
+and CRM response caps plus the gateway response cap. Historical P2-03 is
+**FIXED** by the expanded real-PostgreSQL provider/custom deny, live permission,
+membership deletion, installer change, kill-state, T-own/T-foreign/T-blast
+matrix.
+
+### Deferred and specification conflict
+
+- **DEFERRED Ф7:** arbitrary egress/proxy remains absent exactly as required by
+  `APP-STUDIO-001:130-131` and `APP-MOD-001:134-136`.
+- **DEFERRED Ф8:** public catalog/commerce, KYC, 2FA, payout/payment, and the
+  unresolved builder-token wallet debit/tariff belong to the money/public phase
+  (`APP-STUDIO-001:132-144`; `APP-MOD-001:125-127,134-136`). No rate or charging
+  contract was invented in this closure.
+- **SPEC CONTRADICTION:** master roadmap `APP-STUDIO-001:129` calls Ф6 “typed
+  writes,” while the supplied Ф6 implementation spec `APP-MOD-001:134-136`
+  explicitly excludes new tools and write permissions and instead defines
+  moderation. This audit followed the phase-specific spec and did not invent a
+  write catalog. The roadmap/phase numbering needs an owner decision.
+
+### Verification and sabotage record
+
+The final command results and exact green/red counts are recorded in the task
+handoff. Named sabotage controls:
+
+- `SAB APP-FINAL-P0 live execution requires CRM-authoritative artifact authorization before compile`
+  was observed red after bypassing the live preflight (`expected
+  APP_RUNTIME_SOURCE_MISMATCH`, received `APP_RUNTIME_USAGE_REPORT_FAILED`), then
+  the preflight was restored.
+- `SAB APP-FINAL-P1 transition responses omit source and rejection sinks are scrubbed across the full matrix`
+  was observed red after returning the raw transition row (`source_code` was
+  present), then the response projection was restored.
 
 Дата аудита: 2026-07-31. Объект: текущее состояние после `1c6b989a`, `c16185df`, `e4eeccc8`. Это статический adversarial audit; код и тесты не менялись.
 
@@ -313,15 +490,25 @@ names persist only `unknown:<truncated sha256>` plus `details.unknown_tool=true`
 
 Unknown tool должен аудироваться, но raw path parameter пишется в `target_id` (`appRuntimeAuditService.js:21-35`). Direct valid-token caller может передать token, phone/email или search text как tool name. Это обходит safe `details`, которые сами по себе корректны.
 
-### P1-08 — Fresh independent attack review и complete sabotage evidence не выполнены
+### P1-08 — Fresh independent attack review и complete sabotage evidence — FIXED
+
+**Статус: FIXED by the final Ф1–Ф6 closure above.**
 
 `APP-GW-001:3` сам говорит “pending fresh attack-only review”; `APP-RUN-001:230-233` требует то же. В репо есть много SAB tests, но нет recorded BREAK→red для всех 18 gateway controls; самоаудит автора не заменяет independent review.
 
-### P1-09 — Unauthenticated limiter доверяет raw `X-Forwarded-For`, stores never-expiring keys
+### P1-09 — Unauthenticated limiter доверяет raw `X-Forwarded-For`, stores never-expiring keys — FIXED
+
+**Статус: FIXED.** `req.ip`/socket is the only key source and expired
+entries are swept on consume; named spoof/cleanup tests are in the final closure.
 
 `requestIp` берёт client-controlled header до `req.ip` (`appRuntimeRateLimit.js:48-52`), а `Map` entries никогда не удаляются (`:27-40`). Без жёсткой proxy normalization атакующий обходит IP budget и растит RAM.
 
-### P1-10 — Builder token usage is measured but never charged to the wallet
+### P1-10 — Builder token usage is measured but never charged to the wallet — DEFERRED Ф8
+
+**Status: DEFERRED to the public/money phase.** The owner decision requires a
+wallet debit but no tariff/charging contract exists; `APP-STUDIO-001:132-144`
+places payment/commerce in Ф8 and says compute itself is not billed. This closure
+does not invent money behavior.
 
 Parent owner decision says LLM tokens are deducted from the wallet (`APP-STUDIO-001:143-144`). Builder records model token counts in message/audit and enforces a flat company/day quota (`appBuilderRepository.js:200-215,218-252`), but the generation path contains no wallet balance lookup/debit (`appBuilderService.js:145-235`). This is a billing/consent gap before enabling the paid provider for tenants.
 
@@ -331,11 +518,20 @@ Parent owner decision says LLM tokens are deducted from the wallet (`APP-STUDIO-
 
 Quota is reserved, then `getGenerationContext` runs outside the `try` (`appBuilderService.js:149-167`). A DB error there produces no persisted failed assistant message and no `app_builder.generation` audit. `insertAudit` awaits the query but does not verify `rowCount===1` (`appBuilderRepository.js:218-253`). Это не создаёт версию и не расширяет authority, но делает accounting incomplete.
 
-### P2-02 — Runtime has no explicit source/input/gateway-response host byte ceilings
+### P2-02 — Runtime has no explicit source/input/gateway-response host byte ceilings — FIXED
+
+**Статус: FIXED by APP-SVC-001.** The runner caps the complete HTTP body
+at 256 KiB, CRM caps runner responses at 256 KiB, and the host gateway client
+caps CRM responses before JSON delivery.
 
 Builder source is capped at 64 KiB, но generic Phase 2 `runApplication` accepts any source string (`runner.js:232-250`); host input serializes without size cap (`runner.js:201-223`); gateway parses response without byte ceiling (`gatewayClient.js:86-105`). Container cap was intended as outer boundary but is not deployed. Это следует рассматривать вместе с P0-02, но отдельно эти caps не были заданы Phase 2 spec.
 
-### P2-03 — Exact R-matrix/revocation test plan не полностью табличный
+### P2-03 — Exact R-matrix/revocation test plan не полностью табличный — FIXED
+
+**Статус: FIXED by F5/F6 and the final closure.** The real-PostgreSQL
+matrix now includes provider scope cells, live permission deny, every active
+chain kill state, installer change, membership deletion, and tenant blast
+snapshots; route units retain the custom-role deny cells.
 
 Real-PG gateway coverage сильное, но не имеет exact custom-role positive Tasks cell, missing-delegator cell, membership-deleted и installed_by-changed cases (`tests/appRuntimeTenancy.db.test.js:390-520,599-674`). Это test-evidence gap; actual permission/scoping paths для большинства соседних случаев fail closed.
 
