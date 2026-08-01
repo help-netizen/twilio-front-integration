@@ -720,18 +720,25 @@ async function handleDialAction(req, res) {
             console.error(`[${traceId}] Inbox ingestion failed (non-blocking):`, ingestErr.message);
         }
 
-        const execution = await callFlowRuntime.getExecution(CallSid);
-        if (execution && execution.status === 'active') {
-            // vapi_agent nodes mark their Dial action with ?vapiNode=1 so the
-            // real DialCallStatus maps to a vapi.* event (completed → end call,
-            // failure/timeout → follow the node's fallback edge).
-            const flowEvent = req.query.flowEvent
-                || (req.query.vapiNode ? callFlowRuntime.vapiEventFromDialStatus(dialStatus) : callFlowRuntime.eventFromDialStatus(dialStatus));
-            const flowTwiml = await callFlowRuntime.advance(CallSid, flowEvent, traceId);
-            if (flowTwiml) {
-                res.type('text/xml');
-                return res.send(flowTwiml);
+        // SARA-BACKUP-HARDEN-001: any flow-engine failure here must NOT bubble
+        // to the outer catch (a 500 makes Twilio drop the live caller) — log it
+        // and fall through to the legacy voicemail branch below, which answers.
+        try {
+            const execution = await callFlowRuntime.getExecution(CallSid);
+            if (execution && execution.status === 'active') {
+                // vapi_agent nodes mark their Dial action with ?vapiNode=1 so the
+                // real DialCallStatus maps to a vapi.* event (completed → end call,
+                // failure/timeout → follow the node's fallback edge).
+                const flowEvent = req.query.flowEvent
+                    || (req.query.vapiNode ? callFlowRuntime.vapiEventFromDialStatus(dialStatus) : callFlowRuntime.eventFromDialStatus(dialStatus));
+                const flowTwiml = await callFlowRuntime.advance(CallSid, flowEvent, traceId);
+                if (flowTwiml) {
+                    res.type('text/xml');
+                    return res.send(flowTwiml);
+                }
             }
+        } catch (flowErr) {
+            console.error(`[${traceId}] Call-flow advance crashed — falling back to voicemail route:`, flowErr.stack || flowErr.message);
         }
 
         // Decide TwiML response based on DialCallStatus (no DB reads needed)

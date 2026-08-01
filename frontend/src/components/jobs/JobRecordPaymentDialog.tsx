@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CircleCheckBig } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import {
@@ -7,6 +8,8 @@ import {
 } from '../ui/dialog';
 import { FloatingField } from '../ui/floating-field';
 import { maskMoneyDigits } from '../ui/MoneyInput';
+import { FloatingTextField } from '../shared/FloatingTextField';
+import { sendReceipt, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import * as paymentsApi from '../../services/paymentsCanonicalApi';
@@ -45,7 +48,28 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
         setPaymentDate(todayLocal());
         setMemo('');
         setSubmitting(false);
+        setRecorded(null);
+        setReceiptEmail('');
+        setReceiptPhase('idle');
     }, [open, outstanding]);
+
+    // RECORD-PAY-RECEIPT-001: success screen with Send receipt, mirroring the
+    // card-payment success view — cash/check payers get a receipt too.
+    const [recorded, setRecorded] = useState<PaymentTransaction | null>(null);
+    const [receiptEmail, setReceiptEmail] = useState('');
+    const [receiptPhase, setReceiptPhase] = useState<'idle' | 'sending' | 'sent'>('idle');
+
+    const handleSendReceipt = async () => {
+        if (!recorded || !receiptEmail.trim() || receiptPhase === 'sending') return;
+        setReceiptPhase('sending');
+        try {
+            await sendReceipt(recorded.id, { channel: 'email', recipient: receiptEmail.trim() });
+            setReceiptPhase('sent');
+        } catch (err) {
+            setReceiptPhase('idle');
+            toast.error(err instanceof Error ? err.message : 'Could not send the receipt');
+        }
+    };
 
     const handleSubmit = async () => {
         const numericAmount = Number(amount);
@@ -53,7 +77,7 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
 
         setSubmitting(true);
         try {
-            await paymentsApi.recordJobPayment(jobId, {
+            const txn = await paymentsApi.recordJobPayment(jobId, {
                 amount: numericAmount,
                 payment_method: paymentMethod,
                 reference_number: referenceNumber || undefined,
@@ -62,7 +86,7 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
             });
             toast.success('Payment recorded');
             onSuccess?.();
-            onOpenChange(false);
+            setRecorded(txn);
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Failed to record payment');
         } finally {
@@ -86,6 +110,41 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
                 </DialogPanelHeader>
 
                 <DialogBody className="md:px-8 md:py-7">
+                    {recorded ? (
+                        <div className="mx-auto flex w-full max-w-[740px] flex-col items-center py-8 text-center">
+                            <CircleCheckBig className="size-16 text-[var(--blanc-success)]" strokeWidth={1.6} aria-hidden="true" />
+                            <h2 className="mt-4 text-2xl font-semibold text-[var(--blanc-ink-1)]" style={{ fontFamily: 'var(--blanc-font-heading)' }}>
+                                Payment recorded
+                            </h2>
+                            <p className="mt-3 text-xl font-semibold text-[var(--blanc-ink-1)]">Paid ${Number(recorded.amount).toFixed(2)}</p>
+                            <p className="mt-1 text-sm capitalize text-[var(--blanc-ink-2)]">{String(recorded.payment_method || paymentMethod)}</p>
+                            <div className="mt-6 w-full max-w-md space-y-3.5 text-left">
+                                {receiptPhase === 'sent' ? (
+                                    <p className="flex items-center justify-center gap-2 text-sm font-medium text-[var(--blanc-success)]" role="status">
+                                        <CircleCheckBig className="size-4 shrink-0" aria-hidden="true" />
+                                        <span>Receipt sent to {receiptEmail.trim()}</span>
+                                    </p>
+                                ) : (
+                                    <>
+                                        <FloatingTextField
+                                            label="Customer email"
+                                            inputMode="email"
+                                            autoComplete="off"
+                                            value={receiptEmail}
+                                            onChange={event => setReceiptEmail((event.target as HTMLInputElement).value)}
+                                            disabled={receiptPhase === 'sending'}
+                                            onSubmit={handleSendReceipt}
+                                            submitting={receiptPhase === 'sending'}
+                                            canSubmit={Boolean(receiptEmail.trim())}
+                                        />
+                                        <Button type="button" variant="secondary" className="w-full" onClick={handleSendReceipt} disabled={receiptPhase === 'sending' || !receiptEmail.trim()}>
+                                            {receiptPhase === 'sending' ? 'Sending receipt…' : 'Send receipt'}
+                                        </Button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
                     <div className="mx-auto w-full max-w-[740px] space-y-6">
                         <div className="space-y-3.5">
                             <FloatingField
@@ -126,15 +185,20 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
                             />
                         </div>
                     </div>
+                    )}
                 </DialogBody>
 
                 <DialogPanelFooter>
+                    {recorded ? (
+                        <Button onClick={() => onOpenChange(false)}>Done</Button>
+                    ) : (<>
                     <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
                         Cancel
                     </Button>
                     <Button type="button" onClick={handleSubmit} disabled={submitting || !(Number(amount) > 0)}>
                         {submitting ? 'Recording...' : 'Record payment'}
                     </Button>
+                </>)}
                 </DialogPanelFooter>
             </DialogContent>
         </Dialog>

@@ -627,7 +627,18 @@ async function advance(callSid, event, traceId = 'call-flow') {
     }
 
     await saveExecutionState(callSid, execution.company_id, { currentNodeId: nextId, contextJson: context });
-    const twiml = await renderNodeById(callSid, nextId, traceId);
+    // SARA-BACKUP-HARDEN-001: a node renderer crash must never surface as a
+    // webhook 500 — Twilio would drop the live caller (observed 2026-08-01:
+    // pointer moved to n-vapi-bh-backup, no TwiML, parent died as no-answer).
+    // Fail into voicemail: the call gets ANSWERED and the customer can speak.
+    let twiml;
+    try {
+        twiml = await renderNodeById(callSid, nextId, traceId);
+    } catch (err) {
+        console.error(`[${traceId}] Node render crashed on ${nextId} — failing into voicemail:`, err.stack || err.message);
+        await saveExecutionState(callSid, execution.company_id, { status: 'failed' }).catch(() => {});
+        twiml = buildVoicemailTwiml(context);
+    }
     if (isVoicemailCompletion) await completeVoicemailCall(execution, context);
     return twiml;
 }
