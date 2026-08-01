@@ -1,6 +1,7 @@
 'use strict';
 
-const { runApplication, sourceSha256 } = require('./runner');
+const { runApplication, sourceMatchesExpected } = require('./runner');
+const { AppRunnerError } = require('./errors');
 const { validateApplicationSource } = require('./builderValidator');
 
 const DRY_RUN_INPUT = Object.freeze({ today: '2026-07-31' });
@@ -34,8 +35,8 @@ const TOOL_FIXTURES = Object.freeze({
     }),
 });
 
-function fixtureResponse(toolName) {
-    const data = TOOL_FIXTURES[toolName];
+function fixtureResponse(toolName, fixtures) {
+    const data = fixtures[toolName];
     if (!data) {
         const payload = { ok: false, code: 'TOOL_NOT_FOUND', message: 'Tool not found.' };
         return {
@@ -52,22 +53,68 @@ function fixtureResponse(toolName) {
     };
 }
 
-async function validateAndDryRun(source) {
+async function validateAndDryRun({
+    source,
+    expectedSourceSha256,
+    input = DRY_RUN_INPUT,
+    fixtures = TOOL_FIXTURES,
+    signal,
+}) {
+    if (typeof expectedSourceSha256 !== 'string'
+        || !/^[0-9a-f]{64}$/.test(expectedSourceSha256)) {
+        throw new AppRunnerError(
+            'APP_RUNTIME_SOURCE_HASH_REQUIRED',
+            'An approved source SHA-256 is required.'
+        );
+    }
+    if (!sourceMatchesExpected(source, expectedSourceSha256)) {
+        const mismatch = new AppRunnerError(
+            'APP_RUNTIME_SOURCE_MISMATCH',
+            'Application source does not match the approved artifact.'
+        );
+        mismatch.usage = {
+            wall_ms: 0,
+            gateway_calls: 0,
+            result_bytes: null,
+            error_code: mismatch.code,
+        };
+        throw mismatch;
+    }
     const validation = await validateApplicationSource(source);
-    const result = await runApplication({
-        source,
-        expectedSourceSha256: sourceSha256(source),
-        input: DRY_RUN_INPUT,
-        gatewayBaseUrl: DRY_RUN_GATEWAY,
-        runToken: DRY_RUN_TOKEN,
-        fetchImpl: async (url) => fixtureResponse(decodeURIComponent(url.pathname.split('/').pop())),
-        reportRunUsage: false,
-    });
+    if (!fixtures || typeof fixtures !== 'object' || Array.isArray(fixtures)) {
+        const error = new Error('Dry-run fixtures must be an object.');
+        error.code = 'DRY_RUN_FIXTURES_INVALID';
+        throw error;
+    }
+    let usage = null;
+    let result;
+    try {
+        result = await runApplication({
+            source,
+            expectedSourceSha256,
+            input,
+            gatewayBaseUrl: DRY_RUN_GATEWAY,
+            runToken: DRY_RUN_TOKEN,
+            fetchImpl: async (url) => fixtureResponse(
+                decodeURIComponent(url.pathname.split('/').pop()),
+                fixtures
+            ),
+            reportRunUsage: false,
+            onUsage: value => { usage = value; },
+            signal,
+        });
+    } catch (error) {
+        if (usage) error.usage = usage;
+        throw error;
+    }
     return {
-        source_bytes: validation.sourceBytes,
-        tools: [...validation.tools],
-        entry_point: validation.entryPoint,
-        returned_type: result === null ? 'null' : Array.isArray(result) ? 'array' : typeof result,
+        result: {
+            source_bytes: validation.sourceBytes,
+            tools: [...validation.tools],
+            entry_point: validation.entryPoint,
+            returned_type: result === null ? 'null' : Array.isArray(result) ? 'array' : typeof result,
+        },
+        usage,
     };
 }
 

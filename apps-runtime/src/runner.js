@@ -251,6 +251,8 @@ async function runApplication({
     runToken,
     fetchImpl,
     reportRunUsage = true,
+    onUsage,
+    signal,
 }) {
     const startedAt = Date.now();
     if (typeof runToken !== 'string' || runToken.length === 0) {
@@ -289,13 +291,15 @@ async function runApplication({
             'APP_RUNTIME_SOURCE_MISMATCH',
             'Application source does not match the approved artifact.'
         );
+        const usage = {
+            wall_ms: Date.now() - startedAt,
+            gateway_calls: 0,
+            result_bytes: null,
+            error_code: mismatch.code,
+        };
+        if (typeof onUsage === 'function') onUsage(usage);
         if (reportRunUsage) {
-            await gateway.recordRunCompletion({
-                wall_ms: Date.now() - startedAt,
-                gateway_calls: 0,
-                result_bytes: null,
-                error_code: mismatch.code,
-            }).catch(() => {});
+            await gateway.recordRunCompletion(usage).catch(() => {});
         }
         throw mismatch;
     }
@@ -313,8 +317,15 @@ async function runApplication({
         controllers.clear();
         if (!isolate.isDisposed) isolate.dispose();
     };
+    const abortExecution = () => terminate(new AppRunnerError(
+        'APP_RUNTIME_REQUEST_TIMEOUT',
+        'Application request exceeded the host timeout.'
+    ));
+    if (signal?.aborted) abortExecution();
+    else signal?.addEventListener('abort', abortExecution, { once: true });
 
     try {
+        if (terminationError) throw terminationError;
         const context = await isolate.createContext();
         const callback = new ivm.Reference(async (toolName, args) => {
             if (applicationCpuBaseline !== null
@@ -431,16 +442,19 @@ async function runApplication({
         }
         throw normalized;
     } finally {
+        signal?.removeEventListener('abort', abortExecution);
         for (const controller of controllers) controller.abort();
         controllers.clear();
         if (!isolate.isDisposed) isolate.dispose();
+        const usage = {
+            wall_ms: Date.now() - startedAt,
+            gateway_calls: gatewayCalls,
+            result_bytes: resultBytes,
+            error_code: completionErrorCode,
+        };
+        if (typeof onUsage === 'function') onUsage(usage);
         if (reportRunUsage) {
-            await gateway.recordRunCompletion({
-                wall_ms: Date.now() - startedAt,
-                gateway_calls: gatewayCalls,
-                result_bytes: resultBytes,
-                error_code: completionErrorCode,
-            });
+            await gateway.recordRunCompletion(usage);
         }
     }
 }

@@ -124,7 +124,7 @@ The manual CLI reads source on the trusted host:
 cd apps-runtime
 APP_RUNTIME_GATEWAY_BASE_URL=https://api.example.test \
 APP_RUNTIME_RUN_TOKEN='<run-token>' \
-npm start -- reference-apps/morning-digest/app.js '{"today":"2026-07-31"}'
+npm run run:cli -- reference-apps/morning-digest/app.js '{"today":"2026-07-31"}'
 ```
 
 The source filename and token are never forwarded to application code.

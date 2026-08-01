@@ -43,6 +43,8 @@ export interface SettingsNavLink {
     permissions?: readonly string[];
     /** Platform roles for platform-gated routes. */
     platformRoles?: readonly string[];
+    /** Exact tenant membership roles for surfaces narrower than their permission. */
+    tenantRoles?: readonly string[];
     /** Overrides default matching when several subsections share one pathname. */
     matches?: readonly SettingsNavMatch[];
     /** Clickable destinations owned by this subsection rather than the top-level Settings list. */
@@ -60,6 +62,7 @@ export interface SettingsNavGroup {
 export interface SettingsNavAccess {
     permissions?: readonly string[];
     platformRole?: string | null;
+    tenantRole?: string | null;
 }
 
 export const SETTINGS_GROUP_PATHS: Record<SettingsGroupId, string> = {
@@ -194,6 +197,10 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
                 }],
             },
             {
+                id: 'app-studio', label: 'App Studio', to: '/settings/app-studio',
+                permissions: ['tenant.integrations.manage'], tenantRoles: ['tenant_admin'],
+            },
+            {
                 id: 'zenbooker', label: 'Zenbooker', to: '/settings/integrations?tab=zenbooker', permissions: ['tenant.integrations.manage'],
                 matches: [{ pathname: '/settings/integrations', exact: true, search: { tab: 'zenbooker' } }],
             },
@@ -252,14 +259,13 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
 ];
 
 export function canAccessSettingsLink(link: SettingsNavLink, access: SettingsNavAccess): boolean {
-    const checks: boolean[] = [];
-    if (link.permissions?.length) {
-        checks.push(link.permissions.some(permission => access.permissions?.includes(permission) ?? false));
-    }
-    if (link.platformRoles?.length) {
-        checks.push(link.platformRoles.includes(access.platformRole ?? ''));
-    }
-    return checks.length === 0 || checks.some(Boolean);
+    if (link.permissions?.length
+        && !link.permissions.some(permission => access.permissions?.includes(permission) ?? false)) return false;
+    if (link.platformRoles?.length
+        && !link.platformRoles.includes(access.platformRole ?? '')) return false;
+    if (link.tenantRoles?.length
+        && !link.tenantRoles.includes(access.tenantRole ?? '')) return false;
+    return true;
 }
 
 export function getVisibleSettingsGroups(

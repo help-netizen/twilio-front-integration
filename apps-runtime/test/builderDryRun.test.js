@@ -2,6 +2,11 @@
 
 const { validateApplicationSource } = require('../src/builderValidator');
 const { validateAndDryRun } = require('../src/builderDryRun');
+const { sourceSha256 } = require('../src/runner');
+
+function dryRun(source) {
+    return validateAndDryRun({ source, expectedSourceSha256: sourceSha256(source) });
+}
 
 describe('APP-BUILD-001 static validation and isolated dry run', () => {
     test.each([
@@ -37,18 +42,19 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
     });
 
     test('an infinite loop is rejected by the Phase 2 isolate CPU limit', async () => {
-        await expect(validateAndDryRun(
+        await expect(dryRun(
             'export async function run(ctx) { while (ctx) {} }'
         )).rejects.toMatchObject({ code: 'APP_RUNTIME_CPU_LIMIT' });
     });
 
     test('a working app returns a dry-run report and exact catalog tools', async () => {
-        const report = await validateAndDryRun(`
+        const source = `
             export async function run(ctx) {
                 const jobs = await ctx.callTool('svc.list_jobs', { limit: 1 });
                 return { count: jobs.results.length, today: ctx.input.today };
             }
-        `);
+        `;
+        const { result: report } = await dryRun(source);
         expect(report).toMatchObject({
             entry_point: 'run',
             tools: ['svc.list_jobs'],

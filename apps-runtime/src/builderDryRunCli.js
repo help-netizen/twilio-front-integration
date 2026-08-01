@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateAndDryRun } = require('./builderDryRun');
+const { sourceSha256 } = require('./runner');
 
 // A 64 KiB source can approach 128 KiB after JSON escaping.
 const MAX_ENVELOPE_BYTES = 256 * 1024;
@@ -19,7 +20,13 @@ async function readInput() {
 (async () => {
     try {
         const input = await readInput();
-        const report = await validateAndDryRun(input?.source);
+        const { result: report } = await validateAndDryRun({
+            source: input?.source,
+            expectedSourceSha256: input?.expectedSourceSha256
+                || sourceSha256(input?.source || ''),
+            input: input?.input,
+            fixtures: input?.fixtures,
+        });
         process.stdout.write(`${JSON.stringify({ ok: true, report })}\n`);
     } catch (error) {
         process.stdout.write(`${JSON.stringify({

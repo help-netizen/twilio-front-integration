@@ -73,6 +73,22 @@ describe('SETTINGS-IA-001 navigation model', () => {
             .toContain('document-templates');
     });
 
+    it('shows App Studio only to tenant admins with integrations access', () => {
+        const manager = getVisibleSettingsGroups({
+            permissions: ['tenant.integrations.manage'],
+            tenantRole: 'manager',
+        });
+        expect(manager.find(group => group.id === 'apps-integrations')?.links.map(link => link.id))
+            .not.toContain('app-studio');
+
+        const admin = getVisibleSettingsGroups({
+            permissions: ['tenant.integrations.manage'],
+            tenantRole: 'tenant_admin',
+        });
+        expect(admin.find(group => group.id === 'apps-integrations')?.links.map(link => link.id))
+            .toContain('app-studio');
+    });
+
     it('shows platform administration only for the platform role', () => {
         expect(getVisibleSettingsGroups({ permissions: allPermissions }).some(group => group.kind === 'platform')).toBe(false);
         expect(getVisibleSettingsGroups({ platformRole: 'super_admin' }).map(group => group.id))

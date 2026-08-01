@@ -89,6 +89,7 @@ import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 import BlacklistPage from './pages/telephony/BlacklistPage';
 import CompanySchedulePage from './pages/CompanySchedulePage';
 import BankTransferDetailsPage from './pages/BankTransferDetailsPage';
+import AppStudioPage from './pages/AppStudioPage';
 
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import SettingsLayout from './components/settings/SettingsLayout';
@@ -205,6 +206,7 @@ function App() {
                 <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/telephony/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
+                <Route path="/settings/app-studio" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><AppStudioPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/mail-secretary" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><MailSecretarySettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/outbound-lead-caller" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><OutboundLeadCallerSettingsPage /></ProtectedRoute>} />

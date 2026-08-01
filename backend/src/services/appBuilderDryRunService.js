@@ -1,14 +1,35 @@
 'use strict';
 
-const path = require('node:path');
-const { spawn } = require('node:child_process');
-
-const DEFAULT_TIMEOUT_MS = 5000;
-const MAX_OUTPUT_BYTES = 256 * 1024;
-const CLI_PATH = path.resolve(
-    __dirname,
-    '../../../apps-runtime/src/builderDryRunCli.js'
-);
+const DEFAULT_TIMEOUT_MS = 12000;
+const MAX_RESPONSE_BYTES = 256 * 1024;
+const DRY_RUN_INPUT = Object.freeze({ today: '2026-07-31' });
+const TOOL_FIXTURES = Object.freeze({
+    'svc.list_jobs': Object.freeze({
+        results: Object.freeze([Object.freeze({
+            id: 101,
+            job_number: 'TEST-101',
+            service_name: 'Fixture inspection',
+            status: 'scheduled',
+            scheduled_start: '2026-07-31T09:00:00-04:00',
+        })]),
+        total: 1,
+    }),
+    'svc.get_job': Object.freeze({
+        id: 101,
+        job_number: 'TEST-101',
+        service_name: 'Fixture inspection',
+        status: 'scheduled',
+    }),
+    'svc.list_tasks': Object.freeze({
+        tasks: Object.freeze([Object.freeze({
+            id: 201,
+            title: 'Fixture follow-up',
+            status: 'open',
+            due_at: '2026-07-31T16:00:00Z',
+        })]),
+        total: 1,
+    }),
+});
 
 class AppBuilderDryRunError extends Error {
     constructor(code, message, stage = 'dry_run') {
@@ -21,120 +42,193 @@ class AppBuilderDryRunError extends Error {
 }
 
 function timeoutMs() {
-    const parsed = parseInt(process.env.APP_BUILDER_DRY_RUN_TIMEOUT_MS || '', 10);
+    const parsed = Number.parseInt(process.env.APP_BUILDER_DRY_RUN_TIMEOUT_MS || '', 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT_MS;
 }
 
-function runnerExecutable() {
-    const configured = String(process.env.APP_BUILDER_RUNNER_NODE || '').trim();
-    if (configured) return configured;
-    if (process.versions.node.split('.')[0] === '24') return process.execPath;
-    throw new AppBuilderDryRunError(
-        'RUNNER_NOT_CONFIGURED',
-        'APP_BUILDER_RUNNER_NODE must point to the Node 24 apps-runtime executable.',
-        'configuration'
-    );
+function runnerConfigurationIssue() {
+    if (!String(process.env.APP_RUNNER_BASE_URL || '').trim()) {
+        return 'App runner service URL is not configured.';
+    }
+    try {
+        runnerBaseUrl();
+    } catch (_error) {
+        return 'App runner service URL configuration is invalid.';
+    }
+    if (!String(process.env.APP_RUNNER_SERVICE_TOKEN || '').trim()) {
+        return 'App runner service authentication is not configured.';
+    }
+    return null;
 }
 
-function parseResult(stdout) {
-    let result;
+function runnerBaseUrl() {
+    const configured = String(process.env.APP_RUNNER_BASE_URL || '').trim();
+    let url;
     try {
-        result = JSON.parse(String(stdout || '').trim());
+        url = new URL(configured);
     } catch (_error) {
+        throw new AppBuilderDryRunError(
+            'RUNNER_NOT_CONFIGURED',
+            'APP_RUNNER_BASE_URL must be a valid HTTP(S) origin.',
+            'configuration'
+        );
+    }
+    if (!['http:', 'https:'].includes(url.protocol)
+        || url.username
+        || url.password
+        || url.search
+        || url.hash
+        || (url.pathname !== '/' && url.pathname !== '')) {
+        throw new AppBuilderDryRunError(
+            'RUNNER_NOT_CONFIGURED',
+            'APP_RUNNER_BASE_URL must be a valid HTTP(S) origin.',
+            'configuration'
+        );
+    }
+    return url.origin;
+}
+
+function runnerServiceToken() {
+    const token = String(process.env.APP_RUNNER_SERVICE_TOKEN || '').trim();
+    if (!token) {
+        throw new AppBuilderDryRunError(
+            'RUNNER_NOT_CONFIGURED',
+            'APP_RUNNER_SERVICE_TOKEN is required.',
+            'configuration'
+        );
+    }
+    return token;
+}
+
+async function readBoundedJson(response) {
+    let text;
+    try {
+        if (response.body && typeof response.body.getReader === 'function') {
+            const reader = response.body.getReader();
+            const chunks = [];
+            let bytes = 0;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                bytes += value.byteLength;
+                if (bytes > MAX_RESPONSE_BYTES) {
+                    await reader.cancel().catch(() => {});
+                    throw new AppBuilderDryRunError(
+                        'RUNNER_PROTOCOL_ERROR',
+                        'App runner exceeded the dry-run response limit.',
+                        'runner_protocol'
+                    );
+                }
+                chunks.push(Buffer.from(value));
+            }
+            text = Buffer.concat(chunks, bytes).toString('utf8');
+        } else {
+            text = await response.text();
+            if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) {
+                throw new AppBuilderDryRunError(
+                    'RUNNER_PROTOCOL_ERROR',
+                    'App runner exceeded the dry-run response limit.',
+                    'runner_protocol'
+                );
+            }
+        }
+        return JSON.parse(text);
+    } catch (error) {
+        if (error instanceof AppBuilderDryRunError) throw error;
         throw new AppBuilderDryRunError(
             'RUNNER_PROTOCOL_ERROR',
             'App runner returned an invalid dry-run response.',
             'runner_protocol'
         );
     }
-    if (!result || result.ok !== true) {
-        throw new AppBuilderDryRunError(
-            typeof result?.code === 'string' ? result.code : 'DRY_RUN_FAILED',
-            typeof result?.message === 'string' ? result.message : 'Application dry run failed.',
-            typeof result?.stage === 'string' ? result.stage : 'dry_run'
-        );
-    }
-    return result.report;
 }
 
-async function validateAndDryRun({ source }) {
-    const executable = runnerExecutable();
-    const envelope = JSON.stringify({ source });
-    return new Promise((resolve, reject) => {
-        const child = spawn(executable, ['--no-node-snapshot', CLI_PATH], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            shell: false,
-            env: {
-                PATH: process.env.PATH || '',
-                NODE_ENV: 'production',
+function parseResult(payload, status = 200) {
+    if (status === 401) {
+        throw new AppBuilderDryRunError(
+            'RUNNER_AUTH_FAILED',
+            'App runner service authentication failed.',
+            'configuration'
+        );
+    }
+    if (!payload || payload.ok !== true) {
+        throw new AppBuilderDryRunError(
+            typeof payload?.error?.code === 'string' ? payload.error.code : 'DRY_RUN_FAILED',
+            typeof payload?.error?.message === 'string'
+                ? payload.error.message
+                : 'Application dry run failed.',
+            typeof payload?.error?.stage === 'string' ? payload.error.stage : 'dry_run'
+        );
+    }
+    if (!payload.result || typeof payload.result !== 'object' || Array.isArray(payload.result)) {
+        throw new AppBuilderDryRunError(
+            'RUNNER_PROTOCOL_ERROR',
+            'App runner returned an invalid dry-run result.',
+            'runner_protocol'
+        );
+    }
+    return payload.result;
+}
+
+async function validateAndDryRun(
+    { source, expectedSourceSha256 },
+    { fetchImpl = globalThis.fetch } = {}
+) {
+    const baseUrl = runnerBaseUrl();
+    const serviceToken = runnerServiceToken();
+    if (typeof fetchImpl !== 'function') {
+        throw new AppBuilderDryRunError(
+            'RUNNER_UNAVAILABLE',
+            'App runner service is unavailable.',
+            'configuration'
+        );
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs());
+    try {
+        const response = await fetchImpl(`${baseUrl}/v1/dry-run`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${serviceToken}`,
+                'Content-Type': 'application/json',
             },
+            body: JSON.stringify({
+                source,
+                expectedSourceSha256,
+                input: DRY_RUN_INPUT,
+                fixtures: TOOL_FIXTURES,
+            }),
+            signal: controller.signal,
         });
-        let stdout = '';
-        let stderr = '';
-        let outputBytes = 0;
-        let settled = false;
-
-        const finish = (error, value) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            if (error) reject(error);
-            else resolve(value);
-        };
-        const timer = setTimeout(() => {
-            child.kill('SIGKILL');
-            finish(new AppBuilderDryRunError(
+        const payload = await readBoundedJson(response);
+        return parseResult(payload, response.status);
+    } catch (error) {
+        if (error instanceof AppBuilderDryRunError) throw error;
+        if (controller.signal.aborted || error?.name === 'AbortError') {
+            throw new AppBuilderDryRunError(
                 'DRY_RUN_TIMEOUT',
-                'Application dry run exceeded the host timeout.'
-            ));
-        }, timeoutMs());
-
-        child.stdout.on('data', chunk => {
-            outputBytes += chunk.length;
-            if (outputBytes > MAX_OUTPUT_BYTES) {
-                child.kill('SIGKILL');
-                finish(new AppBuilderDryRunError(
-                    'RUNNER_PROTOCOL_ERROR',
-                    'App runner exceeded the dry-run response limit.',
-                    'runner_protocol'
-                ));
-                return;
-            }
-            stdout += chunk.toString('utf8');
-        });
-        child.stderr.on('data', chunk => {
-            if (stderr.length < 4096) stderr += chunk.toString('utf8');
-        });
-        child.on('error', error => {
-            finish(new AppBuilderDryRunError(
-                'RUNNER_UNAVAILABLE',
-                'App runner could not be started.',
-                'configuration'
-            ), error);
-        });
-        child.on('close', () => {
-            try {
-                finish(null, parseResult(stdout));
-            } catch (error) {
-                if (stderr) error.runnerStderr = stderr.slice(0, 500);
-                finish(error);
-            }
-        });
-        child.stdin.on('error', error => {
-            finish(new AppBuilderDryRunError(
-                'RUNNER_PROTOCOL_ERROR',
-                'App runner input failed.',
-                'runner_protocol'
-            ), error);
-        });
-        child.stdin.end(envelope);
-    });
+                'Application dry run exceeded the runner service timeout.'
+            );
+        }
+        throw new AppBuilderDryRunError(
+            'RUNNER_UNAVAILABLE',
+            'App runner service is unavailable.',
+            'configuration'
+        );
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 module.exports = {
-    CLI_PATH,
+    DEFAULT_TIMEOUT_MS,
+    DRY_RUN_INPUT,
+    MAX_RESPONSE_BYTES,
+    TOOL_FIXTURES,
     AppBuilderDryRunError,
-    runnerExecutable,
     parseResult,
+    runnerBaseUrl,
+    runnerConfigurationIssue,
+    runnerServiceToken,
     validateAndDryRun,
 };

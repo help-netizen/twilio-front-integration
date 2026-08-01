@@ -9,7 +9,8 @@
   "jest": {
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "/\\.claude/worktrees/"
+      "/\\.claude/worktrees/",
+      "/apps-runtime/"
     ]
   },
   "scripts": {

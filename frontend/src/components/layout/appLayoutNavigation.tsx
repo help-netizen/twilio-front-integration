@@ -77,9 +77,9 @@ const PRIMARY_KEYS: readonly string[] = ['pulse', 'leads', 'jobs', 'schedule', '
 export const MobileMoreSheet: React.FC<{ open: boolean; onClose: () => void; logout: () => void; activeTab: string }> = ({ open, onClose, logout, activeTab }) => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { permissions, platformRole } = useAuthz();
+    const { permissions, platformRole, membership } = useAuthz();
     const overflowTabs = useVisibleTabs().filter(t => !PRIMARY_KEYS.includes(t.key));
-    const groups = getVisibleSettingsGroups({ permissions, platformRole });
+    const groups = getVisibleSettingsGroups({ permissions, platformRole, tenantRole: membership?.role_key });
     const activeGroup = findActiveSettingsGroup(groups, location);
     // On mobile the feedback widget mounts on every page (AppLayout), painting no FAB,
     // so the sheet's "Send feedback" is available EVERYWHERE — not gated to /pulse.
@@ -193,14 +193,14 @@ export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: numbe
 export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) => boolean; logout: () => void }> = ({ activeTab, logout }) => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { permissions, platformRole } = useAuthz();
+    const { permissions, platformRole, membership } = useAuthz();
     const isMobile = useIsMobile();
     // Feedback is offered ONLY on the exact /pulse inbox (matches the FAB gating in
     // AppLayout), so the mobile "Send feedback" item never dispatches into a widget
     // that isn't mounted.
     const isFeedbackEnabled = isFeedbackWidgetEnabled(import.meta.env.VITE_FEATURE_FEEDBACK_WIDGET)
         && location.pathname === '/pulse';
-    const groups = getVisibleSettingsGroups({ permissions, platformRole });
+    const groups = getVisibleSettingsGroups({ permissions, platformRole, tenantRole: membership?.role_key });
     const activeGroup = findActiveSettingsGroup(groups, location);
 
     // Low-permission users (provider/technician) get no settings entries — but on

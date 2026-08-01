@@ -224,21 +224,32 @@ company-scoped и сохраняет chat row.
 
 Скраббер не удаляет phones, emails, names, addresses и other PII (`appBuilderSecretScrubber.js:10-30`). Эти данные персистятся (`appBuilderRepository.js:130-156`) и отправляются external model в history (`appBuilderService.js:59-103,165-169`; `appBuilderProviderService.js:87-110`). У таблицы нет expiry/deletion policy (`221_app_studio_builder.sql:31-63`). Это прямо нарушает release-minimum `APP-STUDIO-001:98`.
 
-### P0-04 — Production runner/dry-run isolation boundary ещё не существует
+### P0-04 — Production runner/dry-run isolation boundary ещё не существует — FIXED
 
-**Статус: OPEN / вне APP-GAP-FIX-001.** Existing architect gate in
-`backend/src/routes/appStudio.js` stays fail-closed by default and always 404 in
-production; remote runner service remains Ф4/Ф5.
+**Статус: FIXED (APP-SVC-001 / Ф4).** `apps-runtime/src/server.js` exposes the
+authenticated, body-bounded, deadline-bounded `/v1/dry-run` and `/v1/run`
+service on the application-server boundary. CRM `appBuilderDryRunService` now
+uses only `APP_RUNNER_BASE_URL` + `APP_RUNNER_SERVICE_TOKEN`; the local Node
+spawn/fallback is removed. The production-only 404 is removed, while the
+explicit product flag remains and incomplete runner configuration returns 503.
+`docs/specs/APP-SVC-001.md` records the service, deployment, UI, and test
+contract.
 
-Нет app-server service, 2–4 hardened runner containers, deployment network policy, source store delivery, production token delivery и remote builder dry-run endpoint. Сами specs это явно откладывают (`APP-RUN-001:224-226`; `APP-BUILD-001:218-230`) и прямо запрещают live exposure до remote seam (`APP-BUILD-001:225-228`). Это DEFERRED-BY-DESIGN, но по severity — P0 release gate.
+Исходная находка до APP-SVC-001: не было app-server service, production token
+delivery и remote builder dry-run endpoint. Specs откладывали seam
+(`APP-RUN-001:224-226`; `APP-BUILD-001:218-230`) и запрещали live exposure до
+него (`APP-BUILD-001:225-228`). Hardened multi-container deployment/network
+policy остаётся обязательным deployment control, а не кодовым fallback.
 
-Дополнительно current Phase 3 помещает native `isolated-vm` child в CRM process/container boundary (`appBuilderDryRunService.js:60-71`), что прямо противоречит абсолютному “runner process must never be colocated with CRM” (`APP-RUN-001:220-223`). Broken real mount сегодня fail-closed, но его исправление без remote seam сделало бы эту native-escape boundary reachable tenant admin-у.
+Исходная находка также фиксировала native `isolated-vm` child внутри CRM
+process/container boundary. APP-SVC-001 удалил этот spawn и не оставил локального
+fallback; `isolated-vm` загружается только пакетом `apps-runtime`.
 
 ## P1
 
 ### P1-01 — Real `/api/app-studio` mount неработспособен и тесты скрывают разрыв — FIXED
 
-**Статус: FIXED (архитектор).** Ранний mount перед `express.json`/`requestId`/`authenticate` убран; роутер теперь монтируется рядом с остальными защищёнными API: `app.use('/api/app-studio', authenticate, requireCompanyAccess, appStudioRouter)` (`src/server.js:168`). Поверх него остаётся fail-closed гейт `APP_STUDIO_ENABLED` + always-404 в production (`backend/src/routes/appStudio.js`), пока не появится удалённый раннер (P0-04).
+**Статус: FIXED (архитектор).** Ранний mount перед `express.json`/`requestId`/`authenticate` убран; роутер теперь монтируется рядом с остальными защищёнными API: `app.use('/api/app-studio', authenticate, requireCompanyAccess, appStudioRouter)` (`src/server.js:168`). APP-SVC-001 сохранил `APP_STUDIO_ENABLED`, заменил временный production-404 на обязательную remote-runner configuration проверку и 503 при её отсутствии.
 
 `src/server.js:101` монтирует router до `express.json`, request ID, `authenticate` и `requireCompanyAccess` (`src/server.js:103-108,133-135`). Router сразу вызывает `requirePermission` (`appStudio.js:46`), поэтому real request fail-closed на 403. Tests сами подкладывают body/user/authz/company (`appStudioRoutes.test.js:31-47`). Это блокирует Ф4 integration.
 

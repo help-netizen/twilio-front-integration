@@ -27,5 +27,6 @@ COPY package.json ./package.json
 COPY src ./src
 COPY reference-apps ./reference-apps
 
+EXPOSE 4010
 USER node
-ENTRYPOINT ["node", "--no-node-snapshot", "src/cli.js"]
+ENTRYPOINT ["node", "--no-node-snapshot", "src/server.js"]

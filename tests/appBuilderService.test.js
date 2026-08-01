@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('node:crypto');
+
 const {
     AppBuilderError,
     createAppBuilderService,
@@ -95,7 +97,10 @@ describe('APP-BUILD-001 generation pipeline', () => {
             version: { id: VERSION_ID, status: 'draft' },
         });
         expect(provider.generate).toHaveBeenCalledTimes(1);
-        expect(dryRunner.validateAndDryRun).toHaveBeenCalledWith({ source: SAFE_SOURCE });
+        expect(dryRunner.validateAndDryRun).toHaveBeenCalledWith({
+            source: SAFE_SOURCE,
+            expectedSourceSha256: crypto.createHash('sha256').update(SAFE_SOURCE).digest('hex'),
+        });
         expect(repository.persistSuccess).toHaveBeenCalledWith(expect.objectContaining({
             companyId: COMPANY_ID,
             actorId: ACTOR_ID,
@@ -141,6 +146,35 @@ describe('APP-BUILD-001 generation pipeline', () => {
         expect(repository.persistFailure).toHaveBeenCalledWith(expect.objectContaining({
             companyId: COMPANY_ID,
             errorCode: code,
+        }));
+    });
+
+    test('remote runner unavailable persists a bot reason and creates no version', async () => {
+        const { repository, dryRunner, service } = harness({
+            dryRunner: {
+                validateAndDryRun: jest.fn().mockRejectedValue(Object.assign(
+                    new Error('runner unavailable'),
+                    { code: 'RUNNER_UNAVAILABLE' }
+                )),
+            },
+        });
+        const result = await service.generateMessage({
+            companyId: COMPANY_ID,
+            actorId: ACTOR_ID,
+            chatId: CHAT_ID,
+            text: 'Build it.',
+        });
+
+        expect(result).toMatchObject({
+            generation_status: 'failed',
+            version: null,
+            error: { code: 'RUNNER_UNAVAILABLE' },
+        });
+        expect(dryRunner.validateAndDryRun).toHaveBeenCalledTimes(1);
+        expect(repository.persistSuccess).not.toHaveBeenCalled();
+        expect(repository.persistFailure).toHaveBeenCalledWith(expect.objectContaining({
+            text: 'I could not validate the draft because the isolated runner is unavailable.',
+            errorCode: 'RUNNER_UNAVAILABLE',
         }));
     });
 

@@ -11,8 +11,12 @@ import {
 export default function SettingsLayout() {
     const location = useLocation();
     const navigate = useNavigate();
-    const { permissions, platformRole } = useAuthz();
-    const groups = getVisibleSettingsGroups({ permissions, platformRole });
+    const { permissions, platformRole, membership } = useAuthz();
+    const groups = getVisibleSettingsGroups({
+        permissions,
+        platformRole,
+        tenantRole: membership?.role_key,
+    });
     const activeGroup = findActiveSettingsGroup(groups, location);
 
     return (

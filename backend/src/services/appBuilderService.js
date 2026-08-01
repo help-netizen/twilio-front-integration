@@ -109,6 +109,9 @@ function safeFailureText(code) {
         PROVIDER_UNAVAILABLE: 'I could not generate a draft because the code-generation provider is unavailable.',
         RUNNER_NOT_CONFIGURED: 'I could not validate the draft because the isolated runner is not configured.',
         RUNNER_UNAVAILABLE: 'I could not validate the draft because the isolated runner is unavailable.',
+        RUNNER_AUTH_FAILED: 'I could not validate the draft because the isolated runner rejected service authentication.',
+        DRY_RUN_TIMEOUT: 'I could not validate the draft because the isolated runner timed out.',
+        APP_RUNTIME_REQUEST_TIMEOUT: 'I could not validate the draft because the isolated runner timed out.',
         SOURCE_SECRET_DETECTED: 'I rejected the draft because it appeared to contain a secret.',
     };
     return messages[code]
@@ -173,10 +176,13 @@ function createAppBuilderService({
                     422
                 );
             }
-            const report = await dryRunner.validateAndDryRun({ source: generated.source });
             const sourceSha256 = crypto.createHash('sha256')
                 .update(generated.source, 'utf8')
                 .digest('hex');
+            const report = await dryRunner.validateAndDryRun({
+                source: generated.source,
+                expectedSourceSha256: sourceSha256,
+            });
             const description = scrubSecrets(generated.description).trim().slice(0, 2000)
                 || 'Created a validated read-only App Studio draft.';
             const suffix = String(chatId).replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || randomUUID().slice(0, 8);

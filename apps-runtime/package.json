@@ -9,7 +9,8 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "start": "node --no-node-snapshot src/cli.js",
+    "start": "node --no-node-snapshot src/server.js",
+    "run:cli": "node --no-node-snapshot src/cli.js",
     "test": "node --no-node-snapshot node_modules/jest/bin/jest.js --runInBand"
   },
   "dependencies": {
