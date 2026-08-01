@@ -306,8 +306,6 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
                 }
                 realtimeService.broadcast('thread.action_required', {
                     company_id: companyId,
-                    timelineId,
-                    reason: 'new_message',
                 });
             }
         } catch (e) {

@@ -303,7 +303,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
 
                     const realtimeService = require('./realtimeService');
                     realtimeService.broadcast('thread.action_required', {
-                        company_id: eventCompanyId, timelineId, reason: 'new_call',
+                        company_id: eventCompanyId,
                     });
                     console.log(`[${traceId}] Action Required set for inbound call on timeline ${timelineId}`);
                 }
@@ -892,7 +892,7 @@ async function processRecordingEvent(payload, traceId, source = 'webhook') {
         } else {
             console.log(`[${traceId}] Auto-transcription starting for ${normalized.callSid} (duration: ${normalized.durationSec || 'unknown'}s)`);
             const { transcribeCall } = require('./transcriptionService');
-            transcribeCall(normalized.callSid, normalized.recordingSid, traceId)
+            transcribeCall(normalized.callSid, normalized.recordingSid, traceId, eventCompanyId)
                 .then(() => console.log(`[${traceId}] Auto-transcription completed for ${normalized.callSid}`))
                 .catch(err => console.error(`[${traceId}] Auto-transcription failed for ${normalized.callSid}:`, err.message));
         }

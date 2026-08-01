@@ -129,11 +129,7 @@ async function setAgentStatus(userId, companyId, status, details = {}) {
 
     if (!current || current.status !== next.status || JSON.stringify(current.groupIds) !== JSON.stringify(next.groupIds)) {
         realtimeService.broadcast('agent.status.changed', {
-            userId: next.userId,
             companyId: next.companyId,
-            groupIds: next.groupIds,
-            status: next.status,
-            updated_at: next.updatedAt,
         });
     }
 

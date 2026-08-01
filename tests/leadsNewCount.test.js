@@ -51,7 +51,7 @@ describe('countNewLeads', () => {
 });
 
 describe('lead.* SSE emit', () => {
-    test('markLost broadcasts lead.updated with a MINIMAL, PII-free payload', async () => {
+    test('markLost broadcasts lead.updated with a scope-only payload', async () => {
         db.query.mockResolvedValueOnce({ rows: [{ uuid: 'AB12CD', id: 91 }] });
 
         await leadsService.markLost('AB12CD', 'company-9');
@@ -59,14 +59,7 @@ describe('lead.* SSE emit', () => {
         expect(realtimeService.broadcast).toHaveBeenCalledTimes(1);
         const [eventType, payload] = realtimeService.broadcast.mock.calls[0];
         expect(eventType).toBe('lead.updated');
-        expect(payload.company_id).toBe('company-9');
-        expect(payload.status).toBe('Lost');
-        // No PII leaks over the global broadcast channel.
-        expect(payload).not.toHaveProperty('phone');
-        expect(payload).not.toHaveProperty('first_name');
-        expect(payload).not.toHaveProperty('last_name');
-        expect(payload).not.toHaveProperty('email');
-        expect(Object.keys(payload).sort()).toEqual(['company_id', 'lead_id', 'status']);
+        expect(payload).toEqual({ company_id: 'company-9' });
     });
 
     test('a broadcast failure never breaks the lead write (best-effort)', async () => {

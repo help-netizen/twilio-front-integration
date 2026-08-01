@@ -53,12 +53,9 @@ describe('F017 agentPresence automatic statuses', () => {
     test('sets available/on_call/offline and broadcasts group-scoped SSE event', async () => {
         await agentPresence.setAgentStatus('user-presence-1', 'company-1', 'available', { source: 'test' });
         expect(await agentPresence.getAgentStatus('user-presence-1', 'company-1')).toBe('available');
-        expect(mockBroadcast).toHaveBeenCalledWith('agent.status.changed', expect.objectContaining({
-            userId: 'user-presence-1',
+        expect(mockBroadcast).toHaveBeenCalledWith('agent.status.changed', {
             companyId: 'company-1',
-            groupIds: ['ug-1', 'ug-2'],
-            status: 'available',
-        }));
+        });
 
         await agentPresence.setAgentStatus('user-presence-1', 'company-1', 'on_call', { source: 'test' });
         expect(await agentPresence.getAgentStatus('user-presence-1', 'company-1')).toBe('on_call');

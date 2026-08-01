@@ -6,7 +6,7 @@
  */
 
 const EventEmitter = require('events');
-const { redactPulsePayload } = require('./pulseMaskingService');
+const { projectRealtimePayload } = require('./realtimePayloadPolicy');
 
 class RealtimeService extends EventEmitter {
     constructor() {
@@ -132,14 +132,15 @@ class RealtimeService extends EventEmitter {
             return { sent, failed };
         }
 
+        const projectedData = projectRealtimePayload(eventType, companyId, data);
+        if (!projectedData) {
+            console.warn(`[SSE] Dropped non-allowlisted ${eventType} event`);
+            return { sent, failed };
+        }
+
         for (const [connectionId, client] of this.clients.entries()) {
             if (String(client.companyId) !== String(companyId)) continue;
-            // Transcript events are not events a masked viewer may receive at
-            // all. Other tenant events use the same response-boundary projector
-            // as Pulse REST DTOs.
-            if (client.maskViewer && eventType.startsWith('transcript.')) continue;
-            const clientData = redactPulsePayload(data, client.maskViewer);
-            const success = this.sendEvent(client.res, eventType, clientData);
+            const success = this.sendEvent(client.res, eventType, projectedData);
             if (success) {
                 client.lastEventAt = new Date();
                 sent++;
@@ -157,102 +158,63 @@ class RealtimeService extends EventEmitter {
     }
 
     /**
-     * Publish call update event — sends full call data so frontend can update cache inline
+     * Publish a call cache invalidation.
      */
     publishCallUpdate(data) {
         const eventType = data.eventType || 'call.updated';
         const companyId = data.company_id || data.companyId || null;
-        // Forward all available fields from the call record
         this.broadcast(eventType, {
             company_id: companyId,
-            id: data.id,
-            call_sid: data.call_sid,
-            parent_call_sid: data.parent_call_sid,
-            direction: data.direction,
-            from_number: data.from_number,
-            to_number: data.to_number,
-            status: data.status,
-            is_final: data.is_final,
-            started_at: data.started_at,
-            answered_at: data.answered_at,
-            ended_at: data.ended_at,
-            duration_sec: data.duration_sec,
-            answered_by: data.answered_by,
-            contact_id: data.contact_id,
-            timeline_id: data.timeline_id,
-            contact: data.contact ? (typeof data.contact === 'string' ? JSON.parse(data.contact) : data.contact) : undefined,
-            updated_at: data.updated_at || new Date(),
-            created_at: data.created_at,
         }, companyId);
     }
 
     /**
-     * Publish call created event — sends full call data
+     * Publish a call cache invalidation.
      */
     publishCallCreated(call) {
         this.broadcast('call.created', {
             company_id: call.company_id || call.companyId || null,
-            id: call.id,
-            call_sid: call.call_sid,
-            parent_call_sid: call.parent_call_sid,
-            direction: call.direction,
-            from_number: call.from_number,
-            to_number: call.to_number,
-            status: call.status,
-            is_final: call.is_final,
-            started_at: call.started_at,
-            contact_id: call.contact_id,
-            contact: call.contact ? (typeof call.contact === 'string' ? JSON.parse(call.contact) : call.contact) : undefined,
-            created_at: call.started_at || call.created_at,
         }, call.company_id || call.companyId || null);
     }
 
     // ─── Messaging SSE events ───
 
     /**
-     * Broadcast new message to all connected clients
+     * Broadcast a message cache invalidation.
      */
     publishMessageAdded(message, conversation, timelineId) {
         const companyId = message?.company_id || conversation?.company_id || null;
         this.broadcast('message.added', {
             company_id: companyId,
-            message,
-            conversationId: conversation.id,
-            timelineId: timelineId || null,
         }, companyId);
     }
 
     /**
-     * Broadcast delivery status update
+     * Broadcast a message cache invalidation.
      */
     publishMessageDelivery(messageSid, status, errorCode, companyId = null) {
         this.broadcast('message.delivery', {
             company_id: companyId,
-            messageSid,
-            status,
-            errorCode,
         }, companyId);
     }
 
     /**
-     * Broadcast conversation update (new message preview, state change)
+     * Broadcast a conversation cache invalidation.
      */
     publishConversationUpdate(conversation) {
         this.broadcast('conversation.updated', {
             company_id: conversation?.company_id || null,
-            conversation,
         }, conversation?.company_id || null);
     }
 
     // ─── Jobs SSE events ───
 
     /**
-     * Broadcast job update to all connected clients
+     * Broadcast a job cache invalidation.
      */
     publishJobUpdate(job) {
         this.broadcast('job.updated', {
             company_id: job?.company_id || null,
-            job,
         }, job?.company_id || null);
     }
 

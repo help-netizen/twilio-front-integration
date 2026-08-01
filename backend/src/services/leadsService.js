@@ -612,7 +612,7 @@ async function createLead(fields, companyId, {
         }]
     );
 
-    emitLeadChange('lead.created', columns.company_id, columns.status || 'Submitted', result.ClientId);
+    emitLeadChange('lead.created', columns.company_id);
     // OUTBOUND-LEAD-CALL-001: post-insert domain event (REPAIR-ADVISOR pattern,
     // convertLead precedent). Fire-and-forget: a failing bus never breaks the
     // create. This single emit site covers ALL ingestion paths — UI routes,
@@ -741,7 +741,7 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
     );
 
     // Only a status change can move a lead in/out of the "new" set → refresh badge.
-    if (columns.status) emitLeadChange('lead.updated', companyId, columns.status, result.ClientId);
+    if (columns.status) emitLeadChange('lead.updated', companyId);
 
     if (statusChanged && columns.status === 'Review') {
         eventBus.emit(companyId, 'lead.review_required', {
@@ -790,7 +790,7 @@ async function markLost(uuid, companyId = null, activityActor = null) {
             summary: { status: 'Lost' },
         }]
     );
-    emitLeadChange('lead.updated', companyId, 'Lost', result.ClientId);
+    emitLeadChange('lead.updated', companyId);
     return result;
 }
 
@@ -826,7 +826,7 @@ async function activateLead(uuid, companyId = null, activityActor = null) {
             summary: { status: 'Submitted' },
         }]
     );
-    emitLeadChange('lead.updated', companyId, 'Submitted', result.ClientId);
+    emitLeadChange('lead.updated', companyId);
     return result;
 }
 
@@ -1459,7 +1459,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         console.error(`[ConvertLead] Note sync error (non-blocking):`, noteErr.message);
     }
 
-    emitLeadChange('lead.updated', companyId, 'Converted', leadRow.id);
+    emitLeadChange('lead.updated', companyId);
 
     // [CHANGE START] REPAIR-ADVISOR-001 (T6): post-commit domain event for the
     // AI Repair Advisor subscriber — ONLY when a NEW local job was created during
@@ -1754,16 +1754,14 @@ async function countNewLeads(companyId) {
 }
 
 // Notify same-company clients so the "new leads" badge refreshes live. Payload
-// stays intentionally minimal (company_id + status only, NO PII); the client
-// refetches its own company-scoped count. Best-effort — a broadcast failure
+// carries company scope only; the realtime boundary projects the invalidation,
+// and the client refetches its own company-scoped count. Best-effort — a broadcast failure
 // never breaks the lead write.
-function emitLeadChange(eventType, companyId, status, leadId = null) {
+function emitLeadChange(eventType, companyId) {
     if (!companyId) return;
     try {
         require('./realtimeService').broadcast(eventType, {
             company_id: companyId,
-            status: status || null,
-            lead_id: leadId != null ? String(leadId) : null,
         });
     } catch (err) {
         console.warn('[leadsService] lead event broadcast failed:', err.message);

@@ -15,7 +15,7 @@ async function tick() {
             const realtimeService = require('./realtimeService');
             for (const { timelineId, companyId } of unsnoozed) {
                 realtimeService.broadcast('thread.unsnoozed', {
-                    company_id: companyId, timelineId,
+                    company_id: companyId,
                 });
             }
             console.log(`[SnoozeScheduler] Unsnoozed ${unsnoozed.length} thread(s): ${unsnoozed.map(row => row.timelineId).join(', ')}`);

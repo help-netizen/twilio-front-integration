@@ -221,6 +221,7 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
         const realtimeService = require('./realtimeService');
         realtimeService.publishCallUpdate({
             eventType: 'transcript.ready',
+            company_id: companyId,
             callSid,
             recordingSid,
             status: 'completed',

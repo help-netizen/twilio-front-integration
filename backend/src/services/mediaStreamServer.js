@@ -117,6 +117,7 @@ function handleTwilioEvent(msg, state, ws) {
             const effectiveCallSid = state.customParameters.callSid || state.callSid;
             transcriptService.createSession(effectiveCallSid, {
                 streamSid: state.streamSid,
+                companyId: state.customParameters.companyId || null,
                 direction: state.customParameters.direction || 'unknown',
                 tracks: [...state.tracks]
             });

@@ -308,7 +308,6 @@ router.post('/contact/:contactId/mark-read', requirePermission('pulse.view', 're
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('contact.read', {
             company_id: req.companyFilter?.company_id,
-            contactId: parseInt(contactId),
         });
         res.json({ contact });
     } catch (error) {
@@ -331,7 +330,6 @@ router.post('/contact/:contactId/mark-unread', requirePermission('pulse.view', '
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('contact.unread', {
             company_id: req.companyFilter?.company_id,
-            contactId: parseInt(contactId),
         });
         res.json({ contact });
     } catch (error) {
@@ -388,7 +386,6 @@ router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', '
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('timeline.read', {
             company_id: req.companyFilter?.company_id,
-            timelineId: parseInt(timelineId),
         });
         res.json({ timeline: tl });
     } catch (error) {
@@ -412,7 +409,6 @@ router.post('/timeline/:timelineId/mark-unread', requirePermission('pulse.view',
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('timeline.unread', {
             company_id: req.companyFilter?.company_id,
-            timelineId: parseInt(timelineId),
         });
         res.json({ timeline: tl });
     } catch (error) {

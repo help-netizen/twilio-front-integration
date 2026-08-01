@@ -42,6 +42,10 @@ jest.mock('../backend/src/middleware/authorization', () => ({
 }));
 
 const realtimeService = require('../backend/src/services/realtimeService');
+const {
+    INVALIDATION_RESOURCES,
+    SAFE_COMPANY_EVENTS,
+} = require('../backend/src/services/realtimePayloadPolicy');
 const eventsRouter = require('../backend/src/routes/events');
 const vapiCallTimelineService = require('../backend/src/services/vapiCallTimelineService');
 
@@ -170,7 +174,7 @@ function readBalancedCall(source, start, token) {
 
 function directBroadcastProducers() {
     const backendRoot = path.resolve(__dirname, '../backend/src');
-    const token = 'realtimeService.broadcast(';
+    const token = '.broadcast(';
     const producers = [];
     for (const absolute of listJavaScriptFiles(backendRoot)) {
         const source = fs.readFileSync(absolute, 'utf8');
@@ -228,10 +232,12 @@ describe('realtime SSE delivery and isolation', () => {
         const delivered = bytes(a).slice(connectedBytes.length);
         expect(delivered).toContain('event: call.created\n');
         expect(delivered).toContain(`data: ${JSON.stringify({
+            type: 'call.created',
             company_id: COMPANY_A,
-            id: 41,
-            call_sid: 'CA-delivery',
+            resource: 'calls',
+            invalidate: true,
         })}\n\n`);
+        expect(delivered).not.toContain('CA-delivery');
     });
 
     test('T-blast: company A event writes zero bytes to company B after connected', () => {
@@ -244,7 +250,9 @@ describe('realtime SSE delivery and isolation', () => {
             call_sid: 'CA-shared-natural-key',
         });
 
-        expect(bytes(a).slice(aBefore.length)).toContain('CA-shared-natural-key');
+        const delivered = bytes(a).slice(aBefore.length);
+        expect(delivered).toContain('event: call.created\n');
+        expect(delivered).not.toContain('CA-shared-natural-key');
         expect(bytes(b)).toBe(bBefore);
     });
 
@@ -262,7 +270,7 @@ describe('realtime SSE delivery and isolation', () => {
         expect(warn).toHaveBeenCalledWith('[SSE] Dropped unscoped call.updated event');
     });
 
-    test('MASK-REDACTION-001: masked SSE client gets redacted call events and no transcript frames', () => {
+    test('company SSE sends only invalidations, including to masked viewers', () => {
         const connection = fakeConnection(COMPANY_A);
         realtimeService.addClient(connection.req, connection.res, { maskViewer: true });
         const before = bytes(connection);
@@ -278,7 +286,8 @@ describe('realtime SSE delivery and isolation', () => {
         });
         const callFrame = bytes(connection).slice(before.length);
         expect(callFrame).toContain('event: call.updated\n');
-        expect(callFrame).toContain('"details_redacted":true');
+        expect(callFrame).toContain('"resource":"calls"');
+        expect(callFrame).toContain('"invalidate":true');
         expect(callFrame).not.toContain('+15085550100');
         expect(callFrame).not.toContain('+16175550123');
         expect(callFrame).not.toContain('Private transcript');
@@ -294,7 +303,12 @@ describe('realtime SSE delivery and isolation', () => {
             call_sid: 'CA-secret',
             text: 'Persisted private words',
         });
-        expect(bytes(connection)).toBe(afterCall);
+        const transcriptFrames = bytes(connection).slice(afterCall.length);
+        expect(transcriptFrames).toContain('event: transcript.delta\n');
+        expect(transcriptFrames).toContain('event: transcript.ready\n');
+        expect(transcriptFrames).toContain('"resource":"transcripts"');
+        expect(transcriptFrames).not.toContain('CA-secret');
+        expect(transcriptFrames).not.toContain('private words');
     });
 
     test.each([
@@ -386,7 +400,7 @@ describe('SSE subscription tenant guard', () => {
 });
 
 describe('SSE producer scoping audit', () => {
-    test('all 22 direct broadcast producers carry a tenant source', () => {
+    test('all 30 broadcast producers carry only a tenant source', () => {
         const producers = directBroadcastProducers();
         expect(producers.map(({ file, event }) => `${file}:${event}`)).toEqual([
             'backend/src/routes/calls.js:contact.read',
@@ -406,11 +420,19 @@ describe('SSE producer scoping audit', () => {
             'backend/src/services/conversationsService.js:thread.action_required',
             'backend/src/services/email/emailTimelineService.js:thread.action_required',
             'backend/src/services/inboxWorker.js:thread.action_required',
+            'backend/src/services/leadsService.js:<dynamic>',
             'backend/src/services/mailAgentService.js:thread.action_required',
+            'backend/src/services/realtimeService.js:<dynamic>',
+            'backend/src/services/realtimeService.js:call.created',
+            'backend/src/services/realtimeService.js:message.added',
+            'backend/src/services/realtimeService.js:message.delivery',
+            'backend/src/services/realtimeService.js:conversation.updated',
+            'backend/src/services/realtimeService.js:job.updated',
             'backend/src/services/realtimeTranscriptService.js:transcript.delta',
             'backend/src/services/realtimeTranscriptService.js:transcript.finalized',
             'backend/src/services/replyReadService.js:timeline.read',
             'backend/src/services/snoozeScheduler.js:thread.unsnoozed',
+            'backend/src/services/tasksService.js:task.changed',
         ]);
 
         for (const producer of producers) {
@@ -424,6 +446,25 @@ describe('SSE producer scoping audit', () => {
                 producer: `${producer.file}:${producer.line}:${producer.event}`,
                 scoped: true,
             });
+
+            const payloadProperties = [...payload.matchAll(/(?:^|[{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g)]
+                .map(match => match[1]);
+            expect({
+                producer: `${producer.file}:${producer.line}:${producer.event}`,
+                scopeOnly: payloadProperties.every(property => (
+                    property === 'company_id' || property === 'companyId'
+                )),
+            }).toEqual({
+                producer: `${producer.file}:${producer.line}:${producer.event}`,
+                scopeOnly: true,
+            });
+
+            if (producer.event !== '<dynamic>') {
+                expect(
+                    Object.hasOwn(INVALIDATION_RESOURCES, producer.event)
+                    || Object.hasOwn(SAFE_COMPANY_EVENTS, producer.event)
+                ).toBe(true);
+            }
         }
     });
 });
@@ -466,8 +507,10 @@ describe('real call-status producer smoke', () => {
         );
         const delivered = bytes(a).slice(aBefore.length);
         expect(delivered).toContain('event: call.updated\n');
-        expect(delivered).toContain('CA-sse-smoke');
         expect(delivered).toContain(COMPANY_A);
+        expect(delivered).toContain('"resource":"calls"');
+        expect(delivered).not.toContain('CA-sse-smoke');
+        expect(delivered).not.toContain('+16175550101');
         expect(bytes(b)).toBe(bBefore);
     });
 });

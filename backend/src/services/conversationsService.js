@@ -482,8 +482,6 @@ async function handleMessageAdded(payload) {
                     // SSE broadcast
                     realtimeService.broadcast('thread.action_required', {
                         company_id: conv.company_id || timeline.company_id,
-                        timelineId: timeline.id,
-                        reason: 'new_message',
                     });
                     console.log(`[ConvService] Action Required set on timeline ${timeline.id} for inbound SMS from ${conv.customer_e164}`);
                 }

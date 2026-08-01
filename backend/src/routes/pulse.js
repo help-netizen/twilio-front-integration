@@ -978,7 +978,7 @@ router.post('/threads/:id/mark-handled', async (req, res) => {
 
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('thread.handled', {
-            company_id: tenantCompanyId(req), timelineId,
+            company_id: tenantCompanyId(req),
         });
 
         res.json({ timeline: tl });
@@ -1007,7 +1007,7 @@ router.post('/threads/:id/snooze', async (req, res) => {
 
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('thread.snoozed', {
-            company_id: tenantCompanyId(req), timelineId, snoozed_until,
+            company_id: tenantCompanyId(req),
         });
 
         res.json({ timeline: tl });
@@ -1036,7 +1036,7 @@ router.post('/threads/:id/assign', async (req, res) => {
 
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('thread.assigned', {
-            company_id: tenantCompanyId(req), timelineId, owner_user_id,
+            company_id: tenantCompanyId(req),
         });
 
         res.json({ timeline: tl });
@@ -1081,7 +1081,7 @@ router.post('/threads/:id/tasks', async (req, res) => {
 
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('thread.action_required', {
-            company_id: tl.company_id, timelineId, reason: 'manual', task,
+            company_id: tl.company_id,
         });
 
         res.json({ task });
@@ -1107,7 +1107,7 @@ router.post('/threads/:id/set-action-required', async (req, res) => {
 
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('thread.action_required', {
-            company_id: tenantCompanyId(req), timelineId, reason: 'manual',
+            company_id: tenantCompanyId(req),
         });
 
         res.json({ timeline: tl });

@@ -247,13 +247,11 @@ describe('T-G2-01 (S1): business-hours call, zero available agents → vapi TwiM
         expect(executionRow.status).toBe('active');
 
         // Queue was actually consulted for THIS group/company, and the queued
-        // broadcast still fires with the no-agents status (SSE unchanged).
+        // broadcast still fires as a PII-free invalidation.
         expect(groupRouting.availableAgentsForGroup).toHaveBeenCalledWith(GROUP_ID, COMPANY_ID, 'test');
-        expect(realtimeService.broadcast).toHaveBeenCalledWith('group.call.queued', expect.objectContaining({
-            call_sid: CALL_SID,
-            group_id: GROUP_ID,
-            status: 'no_available_agents',
-        }));
+        expect(realtimeService.broadcast).toHaveBeenCalledWith('group.call.queued', {
+            company_id: COMPANY_ID,
+        });
     });
 });
 
@@ -403,10 +401,9 @@ describe('T-G2-07 (S6): queue.connected → done, unchanged', () => {
         expect(twiml).not.toContain('BUSINESS_VM_MARKER');
         expect(twiml).not.toContain('AFTERHOURS_VM_MARKER');
 
-        expect(realtimeService.broadcast).toHaveBeenCalledWith('group.call.accepted', expect.objectContaining({
-            call_sid: CALL_SID,
-            group_id: GROUP_ID,
-        }));
+        expect(realtimeService.broadcast).toHaveBeenCalledWith('group.call.accepted', {
+            company_id: COMPANY_ID,
+        });
         expect(executionRow.status).toBe('completed');
         // Interception happens BEFORE edge routing — the call never moved to the backup node.
         expect(executionRow.current_node_id).toBe('sk-current-group');

@@ -114,7 +114,13 @@ describe('SSE company-filtered delivery', () => {
         });
 
         expect(result).toBeUndefined();
-        expect(a.res.chunks.join('')).toContain('CA-shared-natural-key');
+        expect(a.res.chunks.join('')).toContain(`data: ${JSON.stringify({
+            type: 'call.updated',
+            company_id: 'company-a',
+            resource: 'calls',
+            invalidate: true,
+        })}`);
+        expect(a.res.chunks.join('')).not.toContain('CA-shared-natural-key');
         expect(b.res.chunks.join('')).toBe('');
     });
 

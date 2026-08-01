@@ -382,6 +382,12 @@ async function handleVoiceInbound(req, res) {
         let twiml;
 
         if (isOutbound) {
+            const outboundCompanyId = realtimeEnabled
+                ? await resolveWebhookCompanyId(req.body)
+                : null;
+            if (realtimeEnabled && !outboundCompanyId) {
+                console.warn(`[${traceId}] Realtime transcription skipped: company context required`);
+            }
             await ingestToInbox({
                 source: 'voice',
                 eventType: 'call.inbound',
@@ -401,11 +407,12 @@ async function handleVoiceInbound(req, res) {
 
             const outboundCallerId = process.env.OUTBOUND_CALLER_ID || '+16175006181';
             const outboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-            const outboundStreamXml = realtimeEnabled ? `
+            const outboundStreamXml = realtimeEnabled && outboundCompanyId ? `
     <Start>
         <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
             <Parameter name="callSid" value="${CallSid}" />
             <Parameter name="direction" value="outbound" />
+            <Parameter name="companyId" value="${outboundCompanyId}" />
         </Stream>
     </Start>` : '';
 

@@ -9,8 +9,6 @@ const { AssemblyAISession } = require('./assemblyAIBridge');
 const realtimeService = require('./realtimeService');
 const db = require('../db/connection');
 
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-
 // Active transcription sessions: callSid → session object
 const activeSessions = new Map();
 
@@ -25,6 +23,11 @@ let globalTurnCounter = 0;
  * @param {Object} meta — { direction, streamSid }
  */
 function createSession(callSid, meta = {}) {
+    if (!meta.companyId) {
+        console.warn(`[TranscriptSvc:${callSid}] Company context required, skipping`);
+        return null;
+    }
+
     const apiKey = process.env.ASSEMBLYAI_API_KEY;
     if (!apiKey) {
         console.error(`[TranscriptSvc:${callSid}] ASSEMBLYAI_API_KEY not set, skipping`);
@@ -41,7 +44,7 @@ function createSession(callSid, meta = {}) {
     const session = {
         callSid,
         meta,
-        companyId: meta.companyId || DEFAULT_COMPANY_ID,
+        companyId: meta.companyId,
         segments: [],           // merged transcript segments from both tracks
         aaiInbound: null,       // AssemblyAI session for inbound (customer)
         aaiOutbound: null,      // AssemblyAI session for outbound (agent)
@@ -76,15 +79,6 @@ function createSession(callSid, meta = {}) {
             // Broadcast live delta via SSE
             realtimeService.broadcast('transcript.delta', {
                 company_id: session.companyId,
-                callSid,
-                track: trackName,
-                speaker,
-                text: turnData.text,
-                isFinal: turnData.isFinal,
-                turnOrder: turnOrder,
-                startMs: turnData.startMs,
-                endMs: turnData.endMs,
-                receivedAt: turnData.receivedAt
             });
         };
     }
@@ -220,7 +214,7 @@ async function finalizeSession(callSid) {
                         turnOrder: seg.turnOrder,
                         words: seg.words
                     }),
-                    DEFAULT_COMPANY_ID
+                    session.companyId
                 ]
             );
         }
@@ -247,17 +241,13 @@ async function finalizeSession(callSid) {
                     provider: 'assemblyai',
                     finalizedAt: new Date().toISOString()
                 }),
-                DEFAULT_COMPANY_ID
+                session.companyId
             ]
         );
 
         // Broadcast finalized event
         realtimeService.broadcast('transcript.finalized', {
             company_id: session.companyId,
-            callSid,
-            text: fullText,
-            segmentCount: sorted.length,
-            finalizedAt: new Date().toISOString()
         });
 
         console.log(`[TranscriptSvc:${callSid}] Finalized: ${sorted.length} segments, ${fullText.length} chars`);

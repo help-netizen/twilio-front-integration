@@ -425,7 +425,7 @@ describe('server-owned rely_filter metadata', () => {
         expect(source).toMatch(/async function updateLead\(uuid, fields, companyId = null, activityActor = null\)/);
     });
 
-    test('TC-R5-01 · marker-bearing INSERT precedes the unchanged lead.created broadcast', async () => {
+    test('TC-R5-01 · marker-bearing INSERT precedes the scope-only lead.created invalidation', async () => {
         useCreateSqlDispatch([]);
         const serverMarker = {
             rejected: true,
@@ -448,8 +448,6 @@ describe('server-owned rely_filter metadata', () => {
             .toBeLessThan(mockBroadcast.mock.invocationCallOrder[0]);
         expect(mockBroadcast).toHaveBeenCalledWith('lead.created', {
             company_id: COMPANY,
-            status: 'Submitted',
-            lead_id: '77',
         });
     });
 });
