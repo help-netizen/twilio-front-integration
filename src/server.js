@@ -40,6 +40,7 @@ const chatgptMcpResourceMetadataRouter = require('../backend/src/routes/chatgptM
 const chatgptMcpOAuthRouter = require('../backend/src/routes/chatgptMcp');
 const appRuntimeGatewayRouter = require('../backend/src/routes/appRuntimeGateway');
 const appRuntimeDevTokensRouter = require('../backend/src/routes/appRuntimeDevTokens');
+const appStudioRouter = require('../backend/src/routes/appStudio');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -97,6 +98,7 @@ app.use('/api/email/push', express.raw({ type: '*/*', limit: '1mb' }),
     require('../backend/src/routes/emailPush'));
 app.use('/internal/app-runtime', appRuntimeGatewayRouter);
 app.use('/api/platform/app-runtime', appRuntimeDevTokensRouter);
+app.use('/api/app-studio', appStudioRouter);
 
 // Middleware
 // 2mb limit covers document-template descriptors that may embed a base64 logo
