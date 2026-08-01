@@ -1,0 +1,3 @@
+# The runner is deployed as its own image; dependencies are installed at build
+# time (isolated-vm is a native module and must be compiled on the target).
+node_modules/
