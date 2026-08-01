@@ -24,7 +24,7 @@ function jobLine(job) {
         `Job ${job?.id ?? ''}`.trim()
     );
     const time = clockTime(
-        job?.scheduled_start || job?.start_at || job?.start_time || job?.scheduled_at
+        job?.start_date || job?.scheduled_start || job?.start_at || job?.start_time || job?.scheduled_at
     );
     const status = firstText(job, ['status', 'blanc_status'], '');
     return `- ${time ? `${time} — ` : ''}${title}${status ? ` (${status})` : ''}`;

@@ -20,13 +20,18 @@ afterAll(() => {
 });
 
 describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
-    test('sends the pinned artifact and fixed fixtures with service authentication', async () => {
+    test('sends the pinned artifact and deterministic sandbox seed with service authentication', async () => {
         const fetchImpl = jest.fn().mockResolvedValue({
             status: 200,
             text: async () => JSON.stringify({
                 ok: true,
-                result: { entry_point: 'run', tools: [], returned_type: 'object' },
-                usage: { wall_ms: 2, gateway_calls: 0 },
+                result: { today: '2026-07-31' },
+                validation: { entry_point: 'run', tools: [], returned_type: 'object' },
+                usage: { wall_ms: 2, gateway_calls: 0, result_bytes: 22, error_code: null },
+                fixtures_summary: {
+                    companies: 1, contacts: 6, leads: 6, jobs: 6,
+                    tasks: 8, invoices: 5, payments: 4,
+                },
             }),
         });
         await expect(dryRunner.validateAndDryRun({
@@ -36,6 +41,12 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             entry_point: 'run',
             tools: [],
             returned_type: 'object',
+            usage: { wall_ms: 2, gateway_calls: 0, result_bytes: 22, error_code: null },
+            fixtures_summary: {
+                companies: 1, contacts: 6, leads: 6, jobs: 6,
+                tasks: 8, invoices: 5, payments: 4,
+            },
+            result: { today: '2026-07-31' },
         });
 
         const [url, options] = fetchImpl.mock.calls[0];
@@ -45,8 +56,9 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             source: SOURCE,
             expectedSourceSha256: SOURCE_SHA256,
             input: { today: '2026-07-31' },
-            fixtures: expect.objectContaining({ 'svc.list_tasks': expect.any(Object) }),
+            seed: 'app-studio-builder-v1',
         });
+        expect(JSON.parse(options.body)).not.toHaveProperty('fixtures');
     });
 
     test('runner authentication and validation failures preserve safe error codes', () => {

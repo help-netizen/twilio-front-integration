@@ -68,6 +68,12 @@ function harness(overrides = {}) {
             tools: ['svc.list_tasks'],
             entry_point: 'run',
             returned_type: 'object',
+            usage: { wall_ms: 3, gateway_calls: 1, result_bytes: 11, error_code: null },
+            fixtures_summary: {
+                companies: 1, contacts: 6, leads: 6, jobs: 6,
+                tasks: 8, invoices: 5, payments: 4,
+            },
+            result: { count: 6 },
         }),
         ...overrides.dryRunner,
     };
@@ -107,7 +113,15 @@ describe('APP-BUILD-001 generation pipeline', () => {
             chatId: CHAT_ID,
             source: SAFE_SOURCE,
             tools: ['svc.list_tasks'],
-            scannerReport: expect.objectContaining({ parsed: true, dry_run: { ok: true, returned_type: 'object' } }),
+            scannerReport: expect.objectContaining({
+                parsed: true,
+                dry_run: expect.objectContaining({
+                    ok: true,
+                    returned_type: 'object',
+                    usage: expect.objectContaining({ gateway_calls: 1 }),
+                    fixtures_summary: expect.objectContaining({ jobs: 6, tasks: 8 }),
+                }),
+            }),
         }));
         expect(dryRunner.validateAndDryRun.mock.invocationCallOrder[0])
             .toBeLessThan(repository.persistSuccess.mock.invocationCallOrder[0]);

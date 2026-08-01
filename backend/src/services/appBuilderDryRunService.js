@@ -3,33 +3,7 @@
 const DEFAULT_TIMEOUT_MS = 12000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const DRY_RUN_INPUT = Object.freeze({ today: '2026-07-31' });
-const TOOL_FIXTURES = Object.freeze({
-    'svc.list_jobs': Object.freeze({
-        results: Object.freeze([Object.freeze({
-            id: 101,
-            job_number: 'TEST-101',
-            service_name: 'Fixture inspection',
-            status: 'scheduled',
-            scheduled_start: '2026-07-31T09:00:00-04:00',
-        })]),
-        total: 1,
-    }),
-    'svc.get_job': Object.freeze({
-        id: 101,
-        job_number: 'TEST-101',
-        service_name: 'Fixture inspection',
-        status: 'scheduled',
-    }),
-    'svc.list_tasks': Object.freeze({
-        tasks: Object.freeze([Object.freeze({
-            id: 201,
-            title: 'Fixture follow-up',
-            status: 'open',
-            due_at: '2026-07-31T16:00:00Z',
-        })]),
-        total: 1,
-    }),
-});
+const SANDBOX_SEED = 'app-studio-builder-v1';
 
 class AppBuilderDryRunError extends Error {
     constructor(code, message, stage = 'dry_run') {
@@ -160,14 +134,28 @@ function parseResult(payload, status = 200) {
             typeof payload?.error?.stage === 'string' ? payload.error.stage : 'dry_run'
         );
     }
-    if (!payload.result || typeof payload.result !== 'object' || Array.isArray(payload.result)) {
+    if (!Object.prototype.hasOwnProperty.call(payload, 'result')
+        || !payload.validation
+        || typeof payload.validation !== 'object'
+        || Array.isArray(payload.validation)
+        || !payload.usage
+        || typeof payload.usage !== 'object'
+        || Array.isArray(payload.usage)
+        || !payload.fixtures_summary
+        || typeof payload.fixtures_summary !== 'object'
+        || Array.isArray(payload.fixtures_summary)) {
         throw new AppBuilderDryRunError(
             'RUNNER_PROTOCOL_ERROR',
             'App runner returned an invalid dry-run result.',
             'runner_protocol'
         );
     }
-    return payload.result;
+    return {
+        ...payload.validation,
+        usage: payload.usage,
+        fixtures_summary: payload.fixtures_summary,
+        result: payload.result,
+    };
 }
 
 async function validateAndDryRun(
@@ -196,7 +184,7 @@ async function validateAndDryRun(
                 source,
                 expectedSourceSha256,
                 input: DRY_RUN_INPUT,
-                fixtures: TOOL_FIXTURES,
+                seed: SANDBOX_SEED,
             }),
             signal: controller.signal,
         });
@@ -224,7 +212,7 @@ module.exports = {
     DEFAULT_TIMEOUT_MS,
     DRY_RUN_INPUT,
     MAX_RESPONSE_BYTES,
-    TOOL_FIXTURES,
+    SANDBOX_SEED,
     AppBuilderDryRunError,
     parseResult,
     runnerBaseUrl,

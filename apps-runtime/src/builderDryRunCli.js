@@ -20,12 +20,13 @@ async function readInput() {
 (async () => {
     try {
         const input = await readInput();
-        const { result: report } = await validateAndDryRun({
+        const { validation: report } = await validateAndDryRun({
             source: input?.source,
             expectedSourceSha256: input?.expectedSourceSha256
                 || sourceSha256(input?.source || ''),
             input: input?.input,
             fixtures: input?.fixtures,
+            seed: input?.seed,
         });
         process.stdout.write(`${JSON.stringify({ ok: true, report })}\n`);
     } catch (error) {

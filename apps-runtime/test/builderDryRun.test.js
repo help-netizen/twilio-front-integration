@@ -54,12 +54,31 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
                 return { count: jobs.results.length, today: ctx.input.today };
             }
         `;
-        const { result: report } = await dryRun(source);
+        const { validation: report } = await dryRun(source);
         expect(report).toMatchObject({
             entry_point: 'run',
             tools: ['svc.list_jobs'],
             returned_type: 'object',
         });
         expect(report.source_bytes).toBeGreaterThan(0);
+    });
+
+    test('caller-supplied Phase 4 fixture maps still take precedence over generated data', async () => {
+        const source = `
+            export async function run(ctx) {
+                const tasks = await ctx.callTool('svc.list_tasks', { limit: 10 });
+                return tasks.tasks.length;
+            }
+        `;
+        const execution = await validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            seed: 'must-not-be-used',
+            fixtures: {
+                'svc.list_tasks': { tasks: [{ id: 1 }], pagination: {} },
+            },
+        });
+        expect(execution.result).toBe(1);
+        expect(execution.fixturesSummary).toMatchObject({ companies: 0, tasks: 1 });
     });
 });

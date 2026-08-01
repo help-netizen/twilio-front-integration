@@ -71,8 +71,13 @@ function validEnvelope(body, endpoint) {
     if (typeof body.expectedSourceSha256 !== 'string'
         || !/^[0-9a-f]{64}$/.test(body.expectedSourceSha256)) return false;
     if (endpoint === 'dry-run') {
-        return body.fixtures && typeof body.fixtures === 'object' && !Array.isArray(body.fixtures)
-            && Object.prototype.hasOwnProperty.call(body, 'input');
+        const fixturesValid = !Object.prototype.hasOwnProperty.call(body, 'fixtures')
+            || (body.fixtures && typeof body.fixtures === 'object' && !Array.isArray(body.fixtures));
+        const seedValid = !Object.prototype.hasOwnProperty.call(body, 'seed')
+            || ((typeof body.seed === 'string' || Number.isSafeInteger(body.seed))
+                && String(body.seed).length > 0
+                && String(body.seed).length <= 128);
+        return fixturesValid && seedValid && Object.prototype.hasOwnProperty.call(body, 'input');
     }
     return typeof body.runToken === 'string' && body.runToken.length > 0
         && Object.prototype.hasOwnProperty.call(body, 'input');
@@ -155,6 +160,7 @@ function createRequestHandler({
                         expectedSourceSha256: body.expectedSourceSha256,
                         input: body.input,
                         fixtures: body.fixtures,
+                        seed: body.seed,
                         signal,
                     });
                 }
@@ -185,7 +191,9 @@ function createRequestHandler({
             writeJson(res, 200, {
                 ok: true,
                 result: execution.result,
+                validation: execution.validation,
                 usage: execution.usage || usageFor(null, startedAt),
+                fixtures_summary: execution.fixturesSummary,
             });
         } catch (error) {
             writeJson(res, responseStatus(error), {

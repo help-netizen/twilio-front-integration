@@ -9,7 +9,7 @@ const DRY_RUN_BODY = {
     source: SOURCE,
     expectedSourceSha256: sourceSha256(SOURCE),
     input: { today: '2026-07-31' },
-    fixtures: {},
+    seed: 'server-test-seed',
 };
 
 const servers = [];
@@ -46,8 +46,18 @@ describe('APP-SVC-001 runner HTTP service', () => {
         expect(response.status).toBe(200);
         await expect(response.json()).resolves.toMatchObject({
             ok: true,
-            result: { entry_point: 'run', returned_type: 'object' },
+            result: { today: '2026-07-31' },
+            validation: { entry_point: 'run', returned_type: 'object' },
             usage: { gateway_calls: 0, error_code: null },
+            fixtures_summary: {
+                companies: 1,
+                contacts: 6,
+                leads: 6,
+                jobs: 6,
+                tasks: 8,
+                invoices: 5,
+                payments: 4,
+            },
         });
     });
 
@@ -98,7 +108,53 @@ describe('APP-SVC-001 runner HTTP service', () => {
         expect(response.status).toBe(504);
         expect(Date.now() - startedAt).toBeLessThan(1000);
         await expect(response.json()).resolves.toMatchObject({
-            error: { code: 'APP_RUNTIME_REQUEST_TIMEOUT' },
+            error: {
+                code: 'APP_RUNTIME_REQUEST_TIMEOUT',
+                message: 'Application request exceeded the host timeout.',
+            },
+            usage: { error_code: 'APP_RUNTIME_REQUEST_TIMEOUT' },
+        });
+    });
+
+    test('an app that names a nonexistent tool returns the honest static error', async () => {
+        const source = "export async function run(ctx) { return ctx.callTool('svc.missing', {}); }";
+        const baseUrl = await startServer();
+        const response = await post(baseUrl, '/v1/dry-run', {
+            body: {
+                ...DRY_RUN_BODY,
+                source,
+                expectedSourceSha256: sourceSha256(source),
+            },
+        });
+        expect(response.status).toBe(422);
+        await expect(response.json()).resolves.toMatchObject({
+            ok: false,
+            error: {
+                code: 'UNKNOWN_TOOL',
+                message: 'Application calls an unknown tool: svc.missing.',
+            },
+            usage: { gateway_calls: 0, error_code: 'UNKNOWN_TOOL' },
+        });
+    });
+
+    test('an application CPU timeout is reported as a timeout, never as a completed run', async () => {
+        const source = 'export async function run(ctx) { while (ctx) {} }';
+        const baseUrl = await startServer();
+        const response = await post(baseUrl, '/v1/dry-run', {
+            body: {
+                ...DRY_RUN_BODY,
+                source,
+                expectedSourceSha256: sourceSha256(source),
+            },
+        });
+        expect(response.status).toBe(422);
+        await expect(response.json()).resolves.toMatchObject({
+            ok: false,
+            error: {
+                code: 'APP_RUNTIME_CPU_LIMIT',
+                message: 'Application exceeded the CPU limit.',
+            },
+            usage: { error_code: 'APP_RUNTIME_CPU_LIMIT' },
         });
     });
 

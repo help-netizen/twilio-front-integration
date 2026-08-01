@@ -3,61 +3,62 @@
 const { runApplication, sourceMatchesExpected } = require('./runner');
 const { AppRunnerError } = require('./errors');
 const { validateApplicationSource } = require('./builderValidator');
+const {
+    DEFAULT_SANDBOX_SEED,
+    SandboxFixtureError,
+    generateSandboxFixtures,
+    projectSandboxTool,
+    summarizeSandboxFixtures,
+} = require('./sandboxFixtures');
 
 const DRY_RUN_INPUT = Object.freeze({ today: '2026-07-31' });
 const DRY_RUN_TOKEN = 'app-builder-dry-run-host-token-0000000000000000';
 const DRY_RUN_GATEWAY = 'https://app-builder-fixtures.albusto.invalid';
+const DEFAULT_FIXTURE_GRAPH = generateSandboxFixtures(DEFAULT_SANDBOX_SEED);
 const TOOL_FIXTURES = Object.freeze({
-    'svc.list_jobs': Object.freeze({
-        results: Object.freeze([Object.freeze({
-            id: 101,
-            job_number: 'TEST-101',
-            service_name: 'Fixture inspection',
-            status: 'scheduled',
-            scheduled_start: '2026-07-31T09:00:00-04:00',
-        })]),
-        total: 1,
+    'svc.list_jobs': projectSandboxTool(DEFAULT_FIXTURE_GRAPH, 'svc.list_jobs'),
+    'svc.get_job': projectSandboxTool(DEFAULT_FIXTURE_GRAPH, 'svc.get_job', {
+        job_id: DEFAULT_FIXTURE_GRAPH.jobs[0].id,
     }),
-    'svc.get_job': Object.freeze({
-        id: 101,
-        job_number: 'TEST-101',
-        service_name: 'Fixture inspection',
-        status: 'scheduled',
-    }),
-    'svc.list_tasks': Object.freeze({
-        tasks: Object.freeze([Object.freeze({
-            id: 201,
-            title: 'Fixture follow-up',
-            status: 'open',
-            due_at: '2026-07-31T16:00:00Z',
-        })]),
-        total: 1,
-    }),
+    'svc.list_tasks': projectSandboxTool(DEFAULT_FIXTURE_GRAPH, 'svc.list_tasks'),
 });
 
-function fixtureResponse(toolName, fixtures) {
-    const data = fixtures[toolName];
-    if (!data) {
-        const payload = { ok: false, code: 'TOOL_NOT_FOUND', message: 'Tool not found.' };
+function isFixtureGraph(fixtures) {
+    return fixtures && Array.isArray(fixtures.jobs) && Array.isArray(fixtures.tasks);
+}
+
+function fixtureResponse(toolName, args, fixtures) {
+    try {
+        const data = isFixtureGraph(fixtures)
+            ? projectSandboxTool(fixtures, toolName, args)
+            : fixtures[toolName];
+        if (!data) throw new SandboxFixtureError('TOOL_NOT_FOUND', 'Tool not found.', 404);
+        const payload = { ok: true, data, request_id: 'app-builder-dry-run' };
+        return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify(payload),
+        };
+    } catch (error) {
+        const payload = {
+            ok: false,
+            code: error?.code || 'DRY_RUN_FIXTURE_ERROR',
+            message: String(error?.message || 'Sandbox fixture projection failed.'),
+        };
         return {
             ok: false,
-            status: 404,
+            status: Number(error?.httpStatus) || 500,
             text: async () => JSON.stringify(payload),
         };
     }
-    const payload = { ok: true, data, request_id: 'app-builder-dry-run' };
-    return {
-        ok: true,
-        status: 200,
-        text: async () => JSON.stringify(payload),
-    };
 }
 
 async function validateAndDryRun({
     source,
     expectedSourceSha256,
     input = DRY_RUN_INPUT,
-    fixtures = TOOL_FIXTURES,
+    fixtures,
+    seed = DEFAULT_SANDBOX_SEED,
     signal,
 }) {
     if (typeof expectedSourceSha256 !== 'string'
@@ -81,7 +82,10 @@ async function validateAndDryRun({
         throw mismatch;
     }
     const validation = await validateApplicationSource(source);
-    if (!fixtures || typeof fixtures !== 'object' || Array.isArray(fixtures)) {
+    const activeFixtures = fixtures === undefined
+        ? generateSandboxFixtures(seed)
+        : fixtures;
+    if (!activeFixtures || typeof activeFixtures !== 'object' || Array.isArray(activeFixtures)) {
         const error = new Error('Dry-run fixtures must be an object.');
         error.code = 'DRY_RUN_FIXTURES_INVALID';
         throw error;
@@ -95,10 +99,19 @@ async function validateAndDryRun({
             input,
             gatewayBaseUrl: DRY_RUN_GATEWAY,
             runToken: DRY_RUN_TOKEN,
-            fetchImpl: async (url) => fixtureResponse(
-                decodeURIComponent(url.pathname.split('/').pop()),
-                fixtures
-            ),
+            fetchImpl: async (url, options) => {
+                let args;
+                try {
+                    args = JSON.parse(options.body);
+                } catch (_error) {
+                    args = {};
+                }
+                return fixtureResponse(
+                    decodeURIComponent(url.pathname.split('/').pop()),
+                    args,
+                    activeFixtures
+                );
+            },
             reportRunUsage: false,
             onUsage: value => { usage = value; },
             signal,
@@ -108,13 +121,15 @@ async function validateAndDryRun({
         throw error;
     }
     return {
-        result: {
+        result,
+        validation: {
             source_bytes: validation.sourceBytes,
             tools: [...validation.tools],
             entry_point: validation.entryPoint,
             returned_type: result === null ? 'null' : Array.isArray(result) ? 'array' : typeof result,
         },
         usage,
+        fixturesSummary: summarizeSandboxFixtures(activeFixtures),
     };
 }
 

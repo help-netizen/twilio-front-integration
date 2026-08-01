@@ -201,6 +201,8 @@ function createAppBuilderService({
                     dry_run: {
                         ok: true,
                         returned_type: report.returned_type,
+                        usage: report.usage,
+                        fixtures_summary: report.fixtures_summary,
                     },
                 },
                 tools: report.tools,
