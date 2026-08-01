@@ -12,21 +12,25 @@ const webpush = require('web-push');
 
 const router = express.Router();
 
-// Resolve company_id
-async function resolveCompanyId(req) {
-    const cid = req.companyFilter?.company_id;
-    if (cid) return cid;
-    const { rows } = await db.query('SELECT id FROM companies ORDER BY id LIMIT 1');
-    return rows[0]?.id || null;
+function companyIdFromRequest(req, res) {
+    const companyId = req.companyFilter?.company_id;
+    if (companyId) return companyId;
+    res.status(403).json({
+        ok: false,
+        code: 'TENANT_CONTEXT_REQUIRED',
+        error: 'Company context is required.',
+    });
+    return null;
 }
 
 // ─── GET /api/push-subscriptions/status ─────────────────────────────────
 // Returns current user's active subscription count for this company
 router.get('/status', async (req, res) => {
     try {
-        const companyId = await resolveCompanyId(req);
+        const companyId = companyIdFromRequest(req, res);
+        if (!companyId) return;
         const userId = req.user?.crmUser?.id;
-        if (!companyId || !userId) {
+        if (!userId) {
             return res.json({ ok: true, hasActiveSubscription: false, count: 0 });
         }
 
@@ -61,9 +65,10 @@ router.get('/vapid-public-key', (req, res) => {
 // Register or re-activate a push subscription
 router.post('/', async (req, res) => {
     try {
-        const companyId = await resolveCompanyId(req);
+        const companyId = companyIdFromRequest(req, res);
+        if (!companyId) return;
         const userId = req.user?.crmUser?.id;
-        if (!companyId || !userId) {
+        if (!userId) {
             return res.status(400).json({ ok: false, error: 'Missing user/company context' });
         }
 
@@ -72,14 +77,13 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ ok: false, error: 'Missing subscription data (endpoint, keys.p256dh, keys.auth)' });
         }
 
-        // Upsert: if endpoint already exists, reactivate it
+        // Upsert only this tenant/user/endpoint tuple. Never move a row to a
+        // different tenant or user because an endpoint string matches.
         await db.query(
             `INSERT INTO push_subscriptions (company_id, user_id, endpoint, p256dh, auth, browser_name, user_agent, is_active, last_seen_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW())
-             ON CONFLICT (endpoint)
+             ON CONFLICT (company_id, user_id, endpoint)
              DO UPDATE SET
-               company_id = $1,
-               user_id = $2,
                p256dh = $4,
                auth = $5,
                browser_name = $6,
@@ -101,14 +105,21 @@ router.post('/', async (req, res) => {
 // Deactivate a subscription by endpoint
 router.delete('/', async (req, res) => {
     try {
+        const companyId = companyIdFromRequest(req, res);
+        if (!companyId) return;
+        const userId = req.user?.crmUser?.id;
+        if (!userId) {
+            return res.status(400).json({ ok: false, error: 'Missing user/company context' });
+        }
         const { endpoint } = req.body;
         if (!endpoint) {
             return res.status(400).json({ ok: false, error: 'Missing endpoint' });
         }
 
         await db.query(
-            `UPDATE push_subscriptions SET is_active = false WHERE endpoint = $1 AND user_id = $2`,
-            [endpoint, req.user?.crmUser?.id]
+            `UPDATE push_subscriptions SET is_active = false
+             WHERE company_id = $1 AND user_id = $2 AND endpoint = $3`,
+            [companyId, userId, endpoint]
         );
 
         res.json({ ok: true });
@@ -122,14 +133,15 @@ router.delete('/', async (req, res) => {
 // Send a test notification to the current user's latest active subscription
 router.post('/test', async (req, res) => {
     try {
-        const companyId = await resolveCompanyId(req);
+        const companyId = companyIdFromRequest(req, res);
+        if (!companyId) return;
         const userId = req.user?.crmUser?.id;
-        if (!companyId || !userId) {
+        if (!userId) {
             return res.status(400).json({ ok: false, error: 'Missing user/company context' });
         }
 
         const { rows } = await db.query(
-            `SELECT endpoint, p256dh, auth FROM push_subscriptions
+            `SELECT id, endpoint, p256dh, auth FROM push_subscriptions
              WHERE company_id = $1 AND user_id = $2 AND is_active = true
              ORDER BY last_seen_at DESC LIMIT 5`,
             [companyId, userId]
@@ -166,8 +178,9 @@ router.post('/test', async (req, res) => {
                 if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
                     // Subscription expired — deactivate
                     await db.query(
-                        'UPDATE push_subscriptions SET is_active = false WHERE endpoint = $1',
-                        [sub.endpoint]
+                        `UPDATE push_subscriptions SET is_active = false
+                         WHERE id = $1 AND company_id = $2 AND user_id = $3`,
+                        [sub.id, companyId, userId]
                     );
                 }
                 console.warn(`[PushSubscriptions] Test push failed for endpoint: ${pushErr.statusCode || pushErr.message}`);

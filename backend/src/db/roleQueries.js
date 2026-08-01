@@ -196,6 +196,17 @@ async function seedRoleConfigs(companyId, createdBy = null) {
         );
         if (rows[0]) results.push(rows[0]);
     }
+    await db.query(
+        `INSERT INTO company_role_permissions (role_config_id, permission_key, is_allowed)
+         SELECT id, 'notifications.financial.receive', true
+         FROM company_role_configs
+         WHERE company_id = $1
+           AND role_key IN ('tenant_admin', 'manager', 'dispatcher', 'provider')
+         ON CONFLICT (role_config_id, permission_key) DO NOTHING`,
+        [companyId]
+    );
+    await require('../services/notificationPolicyService')
+        .seedNotificationRoleDefaultsForCompany(companyId);
     return results;
 }
 

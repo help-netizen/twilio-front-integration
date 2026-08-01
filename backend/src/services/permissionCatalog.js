@@ -8,6 +8,7 @@
  *   - 118_add_stripe_collection_permissions.sql (payments.collect_keyed/terminal)
  *   - 136_extend_tasks_for_crm_entities.sql (tasks.view/create/manage)
  *   - 138_provider_finance_and_source_perm.sql (lead_source.view)
+ *   - 221_notification_security_core.sql (notifications.financial.receive)
  *
  * Grouped per the RBAC audit categories. Keep this in sync with the seed
  * migrations so the matrix rows always match the keys the resolver understands.
@@ -79,6 +80,7 @@ const PERMISSION_CATALOG = [
     {
         category: 'Financial',
         items: [
+            { key: 'notifications.financial.receive', label: 'Receive financial notifications', description: 'Receive generic financial alerts without granting access to financial pages, amounts, or records.' },
             { key: 'financial_data.view', label: 'View financial data' },
             { key: 'estimates.view', label: 'View estimates' },
             { key: 'estimates.create', label: 'Create estimates' },

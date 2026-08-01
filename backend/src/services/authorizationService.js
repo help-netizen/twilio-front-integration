@@ -314,6 +314,7 @@ function buildDevAuthzContext() {
             'jobs.view', 'jobs.create', 'jobs.edit', 'jobs.assign',
             'jobs.close', 'jobs.done_pending_approval',
             'schedule.view', 'schedule.dispatch',
+            'notifications.financial.receive',
             'financial_data.view',
             'estimates.view', 'estimates.create', 'estimates.send',
             'invoices.view', 'invoices.create', 'invoices.send',

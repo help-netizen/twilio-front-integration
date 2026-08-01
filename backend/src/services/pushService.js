@@ -102,7 +102,7 @@ async function sendPushToCompany(companyId, eventType, data) {
         // 5. Send to all subscriptions
         let sent = 0;
         let failed = 0;
-        const staleEndpoints = [];
+        const staleSubscriptionIds = [];
 
         const results = await Promise.allSettled(
             subscriptions.map(async (sub) => {
@@ -114,7 +114,7 @@ async function sendPushToCompany(companyId, eventType, data) {
                     return { status: 'sent', id: sub.id };
                 } catch (err) {
                     if (err.statusCode === 410 || err.statusCode === 404) {
-                        staleEndpoints.push(sub.endpoint);
+                        staleSubscriptionIds.push(sub.id);
                     }
                     throw err;
                 }
@@ -127,12 +127,13 @@ async function sendPushToCompany(companyId, eventType, data) {
         }
 
         // 6. Deactivate stale subscriptions
-        if (staleEndpoints.length > 0) {
+        if (staleSubscriptionIds.length > 0) {
             await db.query(
-                `UPDATE push_subscriptions SET is_active = false WHERE endpoint = ANY($1)`,
-                [staleEndpoints]
+                `UPDATE push_subscriptions SET is_active = false
+                 WHERE company_id = $1 AND id = ANY($2::uuid[])`,
+                [companyId, staleSubscriptionIds]
             );
-            console.log(`${logPrefix} Deactivated ${staleEndpoints.length} stale subscriptions`);
+            console.log(`${logPrefix} Deactivated ${staleSubscriptionIds.length} stale subscriptions`);
         }
 
         console.log(`${logPrefix} Targeted=${subscriptions.length} Sent=${sent} Failed=${failed}`);

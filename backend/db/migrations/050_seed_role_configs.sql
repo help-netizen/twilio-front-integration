@@ -32,6 +32,7 @@ CROSS JOIN (VALUES
     ('jobs.view'), ('jobs.create'), ('jobs.edit'), ('jobs.assign'),
     ('jobs.close'), ('jobs.done_pending_approval'),
     ('schedule.view'), ('schedule.dispatch'),
+    ('notifications.financial.receive'),
     ('financial_data.view'),
     ('estimates.view'), ('estimates.create'), ('estimates.send'),
     ('invoices.view'), ('invoices.create'), ('invoices.send'),
@@ -62,6 +63,7 @@ CROSS JOIN (VALUES
     ('jobs.view'), ('jobs.create'), ('jobs.edit'), ('jobs.assign'),
     ('jobs.close'), ('jobs.done_pending_approval'),
     ('schedule.view'), ('schedule.dispatch'),
+    ('notifications.financial.receive'),
     ('financial_data.view'),
     ('estimates.view'), ('estimates.create'), ('estimates.send'),
     ('invoices.view'), ('invoices.create'), ('invoices.send'),
@@ -89,6 +91,7 @@ CROSS JOIN (VALUES
     ('jobs.view'), ('jobs.create'), ('jobs.edit'), ('jobs.assign'),
     ('jobs.done_pending_approval'),
     ('schedule.view'), ('schedule.dispatch'),
+    ('notifications.financial.receive'),
     ('reports.dashboard.view'), ('reports.jobs.view'), ('reports.leads.view'),
     ('reports.calls.view'),
     ('client_job_history.view'),
@@ -109,6 +112,7 @@ CROSS JOIN (VALUES
     ('jobs.view'),
     ('jobs.done_pending_approval'),
     ('schedule.view'),
+    ('notifications.financial.receive'),
     -- PROVIDER-FINANCE-001: self-serve finance (no refund). ROLE-PROVIDER-NO-PAYMENTS-001:
     -- deliberately NO payments.view — the standalone Payments ledger section is hidden from
     -- providers; job-level payment reads run under financial_data.view (see payments route).

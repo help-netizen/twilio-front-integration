@@ -93,6 +93,10 @@ describe('GET / — role matrix', () => {
         mockQuery.mockResolvedValueOnce({ rows: [] });
         mockQuery.mockResolvedValueOnce({ rows: [] });
         mockQuery.mockResolvedValueOnce({ rows: [] });
+        // Seed the notification-only financial permission for all four configs.
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        // Seed notification role/channel defaults for the newly-created configs.
+        mockQuery.mockResolvedValueOnce({ rows: [] });
         // listRoleConfigs again (now seeded)
         mockQuery.mockResolvedValueOnce({
             rows: [{ id: 'rc-admin', role_key: 'tenant_admin', display_name: 'Tenant Admin', is_locked: true }],

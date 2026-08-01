@@ -28,19 +28,22 @@ const DEFAULT_CONFIG = {
     ],
 };
 
-// Resolve company_id (super_admin fallback to first company)
-async function resolveCompanyId(req) {
-    const cid = req.companyFilter?.company_id;
-    if (cid) return cid;
-    const { rows } = await db.query('SELECT id FROM companies ORDER BY id LIMIT 1');
-    return rows[0]?.id || null;
+function companyIdFromRequest(req, res) {
+    const companyId = req.companyFilter?.company_id;
+    if (companyId) return companyId;
+    res.status(403).json({
+        ok: false,
+        code: 'TENANT_CONTEXT_REQUIRED',
+        error: 'Company context is required.',
+    });
+    return null;
 }
 
 // ─── GET /api/settings/action-required ──────────────────────────────────
 router.get('/', async (req, res) => {
     try {
-        const companyId = await resolveCompanyId(req);
-        if (!companyId) return res.json({ ok: true, config: DEFAULT_CONFIG });
+        const companyId = companyIdFromRequest(req, res);
+        if (!companyId) return;
 
         const { rows } = await db.query(
             'SELECT setting_value FROM company_settings WHERE company_id = $1 AND setting_key = $2',
@@ -73,10 +76,8 @@ router.put('/', async (req, res) => {
             return res.status(400).json({ ok: false, error: 'config must be an object' });
         }
 
-        const companyId = await resolveCompanyId(req);
-        if (!companyId) {
-            return res.status(400).json({ ok: false, error: 'No company context' });
-        }
+        const companyId = companyIdFromRequest(req, res);
+        if (!companyId) return;
 
         await db.query(
             `INSERT INTO company_settings (company_id, setting_key, setting_value, updated_at)

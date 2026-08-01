@@ -351,6 +351,8 @@ app.use('/api/settings/service-territories', authenticate, requirePermission('te
 // Notification settings (GET = any user; PUT = admin-only, checked inside route)
 const notificationSettingsRouter = require('../backend/src/routes/notification-settings');
 app.use('/api/settings/notifications', authenticate, requireCompanyAccess, notificationSettingsRouter);
+const notificationPoliciesRouter = require('../backend/src/routes/notification-policies');
+app.use('/api/settings', authenticate, requireCompanyAccess, notificationPoliciesRouter);
 
 // Push subscriptions (any authenticated user manages their own)
 const pushSubscriptionsRouter = require('../backend/src/routes/push-subscriptions');

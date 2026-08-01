@@ -3,18 +3,16 @@
  *
  * /api/settings/notifications — company-level browser push notification config
  *
- * Stored in company_settings with setting_key = 'browser_push_config'
+ * Compatibility adapter over the notification company-policy table.
  * GET — any authenticated user (to see company policy)
  * PUT — admin only (to change company policy)
  */
 
 const express = require('express');
-const db = require('../db/connection');
 const { requirePermission } = require('../middleware/authorization');
+const notificationPolicyService = require('../services/notificationPolicyService');
 
 const router = express.Router();
-
-const SETTING_KEY = 'browser_push_config';
 
 const DEFAULT_CONFIG = {
     browser_push_new_text_message_enabled: false,
@@ -23,26 +21,23 @@ const DEFAULT_CONFIG = {
     updated_at: null,
 };
 
-// Resolve company_id
-async function resolveCompanyId(req) {
-    const cid = req.companyFilter?.company_id;
-    if (cid) return cid;
-    const { rows } = await db.query('SELECT id FROM companies ORDER BY id LIMIT 1');
-    return rows[0]?.id || null;
+function companyIdFromRequest(req, res) {
+    const companyId = req.companyFilter?.company_id;
+    if (companyId) return companyId;
+    res.status(403).json({
+        ok: false,
+        code: 'TENANT_CONTEXT_REQUIRED',
+        error: 'Company context is required.',
+    });
+    return null;
 }
 
 // ─── GET /api/settings/notifications ────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
-        const companyId = await resolveCompanyId(req);
-        if (!companyId) return res.json({ ok: true, config: DEFAULT_CONFIG });
-
-        const { rows } = await db.query(
-            'SELECT setting_value FROM company_settings WHERE company_id = $1 AND setting_key = $2',
-            [companyId, SETTING_KEY]
-        );
-
-        const saved = rows.length > 0 ? rows[0].setting_value : {};
+        const companyId = companyIdFromRequest(req, res);
+        if (!companyId) return;
+        const saved = await notificationPolicyService.getLegacyNotificationConfig(companyId);
         const config = { ...DEFAULT_CONFIG, ...saved };
 
         res.json({ ok: true, config });
@@ -61,25 +56,16 @@ router.put('/', requirePermission('tenant.company.manage'), async (req, res) => 
             return res.status(400).json({ ok: false, error: 'config must be an object' });
         }
 
-        const companyId = await resolveCompanyId(req);
-        if (!companyId) {
-            return res.status(400).json({ ok: false, error: 'No company context' });
+        const companyId = companyIdFromRequest(req, res);
+        if (!companyId) return;
+        const userId = req.user?.crmUser?.id;
+        if (!userId) {
+            return res.status(409).json({ ok: false, code: 'NO_CRM_USER', error: 'CRM user context is required.' });
         }
-
-        const userId = req.user?.crmUser?.id || null;
-        const toSave = {
-            browser_push_new_text_message_enabled: !!config.browser_push_new_text_message_enabled,
-            browser_push_new_lead_enabled: !!config.browser_push_new_lead_enabled,
-            updated_by_user_id: userId,
-            updated_at: new Date().toISOString(),
-        };
-
-        await db.query(
-            `INSERT INTO company_settings (company_id, setting_key, setting_value, updated_at)
-             VALUES ($1, $2, $3, NOW())
-             ON CONFLICT (company_id, setting_key)
-             DO UPDATE SET setting_value = $3, updated_at = NOW()`,
-            [companyId, SETTING_KEY, JSON.stringify(toSave)]
+        const toSave = await notificationPolicyService.updateLegacyNotificationConfig(
+            companyId,
+            config,
+            userId
         );
 
         res.json({ ok: true, config: toSave });
