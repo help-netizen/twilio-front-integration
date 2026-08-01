@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { authedFetch } from '../services/apiClient';
-import { useAuth } from '../auth/AuthProvider';
 import {
     getPermissionState,
     subscribeToPush,
@@ -10,74 +9,73 @@ import {
     sendTestNotification,
     type PermissionState,
 } from '../services/pushNotificationService';
-import { BellOff, CheckCircle, AlertCircle, XCircle, Send, RefreshCw } from 'lucide-react';
+import { BellOff, CheckCircle, AlertCircle, XCircle, Send, RefreshCw, Lock } from 'lucide-react';
+import { Switch } from '../components/ui/switch';
 import { SettingsSection } from '../components/settings/SettingsSection';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+/**
+ * NOTIF-REWORK-001 — Alerts & notifications (per-user).
+ *
+ * Two flat groups: the device push state ("On this device") and the five
+ * notification categories the user configures for themselves. There is no
+ * per-role / per-channel matrix: a notification is delivered when the category
+ * is on AND the user has access to the record it's about — access is the gate,
+ * enforced server-side. Channel is device-level (browser push here; the mobile
+ * app has its own master toggle).
+ */
 
-interface NotificationConfig {
-    browser_push_new_text_message_enabled: boolean;
-    browser_push_new_lead_enabled: boolean;
+// ─── Types & API ─────────────────────────────────────────────────────────────
+
+interface NotifCategory {
+    key: string;
+    label: string;
+    description: string;
+    enabled: boolean;
+}
+interface NotifSettings {
+    categories: NotifCategory[];
+    device: { browser_push: { supported: boolean; permission: string; subscribed: boolean } };
 }
 
-// ─── API ─────────────────────────────────────────────────────────────────────
-
-async function fetchNotificationConfig(): Promise<NotificationConfig> {
+async function fetchNotifSettings(): Promise<NotifSettings> {
     const res = await authedFetch('/api/settings/notifications');
     const data = await res.json();
-    return data.config;
+    return data.data;
 }
 
-async function saveNotificationConfig(config: NotificationConfig): Promise<NotificationConfig> {
-    const res = await authedFetch('/api/settings/notifications', {
-        method: 'PUT',
+async function patchCategory(vars: { key: string; enabled: boolean }): Promise<NotifCategory> {
+    const res = await authedFetch(`/api/settings/notifications/${vars.key}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config }),
+        body: JSON.stringify({ enabled: vars.enabled }),
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Failed to save');
-    return data.config;
+    return data.data;
 }
 
-// ─── Status Badge ────────────────────────────────────────────────────────────
+// ─── Browser-push status pill ─────────────────────────────────────────────────
 
 function StatusBadge({ state, hasSub }: { state: PermissionState; hasSub: boolean }) {
+    const base = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium';
     if (state === 'unsupported') {
-        return (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-                <XCircle className="size-3.5" /> Not Supported
-            </span>
-        );
+        return <span className={base} style={{ background: 'var(--blanc-surface-muted)', color: 'var(--blanc-ink-3)' }}><XCircle className="size-3.5" /> Not supported</span>;
     }
     if (state === 'denied') {
-        return (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700">
-                <AlertCircle className="size-3.5" /> Blocked in Browser
-            </span>
-        );
+        return <span className={base} style={{ background: 'rgba(240,80,63,.12)', color: 'var(--blanc-danger)' }}><AlertCircle className="size-3.5" /> Blocked in browser</span>;
     }
     if (state === 'granted' && hasSub) {
-        return (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700">
-                <CheckCircle className="size-3.5" /> Enabled
-            </span>
-        );
+        return <span className={base} style={{ background: 'rgba(27,139,99,.12)', color: 'var(--blanc-success, #1b8b63)' }}><CheckCircle className="size-3.5" /> Enabled</span>;
     }
-    return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
-            <BellOff className="size-3.5" /> Not Enabled
-        </span>
-    );
+    return <span className={base} style={{ background: 'var(--blanc-accent-soft)', color: '#5b21b6' }}><BellOff className="size-3.5" /> Not enabled</span>;
 }
 
-// ─── Main Component ──────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function NotificationsSection() {
-    const { hasRole } = useAuth();
-    const isAdmin = hasRole('company_admin', 'super_admin');
     const queryClient = useQueryClient();
 
-    // Browser state
+    // Browser push (client-local truth; the API cannot read Notification.permission)
     const [permState, setPermState] = useState<PermissionState>('default');
     const [hasSub, setHasSub] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
@@ -85,210 +83,131 @@ export default function NotificationsSection() {
     const refreshBrowserState = async () => {
         setRefreshing(true);
         setPermState(getPermissionState());
-        const sub = await hasActiveSubscription();
-        setHasSub(sub);
-
-        // Auto-resync: if browser has subscription but backend doesn't, re-register
-        if (sub && getPermissionState() === 'granted') {
-            try {
-                const statusRes = await authedFetch('/api/push-subscriptions/status');
-                const statusData = await statusRes.json();
-                if (statusData.ok && !statusData.hasActiveSubscription) {
-                    console.log('[NotificationsSection] Browser has sub but backend does not — re-registering');
-                    const ok = await subscribeToPush();
-                    if (ok) toast.success('Push subscription re-synced with server');
-                }
-            } catch { /* ignore */ }
-        }
-
+        setHasSub(await hasActiveSubscription());
         setRefreshing(false);
     };
-
     useEffect(() => { refreshBrowserState(); }, []);
 
-    // Company config
-    const { data: config, isLoading } = useQuery<NotificationConfig>({
+    const { data, isLoading } = useQuery<NotifSettings>({
         queryKey: ['notification-settings'],
-        queryFn: fetchNotificationConfig,
+        queryFn: fetchNotifSettings,
     });
 
-    const saveMutation = useMutation({
-        mutationFn: saveNotificationConfig,
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['notification-settings'] });
-            toast.success('Notification settings saved');
+    const toggle = useMutation({
+        mutationFn: patchCategory,
+        onMutate: async (vars) => {
+            await queryClient.cancelQueries({ queryKey: ['notification-settings'] });
+            const prev = queryClient.getQueryData<NotifSettings>(['notification-settings']);
+            if (prev) {
+                queryClient.setQueryData<NotifSettings>(['notification-settings'], {
+                    ...prev,
+                    categories: prev.categories.map((c) => (c.key === vars.key ? { ...c, enabled: vars.enabled } : c)),
+                });
+            }
+            return { prev };
         },
-        onError: () => toast.error('Failed to save notification settings'),
+        onError: (_e, _vars, ctx) => {
+            if (ctx?.prev) queryClient.setQueryData(['notification-settings'], ctx.prev);
+            toast.error('Could not save that change');
+        },
+        onSettled: () => queryClient.invalidateQueries({ queryKey: ['notification-settings'] }),
     });
 
-    // Handlers
-    const handleEnable = async () => {
+    const handleEnablePush = async () => {
         const ok = await subscribeToPush();
-        if (ok) {
-            toast.success('Browser notifications enabled!');
-            await refreshBrowserState();
-        } else {
-            toast.error('Could not enable notifications. Check browser permissions.');
-            await refreshBrowserState();
-        }
+        if (ok) toast.success('Browser notifications enabled');
+        else if (getPermissionState() === 'denied') toast.error('Notifications are blocked in your browser settings');
+        await refreshBrowserState();
     };
-
     const handleTest = async () => {
         try {
-            const result = await sendTestNotification();
-            if (result.sent > 0) toast.success('Test notification sent!');
+            const r = await sendTestNotification();
+            if (r.sent > 0) toast.success('Test notification sent');
             else toast.error('No active subscriptions to send to');
-        } catch {
-            toast.error('Test notification failed');
-        }
+        } catch { toast.error('Test notification failed'); }
     };
-
-    const handleToggle = (key: keyof NotificationConfig) => {
-        if (!config || !isAdmin) return;
-        saveMutation.mutate({ ...config, [key]: !config[key] });
-    };
-
-    if (isLoading) {
-        return (
-            <div className="animate-pulse space-y-4">
-                <div className="h-6 bg-gray-200 rounded w-48" />
-                <div className="h-32 bg-gray-100 rounded" />
-            </div>
-        );
-    }
 
     return (
         <>
-            {/* ── Browser push status ─────────────────────────────────────── */}
+            {/* ── On this device ─────────────────────────────────────────────── */}
             <SettingsSection
-                title="Browser push notifications"
-                description="Allow this browser to show real-time alerts."
+                title="On this device"
+                description="Push in this browser. In the mobile app, manage it from the app's settings."
+                flat
             >
-                <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-3 pt-0.5">
                     <StatusBadge state={permState} hasSub={hasSub} />
-
-                    {/* Unsupported */}
-                    {permState === 'unsupported' && (
-                        <p className="text-xs text-gray-500">
-                            Your browser does not support push notifications. Try using Chrome, Edge, or Firefox.
-                        </p>
+                    {(permState === 'default' || (permState === 'granted' && !hasSub)) && (
+                        <button
+                            onClick={handleEnablePush}
+                            className="rounded-[10px] px-3.5 py-2 text-sm font-semibold text-white"
+                            style={{ background: 'var(--blanc-accent)' }}
+                        >
+                            Enable notifications
+                        </button>
                     )}
-
-                    {/* Default — can enable */}
-                    {permState === 'default' && (
-                        <div className="flex items-center gap-3">
-                            <button
-                                onClick={handleEnable}
-                                className="px-3 py-1.5 bg-[#2f63d8] text-white text-sm rounded-md hover:bg-[#234d9e] transition-colors"
-                            >
-                                Enable notifications
-                            </button>
-                            <span className="text-xs text-gray-500">Click to allow browser notifications</span>
-                        </div>
+                    {permState === 'granted' && hasSub && (
+                        <button
+                            onClick={handleTest}
+                            className="inline-flex items-center gap-1.5 rounded-[10px] px-3.5 py-2 text-sm font-semibold"
+                            style={{ border: '1px solid var(--blanc-line-strong)', color: 'var(--blanc-ink-1)', background: 'var(--blanc-surface-strong)' }}
+                        >
+                            <Send className="size-3.5" /> Send test
+                        </button>
                     )}
-
-                    {/* Granted */}
-                    {permState === 'granted' && (
-                        <div className="flex items-center gap-3 flex-wrap">
-                            {!hasSub && (
-                                <button
-                                    onClick={handleEnable}
-                                    className="px-3 py-1.5 bg-[#2f63d8] text-white text-sm rounded-md hover:bg-[#234d9e] transition-colors"
-                                >
-                                    Activate subscription
-                                </button>
-                            )}
-                            {hasSub && (
-                                <button
-                                    onClick={handleTest}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors"
-                                >
-                                    <Send className="size-3.5" /> Send test notification
-                                </button>
-                            )}
-                            <button
-                                onClick={refreshBrowserState}
-                                disabled={refreshing}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors disabled:opacity-50"
-                            >
-                                <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh status
-                            </button>
-                        </div>
-                    )}
-
-                    {/* Denied / Blocked */}
-                    {permState === 'denied' && (
-                        <div className="space-y-2">
-                            <p className="text-xs text-gray-600">
-                                Notifications are blocked in your browser settings. To re-enable:
-                            </p>
-                            <ol className="text-xs text-gray-500 list-decimal list-inside space-y-1">
-                                <li>Click the lock/info icon in the address bar</li>
-                                <li>Find "Notifications" and change to "Allow"</li>
-                                <li>Refresh this page</li>
-                            </ol>
-                            <button
-                                onClick={refreshBrowserState}
-                                disabled={refreshing}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-md hover:bg-gray-50 transition-colors mt-1 disabled:opacity-50"
-                            >
-                                <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh status
-                            </button>
-                        </div>
-                    )}
+                    <button
+                        onClick={refreshBrowserState}
+                        disabled={refreshing}
+                        className="inline-flex items-center gap-1.5 rounded-[10px] px-3 py-2 text-sm font-medium disabled:opacity-50"
+                        style={{ color: 'var(--blanc-ink-3)' }}
+                    >
+                        <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+                    </button>
                 </div>
+                {permState === 'denied' && (
+                    <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--blanc-ink-3)' }}>
+                        Notifications are blocked in your browser settings. Open the site permissions (lock icon in the address bar), allow Notifications, then refresh.
+                    </p>
+                )}
             </SettingsSection>
 
-            {/* ── Company notification types ──────────────────────────────── */}
-            {config && (
-                <SettingsSection
-                    title="Company notification types"
-                    description={isAdmin
-                        ? 'These settings apply to all users in this company.'
-                        : 'Notification types are managed by your company admin.'}
-                >
-                    {/* Toggle: New text message */}
-                    <div className="flex items-center justify-between py-2.5">
-                        <div>
-                            <div className="font-medium text-sm">New text message</div>
-                            <div className="text-xs text-gray-500">Push when a customer sends an SMS</div>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                            <input
-                                type="checkbox"
-                                className="sr-only peer"
-                                checked={config.browser_push_new_text_message_enabled}
-                                onChange={() => handleToggle('browser_push_new_text_message_enabled')}
-                                disabled={!isAdmin}
-                            />
-                            <div className={`w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#2f63d8] ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`} />
-                        </label>
+            {/* ── Notifications (categories) ─────────────────────────────────── */}
+            <SettingsSection
+                title="Notifications"
+                description="The updates you want — your own settings. You only get one when you have access to what it's about (no Leads access → no lead alerts)."
+                flat
+            >
+                {isLoading || !data ? (
+                    <div className="animate-pulse space-y-3 pt-1">
+                        {[0, 1, 2, 3, 4].map((i) => (
+                            <div key={i} className="h-10 rounded" style={{ background: 'rgba(25,25,25,0.04)' }} />
+                        ))}
                     </div>
-
-
-                    {/* Toggle: New lead */}
-                    <div className="flex items-center justify-between py-2.5">
-                        <div>
-                            <div className="font-medium text-sm">New lead</div>
-                            <div className="text-xs text-gray-500">Push when a new lead is created</div>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                            <input
-                                type="checkbox"
-                                className="sr-only peer"
-                                checked={config.browser_push_new_lead_enabled}
-                                onChange={() => handleToggle('browser_push_new_lead_enabled')}
-                                disabled={!isAdmin}
-                            />
-                            <div className={`w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#2f63d8] ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`} />
-                        </label>
+                ) : (
+                    <div>
+                        {data.categories.map((cat, i) => (
+                            <div
+                                key={cat.key}
+                                className="flex items-center gap-4 py-3.5"
+                                style={i > 0 ? { borderTop: '1px solid var(--blanc-line)' } : undefined}
+                            >
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{cat.label}</div>
+                                    <div className="mt-0.5 text-xs leading-snug" style={{ color: 'var(--blanc-ink-2)' }}>{cat.description}</div>
+                                </div>
+                                <Switch
+                                    checked={cat.enabled}
+                                    onCheckedChange={(enabled) => toggle.mutate({ key: cat.key, enabled })}
+                                    aria-label={cat.label}
+                                />
+                            </div>
+                        ))}
+                        <p className="mt-3 flex items-center gap-1.5 text-[11.5px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                            <Lock className="size-3" /> Delivered only where your notifications are turned on and to records you can access.
+                        </p>
                     </div>
-
-                    {saveMutation.isPending && (
-                        <p className="text-xs text-gray-400 mt-2">Saving…</p>
-                    )}
-                </SettingsSection>
-            )}
+                )}
+            </SettingsSection>
         </>
     );
 }
