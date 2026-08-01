@@ -9,10 +9,8 @@
  *     NO_CRM_USER gate, own-token DELETE scoping, 401/403, and cross-tenant
  *     isolation (company_id comes from authz, never the body / :token owner).
  *
- *  B) pushService.sendToUser: db + http2 mocked. Verifies fail-soft when APNS_*
- *     env is missing (no throw, no db read), the (company_id, crm_user_id)
- *     resolve, and the reassign hook diff (only NEWLY-added provider ids get a
- *     push) via a thin scheduleService integration with mocked deps.
+ *  B) scoped browser/native transports: verifies full tenant/user/device keys,
+ *     fail-soft configuration handling, and the PII-safe APNs projection.
  *
  * (spec §3.7, §4.2, §8.T2, §10, C9/C13)
  */
@@ -238,145 +236,185 @@ describe('DELETE /api/devices/:token (MTECH-T2)', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// B) pushService.sendToUser — fail-soft + resolve scope
+// B) scoped browser/native transports — fail-soft + complete-key resolve
 // ════════════════════════════════════════════════════════════════════════════
 
-describe('pushService.sendToUser fail-soft (MTECH-T2)', () => {
-    const APNS_ENV_KEYS = ['APNS_KEY_ID', 'APNS_TEAM_ID', 'APNS_BUNDLE_ID', 'APNS_PRIVATE_KEY', 'APNS_ENV'];
+describe('pushService scoped transports (NOTIF-REWORK-001 M1.T5)', () => {
+    const ENV_KEYS = [
+        'APNS_KEY_ID', 'APNS_TEAM_ID', 'APNS_BUNDLE_ID', 'APNS_PRIVATE_KEY', 'APNS_ENV',
+        'VAPID_SUBJECT', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY',
+    ];
     let savedEnv;
 
     beforeEach(() => {
         savedEnv = {};
-        for (const k of APNS_ENV_KEYS) { savedEnv[k] = process.env[k]; delete process.env[k]; }
+        for (const k of ENV_KEYS) { savedEnv[k] = process.env[k]; delete process.env[k]; }
         jest.resetModules();
     });
     afterEach(() => {
-        for (const k of APNS_ENV_KEYS) {
+        for (const k of ENV_KEYS) {
             if (savedEnv[k] === undefined) delete process.env[k];
             else process.env[k] = savedEnv[k];
         }
     });
 
-    it('no APNS_* env → no-op, no throw, db NOT read', async () => {
+    it('missing tenant or user fails closed before a destination query', async () => {
         jest.doMock('../backend/src/db/connection', () => ({ query: jest.fn() }));
         const freshDb = require('../backend/src/db/connection');
         const pushService = require('../backend/src/services/pushService');
 
-        await expect(
-            pushService.sendToUser(COMPANY_A, USER_A, { type: 'job_assigned', job_id: 42 })
-        ).resolves.toBeUndefined();
+        await expect(pushService.sendNativePushToUser(null, USER_A, { title: 'x' }, { destinationIds: ['1'] }))
+            .resolves.toMatchObject({ targeted: 0, error_code: 'INVALID_DELIVERY_CONTEXT' });
+        await expect(pushService.sendWebPushToUser(COMPANY_A, null, { title: 'x' }, { destinationIds: ['1'] }))
+            .resolves.toMatchObject({ targeted: 0, error_code: 'INVALID_DELIVERY_CONTEXT' });
         expect(freshDb.query).not.toHaveBeenCalled();
     });
 
-    it('missing companyId or crmUserId → no-op, no throw, db NOT read', async () => {
-        jest.doMock('../backend/src/db/connection', () => ({ query: jest.fn() }));
-        const freshDb = require('../backend/src/db/connection');
-        const pushService = require('../backend/src/services/pushService');
-
-        await expect(pushService.sendToUser(null, USER_A, { type: 'job_assigned', job_id: 1 })).resolves.toBeUndefined();
-        await expect(pushService.sendToUser(COMPANY_A, null, { type: 'job_assigned', job_id: 1 })).resolves.toBeUndefined();
-        expect(freshDb.query).not.toHaveBeenCalled();
-    });
-
-    it('configured + no device rows → resolves by (company_id, crm_user_id), sends nothing, no http2', async () => {
-        process.env.APNS_KEY_ID = 'KID';
-        process.env.APNS_TEAM_ID = 'TID';
-        process.env.APNS_BUNDLE_ID = 'com.albusto.crm';
-        process.env.APNS_PRIVATE_KEY = 'unused-when-no-rows';
-
+    it('native resolve uses (company_id, crm_user_id, destination ids) and missing APNs config is fail-soft', async () => {
         const connect = jest.fn();
         jest.doMock('http2', () => ({ connect }));
-        jest.doMock('../backend/src/db/connection', () => ({ query: jest.fn().mockResolvedValue({ rows: [] }) }));
+        jest.doMock('../backend/src/db/connection', () => ({
+            query: jest.fn().mockResolvedValue({ rows: [{ id: 71, apns_token: TOKEN_A }] }),
+        }));
         const freshDb = require('../backend/src/db/connection');
         const pushService = require('../backend/src/services/pushService');
 
-        await pushService.sendToUser(COMPANY_A, USER_A, { type: 'job_rescheduled', job_id: 7 });
+        const result = await pushService.sendNativePushToUser(
+            COMPANY_A,
+            USER_A,
+            { title: 'Job assigned', body: 'Open Albusto.', event_type: 'job.assigned' },
+            { destinationIds: ['71'] }
+        );
 
+        expect(result).toEqual({ targeted: 1, sent: 0, failed: 1, error_code: 'APNS_NOT_CONFIGURED' });
         expect(freshDb.query).toHaveBeenCalledTimes(1);
         const [sql, params] = freshDb.query.mock.calls[0];
         expect(sql).toMatch(/FROM device_tokens/i);
-        expect(sql).toMatch(/company_id = \$1 AND crm_user_id = \$2/);
-        expect(params).toEqual([COMPANY_A, USER_A]);
-        // No rows → we never open an APNs connection.
+        expect(sql).toMatch(/company_id = \$1/);
+        expect(sql).toMatch(/crm_user_id = \$2/);
+        expect(sql).toMatch(/id = ANY\(\$3::bigint\[\]\)/);
+        expect(params).toEqual([COMPANY_A, USER_A, ['71']]);
         expect(connect).not.toHaveBeenCalled();
     });
 
-    it('exports the existing web-push API unchanged (sendPushToCompany, isEventEnabled) alongside sendToUser', () => {
-        const pushService = require('../backend/src/services/pushService');
-        expect(typeof pushService.sendToUser).toBe('function');
-        expect(typeof pushService.sendPushToCompany).toBe('function');
-        expect(typeof pushService.isEventEnabled).toBe('function');
-    });
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// B) reassign hook — only NEWLY-added provider ids get a job_assigned push
-// ════════════════════════════════════════════════════════════════════════════
-
-describe('scheduleService.reassignItem push hook (MTECH-T2)', () => {
-    const NEW_TECH = { id: 'zb-tech-2', name: 'Bob' };
-    const OLD_USER = 'user-old-1';   // already assigned before the reassign
-    const ADDED_USER = 'user-new-2'; // newly assigned by this reassign
-
-    function loadWithMocks() {
-        jest.resetModules();
-
-        const sendToUser = jest.fn().mockResolvedValue(undefined);
-        jest.doMock('../backend/src/services/pushService', () => ({
-            sendToUser,
-            sendPushToCompany: jest.fn(),
-            isEventEnabled: jest.fn(),
-        }));
-
-        // jobsService: pre-write read returns OLD mirror [OLD_USER]; the resolve of
-        // the NEW assignee list returns [OLD_USER, ADDED_USER] (as a JSON string).
-        jest.doMock('../backend/src/services/jobsService', () => ({
-            getJobById: jest.fn().mockResolvedValue({
-                id: 55,
-                assigned_techs: [{ id: 'zb-tech-1', name: 'Al' }],
-                assigned_provider_user_ids: [OLD_USER],
-                zenbooker_job_id: null,
+    it('browser resolve uses (company_id, user_id, destination ids), never company fan-out', async () => {
+        jest.doMock('../backend/src/db/connection', () => ({
+            query: jest.fn().mockResolvedValue({
+                rows: [{
+                    id: '00000000-0000-4000-8000-00000000b001',
+                    endpoint: 'https://push.example/shared-natural-key',
+                    p256dh: 'p',
+                    auth: 'a',
+                }],
             }),
-            resolveAssignedProviderUserIds: jest.fn().mockResolvedValue(JSON.stringify([OLD_USER, ADDED_USER])),
         }));
-
-        // scheduleQueries.reassignJob succeeds.
-        jest.doMock('../backend/src/db/scheduleQueries', () => ({
-            reassignJob: jest.fn().mockResolvedValue({ id: 55 }),
-            reassignTask: jest.fn(),
-            rescheduleJob: jest.fn(),
-        }));
-
-        // Route side-effects are irrelevant here — stub to no-op.
-        jest.doMock('../backend/src/services/routeSegmentService', () => ({
-            recalcForJob: jest.fn().mockResolvedValue(undefined),
-            enqueueGeocode: jest.fn().mockResolvedValue(undefined),
-        }));
-        jest.doMock('../backend/src/db/routeQueries', () => ({
-            getCompanyTimezone: jest.fn().mockResolvedValue('America/New_York'),
-            getTechDaysForJob: jest.fn().mockResolvedValue([]),
-        }));
-
-        const scheduleService = require('../backend/src/services/scheduleService');
-        return { scheduleService, sendToUser };
-    }
-
-    afterEach(() => { jest.resetModules(); });
-
-    it('pushes job_assigned to the ADDED provider id ONLY (not the already-assigned one)', async () => {
-        const { scheduleService, sendToUser } = loadWithMocks();
-
-        await scheduleService.reassignItem(COMPANY_A, 'job', 55, [
-            { id: 'zb-tech-1', name: 'Al' }, // resolves to OLD_USER (already assigned)
-            NEW_TECH,                         // resolves to ADDED_USER (new)
-        ]);
-
-        expect(sendToUser).toHaveBeenCalledTimes(1);
-        expect(sendToUser).toHaveBeenCalledWith(
-            COMPANY_A, ADDED_USER, { type: 'job_assigned', job_id: 55 }
+        const freshDb = require('../backend/src/db/connection');
+        const pushService = require('../backend/src/services/pushService');
+        const result = await pushService.sendWebPushToUser(
+            COMPANY_A,
+            USER_A,
+            { title: 'New message', body: 'Open Albusto.' },
+            { destinationIds: ['00000000-0000-4000-8000-00000000b001'] }
         );
-        // The pre-existing assignee must NOT be re-notified.
-        const notifiedUserIds = sendToUser.mock.calls.map(c => c[1]);
-        expect(notifiedUserIds).not.toContain(OLD_USER);
+
+        expect(result).toEqual({ targeted: 1, sent: 0, failed: 1, error_code: 'WEB_PUSH_NOT_CONFIGURED' });
+        const [sql, params] = freshDb.query.mock.calls[0];
+        expect(sql).toMatch(/FROM push_subscriptions/i);
+        expect(sql).toMatch(/company_id = \$1/);
+        expect(sql).toMatch(/user_id = \$2/);
+        expect(sql).toMatch(/id = ANY\(\$3::uuid\[\]\)/);
+        expect(params).toEqual([
+            COMPANY_A,
+            USER_A,
+            ['00000000-0000-4000-8000-00000000b001'],
+        ]);
+    });
+
+    it('APNs projection contains generic routing fields and no arbitrary event data', () => {
+        const pushService = require('../backend/src/services/pushService');
+        const payload = pushService.buildApnsPayload({
+            title: 'Payment received',
+            body: 'Open Albusto to view this update.',
+            event_type: 'payment.succeeded',
+            category_key: 'finance',
+            deep_link_kind: 'payment',
+            record_ref: { type: 'payment', id: '42' },
+            amount: '999.99',
+            phone: '+15555550123',
+        });
+        expect(payload).toEqual({
+            aps: {
+                alert: { title: 'Payment received', body: 'Open Albusto to view this update.' },
+                sound: 'default',
+                'content-available': 1,
+            },
+            data: {
+                event_type: 'payment.succeeded',
+                category_key: 'finance',
+                deep_link_kind: 'payment',
+                record_ref: { type: 'payment', id: '42' },
+            },
+        });
+        expect(JSON.stringify(payload)).not.toContain('999.99');
+        expect(JSON.stringify(payload)).not.toContain('+15555550123');
+    });
+
+    it('Web Push projection drops arbitrary producer fields', () => {
+        const pushService = require('../backend/src/services/pushService');
+        const payload = pushService.buildWebPushPayload({
+            title: 'New text message',
+            body: 'Open Albusto to view this update.',
+            tag: 'notification-1',
+            event_type: 'sms.inbound',
+            category_key: 'calls_messages',
+            category_label: 'Calls & messages',
+            deep_link_kind: 'contact',
+            record_ref: { type: 'contact', id: '42' },
+            url: '/pulse/contact/42',
+            message_body: 'PRIVATE-MESSAGE-BODY',
+            phone: '+15555550123',
+            amount: '999.99',
+        });
+        expect(payload).toEqual({
+            title: 'New text message',
+            body: 'Open Albusto to view this update.',
+            tag: 'notification-1',
+            event_type: 'sms.inbound',
+            category_key: 'calls_messages',
+            category_label: 'Calls & messages',
+            deep_link_kind: 'contact',
+            record_ref: { type: 'contact', id: '42' },
+            url: '/pulse/contact/42',
+        });
+        expect(JSON.stringify(payload)).not.toContain('PRIVATE-MESSAGE-BODY');
+        expect(JSON.stringify(payload)).not.toContain('+15555550123');
+        expect(JSON.stringify(payload)).not.toContain('999.99');
+    });
+
+    it('keeps the native job deep-link compatibility fields on dispatcher payloads', () => {
+        const pushService = require('../backend/src/services/pushService');
+        expect(pushService.buildApnsPayload({
+            title: 'Job rescheduled',
+            body: 'Open Albusto to view this update.',
+            event_type: 'job.rescheduled',
+            category_key: 'job_schedule',
+            deep_link_kind: 'job',
+            record_ref: { type: 'job', id: '42' },
+        }).data).toEqual({
+            event_type: 'job.rescheduled',
+            category_key: 'job_schedule',
+            deep_link_kind: 'job',
+            record_ref: { type: 'job', id: '42' },
+            type: 'job_rescheduled',
+            job_id: '42',
+        });
+    });
+
+    it('retires company-broadcast and legacy inline-native exports', () => {
+        const pushService = require('../backend/src/services/pushService');
+        expect(typeof pushService.sendWebPushToUser).toBe('function');
+        expect(typeof pushService.sendNativePushToUser).toBe('function');
+        expect(pushService.sendPushToCompany).toBeUndefined();
+        expect(pushService.sendToUser).toBeUndefined();
     });
 });

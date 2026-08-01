@@ -375,8 +375,12 @@ describe('REPAIR-ADVISOR-001 — createDirectJob emits job.created (Group E)', (
         expect(emit).toHaveBeenCalledWith(
             COMPANY_A,
             'job.created',
-            expect.objectContaining({ id: JOB_ID, jobId: JOB_ID, companyId: COMPANY_A }),
-            expect.objectContaining({ actorType: 'user', aggregateType: 'job', aggregateId: JOB_ID }),
+            {
+                id: JOB_ID,
+                job_id: JOB_ID,
+                record_refs: [{ type: 'job', id: JOB_ID }],
+            },
+            expect.objectContaining({ actorType: 'system', aggregateType: 'job', aggregateId: JOB_ID }),
         );
 
         // POST-commit: the jobs INSERT ran strictly BEFORE the emit fired.
@@ -492,12 +496,17 @@ describe('REPAIR-ADVISOR-001 — convertLead emits job.created only on the new-l
         const result = await svc.convertLead('ABC123', ZB_OVERRIDES, CID);
 
         expect(result).toMatchObject({ job_id: NEW_JOB_ID, link: `/jobs/${NEW_JOB_ID}` });
-        expect(emit).toHaveBeenCalledTimes(1);
+        const jobCreatedCalls = emit.mock.calls.filter(([, eventType]) => eventType === 'job.created');
+        expect(jobCreatedCalls).toHaveLength(1);
         expect(emit).toHaveBeenCalledWith(
             CID,
             'job.created',
-            expect.objectContaining({ id: NEW_JOB_ID, jobId: NEW_JOB_ID, companyId: CID }),
-            expect.objectContaining({ actorType: 'user', aggregateType: 'job', aggregateId: NEW_JOB_ID }),
+            {
+                id: NEW_JOB_ID,
+                job_id: NEW_JOB_ID,
+                record_refs: [{ type: 'job', id: NEW_JOB_ID }],
+            },
+            expect.objectContaining({ actorType: 'system', aggregateType: 'job', aggregateId: NEW_JOB_ID }),
         );
     });
 
@@ -526,7 +535,13 @@ describe('REPAIR-ADVISOR-001 — convertLead emits job.created only on the new-l
 
         expect(result).toMatchObject({ job_id: 1131, link: '/jobs/1131' });
         // Reuse must stay note-free — no job.created ⇒ no duplicate advisor note.
-        expect(emit).not.toHaveBeenCalled();
+        expect(emit.mock.calls.filter(([, eventType]) => eventType === 'job.created')).toHaveLength(0);
+        expect(emit).toHaveBeenCalledWith(
+            CID,
+            'lead.converted',
+            expect.objectContaining({ lead_id: 42, job_id: 1131 }),
+            expect.objectContaining({ aggregateType: 'lead', aggregateId: 42 })
+        );
     });
 });
 

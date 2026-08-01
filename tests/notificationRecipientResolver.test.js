@@ -159,7 +159,7 @@ describe('resolveNotificationRecipients fail-closed pipeline', () => {
             { client }
         )).resolves.toEqual([]);
         await expect(resolveNotificationRecipients(COMPANY, event({
-            event_type: 'call.missed', aggregate_type: 'call', aggregate_id: 'CA1',
+            event_type: 'call.inbound_started', aggregate_type: 'call', aggregate_id: 'CA1',
         }), { client })).resolves.toEqual([]);
         expect(client.query).not.toHaveBeenCalled();
     });

@@ -493,25 +493,15 @@ async function handleMessageAdded(payload) {
         }
     }
 
-    // Browser push notification for inbound SMS
+    // Preserve the existing SSE deep link. Browser/native notification delivery
+    // now comes only from the scoped sms.inbound event subscriber.
     let timelineId = null;
     if (isInbound && conv.company_id) {
         try {
-            const { sendPushToCompany } = require('./pushService');
-            const senderName = await (async () => {
-                const c = await queries.findContactByPhoneOrSecondary(conv.customer_e164, conv.company_id);
-                return c?.full_name || conv.customer_e164 || 'Unknown';
-            })();
             const timeline = await queries.findOrCreateTimeline(conv.customer_e164, conv.company_id);
             timelineId = timeline?.id || null;
-            sendPushToCompany(conv.company_id, 'new_text_message', {
-                title: 'New text message',
-                body: `New SMS from ${senderName}`,
-                url: timelineId ? `/pulse/timeline/${timelineId}` : '/pulse',
-                tag: `sms-${conv.id}-${Date.now()}`,
-            }).catch(e => console.error('[ConvService] Push notification error:', e.message));
         } catch (e) {
-            console.error('[ConvService] Push notification setup error:', e.message);
+            console.error('[ConvService] Timeline deep-link resolution failed:', e.message);
         }
     }
 

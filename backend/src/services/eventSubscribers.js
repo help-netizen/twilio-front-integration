@@ -7,6 +7,7 @@
 
 const eventBus = require('./eventBus');
 const rulesEngine = require('./rulesEngine');
+const notificationDispatcher = require('./notificationDispatcher');
 
 let registered = false;
 
@@ -16,6 +17,10 @@ function registerSubscribers() {
 
     // Rules engine reacts to every event (it filters by rule internally).
     eventBus.subscribe('rules-engine', '*', (event) => rulesEngine.onEvent(event));
+
+    // NOTIF-REWORK-001: typed, allowlisted events are resolved to live,
+    // record-scoped recipients before either push transport is invoked.
+    notificationDispatcher.register(eventBus);
 
     // Billing usage metering: count billable events per company.
     eventBus.subscribe('billing-meter', [

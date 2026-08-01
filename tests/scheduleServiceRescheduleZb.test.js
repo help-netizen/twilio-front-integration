@@ -4,15 +4,15 @@
  * Proves the ZB write-through SEAM added to `scheduleService.rescheduleItem`:
  *   - ZB-linked job → local write AND `zenbookerClient.rescheduleJob(zbId,{start_date ISO,…})`.
  *   - skip-if-not-linked / skip-if-canceled / non-'job' → NO ZB reschedule push.
- *   - the pre-existing `job_rescheduled` pushService hook stays best-effort/non-fatal
- *     AND does not prevent the ZB push (ASK-WRITE-07).
+ *   - the typed `job.rescheduled` event is emitted after the mutation and does
+ *     not prevent the ZB push (ASK-WRITE-07).
  *   - ZB reject → force-sync from the master THEN throw the friendly 409
  *     (blocking-with-recovery, ASK-WRITE-03) — the local write already committed, so
  *     state never silently diverges.
  *   - the existing NOT_FOUND (404) contract is preserved for existing callers.
  *
  * REAL scheduleService with the lower-level deps mocked (scheduleQueries /
- * jobsService / zenbookerClient / pushService + route side-effects stubbed).
+ * jobsService / zenbookerClient / eventBus + route side-effects stubbed).
  */
 
 'use strict';
@@ -33,8 +33,8 @@ jest.mock('../backend/src/services/zenbookerClient', () => ({
     rescheduleJob: jest.fn(async () => ({})),
     getJob: jest.fn(async () => ({ id: 'zb_7', status: 'scheduled' })),
 }));
-jest.mock('../backend/src/services/pushService', () => ({
-    sendToUser: jest.fn(() => Promise.resolve()),
+jest.mock('../backend/src/services/eventBus', () => ({
+    emit: jest.fn(async () => ({})),
 }));
 // Route/geo side-effects are irrelevant to the seam → stub so recalc never touches real deps.
 jest.mock('../backend/src/services/routeSegmentService', () => ({
@@ -49,7 +49,7 @@ jest.mock('../backend/src/db/routeQueries', () => ({
 const scheduleQueries = require('../backend/src/db/scheduleQueries');
 const jobsService = require('../backend/src/services/jobsService');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
-const pushService = require('../backend/src/services/pushService');
+const eventBus = require('../backend/src/services/eventBus');
 const scheduleService = require('../backend/src/services/scheduleService');
 
 const START = '2026-07-10T14:00:00.000Z';
@@ -88,11 +88,16 @@ describe('rescheduleItem ZB write-through seam (AR-4)', () => {
         expect(res.zb).toMatchObject({ skipped: 'zb_canceled' });
     });
 
-    test('ASK-WRITE-07: pushService throw is non-fatal AND the ZB push still happens + success returned', async () => {
+    test('ASK-WRITE-07: typed event emits and ZB push still happens + success returned', async () => {
         jobsService.getJobById.mockResolvedValue({ id: 7, zenbooker_job_id: 'zb_7', zb_canceled: false, assigned_provider_user_ids: ['u1'] });
-        pushService.sendToUser.mockImplementation(() => { throw new Error('push boom'); });
         const res = await scheduleService.rescheduleItem(CO, 'job', 7, START, END);
-        expect(zenbookerClient.rescheduleJob).toHaveBeenCalled(); // ZB push still fired despite the push-hook throw
+        expect(eventBus.emit).toHaveBeenCalledWith(
+            CO,
+            'job.rescheduled',
+            expect.objectContaining({ job_id: 7, assignee_user_ids: ['u1'] }),
+            expect.objectContaining({ aggregateType: 'job', aggregateId: 7 })
+        );
+        expect(zenbookerClient.rescheduleJob).toHaveBeenCalled();
         expect(res.zb.pushed).toBe(true);
         expect(res.entity_id).toBe(7);
     });

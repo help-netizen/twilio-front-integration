@@ -260,34 +260,16 @@ async function rescheduleItem(
         return { entity_type: entityType, entity_id: entityId, start_at: newStartAt, end_at: newEndAt, zb: { linked: false, pushed: false, skipped: 'not_a_job' } };
     }
 
-    // Read the job ONCE, reused for both the (best-effort) provider push-hook and the
-    // ZB reschedule linkage check below — avoids a second getJobById round-trip.
+    // Read the job once for the typed-event assignee snapshot and the ZB
+    // reschedule linkage check below.
     const jobsService = require('./jobsService');
     let job = null;
     try {
         job = await jobsService.getJobById(entityId, companyId);
     } catch (err) {
         // Reading the job for side-effects is itself best-effort; the authoritative
-        // local write already succeeded. A read failure only means we can't push.
+        // local write already succeeded.
         console.error('[Schedule] reschedule job read failed (non-fatal for local write):', err.message);
-    }
-
-    // MTECH-T2: notify the job's CURRENTLY-assigned providers that their job moved
-    // (spec §3.7, §4.2). A reschedule doesn't change the assignee set, so we read
-    // the internal mirror after the write and push job_rescheduled to each id.
-    // Best-effort and guarded — a push failure never affects the reschedule, and it
-    // must NOT prevent the ZB reschedule push that follows (ASK-WRITE-07).
-    try {
-        const assignedUserIds = (job?.assigned_provider_user_ids || []).map(String).filter(Boolean);
-        if (assignedUserIds.length) {
-            const pushService = require('./pushService');
-            for (const userId of assignedUserIds) {
-                pushService.sendToUser(companyId, userId, { type: 'job_rescheduled', job_id: entityId })
-                    .catch(err => console.error('[Schedule] job_rescheduled push failed (non-fatal):', err.message));
-            }
-        }
-    } catch (err) {
-        console.error('[Schedule] reschedule push hook failed (non-fatal):', err.message);
     }
 
     // AR-4 ZB write-through (BLOCKING-WITH-RECOVERY). Skip if not linked / already
@@ -508,10 +490,8 @@ async function reassignItem(
         }
     }
 
-    // MTECH-T2: notify providers NEWLY added to the job (spec §3.7, §4.2). Diff
-    // old→new internal assignee mirror; push job_assigned to each added id.
-    // Best-effort: sendToUser is itself fail-soft, and we still guard so a push
-    // failure can never affect the reassign result.
+    // Emit assignment changes once. The notification subscriber resolves live
+    // recipients and delivers to every active destination after this mutation.
     if (entityType === 'job') {
         try {
             const newProviderUserIds = providerUserIds ? JSON.parse(providerUserIds) : [];
@@ -520,11 +500,6 @@ async function reassignItem(
             const newSet = new Set(newProviderUserIds.map(String));
             const removedUserIds = oldProviderUserIds.filter(id => !newSet.has(String(id)));
             if (addedUserIds.length) {
-                const pushService = require('./pushService');
-                for (const userId of addedUserIds) {
-                    pushService.sendToUser(companyId, userId, { type: 'job_assigned', job_id: entityId })
-                        .catch(err => console.error('[Schedule] job_assigned push failed (non-fatal):', err.message));
-                }
                 await emitJobEvent(companyId, 'job.assigned', entityId, {
                     assignee_user_ids: addedUserIds,
                 }, activityActor);
@@ -536,7 +511,7 @@ async function reassignItem(
                 }, activityActor);
             }
         } catch (err) {
-            console.error('[Schedule] reassign push hook failed (non-fatal):', err.message);
+            console.error('[Schedule] reassign event hook failed (non-fatal):', err.message);
         }
     }
 
