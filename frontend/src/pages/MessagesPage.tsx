@@ -18,13 +18,13 @@ export function MessagesPage() {
     const [showNewDialog, setShowNewDialog] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const loadConversations = useCallback(async () => { try { const result = await messagingApi.getConversations(); setConversations(result.conversations); setError(null); } catch (err: any) { console.error('Failed to load conversations:', err); setError('Failed to load conversations'); } finally { setLoading(false); } }, []);
+    const loadConversations = useCallback(async () => { try { const result = await messagingApi.getConversations(); setConversations(result.conversations); setSelectedConversation(current => current ? result.conversations.find(conversation => conversation.id === current.id) || null : null); setError(null); } catch (err: any) { console.error('Failed to load conversations:', err); setError('Failed to load conversations'); } finally { setLoading(false); } }, []);
     useEffect(() => { loadConversations(); }, [loadConversations]);
 
-    const loadMessages = useCallback(async (conversationId: string) => { setMessagesLoading(true); try { const result = await messagingApi.getMessages(conversationId); setMessages(result.messages); } catch (err: any) { console.error('Failed to load messages:', err); } finally { setMessagesLoading(false); } }, []);
+    const loadMessages = useCallback(async (conversationId: string) => { setMessagesLoading(true); try { const result = await messagingApi.getMessages(conversationId); setMessages(result.messages); } catch (err: any) { console.error('Failed to load messages:', err); setMessages([]); } finally { setMessagesLoading(false); } }, []);
     useEffect(() => { if (selectedConversation) loadMessages(selectedConversation.id); else setMessages([]); }, [selectedConversation, loadMessages]);
 
-    useMessagesRealtime(selectedConversation, setMessages, setConversations, setSelectedConversation);
+    useMessagesRealtime(selectedConversation?.id || null, loadConversations, loadMessages);
 
     const handleSelectConversation = (conv: Conversation) => {
         setSelectedConversation(conv);

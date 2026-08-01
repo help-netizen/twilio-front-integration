@@ -1,13 +1,12 @@
 /**
  * PulseCallAudioPlayer — audio player, summary, transcription,
- * and live transcript for PulseCallListItem.
+ * and persisted transcript for PulseCallListItem.
  *
  * Albusto design: warm tokens, no gray-* Tailwind colors,
  * no decorative backgrounds on summary/entities.
  */
 import { useState, useRef, useEffect } from 'react';
 import { authedFetch } from '@/services/apiClient';
-import { useLiveTranscript } from '@/hooks/useLiveTranscript';
 import { Play, Pause, Copy, Check } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatPhoneDisplay } from '@/utils/phoneUtils';
@@ -30,7 +29,6 @@ const getSentiment = (score: number | null) => {
 
 export function PulseCallAudioPlayer({ call }: { call: CallData }) {
     const player = usePulsePlayer();
-    const liveLines = useLiveTranscript(call.callSid || '');
 
     // PULSE-PLAYER-001: playback moved to the shared floating bar. The card only
     // starts/stops ITS recording and forwards seeks; all transport UI lives there.
@@ -43,7 +41,6 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
     const isActiveTrack = !!call.callSid && player.track?.callSid === call.callSid;
     const isPlaying = isActiveTrack && player.isPlaying;
     const currentTime = isActiveTrack ? player.currentTime : 0;
-    const isLiveStreaming = liveLines.length > 0 && !call.audioUrl;
 
     const [activeSection, setActiveSection] = useState<'summary' | 'transcription' | null>(
         () => call.status === 'completed' && call.summary ? 'summary' : null
@@ -61,8 +58,6 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
     const [copiedSummary, setCopiedSummary] = useState(false);
     const geminiLoadedRef = useRef(false);
 
-    useEffect(() => { if (liveLines.length > 0 && activeSection !== 'transcription') setActiveSection('transcription'); }, [liveLines.length > 0]);
-
     const mediaLoadedRef = useRef(false);
     useEffect(() => {
         if (mediaLoadedRef.current || !call.callSid || !call.audioUrl) return;
@@ -79,29 +74,18 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
     const handleResetTranscription = async () => { setIsTranscribing(true); setTranscribeError(null); try { await authedFetch(`/api/calls/${call.callSid}/transcript`, { method: 'DELETE' }); setTranscriptionText(null); setEntities([]); setSentimentScore(null); setGeminiSummary(null); setGeminiEntities([]); setGeminiStatus('idle'); setActiveGeminiIdx(null); geminiLoadedRef.current = false; mediaLoadedRef.current = false; const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' }); const data = await res.json(); if (!res.ok) throw new Error(data.error || 'Failed'); setTranscriptionText(data.transcript); if (data.entities) setEntities(data.entities); if (data.gemini_summary) { setGeminiSummary(data.gemini_summary); setGeminiEntities(data.gemini_entities || []); setGeminiStatus('ready'); } if (data.sentimentScore != null) setSentimentScore(data.sentimentScore); } catch (err: any) { setTranscribeError(err.message); } finally { setIsTranscribing(false); } };
     const handleGenerateTranscription = async () => { setIsTranscribing(true); setTranscribeError(null); try { const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' }); const data = await res.json(); if (!res.ok) throw new Error(data.error || 'Failed'); setTranscriptionText(data.transcript); if (data.entities) setEntities(data.entities); if (data.gemini_summary) { setGeminiSummary(data.gemini_summary); setGeminiEntities(data.gemini_entities || []); setGeminiStatus('ready'); } if (data.sentimentScore != null) setSentimentScore(data.sentimentScore); } catch (err: any) { setTranscribeError(err.message); } finally { setIsTranscribing(false); } };
 
-    // ── Live transcription (no audio URL) ──
-    if (!call.audioUrl && isLiveStreaming) {
+    // Finalized transcripts arrive through the scoped timeline refetch. Calls
+    // without a recording still expose that persisted transcript instead of
+    // relying on the removed company-wide transcript stream.
+    if (!call.audioUrl && call.transcription) {
         return (
             <div className="px-4 pb-4">
                 <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                        <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                        <span className="text-xs text-red-500 font-medium">Live transcription</span>
-                    </div>
+                    <h4 className="blanc-eyebrow">Transcript</h4>
                     <ScrollArea className="h-48 p-3 rounded-xl" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                        <div className="space-y-1">
-                            {liveLines.map((line, idx) => (
-                                <div key={idx} className="flex items-baseline gap-2 px-2 py-1 text-xs">
-                                    <span className={`shrink-0 text-[10px] font-semibold ${line.speaker === 'agent' ? 'text-blue-500' : 'text-green-600'}`}>
-                                        {line.speaker === 'agent' ? 'Agent' : 'Customer'}:
-                                    </span>
-                                    <span className="flex-1 text-sm leading-relaxed" style={{ color: 'var(--blanc-ink-1)' }}>
-                                        {line.text}
-                                        {!line.isFinal && <span className="ml-1 animate-pulse" style={{ color: 'var(--blanc-ink-3)' }}>▋</span>}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: 'var(--blanc-ink-1)' }}>
+                            {call.transcription}
+                        </p>
                     </ScrollArea>
                 </div>
             </div>
@@ -156,7 +140,6 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                             }
                         >
                             Transcript
-                            {isLiveStreaming && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
                         </button>
                     </div>
                 </div>
@@ -268,26 +251,6 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                 <div className="flex items-center gap-2">
                                     <Spinner />
                                     <p className="text-sm animate-pulse" style={{ color: 'var(--blanc-ink-3)' }}>Generating transcription...</p>
-                                </div>
-                            ) : isLiveStreaming ? (
-                                <div>
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                                        <span className="text-xs text-red-500 font-medium">Live transcription</span>
-                                    </div>
-                                    <div className="space-y-1">
-                                        {liveLines.map((line, idx) => (
-                                            <div key={idx} className="flex items-baseline gap-2 px-2 py-1 text-xs">
-                                                <span className={`shrink-0 text-[10px] font-semibold ${line.speaker === 'agent' ? 'text-blue-500' : 'text-green-600'}`}>
-                                                    {line.speaker === 'agent' ? 'Agent' : 'Customer'}:
-                                                </span>
-                                                <span className="flex-1 text-sm leading-relaxed" style={{ color: 'var(--blanc-ink-1)' }}>
-                                                    {line.text}
-                                                    {!line.isFinal && <span className="ml-1 animate-pulse" style={{ color: 'var(--blanc-ink-3)' }}>▋</span>}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
                                 </div>
                             ) : (transcriptionText || call.transcription) ? (
                                 <div>

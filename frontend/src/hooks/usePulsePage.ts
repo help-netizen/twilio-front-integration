@@ -9,8 +9,7 @@ import * as contactsApi from '../services/contactsApi';
 import * as emailApi from '../services/emailApi';
 import * as jobsApi from '../services/jobsApi';
 import { buildMessageTargets, type MessageTarget } from '../components/pulse/smsFormHelpers';
-import { useRealtimeEvents, type SSECallEvent, type SSEMessageAddedEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from './useRealtimeEvents';
-import { appendTranscriptDelta, finalizeTranscript } from './useLiveTranscript';
+import { useRealtimeEvents } from './useRealtimeEvents';
 import { authedFetch } from '../services/apiClient';
 import { useLeadByPhone } from './useLeadByPhone';
 import { useLeadByContact } from './useLeadByContact';
@@ -51,24 +50,29 @@ export function usePulsePage() {
     const maskedViewer = meta?.mask_viewer === true;
     const [scrollToBottomSignal, setScrollToBottomSignal] = useState(0);
 
+    const refreshOpenTimeline = () => {
+        if (contactId || timelineId) void refreshNewestPage();
+    };
+    const refreshPulseData = () => {
+        void refetchContacts();
+        refreshOpenTimeline();
+    };
+
     useRealtimeEvents({
-        onCallUpdate: (event: SSECallEvent) => { if (event.parent_call_sid) return; refetchContacts(); if ((contactId && event.contact_id && Number(event.contact_id) === contactId) || (timelineId && event.timeline_id && Number(event.timeline_id) === timelineId)) refreshNewestPage(); },
-        onCallCreated: () => refetchContacts(),
-        onMessageAdded: (event: SSEMessageAddedEvent) => {
-            // List badge always updates (any contact, company-wide).
-            refetchContacts();
-            // Only refetch the open timeline when this event belongs to it (mirror onCallUpdate's
-            // timeline_id gate). message.added carries a numeric `timelineId` (SMS + email publishers
-            // both set it). If it's null/absent the event isn't timeline-scoped, so fall back to the
-            // prior behavior and refetch whenever a timeline is open.
-            const evtTimelineId = event?.timelineId;
-            if (evtTimelineId == null) { if (contactId || timelineId) refreshNewestPage(); return; }
-            if (timelineId && Number(evtTimelineId) === timelineId) refreshNewestPage();
+        onCallUpdate: refreshPulseData,
+        onCallCreated: refreshPulseData,
+        onMessageAdded: refreshPulseData,
+        onContactRead: refreshPulseData,
+        onGenericEvent: (eventType: string) => {
+            if ([
+                'thread.action_required', 'thread.handled', 'thread.snoozed',
+                'thread.unsnoozed', 'thread.assigned', 'timeline.read',
+                'timeline.unread', 'contact.unread', 'task.changed',
+            ].includes(eventType)) refreshPulseData();
         },
-        onContactRead: () => refetchContacts(),
-        onGenericEvent: (et: string) => { if (['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned', 'timeline.read', 'timeline.unread', 'task.changed'].includes(et)) refetchContacts(); },
-        onTranscriptDelta: (e: SSETranscriptDeltaEvent) => { appendTranscriptDelta(e.callSid, { text: e.text, speaker: e.speaker, turnOrder: e.turnOrder, isFinal: e.isFinal, receivedAt: e.receivedAt }); },
-        onTranscriptFinalized: (e: SSETranscriptFinalizedEvent) => { finalizeTranscript(e.callSid, e.text); if (contactId || timelineId) refreshNewestPage(); },
+        // Live transcript text is no longer company-broadcast. The finalized
+        // invalidation refetches the persisted transcript through scoped REST.
+        onTranscriptFinalized: refreshOpenTimeline,
     });
 
     const filteredCalls = useMemo(() => { const raw = contactData?.conversations || []; const seen = new Map<string, number>(); const deduped: Call[] = []; for (const c of raw) { const p = c.contact?.phone_e164 || c.from_number || ''; const d = p.replace(/\D/g, ''); if (!d) { deduped.push(c); continue; } if (!seen.has(d)) { seen.set(d, deduped.length); deduped.push(c); } } return deduped; }, [contactData?.conversations]);

@@ -336,15 +336,9 @@ export default function UserGroupsPage() {
     }, []);
 
     useRealtimeEvents({
-        onGenericEvent: (eventType, data) => {
+        onGenericEvent: (eventType) => {
             if (eventType !== 'agent.status.changed') return;
-            setGroups(current => current.map(group => {
-                if (!Array.isArray(data.groupIds) || !data.groupIds.includes(group.id)) return group;
-                return {
-                    ...group,
-                    members: group.members.map(member => member.id === data.userId ? { ...member, status: data.status } : member),
-                };
-            }));
+            void fetchGroups();
         },
     });
 

@@ -4,7 +4,7 @@ import type { LocalJob } from '../services/jobsApi';
 import { useJobsData } from './useJobsData';
 import { useJobDetail } from './useJobDetail';
 import { useJobsExport } from './useJobsExport';
-import { useRealtimeEvents, type SSEJobUpdatedEvent } from './useRealtimeEvents';
+import { useRealtimeEvents } from './useRealtimeEvents';
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
@@ -44,8 +44,7 @@ export function useJobsPage() {
         navigate('/jobs', { replace: true });
     }, [navigate]);
 
-    // ─── SSE: update list in-place when backend syncs ────────────────
-    // (useJobDetail handles SSE for the selected job internally)
+    // ─── SSE invalidation: reset the scoped list from REST ───────────
 
     const handleJobUpdated = useCallback((updatedJob: LocalJob) => {
         if (!updatedJob?.id) return;
@@ -57,9 +56,9 @@ export function useJobsPage() {
     }, [data.resetJobs, data.updateJob, detail.handleJobUpdated]);
 
     useRealtimeEvents({
-        onJobUpdated: useCallback((event: SSEJobUpdatedEvent) => {
-            handleJobUpdated(event.job as LocalJob);
-        }, [handleJobUpdated]),
+        onJobUpdated: useCallback(() => {
+            void data.resetJobs();
+        }, [data.resetJobs]),
     });
 
     // ─── Return (same surface as before) ─────────────────────────────

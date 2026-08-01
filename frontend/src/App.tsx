@@ -96,7 +96,6 @@ import SettingsLayout from './components/settings/SettingsLayout';
 import { SettingsLandingRedirect } from './components/settings/SettingsLandingRedirect';
 import { EventNotification } from './components/EventNotification';
 import InstallOnboardingSheet from './components/InstallOnboardingSheet';
-import SSEPushBridge from './components/SSEPushBridge';
 import { Toaster } from './components/ui/sonner';
 import { OverlayStackProvider } from './components/ui/OverlayStack';
 import './App.css';
@@ -239,7 +238,6 @@ function App() {
           </AppLayout>
           <EventNotification />
           <InstallOnboardingSheet />
-          <SSEPushBridge />
           <Toaster />
           </OverlayStackProvider>
         </BrowserRouter>

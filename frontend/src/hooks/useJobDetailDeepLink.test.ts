@@ -4,6 +4,7 @@ const hookState = vi.hoisted(() => ({
     getJob: vi.fn(),
     listJobTags: vi.fn(),
     getContact: vi.fn(),
+    realtimeOptions: null as { onJobUpdated?: () => void } | null,
 }));
 
 vi.mock('react', async (importOriginal) => {
@@ -28,7 +29,9 @@ vi.mock('../services/contactsApi', () => ({
 }));
 
 vi.mock('./useRealtimeEvents', () => ({
-    useRealtimeEvents: vi.fn(),
+    useRealtimeEvents: (options: { onJobUpdated?: () => void }) => {
+        hookState.realtimeOptions = options;
+    },
 }));
 
 vi.mock('sonner', () => ({
@@ -41,6 +44,7 @@ beforeEach(() => {
     hookState.getJob.mockReset();
     hookState.listJobTags.mockReset().mockResolvedValue([]);
     hookState.getContact.mockReset();
+    hookState.realtimeOptions = null;
 });
 
 describe('useJobDetail deep-link fetch contract', () => {
@@ -70,6 +74,21 @@ describe('useJobDetail deep-link fetch contract', () => {
         await vi.waitFor(() => {
             expect(hookState.getJob).toHaveBeenCalledWith(404);
             expect(onNotFound).toHaveBeenCalledWith(404);
+        });
+    });
+
+    it('refetches the route-selected job when job.updated is only an invalidation', async () => {
+        hookState.getJob.mockResolvedValue({ id: 1463, contact_id: null });
+
+        useJobDetail({ jobId: 1463 });
+        await vi.waitFor(() => expect(hookState.getJob).toHaveBeenCalledWith(1463));
+
+        hookState.getJob.mockClear();
+        hookState.realtimeOptions?.onJobUpdated?.();
+
+        await vi.waitFor(() => {
+            expect(hookState.getJob).toHaveBeenCalledTimes(1);
+            expect(hookState.getJob).toHaveBeenCalledWith(1463);
         });
     });
 });

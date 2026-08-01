@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import * as jobsApi from '../services/jobsApi';
 import * as contactsApi from '../services/contactsApi';
 import type { LocalJob, JobTag } from '../services/jobsApi';
-import { useRealtimeEvents, type SSEJobUpdatedEvent } from './useRealtimeEvents';
+import { useRealtimeEvents } from './useRealtimeEvents';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -204,7 +204,7 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
         }
     }, []);
 
-    // ─── SSE: update job in-place on backend events ──────────────────
+    // ─── SSE invalidation: refetch the currently visible scoped job ──
 
     const handleJobUpdated = useCallback((updatedJob: LocalJob) => {
         if (!updatedJob?.id) return;
@@ -212,9 +212,9 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
     }, []);
 
     useRealtimeEvents({
-        onJobUpdated: useCallback((event: SSEJobUpdatedEvent) => {
-            handleJobUpdated(event.job as LocalJob);
-        }, [handleJobUpdated]),
+        onJobUpdated: useCallback(() => {
+            if (jobId) void refreshJob(jobId);
+        }, [jobId, refreshJob]),
     });
 
     return {

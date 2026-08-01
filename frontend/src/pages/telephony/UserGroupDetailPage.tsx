@@ -95,12 +95,9 @@ export default function UserGroupDetailPage() {
     }, []);
 
     useRealtimeEvents({
-        onGenericEvent: (eventType, data) => {
-            if (eventType !== 'agent.status.changed' || !groupId || !Array.isArray(data.groupIds) || !data.groupIds.includes(groupId)) return;
-            setGroup(current => current ? {
-                ...current,
-                members: current.members.map(member => member.id === data.userId ? { ...member, status: data.status } : member),
-            } : current);
+        onGenericEvent: (eventType) => {
+            if (eventType !== 'agent.status.changed' || !groupId) return;
+            void loadGroup();
         },
     });
 

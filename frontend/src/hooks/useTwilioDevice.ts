@@ -3,7 +3,6 @@ import { Device, Call } from '@twilio/voice-sdk';
 import { fetchVoiceToken } from '../services/voiceApi';
 import { startRingtone, stopRingtone } from '../utils/ringtone';
 import type { CallState, UseTwilioDeviceReturn, MicPermission } from './twilioDeviceTypes';
-import { useRealtimeEvents } from './useRealtimeEvents';
 import { authedFetch } from '../services/apiClient';
 
 export type { CallState, UseTwilioDeviceReturn };
@@ -262,15 +261,6 @@ export function useTwilioDevice(options: UseTwilioDeviceOptions = {}): UseTwilio
         const id = window.setInterval(heartbeat, PRESENCE_HEARTBEAT_MS);
         return () => window.clearInterval(id);
     }, [enabled, deviceReady, callState, publishPresence]);
-
-    // ── SSE listener: backend hold queue notifications ──────────────────
-    useRealtimeEvents({
-        onGenericEvent: (eventType: string, data: any) => {
-            if (eventType !== 'call.holding') return;
-            console.log('[SoftPhone] SSE call.holding:', data.from_number);
-            setHoldingCallerInfo({ number: data.from_number, callSid: data.call_sid });
-        },
-    });
 
     // ── Microphone permission (calls need mic access) ──────────────────
     // Read the current state via the Permissions API without prompting, and

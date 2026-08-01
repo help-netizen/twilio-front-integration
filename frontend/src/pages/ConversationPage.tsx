@@ -1,7 +1,7 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
 import { useContactCalls, useCall } from '../hooks/useConversations';
-import { useRealtimeEvents, type SSECallEvent } from '../hooks/useRealtimeEvents';
+import { useRealtimeEvents } from '../hooks/useRealtimeEvents';
 import { useQueryClient } from '@tanstack/react-query';
 import { ConversationList } from '../components/conversations/ConversationList';
 import { CallListItem, type CallData } from '../components/call-list-item';
@@ -69,48 +69,18 @@ export const ConversationPage: React.FC = () => {
     const isLoading = contactId ? contactLoading : singleLoading;
     const queryClient = useQueryClient();
 
-    // Subscribe to SSE events — update contact-calls cache inline
-    // so duration, status, and other fields update in real-time
+    const refreshVisibleCalls = () => {
+        if (contactId) {
+            void queryClient.invalidateQueries({ queryKey: ['contact-calls', contactId] });
+        }
+        if (singleCallSid) {
+            void queryClient.invalidateQueries({ queryKey: ['call', singleCallSid] });
+        }
+    };
+
     useRealtimeEvents({
-        onCallUpdate: (event: SSECallEvent) => {
-            if (event.parent_call_sid) return; // skip child legs
-
-            // Only process events for this contact
-            if (event.contact_id && event.contact_id !== contactId) return;
-
-            // Inline update for instant duration/status feedback
-            queryClient.setQueryData<Call[]>(
-                ['contact-calls', contactId],
-                (old) => {
-                    if (!old) return old;
-                    const idx = old.findIndex(c => c.call_sid === event.call_sid);
-                    if (idx === -1) return old;
-
-                    const updated = [...old];
-                    updated[idx] = {
-                        ...updated[idx],
-                        status: (event.status as Call['status']) ?? updated[idx].status,
-                        is_final: event.is_final ?? updated[idx].is_final,
-                        duration_sec: event.duration_sec ?? updated[idx].duration_sec,
-                        ended_at: event.ended_at ?? updated[idx].ended_at,
-                        answered_by: event.answered_by ?? updated[idx].answered_by,
-                    };
-                    return updated;
-                }
-            );
-
-            // Also refetch full data so recordings/transcripts appear
-            // (they arrive via separate events not included in call SSE payload)
-            if (event.is_final) {
-                queryClient.invalidateQueries({ queryKey: ['contact-calls', contactId] });
-            }
-        },
-        onCallCreated: (event: SSECallEvent) => {
-            if (event.parent_call_sid) return;
-            if (event.contact_id && event.contact_id === contactId) {
-                queryClient.invalidateQueries({ queryKey: ['contact-calls', contactId] });
-            }
-        },
+        onCallUpdate: refreshVisibleCalls,
+        onCallCreated: refreshVisibleCalls,
     });
 
     if (isLoading) {
