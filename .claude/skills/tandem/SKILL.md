@@ -84,6 +84,36 @@ DECISIONS NEEDED (conceptual forks only) / PROPOSAL / DECISIONS TAKEN (mechanica
 one line each) / RISKS / QUESTIONS / NEXT. Push back explicitly where you disagree —
 do not silently comply." You SKIM these sections; that is your whole read.
 
+## Decision gate — never let Codex build past an unapproved owner fork
+
+The owner may answer a forwarded fork hours later. Codex must never run ahead into
+work that a **pending owner decision** would reshape — that is how rework happens
+(paid for on 2026-08-01: NOTIF-REWORK-001 baked a per-role / per-channel model into
+the migration + resolver before the owner had approved the UX; the owner then chose a
+flat per-user-category model and the schema/resolver had to be torn out and redone).
+
+1. **Tag every fork APPROVED or PENDING.** APPROVED = the owner decided, OR it is
+   genuinely yours and you decided. PENDING = forwarded to the owner, no answer yet.
+   Only APPROVED decisions may enter a Codex brief.
+2. **Brief only what APPROVED decisions fully determine.** If a task's shape depends on
+   a PENDING owner fork, do NOT brief it — hold it. Never assume the likely answer just
+   to keep Codex busy; a plausible guess that's wrong costs more than the idle time.
+3. **Every brief names the decisions it rests on** and ends with: *"build ONLY what
+   these approved decisions determine; at the first choice they do NOT cover, STOP and
+   return it under DECISIONS NEEDED — do not assume and build past it."* Codex pausing
+   at an unforeseen fork is the success case, not a stall.
+4. **UX approval gates the model.** For an owner-facing surface, the owner's approval of
+   the *screen* gates the backend that encodes its UX model — schema shape, per-X
+   granularity (per-role? per-channel? per-user?), which entities are user-configurable.
+   Do NOT let Codex commit a UX-shaped data model into migrations/APIs before the screen
+   is approved. The screen is the spec (Phase 1). Only decision-INDEPENDENT groundwork
+   may proceed meanwhile: a pure current-state map, tenant-isolation hardening a leak
+   needs regardless, or a shared helper every candidate model would reuse.
+5. **While waiting on the owner,** dispatch only clearly decision-independent work, or
+   pause Codex. "The owner will answer eventually" is never a licence to build the
+   unapproved branch. When unsure whether a task sits downstream of a pending fork,
+   treat it as downstream and hold it.
+
 ## Process
 
 ### Phase 0 — Frame (you; minutes, no code)
