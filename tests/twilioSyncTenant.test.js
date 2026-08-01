@@ -69,4 +69,16 @@ describe('manual Twilio sync tenant isolation', () => {
             COMPANY_A
         );
     });
+
+    test.each(['syncTodayCalls', 'syncRecentCalls'])(
+        'SAB-TW-SYNC-CONTEXT: %s fails closed when company context is absent',
+        async method => {
+            await expect(twilioSync[method]()).rejects.toMatchObject({
+                code: 'TWILIO_TENANT_UNRESOLVED',
+            });
+            expect(mockGetClientForCompany).not.toHaveBeenCalled();
+            expect(mockListCalls).not.toHaveBeenCalled();
+            expect(mockReconcileCall).not.toHaveBeenCalled();
+        }
+    );
 });

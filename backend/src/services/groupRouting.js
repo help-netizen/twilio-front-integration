@@ -106,7 +106,12 @@ function cryptoRandom() {
     return require('crypto').randomUUID().slice(0, 8);
 }
 
-async function resolveGroupForNumber(toNumber) {
+async function resolveGroupForNumber(toNumber, companyId) {
+    if (!companyId) {
+        const err = new Error('companyId is required for group routing');
+        err.code = 'TWILIO_TENANT_UNRESOLVED';
+        throw err;
+    }
     const result = await db.query(
         `SELECT
              pns.id AS phone_setting_id,
@@ -123,8 +128,9 @@ async function resolveGroupForNumber(toNumber) {
           AND ug.company_id = pns.company_id::text
          LEFT JOIN companies c ON c.id = pns.company_id
          WHERE pns.phone_number = $1
+           AND pns.company_id::text = $2::text
          LIMIT 1`,
-        [toNumber]
+        [toNumber, companyId]
     );
 
     const row = result.rows[0];

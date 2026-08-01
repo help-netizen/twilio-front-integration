@@ -166,7 +166,7 @@ async function createExecution({ callSid, companyId, group, flow, context }) {
     const result = await db.query(
         `INSERT INTO call_flow_executions (id, company_id, call_sid, group_id, flow_id, current_node_id, context_json, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
-         ON CONFLICT (call_sid)
+         ON CONFLICT (company_id, call_sid)
          DO UPDATE SET current_node_id = EXCLUDED.current_node_id,
                        context_json = EXCLUDED.context_json,
                        status = 'active'
@@ -183,10 +183,17 @@ function parseExecution(row) {
     return { ...row, context };
 }
 
-async function getExecution(callSid) {
+async function getExecution(callSid, companyId) {
+    if (!companyId) {
+        const err = new Error('companyId is required for call-flow execution');
+        err.code = 'TWILIO_TENANT_UNRESOLVED';
+        throw err;
+    }
     const result = await db.query(
-        `SELECT * FROM call_flow_executions WHERE call_sid = $1 ORDER BY created_at DESC LIMIT 1`,
-        [callSid]
+        `SELECT * FROM call_flow_executions
+         WHERE call_sid = $1 AND company_id::text = $2::text
+         ORDER BY created_at DESC LIMIT 1`,
+        [callSid, companyId]
     );
     return parseExecution(result.rows[0]);
 }
@@ -221,7 +228,7 @@ async function followFailureEdge({ execution, node, context, traceId, fallbackTw
     }
     if (!nextId) return fallbackTwiml();
     await saveExecutionState(execution.call_sid, execution.company_id, { currentNodeId: nextId, contextJson: context });
-    return renderNodeById(execution.call_sid, nextId, traceId);
+    return renderNodeById(execution.call_sid, execution.company_id, nextId, traceId);
 }
 
 async function renderQueueNode({ execution, node, context, traceId }) {
@@ -469,8 +476,8 @@ async function renderVapiNode({ execution, node, context, traceId }) {
     </Dial>`);
 }
 
-async function renderNodeById(callSid, nodeId, traceId = 'call-flow') {
-    const execution = await getExecution(callSid);
+async function renderNodeById(callSid, companyId, nodeId, traceId = 'call-flow') {
+    const execution = await getExecution(callSid, companyId);
     if (!execution) return null;
     const context = execution.context || {};
     const graph = context.graph || { states: [], transitions: [] };
@@ -486,12 +493,12 @@ async function renderNodeById(callSid, nodeId, traceId = 'call-flow') {
         case 'start': {
             const nextId = nextNodeIdForEvent(graph, node.id, null, context);
             if (!nextId) return buildHangupTwiml();
-            return renderNodeById(callSid, nextId, traceId);
+            return renderNodeById(callSid, companyId, nextId, traceId);
         }
         case 'branch': {
             const nextId = nextNodeIdForEvent(graph, node.id, null, context);
             if (!nextId) return buildHangupTwiml();
-            return renderNodeById(callSid, nextId, traceId);
+            return renderNodeById(callSid, companyId, nextId, traceId);
         }
         case 'greeting':
         case 'play_audio': {
@@ -523,7 +530,12 @@ async function renderNodeById(callSid, nodeId, traceId = 'call-flow') {
     }
 }
 
-async function startExecution({ callSid, fromNumber, toNumber, group, flow, baseUrl, traceId }) {
+async function startExecution({ callSid, companyId, fromNumber, toNumber, group, flow, baseUrl, traceId }) {
+    if (!companyId || String(group?.company_id) !== String(companyId)) {
+        const err = new Error('Resolved company does not match call-flow group');
+        err.code = 'TWILIO_TENANT_UNRESOLVED';
+        throw err;
+    }
     // TELEPHONY-AUTONOMOUS-MODE-001: a company-wide Autonomous mode forces EVERY
     // inbound call down its After-Hours branch. When OFF (default) behavior is
     // identical to today — the group's configured hours decide. Single indexed
@@ -531,16 +543,16 @@ async function startExecution({ callSid, fromNumber, toNumber, group, flow, base
     // Fail-open: this override adds a SECOND per-call DB read before the hours
     // check. If it errors, degrade to normal-hours routing (fall through to
     // groupRouting.isBusinessHours) rather than rejecting the call.
-    const autonomous = await telephonyTenantService.getAutonomousMode(group.company_id).catch(() => false);
+    const autonomous = await telephonyTenantService.getAutonomousMode(companyId).catch(() => false);
     const businessHours = autonomous ? false : await groupRouting.isBusinessHours(group);
     if (autonomous) {
         console.log('[CallFlowRuntime] autonomous mode → forcing after-hours', {
-            callSid, companyId: group.company_id,
+            callSid, companyId,
         });
     }
     const context = {
         callSid,
-        companyId: group.company_id,
+        companyId,
         groupName: group.name,
         groupId: group.id,
         calledNumber: toNumber,
@@ -549,8 +561,8 @@ async function startExecution({ callSid, fromNumber, toNumber, group, flow, base
         queueWaitTime: 0,
         baseUrl,
     };
-    const execution = await createExecution({ callSid, companyId: group.company_id, group, flow, context });
-    return renderNodeById(callSid, execution.current_node_id, traceId);
+    const execution = await createExecution({ callSid, companyId, group, flow, context });
+    return renderNodeById(callSid, companyId, execution.current_node_id, traceId);
 }
 
 function eventFromDialStatus(dialStatus) {
@@ -572,8 +584,8 @@ function vapiEventFromDialStatus(dialStatus) {
     return 'vapi.failed';
 }
 
-async function advance(callSid, event, traceId = 'call-flow') {
-    const execution = await getExecution(callSid);
+async function advance(callSid, event, traceId = 'call-flow', companyId) {
+    const execution = await getExecution(callSid, companyId);
     const resolvedEvent = event || 'node.completed';
     const isVoicemailCompletion = ['voicemail.recorded', 'voicemail.completed'].includes(resolvedEvent);
     if (!execution) return null;
@@ -615,7 +627,7 @@ async function advance(callSid, event, traceId = 'call-flow') {
     // Fail into voicemail: the call gets ANSWERED and the customer can speak.
     let twiml;
     try {
-        twiml = await renderNodeById(callSid, nextId, traceId);
+        twiml = await renderNodeById(callSid, companyId, nextId, traceId);
     } catch (err) {
         console.error(`[${traceId}] Node render crashed on ${nextId} — failing into voicemail:`, err.stack || err.message);
         await saveExecutionState(callSid, execution.company_id, { status: 'failed' }).catch(() => {});

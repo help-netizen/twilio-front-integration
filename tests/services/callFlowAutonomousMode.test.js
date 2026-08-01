@@ -91,6 +91,7 @@ describe('TELEPHONY-AUTONOMOUS-MODE-001 startExecution override', () => {
 
         const twiml = await startExecution({
             callSid: 'CA_test', fromNumber: '+15551112222', toNumber: '+16175006181',
+            companyId: 'company-1',
             group, flow, baseUrl: 'https://example.test', traceId: 'test',
         });
 
@@ -108,6 +109,7 @@ describe('TELEPHONY-AUTONOMOUS-MODE-001 startExecution override', () => {
 
         await startExecution({
             callSid: 'CA_test', fromNumber: '+15551112222', toNumber: '+16175006181',
+            companyId: 'company-1',
             group, flow, baseUrl: 'https://example.test', traceId: 'test',
         });
 
@@ -122,6 +124,7 @@ describe('TELEPHONY-AUTONOMOUS-MODE-001 startExecution override', () => {
 
         const twiml = await startExecution({
             callSid: 'CA_test', fromNumber: '+15551112222', toNumber: '+16175006181',
+            companyId: 'company-1',
             group, flow, baseUrl: 'https://example.test', traceId: 'test',
         });
 
@@ -138,6 +141,7 @@ describe('TELEPHONY-AUTONOMOUS-MODE-001 startExecution override', () => {
 
         const twiml = await startExecution({
             callSid: 'CA_test', fromNumber: '+15551112222', toNumber: '+16175006181',
+            companyId: 'company-1',
             group, flow, baseUrl: 'https://example.test', traceId: 'test',
         });
 
@@ -178,6 +182,7 @@ describe('TELEPHONY-AUTONOMOUS-MODE-001 startExecution override', () => {
 
         const twiml = await startExecution({
             callSid: 'CA_test', fromNumber: '+15551112222', toNumber: '+16175006181',
+            companyId: 'company-1',
             group, flow: condFlow, baseUrl: 'https://example.test', traceId: 'test',
         });
 

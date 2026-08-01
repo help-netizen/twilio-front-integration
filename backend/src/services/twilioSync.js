@@ -1,5 +1,4 @@
-const { getTwilioClient } = require('./twilioClient');
-const { reconcileCall, RECONCILE_CONFIG } = require('./reconcileService');
+const { reconcileCall } = require('./reconcileService');
 
 /**
  * Twilio Sync Service (v3)
@@ -8,20 +7,11 @@ const { reconcileCall, RECONCILE_CONFIG } = require('./reconcileService');
  * This file provides the sync trigger endpoints used by /api/sync routes.
  */
 
-// Lazy proxy resolves the shared singleton on each property access.
-const client = new Proxy({}, {
-    get(_t, prop) {
-        return getTwilioClient()[prop];
-    },
-});
-
 async function getSyncClient(companyId) {
     if (!companyId) {
-        return {
-            client,
-            accountSid: process.env.TWILIO_ACCOUNT_SID || null,
-            companyId: require('./telephonyTenantService').DEFAULT_COMPANY_ID,
-        };
+        const err = new Error('companyId is required for Twilio sync');
+        err.code = 'TWILIO_TENANT_UNRESOLVED';
+        throw err;
     }
     const tenant = await require('./telephonyTenantService').getClientForCompany(companyId);
     return { ...tenant, companyId };
@@ -30,7 +20,13 @@ async function getSyncClient(companyId) {
 /**
  * Sync historical calls from Twilio
  */
-async function syncHistoricalCalls(days = 7) {
+async function syncHistoricalCalls(days = 7, companyId) {
+    const tenant = await getSyncClient(companyId);
+    if (tenant.mode !== 'master') {
+        const err = new Error('Historical cold reconcile currently supports only the explicit master tenant');
+        err.code = 'TWILIO_SYNC_MODE_UNSUPPORTED';
+        throw err;
+    }
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
@@ -44,7 +40,7 @@ async function syncHistoricalCalls(days = 7) {
 /**
  * Sync recent calls (last hour)
  */
-async function syncRecentCalls(companyId = null) {
+async function syncRecentCalls(companyId) {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setHours(startDate.getHours() - 1);
@@ -85,6 +81,7 @@ async function syncRecentCalls(companyId = null) {
 
         console.log(`✅ Synced ${synced} recent calls`);
     } catch (error) {
+        if (error.code === 'TWILIO_TENANT_UNRESOLVED') throw error;
         console.error('❌ syncRecentCalls failed:', error);
     }
 
@@ -94,7 +91,7 @@ async function syncRecentCalls(companyId = null) {
 /**
  * Sync today's calls (last 3 days, as per original behavior)
  */
-async function syncTodayCalls(companyId = null) {
+async function syncTodayCalls(companyId) {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 3);
@@ -142,6 +139,7 @@ async function syncTodayCalls(companyId = null) {
 
         console.log(`✅ Today sync: ${synced}/${total} (${skipped} skipped)`);
     } catch (error) {
+        if (error.code === 'TWILIO_TENANT_UNRESOLVED') throw error;
         console.error('❌ syncTodayCalls failed:', error);
     }
 

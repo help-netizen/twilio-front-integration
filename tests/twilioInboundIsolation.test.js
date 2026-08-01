@@ -217,7 +217,7 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(String(res.send.mock.calls[0][0])).not.toContain('<Reject');
 
         // Routed exactly as today: group lookup → none → generic voicemail
-        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085559999');
+        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085559999', DEFAULT_COMPANY_ID);
         expect(mockBuildVoicemailTwiml).toHaveBeenCalled();
         expect(mockIsServiceBlocked).toHaveBeenCalledWith(DEFAULT_COMPANY_ID);
         expect(rejectionWarns()).toHaveLength(0);
@@ -282,7 +282,7 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
 
     test('TC-C-04: connected subaccount resolves by SID — To fallback NEVER queried (short-circuit), normal group routing', async () => {
         mockResolveCompanyByAccountSid.mockResolvedValue(COMPANY_A);
-        mockResolveGroupForNumber.mockResolvedValue({ group: { id: 'g1', name: 'Sales' }, flow: { id: 'f1' } });
+        mockResolveGroupForNumber.mockResolvedValue({ group: { id: 'g1', name: 'Sales', company_id: COMPANY_A }, flow: { id: 'f1' } });
 
         const res = makeRes();
         // To deliberately has NO pns row — must not matter
@@ -292,9 +292,10 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         expect(pnsLookups()).toHaveLength(0); // short-circuit: SID hit skips the To lookup
         expect(mockStartExecution).toHaveBeenCalledWith(expect.objectContaining({
             callSid: 'CA_inbound_001',
+            companyId: COMPANY_A,
             fromNumber: '+16175551000',
             toNumber: '+15085559999',
-            group: { id: 'g1', name: 'Sales' },
+            group: { id: 'g1', name: 'Sales', company_id: COMPANY_A },
             flow: { id: 'f1' },
         }));
         expect(res.send).toHaveBeenCalledWith(GROUP_TWIML);
@@ -425,17 +426,18 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
     test('TC-C-BL-02: FORCED blacklist lookup failure is fail-open and the call still starts group routing', async () => {
         mockResolveCompanyByAccountSid.mockResolvedValue(COMPANY_A);
         mockIsCallerBlocked.mockRejectedValue(new Error('blacklist unavailable'));
-        mockResolveGroupForNumber.mockResolvedValue({ group: { id: 'g1', name: 'Sales' }, flow: { id: 'f1' } });
+        mockResolveGroupForNumber.mockResolvedValue({ group: { id: 'g1', name: 'Sales', company_id: COMPANY_A }, flow: { id: 'f1' } });
 
         const res = makeRes();
         await handleVoiceInbound(makeReq(inboundBody({ AccountSid: SUB_SID })), res);
 
         expect(mockIsCallerBlocked).toHaveBeenCalledWith(COMPANY_A, '+16175551000');
         expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1);
-        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085550001');
+        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085550001', COMPANY_A);
         expect(mockStartExecution).toHaveBeenCalledWith(expect.objectContaining({
             callSid: 'CA_inbound_001',
-            group: { id: 'g1', name: 'Sales' },
+            companyId: COMPANY_A,
+            group: { id: 'g1', name: 'Sales', company_id: COMPANY_A },
             flow: { id: 'f1' },
         }));
         expect(mockIsCallerBlocked.mock.invocationCallOrder[0])
@@ -453,7 +455,7 @@ describe('handleVoiceInbound — C1 fail-closed resolution + C4 wallet gate', ()
         await handleVoiceInbound(makeReq(inboundBody({ AccountSid: SUB_SID })), res);
 
         expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1);
-        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085550001');
+        expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15085550001', COMPANY_A);
         expect(res.send).toHaveBeenCalledWith(VOICEMAIL_TWIML);
         expect(String(res.send.mock.calls[0][0])).not.toContain('<Reject');
     });

@@ -35,7 +35,7 @@ async function upsertCall(data) {
             price, price_unit, last_event_time, raw_last_payload,
             company_id, timeline_id
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-        ON CONFLICT (call_sid) DO UPDATE SET
+        ON CONFLICT (company_id, call_sid) DO UPDATE SET
             parent_call_sid   = COALESCE(EXCLUDED.parent_call_sid, calls.parent_call_sid),
             contact_id        = COALESCE(EXCLUDED.contact_id, calls.contact_id),
             timeline_id       = COALESCE(EXCLUDED.timeline_id, calls.timeline_id),
@@ -143,8 +143,8 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
     if (cursor) { conditions.push(`c.id < $${paramIdx++}`); params.push(cursor); }
     if (status) { conditions.push(`c.status = $${paramIdx++}`); params.push(status); }
     if (contactId) { conditions.push(`c.contact_id = $${paramIdx++}`); params.push(contactId); }
-    if (hasRecording === true) { conditions.push(`EXISTS (SELECT 1 FROM recordings r WHERE r.call_sid = c.call_sid AND r.status = 'completed')`); }
-    if (hasTranscript === true) { conditions.push(`EXISTS (SELECT 1 FROM transcripts t WHERE t.call_sid = c.call_sid AND t.status = 'completed')`); }
+    if (hasRecording === true) { conditions.push(`EXISTS (SELECT 1 FROM recordings r WHERE r.call_sid = c.call_sid AND r.company_id = c.company_id AND r.status = 'completed')`); }
+    if (hasTranscript === true) { conditions.push(`EXISTS (SELECT 1 FROM transcripts t WHERE t.call_sid = c.call_sid AND t.company_id = c.company_id AND t.status = 'completed')`); }
     if (rootOnly === true) { conditions.push(`c.parent_call_sid IS NULL`); }
     if (groupId) { conditions.push(`cfe.group_id = $${paramIdx++}`); params.push(groupId); }
     if (dateFrom) {
@@ -404,7 +404,7 @@ async function upsertRecording(data) {
             duration_sec, channels, track, source,
             started_at, completed_at, raw_payload, company_id
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-        ON CONFLICT (recording_sid) DO UPDATE SET
+        ON CONFLICT (company_id, recording_sid) DO UPDATE SET
             status        = EXCLUDED.status,
             recording_url = COALESCE(EXCLUDED.recording_url, recordings.recording_url),
             duration_sec  = COALESCE(EXCLUDED.duration_sec, recordings.duration_sec),

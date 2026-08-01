@@ -78,7 +78,7 @@ describe('F017 callFlowRuntime voicemail completion', () => {
     });
 
     test('advances voicemail.recorded from voicemail status and finalizes the call', async () => {
-        const twiml = await advance('CA_vm', 'voicemail.recorded', 'test');
+        const twiml = await advance('CA_vm', 'voicemail.recorded', 'test', 'company-1');
 
         expect(twiml).toContain('<Hangup');
         expect(mockQuery).toHaveBeenCalledWith(
@@ -174,7 +174,7 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
             return { rows: [] };
         });
 
-        const twiml = await advance('CA_after_hours', 'node.completed', 'test');
+        const twiml = await advance('CA_after_hours', 'node.completed', 'test', 'company-1');
 
         expect(twiml).toContain('<Dial timeout="20"');
         expect(twiml).toContain('callerId="+16175006181"');
@@ -232,7 +232,7 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
             return { rows: [] };
         });
 
-        const twiml = await advance('CA_user_transfer', 'node.completed', 'test');
+        const twiml = await advance('CA_user_transfer', 'node.completed', 'test', 'company-1');
 
         expect(twiml).toContain('<Dial timeout="20"');
         expect(twiml).toContain(`<Client>${buildSoftphoneIdentity('company-1', targetUserId)}</Client>`);
@@ -301,7 +301,7 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
             return { rows: [] };
         });
 
-        const twiml = await advance('CA_group_transfer', 'node.completed', 'test');
+        const twiml = await advance('CA_group_transfer', 'node.completed', 'test', 'company-1');
 
         expect(groupRouting.availableAgentsForGroup).toHaveBeenCalledWith('ug-target', 'company-1', 'test');
         expect(twiml).toContain('<Record');
@@ -354,7 +354,7 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
             return { rows: [] };
         });
 
-        const twiml = await advance('CA_vapi', 'node.completed', 'test');
+        const twiml = await advance('CA_vapi', 'node.completed', 'test', 'company-1');
 
         // vapiNode=1 marks the dial action so the handler maps the real
         // DialCallStatus to a vapi.* event (completed → end, failure → edge).
@@ -426,7 +426,7 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
             return { rows: [] };
         });
 
-        const twiml = await advance('CA_vapi_missing', 'node.completed', 'test');
+        const twiml = await advance('CA_vapi_missing', 'node.completed', 'test', 'company-1');
 
         expect(twiml).toContain('<Record');
         expect(twiml).not.toContain('AI agent is not configured');

@@ -181,6 +181,7 @@ function seedExecution(nodeId, { graph = TRANSFORMED, context = {}, status = 'ac
 function runStartExecution(graph) {
     return startExecution({
         callSid: CALL_SID,
+        companyId: COMPANY_ID,
         fromNumber: '+15551112222',
         toNumber: '+16175550100',
         group,
@@ -275,7 +276,7 @@ describe('T-G2-02 (S2): agents ring (queue Dial), DialCallStatus=no-answer → v
         // Phase 2 — Twilio posts the dial result: no-answer → queue.timeout.
         const event = eventFromDialStatus('no-answer');
         expect(event).toBe('queue.timeout');
-        const twiml = await advance(CALL_SID, event, 'test');
+        const twiml = await advance(CALL_SID, event, 'test', COMPANY_ID);
 
         // The dial-action HTTP response IS the vapi leg (no <Redirect>, no voicemail).
         expectVapiTwiml(twiml);
@@ -295,7 +296,7 @@ describe('T-G2-03 (S3): dial failure statuses map onto the repointed edge → va
         expect(eventFromDialStatus(dialStatus)).toBe(expectedEvent); // mapping pin
         seedExecution('sk-current-group');
 
-        const twiml = await advance(CALL_SID, expectedEvent, 'test');
+        const twiml = await advance(CALL_SID, expectedEvent, 'test', COMPANY_ID);
 
         expectVapiTwiml(twiml);
         expect(executionRow.current_node_id).toBe('n-vapi-bh-backup');
@@ -314,7 +315,7 @@ describe('T-G2-04 (S4A): vapi dial failure at n-vapi-bh-backup → business-hour
         expect(vapiEventFromDialStatus(dialStatus)).toBe(expectedEvent); // ?vapiNode=1 mapping pin
         seedExecution('n-vapi-bh-backup');
 
-        const twiml = await advance(CALL_SID, expectedEvent, 'test');
+        const twiml = await advance(CALL_SID, expectedEvent, 'test', COMPANY_ID);
 
         // Business-hours greeting (branchKey business_hours → VM_GREETING) — NOT after-hours.
         expect(twiml).toContain('BUSINESS_VM_MARKER');
@@ -336,7 +337,7 @@ describe('T-G2-05 (S4B): no vapi_tenant_resources row AND no env VAPI_SIP_URI �
         sipRows = []; // no active tenant resource; env VAPI_SIP_URI deleted at module top
         seedExecution('sk-current-group');
 
-        const twiml = await advance(CALL_SID, 'queue.timeout', 'test');
+        const twiml = await advance(CALL_SID, 'queue.timeout', 'test', COMPANY_ID);
 
         // followFailureEdge probes vapi.no_target → the new fallback edge — the
         // voicemail TwiML comes back in the SAME response that attempted the vapi render.
@@ -370,7 +371,7 @@ describe('T-G2-06 (S4 non-case): vapi.completed at n-vapi-bh-backup → call com
     test('vapi.completed → <Hangup>, status completed, no voicemail content', async () => {
         seedExecution('n-vapi-bh-backup');
 
-        const twiml = await advance(CALL_SID, 'vapi.completed', 'test');
+        const twiml = await advance(CALL_SID, 'vapi.completed', 'test', COMPANY_ID);
 
         expect(twiml).toContain('<Hangup');
         expect(twiml).not.toContain('BUSINESS_VM_MARKER');
@@ -393,7 +394,7 @@ describe('T-G2-07 (S6): queue.connected → done, unchanged', () => {
         expect(eventFromDialStatus('answered')).toBe('queue.connected');
         seedExecution('sk-current-group');
 
-        const twiml = await advance(CALL_SID, 'queue.connected', 'test');
+        const twiml = await advance(CALL_SID, 'queue.connected', 'test', COMPANY_ID);
 
         expect(twiml).toContain('<Hangup');
         expect(twiml).not.toContain('<Sip');
@@ -426,7 +427,7 @@ describe('T-G2-08 (S5): after-hours branch untouched — original vapi node, its
         // The queue (and therefore the backup node) is unreachable on this branch.
         expect(groupRouting.availableAgentsForGroup).not.toHaveBeenCalled();
 
-        const twiml2 = await advance(CALL_SID, 'vapi.failed', 'test');
+        const twiml2 = await advance(CALL_SID, 'vapi.failed', 'test', COMPANY_ID);
 
         expect(twiml2).toContain('AFTERHOURS_VM_MARKER');
         expect(twiml2).toContain('<Record');
@@ -442,7 +443,7 @@ describe('T-G2-09: stray/duplicate queue.timeout while already at n-vapi-bh-back
     test('duplicate event ends the call (<Hangup> + completed), never re-dials Sara or the queue', async () => {
         seedExecution('n-vapi-bh-backup');
 
-        const twiml = await advance(CALL_SID, 'queue.timeout', 'test');
+        const twiml = await advance(CALL_SID, 'queue.timeout', 'test', COMPANY_ID);
 
         // No cycle through the repointed edge: no new Sip leg, no client dial,
         // no voicemail — the execution just completes with a hangup.

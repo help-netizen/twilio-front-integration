@@ -575,11 +575,12 @@ async function handleVoiceInbound(req, res) {
                 return res.send('<Response><Reject reason="busy"/></Response>');
             }
 
-            const resolvedGroup = await groupRouting.resolveGroupForNumber(To);
+            const resolvedGroup = await groupRouting.resolveGroupForNumber(To, companyId);
             if (resolvedGroup) {
                 console.log(`[${traceId}] F017 inbound: ${From} → group ${resolvedGroup.group.name} (${resolvedGroup.group.id})`);
                 twiml = await callFlowRuntime.startExecution({
                     callSid: CallSid,
+                    companyId,
                     fromNumber: From,
                     toNumber: To,
                     group: resolvedGroup.group,
@@ -741,6 +742,15 @@ async function handleDialAction(req, res) {
         if (!CallSid) {
             return res.status(400).send('<Response></Response>');
         }
+        let companyId;
+        try {
+            companyId = await resolveWebhookCompanyId(req.body, 'voice_dial_action');
+        } catch (error) {
+            if (error.code === 'TWILIO_TENANT_UNRESOLVED') {
+                return res.status(403).type('text/xml').send(buildHangupTwiml());
+            }
+            throw error;
+        }
 
         // Defensive no-loop guard for already-issued TwiML that had <Record>
         // without an action URL. Twilio posts Record completion back to the
@@ -780,14 +790,14 @@ async function handleDialAction(req, res) {
         // to the outer catch (a 500 makes Twilio drop the live caller) — log it
         // and fall through to the legacy voicemail branch below, which answers.
         try {
-            const execution = await callFlowRuntime.getExecution(CallSid);
+            const execution = await callFlowRuntime.getExecution(CallSid, companyId);
             if (execution && execution.status === 'active') {
                 // vapi_agent nodes mark their Dial action with ?vapiNode=1 so the
                 // real DialCallStatus maps to a vapi.* event (completed → end call,
                 // failure/timeout → follow the node's fallback edge).
                 const flowEvent = req.query.flowEvent
                     || (req.query.vapiNode ? callFlowRuntime.vapiEventFromDialStatus(dialStatus) : callFlowRuntime.eventFromDialStatus(dialStatus));
-                const flowTwiml = await callFlowRuntime.advance(CallSid, flowEvent, traceId);
+                const flowTwiml = await callFlowRuntime.advance(CallSid, flowEvent, traceId, companyId);
                 if (flowTwiml) {
                     res.type('text/xml');
                     return res.send(flowTwiml);
@@ -858,10 +868,20 @@ async function handleVoicemailComplete(req, res) {
         }
 
         const callSid = req.body.CallSid;
+        if (!callSid) {
+            return res.status(400).type('text/xml').send(buildHangupTwiml());
+        }
+        let companyId;
+        try {
+            companyId = await resolveWebhookCompanyId(req.body, 'voicemail_complete');
+        } catch (error) {
+            if (error.code === 'TWILIO_TENANT_UNRESOLVED') {
+                return res.status(403).type('text/xml').send(buildHangupTwiml());
+            }
+            throw error;
+        }
         const flowEvent = req.query.flowEvent || 'voicemail.recorded';
-        const flowTwiml = callSid
-            ? await callFlowRuntime.advance(callSid, flowEvent, traceId)
-            : null;
+        const flowTwiml = await callFlowRuntime.advance(callSid, flowEvent, traceId, companyId);
 
         res.type('text/xml');
         res.send(flowTwiml || buildHangupTwiml());

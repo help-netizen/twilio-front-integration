@@ -17,7 +17,7 @@ const agentPresence = require('../services/agentPresence');
 const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
 const walletService = require('../services/walletService');
 const { requirePermission } = require('../middleware/authorization');
-const { validateTwilioSignature, ingestToInbox } = require('../webhooks/twilioWebhooks');
+const { validateTwilioSignature, resolveWebhookCompanyId, ingestToInbox } = require('../webhooks/twilioWebhooks');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -44,7 +44,7 @@ function buildMessageTwiml(message) {
 </Response>`;
 }
 
-async function validateOutboundCallerId({ callerId, from }) {
+async function validateOutboundCallerId({ callerId, from, companyId }) {
     const normalizedCallerId = toE164(callerId);
     if (!normalizedCallerId) {
         return { ok: false, status: 400, message: 'Invalid caller ID.' };
@@ -53,6 +53,9 @@ async function validateOutboundCallerId({ callerId, from }) {
     const identity = parseSoftphoneIdentity(from);
     if (!identity?.companyId || !identity?.userId) {
         return { ok: false, status: 403, message: 'Caller ID is not available for this softphone identity.' };
+    }
+    if (!companyId || String(identity.companyId) !== String(companyId)) {
+        return { ok: false, status: 403, message: 'Softphone identity does not match the Twilio account.' };
     }
 
     const db = require('../db/connection');
@@ -77,13 +80,13 @@ async function validateOutboundCallerId({ callerId, from }) {
            AND pns.routing_mode = 'client'
            AND pns.group_id IS NOT NULL
          LIMIT 1`,
-        [normalizedCallerId, String(identity.companyId), String(identity.userId)]
+        [normalizedCallerId, String(companyId), String(identity.userId)]
     );
     if (result.rows.length === 0) {
         return { ok: false, status: 403, message: 'Caller ID is not assigned to this user group.' };
     }
 
-    return { ok: true, callerId: normalizedCallerId, companyId: identity.companyId, userId: identity.userId };
+    return { ok: true, callerId: normalizedCallerId, companyId, userId: identity.userId };
 }
 
 async function getMyGroups(req) {
@@ -308,6 +311,12 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
     if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
         return res.status(403).type('text/xml').send('<Response><Reject/></Response>');
     }
+    let resolvedCompanyId;
+    try {
+        resolvedCompanyId = await resolveWebhookCompanyId(req.body, 'voice_twiml_outbound');
+    } catch (error) {
+        return res.status(403).type('text/xml').send('<Response><Reject/></Response>');
+    }
     const to = req.body.To;
     const requestedCallerId = req.body.CallerId || process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
     const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
@@ -339,16 +348,18 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
     }
 
     let callerId;
-    let validatedCompanyId = null;
     try {
-        const validation = await validateOutboundCallerId({ callerId: requestedCallerId, from: req.body.From });
+        const validation = await validateOutboundCallerId({
+            callerId: requestedCallerId,
+            from: req.body.From,
+            companyId: resolvedCompanyId,
+        });
         if (!validation.ok) {
             res.status(validation.status || 403);
             res.type('text/xml').send(buildMessageTwiml(validation.message || 'Caller ID is not allowed.'));
             return;
         }
         callerId = validation.callerId;
-        validatedCompanyId = validation.companyId;
     } catch (err) {
         console.error('[Voice TwiML] Caller ID validation error:', err.message);
         res.status(500);
@@ -357,7 +368,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
     }
 
     // Wallet gate: block outbound calls when the balance is at/below the grace floor.
-    if (validatedCompanyId && await walletService.isServiceBlocked(validatedCompanyId).catch(() => false)) {
+    if (await walletService.isServiceBlocked(resolvedCompanyId).catch(() => false)) {
         res.type('text/xml').send(buildMessageTwiml('Your account balance is too low to place calls. Please top up your wallet.'));
         return;
     }
@@ -389,7 +400,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
             const realtimeService = require('../services/realtimeService');
 
             // Resolve timeline for the dialed number
-            const timeline = await queries.findOrCreateTimeline(normalized, validatedCompanyId);
+            const timeline = await queries.findOrCreateTimeline(normalized, resolvedCompanyId);
             const timelineId = timeline.id;
             const contactId = timeline.contact_id || null;
 
@@ -411,7 +422,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
                 priceUnit: null,
                 lastEventTime: new Date(),
                 rawLastPayload: req.body,
-                companyId: validatedCompanyId,
+                companyId: resolvedCompanyId,
             });
 
             if (call) {

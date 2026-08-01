@@ -4,6 +4,13 @@ const request = require('supertest');
 const mockQuery = jest.fn();
 jest.mock('../../backend/src/db/connection', () => ({ query: mockQuery }));
 
+const mockResolveWebhookCompanyId = jest.fn();
+jest.mock('../../backend/src/webhooks/twilioWebhooks', () => ({
+    validateTwilioSignature: jest.fn(async () => true),
+    resolveWebhookCompanyId: (...args) => mockResolveWebhookCompanyId(...args),
+    ingestToInbox: jest.fn(async () => ({ id: 1 })),
+}));
+
 const mockGenerateTokenForCompany = jest.fn();
 jest.mock('../../backend/src/services/voiceService', () => ({
     generateToken: jest.fn(() => ({ token: 'token', identity: 'user_test' })),
@@ -86,6 +93,7 @@ afterAll(() => { process.env.NODE_ENV = VOICE_TEST_PRIOR_ENV; });
 describe('F017 outbound Caller ID validation', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockResolveWebhookCompanyId.mockResolvedValue('company-1');
         mockFindOrCreateTimeline.mockResolvedValue({ id: 10, contact_id: null });
         mockUpsertCall.mockResolvedValue(null);
     });
@@ -141,6 +149,27 @@ describe('F017 outbound Caller ID validation', () => {
         expect(res.text).toContain('Caller ID is not available for this softphone identity.');
         expect(mockQuery).not.toHaveBeenCalled();
         expect(mockFindOrCreateTimeline).not.toHaveBeenCalled();
+    });
+
+    test('SAB-TW-VOICE-ACCOUNT: From identity cannot override the AccountSid-resolved tenant', async () => {
+        mockResolveWebhookCompanyId.mockResolvedValue('company-b');
+        const forgedIdentity = buildSoftphoneIdentity('company-1', 'user-1');
+
+        const res = await request(makeApp())
+            .post('/api/voice/twiml/outbound')
+            .send({
+                AccountSid: 'AC-company-b',
+                From: `client:${forgedIdentity}`,
+                To: '+15551112222',
+                CallerId: '+16175006181',
+                CallSid: 'CA-shared',
+            });
+
+        expect(res.status).toBe(403);
+        expect(res.text).toContain('Softphone identity does not match the Twilio account.');
+        expect(mockQuery).not.toHaveBeenCalled();
+        expect(mockFindOrCreateTimeline).not.toHaveBeenCalled();
+        expect(mockUpsertCall).not.toHaveBeenCalled();
     });
 });
 

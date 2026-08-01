@@ -8,7 +8,7 @@
 const { WebSocketServer } = require('ws');
 const transcriptService = require('./realtimeTranscriptService');
 const telephonyTenantService = require('./telephonyTenantService');
-const { verifyStreamToken } = require('./mediaStreamTokenService');
+const { verifyStreamToken, consumeStreamToken } = require('./mediaStreamTokenService');
 
 const AUTHENTICATION_TIMEOUT_MS = 5000;
 let wss = null;
@@ -107,6 +107,7 @@ function handleConnection(ws, request = null) {
 
     ws.on('close', (code) => {
         clearTimeout(authenticationTimer);
+        state.rejected = true;
         console.log(`[MediaStream] Connection closed (code=${code}) packets=${state.packetCount}`);
         if (state.authenticated && state.companyId && state.callSid) {
             transcriptService.terminateSession(state.companyId, state.callSid).catch(() => {
@@ -162,10 +163,26 @@ async function handleTwilioEvent(msg, state, ws, request) {
                 rejectConnection(ws, state, 'account_binding_mismatch');
                 return;
             }
+            if (state.rejected) return;
 
             const signatureValid = await validateUpgradeSignature(request, startAccountSid);
+            if (state.rejected) return;
             if (!signatureValid) {
                 rejectConnection(ws, state, 'invalid_twilio_signature');
+                return;
+            }
+
+            let consumedClaims;
+            try {
+                consumedClaims = await consumeStreamToken(customParameters.streamToken);
+            } catch {
+                consumedClaims = null;
+            }
+            // The auth timer or socket close may win while any validation/claim
+            // await is pending. A late continuation must never create a session.
+            if (state.rejected) return;
+            if (!consumedClaims) {
+                rejectConnection(ws, state, 'token_replay');
                 return;
             }
 

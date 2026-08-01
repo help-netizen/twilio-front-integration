@@ -84,7 +84,7 @@ describe('advance() — vapi_agent routing', () => {
 
     test('vapi.completed → ends the call (does NOT follow the edge)', async () => {
         mockExecutionAt('ai');
-        const twiml = await advance('CA_vapi', 'vapi.completed', 'test');
+        const twiml = await advance('CA_vapi', 'vapi.completed', 'test', 'company-1');
         expect(twiml).toContain('<Hangup');
         expect(twiml).not.toContain('FALLBACK_REACHED');
         // status set to completed via an UPDATE carrying 'completed'
@@ -95,13 +95,13 @@ describe('advance() — vapi_agent routing', () => {
 
     test('vapi.failed → follows the outgoing edge to the fallback node', async () => {
         mockExecutionAt('ai');
-        const twiml = await advance('CA_vapi', 'vapi.failed', 'test');
+        const twiml = await advance('CA_vapi', 'vapi.failed', 'test', 'company-1');
         expect(twiml).toContain('FALLBACK_REACHED');
     });
 
     test('vapi.timeout → follows the outgoing edge to the fallback node', async () => {
         mockExecutionAt('ai');
-        const twiml = await advance('CA_vapi', 'vapi.timeout', 'test');
+        const twiml = await advance('CA_vapi', 'vapi.timeout', 'test', 'company-1');
         expect(twiml).toContain('FALLBACK_REACHED');
     });
 });

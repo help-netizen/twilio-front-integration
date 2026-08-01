@@ -2,6 +2,7 @@ const mockInsertInboxEvent = jest.fn();
 const mockResolveGroupForNumber = jest.fn();
 const mockBuildVoicemailTwiml = jest.fn(() => '<?xml version="1.0" encoding="UTF-8"?><Response><Record /></Response>');
 const mockAdvance = jest.fn();
+const mockGetExecution = jest.fn();
 const mockDbQuery = jest.fn();
 const mockIsServiceBlocked = jest.fn();
 const mockIsCallerBlocked = jest.fn();
@@ -46,11 +47,15 @@ jest.mock('../backend/src/services/groupRouting', () => ({
 jest.mock('../backend/src/services/callFlowRuntime', () => ({
     buildVoicemailTwiml: (...args) => mockBuildVoicemailTwiml(...args),
     advance: (...args) => mockAdvance(...args),
+    getExecution: (...args) => mockGetExecution(...args),
+    eventFromDialStatus: jest.fn(() => 'queue.connected'),
+    vapiEventFromDialStatus: jest.fn(() => 'vapi.completed'),
 }));
 
 const {
     handleVoiceInbound,
     handleVoiceStatus,
+    handleDialAction,
     handleVoicemailComplete,
     validateTwilioSignature,
     generateEventKey,
@@ -231,7 +236,7 @@ describe('Twilio webhook handlers', () => {
 
             await handleVoiceInbound(req, res);
 
-            expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15553334444');
+            expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15553334444', 'company_1');
             expect(mockBuildVoicemailTwiml).toHaveBeenCalledWith({ baseUrl: 'https://api.albusto.com' });
             expect(res.type).toHaveBeenCalledWith('text/xml');
             expect(res.send.mock.calls[0][0]).toContain('<Record');
@@ -317,9 +322,65 @@ describe('Twilio webhook handlers', () => {
 
             await handleVoicemailComplete(req, res);
 
-            expect(mockAdvance).toHaveBeenCalledWith('CA_vm', 'voicemail.recorded', expect.stringMatching(/^trace_/));
+            expect(mockAdvance).toHaveBeenCalledWith(
+                'CA_vm',
+                'voicemail.recorded',
+                expect.stringMatching(/^trace_/),
+                'company_1'
+            );
             expect(res.type).toHaveBeenCalledWith('text/xml');
             expect(res.send.mock.calls[0][0]).toContain('<Hangup');
+        });
+    });
+
+    describe('call-flow callback tenant isolation', () => {
+        test('SAB-TW-FLOW-TBLAST: same CallSid advances only the AccountSid-resolved execution', async () => {
+            mockResolveCompanyByAccountSid.mockResolvedValue('company_b');
+            mockGetExecution.mockResolvedValue({
+                call_sid: 'CA-shared',
+                company_id: 'company_b',
+                status: 'active',
+            });
+            mockAdvance.mockResolvedValue('<Response><Hangup /></Response>');
+            const req = makeReq({
+                AccountSid: 'AC-sub-b',
+                CallSid: 'CA-shared',
+                DialCallStatus: 'completed',
+            });
+            req.originalUrl = '/webhooks/twilio/voice-dial-action';
+            const res = makeRes();
+
+            await handleDialAction(req, res);
+
+            expect(mockGetExecution).toHaveBeenCalledWith('CA-shared', 'company_b');
+            expect(mockAdvance).toHaveBeenCalledWith(
+                'CA-shared',
+                'queue.connected',
+                expect.stringMatching(/^trace_/),
+                'company_b'
+            );
+            expect(mockAdvance).not.toHaveBeenCalledWith(
+                'CA-shared',
+                expect.anything(),
+                expect.anything(),
+                'company_1'
+            );
+        });
+
+        test('T-foreign: unbound dial callback cannot read or advance any execution', async () => {
+            mockResolveCompanyByAccountSid.mockResolvedValue(null);
+            const req = makeReq({
+                AccountSid: 'AC-foreign',
+                CallSid: 'CA-shared',
+                DialCallStatus: 'completed',
+            });
+            const res = makeRes();
+
+            await handleDialAction(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(403);
+            expect(mockGetExecution).not.toHaveBeenCalled();
+            expect(mockAdvance).not.toHaveBeenCalled();
         });
     });
 });

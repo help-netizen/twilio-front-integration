@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const db = require('../db/connection');
 
 const DEFAULT_TTL_SECONDS = 60;
 const MAX_TTL_SECONDS = 300;
@@ -65,6 +66,7 @@ function verifyStreamToken(token) {
             || !claims.company_id
             || !claims.call_sid
             || !claims.account_sid
+            || !claims.jti
             || !Number.isInteger(claims.iat)
             || !Number.isInteger(claims.exp)
             || claims.exp <= now
@@ -78,9 +80,32 @@ function verifyStreamToken(token) {
     }
 }
 
+async function consumeStreamToken(token) {
+    const claims = verifyStreamToken(token);
+    if (!claims) return null;
+
+    const claimed = await db.query(
+        `INSERT INTO twilio_media_stream_token_claims (jti, expires_at)
+         VALUES ($1, to_timestamp($2))
+         ON CONFLICT (jti) DO NOTHING
+         RETURNING jti`,
+        [claims.jti, claims.exp]
+    );
+    if (claimed.rows.length === 0) return null;
+
+    // Keep the replay ledger bounded. This is deliberately best-effort after
+    // the atomic claim; cleanup failure must not make a claimed token reusable.
+    db.query(
+        `DELETE FROM twilio_media_stream_token_claims
+         WHERE expires_at < NOW() - INTERVAL '5 minutes'`
+    ).catch(() => {});
+    return claims;
+}
+
 module.exports = {
     mintStreamToken,
     verifyStreamToken,
+    consumeStreamToken,
     DEFAULT_TTL_SECONDS,
     MAX_TTL_SECONDS,
 };

@@ -5,6 +5,12 @@ const mockRouteAudio = jest.fn();
 const mockTerminateSession = jest.fn().mockResolvedValue(undefined);
 const mockResolveCompanyByAccountSid = jest.fn();
 const mockValidateTwilioSignature = jest.fn();
+const mockDbQuery = jest.fn();
+const claimedJtis = new Set();
+
+jest.mock('../backend/src/db/connection', () => ({
+    query: (...args) => mockDbQuery(...args),
+}));
 
 jest.mock('../backend/src/services/realtimeTranscriptService', () => ({
     createSession: (...args) => mockCreateSession(...args),
@@ -73,6 +79,7 @@ async function flushEvents() {
 
 beforeEach(() => {
     jest.clearAllMocks();
+    claimedJtis.clear();
     process.env.TWILIO_MEDIA_STREAM_TOKEN_SECRET = 'media-test-secret-at-least-32-bytes';
     mockResolveCompanyByAccountSid.mockImplementation(async accountSid => (
         accountSid === MASTER_SID ? MASTER_COMPANY
@@ -80,12 +87,21 @@ beforeEach(() => {
                 : null
     ));
     mockValidateTwilioSignature.mockResolvedValue(true);
+    mockDbQuery.mockImplementation(async (sql, params = []) => {
+        if (String(sql).includes('INSERT INTO twilio_media_stream_token_claims')) {
+            if (claimedJtis.has(params[0])) return { rows: [] };
+            claimedJtis.add(params[0]);
+            return { rows: [{ jti: params[0] }] };
+        }
+        return { rows: [] };
+    });
     mockTerminateSession.mockResolvedValue(undefined);
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
 afterEach(() => {
+    jest.useRealTimers();
     console.log.mockRestore();
     console.warn.mockRestore();
 });
@@ -213,4 +229,56 @@ test('T-blast: same CallSid in master and subaccount routes by verified company 
         COMPANY_B, SHARED_CALL_SID, 'inbound', Buffer.from('sub-audio')
     );
     expect(mockValidateTwilioSignature).toHaveBeenCalledTimes(2);
+});
+
+test('SAB-TW-WS-REPLAY: a captured valid stream token is single-use', async () => {
+    const token = mintStreamToken({
+        companyId: MASTER_COMPANY,
+        callSid: SHARED_CALL_SID,
+        accountSid: MASTER_SID,
+    });
+    const firstWs = new FakeWebSocket();
+    const replayWs = new FakeWebSocket();
+    handleConnection(firstWs, request());
+    handleConnection(replayWs, request());
+
+    firstWs.sendEvent(startEvent(token));
+    await flushEvents();
+    replayWs.sendEvent(startEvent(token));
+    await flushEvents();
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(1);
+    expect(mockCreateSession).toHaveBeenCalledWith(
+        MASTER_COMPANY,
+        SHARED_CALL_SID,
+        expect.any(Object)
+    );
+    expect(replayWs.close).toHaveBeenCalledWith(1008, 'Unauthorized media stream');
+});
+
+test('SAB-TW-WS-TIMEOUT: validation completing after auth timeout cannot create a session', async () => {
+    jest.useFakeTimers();
+    let resolveCompany;
+    mockResolveCompanyByAccountSid.mockReturnValue(new Promise(resolve => { resolveCompany = resolve; }));
+    const token = mintStreamToken({
+        companyId: MASTER_COMPANY,
+        callSid: SHARED_CALL_SID,
+        accountSid: MASTER_SID,
+    });
+    const ws = new FakeWebSocket();
+    handleConnection(ws, request());
+    ws.sendEvent(startEvent(token));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    jest.advanceTimersByTime(5000);
+    resolveCompany(MASTER_COMPANY);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(ws.close).toHaveBeenCalledWith(1008, 'Unauthorized media stream');
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(mockRouteAudio).not.toHaveBeenCalled();
+    jest.useRealTimers();
 });

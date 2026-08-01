@@ -23,24 +23,54 @@ describe('migration 226 real PostgreSQL tenant-paired Twilio keys', () => {
         const companyA = '00000000-0000-0000-0000-000000000001';
         const companyB = randomUUID();
         const sharedTranscriptSid = `TR-${randomUUID()}`;
+        const sharedCallSid = `CA-${randomUUID()}`;
+        const sharedRecordingSid = `RE-${randomUUID()}`;
         const sharedEventKey = `event-${randomUUID()}`;
 
         try {
             await client.query(`CREATE SCHEMA "${schema}"`);
             await client.query(`SET search_path TO "${schema}"`);
             await client.query(`
+                CREATE TABLE calls (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_id UUID NOT NULL,
+                    call_sid TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'initiated',
+                    is_final BOOLEAN NOT NULL DEFAULT false,
+                    last_event_time TIMESTAMPTZ,
+                    raw_last_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT calls_call_sid_key UNIQUE (call_sid)
+                );
+                CREATE TABLE recordings (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_id UUID NOT NULL,
+                    recording_sid TEXT NOT NULL,
+                    call_sid TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'in-progress',
+                    completed_at TIMESTAMPTZ,
+                    raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT recordings_recording_sid_key UNIQUE (recording_sid),
+                    CONSTRAINT recordings_call_sid_fkey FOREIGN KEY (call_sid) REFERENCES calls(call_sid)
+                );
                 CREATE TABLE transcripts (
                     id BIGSERIAL PRIMARY KEY,
                     company_id UUID NOT NULL,
                     transcription_sid TEXT,
                     call_sid TEXT,
+                    recording_sid TEXT,
                     status TEXT,
                     text TEXT,
                     raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
                     is_final BOOLEAN NOT NULL DEFAULT false,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    CONSTRAINT transcripts_transcription_sid_key UNIQUE (transcription_sid)
+                    CONSTRAINT transcripts_transcription_sid_key UNIQUE (transcription_sid),
+                    CONSTRAINT transcripts_call_sid_fkey FOREIGN KEY (call_sid) REFERENCES calls(call_sid),
+                    CONSTRAINT transcripts_recording_sid_fkey FOREIGN KEY (recording_sid) REFERENCES recordings(recording_sid)
                 );
                 CREATE TABLE webhook_inbox (
                     id BIGSERIAL PRIMARY KEY,
@@ -57,12 +87,28 @@ describe('migration 226 real PostgreSQL tenant-paired Twilio keys', () => {
                     company_id UUID NOT NULL,
                     twilio_subaccount_sid TEXT
                 );
+                CREATE TABLE call_flow_executions (
+                    id TEXT PRIMARY KEY,
+                    company_id TEXT NOT NULL,
+                    call_sid TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                CREATE UNIQUE INDEX uq_call_flow_executions_call_sid
+                    ON call_flow_executions(call_sid);
             `);
 
             await client.query(
                 `INSERT INTO company_telephony (company_id, twilio_subaccount_sid)
                  VALUES ($1, 'AC-sub-b')`,
                 [companyB]
+            );
+            await client.query(
+                `INSERT INTO calls
+                    (company_id, call_sid, status, is_final, raw_last_payload)
+                 VALUES ($1, 'CA-leaked', 'completed', true, '{"AccountSid":"AC-sub-b"}')`,
+                [companyA]
             );
             await client.query(
                 `INSERT INTO transcripts
@@ -88,11 +134,30 @@ describe('migration 226 real PostgreSQL tenant-paired Twilio keys', () => {
                 inbox_company: companyB,
             });
             await client.query(
+                `INSERT INTO calls (company_id, call_sid, status, is_final, last_event_time)
+                 VALUES ($1, $3, 'completed', true, now()),
+                        ($2, $3, 'completed', true, now())`,
+                [companyA, companyB, sharedCallSid]
+            );
+            await client.query(
+                `INSERT INTO recordings
+                    (company_id, recording_sid, call_sid, status, completed_at)
+                 VALUES ($1, $3, $4, 'completed', now()),
+                        ($2, $3, $4, 'completed', now())`,
+                [companyA, companyB, sharedRecordingSid, sharedCallSid]
+            );
+            await client.query(
+                `INSERT INTO call_flow_executions (id, company_id, call_sid, status)
+                 VALUES ('flow-a', $1, $3, 'active'),
+                        ('flow-b', $2, $3, 'active')`,
+                [companyA, companyB, sharedCallSid]
+            );
+            await client.query(
                 `INSERT INTO transcripts
                     (company_id, transcription_sid, call_sid, status, text, is_final)
-                 VALUES ($1, $3, 'CA-shared', 'completed', 'master text', true),
-                        ($2, $3, 'CA-shared', 'completed', 'tenant B text', true)`,
-                [companyA, companyB, sharedTranscriptSid]
+                 VALUES ($1, $3, $4, 'completed', 'master text', true),
+                        ($2, $3, $4, 'completed', 'tenant B text', true)`,
+                [companyA, companyB, sharedTranscriptSid, sharedCallSid]
             );
             await client.query(
                 `INSERT INTO webhook_inbox (company_id, event_key, status, attempts, processed_at)
@@ -111,13 +176,52 @@ describe('migration 226 real PostgreSQL tenant-paired Twilio keys', () => {
                  WHERE company_id = $1 AND event_key = $2`,
                 [companyB, sharedEventKey]
             );
+            const beforeBCall = await client.query(
+                `SELECT to_jsonb(c) AS snapshot FROM calls c
+                 WHERE company_id = $1 AND call_sid = $2`,
+                [companyB, sharedCallSid]
+            );
+            const beforeBRecording = await client.query(
+                `SELECT to_jsonb(r) AS snapshot FROM recordings r
+                 WHERE company_id = $1 AND recording_sid = $2`,
+                [companyB, sharedRecordingSid]
+            );
+            const beforeBFlow = await client.query(
+                `SELECT to_jsonb(f) AS snapshot FROM call_flow_executions f
+                 WHERE company_id = $1 AND call_sid = $2`,
+                [companyB, sharedCallSid]
+            );
 
             // Simulate a drifted database with duplicate default-company rows,
             // then prove re-apply keeps the most complete row and restores keys.
             await client.query(`
+                ALTER TABLE recordings DROP CONSTRAINT recordings_company_call_sid_fkey;
+                ALTER TABLE transcripts DROP CONSTRAINT transcripts_company_call_sid_fkey;
+                ALTER TABLE transcripts DROP CONSTRAINT transcripts_company_recording_sid_fkey;
+                ALTER TABLE calls DROP CONSTRAINT uq_calls_company_call_sid;
+                ALTER TABLE recordings DROP CONSTRAINT uq_recordings_company_recording_sid;
                 ALTER TABLE transcripts DROP CONSTRAINT uq_transcripts_company_transcription_sid;
                 ALTER TABLE webhook_inbox DROP CONSTRAINT uq_webhook_inbox_company_event_key;
+                DROP INDEX uq_call_flow_executions_company_call_sid;
             `);
+            await client.query(
+                `INSERT INTO calls
+                    (company_id, call_sid, status, is_final, last_event_time, updated_at)
+                 VALUES ($1, $2, 'initiated', false, now() - interval '1 day', now() - interval '1 day')`,
+                [companyA, sharedCallSid]
+            );
+            await client.query(
+                `INSERT INTO recordings
+                    (company_id, recording_sid, call_sid, status, updated_at)
+                 VALUES ($1, $2, $3, 'in-progress', now() - interval '1 day')`,
+                [companyA, sharedRecordingSid, sharedCallSid]
+            );
+            await client.query(
+                `INSERT INTO call_flow_executions
+                    (id, company_id, call_sid, status, updated_at)
+                 VALUES ('flow-a-stale', $1, $2, 'completed', now() - interval '1 day')`,
+                [companyA, sharedCallSid]
+            );
             await client.query(
                 `INSERT INTO transcripts
                     (company_id, transcription_sid, call_sid, status, text, is_final, updated_at)
@@ -158,6 +262,32 @@ describe('migration 226 real PostgreSQL tenant-paired Twilio keys', () => {
             );
             expect(afterBInbox.rows[0].snapshot)
                 .toStrictEqual(beforeBInbox.rows[0].snapshot);
+            const afterBCall = await client.query(
+                `SELECT to_jsonb(c) AS snapshot FROM calls c
+                 WHERE company_id = $1 AND call_sid = $2`,
+                [companyB, sharedCallSid]
+            );
+            const afterBRecording = await client.query(
+                `SELECT to_jsonb(r) AS snapshot FROM recordings r
+                 WHERE company_id = $1 AND recording_sid = $2`,
+                [companyB, sharedRecordingSid]
+            );
+            const afterBFlow = await client.query(
+                `SELECT to_jsonb(f) AS snapshot FROM call_flow_executions f
+                 WHERE company_id = $1 AND call_sid = $2`,
+                [companyB, sharedCallSid]
+            );
+            expect(afterBCall.rows[0].snapshot).toStrictEqual(beforeBCall.rows[0].snapshot);
+            expect(afterBRecording.rows[0].snapshot).toStrictEqual(beforeBRecording.rows[0].snapshot);
+            expect(afterBFlow.rows[0].snapshot).toStrictEqual(beforeBFlow.rows[0].snapshot);
+            const pairedCounts = await client.query(
+                `SELECT
+                    (SELECT COUNT(*)::int FROM calls WHERE call_sid = $1) AS calls,
+                    (SELECT COUNT(*)::int FROM recordings WHERE recording_sid = $2) AS recordings,
+                    (SELECT COUNT(*)::int FROM call_flow_executions WHERE call_sid = $1) AS flows`,
+                [sharedCallSid, sharedRecordingSid]
+            );
+            expect(pairedCounts.rows[0]).toEqual({ calls: 2, recordings: 2, flows: 2 });
 
             await client.query('BEGIN');
             await client.query('SAVEPOINT same_tenant_duplicate');
