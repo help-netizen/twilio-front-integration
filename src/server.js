@@ -576,8 +576,11 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
         console.log('🎙️ Realtime transcription disabled (set FEATURE_REALTIME_TRANSCRIPTION=true to enable)');
     }
 
-    // Prevent accumulation of hung requests (e.g. when DB is unresponsive)
-    server.setTimeout(15000);
+    // Prevent accumulation of hung requests (e.g. when DB is unresponsive).
+    // 120s, NOT 15s: AI endpoints (estimate ai-draft with a full Price Book
+    // digest) legitimately run 17-20s+ — the old 15s cut the socket mid-work
+    // and the client saw Caddy's 502 (AI-DRAFT-502-001).
+    server.setTimeout(120000);
 });
 
 // ── Graceful shutdown ────────────────────────────────────────────────────────
