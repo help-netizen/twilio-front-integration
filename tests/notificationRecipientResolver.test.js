@@ -230,6 +230,24 @@ describe('resolveNotificationRecipients fail-closed pipeline', () => {
         expect(client.claims.size).toBe(0);
     });
 
+    test('a custom role with live assigned_only scope is never treated office-wide', async () => {
+        const client = fakeClient({ candidateIds: [OFFICE] });
+        authorizationService.resolveCompanyUserAuthz.mockResolvedValue({
+            ...authz('custom_dispatch', ['jobs.view']),
+            scopes: { job_visibility: 'assigned_only' },
+        });
+        tasksQueries.jobParentVisible.mockResolvedValue(false);
+
+        await expect(resolveNotificationRecipients(COMPANY, event(), { client })).resolves.toEqual([]);
+        expect(tasksQueries.jobParentVisible).toHaveBeenCalledWith(
+            COMPANY,
+            '10',
+            { assignedOnly: true, userId: OFFICE },
+            client
+        );
+        expect(client.claims.size).toBe(0);
+    });
+
     test('live RBAC denial cannot be widened by an enabled category', async () => {
         const client = fakeClient({ candidateIds: [PROVIDER], categoryEnabled: true });
         tasksQueries.jobParentVisible.mockResolvedValue(true);
@@ -309,6 +327,10 @@ describe('resolveNotificationRecipients fail-closed pipeline', () => {
         const unassigned = event({ event_type: 'job.unassigned', payload: previousPayload });
         await expect(resolveNotificationRecipients(COMPANY, unassigned, { client }))
             .resolves.toHaveLength(1);
+        const preChangeInsert = client.query.mock.calls.find(([sql]) => (
+            String(sql).includes('INSERT INTO notification_deliveries')
+        ));
+        expect(preChangeInsert[1].slice(5, 8)).toEqual([null, null, true]);
 
         const invalidPayload = {
             previous_recipient_user_ids: [PROVIDER],
@@ -349,6 +371,10 @@ describe('resolveNotificationRecipients fail-closed pipeline', () => {
         );
         await expect(resolveNotificationRecipients(COMPANY, financialEvent, { client }))
             .resolves.toHaveLength(1);
+        const financialInsert = client.query.mock.calls.find(([sql]) => (
+            String(sql).includes('INSERT INTO notification_deliveries')
+        ));
+        expect(financialInsert[1].slice(5, 8)).toEqual(['job', '10', false]);
 
         const deniedClient = fakeClient({
             candidateIds: [OFFICE], ...rows, eventDataById: { '103': {} },
@@ -359,5 +385,43 @@ describe('resolveNotificationRecipients fail-closed pipeline', () => {
         await expect(resolveNotificationRecipients(COMPANY, {
             ...financialEvent, id: '103',
         }, { client: deniedClient })).resolves.toEqual([]);
+    });
+
+    test('assigned-only financial access requires the exact parent job, not another job for its contact', async () => {
+        const client = fakeClient({
+            candidateIds: [PROVIDER],
+            paymentRows: {
+                '30': {
+                    id: 30, job_id: 20, contact_id: 50, estimate_id: null,
+                    invoice_id: null, recorded_by: null,
+                },
+            },
+            jobRows: {
+                '20': { id: 20, contact_id: 50, assigned_provider_user_ids: [] },
+            },
+            contactRows: { '50': { id: 50 } },
+            eventDataById: { '101': {} },
+        });
+        authorizationService.resolveCompanyUserAuthz.mockResolvedValue(
+            authz('provider', ['notifications.financial.receive'])
+        );
+        tasksQueries.jobParentVisible.mockResolvedValue(false);
+        // The provider owns another active job for contact 50. That must not
+        // authorize this payment, whose operational parent is job 20.
+        contactAccess.providerHasActiveJobForContact.mockResolvedValue(true);
+
+        await expect(resolveNotificationRecipients(COMPANY, event({
+            event_type: 'payment.succeeded',
+            aggregate_type: 'payment',
+            aggregate_id: '30',
+            payload: {},
+        }), { client })).resolves.toEqual([]);
+        expect(tasksQueries.jobParentVisible).toHaveBeenCalledWith(
+            COMPANY,
+            '20',
+            { assignedOnly: true, userId: PROVIDER },
+            client
+        );
+        expect(contactAccess.providerHasActiveJobForContact).not.toHaveBeenCalled();
     });
 });

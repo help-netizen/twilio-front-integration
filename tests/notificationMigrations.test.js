@@ -22,9 +22,11 @@ describe('NOTIF-REWORK-001 migration 221 contract', () => {
     test('uses tenant-paired idempotency and endpoint identities', () => {
         expect(migration).toContain('ON domain_events(company_id, idempotency_key)');
         expect(migration).toContain('ON push_subscriptions(company_id, user_id, endpoint)');
+        expect(migration).toContain('ON device_tokens(company_id, crm_user_id, apns_token)');
         expect(migration).toContain('UNIQUE (company_id, domain_event_id, user_id, channel)');
         expect(rollback).toContain('ROLLBACK_221_BLOCKED: cross-company domain_events');
         expect(rollback).toContain('ROLLBACK_221_BLOCKED: cross-company push endpoints');
+        expect(rollback).toContain('ROLLBACK_221_BLOCKED: cross-company APNs tokens');
     });
 
     test('creates only per-user category preferences and the delivery ledger', () => {
@@ -41,6 +43,7 @@ describe('NOTIF-REWORK-001 migration 221 contract', () => {
         expect(migration).toContain('UNIQUE (company_id, user_id, category)');
         expect(migration).toContain('REFERENCES company_memberships(user_id, company_id)');
         expect(migration).toContain('REFERENCES domain_events(company_id, id)');
+        expect(migration).toContain('is_pre_change_recipient BOOLEAN NOT NULL DEFAULT false');
     });
 
     test('does not seed company, role, event, or channel preferences', () => {
@@ -58,7 +61,15 @@ describe('NOTIF-REWORK-001 migration 221 contract', () => {
         expect(ALL_PERMISSION_KEYS).toContain('notifications.financial.receive');
         expect(roleSeed.match(/\('notifications\.financial\.receive'\)/g)).toHaveLength(4);
         expect(migration).toContain("WHERE rc.role_key IN ('tenant_admin', 'manager', 'dispatcher', 'provider')");
+        expect(migration).toMatch(/ON CONFLICT \(role_config_id, permission_key\) DO UPDATE\s+SET is_allowed = true/);
         expect(migration).not.toContain('financial_data.view');
+    });
+
+    test('rollback locks global-key writers and is atomic with destructive statements', () => {
+        expect(rollback).toMatch(/BEGIN;[\s\S]*LOCK TABLE domain_events, push_subscriptions, device_tokens\s+IN SHARE ROW EXCLUSIVE MODE;/);
+        expect(rollback.indexOf('LOCK TABLE')).toBeLessThan(rollback.indexOf('IF EXISTS ('));
+        expect(rollback.indexOf('IF EXISTS (')).toBeLessThan(rollback.indexOf('DROP TABLE IF EXISTS'));
+        expect(rollback.trimEnd().endsWith('COMMIT;')).toBe(true);
     });
 
     test('all three settings routes fail closed without first-company lookup', () => {

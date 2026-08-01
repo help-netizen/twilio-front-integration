@@ -76,6 +76,13 @@ describe('notification recipient resolver real PostgreSQL isolation', () => {
                 [dispatcherRole, providerRoleA, providerRoleB]
             );
             await client.query(
+                `INSERT INTO company_role_scopes (role_config_id, scope_key, scope_json)
+                 VALUES ($1, 'job_visibility', '"all"'::jsonb),
+                        ($2, 'job_visibility', '"assigned_only"'::jsonb),
+                        ($3, 'job_visibility', '"assigned_only"'::jsonb)`,
+                [dispatcherRole, providerRoleA, providerRoleB]
+            );
+            await client.query(
                 `INSERT INTO push_subscriptions
                     (company_id, user_id, endpoint, p256dh, auth, is_active)
                  VALUES

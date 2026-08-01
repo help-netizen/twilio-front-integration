@@ -35,17 +35,20 @@ function selectedIds(options) {
 }
 
 function buildWebPushPayload(payload) {
-    return {
+    const projected = {
         title: payload.title,
         body: payload.body,
         tag: payload.tag,
         event_type: payload.event_type,
         category_key: payload.category_key,
         category_label: payload.category_label,
-        deep_link_kind: payload.deep_link_kind,
-        record_ref: payload.record_ref,
-        url: payload.url,
     };
+    if (payload.deep_link_kind && payload.record_ref && payload.url) {
+        projected.deep_link_kind = payload.deep_link_kind;
+        projected.record_ref = payload.record_ref;
+        projected.url = payload.url;
+    }
+    return projected;
 }
 
 async function sendWebPushToUser(companyId, userId, payload, options = {}) {
@@ -150,6 +153,9 @@ function buildApnsPayload(payload) {
     const legacyJobData = legacyType && payload.record_ref?.type === 'job'
         ? { type: legacyType, job_id: payload.record_ref.id }
         : {};
+    const routingData = payload.deep_link_kind && payload.record_ref
+        ? { deep_link_kind: payload.deep_link_kind, record_ref: payload.record_ref }
+        : {};
     return {
         aps: {
             alert: { title: payload.title, body: payload.body },
@@ -159,8 +165,7 @@ function buildApnsPayload(payload) {
         data: {
             event_type: payload.event_type,
             category_key: payload.category_key,
-            deep_link_kind: payload.deep_link_kind,
-            record_ref: payload.record_ref,
+            ...routingData,
             ...legacyJobData,
         },
     };

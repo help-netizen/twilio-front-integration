@@ -100,7 +100,9 @@ describe('POST /api/devices (MTECH-T2)', () => {
         expect(db.query).toHaveBeenCalledTimes(1);
         const [sql, params] = db.query.mock.calls[0];
         expect(sql).toMatch(/INSERT INTO device_tokens/i);
-        expect(sql).toMatch(/ON CONFLICT \(apns_token\) DO UPDATE/i);
+        expect(sql).toMatch(/ON CONFLICT \(company_id, crm_user_id, apns_token\) DO UPDATE/i);
+        expect(sql).not.toMatch(/company_id\s*=\s*EXCLUDED\.company_id/i);
+        expect(sql).not.toMatch(/crm_user_id\s*=\s*EXCLUDED\.crm_user_id/i);
         // company_id from authz (param 1), crm_user_id (param 2) — NOT the body.
         expect(params[0]).toBe(COMPANY_A);
         expect(params[1]).toBe(USER_A);
@@ -337,8 +339,8 @@ describe('pushService scoped transports (NOTIF-REWORK-001 M1.T5)', () => {
             body: 'Open Albusto to view this update.',
             event_type: 'payment.succeeded',
             category_key: 'finance',
-            deep_link_kind: 'payment',
-            record_ref: { type: 'payment', id: '42' },
+            deep_link_kind: 'job',
+            record_ref: { type: 'job', id: '42' },
             amount: '999.99',
             phone: '+15555550123',
         });
@@ -351,8 +353,8 @@ describe('pushService scoped transports (NOTIF-REWORK-001 M1.T5)', () => {
             data: {
                 event_type: 'payment.succeeded',
                 category_key: 'finance',
-                deep_link_kind: 'payment',
-                record_ref: { type: 'payment', id: '42' },
+                deep_link_kind: 'job',
+                record_ref: { type: 'job', id: '42' },
             },
         });
         expect(JSON.stringify(payload)).not.toContain('999.99');

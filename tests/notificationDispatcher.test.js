@@ -131,6 +131,33 @@ describe('notificationDispatcher', () => {
         expect(transports.sendNativePushToUser).not.toHaveBeenCalled();
     });
 
+    test('pre-change delivery claims emit no record identity or navigation target', async () => {
+        const preChangeRecipient = {
+            ...recipient(),
+            destinations: { browser_push: recipient().destinations.browser_push, native_push: [] },
+            delivery_ids: { browser_push: recipient().delivery_ids.browser_push },
+        };
+        const { dispatcher, transports } = harness({
+            resolverResult: [preChangeRecipient],
+            beginRows: [{
+                id: recipient().delivery_ids.browser_push,
+                event_type: 'job.unassigned',
+                record_type: 'job',
+                record_id: 'private-job-42',
+                is_pre_change_recipient: true,
+            }],
+        });
+
+        await expect(dispatcher.dispatch(domainEvent({ event_type: 'job.unassigned' })))
+            .resolves.toEqual({ recipients: 1, deliveries: 1 });
+        const payload = transports.sendWebPushToUser.mock.calls[0][2];
+        expect(payload.title).toBe('Assignment updated');
+        expect(payload).not.toHaveProperty('record_ref');
+        expect(payload).not.toHaveProperty('deep_link_kind');
+        expect(payload).not.toHaveProperty('url');
+        expect(JSON.stringify(payload)).not.toContain('private-job-42');
+    });
+
     test('provider failures are fail-soft and recorded without leaking provider text', async () => {
         const { dispatcher, transports, finishCalls, logger } = harness({
             resolverResult: [{

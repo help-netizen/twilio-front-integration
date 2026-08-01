@@ -21,6 +21,14 @@ ALTER TABLE push_subscriptions
 CREATE UNIQUE INDEX IF NOT EXISTS uq_push_subscriptions_company_user_endpoint
     ON push_subscriptions(company_id, user_id, endpoint);
 
+-- Native device tokens follow the same full-owner rule as browser endpoints.
+-- Re-registering in another tenant/user inserts a separate row; it never moves
+-- or rewrites the existing owner's row.
+ALTER TABLE device_tokens
+    DROP CONSTRAINT IF EXISTS device_tokens_apns_token_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_device_tokens_company_user_apns_token
+    ON device_tokens(company_id, crm_user_id, apns_token);
+
 -- These two T1/T2 policy tables existed only on the unreleased local version of
 -- migration 221. Remove them so an already-run development database converges
 -- to the simplified model when this migration is reapplied.
@@ -73,6 +81,7 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
     channel TEXT NOT NULL CHECK (channel IN ('browser_push', 'native_push', 'in_app', 'email', 'sms')),
     record_type TEXT,
     record_id TEXT,
+    is_pre_change_recipient BOOLEAN NOT NULL DEFAULT false,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'sending', 'sent', 'failed', 'skipped', 'unknown')),
     attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -92,6 +101,11 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
         UNIQUE (company_id, domain_event_id, user_id, channel)
 );
 
+-- Reapplying migration 221 must also upgrade databases that created the table
+-- before pre-change recipient payload isolation was added.
+ALTER TABLE notification_deliveries
+    ADD COLUMN IF NOT EXISTS is_pre_change_recipient BOOLEAN NOT NULL DEFAULT false;
+
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_company_status
     ON notification_deliveries(company_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_company_user
@@ -104,4 +118,5 @@ INSERT INTO company_role_permissions (role_config_id, permission_key, is_allowed
 SELECT rc.id, 'notifications.financial.receive', true
 FROM company_role_configs rc
 WHERE rc.role_key IN ('tenant_admin', 'manager', 'dispatcher', 'provider')
-ON CONFLICT (role_config_id, permission_key) DO NOTHING;
+ON CONFLICT (role_config_id, permission_key) DO UPDATE
+SET is_allowed = true;

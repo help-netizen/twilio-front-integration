@@ -4,8 +4,14 @@
 -- exist. It never deletes or merges subscription/event data to make rollback fit.
 -- =============================================================================
 
+BEGIN;
+
+-- Hold writers out from the global-key checks through index restoration. The
+-- transaction makes every later destructive statement atomic with the checks.
+LOCK TABLE domain_events, push_subscriptions, device_tokens
+    IN SHARE ROW EXCLUSIVE MODE;
+
 -- Run every incompatibility check before the first destructive statement.
--- This remains fail-safe even when psql applies the file in autocommit mode.
 DO $rollback$
 BEGIN
     IF EXISTS (
@@ -26,6 +32,15 @@ BEGIN
     ) THEN
         RAISE EXCEPTION
             'ROLLBACK_221_BLOCKED: cross-company push endpoints prevent restoring global uniqueness';
+    END IF;
+    IF EXISTS (
+        SELECT apns_token
+        FROM device_tokens
+        GROUP BY apns_token
+        HAVING COUNT(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+            'ROLLBACK_221_BLOCKED: cross-company APNs tokens prevent restoring global uniqueness';
     END IF;
 END
 $rollback$;
@@ -56,3 +71,20 @@ BEGIN
     END IF;
 END
 $rollback$;
+
+DROP INDEX IF EXISTS uq_device_tokens_company_user_apns_token;
+DO $rollback$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'device_tokens'::regclass
+          AND conname = 'device_tokens_apns_token_key'
+    ) THEN
+        ALTER TABLE device_tokens
+            ADD CONSTRAINT device_tokens_apns_token_key UNIQUE (apns_token);
+    END IF;
+END
+$rollback$;
+
+COMMIT;

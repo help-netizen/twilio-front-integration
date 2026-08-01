@@ -3,6 +3,7 @@
 const { getNotificationCatalogEntry } = require('./notificationEventCatalog');
 
 const GENERIC_BODY = 'Open Albusto to view this update.';
+const PRE_CHANGE_GENERIC_TITLE = 'Assignment updated';
 
 const DEEP_LINKS = Object.freeze({
     job: id => `/jobs/${encodeURIComponent(id)}`,
@@ -16,9 +17,6 @@ const DEEP_LINKS = Object.freeze({
     email_message: () => '/email',
     email_thread: () => '/email',
     yelp_conversation: () => '/leads',
-    estimate: () => '/estimates',
-    invoice: () => '/invoices',
-    payment: id => `/payments/${encodeURIComponent(id)}`,
     review: () => '/jobs',
 });
 
@@ -39,19 +37,35 @@ function deepLinkFor(recordRef) {
  * Event payload data is intentionally not accepted: message bodies, amounts,
  * contact details, and integration summaries cannot cross this boundary.
  */
-function buildNotificationPayload({ eventType, deliveryId, recordType, recordId }) {
+function buildNotificationPayload({
+    eventType,
+    deliveryId,
+    recordType,
+    recordId,
+    isPreChangeRecipient = false,
+}) {
     const entry = getNotificationCatalogEntry(eventType);
     if (!entry || !entry.producer_available || !deliveryId) return null;
 
-    const recordRef = normalizeRecordRef(recordType, recordId);
-    const deepLink = deepLinkFor(recordRef);
-    return {
-        title: entry.label,
+    const base = {
+        title: isPreChangeRecipient ? PRE_CHANGE_GENERIC_TITLE : entry.label,
         body: GENERIC_BODY,
         tag: `notification-${deliveryId}`,
         event_type: entry.event_type,
         category_key: entry.category_key,
         category_label: entry.category_label,
+    };
+    if (isPreChangeRecipient) return base;
+
+    const normalizedRecordRef = normalizeRecordRef(recordType, recordId);
+    const recordRef = entry.category_key === 'finance'
+        && normalizedRecordRef
+        && !['job', 'contact', 'lead'].includes(normalizedRecordRef.type)
+        ? null
+        : normalizedRecordRef;
+    const deepLink = deepLinkFor(recordRef);
+    return {
+        ...base,
         deep_link_kind: deepLink.kind,
         record_ref: recordRef,
         url: deepLink.url,
@@ -60,5 +74,6 @@ function buildNotificationPayload({ eventType, deliveryId, recordType, recordId 
 
 module.exports = {
     GENERIC_BODY,
+    PRE_CHANGE_GENERIC_TITLE,
     buildNotificationPayload,
 };

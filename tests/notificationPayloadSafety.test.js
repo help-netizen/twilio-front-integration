@@ -5,6 +5,7 @@ const {
 } = require('../backend/src/services/notificationEventCatalog');
 const {
     GENERIC_BODY,
+    PRE_CHANGE_GENERIC_TITLE,
     buildNotificationPayload,
 } = require('../backend/src/services/notificationPayloadBuilder');
 
@@ -67,5 +68,52 @@ describe('notification lock-screen payload safety', () => {
             recordType: 'https://attacker.invalid',
             recordId: '../secret',
         })).toMatchObject({ deep_link_kind: 'home', url: '/' });
+    });
+
+    test('pre-change recipients get a generic title and no record or deep-link fields', () => {
+        for (const [eventType, categoryKey, categoryLabel] of [
+            ['job.unassigned', 'job_schedule', 'Job & schedule updates'],
+            ['lead.unassigned', 'leads', 'Leads'],
+            ['task.reassigned', 'tasks', 'Tasks'],
+        ]) {
+            const payload = buildNotificationPayload({
+                eventType,
+                deliveryId: 'delivery-pre-change',
+                recordType: 'job',
+                recordId: 'private-job-42',
+                isPreChangeRecipient: true,
+            });
+            expect(payload).toEqual({
+                title: PRE_CHANGE_GENERIC_TITLE,
+                body: GENERIC_BODY,
+                tag: 'notification-delivery-pre-change',
+                event_type: eventType,
+                category_key: categoryKey,
+                category_label: categoryLabel,
+            });
+            expect(JSON.stringify(payload)).not.toContain('private-job-42');
+        }
+    });
+
+    test('financial payloads link only to an operational parent and reject raw ledger refs', () => {
+        expect(buildNotificationPayload({
+            eventType: 'payment.succeeded',
+            deliveryId: 'delivery-financial-parent',
+            recordType: 'job',
+            recordId: '42',
+        })).toMatchObject({
+            deep_link_kind: 'job',
+            record_ref: { type: 'job', id: '42' },
+            url: '/jobs/42',
+        });
+
+        const rawLedger = buildNotificationPayload({
+            eventType: 'payment.succeeded',
+            deliveryId: 'delivery-financial-raw',
+            recordType: 'payment',
+            recordId: 'private-payment-99',
+        });
+        expect(rawLedger).toMatchObject({ deep_link_kind: 'home', record_ref: null, url: '/' });
+        expect(JSON.stringify(rawLedger)).not.toContain('private-payment-99');
     });
 });

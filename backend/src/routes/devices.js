@@ -7,12 +7,12 @@
  * `/api/auth/*` SMS-OTP 2FA flow, unrelated to APNs).
  *
  *   POST /api/devices          register / re-register the caller's iOS device
- *                              token (idempotent upsert on apns_token).
+ *                              token under its full tenant/user identity.
  *   DELETE /api/devices/:token deregister the caller's own device token
  *                              (idempotent — a missing row is still 200).
  *
- * Isolation: company_id ONLY from req.authz.company.id (mirror
- * req.companyFilter.company_id set by requireCompanyAccess); the owning user is
+ * Isolation: company_id ONLY from req.companyFilter.company_id, set by
+ * requireCompanyAccess; the owning user is
  * req.user.crmUser.id — a request with no crm_user gets 409 NO_CRM_USER (a push
  * with no user scope is meaningless). DELETE is own-token only (scoped by
  * crm_user_id) so one user can never remove another user's device.
@@ -25,19 +25,15 @@ const db = require('../db/connection');
 
 const router = express.Router();
 
-// company_id ONLY from authz (G6 / ONBOARD-FIX-001) — no crm_users.company_id
-// fallback, no "first company" guess. requireCompanyAccess already mirrors this
-// onto req.companyFilter.company_id.
+// company_id ONLY from requireCompanyAccess — no crm_users.company_id, authz
+// fallback, body identity, or "first company" guess.
 function getCompanyId(req) {
-    return req.authz?.company?.id || req.companyFilter?.company_id || null;
+    return req.companyFilter?.company_id || null;
 }
 
 // ─── POST /api/devices ───────────────────────────────────────────────────────
-// Register or re-register a device token. Upsert on apns_token: a token is unique
-// to one physical device, so re-registering (cold-start / token rotation, C9)
-// bumps last_seen_at, and a device handoff (a different user signs in on the same
-// hardware, C13) re-binds company_id + crm_user_id to the new owner — never a
-// duplicate row.
+// Register or re-register a device token. A token may appear under separate
+// tenant memberships, but no registration may move another tenant/user's row.
 router.post('/', async (req, res) => {
     try {
         const companyId = getCompanyId(req);
@@ -59,14 +55,12 @@ router.post('/', async (req, res) => {
         const token = apns_token.trim();
         const plat = (typeof platform === 'string' && platform.trim()) ? platform.trim() : 'ios';
 
-        // Insert new → 201; conflict (existing token) → re-bind owner + 200.
+        // Insert new full key → 201; same tenant/user/token heartbeat → 200.
         const { rows } = await db.query(
             `INSERT INTO device_tokens
                 (company_id, crm_user_id, apns_token, platform, app_version, device_model, last_seen_at, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, now(), now())
-             ON CONFLICT (apns_token) DO UPDATE SET
-                company_id  = EXCLUDED.company_id,
-                crm_user_id = EXCLUDED.crm_user_id,
+             ON CONFLICT (company_id, crm_user_id, apns_token) DO UPDATE SET
                 platform    = EXCLUDED.platform,
                 app_version = EXCLUDED.app_version,
                 device_model= EXCLUDED.device_model,

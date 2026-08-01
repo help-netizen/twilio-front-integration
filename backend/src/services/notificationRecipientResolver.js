@@ -12,9 +12,9 @@ const db = require('../db/connection');
 const authorizationService = require('./authorizationService');
 const tasksQueries = require('../db/tasksQueries');
 const { resolveTaskContentScope } = require('../middleware/taskContentScope');
+const { resolveProviderScope } = require('../middleware/providerScope');
 const {
     providerHasActiveJobForContact,
-    listProvidersWithActiveJobForContact,
 } = require('../db/providerContactAccessQueries');
 const { getNotificationCatalogEntry } = require('./notificationEventCatalog');
 
@@ -28,7 +28,6 @@ const IMPORTANT_JOB_STATUSES = new Set([
 ]);
 const PRE_CHANGE_EVENTS = new Set(['job.unassigned', 'lead.unassigned', 'task.reassigned']);
 const MAX_PREVIOUS_RECIPIENTS = 100;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class NotificationRecipientResolutionError extends Error {
     constructor(code, message) {
@@ -399,11 +398,11 @@ function snapshotRecipientIds(event) {
     return new Set(requested.filter(Boolean).map(String).filter(userId => actualSet.has(userId)));
 }
 
-function isProvider(authz) {
-    return authz.role_key === 'provider';
+function isAssignedOnly(authz, userId) {
+    return resolveProviderScope(authz.scopes, userId).assignedOnly;
 }
 
-async function providerCanSeeAnyJob(companyId, userId, context, client) {
+async function assignedUserCanSeeAnyJob(companyId, userId, context, client) {
     const jobIds = idsOfType(context, 'job');
     for (const jobId of jobIds) {
         if (await tasksQueries.jobParentVisible(
@@ -416,7 +415,7 @@ async function providerCanSeeAnyJob(companyId, userId, context, client) {
     return false;
 }
 
-async function providerCanSeeAnyContact(companyId, userId, context, client) {
+async function assignedUserCanSeeAnyContact(companyId, userId, context, client) {
     const contactIds = idsOfType(context, 'contact');
     for (const contactId of contactIds) {
         if (await providerHasActiveJobForContact(companyId, userId, contactId, { client })) return true;
@@ -425,33 +424,36 @@ async function providerCanSeeAnyContact(companyId, userId, context, client) {
 }
 
 async function recordScopeAllows(companyId, entry, event, context, candidate, authz, client) {
-    const provider = isProvider(authz);
+    const assignedOnly = isAssignedOnly(authz, candidate.user_id);
     const previousRecipient = snapshotRecipientIds(event).has(String(candidate.user_id));
     const scope = entry.record_scope;
 
     if (scope === 'admin_only') return authz.permissions.includes('tenant.company.manage');
-    if (scope.startsWith('office_only_lead')) return !provider && idsOfType(context, 'lead').length > 0;
-    if (scope === 'office_only_job') return !provider && idsOfType(context, 'job').length > 0;
+    if (scope.startsWith('office_only_lead')) {
+        if (scope === 'office_only_lead_with_previous_recipient' && previousRecipient) return true;
+        return !assignedOnly && idsOfType(context, 'lead').length > 0;
+    }
+    if (scope === 'office_only_job') return !assignedOnly && idsOfType(context, 'job').length > 0;
 
     if (scope.startsWith('job_assignment') || scope === 'rated_job_assignment') {
-        if (!provider) return idsOfType(context, 'job').length > 0;
+        if (!assignedOnly) return idsOfType(context, 'job').length > 0;
         if (scope === 'job_assignment_with_previous_recipient' && previousRecipient) return true;
-        return providerCanSeeAnyJob(companyId, candidate.user_id, context, client);
+        return assignedUserCanSeeAnyJob(companyId, candidate.user_id, context, client);
     }
 
     if (scope === 'active_contact' || scope === 'active_contact_or_office_orphan'
         || scope === 'actor_and_active_contact') {
-        if (!provider) return scope === 'active_contact_or_office_orphan'
+        if (!assignedOnly) return scope === 'active_contact_or_office_orphan'
             || idsOfType(context, 'contact').length > 0;
         if (scope === 'actor_and_active_contact' && String(event.actor_id || '') !== String(candidate.user_id)) {
             return false;
         }
-        return providerCanSeeAnyContact(companyId, candidate.user_id, context, client);
+        return assignedUserCanSeeAnyContact(companyId, candidate.user_id, context, client);
     }
 
     if (scope === 'lead_office_or_job_assignment') {
-        if (!provider) return idsOfType(context, 'lead').length > 0 || idsOfType(context, 'job').length > 0;
-        return providerCanSeeAnyJob(companyId, candidate.user_id, context, client);
+        if (!assignedOnly) return idsOfType(context, 'lead').length > 0 || idsOfType(context, 'job').length > 0;
+        return assignedUserCanSeeAnyJob(companyId, candidate.user_id, context, client);
     }
 
     if (scope.startsWith('task_owner_author_or_')) {
@@ -471,46 +473,33 @@ async function recordScopeAllows(companyId, entry, event, context, candidate, au
         const hasFinancialRecord = ['estimate', 'invoice', 'payment']
             .some(type => recordsOfType(context, type).length > 0);
         if (!hasFinancialRecord) return false;
-        if (!provider) return true;
-        if (await providerCanSeeAnyJob(companyId, candidate.user_id, context, client)) return true;
-        if (idsOfType(context, 'lead').length > 0) return false;
-        return providerCanSeeAnyContact(companyId, candidate.user_id, context, client);
+        const parent = financialOperationalParent(context);
+        if (!parent) return false;
+        if (!assignedOnly) return true;
+        if (parent.ref.type === 'job') {
+            return tasksQueries.jobParentVisible(
+                companyId,
+                parent.ref.id,
+                { assignedOnly: true, userId: candidate.user_id },
+                client
+            );
+        }
+        if (parent.ref.type === 'lead') return false;
+        if (parent.ref.type === 'contact') {
+            return providerHasActiveJobForContact(
+                companyId,
+                candidate.user_id,
+                parent.ref.id,
+                { client }
+            );
+        }
+        return false;
     }
 
     return false;
 }
 
-async function boundedProviderCandidateIds(companyId, entry, event, context, client) {
-    const ids = new Set();
-    const add = userId => {
-        if (UUID_PATTERN.test(String(userId || ''))) ids.add(String(userId));
-    };
-
-    for (const { row } of recordsOfType(context, 'job')) {
-        for (const userId of row.assigned_provider_user_ids || []) add(userId);
-    }
-    for (const { row } of recordsOfType(context, 'task')) {
-        add(row.owner_user_id);
-        add(row.author_user_id);
-    }
-    for (const userId of snapshotRecipientIds(event)) add(userId);
-
-    const contactScoped = entry.record_scope.includes('contact')
-        || entry.record_scope.includes('financial');
-    if (contactScoped) {
-        for (const contactId of idsOfType(context, 'contact')) {
-            for (const userId of await listProvidersWithActiveJobForContact(
-                companyId,
-                contactId,
-                { client }
-            )) add(userId);
-        }
-    }
-    return [...ids];
-}
-
-async function activeCandidates(companyId, entry, event, context, query, client) {
-    const providerIds = await boundedProviderCandidateIds(companyId, entry, event, context, client);
+async function activeCandidates(companyId, query) {
     const { rows } = await query(
         `SELECT DISTINCT m.user_id
          FROM company_memberships m
@@ -524,15 +513,8 @@ async function activeCandidates(companyId, entry, event, context, query, client)
           AND COALESCE(u.kind, 'user') = 'user'
          WHERE m.company_id = $1
            AND m.status = 'active'
-           AND (
-                COALESCE(
-                    m.role_key,
-                    CASE WHEN m.role = 'company_admin' THEN 'tenant_admin' ELSE 'dispatcher' END
-                ) <> 'provider'
-                OR m.user_id = ANY($2::uuid[])
-           )
          ORDER BY m.user_id`,
-        [companyId, providerIds]
+        [companyId]
     );
     return rows.map(row => ({ user_id: String(row.user_id) }));
 }
@@ -572,12 +554,53 @@ async function activeDestinations(companyId, userId, query) {
     return { browser_push: browserPush, native_push: nativePush };
 }
 
+function recordByTypeAndId(context, type, id) {
+    if (id === undefined || id === null) return null;
+    return context.records.get(`${type}:${String(id)}`) || null;
+}
+
+function financialParentFromRecord(context, record, visited = new Set()) {
+    if (!record || visited.has(`${record.ref.type}:${record.ref.id}`)) return null;
+    visited.add(`${record.ref.type}:${record.ref.id}`);
+    const { row } = record;
+
+    const job = recordByTypeAndId(context, 'job', row.job_id);
+    if (job) return job;
+    for (const [type, id] of [['invoice', row.invoice_id], ['estimate', row.estimate_id]]) {
+        const nested = financialParentFromRecord(context, recordByTypeAndId(context, type, id), visited);
+        if (nested) return nested;
+    }
+    return recordByTypeAndId(context, 'contact', row.contact_id)
+        || recordByTypeAndId(context, 'lead', row.lead_id)
+        || null;
+}
+
+function financialOperationalParent(context) {
+    const financialTypes = new Set(['payment', 'invoice', 'estimate']);
+    const roots = context.references
+        .filter(ref => financialTypes.has(ref.type))
+        .map(ref => recordByTypeAndId(context, ref.type, ref.id))
+        .filter(Boolean);
+    if (roots.length === 0) {
+        for (const type of ['payment', 'invoice', 'estimate']) {
+            roots.push(...recordsOfType(context, type));
+        }
+    }
+    for (const root of roots) {
+        const parent = financialParentFromRecord(context, root);
+        if (parent) return parent;
+    }
+    return null;
+}
+
 function deliveryRecordRef(entry, context) {
+    if (entry.record_scope.includes('financial')) {
+        const parent = financialOperationalParent(context);
+        return parent ? { type: parent.ref.type, id: String(parent.ref.id) } : null;
+    }
     const preferredTypes = entry.record_scope.startsWith('task_')
         ? ['task']
-        : entry.record_scope.includes('financial')
-            ? ['payment', 'invoice', 'estimate', 'job', 'contact', 'lead']
-            : entry.record_scope.includes('job') || entry.record_scope === 'rated_job_assignment'
+        : entry.record_scope.includes('job') || entry.record_scope === 'rated_job_assignment'
                 ? ['job']
                 : entry.record_scope.includes('contact')
                     ? ['contact']
@@ -592,12 +615,13 @@ function deliveryRecordRef(entry, context) {
 }
 
 async function claimDelivery(companyId, event, entry, candidate, channel, context, query) {
-    const recordRef = deliveryRecordRef(entry, context);
+    const preChangeRecipient = snapshotRecipientIds(event).has(String(candidate.user_id));
+    const recordRef = preChangeRecipient ? null : deliveryRecordRef(entry, context);
     const { rows } = await query(
         `INSERT INTO notification_deliveries
             (company_id, domain_event_id, user_id, event_type, channel,
-             record_type, record_id, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+             record_type, record_id, is_pre_change_recipient, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
          ON CONFLICT (company_id, domain_event_id, user_id, channel) DO NOTHING
          RETURNING id`,
         [
@@ -608,6 +632,7 @@ async function claimDelivery(companyId, event, entry, candidate, channel, contex
             channel,
             recordRef?.type || null,
             recordRef?.id || null,
+            preChangeRecipient,
         ]
     );
     return rows[0]?.id || null;
@@ -639,14 +664,7 @@ async function resolveNotificationRecipients(companyId, event, { client = null }
     const verifiedEvent = context.event;
     if (!sourcePredicateMatches(entry, verifiedEvent)) return [];
 
-    const candidates = await activeCandidates(
-        companyId,
-        entry,
-        verifiedEvent,
-        context,
-        query,
-        client
-    );
+    const candidates = await activeCandidates(companyId, query);
     const scoped = [];
     for (const candidate of candidates) {
         let authz;

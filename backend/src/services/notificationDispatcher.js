@@ -50,7 +50,7 @@ function createNotificationDispatcher({
                AND user_id = $3
                AND channel = $4
                AND status = 'pending'
-             RETURNING id, event_type, record_type, record_id`,
+             RETURNING id, event_type, record_type, record_id, is_pre_change_recipient`,
             [deliveryId, companyId, userId, channel]
         );
         return rows[0] || null;
@@ -100,6 +100,7 @@ function createNotificationDispatcher({
             deliveryId: claim.id,
             recordType: claim.record_type,
             recordId: claim.record_id,
+            isPreChangeRecipient: claim.is_pre_change_recipient === true,
         });
         if (!payload) {
             await finishDelivery(query, {

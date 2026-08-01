@@ -82,6 +82,13 @@ describe('migration 221 real PostgreSQL isolation', () => {
                 [companyA, userA, companyB, userB]
             );
             const beforeSecondApply = await preferenceSnapshot(client, companyB);
+            await client.query(
+                `UPDATE company_role_permissions
+                 SET is_allowed = false
+                 WHERE role_config_id = $1
+                   AND permission_key = 'notifications.financial.receive'`,
+                [roleA]
+            );
             await client.query(migration);
             expect(await preferenceSnapshot(client, companyB)).toStrictEqual(beforeSecondApply);
 
