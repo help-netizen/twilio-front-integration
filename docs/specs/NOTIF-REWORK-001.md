@@ -1,6 +1,6 @@
 # NOTIF-REWORK-001 — Alerts & notifications platform rework
 
-Status: approved for milestone planning; implementation not started  
+Status: approved; M1 foundation implementation in progress
 Owner: Product owner / team lead  
 Backend implementation: GPT implementer  
 Frontend design and implementation: Claude architect, except the explicitly listed M1 security wiring  
@@ -16,17 +16,18 @@ The source of notification intent is an allowlisted catalog over typed `domain_e
 
 1. Scope is the full platform, delivered as M1 security core, M2 in-app inbox, M3 staff email/SMS, and M4 durable projector hardening.
 2. M1 contains both current leak paths: company-broadcast Web Push and record-bearing SSE.
-3. The V1 catalog and defaults are the Turn-1 taxonomy in §6.
+3. The V1 event vocabulary and isolation scopes are the Turn-1 taxonomy in §6. User preferences are five category booleans, default on by absence.
 4. Financial notifications use a new permission, `notifications.financial.receive`. It grants notification eligibility only; it does not grant access to financial pages, APIs, amounts, or records.
 5. Default dispatchers receive that permission. Providers may receive financial notifications only for their own jobs.
 6. The reworked settings UI and the M2 bell/inbox UI are owned by the Claude architect. The GPT implementer does not design or build those surfaces.
 7. The Action triggers section is removed from the frontend in M1. Its backend settings, legacy helper, automation rules, and data remain, except that the unsafe first-company fallback is removed.
+8. There is no company, role, per-event, or per-channel notification policy. Channel enablement is the existence of an active user-owned destination; every eligible event goes to every active destination.
 
 ## 3. Milestone boundaries
 
 | Milestone | Independently shippable outcome | Must not depend on |
 |---|---|---|
-| M1 | Scoped event-driven browser/native delivery; current Web Push and SSE leaks contained; typed V1 producers; policies; Action triggers hidden | Bell UI, staff email/SMS, background replay worker |
+| M1 | Scoped event-driven browser/native delivery; current Web Push and SSE leaks contained; typed V1 producers; per-user category settings; Action triggers hidden | Bell UI, staff email/SMS, background replay worker |
 | M2 | Persistent per-user notification center and unread state with access re-check | Staff email/SMS or M4 worker |
 | M3 | Verified, opted-in staff email/SMS with quiet hours, cost guards, and loop prevention | M4 worker |
 | M4 | Persistent event scan, leases, retry, replay, and at-least-once hardening | Any UI change |
@@ -45,7 +46,7 @@ Each milestone has its own test suite, named sabotage controls, owner review, an
   - removing the Action triggers section and its obsolete query/mutation wiring;
   - unmounting/stopping `SSEPushBridge` notification behavior;
   - non-visual realtime callback changes needed to refetch scoped REST data after PII-free invalidations.
-- All settings-policy markup, channel matrices, bell/inbox markup, responsive behavior, and visual design are Claude-owned. They use `SettingsPageShell` / `SettingsSection`, PALETTE-V2 violet tokens, invisible containers, no horizontal rules, and no entity slide-over.
+- All settings-category markup, device controls, bell/inbox markup, responsive behavior, and visual design are Claude-owned. They use `SettingsPageShell` / `SettingsSection`, PALETTE-V2 violet tokens, invisible containers, no horizontal rules, and no entity slide-over.
 
 ## 5. Architecture
 
@@ -85,109 +86,46 @@ External Web Push/APNs/email/SMS providers do not offer a universal exactly-once
 
 ## 6. Versioned notification event catalog
 
-### 6.1 Public UI contract
+### 6.1 Public event-catalog contract
 
-The backend owns an ordered, versioned code catalog. The settings API returns one object per entry with exactly this public shape:
+The backend owns an ordered, versioned allowlist of 54 typed events. The event catalog remains useful for diagnostics and future UI detail, but the settings UI renders only the five user-configurable categories from §11.
 
 ```ts
 type NotificationEventCatalogItem = {
   event_type: string;
-  category: string;
+  category_key: NotificationCategoryKey | 'admin_system';
+  category_label: string;
   label: string;
   description: string;
-  default_enabled: boolean;
   required_permission: string;
   default_audience_summary: string;
-  supported_channels: Array<'browser_push' | 'native_push' | 'in_app' | 'email' | 'sms'>;
   producer_available: boolean;
 };
+
+type NotificationCategoryKey =
+  | 'job_schedule'
+  | 'leads'
+  | 'calls_messages'
+  | 'finance'
+  | 'tasks';
 ```
 
-Contract rules:
+Internal-only fields remain `source_event_type`, `source_predicate`, `record_scope`, safe payload builder, deep-link builder, and self-notification behavior. They never come from a client. `producer_available` is an event dispatch gate, not a category-toggle availability gate: all five user categories remain visible while individual producers come online. Unknown events are ignored fail-closed.
 
-- `event_type` is the stable notification policy key. It maps to one typed source `domain_event` and, where necessary, a catalog-owned predicate such as "important job target status." It is never a free-form client value.
-- `category` is the display-ready category label. Catalog array order and first occurrence define category and row order; the UI must not alphabetize unless the owner chooses to.
-- `supported_channels` contains only channels implemented and selectable in the deployed milestone. M1 returns browser/native only, M2 adds `in_app`, and M3 adds eligible email/SMS channels. It must not advertise future channels as working.
-- `producer_available` is true only after the authoritative producer and its tests are deployed. Policy mutation for an unavailable producer returns `409 PRODUCER_UNAVAILABLE`. This supports a disabled "Coming soon" UI.
-- Internal-only catalog fields include `source_event_type`, `source_predicate`, `record_scope`, `default_role_keys`, safe payload builder, deep-link builder, and self-notification behavior. These are not client-controlled and are not returned in the public catalog item.
-- A catalog change is a code review event. Unknown database policy keys are ignored for dispatch and returned only in diagnostics, never executed.
+There is no per-event default, company policy, role audience toggle, supported-channel toggle, or channel preference in this model. Record audience is derived only from live permission and live record scope.
 
-### 6.2 Channel abbreviations used below
+### 6.2 Stable category map (all 54 V1 events)
 
-- `B`: `browser_push`
-- `N`: `native_push`
-- `I`: `in_app`
-- `E`: staff `email`
-- `S`: staff `sms`
+| category_key | category_label | configurable | events |
+|---|---|---:|---|
+| `job_schedule` | Job & schedule updates | yes | `job.created`, `job.assigned`, `job.unassigned`, `job.rescheduled`, `job.status_changed`, `job.updated`, `job.sync_completed`, `review.received` |
+| `leads` | Leads | yes | `lead.created`, `lead.assigned`, `lead.unassigned`, `lead.review_required`, `lead.converted`, `lead.status_changed`, `lead.updated` |
+| `calls_messages` | Calls & messages | yes | `sms.inbound`, `email.inbound`, `yelp.message_received`, `call.inbound_started`, `call.missed`, `call.voicemail_received`, `call.completed`, `sms.outbound`, `message.delivery_failed`, `ai_call.booked`, `ai_call.declined`, `ai_call.exhausted`, `ai_call.failed`, `ai_call.retry_scheduled`, `contact.updated` |
+| `finance` | Estimates, invoices & payments | yes | `estimate.client_accepted`, `estimate.client_declined`, `estimate.send_failed`, `estimate.sent`, `estimate.viewed`, `invoice.send_failed`, `invoice.sent`, `invoice.viewed`, `invoice.voided`, `payment.succeeded`, `payment.failed`, `payment.disputed`, `payment.refunded`, `payment.voided` |
+| `tasks` | Tasks | yes | `task.assigned`, `task.reassigned`, `task.due`, `task.overdue`, `task.completed` |
+| `admin_system` | Administration & system | no; internal and always on | `agent_task.failed`, `integration.delivery_failed`, `sync.completed`, `billing.subscription_past_due`, `billing.invoice_payment_failed` |
 
-The "Final channels" column is the full-platform target. The runtime `supported_channels` array exposes only the subset whose milestone is deployed.
-
-### 6.3 V1 catalog
-
-| event_type | category | label | description | default | required_permission | default audience summary | internal record scope | M1 channels | final channels | producer before M1 -> M1 target |
-|---|---|---|---|---:|---|---|---|---|---|---|
-| `lead.created` | Leads | New lead | A new lead was created. | on | `leads.view` | Admins, managers, and dispatchers | office-only lead | B | B,I,E,S | available -> available |
-| `lead.assigned` | Leads | Lead assigned | A lead was assigned to an office user. | on | `leads.view` | Assignee and office roles | office-only lead; explicit CRM assignee | B | B,I,E,S | missing -> available |
-| `lead.unassigned` | Leads | Lead unassigned | An office user was removed from a lead. | on | `leads.view` | Removed assignee and office roles | office-only lead; pre-change recipient | B | B,I,E,S | missing -> available |
-| `lead.review_required` | Leads | Lead needs review | A lead entered Review and needs a human decision. | on | `leads.view` | Admins, managers, and dispatchers | office-only lead | B | B,I,E,S | missing -> available |
-| `lead.converted` | Leads | Lead converted | A lead was converted to a job. | on | `leads.view` | Admins, managers, and dispatchers | office-only lead | B | B,I,E,S | audit-only -> available |
-| `lead.status_changed` | Leads | Other lead status changes | A routine lead status changed. | off | `leads.view` | Admins, managers, and dispatchers | office-only lead; excludes Review/Converted selectors | B | B,I,E,S | catalog-only -> available |
-| `lead.updated` | Leads | Lead updated | Lead details changed. | off | `leads.view` | Admins, managers, and dispatchers | office-only lead | B | B,I,E | SSE/audit-only -> available |
-| `job.created` | Jobs & schedule | Job created | A new job was created. | off | `jobs.view` | Office roles; assigned providers when present | job assignment | B,N | B,N,I,E,S | available -> available |
-| `job.assigned` | Jobs & schedule | Job assigned | A provider was assigned to a job. | on | `jobs.view` | Office roles and newly assigned provider | job assignment; explicit added recipients | B,N | B,N,I,E,S | audit + inline APNs -> available |
-| `job.unassigned` | Jobs & schedule | Job unassigned | A provider was removed from a job. | on | `jobs.view` | Office roles and removed provider | job assignment; minimal pre-change exception | B,N | B,N,I,E,S | audit-only -> available |
-| `job.rescheduled` | Jobs & schedule | Job rescheduled | A job's appointment window changed. | on | `jobs.view` | Office roles and assigned providers | job assignment | B,N | B,N,I,E,S | audit + inline APNs -> available |
-| `job.status_changed` | Jobs & schedule | Important job status change | A job moved to On the way, Waiting for parts, Part arrived, Visit completed, Job is Done, or Canceled. | on | `jobs.view` | Office roles and assigned providers | job assignment; catalog-owned target-status predicate | B,N | B,N,I,E,S | available, incomplete audit parity -> available |
-| `job.updated` | Jobs & schedule | Other job updates | Non-critical job details changed. | off | `jobs.view` | Office roles and assigned providers | job assignment | B,N | B,N,I,E | SSE/audit-only -> available |
-| `job.sync_completed` | Jobs & schedule | Job sync completed | A job sync completed successfully. | off | `jobs.view` | Admins and managers | office-only job | B | B,I,E | audit-only -> available |
-| `sms.inbound` | Messages & calls | New text message | A customer sent an inbound SMS. | on | `messages.view_client` | Office roles and providers with an active job for the contact | active contact; orphan office-only | B,N | B,N,I,E,S | available -> available |
-| `email.inbound` | Messages & calls | New email | A customer sent an inbound email. | on | `messages.view_client` | Office roles and providers with an active job for the contact | active contact; orphan office-only | B,N | B,N,I,E,S | SSE-only -> available |
-| `yelp.message_received` | Messages & calls | New Yelp message | A customer sent a Yelp message. | on | `messages.view_client` | Office roles and providers with an active job for the contact | active contact; orphan office-only | B,N | B,N,I,E,S | SSE-only -> available |
-| `call.inbound_started` | Messages & calls | Incoming call | An inbound customer call started. | off | `pulse.view` | Office roles and providers with an active job for the contact | active contact; orphan office-only | B,N | B,N,I,E,S | SSE-only -> available |
-| `call.missed` | Messages & calls | Missed call | An inbound call reached a terminal unanswered outcome. | on | `pulse.view` | Office roles and providers with an active job for the contact | active contact; orphan office-only | B,N | B,N,I,E,S | broken semantics -> available/correct |
-| `call.voicemail_received` | Messages & calls | Voicemail received | A caller left a voicemail. | on | `pulse.view` | Office roles and providers with an active job for the contact | active contact; orphan office-only | B,N | B,N,I,E,S | missing -> available |
-| `call.completed` | Messages & calls | Call completed | A customer call completed. | off | `pulse.view` | Office roles and providers with an active job for the contact | active contact; orphan office-only | B,N | B,N,I,E | catalog-only -> available |
-| `sms.outbound` | Messages & calls | Text message sent | A staff-authored SMS was sent. | off | `messages.view_client` | Initiating user and permitted office roles | actor + active contact | B,N | B,N,I,E | catalog-only -> available; SMS channel prohibited |
-| `message.delivery_failed` | Messages & calls | Message delivery failed | A customer message could not be delivered. | on | `messages.send` | Initiating user and permitted office roles | actor + active contact | B,N | B,N,I,E | SSE-only -> available; SMS channel prohibited |
-| `ai_call.booked` | AI outcomes | AI call booked | An AI call produced a tentative booking or human-review outcome. | on | `pulse.view` | Office roles; assigned provider only for a job outcome | lead office-only or job assignment | B,N | B,N,I,E,S | legacy raw event -> available |
-| `ai_call.declined` | AI outcomes | AI call declined or needs handoff | A customer declined or requested human follow-up. | on | `pulse.view` | Office roles; assigned provider only for a job outcome | lead office-only or job assignment | B,N | B,N,I,E,S | legacy raw event -> available |
-| `ai_call.exhausted` | AI outcomes | AI call attempts exhausted | The AI call retry ladder ended without resolution. | on | `pulse.view` | Office roles; assigned provider only for a job outcome | lead office-only or job assignment | B,N | B,N,I,E,S | legacy raw event -> available |
-| `ai_call.failed` | AI outcomes | AI call failed | An AI call ended in a hard operational failure. | on | `pulse.view` | Office roles; assigned provider only for a job outcome | lead office-only or job assignment | B,N | B,N,I,E,S | missing typed event -> available |
-| `ai_call.retry_scheduled` | AI outcomes | AI call retry scheduled | A transient outcome scheduled another attempt. | off | `pulse.view` | Admins, managers, and dispatchers | lead office-only or job assignment | B | B,I,E | legacy raw event -> available |
-| `estimate.client_accepted` | Estimates, invoices & payments | Estimate accepted | A client accepted an estimate. | on | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E,S | audit-only -> available |
-| `estimate.client_declined` | Estimates, invoices & payments | Estimate declined | A client declined an estimate. | on | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E,S | audit-only -> available |
-| `estimate.send_failed` | Estimates, invoices & payments | Estimate delivery failed | An estimate could not be sent. | on | `notifications.financial.receive` | Initiator and financial-alert recipients | actor + financial parent | B,N | B,N,I,E | audit-only -> available |
-| `estimate.sent` | Estimates, invoices & payments | Estimate sent | An estimate was sent to a client. | off | `notifications.financial.receive` | Initiator and financial-alert recipients | actor + financial parent | B,N | B,N,I,E | audit-only -> available |
-| `estimate.viewed` | Estimates, invoices & payments | Estimate viewed | A client viewed an estimate. | off | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E | audit-only -> available |
-| `invoice.send_failed` | Estimates, invoices & payments | Invoice delivery failed | An invoice could not be sent. | on | `notifications.financial.receive` | Initiator and financial-alert recipients | actor + financial parent | B,N | B,N,I,E | audit-only -> available |
-| `invoice.sent` | Estimates, invoices & payments | Invoice sent | An invoice was sent to a client. | off | `notifications.financial.receive` | Initiator and financial-alert recipients | actor + financial parent | B,N | B,N,I,E | audit-only -> available |
-| `invoice.viewed` | Estimates, invoices & payments | Invoice viewed | A client viewed an invoice. | off | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E | audit-only -> available |
-| `invoice.voided` | Estimates, invoices & payments | Invoice voided | An invoice was voided. | off | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E | audit-only -> available |
-| `payment.succeeded` | Estimates, invoices & payments | Payment received | A customer payment succeeded or was recorded. | on | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E,S | audit-only -> available |
-| `payment.failed` | Estimates, invoices & payments | Payment failed | A customer payment failed. | on | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E,S | audit-only -> available |
-| `payment.disputed` | Estimates, invoices & payments | Payment disputed | A customer payment was disputed. | on | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E,S | audit-only -> available |
-| `payment.refunded` | Estimates, invoices & payments | Payment refunded | A customer payment was refunded. | on | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E,S | audit-only -> available |
-| `payment.voided` | Estimates, invoices & payments | Payment voided | A recorded customer payment was voided. | on | `notifications.financial.receive` | Financial-alert recipients; provider only for own job | financial parent | B,N | B,N,I,E,S | audit-only -> available |
-| `task.assigned` | Tasks | Task assigned | A task was assigned to a user. | on | `tasks.view` | Task owner; task managers for unassigned work | task owner/author or `tasks.manage` | B,N | B,N,I,E,S | coarse SSE only -> available |
-| `task.reassigned` | Tasks | Task reassigned | Task ownership changed. | on | `tasks.view` | New owner, removed owner minimally, and task managers | task owner/author or pre-change exception | B,N | B,N,I,E,S | coarse SSE only -> available |
-| `task.due` | Tasks | Task due soon | A task reached its configured due-soon window. | on | `tasks.view` | Task owner and task managers | task owner/author or `tasks.manage` | B,N | B,N,I,E,S | missing scheduler -> available |
-| `task.overdue` | Tasks | Task overdue | An open task passed its due time. | on | `tasks.view` | Task owner and task managers | task owner/author or `tasks.manage` | B,N | B,N,I,E,S | missing scheduler -> available |
-| `task.completed` | Tasks | Task completed | A task was completed. | off | `tasks.view` | Task owner, author, and task managers | task owner/author or `tasks.manage` | B,N | B,N,I,E | coarse SSE only -> available |
-| `review.received` | Reviews | Review received | A customer submitted a job/provider review. | on | `jobs.view` | Office roles and providers assigned to the reviewed job | rated job assignment | B,N | B,N,I,E,S | missing -> available |
-| `agent_task.failed` | System & billing | Automation task failed | An internal agent task failed and needs administrator attention. | on | `tenant.company.manage` | Company administrators | admin-only | B | B,I,E,S | available -> available |
-| `integration.delivery_failed` | System & billing | Integration delivery failed | A configured integration could not deliver or synchronize required data. | on | `tenant.company.manage` | Company administrators | admin-only | B | B,I,E,S | fragmented -> available |
-| `sync.completed` | System & billing | Sync completed | A background integration sync completed successfully. | off | `tenant.company.manage` | Company administrators | admin-only | B | B,I,E | fragmented -> available |
-| `billing.subscription_past_due` | System & billing | Albusto subscription past due | The company's Albusto subscription requires attention. | on | `tenant.company.manage` | Company administrators | admin-only | B | B,I,E,S | available under inconsistent names -> available |
-| `billing.invoice_payment_failed` | System & billing | Albusto billing payment failed | Payment for the company's Albusto invoice failed. | on | `tenant.company.manage` | Company administrators | admin-only | B | B,I,E,S | available under inconsistent names -> available |
-| `contact.updated` | System & billing | Contact updated | Contact details changed. | off | `contacts.view` | Office roles and providers with an active job for the contact | active contact | B,N | B,N,I,E | audit-only -> available |
-
-Catalog normalization rules:
-
-1. `payment.*` is the single notification source for payment outcomes even when History also writes `invoice.payment_*`. Do not emit two staff notifications for one Stripe/payment transaction.
-2. `job.status_changed` remains the existing domain event used by Automations. The notification catalog applies the important-target predicate shown above; routine/custom status changes remain non-interruptive unless a future separately approved policy selector is added.
-3. Lead Review and Converted outcomes have dedicated policy keys. The generic `lead.status_changed` entry excludes them, preventing duplicates.
-4. `sms.outbound` and notification-origin delivery events can never produce staff SMS notifications.
-5. Self-authored routine events are suppressed by default. Explicit assignment, removal, delivery failure, and payment-result events may notify the actor when the catalog audience says so.
+The per-event labels, descriptions, required permissions, audience summaries, source predicates, record scopes, and producer flags are versioned in `backend/src/services/notificationEventCatalog.js`. Financial events use only `notifications.financial.receive`; system events use `tenant.company.manage`. The event vocabulary and security scopes remain the accepted Turn-1 taxonomy.
 
 ## 7. Recipient isolation contract
 
@@ -196,8 +134,13 @@ Catalog normalization rules:
 Implement:
 
 ```js
-resolveNotificationRecipients(companyId, event, { channel, client? })
-  -> Array<{ user_id, role_config_id, role_key, channel }>
+resolveNotificationRecipients(companyId, event, { client? })
+  -> Array<{
+       user_id,
+       role_key,
+       destinations: { browser_push: PushSubscription[], native_push: DeviceToken[] },
+       delivery_ids: { browser_push?: uuid, native_push?: uuid }
+     }>
 ```
 
 The function is server-owned. No caller supplies roles, company, audience, permission, record scope, or user IDs except explicit pre-change recipient IDs carried by an authoritative event producer.
@@ -208,25 +151,24 @@ Evaluation order is fixed and fail-closed:
 2. Resolve the catalog entry by allowlisted event type. Unknown/unavailable types produce no recipients.
 3. Validate the aggregate and every `record_ref` belongs to `companyId`. A foreign or missing record is indistinguishable and returns no recipients/404 at route boundaries.
 4. Build a bounded candidate set from active `company_memberships` in that company only:
-   - office roles from role policy;
+   - active office-role members;
    - current/pre-change job assignees for job events;
    - providers assigned to an active job for contact events;
    - task owner/author and `tasks.manage` candidates;
    - explicit assignee/actor where allowed.
 5. Resolve live, no-cache authorization for every candidate with `resolveCompanyUserAuthz(companyId, userId)`. Do not copy role permissions into the event or trust a cached request context.
-6. Require the catalog `required_permission`.
-7. Apply record scope:
+6. Resolve the catalog category. For the five user categories, deny only when an explicit `(company_id,user_id,category)` row has `enabled=false`; absence is enabled. `admin_system` skips this lookup.
+7. Require the catalog `required_permission`.
+8. Apply record scope:
    - job: reuse the canonical company + id + `assigned_provider_user_ids @>` predicate represented by `tasksQueries.jobParentVisible`;
    - contact/message/call/email/Yelp: require an active assigned job, with only `Canceled` and `Job is Done` inactive;
    - task: reuse `resolveTaskContentScope`; non-managers see owner/author tasks only;
    - lead: office-only; providers are denied;
    - financial: resolve the estimate/invoice/payment parent, require `notifications.financial.receive`, then apply the parent job/contact/lead scope;
+   - `admin_system`: active members with live `tenant.company.manage` only;
    - orphan/unresolvable record: provider denied; a permitted office user may receive a generic event only when the catalog says office-only fallback is allowed.
-8. Apply company enabled policy.
-9. Apply current role/channel delivery policy.
-10. Apply user preference and channel-specific opt-in rule.
-11. Require an active destination/subscription bound to both `company_id` and `user_id` for delivery channels.
-12. Insert/claim the delivery row before provider send.
+9. Load every active Web Push subscription and native token bound to both `company_id` and `user_id`; no destination means no recipient.
+10. Insert/claim one delivery row per available transport before provider send. The dispatcher sends to every active device returned for that transport.
 
 No stage may widen recipients after a previous deny.
 
@@ -257,55 +199,26 @@ The module imports the one canonical inactive-status constant from `providerScop
 
 `job.unassigned`, `lead.unassigned`, and `task.reassigned` may carry an authoritative `previous_recipient_user_ids` array captured inside the mutation transaction. The resolver validates that each ID was actually present before the mutation and is an active membership in the same company.
 
-The removed user receives only a generic title and job/task/lead number when that number is already non-sensitive. It contains no customer name, contact data, address, message, amount, or deep link to a record the user can no longer open.
+The removed user receives only a generic title. It contains no customer name, contact data, address, message, amount, AI summary, or deep link to a record the user can no longer open.
 
 ## 8. Effective policy rule
 
-### 8.1 Preference values
+### 8.1 Exact rule
 
-User channel preference is one of:
-
-- `inherit`
-- `enabled`
-- `disabled`
-
-`enabled` never widens company policy, role audience, permission, record scope, or channel support.
-
-### 8.2 Exact rule
-
-For candidate user `u`, event policy key `e`, and channel `c`:
+For candidate user `u` and allowlisted event `e`:
 
 ```text
-effective(u,e,c) =
+deliver(u,e) =
     catalog[e].producer_available
-    AND c IN catalog[e].supported_channels
-    AND company_policy[e].enabled
-    AND role_delivery[u.role_config_id,e,c].enabled
+    AND user_category_enabled(u, catalog[e].category_key)
     AND live_permission(u, catalog[e].required_permission)
     AND live_record_scope(u, event.record_ref)
-    AND destination_is_active(u,c)
-    AND user_channel_rule(u,e,c)
-    AND channel_guard_allows(u,event,c)
+    AND active_destinations(company_id,u).length >= 1
 ```
 
-Where:
+`user_category_enabled` is true when no preference row exists and equals the stored boolean when a row exists. The five configurable categories therefore default on for every user. `admin_system` is internal, always on, and not stored in `user_notification_preferences`; eligibility still requires live `tenant.company.manage`, the event permission, and record scope.
 
-```text
-user_channel_rule for browser_push/native_push/in_app:
-    preference != disabled
-
-user_channel_rule for email/sms:
-    preference == enabled
-```
-
-Missing company, role, or user rows fail closed:
-
-- Missing company policy is disabled.
-- Missing role delivery is disabled.
-- Missing push/in-app user preference is `inherit`.
-- Missing email/SMS preference is not opted in and therefore disabled.
-
-For companies existing when migration 221 runs, every newly introduced event is explicitly or effectively off. The two legacy booleans alone preserve their current enabled values. For companies created after M1, company bootstrap writes the catalog defaults explicitly. Adding a future catalog entry never silently enables it for existing companies.
+Access gates are authoritative and cannot be widened by a category preference. Channel is device-level, not event-level: an eligible event is delivered to every active browser subscription and native token for `(company_id,user_id)`. Creating/removing a browser subscription or native token is the corresponding device master switch. There is no company, role, event, or per-channel policy layer.
 
 ## 9. PII-safe delivery contract
 
@@ -342,59 +255,39 @@ Changes:
 
 1. Replace the global partial unique index on `domain_events(idempotency_key)` with a tenant-paired partial unique index on `(company_id, idempotency_key)`.
 2. Replace Web Push endpoint uniqueness with `UNIQUE(company_id, user_id, endpoint)`. Subscription create/update/delete/stale-deactivation operations use the full key and never move a row between tenants/users.
-3. Add composite role-context uniqueness needed by tenant-bound FKs: `(company_id, id)` on `company_role_configs` if absent.
-4. Create `company_notification_policies`:
-   - `id uuid PK`
-   - `company_id uuid NOT NULL FK companies`
-   - `event_type text NOT NULL`
-   - `enabled boolean NOT NULL DEFAULT false`
-   - `updated_by_user_id uuid NULL`
-   - timestamps
-   - unique `(company_id, event_type)`
-   - tenant-bound updater membership FK where available
-5. Create `role_notification_delivery`:
-   - `id uuid PK`
-   - `company_id uuid NOT NULL`
-   - `role_config_id uuid NOT NULL`
-   - `event_type text NOT NULL`
-   - `channel text NOT NULL CHECK browser_push/native_push/in_app/email/sms`
-   - `enabled boolean NOT NULL DEFAULT false`
-   - timestamps
-   - composite FK `(company_id, role_config_id)`
-   - unique `(company_id, role_config_id, event_type, channel)`
-6. Create `user_notification_preferences`:
+3. Drop the unreleased `company_notification_policies` and `role_notification_delivery` tables if a development database already ran the earlier local form of migration 221. They are not part of the shipped model.
+4. Create `user_notification_preferences`:
    - `id uuid PK`
    - `company_id uuid NOT NULL`
    - `user_id uuid NOT NULL`
-   - `event_type text NOT NULL`
-   - `channel text NOT NULL`
-   - `preference text NOT NULL CHECK inherit/enabled/disabled`
+   - `category text NOT NULL CHECK job_schedule/leads/calls_messages/finance/tasks`
+   - `enabled boolean NOT NULL`
    - timestamps
    - membership-bound FK `(user_id, company_id)`
-   - unique `(company_id, user_id, event_type, channel)`
-7. Create `notification_deliveries`:
+   - unique `(company_id, user_id, category)`
+   - absence means enabled; no preference rows are seeded
+5. Create `notification_deliveries`:
    - `id uuid PK`
    - `company_id uuid NOT NULL`
    - `domain_event_id bigint NOT NULL`
    - `user_id uuid NOT NULL`
    - `event_type text NOT NULL`
-   - `channel text NOT NULL`
+   - `channel text NOT NULL`; this records the transport claim and is not a preference
    - `record_type text NULL`, `record_id text NULL`
    - `status text NOT NULL CHECK pending/sending/sent/failed/skipped/unknown`
    - `attempt_count integer NOT NULL DEFAULT 0`
    - `last_error_code text NULL`, `last_error_at timestamptz NULL`
    - `provider_message_id text NULL`
    - `sent_at timestamptz NULL`, timestamps
-   - FK `(company_id, domain_event_id)` using a new unique context index on `domain_events(company_id,id)`
+   - FK `(company_id, domain_event_id)` using a unique context index on `domain_events(company_id,id)`
    - membership-bound FK `(user_id, company_id)`
    - unique `(company_id, domain_event_id, user_id, channel)`
-8. Add `notifications.financial.receive` to `permissionCatalog.js` under Financial.
-9. Add the permission to `050_seed_role_configs.sql` for tenant admin, manager, dispatcher, and provider. It grants notification eligibility only.
-10. Backfill `is_allowed=true` for existing tenant-admin, manager, dispatcher, and provider role configs. Provider delivery remains own-job-only through record scope.
-11. Seed role/channel delivery defaults for the V1 catalog.
-12. Migrate `browser_push_new_text_message_enabled` to `sms.inbound` and `browser_push_new_lead_enabled` to `lead.created`; every other company event is off for existing companies.
+6. Add `notifications.financial.receive` to `permissionCatalog.js` under Financial.
+7. Add the permission to `050_seed_role_configs.sql` for tenant admin, manager, dispatcher, and provider. It grants notification eligibility only.
+8. Backfill `is_allowed=true` for existing tenant-admin, manager, dispatcher, and provider role configs. Provider delivery remains own-job-only through record scope.
+9. Retire the legacy `company_settings.browser_push_config` bridge. Migration 221 neither reads nor writes it, and the legacy broadcast gate is fail-closed until its callers are replaced by the scoped dispatcher.
 
-Rollback must be fail-safe. Before restoring either former global unique index, it checks for cross-company duplicate idempotency keys/endpoints and raises a clear exception rather than deleting or merging data.
+The `notifications` inbox remains M2 migration 222; this task does not pull M2 storage into migration 221. Rollback is fail-safe: before restoring either former global unique index, it checks for cross-company duplicate idempotency keys/endpoints and raises a clear exception rather than deleting or merging data.
 
 ### 10.2 M2 — `222_notification_inbox.sql`
 
@@ -467,15 +360,74 @@ Extend `notification_deliveries` with per-delivery retry/lease columns if M1 did
 
 All routes use `authenticate, requireCompanyAccess`. `company_id` comes only from `req.companyFilter?.company_id`; it is never accepted in the body/query and there is no first-company fallback.
 
-### 11.1 Policy read
+### 11.1 Current-user settings read
 
-`GET /api/settings/notification-policies`
+`GET /api/settings/notifications`
 
-Permission:
+Permission: any active company member; current request-derived user only.
 
-- any active company member may load catalog, company policy, their own role delivery, preferences, and effective policy;
-- callers with `tenant.company.manage` additionally receive every company role's delivery matrix;
-- no caller receives another user's preferences.
+```json
+{
+  "ok": true,
+  "data": {
+    "categories": [
+      {
+        "key": "job_schedule",
+        "label": "Job & schedule updates",
+        "description": "Job assignments, schedule changes, status updates, and reviews.",
+        "enabled": true
+      },
+      {
+        "key": "leads",
+        "label": "Leads",
+        "description": "New leads, assignments, status changes, and review requests.",
+        "enabled": true
+      },
+      {
+        "key": "calls_messages",
+        "label": "Calls & messages",
+        "description": "Customer calls, messages, delivery failures, and AI-call outcomes.",
+        "enabled": true
+      },
+      {
+        "key": "finance",
+        "label": "Estimates, invoices & payments",
+        "description": "Estimate, invoice, and payment activity you are allowed to access.",
+        "enabled": true
+      },
+      {
+        "key": "tasks",
+        "label": "Tasks",
+        "description": "Task assignments, due dates, overdue alerts, and completions.",
+        "enabled": true
+      }
+    ],
+    "device": {
+      "browser_push": {
+        "supported": true,
+        "permission": "unknown",
+        "subscribed": true
+      }
+    }
+  }
+}
+```
+
+Categories are returned in the exact order above. A missing preference row yields `enabled:true`. `admin_system` is not returned. `subscribed` reuses the existing `(company_id,user_id,is_active=true)` Web Push subscription status. Browser permission cannot be observed by the server, so the API returns the stable `"unknown"` sentinel and the frontend replaces it with the local `Notification.permission` value.
+
+The old `GET /api/settings/notification-policies`, company/role snapshot, effective-policy snapshot, and legacy two-boolean response are retired.
+
+### 11.2 Current-user category write
+
+`PATCH /api/settings/notifications/:category`
+
+Permission: any active company member; current request-derived user only.
+
+Body:
+
+```json
+{ "enabled": false }
+```
 
 Response:
 
@@ -483,126 +435,19 @@ Response:
 {
   "ok": true,
   "data": {
-    "catalog": [
-      {
-        "event_type": "job.assigned",
-        "category": "Jobs & schedule",
-        "label": "Job assigned",
-        "description": "A provider was assigned to a job.",
-        "default_enabled": true,
-        "required_permission": "jobs.view",
-        "default_audience_summary": "Office roles and newly assigned provider",
-        "supported_channels": ["browser_push", "native_push"],
-        "producer_available": true
-      }
-    ],
-    "company_policy": [
-      { "event_type": "job.assigned", "enabled": true }
-    ],
-    "role_delivery": [
-      {
-        "role_config_id": "uuid",
-        "role_key": "provider",
-        "role_label": "Provider",
-        "events": [
-          {
-            "event_type": "job.assigned",
-            "channels": {
-              "browser_push": true,
-              "native_push": true
-            }
-          }
-        ]
-      }
-    ],
-    "current_user_preferences": [
-      {
-        "event_type": "job.assigned",
-        "channels": {
-          "browser_push": "inherit",
-          "native_push": "inherit"
-        }
-      }
-    ],
-    "effective_policy": [
-      {
-        "event_type": "job.assigned",
-        "channels": {
-          "browser_push": { "enabled": true, "reason_codes": [] },
-          "native_push": { "enabled": false, "reason_codes": ["NO_ACTIVE_DESTINATION"] }
-        }
-      }
-    ]
+    "key": "leads",
+    "label": "Leads",
+    "description": "New leads, assignments, status changes, and review requests.",
+    "enabled": false
   }
 }
 ```
 
-`effective_policy` is informational for the current user and current policy state; record scope is event-instance-specific and is still evaluated during dispatch.
+Only the five category keys from §6.2 are accepted. Unknown keys, including `admin_system`, return `404 NOTIFICATION_CATEGORY_NOT_FOUND`. `enabled` must be a boolean; extra identity/audience/channel fields return `400 INVALID_NOTIFICATION_PREFERENCE`. The route derives `company_id` from `req.companyFilter.company_id` and `user_id` from `req.user.crmUser.id`; neither can be selected by the caller.
 
-For non-admin callers, `role_delivery` contains only their own role row. An admin response contains every role config belonging to the selected company. Foreign role IDs never appear.
+The former `PATCH /api/settings/notification-policies/:eventType` and `PATCH /api/settings/notification-preferences/:eventType` routes are removed.
 
-### 11.2 Company/role policy write
-
-`PATCH /api/settings/notification-policies/:eventType`
-
-Permission: `tenant.company.manage`
-
-Body:
-
-```json
-{
-  "company_enabled": true,
-  "roles": [
-    {
-      "role_config_id": "uuid",
-      "channels": {
-        "browser_push": true,
-        "native_push": false
-      }
-    }
-  ]
-}
-```
-
-Semantics:
-
-- Partial update for one catalog event; omitted roles/channels remain unchanged.
-- `eventType` must exist in the catalog.
-- A role ID must belong to the request company; foreign/unknown returns 404.
-- A channel must appear in the deployed catalog entry's `supported_channels`; otherwise 400.
-- Enabling an unavailable producer returns `409 PRODUCER_UNAVAILABLE`.
-- `updated_by_user_id` is `req.user.crmUser.id`.
-- Response returns the updated company policy and every affected role row in the GET shapes.
-
-The legacy `GET/PUT /api/settings/notifications` remains as an M1 compatibility adapter for the two old booleans until the Claude-owned policy UI switches to this API. It reads/writes only `lead.created` and `sms.inbound` company policy and contains no fallback company resolution.
-
-### 11.3 Current-user preference write
-
-`PATCH /api/settings/notification-preferences/:eventType`
-
-Permission: active company membership; own user only
-
-Body:
-
-```json
-{
-  "channels": {
-    "browser_push": "disabled",
-    "native_push": "inherit"
-  }
-}
-```
-
-Semantics:
-
-- Partial update for one event.
-- Values are `inherit|enabled|disabled`.
-- The route ignores/rejects `user_id`, `company_id`, roles, permission, and audience fields.
-- `enabled` does not widen effective policy.
-- Email/SMS delivery still requires explicit `enabled`, verified endpoint, quiet-hours/cost guards, and M3 availability.
-- Response returns the updated preference and recomputed effective-policy row.
-
-### 11.4 M2 inbox list/item contract
+### 11.3 M2 inbox list/item contract
 
 `GET /api/notifications?cursor=<opaque>&limit=<1..50>`
 
@@ -639,7 +484,7 @@ Response:
 
 `title` is PII-safe. `deep_link` is built from an allowlisted `deep_link_kind`; arbitrary URLs are never stored or returned. A record ID appears only after current access succeeds.
 
-### 11.5 Unread count
+### 11.4 Unread count
 
 `GET /api/notifications/unread-count`
 
@@ -651,7 +496,7 @@ Response:
 
 The count is scoped to `(company_id,user_id)`. It excludes `hidden_at` rows. The inbox list/open path remains authoritative for live record access; revocation events should proactively hide affected rows so the count does not remain stale.
 
-### 11.6 Mark read and open
+### 11.5 Mark read and open
 
 `PATCH /api/notifications/:id/read`
 
@@ -673,9 +518,9 @@ This is the required record-access re-check before navigation. It resolves live 
 
 It marks `read_at/opened_at` only after authorization. If access was revoked, it returns 404, stamps the caller's own row hidden, and returns no record reference or link. The destination route/API still performs its normal authorization.
 
-### 11.7 Eligibility preview, deferred to M2
+### 11.6 Eligibility preview, deferred to M2
 
-`POST /api/settings/notification-policies/eligibility-preview`
+`POST /api/settings/notifications/eligibility-preview`
 
 Permission: `tenant.company.manage`
 
@@ -684,8 +529,7 @@ Body:
 ```json
 {
   "event_type": "job.rescheduled",
-  "record_ref": { "type": "job", "id": "123" },
-  "channel": "browser_push"
+  "record_ref": { "type": "job", "id": "123" }
 }
 ```
 
@@ -698,7 +542,7 @@ Response contains counts only, never user IDs, names, emails, phones, or destina
     "eligible_count": 3,
     "excluded_count": 5,
     "exclusion_reasons": [
-      { "code": "ROLE_CHANNEL_DISABLED", "count": 2 },
+      { "code": "USER_CATEGORY_DISABLED", "count": 2 },
       { "code": "RECORD_SCOPE_DENIED", "count": 2 },
       { "code": "NO_ACTIVE_DESTINATION", "count": 1 }
     ]
@@ -711,12 +555,9 @@ Each candidate is assigned the first terminal reason in the resolver evaluation 
 Stable reason codes:
 
 - `INACTIVE_MEMBERSHIP`
+- `USER_CATEGORY_DISABLED`
 - `MISSING_PERMISSION`
 - `RECORD_SCOPE_DENIED`
-- `COMPANY_EVENT_DISABLED`
-- `ROLE_CHANNEL_DISABLED`
-- `USER_DISABLED`
-- `CHANNEL_UNAVAILABLE`
 - `NO_ACTIVE_DESTINATION`
 - `QUIET_HOURS`
 - `COST_GUARD`
@@ -752,8 +593,7 @@ This changes realtime latency behavior but preserves security and avoids caching
 
 ### 13.1 Opt-in and verification
 
-- Email/SMS user preference must be explicitly `enabled`; `inherit` is off.
-- Destination must be verified and active for the same `(company_id,user_id)`.
+- Email/SMS is opted in by creating a verified active destination for the same `(company_id,user_id)`; removing/revoking it is the device/channel master off switch.
 - SMS may reuse `crm_users.phone_verified_at` only when the normalized opted-in destination equals the current verified `phone_e164`.
 - Email uses a verification link/token flow and stores only a token hash; token expiry and one-time consumption are mandatory.
 - Verification responses do not reveal whether another tenant/user owns the same normalized destination.
@@ -783,22 +623,21 @@ This changes realtime latency behavior but preserves security and avoids caching
 
 ### M1 — Security core and event-driven dispatch
 
-#### M1.T1 — Migration 221, permission, and legacy-policy bridge
+#### M1.T1 — Migration 221, financial permission, and tenant-paired keys
 
 Deliverables:
 
 - Migration/rollback 221 from §10.1.
 - `notifications.financial.receive` in `permissionCatalog.js` and `050_seed_role_configs.sql`.
 - Existing-role backfill for tenant admin, manager, dispatcher, and provider.
-- Legacy two-boolean migration and compatibility adapter.
+- Category preference table and retirement of the legacy two-boolean/company-settings bridge.
 - Removal of first-company fallbacks from notification settings, Action Required settings, and push subscriptions.
 - Full-key Web Push subscription mutations and tenant-paired domain-event idempotency.
 
 Acceptance criteria:
 
-- Existing companies have no newly enabled event.
-- A legacy true SMS/lead boolean remains true in its corresponding company policy.
-- New company bootstrap explicitly writes catalog defaults.
+- No company/role/event/channel preference rows are seeded; all five user categories resolve enabled by absence.
+- Reapplying migration 221 preserves category preference rows.
 - Dispatcher receives the new permission without gaining `financial_data.view` or any financial-route permission.
 - Provider receives the notification permission but remains assigned-only.
 - Foreign role/user/subscription/event keys cannot be read or changed.
@@ -819,44 +658,44 @@ npm test -- --runInBand --runTestsByPath tests/notificationMigrations.test.js te
 
 Sabotage minimum:
 
-- `SAB-M1-T1-LEGACY-ON`: change a migrated missing event to catalog default true; existing-company no-new-on test must fail.
+- `SAB-M1-T1-CATEGORY-PRESERVE`: make the second migration apply recreate category preferences; double-apply preservation must fail.
 - `SAB-M1-T1-NATURAL-KEY`: remove `company_id` from endpoint/idempotency uniqueness or mutation; shared-key T-blast must fail.
 - `SAB-M1-T1-EFFECTIVE-PERM`: remove the migration backfill while leaving the catalog key; existing-dispatcher effective-permission test must fail.
 
-#### M1.T2 — Catalog and policy services/APIs
+#### M1.T2 — Catalog and category settings API
 
 Deliverables:
 
 - Versioned internal catalog and exact public catalog projection from §6.
-- Company/role/current-user policy reads and writes from §11.
-- Strict allowlist validation and `producer_available` handling.
+- Current-user category reads and writes from §11.
+- Strict five-category allowlist validation; producer availability remains an event dispatch concern.
 
 Acceptance criteria:
 
 - Public catalog objects have the exact required UI fields.
-- Runtime channels reflect deployed milestones only.
-- Non-admin sees only their role delivery; admin sees company roles only.
-- Missing policy rows fail closed.
-- User `enabled` cannot widen company/role/permission/scope policy.
-- Foreign role/event inputs return 404/400 as specified with no writes.
+- Exactly five ordered user categories are returned; missing rows read enabled.
+- `admin_system` is not user-configurable.
+- User `enabled` cannot widen live permission or record scope.
+- Foreign company/user identity cannot be selected; unknown categories return 404 with no write.
 
 Planned tests:
 
 - `tests/notificationEventCatalog.test.js`
 - `tests/notificationPolicyService.test.js`
 - `tests/notificationPolicyRoutes.test.js`
+- `tests/notificationSettingsRoutes.test.js`
 
 Verify:
 
 ```bash
-npm test -- --runInBand --runTestsByPath tests/notificationEventCatalog.test.js tests/notificationPolicyService.test.js tests/notificationPolicyRoutes.test.js
+npm test -- --runInBand --runTestsByPath tests/notificationEventCatalog.test.js tests/notificationPolicyService.test.js tests/notificationPolicyRoutes.test.js tests/notificationSettingsRoutes.test.js
 ```
 
 Sabotage minimum:
 
-- `SAB-M1-T2-ALLOWLIST`: accept an unknown event key; unknown-event write/dispatch tests must fail.
-- `SAB-M1-T2-ROLE-FOREIGN`: remove the role/company join; foreign-role 404 + unchanged snapshot must fail.
-- `SAB-M1-T2-USER-WIDEN`: allow a user preference to override a disabled company/role policy; effective-policy test must fail.
+- `SAB-M1-T2-ALLOWLIST`: accept an unknown/internal category; unknown-category tests must fail.
+- `SAB-M1-T2-IDENTITY`: accept body/query company or user identity; request-derived identity tests must fail.
+- `SAB-M1-T2-DEFAULT`: treat a missing preference row as disabled; default-on settings/resolver tests must fail.
 
 #### M1.T3 — Shared contact scope and recipient resolver
 
@@ -874,6 +713,8 @@ Acceptance criteria:
 - Only `Canceled` and `Job is Done` are inactive; unknown/custom status remains active.
 - Office users are still gated by event permission.
 - Financial resolver uses only `notifications.financial.receive` plus parent scope, never `financial_data.view`.
+- Category false is a terminal deny, absence is enabled, and `admin_system` ignores user preferences while requiring `tenant.company.manage`.
+- Every active browser/native destination bound to the eligible `(company,user)` is returned and claimed.
 - All entity validation is company-scoped and foreign IDs become 404/no recipients.
 
 Planned tests:
@@ -1126,11 +967,11 @@ M2 owner gate: no deploy until M1 suites also pass unchanged.
 
 ### M3 — Staff email and SMS channels
 
-#### M3.T1 — Migration 223, destination verification, and preference APIs
+#### M3.T1 — Migration 223 and verified destination APIs
 
 Acceptance criteria:
 
-- Email/SMS are opt-in only.
+- Email/SMS are opt-in only through existence of a verified active destination.
 - Destination verification is tenant/member scoped and token/OTP replay-safe.
 - Unverified/revoked destination cannot become effective.
 - No endpoint API returns another user's full destination.
@@ -1246,10 +1087,8 @@ Mock-only tests that assert SQL substrings do not satisfy T-blast. At least one 
 
 | surface (route/worker/webhook/SSE/aggregate) | scoped by | key used | permission | roles ✓/✗ | blast-radius risk |
 |---|---|---|---|---|---|
-| `GET /api/settings/notification-policies` | `req.companyFilter.company_id` | company + current membership | active membership; all-role matrix requires `tenant.company.manage` | all active ✓ own view; admin ✓ all roles; others ✗ other roles | leaking role policy across company |
-| `PATCH /api/settings/notification-policies/:eventType` | request company | company + catalog event + role config | `tenant.company.manage` | tenant admin/custom allow ✓; manager/dispatcher/provider default ✗ | foreign role update; mass enable |
-| `PATCH /api/settings/notification-preferences/:eventType` | request company + `req.user.crmUser.id` | company + user + event + channel | active membership, own only | all active ✓ own; everyone ✗ other user | cross-user preference write |
-| legacy `GET/PUT /api/settings/notifications` | request company | company + two fixed policy keys | GET active; PUT `tenant.company.manage` | same as current policy route | first-company fallback; legacy drift |
+| `GET /api/settings/notifications` | `req.companyFilter.company_id` + `req.user.crmUser.id` | company + current user | active membership, own only | all active ✓ own; everyone ✗ other user | cross-user category/device status leak |
+| `PATCH /api/settings/notifications/:category` | request company + `req.user.crmUser.id` | company + user + allowlisted category | active membership, own only | all active ✓ own; everyone ✗ other user | cross-user preference write; internal-category override |
 | push subscription routes | request company + CRM user | company + user + endpoint | active membership, own only | all active ✓ own | endpoint shared/rebound across tenants |
 | `resolveNotificationRecipients` subscriber | `event.company_id` explicit | company + domain event + aggregate/record | live catalog permission | office ✓ per permission; provider ✓ own only; inactive/foreign ✗ | company/role/record-wide fan-out |
 | task due/overdue scheduler | explicit company per scanned task | company + task + due window | live `tasks.view` and scope | owner/author/manager ✓; others ✗ | cron has no request context; duplicate window |
@@ -1263,7 +1102,7 @@ Mock-only tests that assert SQL substrings do not satisfy T-blast. At least one 
 | `POST /api/notifications/:id/open` | request company + current user | company + user + notification + record | live catalog permission + record scope | own current access ✓; revoked/foreign ✗ | stale deep-link access |
 | eligibility preview | request company | company + event + record | `tenant.company.manage` | admin/custom allow ✓; others ✗ | recipient/PII enumeration |
 | endpoint verification APIs | request company + current user | company + user + destination hash/token | active membership, own only | own ✓ | email/phone natural-key collision |
-| staff email/SMS worker | delivery row company + user | company + user + verified endpoint | live policy + destination/guard | opted-in eligible ✓; others ✗ | paid fan-out, proxy loop |
+| staff email/SMS worker | delivery row company + user | company + user + verified endpoint | live permission/scope + destination/guard | opted-in eligible ✓; others ✗ | paid fan-out, proxy loop |
 | M4 projector worker | `domain_events.company_id` explicit | company + domain event | allowlisted event + live recipient checks | resolved users only | process-wide scan without tenant key |
 
 ### Default R-matrix
@@ -1287,8 +1126,8 @@ Permission note: migration 221 grants `notifications.financial.receive` to all f
 
 ### M1
 
-- Deploy migration and backend with the legacy settings adapter in the same release.
-- Do not enable any new existing-company event during migration.
+- Deploy migration and backend category API in the same release.
+- Confirm category absence resolves enabled and explicit false is preserved across reapply.
 - Confirm no call site remains for `sendPushToCompany` before deploy.
 - Confirm all record-bearing SSE publisher tests pass before deploy.
 - Keep manual `eventBus.redispatch` operator-only; never expose event ID replay without company authorization.
@@ -1301,9 +1140,9 @@ Permission note: migration 221 grants `notifications.financial.receive` to all f
 
 ### M3
 
-- Email/SMS channels remain absent from `supported_channels` until provider configuration, verification, cost limits, and quiet hours are all ready.
-- Default all existing users to not opted in.
-- Disable channel by company policy before rollback.
+- Email/SMS destinations cannot become active until provider configuration, verification, cost limits, and quiet hours are all ready.
+- Default all existing users to no staff email/SMS destination, hence not opted in.
+- Revoke/disable staff destinations before rollback.
 
 ### M4
 
@@ -1314,7 +1153,7 @@ Permission note: migration 221 grants `notifications.financial.receive` to all f
 ## 18. Risks and explicit engineering pushback
 
 1. Exactly-once delivery across PostgreSQL and external push/email/SMS providers cannot be guaranteed. M4 provides one logical delivery and at-least-once attempts with best-effort transport dedupe.
-2. M1's complete V1 producer set is large. It must still ship as one owner-gated security milestone because exposing policy toggles before scoped producers/dispatch would recreate the current unsafe state. Tasks M1.T1–T7 may be reviewed separately but are not independently deployable unless `producer_available=false` keeps incomplete events inert.
+2. M1's complete V1 producer set is large. It must still ship as one owner-gated security milestone because enabling delivery before scoped producers/dispatch would recreate the current unsafe state. Tasks M1.T1–T7 may be reviewed separately but are not independently deployable unless `producer_available=false` keeps incomplete events inert.
 3. Converting SSE to invalidation/refetch increases REST traffic and may reduce instant inline updates. This is preferred to storing stale authorization on a long-lived SSE connection or continuing full DTO broadcasts.
 4. The financial notification permission intentionally does not authorize financial details. Dispatcher payloads must remain generic and deep-link to an operational parent they may access, not to a forbidden payment ledger.
 5. Removing global endpoint uniqueness permits the same browser endpoint to be bound separately to multiple company memberships. Every send/deactivation must therefore operate by row ID or full `(company,user,endpoint)` key.
@@ -1327,7 +1166,7 @@ NOTIF-REWORK-001 is complete only when:
 - all four owner-gated milestones are deployed;
 - no company-broadcast notification delivery remains;
 - no record-bearing company-wide SSE payload remains;
-- every V1 catalog entry truthfully reports producer/channel availability;
+- every V1 catalog entry truthfully reports producer availability and a stable category;
 - all recipient decisions use live RBAC and canonical record scope;
 - existing companies were not silently opted into new events or paid channels;
 - persistent inbox access is rechecked;

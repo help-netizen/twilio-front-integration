@@ -12,12 +12,11 @@ const migration = fs.readFileSync(path.join(root, 'backend/db/migrations/221_not
 const rollback = fs.readFileSync(path.join(root, 'backend/db/migrations/rollback_221_notification_security_core.sql'), 'utf8');
 const roleSeed = fs.readFileSync(path.join(root, 'backend/db/migrations/050_seed_role_configs.sql'), 'utf8');
 const notificationRoute = fs.readFileSync(path.join(root, 'backend/src/routes/notification-settings.js'), 'utf8');
+const notificationPoliciesRoute = fs.readFileSync(path.join(root, 'backend/src/routes/notification-policies.js'), 'utf8');
 const actionRequiredRoute = fs.readFileSync(path.join(root, 'backend/src/routes/action-required-settings.js'), 'utf8');
 const pushRoute = fs.readFileSync(path.join(root, 'backend/src/routes/push-subscriptions.js'), 'utf8');
 const pushService = fs.readFileSync(path.join(root, 'backend/src/services/pushService.js'), 'utf8');
-const platformCompanyService = fs.readFileSync(path.join(root, 'backend/src/services/platformCompanyService.js'), 'utf8');
-const companyQueries = fs.readFileSync(path.join(root, 'backend/src/db/companyQueries.js'), 'utf8');
-const roleQueries = fs.readFileSync(path.join(root, 'backend/src/db/roleQueries.js'), 'utf8');
+const notificationPolicyService = fs.readFileSync(path.join(root, 'backend/src/services/notificationPolicyService.js'), 'utf8');
 
 describe('NOTIF-REWORK-001 migration 221 contract', () => {
     test('uses tenant-paired idempotency and endpoint identities', () => {
@@ -28,47 +27,49 @@ describe('NOTIF-REWORK-001 migration 221 contract', () => {
         expect(rollback).toContain('ROLLBACK_221_BLOCKED: cross-company push endpoints');
     });
 
-    test('creates all M1 policy and delivery tables with tenant-bound FKs', () => {
-        for (const table of [
-            'company_notification_policies',
-            'role_notification_delivery',
-            'user_notification_preferences',
-            'notification_deliveries',
-        ]) {
+    test('creates only per-user category preferences and the delivery ledger', () => {
+        for (const table of ['user_notification_preferences', 'notification_deliveries']) {
             expect(migration).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
             expect(rollback).toContain(`DROP TABLE IF EXISTS ${table}`);
         }
+        expect(migration).not.toContain('CREATE TABLE IF NOT EXISTS company_notification_policies');
+        expect(migration).not.toContain('CREATE TABLE IF NOT EXISTS role_notification_delivery');
+        expect(migration).toContain('DROP TABLE IF EXISTS company_notification_policies CASCADE');
+        expect(migration).toContain('DROP TABLE IF EXISTS role_notification_delivery CASCADE');
+        expect(migration).toContain('category TEXT NOT NULL CHECK');
+        expect(migration).toContain('enabled BOOLEAN NOT NULL');
+        expect(migration).toContain('UNIQUE (company_id, user_id, category)');
         expect(migration).toContain('REFERENCES company_memberships(user_id, company_id)');
         expect(migration).toContain('REFERENCES domain_events(company_id, id)');
-        expect(migration).toContain('REFERENCES company_role_configs(company_id, id)');
     });
 
-    test('catalog seed covers every V1 event and existing-company fallback is false', () => {
-        for (const entry of NOTIFICATION_EVENT_CATALOG) {
-            expect(migration).toContain(`('${entry.event_type}', ${entry.default_enabled}`);
-        }
-        expect(migration).toContain('SELECT c.id, catalog.event_type, false');
-        expect(migration).toContain("('lead.created', 'browser_push_new_lead_enabled')");
-        expect(migration).toContain("('sms.inbound', 'browser_push_new_text_message_enabled')");
-        expect(migration).toContain('ON CONFLICT (company_id, event_type) DO NOTHING');
+    test('does not seed company, role, event, or channel preferences', () => {
+        expect(NOTIFICATION_EVENT_CATALOG).toHaveLength(54);
+        expect(migration).not.toContain('browser_push_config');
+        expect(migration).not.toContain('notification_m1_catalog_seed');
+        const preferenceTable = migration.slice(
+            migration.indexOf('CREATE TABLE IF NOT EXISTS user_notification_preferences'),
+            migration.indexOf('CREATE INDEX IF NOT EXISTS idx_user_notification_preferences')
+        );
+        expect(preferenceTable).not.toMatch(/event_type|channel|preference TEXT/);
     });
 
     test('financial notification permission is cataloged, seeded, and backfilled only as its own key', () => {
         expect(ALL_PERMISSION_KEYS).toContain('notifications.financial.receive');
         expect(roleSeed.match(/\('notifications\.financial\.receive'\)/g)).toHaveLength(4);
         expect(migration).toContain("WHERE rc.role_key IN ('tenant_admin', 'manager', 'dispatcher', 'provider')");
-        const backfill = migration.slice(
-            migration.indexOf('-- New permission keys'),
-            migration.indexOf('-- Keep the SQL bootstrap defaults')
-        );
-        expect(backfill).not.toContain('financial_data.view');
+        expect(migration).not.toContain('financial_data.view');
     });
 
-    test('all three legacy settings routes fail closed without first-company lookup', () => {
+    test('all three settings routes fail closed without first-company lookup', () => {
         for (const source of [notificationRoute, actionRequiredRoute, pushRoute]) {
             expect(source).not.toMatch(/SELECT id FROM companies ORDER BY id LIMIT 1/i);
-            expect(source).toContain('TENANT_CONTEXT_REQUIRED');
         }
+        expect(notificationPoliciesRoute).toContain('req.companyFilter?.company_id');
+        expect(notificationRoute).not.toMatch(/router\.(get|put|patch|post|delete)/);
+        expect(notificationPolicyService).toContain('TENANT_CONTEXT_REQUIRED');
+        expect(actionRequiredRoute).toContain('TENANT_CONTEXT_REQUIRED');
+        expect(pushRoute).toContain('TENANT_CONTEXT_REQUIRED');
     });
 
     test('subscription mutations and stale cleanup retain the full tenant/user identity', () => {
@@ -78,9 +79,9 @@ describe('NOTIF-REWORK-001 migration 221 contract', () => {
         expect(pushService).toMatch(/WHERE company_id = \$1 AND id = ANY\(\$2::uuid\[\]\)/);
     });
 
-    test('new-company bootstrap explicitly seeds catalog defaults', () => {
-        expect(platformCompanyService).toContain('seedNotificationDefaultsForCompany');
-        expect(companyQueries).toContain('seedNotificationDefaultsForCompany');
-        expect(roleQueries).toContain('seedNotificationRoleDefaultsForCompany');
+    test('legacy company push config is no longer an authorization source', () => {
+        expect(pushService).not.toContain('browser_push_config');
+        expect(pushService).not.toContain('company_settings WHERE company_id');
+        expect(pushService).toMatch(/async function isEventEnabled\(\) \{\s+return false;/);
     });
 });

@@ -39,10 +39,10 @@ describe('ROLE-PULSE-LIST-SCOPE-002 unified timeline page provider scope', () =>
         expect(sql).toMatch(/tl\.contact_id IS NOT NULL AND EXISTS/);
         expect(sql).toMatch(/pj\.assigned_provider_user_ids @> \$\d+::jsonb/);
         // NULL-safe deny-list (active = not Canceled/Job is Done), NOT an allow-list.
-        expect(sql).toMatch(/pj\.blanc_status IS NULL OR pj\.blanc_status <> ALL\(\$\d+::text\[\]\)/);
+        expect(sql).toContain("pj.blanc_status IS NULL OR pj.blanc_status <> ALL(ARRAY['Canceled', 'Job is Done']::text[])");
         expect(sql).not.toMatch(/pj\.blanc_status = ANY/);
         expect(params).toContain(JSON.stringify(['user-1']));
-        expect(params).toContainEqual(PULSE_INACTIVE_JOB_STATUSES);
+        expect(PULSE_INACTIVE_JOB_STATUSES).toEqual(['Canceled', 'Job is Done']);
     });
 
     it('provider assigned_only WITHOUT a resolved user denies everything (never widens)', async () => {

@@ -90,8 +90,10 @@ test('T-own: masked composer resolves an owned proxy and response contains no ph
         42,
         COMPANY_A,
         JSON.stringify(['provider-1']),
-        expect.any(Array),
     ]);
+    expect(mockDbQuery.mock.calls[0][0]).toContain(
+        "visible_job.blanc_status <> ALL(ARRAY['Canceled', 'Job is Done']::text[])"
+    );
     expect(mockDbQuery.mock.calls[1][1]).toEqual([COMPANY_A, CUSTOMER]);
     expect(mockDbQuery.mock.calls[2][1]).toEqual([PROXY, COMPANY_A]);
     expect(mockGetOrCreateConversation).toHaveBeenCalledWith(CUSTOMER, PROXY, COMPANY_A);

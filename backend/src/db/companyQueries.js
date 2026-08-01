@@ -6,7 +6,6 @@
 
 const db = require('./connection');
 const marketplaceQueries = require('./marketplaceQueries');
-const notificationPolicyService = require('../services/notificationPolicyService');
 
 /**
  * Get company by ID.
@@ -93,11 +92,6 @@ async function createCompany(fields) {
             company.id,
             { seededBy: 'REPORT-TO-ESTIMATE-001-ADMIN', client }
         );
-        await notificationPolicyService.seedNotificationDefaultsForCompany(
-            company.id,
-            { client }
-        );
-
         await client.query('COMMIT');
         return company;
     } catch (error) {

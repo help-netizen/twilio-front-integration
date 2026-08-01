@@ -3,7 +3,7 @@
  * PostgreSQL CRUD for SMS Conversations tables.
  */
 const db = require('./connection');
-const { PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const { buildActiveAssignedContactPredicate } = require('./providerContactAccessQueries');
 
 function requireCompanyId(companyId) {
     if (!companyId) throw new Error('companyId is required');
@@ -75,6 +75,12 @@ async function getConversationById(id, companyId) {
  */
 async function isConversationVisibleToProvider(conversationId, companyId, userId) {
     if (!companyId || !userId) return false;
+    const activeContactPredicate = buildActiveAssignedContactPredicate({
+        jobsAlias: 'pj',
+        contactIdExpression: 'c.id',
+        companyPlaceholder: 'sc.company_id',
+        userPlaceholder: '$3',
+    });
     const r = await db.query(
         `SELECT 1
          FROM sms_conversations sc
@@ -82,14 +88,9 @@ async function isConversationVisibleToProvider(conversationId, companyId, userId
            ON c.company_id = sc.company_id
           AND regexp_replace(c.phone_e164, '\\D', '', 'g') = regexp_replace(sc.customer_e164, '\\D', '', 'g')
          WHERE sc.id = $1 AND sc.company_id = $2
-           AND EXISTS (
-             SELECT 1 FROM jobs pj
-             WHERE pj.contact_id = c.id AND pj.company_id = sc.company_id
-               AND pj.assigned_provider_user_ids @> $3::jsonb
-               AND (pj.blanc_status IS NULL OR pj.blanc_status <> ALL($4::text[]))
-           )
+           AND ${activeContactPredicate}
          LIMIT 1`,
-        [conversationId, companyId, JSON.stringify([userId]), PULSE_INACTIVE_JOB_STATUSES]
+        [conversationId, companyId, JSON.stringify([String(userId)])]
     );
     return r.rows.length > 0;
 }

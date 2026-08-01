@@ -6,7 +6,7 @@
  */
 const db = require('./connection');
 const { toE164 } = require('../utils/phoneUtils');
-const { PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const { buildActiveAssignedContactPredicate } = require('./providerContactAccessQueries');
 const { buildTaskActorPredicate } = require('../middleware/taskContentScope');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
@@ -481,8 +481,7 @@ async function getUnifiedTimelinePage({
     }
 
     // ROLE-PULSE-LIST-SCOPE-002: an assigned_only provider's Pulse sidebar shows ONLY
-    // timelines of a contact they have an ACTIVE job with (active = any blanc_status
-    // except PULSE_INACTIVE_JOB_STATUSES). Contactless/orphan timelines (no contact_id)
+    // timelines of a contact they have an ACTIVE job with. Contactless/orphan timelines
     // are hidden from providers entirely. Office roles (assignedOnly=false) pass the
     // empty filter → byte-identical to before. Built AFTER searchFilter so its params
     // append past any search params. Deny-by-default: assigned_only with no resolved
@@ -494,15 +493,12 @@ async function getUnifiedTimelinePage({
         } else {
             params.push(JSON.stringify([providerScope.userId]));
             const userIdx = params.length;
-            params.push(PULSE_INACTIVE_JOB_STATUSES);
-            const statusIdx = params.length;
-            providerFilter = `AND tl.contact_id IS NOT NULL AND EXISTS (
-                 SELECT 1 FROM jobs pj
-                 WHERE pj.contact_id = tl.contact_id
-                   AND pj.company_id = $1
-                   AND pj.assigned_provider_user_ids @> $${userIdx}::jsonb
-                   AND (pj.blanc_status IS NULL OR pj.blanc_status <> ALL($${statusIdx}::text[]))
-             )`;
+            providerFilter = `AND tl.contact_id IS NOT NULL AND ${buildActiveAssignedContactPredicate({
+                jobsAlias: 'pj',
+                contactIdExpression: 'tl.contact_id',
+                companyPlaceholder: '$1',
+                userPlaceholder: `$${userIdx}`,
+            })}`;
         }
     }
 

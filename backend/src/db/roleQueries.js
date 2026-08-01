@@ -205,8 +205,6 @@ async function seedRoleConfigs(companyId, createdBy = null) {
          ON CONFLICT (role_config_id, permission_key) DO NOTHING`,
         [companyId]
     );
-    await require('../services/notificationPolicyService')
-        .seedNotificationRoleDefaultsForCompany(companyId);
     return results;
 }
 

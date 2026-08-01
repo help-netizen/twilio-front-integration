@@ -11,7 +11,6 @@ const path = require('path');
 const db = require('../db/connection');
 const auditService = require('./auditService');
 const marketplaceQueries = require('../db/marketplaceQueries');
-const notificationPolicyService = require('./notificationPolicyService');
 
 const ROLE_SEED_SQL = fs.readFileSync(
     path.resolve(__dirname, '../../db/migrations/050_seed_role_configs.sql'),
@@ -109,10 +108,6 @@ async function bootstrapCompany({ userId, name, geo = {}, phone, email }) {
         // Seed default role matrix (migration 050 body is idempotent and
         // covers every company, including the one just created)
         await client.query(ROLE_SEED_SQL);
-        await notificationPolicyService.seedNotificationDefaultsForCompany(
-            company.id,
-            { client }
-        );
 
         await client.query('COMMIT');
 

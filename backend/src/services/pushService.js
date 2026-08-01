@@ -3,10 +3,10 @@
  *
  * Two independent delivery channels live here:
  *
- *  1. Web Push (VAPID) — company-wide broadcast for the browser CRM.
- *     `sendPushToCompany(companyId, eventType, data)` fans a notification out to
- *     every active push_subscriptions row for a company (new_text_message,
- *     new_lead). Used by leads.js and conversationsService.js.
+ *  1. Web Push (VAPID) — the legacy company-wide entry point remains exported
+ *     for callers awaiting M1.T4/T5 conversion, but is fail-closed. Notification
+ *     category preferences and record scope cannot be enforced by a company
+ *     broadcast.
  *
  *  2. Native APNs (MOBILE-TECH-APP-001 / MTECH-T2, spec §3.7/§4.2/§8.T2/C9) —
  *     per-user delivery to the iOS tech app. `sendToUser(companyId, crmUserId,
@@ -25,28 +25,12 @@ const http2 = require('http2');
 const jwt = require('jsonwebtoken');
 const db = require('../db/connection');
 
-const SETTING_KEY = 'browser_push_config';
-
-// Event type → company setting key mapping
-const EVENT_SETTING_MAP = {
-    new_text_message: 'browser_push_new_text_message_enabled',
-    new_lead: 'browser_push_new_lead_enabled',
-};
-
 /**
- * Check if a notification event type is enabled for a company.
+ * The removed company settings are no longer an authorization source. Keep the
+ * legacy probe fail-closed until its callers move to the scoped dispatcher.
  */
-async function isEventEnabled(companyId, eventType) {
-    const settingKey = EVENT_SETTING_MAP[eventType];
-    if (!settingKey) return false;
-
-    const { rows } = await db.query(
-        'SELECT setting_value FROM company_settings WHERE company_id = $1 AND setting_key = $2',
-        [companyId, SETTING_KEY]
-    );
-
-    if (rows.length === 0) return false;
-    return !!rows[0].setting_value?.[settingKey];
+async function isEventEnabled() {
+    return false;
 }
 
 /**
@@ -64,7 +48,7 @@ async function sendPushToCompany(companyId, eventType, data) {
     const logPrefix = `[PushService] [${eventType}] company=${companyId}`;
 
     try {
-        // 1. Check company policy
+        // 1. Legacy broadcasts stay disabled until scoped dispatcher replacement.
         const enabled = await isEventEnabled(companyId, eventType);
         if (!enabled) {
             console.log(`${logPrefix} Event type disabled, skipping`);

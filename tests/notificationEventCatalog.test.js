@@ -2,21 +2,21 @@
 
 const {
     NOTIFICATION_CATALOG_VERSION,
+    NOTIFICATION_CATEGORIES,
     NOTIFICATION_EVENT_CATALOG,
     getNotificationCatalogEntry,
     getPublicNotificationEventCatalog,
 } = require('../backend/src/services/notificationEventCatalog');
 
 const PUBLIC_KEYS = [
-    'category',
+    'category_key',
+    'category_label',
     'default_audience_summary',
-    'default_enabled',
     'description',
     'event_type',
     'label',
     'producer_available',
     'required_permission',
-    'supported_channels',
 ].sort();
 
 describe('notification event catalog', () => {
@@ -38,12 +38,17 @@ describe('notification event catalog', () => {
         }
     });
 
-    test('M1.T2 exposes only deployed channels and truthfully marks producer gaps', () => {
-        for (const entry of getPublicNotificationEventCatalog()) {
-            expect(entry.supported_channels.every(channel => (
-                channel === 'browser_push' || channel === 'native_push'
-            ))).toBe(true);
-        }
+    test('defines five ordered user categories plus one internal always-on category', () => {
+        expect(NOTIFICATION_CATEGORIES.map(category => category.key)).toEqual([
+            'job_schedule', 'leads', 'calls_messages', 'finance', 'tasks', 'admin_system',
+        ]);
+        expect(NOTIFICATION_CATEGORIES.filter(category => category.user_configurable)).toHaveLength(5);
+        expect(NOTIFICATION_EVENT_CATALOG.every(entry => (
+            NOTIFICATION_CATEGORIES.some(category => category.key === entry.category_key)
+        ))).toBe(true);
+    });
+
+    test('truthfully marks producer gaps', () => {
         expect(getNotificationCatalogEntry('lead.created').producer_available).toBe(true);
         expect(getNotificationCatalogEntry('sms.inbound').producer_available).toBe(true);
         expect(getNotificationCatalogEntry('call.voicemail_received').producer_available).toBe(false);
@@ -52,7 +57,7 @@ describe('notification event catalog', () => {
 
     test('financial event family uses the notification-only permission', () => {
         const financial = NOTIFICATION_EVENT_CATALOG.filter(entry => (
-            entry.category === 'Estimates, invoices & payments'
+            entry.category_key === 'finance'
         ));
         expect(financial.length).toBeGreaterThan(0);
         expect(financial.every(entry => (
@@ -60,8 +65,21 @@ describe('notification event catalog', () => {
         ))).toBe(true);
     });
 
+    test('maps all event families to the binding categories', () => {
+        for (const entry of NOTIFICATION_EVENT_CATALOG) {
+            let expected;
+            if (entry.event_type.startsWith('job.') || entry.event_type === 'review.received') expected = 'job_schedule';
+            else if (entry.event_type.startsWith('lead.')) expected = 'leads';
+            else if (/^(sms\.|email\.|yelp\.|call\.|ai_call\.)/.test(entry.event_type)
+                || ['message.delivery_failed', 'contact.updated'].includes(entry.event_type)) expected = 'calls_messages';
+            else if (/^(estimate\.|invoice\.|payment\.)/.test(entry.event_type)) expected = 'finance';
+            else if (entry.event_type.startsWith('task.')) expected = 'tasks';
+            else expected = 'admin_system';
+            expect(entry.category_key).toBe(expected);
+        }
+    });
+
     test('unknown event keys are not catalog entries', () => {
         expect(getNotificationCatalogEntry('anything.from.the.client')).toBeNull();
     });
 });
-

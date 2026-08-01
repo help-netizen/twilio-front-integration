@@ -18,7 +18,8 @@ const {
     buildMaskedSmsTargets,
 } = require('../services/pulseMaskingService');
 const { requirePermission } = require('../middleware/authorization');
-const { getProviderScope, PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const { getProviderScope } = require('../middleware/providerScope');
+const { providerHasActiveJobForContact } = require('../db/providerContactAccessQueries');
 
 // All Pulse surfaces require pulse.view (PF007-HARDENING-001 / TASK-RBAC-009)
 router.use(requirePermission('pulse.view'));
@@ -49,15 +50,11 @@ async function isContactVisibleToProvider(req, contactId) {
     const scope = getProviderScope(req);
     if (!scope.assignedOnly) return true;
     if (!scope.userId || !contactId) return false;
-    const { rows } = await db.query(
-        `SELECT 1 FROM jobs pj
-         WHERE pj.contact_id = $1 AND pj.company_id = $2
-           AND pj.assigned_provider_user_ids @> $3::jsonb
-           AND (pj.blanc_status IS NULL OR pj.blanc_status <> ALL($4::text[]))
-         LIMIT 1`,
-        [contactId, tenantCompanyId(req), JSON.stringify([scope.userId]), PULSE_INACTIVE_JOB_STATUSES]
+    return providerHasActiveJobForContact(
+        tenantCompanyId(req),
+        scope.userId,
+        contactId
     );
-    return rows.length > 0;
 }
 
 // Tenant-safe timeline ownership check for thread mutations → null = 404

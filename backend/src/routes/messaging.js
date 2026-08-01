@@ -6,7 +6,8 @@
 const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
-const { getProviderScope, PULSE_INACTIVE_JOB_STATUSES } = require('../middleware/providerScope');
+const { getProviderScope } = require('../middleware/providerScope');
+const { buildActiveAssignedContactPredicate } = require('../db/providerContactAccessQueries');
 const db = require('../db/connection');
 const { getMaskViewer, redactPulsePayload } = require('../services/pulseMaskingService');
 const { toE164 } = require('../utils/phoneUtils');
@@ -49,15 +50,13 @@ async function resolveMaskedStartTarget(req, contactId, targetRef) {
         if (!scope.userId) {
             providerFilter = 'AND FALSE';
         } else {
-            params.push(JSON.stringify([String(scope.userId)]), PULSE_INACTIVE_JOB_STATUSES);
-            providerFilter = `AND EXISTS (
-                SELECT 1
-                FROM jobs visible_job
-                WHERE visible_job.company_id = c.company_id
-                  AND visible_job.contact_id = c.id
-                  AND visible_job.assigned_provider_user_ids @> $3::jsonb
-                  AND (visible_job.blanc_status IS NULL OR visible_job.blanc_status <> ALL($4::text[]))
-            )`;
+            params.push(JSON.stringify([String(scope.userId)]));
+            providerFilter = `AND ${buildActiveAssignedContactPredicate({
+                jobsAlias: 'visible_job',
+                contactIdExpression: 'c.id',
+                companyPlaceholder: 'c.company_id',
+                userPlaceholder: '$3',
+            })}`;
         }
     }
 

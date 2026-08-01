@@ -21,27 +21,18 @@ function slug(prefix, id) {
     return `${prefix}-${id.replaceAll('-', '')}`;
 }
 
-async function snapshotCompanyPolicy(client, companyId) {
+async function preferenceSnapshot(client, companyId) {
     const { rows } = await client.query(
-        `SELECT jsonb_build_object(
-             'policies', COALESCE((
-                 SELECT jsonb_agg(to_jsonb(p) ORDER BY p.event_type)
-                 FROM company_notification_policies p
-                 WHERE p.company_id = $1
-             ), '[]'::jsonb),
-             'roles', COALESCE((
-                 SELECT jsonb_agg(to_jsonb(d) ORDER BY d.role_config_id, d.event_type, d.channel)
-                 FROM role_notification_delivery d
-                 WHERE d.company_id = $1
-             ), '[]'::jsonb)
-         ) AS snapshot`,
+        `SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY p.user_id, p.category), '[]'::jsonb) AS snapshot
+         FROM user_notification_preferences p
+         WHERE p.company_id = $1`,
         [companyId]
     );
     return rows[0].snapshot;
 }
 
 describe('migration 221 real PostgreSQL isolation', () => {
-    test('double apply preserves legacy true, defaults new events off, and tenant-pairs natural keys', async () => {
+    test('double apply preserves category preferences and tenant-pairs natural keys', async () => {
         const client = await db.pool.connect();
         const companyA = randomUUID();
         const companyB = randomUUID();
@@ -83,40 +74,25 @@ describe('migration 221 real PostgreSQL isolation', () => {
                         ($3, $4, 'provider', 'Provider', 'Fixture', false)`,
                 [roleA, companyA, roleB, companyB]
             );
+
+            await client.query(migration);
             await client.query(
-                `INSERT INTO company_settings (company_id, setting_key, setting_value)
-                 VALUES ($1, 'browser_push_config', $2::jsonb)`,
-                [companyA, JSON.stringify({
-                    browser_push_new_text_message_enabled: true,
-                    browser_push_new_lead_enabled: true,
-                })]
+                `INSERT INTO user_notification_preferences (company_id, user_id, category, enabled)
+                 VALUES ($1, $2, 'leads', false), ($3, $4, 'tasks', false)`,
+                [companyA, userA, companyB, userB]
             );
-
+            const beforeSecondApply = await preferenceSnapshot(client, companyB);
             await client.query(migration);
-            await client.query(migration);
+            expect(await preferenceSnapshot(client, companyB)).toStrictEqual(beforeSecondApply);
 
-            const legacy = await client.query(
-                `SELECT company_id, event_type, enabled
-                 FROM company_notification_policies
-                 WHERE company_id = ANY($1::uuid[])
-                   AND event_type IN ('lead.created', 'sms.inbound')
-                 ORDER BY company_id, event_type`,
-                [[companyA, companyB]]
+            const settings = await notificationPolicyService.getNotificationSettings(
+                companyA,
+                userA,
+                { client }
             );
-            expect(legacy.rows.filter(row => row.company_id === companyA).map(row => row.enabled))
-                .toEqual([true, true]);
-            expect(legacy.rows.filter(row => row.company_id === companyB).map(row => row.enabled))
-                .toEqual([false, false]);
-
-            const newlyEnabled = await client.query(
-                `SELECT event_type
-                 FROM company_notification_policies
-                 WHERE company_id = ANY($1::uuid[])
-                   AND enabled = true
-                   AND event_type NOT IN ('lead.created', 'sms.inbound')`,
-                [[companyA, companyB]]
-            );
-            expect(newlyEnabled.rows).toEqual([]);
+            expect(settings.categories.find(category => category.key === 'leads').enabled).toBe(false);
+            expect(settings.categories.filter(category => category.key !== 'leads')
+                .every(category => category.enabled)).toBe(true);
 
             const grants = await client.query(
                 `SELECT rc.role_key, p.permission_key, p.is_allowed
@@ -130,6 +106,15 @@ describe('migration 221 real PostgreSQL isolation', () => {
                 { role_key: 'dispatcher', permission_key: 'notifications.financial.receive', is_allowed: true },
                 { role_key: 'provider', permission_key: 'notifications.financial.receive', is_allowed: true },
             ]);
+
+            await notificationPolicyService.updateCurrentUserCategory(
+                companyA,
+                userA,
+                'finance',
+                { enabled: false },
+                { client }
+            );
+            expect(await preferenceSnapshot(client, companyB)).toStrictEqual(beforeSecondApply);
 
             await client.query(
                 `INSERT INTO push_subscriptions
@@ -153,7 +138,8 @@ describe('migration 221 real PostgreSQL isolation', () => {
                  WHERE company_id = $1 AND user_id = $2 AND endpoint = $3`,
                 [companyB, userB, sharedEndpoint]
             );
-            expect(afterBSubscription.rows[0].snapshot).toStrictEqual(beforeBSubscription.rows[0].snapshot);
+            expect(afterBSubscription.rows[0].snapshot)
+                .toStrictEqual(beforeBSubscription.rows[0].snapshot);
 
             await client.query(
                 `INSERT INTO domain_events
@@ -175,36 +161,13 @@ describe('migration 221 real PostgreSQL isolation', () => {
             await expect(client.query(rollback)).rejects.toThrow(/ROLLBACK_221_BLOCKED/);
             await client.query('ROLLBACK TO SAVEPOINT rollback_preflight');
             const rollbackSafety = await client.query(
-                `SELECT to_regclass('company_notification_policies') AS policies,
-                        to_regclass('role_notification_delivery') AS roles`
+                `SELECT to_regclass('user_notification_preferences') AS preferences,
+                        to_regclass('notification_deliveries') AS deliveries`
             );
             expect(rollbackSafety.rows[0]).toEqual({
-                policies: 'company_notification_policies',
-                roles: 'role_notification_delivery',
+                preferences: 'user_notification_preferences',
+                deliveries: 'notification_deliveries',
             });
-
-            const beforeBPolicy = await snapshotCompanyPolicy(client, companyB);
-            await expect(notificationPolicyService.updateCompanyPolicy(
-                companyA,
-                'lead.created',
-                { roles: [{ role_config_id: roleB, channels: { browser_push: true } }] },
-                userA,
-                { client }
-            )).rejects.toMatchObject({ status: 404, code: 'ROLE_CONFIG_NOT_FOUND' });
-            expect(await snapshotCompanyPolicy(client, companyB)).toStrictEqual(beforeBPolicy);
-
-            const ownUpdate = await notificationPolicyService.updateCompanyPolicy(
-                companyA,
-                'lead.created',
-                {
-                    company_enabled: false,
-                    roles: [{ role_config_id: roleA, channels: { browser_push: false } }],
-                },
-                userA,
-                { client }
-            );
-            expect(ownUpdate.company_policy).toEqual({ event_type: 'lead.created', enabled: false });
-            expect(await snapshotCompanyPolicy(client, companyB)).toStrictEqual(beforeBPolicy);
         } finally {
             await client.query('ROLLBACK');
             client.release();

@@ -27,10 +27,10 @@ describe('ROLE-PULSE-SCOPE-001 active-job Pulse scope', () => {
         const [sql, params] = db.query.mock.calls[0];
         expect(sql).toMatch(/pj\.assigned_provider_user_ids @> \$3::jsonb/);
         // NULL-safe deny-list: active == not one of the inactive statuses (NULL counts as active).
-        expect(sql).toMatch(/pj\.blanc_status IS NULL OR pj\.blanc_status <> ALL\(\$4::text\[\]\)/);
+        expect(sql).toContain("pj.blanc_status IS NULL OR pj.blanc_status <> ALL(ARRAY['Canceled', 'Job is Done']::text[])");
         // Must NOT be an allow-list (= ANY(...)) — that would hide statuses the owner calls active.
         expect(sql).not.toMatch(/pj\.blanc_status = ANY/);
-        expect(params[3]).toEqual(PULSE_INACTIVE_JOB_STATUSES);
+        expect(params).toEqual([5, 'company-1', JSON.stringify(['user-1'])]);
     });
 
     it('denies without a resolved user (deny-by-default) — no query at all', async () => {

@@ -1,7 +1,13 @@
 'use strict';
 
+/**
+ * Per-user notification category settings.
+ *
+ * Mounted at /api/settings behind authenticate and requireCompanyAccess.
+ * Tenant and user identity are request-derived only.
+ */
+
 const express = require('express');
-const { requirePermission } = require('../middleware/authorization');
 const notificationPolicyService = require('../services/notificationPolicyService');
 
 const router = express.Router();
@@ -10,64 +16,36 @@ function requestContext(req) {
     return {
         companyId: req.companyFilter?.company_id || null,
         userId: req.user?.crmUser?.id || null,
-        roleKey: req.authz?.membership?.role_key || null,
-        permissions: req.authz?.permissions || [],
     };
 }
 
 function sendError(res, error) {
     const status = error.status || 500;
-    if (status >= 500) console.error('[NotificationPolicies] error:', error.message);
+    if (status >= 500) console.error('[NotificationSettings] error:', error.message);
     return res.status(status).json({
         ok: false,
-        code: error.code || 'NOTIFICATION_POLICY_ERROR',
-        error: status >= 500 ? 'Unable to process notification policy request.' : error.message,
+        code: error.code || 'NOTIFICATION_SETTINGS_ERROR',
+        error: status >= 500 ? 'Unable to process notification settings request.' : error.message,
     });
 }
 
-router.get('/notification-policies', async (req, res) => {
+router.get('/notifications', async (req, res) => {
     try {
-        const { companyId, userId, roleKey, permissions } = requestContext(req);
-        const data = await notificationPolicyService.getPolicySnapshot(companyId, {
-            userId,
-            roleKey,
-            permissions,
-            includeAllRoles: permissions.includes('tenant.company.manage'),
-        });
+        const { companyId, userId } = requestContext(req);
+        const data = await notificationPolicyService.getNotificationSettings(companyId, userId);
         return res.json({ ok: true, data });
     } catch (error) {
         return sendError(res, error);
     }
 });
 
-router.patch(
-    '/notification-policies/:eventType',
-    requirePermission('tenant.company.manage'),
-    async (req, res) => {
-        try {
-            const { companyId, userId } = requestContext(req);
-            const data = await notificationPolicyService.updateCompanyPolicy(
-                companyId,
-                req.params.eventType,
-                req.body,
-                userId
-            );
-            return res.json({ ok: true, data });
-        } catch (error) {
-            return sendError(res, error);
-        }
-    }
-);
-
-router.patch('/notification-preferences/:eventType', async (req, res) => {
+router.patch('/notifications/:category', async (req, res) => {
     try {
-        const { companyId, userId, roleKey, permissions } = requestContext(req);
-        const data = await notificationPolicyService.updateCurrentUserPreference(
+        const { companyId, userId } = requestContext(req);
+        const data = await notificationPolicyService.updateCurrentUserCategory(
             companyId,
             userId,
-            roleKey,
-            permissions,
-            req.params.eventType,
+            req.params.category,
             req.body
         );
         return res.json({ ok: true, data });
@@ -77,4 +55,3 @@ router.patch('/notification-preferences/:eventType', async (req, res) => {
 });
 
 module.exports = router;
-

@@ -32,8 +32,6 @@ $rollback$;
 
 DROP TABLE IF EXISTS notification_deliveries;
 DROP TABLE IF EXISTS user_notification_preferences;
-DROP TABLE IF EXISTS role_notification_delivery;
-DROP TABLE IF EXISTS company_notification_policies;
 
 DELETE FROM company_role_permissions
 WHERE permission_key = 'notifications.financial.receive';
@@ -58,5 +56,3 @@ BEGIN
     END IF;
 END
 $rollback$;
-
-DROP INDEX IF EXISTS uq_company_role_configs_company_id_id;
