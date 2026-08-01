@@ -122,6 +122,23 @@ state mutation, and callbacks require the resolved company and key executions
 by `(company_id, call_sid)`. Caller-controlled `To`, `From`, and CallSid alone
 never select another tenant's routing graph or execution.
 
+### 2.7 Busy-call availability reconciliation
+
+Busy Client/SIP/contact reads require company context and filter `calls` by
+`company_id`. Stale-call verification selects the resolved company's Twilio
+master/subaccount client through `getClientForCompany`; it never uses the global
+master client. A final provider status updates only
+`(company_id, call_sid)`. Missing company context fails closed.
+
+### 2.8 Shared inbox conflict-target compatibility
+
+Migration 226 changes the shared `webhook_inbox` key to
+`(company_id, event_key)`, so every provider writer must use that same conflict
+target. Zenbooker webhook ingestion uses its URL-key-resolved company (or an
+explicitly configured legacy webhook company), rejects absent company context,
+and scopes processed/failed mutations by company plus event key. It never
+defaults an unbound webhook to ABC Homes.
+
 ## 3. Migration 226
 
 `226_twilio_tenant_natural_keys.sql` runs in one locked transaction. It:
@@ -164,6 +181,8 @@ code fix does not infer tenant ownership from a master-account phone number.
 | Outbound softphone TwiML persistence | resolved payload `AccountSid` | `(company_id,callSid)` | provider signature + matching tenant identity | matching bound identity ✓; cross-tenant `From` ✗ | foreign timeline/call persistence |
 | Realtime transcript persistence/SSE | authenticated session company | `(company_id,transcription_sid)` | internal session | authenticated session ✓ | same CallSid session capture or foreign broadcast |
 | Softphone TwiML inbox ingress | resolved payload `AccountSid` | `(company_id,event_key)` | Twilio signature | bound account ✓; unresolved ✗ | bypass of shared inbox isolation |
+| Busy-call reconciliation | resolved/routed company | `(company_id,callSid)` | internal live-routing context | master or bound subaccount ✓; missing company ✗ | foreign status overwrite and false busy routing |
+| Zenbooker webhook inbox | opaque company webhook key or explicit legacy binding | `(company_id,event_key)` | provider webhook key/secret | resolved company ✓; absent binding ✗ | silent callback loss or foreign inbox mutation |
 
 Provider callbacks have no CRM entity-id authorization lookup, so canonical
 `T-foreign` is a rejected provider request with byte-unchanged tenant rows, not
@@ -183,6 +202,10 @@ an internal-route 404. CRM RBAC is not applicable to public provider callbacks.
   one tenant inbox event.
 - Master regression: ABC Homes callbacks and media tokens resolve to the
   default company and continue normally.
+- Busy reconciliation: a shared CallSid reconciled for B changes only B; A is
+  byte-unchanged and the provider fetch uses B's subaccount client.
+- Shared inbox: the same Zenbooker event key inserts once per resolved company
+  against the post-226 composite constraint; absent company writes nothing.
 
 Sabotage minimum:
 
@@ -194,3 +217,6 @@ Sabotage minimum:
 - Remove post-await rejection checks → `SAB-TW-WS-TIMEOUT` creates a late session.
 - Drop resolved-company routing scope → `SAB-TW-GROUP`/`SAB-TW-FLOW-TBLAST`
   expose the foreign group or execution.
+- Drop busy-call company scope → the real-DB availability T-blast mutates A.
+- Restore Zenbooker `ON CONFLICT(event_key)` → the post-226 real-DB webhook test
+  fails with PostgreSQL conflict-target error.

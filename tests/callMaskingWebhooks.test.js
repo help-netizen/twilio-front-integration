@@ -214,7 +214,7 @@ describe('CALL-MASKING Twilio webhook flow', () => {
 
         await handleVoiceInbound(req, res);
 
-        expect(mockResolveGroup).toHaveBeenCalledWith(MASKING);
+        expect(mockResolveGroup).toHaveBeenCalledWith(MASKING, COMPANY_A);
         expect(mockVoicemail).toHaveBeenCalledWith({ baseUrl: 'https://api.example.test' });
         expect(res.send).toHaveBeenCalledWith('<Response><Say>Company voicemail</Say></Response>');
         expect(mockInsertInboxEvent).toHaveBeenCalledTimes(1);

@@ -77,6 +77,7 @@ function makeRes() {
 // ---------------------------------------------------------------------------
 
 const { handleVoiceInbound, handleDialAction } = require('../backend/src/webhooks/twilioWebhooks');
+const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
 describe('Bug #6 — Stale call records / voicemail routing', () => {
     beforeEach(() => {
@@ -240,7 +241,7 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
             });
 
             const ca = require('../backend/src/services/callAvailability');
-            const resolved = await ca.verifyAndFixStaleCalls(['CA_stale_999'], 'test');
+            const resolved = await ca.verifyAndFixStaleCalls(['CA_stale_999'], DEFAULT_COMPANY_ID, 'test');
 
             expect(mockTwilioCallsFn).toHaveBeenCalledWith('CA_stale_999');
             expect(mockTwilioFetch).toHaveBeenCalled();
@@ -253,6 +254,8 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
                     params && params.includes('CA_stale_999')
             );
             expect(updateCalls.length).toBeGreaterThanOrEqual(1);
+            expect(updateCalls[0][0]).toContain('company_id = $4');
+            expect(updateCalls[0][1][3]).toBe(DEFAULT_COMPANY_ID);
         });
     });
 
@@ -274,7 +277,7 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
         it('isContactBusy should return false when no active calls', async () => {
             mockQuery.mockResolvedValue({ rows: [] });
             const ca = require('../backend/src/services/callAvailability');
-            const busy = await ca.isContactBusy('+15551234567', 'test');
+            const busy = await ca.isContactBusy('+15551234567', DEFAULT_COMPANY_ID, 'test');
             expect(busy).toBe(false);
         });
 
@@ -286,7 +289,7 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
             mockTwilioFetch.mockResolvedValue({ status: 'completed', endTime: new Date().toISOString() });
 
             const ca = require('../backend/src/services/callAvailability');
-            const busy = await ca.isContactBusy('+15551234567', 'test');
+            const busy = await ca.isContactBusy('+15551234567', DEFAULT_COMPANY_ID, 'test');
             expect(busy).toBe(false);
             expect(mockTwilioCallsFn).toHaveBeenCalledWith('CA_stale_123');
         });

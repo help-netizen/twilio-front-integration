@@ -213,7 +213,7 @@ async function availableAgentsForGroup(groupId, companyId, traceId = 'group-rout
     let busyIdentities = new Set();
     let callSids = [];
     try {
-        const busy = await getBusyClientIdentities(traceId);
+        const busy = await getBusyClientIdentities(companyId, traceId);
         busyIdentities = busy.busyIdentities;
         callSids = busy.callSids;
     } catch (err) {
@@ -236,8 +236,8 @@ async function availableAgentsForGroup(groupId, companyId, traceId = 'group-rout
         }));
 
     if (agents.length === 0 && callSids.length > 0) {
-        await verifyAndFixStaleCalls(callSids, traceId);
-        const fresh = await getBusyClientIdentities(traceId);
+        await verifyAndFixStaleCalls(callSids, companyId, traceId);
+        const fresh = await getBusyClientIdentities(companyId, traceId);
         agents = members.rows
             .filter(row => candidateIds.includes(String(row.user_id)))
             .filter(row => {

@@ -61,6 +61,10 @@ describe('Zenbooker webhook activity coalescing', () => {
 
         await processWebhookPayload('request-1', payload, {}, companyId);
 
+        expect(mockDbQuery).toHaveBeenCalledWith(
+            expect.stringContaining('ON CONFLICT (company_id, event_key)'),
+            expect.arrayContaining([companyId])
+        );
         expect(mockHandleContactWebhook).toHaveBeenCalledWith(payload, companyId);
         expect(mockLogZenbookerEntity).toHaveBeenCalledTimes(1);
         expect(mockLogZenbookerEntity).toHaveBeenCalledWith({
@@ -69,6 +73,23 @@ describe('Zenbooker webhook activity coalescing', () => {
             entityId: 81,
             summary: { status: 'updated' },
         });
+        const processedUpdate = mockDbQuery.mock.calls.find(
+            ([sql]) => String(sql).includes("SET status = 'processed'")
+        );
+        expect(processedUpdate[0]).toContain('company_id = $2');
+        expect(processedUpdate[1][1]).toBe(companyId);
+    });
+
+    test('missing webhook company fails closed before inbox persistence', async () => {
+        await expect(processWebhookPayload(
+            'request-unscoped',
+            { event: 'customer.edited', data: { id: 'zb-contact-1' } },
+            {},
+            null
+        )).rejects.toMatchObject({ code: 'ZENBOOKER_TENANT_UNRESOLVED' });
+
+        expect(mockDbQuery).not.toHaveBeenCalled();
+        expect(mockHandleContactWebhook).not.toHaveBeenCalled();
     });
 
     test('job webhook emits one Job event after the entity sync', async () => {

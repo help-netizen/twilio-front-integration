@@ -53,6 +53,30 @@ describe('F017 groupRouting.availableAgentsForGroup', () => {
         ]);
         expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('WHERE ugm.group_id = $1'), ['ug-1', 'company-1']);
         expect(mockGetPresenceSnapshot).toHaveBeenCalledWith(['u-available', 'u-on-call', 'u-offline', 'u-busy-db'], 'company-1');
+        expect(mockGetBusyClientIdentities).toHaveBeenCalledWith('company-1', 'test');
+    });
+
+    it('reconciles and re-reads busy calls only in the routed company', async () => {
+        const busyIdentities = new Set([
+            buildSoftphoneIdentity('company-1', 'u-available'),
+            buildSoftphoneIdentity('company-1', 'u-busy-db'),
+        ]);
+        mockGetBusyClientIdentities
+            .mockResolvedValueOnce({
+                busyIdentities,
+                callSids: ['CA-shared'],
+            })
+            .mockResolvedValueOnce({ busyIdentities: new Set(), callSids: [] });
+
+        const agents = await availableAgentsForGroup('ug-1', 'company-1', 'tenant-route');
+
+        expect(mockVerifyAndFixStaleCalls).toHaveBeenCalledWith(
+            ['CA-shared'], 'company-1', 'tenant-route'
+        );
+        expect(mockGetBusyClientIdentities).toHaveBeenNthCalledWith(
+            2, 'company-1', 'tenant-route'
+        );
+        expect(agents).toContainEqual(expect.objectContaining({ user_id: 'u-available' }));
     });
 
     it('computes business hours in the group timezone', async () => {

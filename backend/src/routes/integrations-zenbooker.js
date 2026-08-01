@@ -34,6 +34,11 @@ function requestId() {
 // Shared: process webhook payload (used by both legacy and per-company routes)
 // =============================================================================
 async function processWebhookPayload(reqId, payload, headers, companyId = null) {
+    if (!companyId) {
+        const err = new Error('Zenbooker webhook company could not be resolved');
+        err.code = 'ZENBOOKER_TENANT_UNRESOLVED';
+        throw err;
+    }
     const event = payload.event || 'unknown';
     const dataId = payload.data?.id ? String(payload.data.id) : 'unknown';
     const webhookId = payload.webhook_id || '';
@@ -44,13 +49,14 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
     // Store in webhook_inbox for audit (reqId is unique per HTTP request)
     const eventKey = `zenbooker:${event}:${dataId}:${reqId}`;
     try {
-        await db.query(
+        const inserted = await db.query(
             `INSERT INTO webhook_inbox (provider, event_key, source, event_type, call_sid, payload, headers, company_id)
              VALUES ('zenbooker', $1, 'zenbooker', $2, NULL, $3::jsonb, $4::jsonb, $5)
-             ON CONFLICT (event_key) DO NOTHING
+             ON CONFLICT (company_id, event_key) DO NOTHING
              RETURNING id`,
             [eventKey, event, JSON.stringify(payload), JSON.stringify(headers), companyId]
         );
+        if (inserted.rows.length === 0) return;
     } catch (dbErr) {
         if (dbErr.code === '23505') {
             console.log(`[ZbWebhook][${reqId}] Duplicate event_key=${eventKey}, skipping`);
@@ -79,16 +85,16 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
             }
             await db.query(
                 `UPDATE webhook_inbox SET status = 'processed', processed_at = NOW(), attempts = attempts + 1
-                 WHERE event_key = $1 AND provider = 'zenbooker'`,
-                [eventKey]
+                 WHERE event_key = $1 AND company_id = $2 AND provider = 'zenbooker'`,
+                [eventKey, companyId]
             );
             console.log(`[ZbWebhook][${reqId}] Processed event=${event} successfully`);
         } catch (procErr) {
             console.error(`[ZbWebhook][${reqId}] Processing error:`, procErr.message);
             await db.query(
                 `UPDATE webhook_inbox SET status = 'failed', error_text = $1, attempts = attempts + 1
-                 WHERE event_key = $2 AND provider = 'zenbooker'`,
-                [procErr.message, eventKey]
+                 WHERE event_key = $2 AND company_id = $3 AND provider = 'zenbooker'`,
+                [procErr.message, eventKey, companyId]
             );
         }
     } else if (event.startsWith('job.')) {
@@ -133,15 +139,15 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
 
             await db.query(
                 `UPDATE webhook_inbox SET status = 'processed', processed_at = NOW(), attempts = attempts + 1
-                 WHERE event_key = $1 AND provider = 'zenbooker'`,
-                [eventKey]
+                 WHERE event_key = $1 AND company_id = $2 AND provider = 'zenbooker'`,
+                [eventKey, companyId]
             );
         } catch (procErr) {
             console.error(`[ZbWebhook][${reqId}] Job event processing error:`, procErr.message);
             await db.query(
                 `UPDATE webhook_inbox SET status = 'failed', error_text = $1, attempts = attempts + 1
-                 WHERE event_key = $2 AND provider = 'zenbooker'`,
-                [procErr.message, eventKey]
+                 WHERE event_key = $2 AND company_id = $3 AND provider = 'zenbooker'`,
+                [procErr.message, eventKey, companyId]
             );
         }
     } else {
@@ -163,12 +169,22 @@ router.post('/webhooks', async (req, res) => {
             }
         }
 
+        // The legacy shared webhook cannot infer a tenant from payload data.
+        // It is enabled only with an explicit account-to-company binding.
+        const companyId = process.env.ZENBOOKER_WEBHOOK_COMPANY_ID
+            || process.env.ZENBOOKER_DEFAULT_COMPANY_ID
+            || null;
+        if (!companyId) {
+            console.warn(`[ZbWebhook][${reqId}] Legacy webhook company is not configured`);
+            return res.status(503).json({ error: 'Webhook tenant is not configured' });
+        }
+
         res.status(200).json({ ok: true, request_id: reqId });
         await processWebhookPayload(
             reqId,
             req.body,
             req.headers,
-            zenbookerClient.ZENBOOKER_DEFAULT_COMPANY_ID
+            companyId
         );
     } catch (err) {
         console.error(`[ZbWebhook][${reqId}] Unexpected error:`, err);

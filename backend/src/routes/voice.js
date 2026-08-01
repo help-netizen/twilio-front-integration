@@ -11,7 +11,7 @@ const express = require('express');
 const { generateToken, generateTokenForCompany } = require('../services/voiceService');
 const { toE164 } = require('../utils/phoneUtils');
 const { STALE_FILTER_SQL, FINAL_STATUSES } = require('../services/callAvailability');
-const { getTwilioClient } = require('../services/twilioClient');
+const { getClientForCompany } = require('../services/telephonyTenantService');
 const { groupsForUser } = require('../services/groupRouting');
 const agentPresence = require('../services/agentPresence');
 const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
@@ -97,6 +97,11 @@ async function getMyGroups(req) {
 }
 
 async function isContactBusyForCompany(phoneE164, companyId, traceId) {
+    if (!companyId) {
+        const err = new Error('companyId is required for call availability');
+        err.code = 'TWILIO_TENANT_UNRESOLVED';
+        throw err;
+    }
     const db = require('../db/connection');
     const result = await db.query(
         `SELECT call_sid FROM calls
@@ -112,7 +117,8 @@ async function isContactBusyForCompany(phoneE164, companyId, traceId) {
 
     const sid = result.rows[0].call_sid;
     try {
-        const details = await getTwilioClient().calls(sid).fetch();
+        const tenant = await getClientForCompany(companyId);
+        const details = await tenant.client.calls(sid).fetch();
         const status = (details.status || '').toLowerCase();
         if (FINAL_STATUSES.includes(status)) {
             await db.query(

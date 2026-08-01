@@ -11,13 +11,20 @@
  */
 
 const db = require('../db/connection');
-const { getTwilioClient } = require('./twilioClient');
+const { getClientForCompany } = require('./telephonyTenantService');
 
 const FINAL_STATUSES = ['completed', 'busy', 'no-answer', 'canceled', 'failed', 'blocked'];
 
 // Age thresholds: calls older than these are considered stale
 const RINGING_MAX_AGE_SECONDS = 90;
 const IN_PROGRESS_MAX_AGE_HOURS = 4;
+
+function requireCompanyId(companyId) {
+    if (companyId) return companyId;
+    const err = new Error('companyId is required for call availability');
+    err.code = 'TWILIO_TENANT_UNRESOLVED';
+    throw err;
+}
 
 /**
  * SQL WHERE clause fragment for filtering out stale call records.
@@ -36,15 +43,19 @@ const STALE_FILTER_SQL = `
  * Returns the set of call_sids that were resolved (actually finished).
  *
  * @param {string[]} callSids - Call SIDs to verify
+ * @param {string} companyId - Resolved company that owns the Twilio account
  * @param {string} traceId - For logging
  * @returns {Promise<Set<string>>} - Resolved (finished) call SIDs
  */
-async function verifyAndFixStaleCalls(callSids, traceId) {
+async function verifyAndFixStaleCalls(callSids, companyId, traceId) {
+    const scopedCompanyId = requireCompanyId(companyId);
     const resolved = new Set();
     if (!callSids || callSids.length === 0) return resolved;
 
     try {
-        const client = getTwilioClient();
+        const tenant = await getClientForCompany(scopedCompanyId);
+        const client = tenant?.client;
+        if (!client) throw new Error('Twilio client is unavailable for company');
 
         for (const sid of callSids) {
             try {
@@ -54,8 +65,8 @@ async function verifyAndFixStaleCalls(callSids, traceId) {
                     resolved.add(sid);
                     await db.query(
                         `UPDATE calls SET status = $2, is_final = true, ended_at = COALESCE($3, ended_at)
-                         WHERE call_sid = $1 AND is_final = false`,
-                        [sid, apiStatus, details.endTime ? new Date(details.endTime) : null]
+                         WHERE call_sid = $1 AND company_id = $4 AND is_final = false`,
+                        [sid, apiStatus, details.endTime ? new Date(details.endTime) : null, scopedCompanyId]
                     );
                     console.log(`[${traceId}] Twilio API: ${sid} actually ${apiStatus} — fixed`);
                 }
@@ -74,10 +85,12 @@ async function verifyAndFixStaleCalls(callSids, traceId) {
  * Get busy Client identities (WebRTC softphone users).
  * Returns { busyIdentities: Set<string>, callSids: string[] }
  *
+ * @param {string} companyId
  * @param {string} traceId
  * @returns {Promise<{busyIdentities: Set<string>, callSids: string[]}>}
  */
-async function getBusyClientIdentities(traceId) {
+async function getBusyClientIdentities(companyId, traceId) {
+    const scopedCompanyId = requireCompanyId(companyId);
     const result = await db.query(
         `SELECT DISTINCT
             CASE WHEN to_number LIKE 'client:%' THEN to_number
@@ -85,9 +98,11 @@ async function getBusyClientIdentities(traceId) {
             END AS client_number,
             call_sid
          FROM calls
-         WHERE status IN ('ringing', 'in-progress')
+         WHERE company_id = $1
+           AND status IN ('ringing', 'in-progress')
            AND ${STALE_FILTER_SQL}
-           AND (to_number LIKE 'client:%' OR from_number LIKE 'client:%')`
+           AND (to_number LIKE 'client:%' OR from_number LIKE 'client:%')`,
+        [scopedCompanyId]
     );
 
     const busyIdentities = new Set(
@@ -104,15 +119,19 @@ async function getBusyClientIdentities(traceId) {
  * Get busy SIP operators.
  * Returns { busySipUsers: Set<string>, callSids: string[] }
  *
+ * @param {string} companyId
  * @param {string} traceId
  * @returns {Promise<{busySipUsers: Set<string>, callSids: string[]}>}
  */
-async function getBusySipUsers(traceId) {
+async function getBusySipUsers(companyId, traceId) {
+    const scopedCompanyId = requireCompanyId(companyId);
     const result = await db.query(
         `SELECT DISTINCT to_number, call_sid FROM calls
-         WHERE status IN ('ringing', 'in-progress', 'voicemail_recording')
+         WHERE company_id = $1
+           AND status IN ('ringing', 'in-progress', 'voicemail_recording')
            AND ${STALE_FILTER_SQL}
-           AND to_number LIKE 'sip:%'`
+           AND to_number LIKE 'sip:%'`,
+        [scopedCompanyId]
     );
 
     const busySipUsers = new Set();
@@ -129,25 +148,28 @@ async function getBusySipUsers(traceId) {
  * Check if a phone number has an active call (for outbound pre-flight check).
  *
  * @param {string} phoneE164 - Phone number in E.164 format
+ * @param {string} companyId
  * @param {string} traceId
  * @returns {Promise<boolean>} - true if busy
  */
-async function isContactBusy(phoneE164, traceId) {
+async function isContactBusy(phoneE164, companyId, traceId) {
+    const scopedCompanyId = requireCompanyId(companyId);
     const result = await db.query(
         `SELECT call_sid FROM calls
-         WHERE parent_call_sid IS NULL
+         WHERE company_id = $2
+           AND parent_call_sid IS NULL
            AND status IN ('initiated', 'ringing', 'in-progress', 'queued')
            AND ${STALE_FILTER_SQL}
            AND (from_number = $1 OR to_number = $1)
          LIMIT 1`,
-        [phoneE164]
+        [phoneE164, scopedCompanyId]
     );
 
     if (result.rows.length === 0) return false;
 
     // Verify via Twilio API before declaring busy
     const sid = result.rows[0].call_sid;
-    const resolved = await verifyAndFixStaleCalls([sid], traceId || 'check-busy');
+    const resolved = await verifyAndFixStaleCalls([sid], scopedCompanyId, traceId || 'check-busy');
     return !resolved.has(sid);
 }
 
