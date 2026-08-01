@@ -14,6 +14,7 @@ const outboundCallSettingsService = require('./outboundCallSettingsService');
 const scheduleService = require('./scheduleService');
 const inspectorSettingsService = require('./inspectorSettingsService');
 const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
+const appRuntimeIdentityService = require('./appRuntimeIdentityService');
 const {
     DEFAULT_INSTRUCTION,
     MAX_INSTRUCTION_CHARS,
@@ -1532,6 +1533,10 @@ async function disconnectInstallation(companyId, actorId, installationId, { requ
                 actorId,
             }, client);
         }
+        await appRuntimeIdentityService.revokeInstallationPrincipal({
+            companyId,
+            installationId,
+        }, client);
         const updated = await marketplaceQueries.markDisconnected({
             companyId,
             installationId,

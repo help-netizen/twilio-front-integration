@@ -515,6 +515,7 @@ module.exports = {
     validateSettings,
     formatCode,
     getSettings,
+    getActiveSettings,
     saveSettings,
     getMaskedDialForContact,
     getMaskedDialForJob,

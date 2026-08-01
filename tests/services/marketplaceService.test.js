@@ -58,11 +58,16 @@ jest.mock('../../backend/src/services/chatgptMcpIdentityService', () => {
     };
 });
 
+jest.mock('../../backend/src/services/appRuntimeIdentityService', () => ({
+    revokeInstallationPrincipal: jest.fn(),
+}));
+
 const queries = require('../../backend/src/db/marketplaceQueries');
 const emailQueries = require('../../backend/src/db/emailQueries');
 const integrationsService = require('../../backend/src/services/integrationsService');
 const provisioningService = require('../../backend/src/services/marketplaceProvisioningService');
 const chatgptMcpIdentityService = require('../../backend/src/services/chatgptMcpIdentityService');
+const appRuntimeIdentityService = require('../../backend/src/services/appRuntimeIdentityService');
 const marketplaceService = require('../../backend/src/services/marketplaceService');
 
 describe('marketplaceService', () => {
@@ -74,6 +79,7 @@ describe('marketplaceService', () => {
         chatgptMcpIdentityService.provisionAvatar.mockResolvedValue({});
         chatgptMcpIdentityService.provisionInstallation.mockResolvedValue({});
         chatgptMcpIdentityService.revokeInstallation.mockResolvedValue(1);
+        appRuntimeIdentityService.revokeInstallationPrincipal.mockResolvedValue(0);
         queries.countOtherActiveInstallationsOnCredential.mockResolvedValue(0);
         emailQueries.getMailboxByCompany.mockResolvedValue({
             id: 'mailbox-1',
@@ -246,6 +252,9 @@ describe('marketplaceService', () => {
             .toHaveBeenCalledWith('company-1', 'user-1', mockClient);
         expect(chatgptMcpIdentityService.revokeInstallation).toHaveBeenCalledWith({
             companyId: 'company-1', installationId: 1950, actorId: 'user-1',
+        }, mockClient);
+        expect(appRuntimeIdentityService.revokeInstallationPrincipal).toHaveBeenCalledWith({
+            companyId: 'company-1', installationId: 1950,
         }, mockClient);
         expect(queries.markDisconnected).toHaveBeenCalledWith(expect.objectContaining({
             companyId: 'company-1', installationId: 1950, status: 'disconnected',
