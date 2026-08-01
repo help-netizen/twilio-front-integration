@@ -787,6 +787,10 @@ function createAiEstimateService({
         });
 
         let extractedPayload;
+        // AI-DRAFT-TRACE-001: entry/exit stamps around the model call — a prod
+        // request once vanished between the digest and the response with no
+        // error logged; these two lines pin the hang point if it recurs.
+        logger.log?.('[AI Estimate] draft transport start', { companyId });
         try {
             extractedPayload = await transport({
                 systemPrompt: buildSystemPrompt(context.digest, instructionText),
@@ -799,6 +803,8 @@ function createAiEstimateService({
                 'AI draft generation is temporarily unavailable. Please try again.',
             );
         }
+
+        logger.log?.('[AI Estimate] draft transport done', { companyId });
 
         let selections;
         try {
