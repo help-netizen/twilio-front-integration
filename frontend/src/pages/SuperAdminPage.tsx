@@ -16,6 +16,7 @@ import { CompaniesManager } from '../components/super-admin/CompaniesManager';
 import { PlatformUsersTab } from '../components/super-admin/PlatformUsersTab';
 import { PlatformStatsTab } from '../components/super-admin/PlatformStatsTab';
 import { AppReviewsModeration } from '../components/super-admin/AppReviewsModeration';
+import { AppVersionModeration } from '../components/super-admin/AppVersionModeration';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 const KC_URL = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8080';
@@ -61,6 +62,7 @@ export default function SuperAdminPage() {
                     <TabsTrigger value="statistics">Statistics</TabsTrigger>
                     <TabsTrigger value="sessions">Sessions</TabsTrigger>
                     <TabsTrigger value="policy">Auth policy</TabsTrigger>
+                    <TabsTrigger value="apps">Apps</TabsTrigger>
                     <TabsTrigger value="app-reviews">App reviews</TabsTrigger>
                 </TabsList>
 
@@ -131,6 +133,10 @@ export default function SuperAdminPage() {
 
                 <TabsContent value="app-reviews" className="space-y-6 pt-4">
                     <AppReviewsModeration />
+                </TabsContent>
+
+                <TabsContent value="apps" className="space-y-6 pt-4">
+                    <AppVersionModeration />
                 </TabsContent>
             </Tabs>
 

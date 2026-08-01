@@ -120,6 +120,7 @@ describe('APP-BUILD-001 generation pipeline', () => {
                     returned_type: 'object',
                     usage: expect.objectContaining({ gateway_calls: 1 }),
                     fixtures_summary: expect.objectContaining({ jobs: 6, tasks: 8 }),
+                    result: { count: 6 },
                 }),
             }),
         }));

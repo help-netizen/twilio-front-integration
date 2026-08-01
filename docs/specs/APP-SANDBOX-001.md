@@ -53,8 +53,10 @@ old disconnected response literals.
 8. Builder artifact attestation remains separate from the application result.
    CRM consumes the new `validation` member for `source_bytes`, `tools`,
    `entry_point`, and `returned_type`, and stores bounded `usage` plus
-   `fixtures_summary` under `scanner_report.dry_run`. It does not store the
-   application result.
+   `fixtures_summary` under `scanner_report.dry_run`. **APP-MOD-001 follow-up:**
+   Phase 6 also stores the runner's already bounded synthetic `result` there so
+   the super-admin moderation card can show the latest sandbox outcome. This
+   supersedes Phase 5's original decision to discard that value.
 9. Error identity is never rewritten as success. Unknown catalog tools retain
    `UNKNOWN_TOOL`; isolate CPU exhaustion retains `APP_RUNTIME_CPU_LIMIT`; the
    HTTP host deadline retains `APP_RUNTIME_REQUEST_TIMEOUT` with status 504.

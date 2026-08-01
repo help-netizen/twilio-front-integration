@@ -2,6 +2,7 @@
 
 const express = require('express');
 const appBuilderService = require('../services/appBuilderService');
+const appVersionTransitionService = require('../services/appVersionTransitionService');
 const { runnerConfigurationIssue } = require('../services/appBuilderDryRunService');
 const { requirePermission } = require('../middleware/authorization');
 
@@ -152,6 +153,44 @@ router.get('/apps/:appId/versions', async (req, res) => {
         return handleError(error, req, res);
     }
 });
+
+async function tenantVersionTransition(req, res, action) {
+    const context = requestContext(req);
+    if (!context) {
+        return res.status(403).json({ code: 'TENANT_CONTEXT_REQUIRED', message: 'Company access required.' });
+    }
+    if (!/^[1-9]\d*$/.test(String(req.params.appId || ''))
+        || !UUID_RE.test(String(req.params.versionId || ''))) {
+        return res.status(404).json({ code: 'NOT_FOUND', message: 'App Studio resource not found.' });
+    }
+    try {
+        const version = await appVersionTransitionService[action]({
+            companyId: context.companyId,
+            actorId: context.actorId,
+            appId: req.params.appId,
+            versionId: req.params.versionId,
+            traceId: req.requestId,
+        });
+        return res.status(action === 'forkRejectedVersion' ? 201 : 200).json({
+            version,
+            request_id: req.requestId,
+        });
+    } catch (error) {
+        return handleError(error, req, res);
+    }
+}
+
+router.post('/apps/:appId/versions/:versionId/submit', (req, res) => (
+    tenantVersionTransition(req, res, 'submitVersion')
+));
+
+router.post('/apps/:appId/versions/:versionId/publish', (req, res) => (
+    tenantVersionTransition(req, res, 'publishVersion')
+));
+
+router.post('/apps/:appId/versions/:versionId/fork', (req, res) => (
+    tenantVersionTransition(req, res, 'forkRejectedVersion')
+));
 
 module.exports = router;
 module.exports.requireTenantAdmin = requireTenantAdmin;

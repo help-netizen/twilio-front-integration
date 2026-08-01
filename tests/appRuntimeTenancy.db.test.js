@@ -11,6 +11,7 @@ const tokenService = require('../backend/src/services/appRuntimeTokenService');
 const gatewayService = require('../backend/src/services/appRuntimeGatewayService');
 const rateLimit = require('../backend/src/services/appRuntimeRateLimit');
 const callMaskingService = require('../backend/src/services/callMaskingService');
+const appVersionTransitionModule = require('../backend/src/services/appVersionTransitionService');
 
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const MASKING_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '208_call_masking.sql'), 'utf8');
@@ -863,6 +864,65 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 error_code: 'APP_RUNTIME_SUSPENDED',
                 status: 'failed',
             });
+        } finally {
+            dbSpy?.mockRestore();
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
+    databaseTest('APP-MOD-001 revoke kill-switch makes the next gateway resolution return 403', async () => {
+        const client = await db.pool.connect();
+        let dbSpy;
+        try {
+            await client.query('BEGIN');
+            const fixture = await setupFixture(client);
+            await client.query(
+                `INSERT INTO app_studio_apps (app_id, company_id, created_by)
+                 VALUES ($1, $2, $3)`,
+                [fixture.appId, fixture.companyA, fixture.humanA.id]
+            );
+            dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => (
+                client.query(text, params)
+            ));
+            const live = await createRunContext(client, fixture);
+            let savepointOpen = false;
+            const transitionDatabase = {
+                getClient: async () => ({
+                    query: async (text, params) => {
+                        if (text === 'BEGIN') {
+                            savepointOpen = true;
+                            return client.query('SAVEPOINT app_mod_revoke');
+                        }
+                        if (text === 'COMMIT') {
+                            savepointOpen = false;
+                            return client.query('RELEASE SAVEPOINT app_mod_revoke');
+                        }
+                        if (text === 'ROLLBACK') {
+                            if (!savepointOpen) return undefined;
+                            savepointOpen = false;
+                            return client.query('ROLLBACK TO SAVEPOINT app_mod_revoke');
+                        }
+                        return client.query(text, params);
+                    },
+                    release: jest.fn(),
+                }),
+            };
+            const transitionService = appVersionTransitionModule
+                .createAppVersionTransitionService({ database: transitionDatabase });
+            await expect(transitionService.revokeVersion({
+                versionId: fixture.versionId,
+                actorId: fixture.humanA.id,
+                traceId: 'trace-app-mod-revoke',
+            })).resolves.toMatchObject({ status: 'revoked' });
+
+            await expect(tokenService.resolveRunContext({
+                installation_id: String(fixture.installationA),
+                version_id: String(fixture.versionId),
+                run_id: live.run_id,
+                exp: Math.floor(Date.now() / 1000) + 300,
+                nonce: live.nonce_for_test,
+            })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
         } finally {
             dbSpy?.mockRestore();
             await client.query('ROLLBACK').catch(() => {});

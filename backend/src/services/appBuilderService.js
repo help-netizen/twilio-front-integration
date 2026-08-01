@@ -203,6 +203,7 @@ function createAppBuilderService({
                         returned_type: report.returned_type,
                         usage: report.usage,
                         fixtures_summary: report.fixtures_summary,
+                        result: report.result,
                     },
                 },
                 tools: report.tools,

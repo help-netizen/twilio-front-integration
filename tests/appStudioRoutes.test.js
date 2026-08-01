@@ -7,6 +7,7 @@ const COMPANY_A = '10000000-0000-4000-8000-000000000001';
 const COMPANY_B = '10000000-0000-4000-8000-000000000002';
 const ACTOR_ID = '20000000-0000-4000-8000-000000000001';
 const CHAT_ID = '30000000-0000-4000-8000-000000000001';
+const VERSION_ID = '40000000-0000-4000-8000-000000000001';
 const ORIGINAL_ENABLED = process.env.APP_STUDIO_ENABLED;
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 const ORIGINAL_RUNNER_BASE_URL = process.env.APP_RUNNER_BASE_URL;
@@ -20,8 +21,14 @@ const mockService = {
     listVersions: jest.fn(),
 };
 const mockAuditLog = jest.fn().mockResolvedValue(undefined);
+const mockTransitionService = {
+    submitVersion: jest.fn(),
+    publishVersion: jest.fn(),
+    forkRejectedVersion: jest.fn(),
+};
 
 jest.mock('../backend/src/services/appBuilderService', () => mockService);
+jest.mock('../backend/src/services/appVersionTransitionService', () => mockTransitionService);
 jest.mock('../backend/src/services/auditService', () => ({ log: mockAuditLog }));
 
 const appStudioRouter = require('../backend/src/routes/appStudio');
@@ -71,10 +78,13 @@ beforeEach(() => {
     mockService.generateMessage.mockResolvedValue({
         generation_status: 'created',
         app_id: '91',
-        version: { id: '40000000-0000-4000-8000-000000000001', status: 'draft' },
+        version: { id: VERSION_ID, status: 'draft' },
         message: { role: 'assistant', text: 'Created.' },
     });
     mockService.listVersions.mockResolvedValue({ app: { app_id: '91' }, versions: [] });
+    mockTransitionService.submitVersion.mockResolvedValue({ id: VERSION_ID, status: 'submitted' });
+    mockTransitionService.publishVersion.mockResolvedValue({ id: VERSION_ID, status: 'published' });
+    mockTransitionService.forkRejectedVersion.mockResolvedValue({ id: VERSION_ID, status: 'draft' });
 });
 
 afterAll(() => {
@@ -179,5 +189,66 @@ describe('APP-BUILD-001 tenant admin API', () => {
         expect((await request(app).get('/api/app-studio/apps/91/versions')).status).toBe(200);
         expect((await request(app).post('/api/app-studio/chats').send({ company_id: COMPANY_B })).status)
             .toBe(400);
+    });
+
+    test.each([
+        ['submit', 'submitVersion', 200],
+        ['publish', 'publishVersion', 200],
+        ['fork', 'forkRejectedVersion', 201],
+    ])('T-own: POST version %s is company-scoped and uses the CRM actor', async (
+        routeAction,
+        serviceAction,
+        expectedStatus
+    ) => {
+        const response = await request(buildApp())
+            .post(`/api/app-studio/apps/91/versions/${VERSION_ID}/${routeAction}`);
+        expect(response.status).toBe(expectedStatus);
+        expect(mockTransitionService[serviceAction]).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            actorId: ACTOR_ID,
+            appId: '91',
+            versionId: VERSION_ID,
+            traceId: 'req-app-studio',
+        });
+    });
+
+    test.each(['manager', 'dispatcher', 'provider', 'custom'])(
+        'version-action R-matrix: %s is denied from submit, publish, and fork',
+        async roleKey => {
+            for (const action of ['submit', 'publish', 'fork']) {
+                const response = await request(buildApp({ roleKey }))
+                    .post(`/api/app-studio/apps/91/versions/${VERSION_ID}/${action}`);
+                expect(response.status).toBe(403);
+                expect(response.body.code).toBe('TENANT_ADMIN_ONLY');
+            }
+            expect(mockTransitionService.submitVersion).not.toHaveBeenCalled();
+            expect(mockTransitionService.publishVersion).not.toHaveBeenCalled();
+            expect(mockTransitionService.forkRejectedVersion).not.toHaveBeenCalled();
+        }
+    );
+
+    test('version-action R-matrix denies tenant_admin without integrations permission', async () => {
+        for (const action of ['submit', 'publish', 'fork']) {
+            const response = await request(buildApp({ permissions: [] }))
+                .post(`/api/app-studio/apps/91/versions/${VERSION_ID}/${action}`);
+            expect(response.status).toBe(403);
+            expect(response.body.code).toBe('ACCESS_DENIED');
+        }
+    });
+
+    test('T-foreign: foreign company version action is a 404 and keeps its scoped company id', async () => {
+        mockTransitionService.submitVersion.mockRejectedValue(Object.assign(new Error('not found'), {
+            code: 'NOT_FOUND',
+            httpStatus: 404,
+        }));
+        const response = await request(buildApp({ companyId: COMPANY_B }))
+            .post(`/api/app-studio/apps/91/versions/${VERSION_ID}/submit`);
+        expect(response.status).toBe(404);
+        expect(response.body.code).toBe('NOT_FOUND');
+        expect(mockTransitionService.submitVersion).toHaveBeenCalledWith(expect.objectContaining({
+            companyId: COMPANY_B,
+            appId: '91',
+            versionId: VERSION_ID,
+        }));
     });
 });

@@ -282,13 +282,17 @@ deletion succeeds, preserves the principal, and the next call receives 403.
 
 `app_installation_principals(delegated_by_user_id,company_id)` ссылается на membership `ON DELETE RESTRICT` (`220_app_runtime_gateway.sql:117-119`). Это не даёт удалить membership/installer, вместо того чтобы удаление на следующем request убило authority. Тест membership-deleted отсутствует.
 
-### P1-05 — Artifact/tool immutability не закрывает approval-time races/transitions
+### P1-05 — Artifact/tool immutability не закрывает approval-time races/transitions — FIXED
 
-**Статус: DEBT / intentionally not fixed in APP-GAP-FIX-001.** Это moderation
-Ф6 debt по brief: transition serialization, review workflow и concurrent approval
-races требуют отдельной спецификации/миграции.
-
-Version trigger смотрит `OLD.status`, поэтому draft можно одним UPDATE перевести прямо в published и одновременно заменить source/hash (`220...sql:33-52`). Tool trigger делает plain `SELECT status` без lock (`:64-97`), так что concurrent approval/tool insertion не сериализованы. Нет transition/moderation service.
+**Статус: FIXED (APP-MOD-001).** Migration 223 adds the exact database
+transition guard, rejects artifact mutation in the same statement that leaves
+draft, and locks the parent version for every tool mutation. All application
+status writes now go through `appVersionTransitionService`, whose transaction
+locks the version with `SELECT ... FOR UPDATE`, validates the fixed matrix, and
+writes awaited transition audit. A real-PostgreSQL concurrent-approve test
+proves exactly one success; its named sabotage becomes red when `FOR UPDATE` is
+removed. The same phase adds the super-admin queue, rejection-message delivery,
+rejected-version fork, publication pin advance, and live revoke path.
 
 ### P1-06 — Builder “direct literal call only” scanner bypass — FIXED
 
@@ -339,17 +343,13 @@ Real-PG gateway coverage сильное, но не имеет exact custom-role 
 
 1. **Production app server and container pool** — `APP-RUN-001:24-29,137-140,224-226`; требуется до exposure, хотя отложено из Ф2.
 2. **Remote production builder dry-run service** — `APP-BUILD-001:218-230`, назначен на Ф4/Ф5.
-3. **Moderation/publication/rejection fork and prior-live-version behavior** — `APP-STUDIO-001:71-79`; Ф3 явно их не добавляет (`APP-BUILD-001:7-9`).
-4. **App Studio UI** — Ф4 (`APP-STUDIO-001:124-125`).
-5. **Separate synthetic sandbox DB** — Ф5 (`APP-STUDIO-001:126-128`). Current fixed in-memory fixtures — dry run, не Ф5.
-6. **Writes/bulk rollback** — Ф6 (`APP-STUDIO-001:129`).
-7. **External egress proxy** — Ф7 (`APP-STUDIO-001:130-131`).
-8. **Public marketplace/author statistics/KYC/2FA/payment** — Ф8 (`APP-STUDIO-001:132-133`); поэтому control §5(7) пока не имеет author-stats surface, но остаётся release requirement.
-9. **Distributed rate limiter** — only before horizontal CRM scaling (`APP-GW-001:106-107,619-620`).
-10. **Full run storage/usage metrics** — Phase 1 явно ограничил `app_runs` skeleton (`APP-GW-001:377-386`), а Phase 2 отложил app storage/server (`APP-RUN-001:24-29`). Однако до production это переходит в P0-02 из-за §5(5).
-11. **Version transition/moderation races (P1-05)** — intentionally retained as
-    Ф6 debt by APP-GAP-FIX-001; requires serialized moderation transitions rather
-    than an adjacent patch to artifact triggers.
+3. **App Studio UI** — Ф4 (`APP-STUDIO-001:124-125`).
+4. **Separate synthetic sandbox DB** — Ф5 (`APP-STUDIO-001:126-128`). Current fixed in-memory fixtures — dry run, не Ф5.
+5. **Writes/bulk rollback** — Ф6 (`APP-STUDIO-001:129`).
+6. **External egress proxy** — Ф7 (`APP-STUDIO-001:130-131`).
+7. **Public marketplace/author statistics/KYC/2FA/payment** — Ф8 (`APP-STUDIO-001:132-133`); поэтому control §5(7) пока не имеет author-stats surface, но остаётся release requirement.
+8. **Distributed rate limiter** — only before horizontal CRM scaling (`APP-GW-001:106-107,619-620`).
+9. **Full run storage/usage metrics** — Phase 1 явно ограничил `app_runs` skeleton (`APP-GW-001:377-386`), а Phase 2 отложил app storage/server (`APP-RUN-001:24-29`). Однако до production это переходит в P0-02 из-за §5(5).
 
 ## CONTRADICTIONS
 

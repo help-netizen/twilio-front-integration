@@ -1,14 +1,10 @@
-/**
- * Platform Marketplace review moderation.
- *
- * This router is ready for Claude's authorized bridge at /api/admin/app-reviews.
- * It is self-guarded so a future mount cannot accidentally expose the global
- * moderation queue without the platform super_admin role.
- */
+/** Platform App Studio version moderation plus legacy Marketplace ratings. */
 'use strict';
 
 const express = require('express');
 const { requirePlatformRole } = require('../middleware/authorization');
+const appVersionReviewService = require('../services/appVersionReviewService');
+const appVersionTransitionService = require('../services/appVersionTransitionService');
 const marketplaceRatingsService = require('../services/marketplaceRatingsService');
 
 const router = express.Router();
@@ -21,7 +17,8 @@ function positiveInteger(value, fallback) {
 }
 
 function handleError(err, req, res) {
-    if (err instanceof marketplaceRatingsService.MarketplaceRatingsError) {
+    if (err instanceof marketplaceRatingsService.MarketplaceRatingsError
+        || err instanceof appVersionTransitionService.AppVersionTransitionError) {
         return res.status(err.httpStatus || 400).json({
             ok: false,
             code: err.code,
@@ -45,7 +42,7 @@ router.get('/', async (req, res) => {
             : 'pending';
         const page = positiveInteger(req.query.page, 1);
         const limit = Math.min(positiveInteger(req.query.limit, 25), 100);
-        const result = await marketplaceRatingsService.listReviewsForModeration({
+        const result = await appVersionReviewService.listReviews({
             status,
             page,
             limit,
@@ -56,6 +53,90 @@ router.get('/', async (req, res) => {
     }
 });
 
+router.get('/ratings', async (req, res) => {
+    try {
+        const status = typeof req.query.status === 'string'
+            ? req.query.status.trim().toLowerCase()
+            : 'pending';
+        const page = positiveInteger(req.query.page, 1);
+        const limit = Math.min(positiveInteger(req.query.limit, 25), 100);
+        const result = await marketplaceRatingsService.listReviewsForModeration({
+            status,
+            page,
+            limit,
+        });
+        return res.json({ ok: true, ...result, trace_id: req.traceId });
+    } catch (err) {
+        return handleError(err, req, res);
+    }
+});
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function actorContext(req) {
+    const actorId = req.user?.crmUser?.id;
+    if (!actorId) {
+        throw new appVersionTransitionService.AppVersionTransitionError(
+            'PLATFORM_ACTOR_REQUIRED',
+            'Authenticated CRM user required.',
+            403
+        );
+    }
+    return { actorId, traceId: req.traceId || req.requestId || null };
+}
+
+function requireVersionId(req, res, next) {
+    if (!UUID_RE.test(String(req.params.versionId || ''))) {
+        return res.status(404).json({
+            ok: false,
+            code: 'NOT_FOUND',
+            message: 'App version review was not found.',
+            trace_id: req.traceId,
+        });
+    }
+    return next();
+}
+
+router.get('/:versionId', requireVersionId, async (req, res) => {
+    try {
+        const review = await appVersionReviewService.getReview(req.params.versionId, {
+            ...actorContext(req),
+            includeCode: req.query.include_code === 'true',
+        });
+        return res.json({ ok: true, review, trace_id: req.traceId });
+    } catch (err) {
+        return handleError(err, req, res);
+    }
+});
+
+async function transition(req, res, action) {
+    try {
+        const version = await appVersionTransitionService[action]({
+            versionId: req.params.versionId,
+            ...actorContext(req),
+            ...(action === 'rejectVersion' ? { reason: req.body?.reason } : {}),
+        });
+        return res.json({ ok: true, version, trace_id: req.traceId });
+    } catch (err) {
+        return handleError(err, req, res);
+    }
+}
+
+router.post('/:versionId/start-review', requireVersionId, (req, res) => (
+    transition(req, res, 'startReview')
+));
+router.post('/:versionId/approve', requireVersionId, (req, res) => (
+    transition(req, res, 'approveVersion')
+));
+router.post('/:versionId/reject', requireVersionId, (req, res) => (
+    transition(req, res, 'rejectVersion')
+));
+router.post('/:versionId/revoke', requireVersionId, (req, res) => (
+    transition(req, res, 'revokeVersion')
+));
+
+// MARKETPLACE-RATINGS-001 compatibility endpoint. Version ids are UUIDs, while
+// product review ids are positive integers, so the two contracts cannot collide.
 router.post('/:id/moderate', async (req, res) => {
     try {
         if (!/^[1-9]\d*$/.test(String(req.params.id || ''))) {

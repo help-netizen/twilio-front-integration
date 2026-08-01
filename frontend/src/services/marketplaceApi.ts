@@ -431,7 +431,7 @@ export interface AppReviewsQueue {
 
 export async function fetchAppReviewQueue(status: AppReviewStatus, page = 1): Promise<AppReviewsQueue> {
     const data = await request<AppReviewsQueue & { ok: boolean }>(
-        `/api/platform/app-reviews?status=${status}&page=${page}`,
+        `/api/platform/app-reviews/ratings?status=${status}&page=${page}`,
     );
     return { reviews: data.reviews, total: data.total, page: data.page, limit: data.limit };
 }
