@@ -50,6 +50,17 @@ jest.mock('../backend/src/services/reconcileStale', () => ({
     reconcileStaleCalls: jest.fn(),
 }));
 
+jest.mock('../backend/src/services/telephonyTenantService', () => ({
+    resolveCompanyByAccountSid: jest.fn().mockResolvedValue('00000000-0000-0000-0000-000000000001'),
+}));
+
+jest.mock('../backend/src/services/callMaskingService', () => ({
+    getSessionForCallEvent: jest.fn().mockResolvedValue(null),
+}));
+
+const mockEventEmit = jest.fn().mockResolvedValue({ id: 1 });
+jest.mock('../backend/src/services/eventBus', () => ({ emit: mockEventEmit }));
+
 // ---------------------------------------------------------------------------
 // Import
 // ---------------------------------------------------------------------------
@@ -76,6 +87,7 @@ function makeDialEvent(overrides = {}) {
             CallSid: PARENT_SID,
             DialCallStatus: 'completed',
             DialCallDuration: '45',
+            AccountSid: 'ACtest',
             From: '+15551112222',
             To: '+15553334444',
             ...overrides,
@@ -117,7 +129,8 @@ describe('Answered call shown as missed — single-writer fix', () => {
 
             // Step 4: SSE broadcast
             mockGetCallByCallSid.mockResolvedValue({
-                call_sid: PARENT_SID, status: 'completed', is_final: true,
+                id: 10, call_sid: PARENT_SID, status: 'completed', is_final: true,
+                direction: 'inbound', parent_call_sid: null,
             });
 
             // Step 5: reconcileParentCall — parent check
@@ -138,12 +151,19 @@ describe('Answered call shown as missed — single-writer fix', () => {
                 CallSid: PARENT_SID,
                 DialCallStatus: 'completed',
                 DialCallDuration: '45',
+                AccountSid: 'ACtest',
             }, 'test_trace');
 
             // Verify parent was set to completed (step 3 query)
             const parentUpdateCall = mockQuery.mock.calls[2];
             expect(parentUpdateCall[0]).toContain('completed');
             expect(parentUpdateCall[1]).toContain(PARENT_SID);
+            expect(mockEventEmit).not.toHaveBeenCalledWith(
+                DEFAULT_COMPANY_ID,
+                'call.missed',
+                expect.anything(),
+                expect.anything()
+            );
         });
 
         it('should set parent to voicemail_recording when DialCallStatus=no-answer and no answered children', async () => {
@@ -162,18 +182,20 @@ describe('Answered call shown as missed — single-writer fix', () => {
                 .mockResolvedValueOnce({ rowCount: 1 });
 
             mockGetCallByCallSid.mockResolvedValue({
-                call_sid: PARENT_SID, status: 'voicemail_recording', is_final: false,
+                id: 10, call_sid: PARENT_SID, status: 'voicemail_recording', is_final: false,
+                direction: 'inbound', parent_call_sid: null,
             });
 
             await processDialEvent({
                 CallSid: PARENT_SID,
                 DialCallStatus: 'no-answer',
                 DialCallDuration: '0',
+                AccountSid: 'ACtest',
             }, 'test_trace');
 
             // Verify parent was set to voicemail_recording
             const parentUpdateCall = mockQuery.mock.calls[2];
-            expect(parentUpdateCall[0]).toContain('voicemail_recording');
+            expect(parentUpdateCall[1][2]).toBe('voicemail_recording');
         });
 
         it('should override DialCallStatus=no-answer when child evidence shows call was answered', async () => {
@@ -208,12 +230,53 @@ describe('Answered call shown as missed — single-writer fix', () => {
                 CallSid: PARENT_SID,
                 DialCallStatus: 'no-answer',
                 DialCallDuration: '0',
+                AccountSid: 'ACtest',
             }, 'test_trace');
 
             // Verify parent was set to completed, NOT voicemail_recording
             const parentUpdateCall = mockQuery.mock.calls[2];
             expect(parentUpdateCall[0]).toContain('completed');
             expect(parentUpdateCall[0]).not.toContain('voicemail_recording');
+        });
+
+        it('emits call.missed once for a terminal unanswered parent only', async () => {
+            mockQuery
+                .mockResolvedValueOnce({ rows: [] })
+                .mockResolvedValueOnce({ rowCount: 0 })
+                .mockResolvedValueOnce({ rowCount: 1 });
+            mockGetCallByCallSid.mockResolvedValue({
+                id: 10,
+                call_sid: PARENT_SID,
+                status: 'no-answer',
+                is_final: true,
+                direction: 'inbound',
+                parent_call_sid: null,
+                contact_id: 20,
+            });
+
+            await processDialEvent({
+                CallSid: PARENT_SID,
+                DialCallStatus: 'no-answer',
+                DialCallDuration: '0',
+                AccountSid: 'ACtest',
+                MaskedCall: '1',
+            }, 'test_trace');
+
+            expect(mockEventEmit).toHaveBeenCalledTimes(1);
+            expect(mockEventEmit).toHaveBeenCalledWith(
+                DEFAULT_COMPANY_ID,
+                'call.missed',
+                expect.objectContaining({
+                    call_id: 10,
+                    call_sid: PARENT_SID,
+                    record_refs: [{ type: 'call', id: 10 }],
+                }),
+                expect.objectContaining({
+                    aggregateType: 'call',
+                    aggregateId: 10,
+                    idempotencyKey: `call.missed:${PARENT_SID}`,
+                })
+            );
         });
     });
 
@@ -303,6 +366,7 @@ describe('Answered call shown as missed — single-writer fix', () => {
                     From: '+15551112222',
                     To: VAPI_SIP,
                     Direction: 'outbound-dial',
+                    AccountSid: 'ACtest',
                     Timestamp: '1760000000',
                 },
             });
@@ -438,6 +502,7 @@ describe('Answered call shown as missed — single-writer fix', () => {
                     From: '+15551112222',
                     To: '+15553334444',
                     Direction: 'inbound',
+                    AccountSid: 'ACtest',
                     Timestamp: new Date().toISOString(),
                 },
             };
@@ -468,7 +533,8 @@ describe('Answered call shown as missed — single-writer fix', () => {
 
             // Verify the parent was set to voicemail_recording (processDialEvent ran)
             const parentUpdateCall = mockQuery.mock.calls.find(c =>
-                c[0].includes('voicemail_recording')
+                c[0].includes('UPDATE calls SET status = $3')
+                && c[1]?.[2] === 'voicemail_recording'
             );
             expect(parentUpdateCall).toBeTruthy();
         });
@@ -495,6 +561,7 @@ describe('Answered call shown as missed — single-writer fix', () => {
                     From: '+15551112222',
                     To: '+15553334444',
                     Direction: 'inbound',
+                    AccountSid: 'ACtest',
                     Timestamp: new Date().toISOString(),
                 },
             };

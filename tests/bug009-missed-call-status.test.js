@@ -49,6 +49,17 @@ jest.mock('../backend/src/services/reconcileStale', () => ({
     reconcileStaleCalls: jest.fn(),
 }));
 
+jest.mock('../backend/src/services/telephonyTenantService', () => ({
+    resolveCompanyByAccountSid: jest.fn().mockResolvedValue('00000000-0000-0000-0000-000000000001'),
+}));
+
+jest.mock('../backend/src/services/callMaskingService', () => ({
+    getSessionForCallEvent: jest.fn().mockResolvedValue(null),
+}));
+
+const mockEventEmit = jest.fn().mockResolvedValue({ id: 1 });
+jest.mock('../backend/src/services/eventBus', () => ({ emit: mockEventEmit }));
+
 // ---------------------------------------------------------------------------
 // Import
 // ---------------------------------------------------------------------------
@@ -71,6 +82,7 @@ function makeVoiceEvent(overrides = {}) {
             From: '+15551112222',
             To: '+15553334444',
             Direction: 'inbound',
+            AccountSid: 'ACtest',
             Timestamp: new Date().toISOString(),
             ...overrides,
         },
@@ -161,6 +173,12 @@ describe('Bug #9 — Missed call status preservation', () => {
 
         // Should have been upserted (ringing → completed is valid)
         expect(mockUpsertCall).toHaveBeenCalled();
+        expect(mockEventEmit).not.toHaveBeenCalledWith(
+            expect.anything(),
+            'call.missed',
+            expect.anything(),
+            expect.anything()
+        );
     });
 
     it('should allow in-progress → completed transition', async () => {
@@ -223,6 +241,7 @@ describe('Bug #9 — Missed call status preservation', () => {
                 From: '+15551112222',
                 To: 'sip:agent@sip.twilio.com',
                 Direction: 'inbound',
+                AccountSid: 'ACtest',
                 Timestamp: new Date().toISOString(),
             },
         };

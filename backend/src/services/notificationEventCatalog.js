@@ -51,12 +51,41 @@ const NOTIFICATION_CATEGORIES = Object.freeze([
 
 const CATEGORY_BY_KEY = new Map(NOTIFICATION_CATEGORIES.map(category => [category.key, category]));
 
-// M1.T2 must not advertise producer work that is scheduled for M1.T4.
 const CURRENT_PRODUCERS = new Set([
     'lead.created',
+    'lead.assigned',
+    'lead.unassigned',
+    'lead.review_required',
+    'lead.converted',
     'job.created',
+    'job.assigned',
+    'job.unassigned',
+    'job.rescheduled',
     'job.status_changed',
     'sms.inbound',
+    'email.inbound',
+    'yelp.message_received',
+    'call.missed',
+    'call.voicemail_received',
+    'message.delivery_failed',
+    'ai_call.booked',
+    'ai_call.declined',
+    'ai_call.exhausted',
+    'ai_call.failed',
+    'estimate.client_accepted',
+    'estimate.client_declined',
+    'estimate.send_failed',
+    'invoice.send_failed',
+    'payment.succeeded',
+    'payment.failed',
+    'payment.disputed',
+    'payment.refunded',
+    'payment.voided',
+    'task.assigned',
+    'task.reassigned',
+    'task.due',
+    'task.overdue',
+    'review.received',
     'agent_task.failed',
 ]);
 

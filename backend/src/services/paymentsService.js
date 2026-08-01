@@ -15,6 +15,21 @@ const paymentsQueries = require('../db/paymentsQueries');
 const invoicesQueries = require('../db/invoicesQueries');
 const estimatesQueries = require('../db/estimatesQueries');
 const { logFinancialActivity } = require('./financialActivityService');
+const eventBus = require('./eventBus');
+
+function emitPaymentEvent(companyId, eventType, payment, activityActor, client = null, idempotencyKey = null) {
+    return eventBus.emit(companyId, eventType, {
+        payment_id: payment.id,
+        record_refs: [{ type: 'payment', id: payment.id }],
+    }, {
+        actorType: activityActor?.type || 'system',
+        actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+        aggregateType: 'payment',
+        aggregateId: payment.id,
+        idempotencyKey,
+        client,
+    });
+}
 
 // =============================================================================
 // Error class
@@ -269,6 +284,17 @@ async function createTransaction(
         }
     }
 
+    if (transaction_type === 'payment') {
+        await emitPaymentEvent(
+            companyId,
+            'payment.succeeded',
+            tx,
+            activityActor,
+            client,
+            `payment.succeeded:${tx.id}`
+        );
+    }
+
     return tx;
 }
 
@@ -393,6 +419,15 @@ async function refundTransaction(
             }, { client });
         }
     }
+
+    await emitPaymentEvent(
+        companyId,
+        'payment.refunded',
+        original,
+        activityActor,
+        client,
+        `payment.refunded:${refundTx.id}`
+    );
 
     return refundTx;
 }
@@ -535,6 +570,15 @@ async function voidPayment(
             },
         }, { client });
     }
+
+    await emitPaymentEvent(
+        companyId,
+        'payment.voided',
+        currentPayment,
+        activityActor,
+        client,
+        `payment.voided:${currentPayment.id}`
+    );
 
     return {
         payment: currentPayment,

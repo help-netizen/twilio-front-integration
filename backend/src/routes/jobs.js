@@ -29,6 +29,7 @@ const { logZenbookerBatch } = require('../services/zenbookerActivityService');
 const { withTransaction } = require('../services/transactionService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
+const eventBus = require('../services/eventBus');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -369,14 +370,6 @@ router.patch('/:id/status', requirePermission('jobs.edit', 'jobs.done_pending_ap
         );
         eventService.logEvent(companyId, 'job', req.params.id, 'status_changed',
             { from: existing.blanc_status, to: blanc_status, actor_name: eventService.actorName(req), reason: cancelReason }, 'user', req.user?.sub);
-        // ADR-001: publish to the event bus so automation rules can react
-        require('../services/eventBus').emit(companyId, 'job.status_changed', {
-            id: req.params.id, from: existing.blanc_status, to: blanc_status,
-            contact_id: existing.contact_id, customer_name: existing.customer_name,
-            customer_phone: existing.customer_phone, service_name: existing.service_name,
-            reason: cancelReason,
-        }, { actorType: 'user', actorId: req.user?.sub, aggregateType: 'job', aggregateId: req.params.id })
-            .catch(e => console.error('[eventBus] job.status_changed emit failed:', e.message));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Status update error:', err.message);
@@ -735,7 +728,7 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
 
         // 1. Fetch local job to get ZB ID + current techs
         const { rows } = await db.query(
-            `SELECT zenbooker_job_id, assigned_techs
+            `SELECT zenbooker_job_id, assigned_techs, assigned_provider_user_ids
              FROM jobs
              WHERE id = $1 AND company_id = $2`,
             [jobId, companyId]
@@ -743,6 +736,7 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
         if (!rows.length) return res.status(404).json({ ok: false, error: 'Job not found' });
         const zbJobId = rows[0].zenbooker_job_id;
         const currentTechs = rows[0].assigned_techs || [];
+        const currentProviderUserIds = (rows[0].assigned_provider_user_ids || []).map(String);
         let freshAssignedProviders = null;
         let freshProviderMirror = null;
 
@@ -844,6 +838,53 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
                 jobId,
                 actor: jobUserActor(req),
             }, { client });
+            const nextProviderUserIds = freshProviderMirror
+                ? JSON.parse(freshProviderMirror).map(String)
+                : currentProviderUserIds;
+            await eventBus.emit(companyId, 'job.rescheduled', {
+                job_id: jobId,
+                assignee_user_ids: nextProviderUserIds,
+                record_refs: [{ type: 'job', id: jobId }],
+            }, {
+                actorType: 'user',
+                actorId: req.user?.crmUser?.id || null,
+                aggregateType: 'job',
+                aggregateId: jobId,
+                client,
+            });
+            if (freshProviderMirror) {
+                const previous = new Set(currentProviderUserIds);
+                const next = new Set(nextProviderUserIds);
+                const added = nextProviderUserIds.filter(id => !previous.has(id));
+                const removed = currentProviderUserIds.filter(id => !next.has(id));
+                if (added.length) {
+                    await eventBus.emit(companyId, 'job.assigned', {
+                        job_id: jobId,
+                        assignee_user_ids: added,
+                        record_refs: [{ type: 'job', id: jobId }],
+                    }, {
+                        actorType: 'user',
+                        actorId: req.user?.crmUser?.id || null,
+                        aggregateType: 'job',
+                        aggregateId: jobId,
+                        client,
+                    });
+                }
+                if (removed.length) {
+                    await eventBus.emit(companyId, 'job.unassigned', {
+                        job_id: jobId,
+                        previous_recipient_user_ids: removed,
+                        previous_assigned_provider_user_ids: currentProviderUserIds,
+                        record_refs: [{ type: 'job', id: jobId }],
+                    }, {
+                        actorType: 'user',
+                        actorId: req.user?.crmUser?.id || null,
+                        aggregateType: 'job',
+                        aggregateId: jobId,
+                        client,
+                    });
+                }
+            }
         });
 
         // SCHED-ROUTE-VIS-001 (FR-1, S-8): best-effort route recalc after the

@@ -23,6 +23,7 @@ const queries = require('../../db/queries');
 const db = require('../../db/connection');
 const realtimeService = require('../realtimeService');
 const { projectEmailTimelineItem } = require('./emailTimelineItem');
+const eventBus = require('../eventBus');
 
 const SENT_DRAFT_LABELS = new Set(['SENT', 'DRAFT']);
 
@@ -118,6 +119,15 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
                             } catch (e) {
                                 console.error('[EmailTimeline] Yelp publishMessageAdded failed:', e.message);
                             }
+                            await eventBus.emit(companyId, 'yelp.message_received', {
+                                timeline_id: timelineId,
+                                record_refs: [{ type: 'timeline', id: timelineId }],
+                            }, {
+                                actorType: 'webhook',
+                                aggregateType: 'timeline',
+                                aggregateId: timelineId,
+                                idempotencyKey: `yelp.message_received:${msg.provider_message_id}`,
+                            });
                         }
                     }
                 } catch (e) {
@@ -312,6 +322,18 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
         } catch (e) {
             console.error('[EmailTimeline] publishMessageAdded failed:', e.message);
         }
+
+        await eventBus.emit(companyId, 'email.inbound', {
+            email_message_id: linked.id,
+            contact_id: contactId,
+            timeline_id: timelineId,
+            record_refs: [{ type: 'email_message', id: linked.id }],
+        }, {
+            actorType: 'webhook',
+            aggregateType: 'email_message',
+            aggregateId: linked.id,
+            idempotencyKey: `email.inbound:${msg.provider_message_id}`,
+        });
 
         return { linked: true, contactId, timelineId };
     } catch (err) {

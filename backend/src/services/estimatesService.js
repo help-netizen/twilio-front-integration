@@ -12,6 +12,7 @@ const { toE164 } = require('../utils/phoneUtils');
 const { shortDocNumber } = require('../utils/docNumber');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 const { logFinancialActivity } = require('./financialActivityService');
+const eventBus = require('./eventBus');
 const {
     normalizeOrderList,
     stripInternalOrderList,
@@ -28,6 +29,19 @@ class EstimatesServiceError extends Error {
 
 function asText(value) {
     return typeof value === 'string' ? value.trim() : '';
+}
+
+function emitEstimateEvent(companyId, eventType, estimateId, activityActor, client = null) {
+    return eventBus.emit(companyId, eventType, {
+        estimate_id: estimateId,
+        record_refs: [{ type: 'estimate', id: estimateId }],
+    }, {
+        actorType: activityActor?.type || 'system',
+        actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+        aggregateType: 'estimate',
+        aggregateId: estimateId,
+        client,
+    });
 }
 
 function asNumber(value, fallback = 0) {
@@ -674,6 +688,7 @@ async function sendEstimate(
                 summary: { channel: normalizedChannel },
             });
         }
+        await emitEstimateEvent(companyId, 'estimate.send_failed', id, activityActor);
         throw err;
     }
 
@@ -782,6 +797,15 @@ async function approveEstimate(
             summary: { status: 'approved' },
         }, { client });
     }
+    if (actorType === 'client') {
+        await emitEstimateEvent(
+            companyId,
+            'estimate.client_accepted',
+            id,
+            activityActor || { type: 'client' },
+            client
+        );
+    }
 
     return updated;
 }
@@ -831,6 +855,15 @@ async function declineEstimate(
             actor: activityActor,
             summary: { status: 'declined' },
         }, { client });
+    }
+    if (actorType === 'client') {
+        await emitEstimateEvent(
+            companyId,
+            'estimate.client_declined',
+            id,
+            activityActor || { type: 'client' },
+            client
+        );
     }
 
     return updated;

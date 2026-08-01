@@ -6,6 +6,7 @@ const mockLogJobActivity = jest.fn();
 const mockWithTransaction = jest.fn();
 const mockResolveTransition = jest.fn();
 const mockRecalcForJob = jest.fn();
+const mockEventBusEmit = jest.fn();
 
 jest.mock('../backend/src/db/connection', () => ({
     query: (...args) => mockDbQuery(...args),
@@ -45,6 +46,9 @@ jest.mock('../backend/src/db/membershipQueries', () => ({
 }));
 jest.mock('../backend/src/config/featureFlags', () => ({
     isZenbookerSyncEnabled: jest.fn(() => false),
+}));
+jest.mock('../backend/src/services/eventBus', () => ({
+    emit: (...args) => mockEventBusEmit(...args),
 }));
 
 const jobsService = require('../backend/src/services/jobsService');
@@ -135,6 +139,7 @@ beforeEach(() => {
     mockResolveTransition.mockResolvedValue({ valid: true });
     mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
     mockRecalcForJob.mockResolvedValue(null);
+    mockEventBusEmit.mockResolvedValue({ id: 1 });
 
     mockDbQuery.mockImplementation(async (sql, params = []) => {
         const text = String(sql);
@@ -209,6 +214,23 @@ describe.each([
 
 test('same-company FSM status transition keeps its behavior and logs the CRM actor atomically', async () => {
     await jobsService.updateBlancStatus(50, 'On the way', COMPANY_A, ACTOR);
+
+    expect(mockEventBusEmit).toHaveBeenCalledWith(
+        COMPANY_A,
+        'job.status_changed',
+        {
+            job_id: 50,
+            record_refs: [{ type: 'job', id: 50 }],
+            from: 'Submitted',
+            to: 'On the way',
+        },
+        expect.objectContaining({
+            actorType: 'user',
+            actorId: ACTOR.id,
+            aggregateType: 'job',
+            aggregateId: 50,
+        })
+    );
 
     expect(job.blanc_status).toBe('On the way');
     expect(mockLogJobActivity).toHaveBeenCalledWith({

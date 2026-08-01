@@ -26,9 +26,23 @@ const outboundLeadCallSettingsService = require('./outboundLeadCallSettingsServi
 const agentCallWindowService = require('./agentCallWindowService');
 const outboundCallCancellationService = require('./outboundCallCancellationService');
 const { aiActor } = require('./leadContactActivityService');
+const eventBus = require('./eventBus');
 
 const APP_KEY = 'outbound-lead-caller';
 const CONTACT_CANCEL_CAUSES = outboundCallCancellationService.CAUSES;
+
+function emitLeadAiOutcome(companyId, eventType, leadId, attemptId) {
+    return eventBus.emit(companyId, eventType, {
+        lead_id: leadId,
+        attempt_id: attemptId,
+        record_refs: [{ type: 'lead', id: leadId }],
+    }, {
+        actorType: 'system',
+        aggregateType: 'lead',
+        aggregateId: leadId,
+        idempotencyKey: `${eventType}:${attemptId}`,
+    });
+}
 
 // ── §5.1 Pure helpers (exported for jest — no DB, injectable now) ───────────
 
@@ -420,6 +434,7 @@ async function scheduleLeadRetryOrExhaust(attempt, reason, klass = 'failed') {
             eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_retry_skipped',
                 { attemptNo: attempt.attempt_no, outcome: klass, blockedBy }, 'system');
         } catch { /* non-fatal */ }
+        await emitLeadAiOutcome(companyId, 'ai_call.failed', attempt.lead_uuid, attempt.id);
         console.log(`[outboundLeadCall] retry blocked attempt=${attempt.id} by=${blockedBy}`);
         return;
     }
@@ -446,6 +461,7 @@ async function scheduleLeadRetryOrExhaust(attempt, reason, klass = 'failed') {
             eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_retry',
                 { attemptNo: attempt.attempt_no, nextScheduledAt: nextAt.toISOString(), outcome: klass }, 'system');
         } catch { /* non-fatal */ }
+        await emitLeadAiOutcome(companyId, 'ai_call.failed', attempt.lead_uuid, attempt.id);
         console.log(`[outboundLeadCall] retry scheduled lead=${attempt.lead_uuid} attempt=${attempt.attempt_no + 1} at=${nextAt.toISOString()}`);
     } else {
         // 4. Exhaustion (FR-12): terminal marker row + dispatcher task.
@@ -460,6 +476,7 @@ async function scheduleLeadRetryOrExhaust(attempt, reason, klass = 'failed') {
             eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_exhausted',
                 { attempts: maxAttempts }, 'system');
         } catch { /* non-fatal */ }
+        await emitLeadAiOutcome(companyId, 'ai_call.exhausted', attempt.lead_uuid, attempt.id);
         console.log(`[outboundLeadCall] exhausted lead=${attempt.lead_uuid} after=${attempt.attempt_no}`);
     }
 }
@@ -513,6 +530,7 @@ async function handleLeadEndOfCall(attempt, klass, endedReason, message) {
                 eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_booked',
                     { attemptNo: attempt.attempt_no, needsReview: true }, 'system');
             } catch { /* non-fatal */ }
+            await emitLeadAiOutcome(companyId, 'ai_call.booked', attempt.lead_uuid, attempt.id);
             console.log(`[outboundLeadCall] booked → review attempt=${attempt.id} lead=${attempt.lead_uuid}`);
             return;
         }
@@ -537,6 +555,7 @@ async function handleLeadEndOfCall(attempt, klass, endedReason, message) {
                 eventService.logEvent(companyId, 'lead', attempt.lead_uuid, 'outbound_lead_call_declined',
                     { attemptNo: attempt.attempt_no, outcome: outcome || klass }, 'system');
             } catch { /* non-fatal */ }
+            await emitLeadAiOutcome(companyId, 'ai_call.declined', attempt.lead_uuid, attempt.id);
             return;
         }
 

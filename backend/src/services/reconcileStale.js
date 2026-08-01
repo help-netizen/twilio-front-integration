@@ -2,6 +2,7 @@ const db = require('../db/connection');
 const queries = require('../db/queries');
 const { isFinalStatus } = require('./stateMachine');
 const { getTwilioClient } = require('./twilioClient');
+const eventBus = require('./eventBus');
 
 /**
  * Reconcile stale calls — safety net for calls stuck in transient statuses.
@@ -122,19 +123,37 @@ async function reconcileOneCall(call, traceId) {
     // so the recording callback never arrives. Transition to no-answer (final).
     if (call.status === 'voicemail_recording') {
         const recCheck = await db.query(
-            `SELECT 1 FROM recordings WHERE call_sid = $1 LIMIT 1`, [call_sid]
+            `SELECT 1 FROM recordings WHERE call_sid = $1 AND company_id = $2 LIMIT 1`,
+            [call_sid, company_id]
         );
         if (recCheck.rows.length === 0) {
             await db.query(
                 `UPDATE calls SET status = 'no-answer', is_final = true,
-                 ended_at = COALESCE(ended_at, NOW()) WHERE call_sid = $1`, [call_sid]
+                 ended_at = COALESCE(ended_at, NOW())
+                 WHERE call_sid = $1 AND company_id = $2`,
+                [call_sid, company_id]
             );
             console.log(`[${traceId}] voicemail_recording with no recording → no-answer: ${call_sid}`);
             // Publish SSE update
             try {
                 const realtimeService = require('./realtimeService');
-                const updated = await queries.getCallByCallSid(call_sid);
-                if (updated) realtimeService.publishCallUpdate({ eventType: 'call.updated', ...updated });
+                const updated = await queries.getCallByCallSid(call_sid, company_id);
+                if (updated) {
+                    realtimeService.publishCallUpdate({ eventType: 'call.updated', ...updated });
+                    if (!updated.parent_call_sid && updated.direction === 'inbound') {
+                        await eventBus.emit(company_id, 'call.missed', {
+                            call_id: updated.id,
+                            call_sid,
+                            contact_id: updated.contact_id || null,
+                            record_refs: [{ type: 'call', id: updated.id }],
+                        }, {
+                            actorType: 'system',
+                            aggregateType: 'call',
+                            aggregateId: updated.id,
+                            idempotencyKey: `call.missed:${call_sid}`,
+                        });
+                    }
+                }
             } catch (e) { /* best-effort */ }
             return true;
         }
@@ -143,15 +162,17 @@ async function reconcileOneCall(call, traceId) {
     // Strategy 1: Parent call with children — re-run reconcileParentCall
     if (!parent_call_sid) {
         const childResult = await db.query(
-            `SELECT call_sid, status, is_final FROM calls WHERE parent_call_sid = $1`,
-            [call_sid]
+            `SELECT call_sid, status, is_final
+             FROM calls
+             WHERE parent_call_sid = $1 AND company_id = $2`,
+            [call_sid, company_id]
         );
 
         if (childResult.rows.length > 0) {
             // First, reconcile any stale children via Twilio API
             for (const child of childResult.rows) {
                 if (!child.is_final) {
-                    await fetchAndUpdateFromTwilio(child.call_sid, traceId);
+                    await fetchAndUpdateFromTwilio(child.call_sid, traceId, company_id);
                 }
             }
 
@@ -159,22 +180,22 @@ async function reconcileOneCall(call, traceId) {
             const { reconcileParentCall } = require('./inboxWorker');
             await reconcileParentCall(call_sid, traceId, company_id);
 
-            const updated = await queries.getCallByCallSid(call_sid);
+            const updated = await queries.getCallByCallSid(call_sid, company_id);
             if (updated && updated.is_final) {
                 console.log(`[${traceId}] Parent ${call_sid}: ${call.status} → ${updated.status}`);
                 return true;
             }
 
             // If still not final after reconcile, force-fetch from Twilio
-            return await fetchAndUpdateFromTwilio(call_sid, traceId);
+            return await fetchAndUpdateFromTwilio(call_sid, traceId, company_id);
         }
     }
 
     // Strategy 2: Standalone or child call — fetch from Twilio API directly
-    return await fetchAndUpdateFromTwilio(call_sid, traceId);
+    return await fetchAndUpdateFromTwilio(call_sid, traceId, company_id);
 }
 
-async function fetchAndUpdateFromTwilio(callSid, traceId) {
+async function fetchAndUpdateFromTwilio(callSid, traceId, companyId) {
     try {
         const client = getTwilioClient();
         const details = await client.calls(callSid).fetch();
@@ -187,7 +208,7 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
         // Guard: don't let Twilio's "completed" overwrite meaningful statuses.
         // Twilio reports "completed" for parent calls when TwiML finishes,
         // even if no agent answered — preserve no-answer/voicemail statuses.
-        const existing = await queries.getCallByCallSid(callSid);
+        const existing = await queries.getCallByCallSid(callSid, companyId);
         const preserveStatuses = ['no-answer', 'voicemail_recording', 'voicemail_left', 'blocked'];
         if (existing && preserveStatuses.includes(existing.status) && apiStatus === 'completed') {
             await db.query(
@@ -196,13 +217,14 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
                  duration_sec = COALESCE($3, duration_sec),
                  price      = COALESCE($4, price),
                  price_unit = COALESCE($5, price_unit)
-                 WHERE call_sid = $1`,
+                 WHERE call_sid = $1 AND company_id = $6`,
                 [
                     callSid,
                     details.endTime ? new Date(details.endTime) : null,
                     parseInt(details.duration) || null,
                     details.price ? parseFloat(details.price) : null,
                     details.priceUnit || null,
+                    companyId,
                 ]
             );
             console.log(`[${traceId}] Preserving ${existing.status} (Twilio says ${apiStatus}): ${callSid}`);
@@ -218,7 +240,7 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
                 duration_sec = COALESCE($6, duration_sec),
                 price        = COALESCE($7, price),
                 price_unit   = COALESCE($8, price_unit)
-             WHERE call_sid = $1`,
+             WHERE call_sid = $1 AND company_id = $9`,
             [
                 callSid,
                 apiStatus,
@@ -228,6 +250,7 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
                 parseInt(details.duration) || null,
                 details.price ? parseFloat(details.price) : null,
                 details.priceUnit || null,
+                companyId,
             ]
         );
 
@@ -236,7 +259,7 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
         // Publish SSE update
         try {
             const realtimeService = require('./realtimeService');
-            const updated = await queries.getCallByCallSid(callSid);
+            const updated = await queries.getCallByCallSid(callSid, companyId);
             if (updated) {
                 realtimeService.publishCallUpdate({ eventType: 'call.updated', ...updated });
             }
@@ -247,8 +270,9 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
         // If Twilio returns 404, the call doesn't exist — mark as failed
         if (error.status === 404) {
             await db.query(
-                `UPDATE calls SET status = 'failed', is_final = true WHERE call_sid = $1`,
-                [callSid]
+                `UPDATE calls SET status = 'failed', is_final = true
+                 WHERE call_sid = $1 AND company_id = $2`,
+                [callSid, companyId]
             );
             console.log(`[${traceId}] Twilio 404: ${callSid} → marked failed`);
             return true;

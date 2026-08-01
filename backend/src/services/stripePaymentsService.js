@@ -30,6 +30,20 @@ const {
     userActor,
 } = require('./financialActivityService');
 const { withTransaction } = require('./transactionService');
+const eventBus = require('./eventBus');
+
+function emitPaymentDomainEvent(companyId, eventType, payment, client, idempotencyKey) {
+    return eventBus.emit(companyId, eventType, {
+        payment_id: payment.id,
+        record_refs: [{ type: 'payment', id: payment.id }],
+    }, {
+        actorType: 'webhook',
+        aggregateType: 'payment',
+        aggregateId: payment.id,
+        idempotencyKey,
+        client,
+    });
+}
 
 const APP_KEY = 'stripe-payments';
 
@@ -1129,6 +1143,13 @@ async function applyStripeRefund(
             }, { client });
         }
     }
+    await emitPaymentDomainEvent(
+        companyId,
+        'payment.refunded',
+        original || tx,
+        client,
+        `payment.refunded:stripe:${refundId}`
+    );
     return { tx, deduped: false };
 }
 
@@ -1443,6 +1464,89 @@ async function applyStripePayment(
             }, { client });
         }
     }
+    await emitPaymentDomainEvent(
+        companyId,
+        'payment.succeeded',
+        tx,
+        client,
+        `payment.succeeded:stripe:${externalId}`
+    );
+    return { tx, deduped: false };
+}
+
+/** Idempotently project a failed Stripe intent into the tenant-owned ledger. */
+async function applyStripePaymentFailure(
+    companyId,
+    { externalId, invoiceId, contactId, jobId, amount, currency },
+    client = null,
+    activityActor = null
+) {
+    const existing = await paymentsQueries.findByExternalSourceId(
+        companyId,
+        'stripe',
+        externalId,
+        client
+    );
+    if (existing) return { tx: existing, deduped: true };
+
+    let invoice = null;
+    if (invoiceId) {
+        invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
+        if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+    }
+    if (contactId && !await estimatesQueries.getContactContext(companyId, contactId, client)) {
+        throw new StripePaymentsError('NOT_FOUND', 'Contact not found', 404);
+    }
+    if (jobId && !await estimatesQueries.getJobContext(companyId, jobId, client)) {
+        throw new StripePaymentsError('NOT_FOUND', 'Job not found', 404);
+    }
+
+    let tx;
+    try {
+        tx = await paymentsQueries.createTransaction(companyId, {
+            transaction_type: 'payment',
+            payment_method: 'credit_card',
+            status: 'failed',
+            amount: Number.isFinite(Number(amount)) ? Number(amount) : 0,
+            currency: (currency || 'USD').toUpperCase(),
+            invoice_id: invoiceId || null,
+            contact_id: contactId || invoice?.contact_id || null,
+            job_id: jobId || invoice?.job_id || null,
+            external_id: externalId,
+            external_source: 'stripe',
+            metadata: { outcome: 'failed' },
+            processed_at: new Date().toISOString(),
+        }, client);
+    } catch (error) {
+        if (error.code === '23505') {
+            const row = await paymentsQueries.findByExternalSourceId(
+                companyId,
+                'stripe',
+                externalId,
+                client
+            );
+            return { tx: row, deduped: true };
+        }
+        throw error;
+    }
+
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'payment',
+            action: 'payment.failed',
+            entity: tx,
+            actor: activityActor,
+            summary: { status: 'failed' },
+        }, { client });
+    }
+    await emitPaymentDomainEvent(
+        companyId,
+        'payment.failed',
+        tx,
+        client,
+        `payment.failed:stripe:${externalId}`
+    );
     return { tx, deduped: false };
 }
 
@@ -1583,20 +1687,16 @@ async function handleWebhook(rawBody, signature) {
                             failure_reason: reason,
                         }, client);
                     }
-                    const paymentTarget = session || {
-                        id: obj.id,
-                        invoice_id: invoiceId,
-                        job_id: meta.job_id ? Number(meta.job_id) : null,
-                        contact_id: meta.contact_id ? Number(meta.contact_id) : null,
-                    };
-                    await logFinancialActivity({
-                        companyId,
-                        entityType: 'payment',
-                        action: 'payment.failed',
-                        entity: paymentTarget,
-                        actor: stripeActor(),
-                        summary: { status: 'failed' },
-                    }, { client });
+                    await applyStripePaymentFailure(companyId, {
+                        externalId: obj.id,
+                        invoiceId,
+                        contactId: session?.contact_id
+                            || (meta.contact_id ? Number(meta.contact_id) : null),
+                        jobId: session?.job_id
+                            || (meta.job_id ? Number(meta.job_id) : null),
+                        amount: obj.amount != null ? obj.amount / 100 : session?.amount,
+                        currency: obj.currency || session?.currency,
+                    }, client, stripeActor());
                     if (invoiceId) {
                         const invoice = await invoicesQueries.getInvoiceById(
                             companyId,
@@ -1686,6 +1786,33 @@ async function handleWebhook(rawBody, signature) {
                             status: 'disputed',
                         },
                     }, { client });
+                    if (original) {
+                        await emitPaymentDomainEvent(
+                            companyId,
+                            'payment.disputed',
+                            original,
+                            client,
+                            `payment.disputed:stripe:${obj.id}`
+                        );
+                    } else if (meta.invoice_id) {
+                        const invoice = await invoicesQueries.getInvoiceById(
+                            companyId,
+                            Number(meta.invoice_id),
+                            client
+                        );
+                        if (invoice) {
+                            await eventBus.emit(companyId, 'payment.disputed', {
+                                invoice_id: invoice.id,
+                                record_refs: [{ type: 'invoice', id: invoice.id }],
+                            }, {
+                                actorType: 'webhook',
+                                aggregateType: 'invoice',
+                                aggregateId: invoice.id,
+                                idempotencyKey: `payment.disputed:stripe:${obj.id}`,
+                                client,
+                            });
+                        }
+                    }
                 });
                 break;
             }

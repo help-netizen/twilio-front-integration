@@ -444,6 +444,16 @@ async function createManualJob(companyId, input = {}, activityActor = null) {
         await enqueueZbJobSync(companyId, job.id, { address: input.zb_address || null })
             .catch(e => console.error('[JobsService] zb sync enqueue failed (non-fatal):', e.message));
     }
+    await eventBus.emit(companyId, 'job.created', {
+        id: job.id,
+        job_id: job.id,
+        record_refs: [{ type: 'job', id: job.id }],
+    }, {
+        actorType: activityActor?.type || 'system',
+        actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+        aggregateType: 'job',
+        aggregateId: job.id,
+    });
     return job;
 }
 
@@ -657,8 +667,17 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
     eventBus.emit(
         companyId,
         'job.created',
-        { id: localJob.id, jobId: localJob.id, companyId },
-        { actorType: 'user', aggregateType: 'job', aggregateId: localJob.id }
+        {
+            id: localJob.id,
+            job_id: localJob.id,
+            record_refs: [{ type: 'job', id: localJob.id }],
+        },
+        {
+            actorType: activityActor?.type || 'system',
+            actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+            aggregateType: 'job',
+            aggregateId: localJob.id,
+        }
     ).catch(() => {});
     // [CHANGE END]
 
@@ -1212,6 +1231,19 @@ function fireRobotCallLeaveHook(jobId, companyId, newStatus) {
     }
 }
 
+function emitJobDomainEvent(companyId, eventType, jobId, payload, activityActor = null) {
+    return eventBus.emit(companyId, eventType, {
+        job_id: jobId,
+        record_refs: [{ type: 'job', id: jobId }],
+        ...payload,
+    }, {
+        actorType: activityActor?.type || 'system',
+        actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+        aggregateType: 'job',
+        aggregateId: jobId,
+    }).catch(() => {});
+}
+
 async function updateBlancStatus(jobId, newStatus, companyId, activityActor = null) {
     if (!companyId) {
         const err = new Error('updateBlancStatus requires companyId');
@@ -1268,6 +1300,11 @@ async function updateBlancStatus(jobId, newStatus, companyId, activityActor = nu
             jobId
         )
     );
+
+    await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        from: job.blanc_status,
+        to: newStatus,
+    }, activityActor);
 
     // Outbound sync to Zenbooker — full mapping with no-op guards (§6).
     // Errors are logged but NOT thrown — local DB is source of truth and must not
@@ -1731,6 +1768,10 @@ async function cancelJob(jobId, companyId, activityActor = null) {
             jobId
         )
     );
+    await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        from: job.blanc_status,
+        to: 'Canceled',
+    }, activityActor);
     // CANCEL-001 leave-hook (CC-02 S2): this writer sets blanc_status DIRECTLY
     // (bypasses updateBlancStatus — fsm.js /apply + the jobs.js cancel route), so
     // it needs its own exit hook. Pre-state from the job loaded above.
@@ -1776,6 +1817,10 @@ async function markEnroute(jobId, companyId, activityActor = null) {
             jobId
         )
     );
+    await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        from: job.zb_status,
+        to: 'en-route',
+    }, activityActor);
     return { ...job, zb_status: 'en-route' };
 }
 
@@ -1815,6 +1860,10 @@ async function markInProgress(jobId, companyId, activityActor = null) {
             jobId
         )
     );
+    await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        from: job.zb_status,
+        to: 'in-progress',
+    }, activityActor);
     return { ...job, zb_status: 'in-progress' };
 }
 
@@ -1855,6 +1904,10 @@ async function markComplete(jobId, companyId, activityActor = null) {
             jobId
         )
     );
+    await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        from: job.blanc_status,
+        to: 'Visit completed',
+    }, activityActor);
     // CANCEL-001 leave-hook (CC-02 S2): direct blanc_status writer, same as
     // cancelJob above — a completed visit ends the robot-call plan.
     if (job.blanc_status === 'Part arrived') {

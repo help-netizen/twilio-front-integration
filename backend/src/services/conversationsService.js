@@ -8,6 +8,7 @@ const queries = require('../db/queries');
 const realtimeService = require('./realtimeService');
 const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
+const eventBus = require('./eventBus');
 
 // Lazy proxy: every `client.x.y` access first resolves the shared singleton.
 const client = new Proxy({}, {
@@ -425,12 +426,19 @@ async function handleMessageAdded(payload) {
             console.error('[ConvService] Failed to mark contact unread for SMS:', e.message);
         }
 
-        // ADR-001/AUTO-001: publish sms.inbound so the rules engine can react.
+        // Typed, PII-safe event; message detail is fetched only after authorization.
         try {
-            require('./eventBus').emit(conv.company_id, 'sms.inbound', {
-                from: conv.customer_e164, to: conv.proxy_e164, body: payload.Body,
-                contact_id: conv.contact_id || null, conversation_id: conv.id,
-            }, { actorType: 'webhook', aggregateType: 'sms', aggregateId: conv.id }).catch(() => {});
+            eventBus.emit(conv.company_id, 'sms.inbound', {
+                message_id: msg.id,
+                conversation_id: conv.id,
+                contact_id: conv.contact_id || null,
+                record_refs: [{ type: 'sms_message', id: msg.id }],
+            }, {
+                actorType: 'webhook',
+                aggregateType: 'sms_message',
+                aggregateId: msg.id,
+                idempotencyKey: `sms.inbound:${payload.MessageSid || msg.id}`,
+            }).catch(() => {});
         } catch (e) { /* non-blocking */ }
 
         // Legacy hardcoded AR path — superseded by rules engine when
@@ -524,6 +532,20 @@ async function handleDeliveryUpdated(payload) {
         const updatedMessage = await convQueries.updateDeliveryStatus(
             payload.MessageSid, companyId, status, errorCode, payload.ErrorMessage
         );
+        if (updatedMessage
+            && updatedMessage.direction === 'outbound'
+            && ['failed', 'undelivered'].includes(String(status || '').toLowerCase())) {
+            await eventBus.emit(companyId, 'message.delivery_failed', {
+                message_id: updatedMessage.id,
+                conversation_id: updatedMessage.conversation_id,
+                record_refs: [{ type: 'sms_message', id: updatedMessage.id }],
+            }, {
+                actorType: 'webhook',
+                aggregateType: 'sms_message',
+                aggregateId: updatedMessage.id,
+                idempotencyKey: `message.delivery_failed:${payload.MessageSid}:${String(status).toLowerCase()}`,
+            });
+        }
         realtimeService.publishMessageDelivery(
             payload.MessageSid, status, errorCode, updatedMessage?.company_id
         );

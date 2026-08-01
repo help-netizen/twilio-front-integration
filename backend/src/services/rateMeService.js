@@ -5,6 +5,7 @@ const db = require('../db/connection');
 const rateMeQueries = require('../db/rateMeQueries');
 const marketplaceQueries = require('../db/marketplaceQueries');
 const storageService = require('./storageService');
+const eventBus = require('./eventBus');
 
 const RATE_ME_PUBLIC_HOST = String(
     process.env.RATE_ME_PUBLIC_HOST || 'rate.albusto.com'
@@ -322,6 +323,20 @@ async function submitRating(token, { stars, feedback = null } = {}, hostCompanyI
         await rateMeQueries.stampTokenUsed(context.id, client);
         await client.query('COMMIT');
         logRating(context, stars, normalizedFeedback, false);
+
+        await eventBus.emit(context.company_id, 'review.received', {
+            review_id: inserted.id,
+            job_id: identity.jobId,
+            record_refs: [
+                { type: 'review', id: inserted.id },
+                { type: 'job', id: identity.jobId },
+            ],
+        }, {
+            actorType: 'client',
+            aggregateType: 'review',
+            aggregateId: inserted.id,
+            idempotencyKey: `review.received:${inserted.id}`,
+        });
 
         const redirectUrl = googleReviewUrl(installation.metadata);
         if (stars === 5 && redirectUrl) {

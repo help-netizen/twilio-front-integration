@@ -286,7 +286,7 @@ async function updateDeliveryStatus(messageSid, companyId, status, errorCode, er
     const result = await db.query(`
         UPDATE sms_messages SET delivery_status = $3, error_code = $4, error_message = $5, updated_at = now()
         WHERE twilio_message_sid = $1 AND company_id = $2
-        RETURNING company_id
+        RETURNING id, conversation_id, company_id, direction
     `, [messageSid, companyId, status, errorCode, errorMessage]);
     return result.rows[0] || null;
 }

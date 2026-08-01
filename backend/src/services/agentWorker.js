@@ -74,7 +74,11 @@ async function processBatch() {
                          WHERE id = $1`,
                         [task.id, errPayload, next]
                     );
-                    await emit(task, 'agent_task.failed', { task_id: task.id, agent_type: task.agent_type, error: err.message?.slice(0, 300) });
+                    await emit(task, 'agent_task.failed', {
+                        task_id: task.id,
+                        agent_type: task.agent_type,
+                        record_refs: [{ type: 'task', id: task.id }],
+                    });
                 } else {
                     // Re-queue with backoff. Emit NOTHING (no billing/rule double-count).
                     const backoff = backoffSeconds(attemptCount);

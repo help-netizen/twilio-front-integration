@@ -22,6 +22,7 @@ const taskActions = require('../services/taskActions/registry');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 const { getTaskContentScope } = require('../middleware/taskContentScope');
+const eventBus = require('../services/eventBus');
 
 function companyId(req) {
     return req.companyFilter?.company_id;
@@ -69,6 +70,20 @@ function bad(res, code, message) {
 function canActOn(req, task) {
     const me = actorId(req);
     return canManage(req) || (me && (task.owner_user_id === me || task.author_user_id === me));
+}
+
+function emitTaskEvent(req, eventType, task, payload = {}) {
+    const tenantId = companyId(req);
+    return eventBus.emit(tenantId, eventType, {
+        task_id: task.id,
+        record_refs: [{ type: 'task', id: task.id }],
+        ...payload,
+    }, {
+        actorType: 'user',
+        actorId: actorId(req),
+        aggregateType: 'task',
+        aggregateId: task.id,
+    });
 }
 
 // ── GET / — global cross-entity list (role-scoped) ──────────────────────────
@@ -210,6 +225,11 @@ router.post('/', requirePermission('tasks.create'), async (req, res) => {
             author_user_id: actorId(req),
             due_at: due_at || null,
         });
+        if (task.owner_user_id) {
+            await emitTaskEvent(req, 'task.assigned', task, {
+                assignee_user_ids: [task.owner_user_id],
+            });
+        }
         // TASKS-COUNT-BADGE-001: a new open task always changes the count. Best-effort.
         tasksService.emitTaskChange(companyId(req));
         res.status(201).json({ ok: true, data: { task } });
@@ -247,6 +267,14 @@ router.patch('/:id', requirePermission('tasks.view'), async (req, res) => {
         }
 
         const task = await tasksQueries.updateTask(companyId(req), req.params.id, patch);
+        if ('owner_user_id' in patch
+            && String(existing.owner_user_id || '') !== String(task.owner_user_id || '')) {
+            await emitTaskEvent(req, 'task.reassigned', task, {
+                assignee_user_ids: task.owner_user_id ? [task.owner_user_id] : [],
+                previous_recipient_user_ids: existing.owner_user_id ? [existing.owner_user_id] : [],
+                previous_owner_user_ids: existing.owner_user_id ? [existing.owner_user_id] : [],
+            });
+        }
         // AR-TASKS-001: the timeline flag is legacy metadata, but manual-flag
         // rows still depend on it. Clear it only after the FINAL open task on
         // this company-owned timeline is completed. A task may be job-parented

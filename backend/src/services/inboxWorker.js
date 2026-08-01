@@ -6,6 +6,7 @@ const { extractPhoneFromSIP } = require('./callProcessor');
 const { reconcileStaleCalls } = require('./reconcileStale');
 const { getTwilioClient } = require('./twilioClient');
 const callMaskingService = require('./callMaskingService');
+const eventBus = require('./eventBus');
 
 const AI_ANSWERED_BY = 'ai';
 
@@ -269,13 +270,6 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
                 const tlRow = await db.query('SELECT company_id FROM timelines WHERE id = $1', [timelineId]);
                 const companyId = tlRow.rows[0]?.company_id || null;
 
-                // AUTO-001: publish call.missed for the rules engine.
-                if (companyId) {
-                    require('./eventBus').emit(companyId, 'call.missed', {
-                        call_sid: normalized.callSid, from: normalized.fromNumber, to: normalized.toNumber,
-                        contact_id: contactId || null, timeline_id: timelineId,
-                    }, { actorType: 'webhook', aggregateType: 'call', aggregateId: normalized.callSid }).catch(() => {});
-                }
                 if (process.env.FEATURE_RULES_ENGINE_AR === 'true') throw { __skipLegacyAR: true };
 
                 const triggerCfg = await getTriggerConfig(companyId, 'missed_call');
@@ -638,6 +632,23 @@ async function processDialEvent(payload, traceId) {
     const freshCall = await queries.getCallByCallSid(CallSid, companyId);
     if (freshCall) {
         publishRealtimeEvent('call.updated', freshCall, traceId);
+        if (!effectivelyAnswered
+            && !freshCall.parent_call_sid
+            && freshCall.direction === 'inbound'
+            && freshCall.is_final === true
+            && freshCall.status === 'no-answer') {
+            await eventBus.emit(companyId, 'call.missed', {
+                call_id: freshCall.id,
+                call_sid: CallSid,
+                contact_id: freshCall.contact_id || null,
+                record_refs: [{ type: 'call', id: freshCall.id }],
+            }, {
+                actorType: 'webhook',
+                aggregateType: 'call',
+                aggregateId: freshCall.id,
+                idempotencyKey: `call.missed:${CallSid}`,
+            });
+        }
     }
 
     // 5. Final reconciliation to enrich parent with winner metadata (duration, answered_at, etc.)
@@ -845,6 +856,28 @@ async function processRecordingEvent(payload, traceId, source = 'webhook') {
                 const updatedCall = await queries.getCallByCallSid(normalized.callSid, eventCompanyId);
                 if (updatedCall) {
                     publishRealtimeEvent('call.updated', updatedCall, traceId);
+                    if (!updatedCall.parent_call_sid
+                        && updatedCall.direction === 'inbound'
+                        && updatedCall.is_final === true) {
+                        const eventPayload = {
+                            call_id: updatedCall.id,
+                            call_sid: normalized.callSid,
+                            contact_id: updatedCall.contact_id || null,
+                            record_refs: [{ type: 'call', id: updatedCall.id }],
+                        };
+                        await eventBus.emit(eventCompanyId, 'call.voicemail_received', eventPayload, {
+                            actorType: 'webhook',
+                            aggregateType: 'call',
+                            aggregateId: updatedCall.id,
+                            idempotencyKey: `call.voicemail_received:${normalized.callSid}`,
+                        });
+                        await eventBus.emit(eventCompanyId, 'call.missed', eventPayload, {
+                            actorType: 'webhook',
+                            aggregateType: 'call',
+                            aggregateId: updatedCall.id,
+                            idempotencyKey: `call.missed:${normalized.callSid}`,
+                        });
+                    }
                 }
                 console.log(`[${traceId}] Status → voicemail_left for ${normalized.callSid}`);
             }

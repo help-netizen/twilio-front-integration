@@ -13,6 +13,7 @@ const { toE164 } = require('../utils/phoneUtils');
 const { shortDocNumber } = require('../utils/docNumber');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 const { logFinancialActivity } = require('./financialActivityService');
+const eventBus = require('./eventBus');
 const { buildEmailBody } = require('./documentEmailBody');
 const {
     normalizeOrderList,
@@ -715,6 +716,15 @@ async function sendInvoice(
                 summary: { channel: normalizedChannel },
             });
         }
+        await eventBus.emit(companyId, 'invoice.send_failed', {
+            invoice_id: id,
+            record_refs: [{ type: 'invoice', id }],
+        }, {
+            actorType: activityActor?.type || 'system',
+            actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+            aggregateType: 'invoice',
+            aggregateId: id,
+        });
         throw err;
     }
 

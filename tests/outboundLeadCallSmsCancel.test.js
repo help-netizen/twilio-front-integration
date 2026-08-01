@@ -176,15 +176,19 @@ describe('SMS direction invariant at webhook ingestion', () => {
         expect(mockEventEmit).toHaveBeenCalledWith(
             CO,
             'sms.inbound',
-            expect.objectContaining({
-                from: CUSTOMER,
-                to: PROXY,
-                body: 'Hello',
+            {
+                message_id: 700,
                 contact_id: 501,
                 conversation_id: 42,
+                record_refs: [{ type: 'sms_message', id: 700 }],
+            },
+            expect.objectContaining({
+                actorType: 'webhook',
+                aggregateType: 'sms_message',
+                aggregateId: 700,
             }),
-            expect.objectContaining({ actorType: 'webhook', aggregateType: 'sms', aggregateId: 42 }),
         );
+        expect(JSON.stringify(mockEventEmit.mock.calls[0])).not.toMatch(/Hello|16175551234|16175006181/);
         expect(mockConvQueries.upsertMessage.mock.invocationCallOrder[0])
             .toBeLessThan(mockEventEmit.mock.invocationCallOrder[0]);
         expect(mockConvQueries.markEventProcessed).toHaveBeenCalledWith(900);
@@ -318,16 +322,21 @@ describe('all-outbound-agents sms.inbound subscriber', () => {
         ({ name }) => name === 'outbound-call-cancel-on-sms'
     );
 
-    test('is registered for sms.inbound only and forwards authoritative company + customer phone', async () => {
+    test('is registered for sms.inbound only and reloads the customer phone through tenant scope', async () => {
         const registration = subscriber();
         expect(registration).toBeTruthy();
         expect(registration.patterns).toBe('sms.inbound');
+        mockDbQuery.mockResolvedValueOnce({ rows: [{ customer_e164: CUSTOMER }] });
 
         await registration.handler({
             company_id: CO,
-            payload: { from: CUSTOMER, company_id: 'untrusted-payload-company' },
+            payload: { message_id: 700, company_id: 'untrusted-payload-company' },
         });
 
+        expect(mockDbQuery).toHaveBeenCalledWith(
+            expect.stringContaining('sm.company_id = $1'),
+            [CO, 700]
+        );
         expect(mockGlobalCancel).toHaveBeenCalledWith({
             companyId: CO,
             rawPhone: CUSTOMER,
@@ -335,10 +344,11 @@ describe('all-outbound-agents sms.inbound subscriber', () => {
         });
     });
 
-    test('missing event company or sender is ignored', async () => {
+    test('missing event company/message or foreign message is ignored', async () => {
         const { handler } = subscriber();
-        await handler({ company_id: null, payload: { from: CUSTOMER } });
+        await handler({ company_id: null, payload: { message_id: 700 } });
         await handler({ company_id: CO, payload: {} });
+        await handler({ company_id: CO, payload: { message_id: 700 } });
         expect(mockGlobalCancel).not.toHaveBeenCalled();
     });
 });

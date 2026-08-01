@@ -100,17 +100,20 @@ describe('TC-OLC-011: lead.created emit contract in createLead', () => {
         const [companyId, type, payload, opts] = eventBus.emit.mock.calls[0];
         expect(companyId).toBe('co-1');
         expect(type).toBe('lead.created');
-        expect(payload).toMatchObject({
+        expect(payload).toEqual({
             id: 555,
-            uuid: 'LD-NEW-1',
-            first_name: 'A',
-            last_name: 'B',
-            phone: '+16175551234',
-            job_source: 'Pro Referral',
+            lead_id: 555,
             status: 'Submitted',
+            record_refs: [{ type: 'lead', id: 555 }],
         });
-        expect(payload).toHaveProperty('job_type');
-        expect(opts).toEqual({ actorType: 'system', aggregateType: 'lead', aggregateId: 555 });
+        expect(payload).not.toHaveProperty('first_name');
+        expect(payload).not.toHaveProperty('phone');
+        expect(opts).toEqual({
+            actorType: 'system',
+            actorId: null,
+            aggregateType: 'lead',
+            aggregateId: 555,
+        });
     });
 });
 

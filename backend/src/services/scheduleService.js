@@ -8,6 +8,26 @@
 const scheduleQueries = require('../db/scheduleQueries');
 const { logJobActivity } = require('./jobActivityService');
 const { withTransaction } = require('./transactionService');
+const eventBus = require('./eventBus');
+
+function domainActor(activityActor) {
+    return {
+        actorType: activityActor?.type || 'system',
+        actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+    };
+}
+
+function emitJobEvent(companyId, eventType, jobId, payload, activityActor) {
+    return eventBus.emit(companyId, eventType, {
+        job_id: jobId,
+        record_refs: [{ type: 'job', id: jobId }],
+        ...payload,
+    }, {
+        ...domainActor(activityActor),
+        aggregateType: 'job',
+        aggregateId: jobId,
+    }).catch(() => {});
+}
 
 // =============================================================================
 // Defaults for dispatch settings
@@ -297,6 +317,9 @@ async function rescheduleItem(
     }
 
     await recalcAfterJobChange(companyId, entityId, before);
+    await emitJobEvent(companyId, 'job.rescheduled', entityId, {
+        assignee_user_ids: (job?.assigned_provider_user_ids || []).map(String).filter(Boolean),
+    }, activityActor);
     return { entity_type: entityType, entity_id: entityId, start_at: newStartAt, end_at: newEndAt, zb };
 }
 
@@ -494,12 +517,23 @@ async function reassignItem(
             const newProviderUserIds = providerUserIds ? JSON.parse(providerUserIds) : [];
             const oldSet = new Set(oldProviderUserIds);
             const addedUserIds = newProviderUserIds.map(String).filter(id => id && !oldSet.has(id));
+            const newSet = new Set(newProviderUserIds.map(String));
+            const removedUserIds = oldProviderUserIds.filter(id => !newSet.has(String(id)));
             if (addedUserIds.length) {
                 const pushService = require('./pushService');
                 for (const userId of addedUserIds) {
                     pushService.sendToUser(companyId, userId, { type: 'job_assigned', job_id: entityId })
                         .catch(err => console.error('[Schedule] job_assigned push failed (non-fatal):', err.message));
                 }
+                await emitJobEvent(companyId, 'job.assigned', entityId, {
+                    assignee_user_ids: addedUserIds,
+                }, activityActor);
+            }
+            if (removedUserIds.length) {
+                await emitJobEvent(companyId, 'job.unassigned', entityId, {
+                    previous_recipient_user_ids: removedUserIds,
+                    previous_assigned_provider_user_ids: oldProviderUserIds,
+                }, activityActor);
             }
         } catch (err) {
             console.error('[Schedule] reassign push hook failed (non-fatal):', err.message);

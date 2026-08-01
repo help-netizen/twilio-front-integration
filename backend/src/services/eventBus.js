@@ -39,7 +39,8 @@ function subscribe(name, pattern, handle) {
  * @param {string} companyId
  * @param {string} eventType - canonical type, e.g. 'job.status_changed'
  * @param {object} payload
- * @param {object} [opts] - { actorType, actorId, aggregateType, aggregateId, idempotencyKey, dispatch }
+ * @param {object} [opts] - { actorType, actorId, aggregateType, aggregateId,
+ *   idempotencyKey, dispatch, client }
  */
 async function emit(companyId, eventType, payload = {}, opts = {}) {
     if (!companyId || !eventType) return null;
@@ -49,11 +50,13 @@ async function emit(companyId, eventType, payload = {}, opts = {}) {
         aggregateId = payload.aggregate_id || payload.id || '0',
         idempotencyKey = null,
         dispatch = true,
+        client = null,
     } = opts;
+    const query = client?.query ? client.query.bind(client) : db.query;
 
     let event = null;
     try {
-        const { rows } = await db.query(
+        const { rows } = await query(
             `INSERT INTO domain_events
                 (company_id, aggregate_type, aggregate_id, event_type, event_data, actor_type, actor_id, idempotency_key)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -75,8 +78,19 @@ async function emit(companyId, eventType, payload = {}, opts = {}) {
             aggregate_type: aggregateType, aggregate_id: String(aggregateId),
             created_at: event.created_at,
         };
-        // Async, never block / never throw into the producer.
-        setImmediate(() => dispatchToSubscribers(enriched));
+        // A transaction-owned event is visible to subscribers only after the
+        // business mutation commits. transactionService decorates its client
+        // with afterCommit(); an arbitrary client without that contract keeps
+        // the durable event but fails closed on in-process dispatch (M4 can
+        // recover it). Non-transactional producers preserve the legacy async
+        // dispatch behavior.
+        if (client?.afterCommit) {
+            client.afterCommit(() => {
+                setImmediate(() => dispatchToSubscribers(enriched));
+            });
+        } else if (!client) {
+            setImmediate(() => dispatchToSubscribers(enriched));
+        }
     }
     return event;
 }

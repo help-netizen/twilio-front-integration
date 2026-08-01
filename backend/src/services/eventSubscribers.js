@@ -56,13 +56,28 @@ function registerSubscribers() {
     });
 
     // OUTBOUND-CALL-CANCEL-001: conversationsService emits this ONLY for an
-    // inbound customer-authored message, after sms_messages persistence. The
-    // event company is authoritative; payload.from is the customer phone because
-    // sms_conversations has no lead/timeline FK.
+    // inbound customer-authored message, after sms_messages persistence. Keep
+    // phone data out of the shared event and reload it through the tenant-owned
+    // message/conversation relationship.
     eventBus.subscribe('outbound-call-cancel-on-sms', 'sms.inbound', async (event) => {
         const companyId = event.company_id;
-        const rawPhone = event.payload && event.payload.from;
-        if (!companyId || !rawPhone) return;
+        const messageId = event.payload && event.payload.message_id;
+        if (!companyId || !messageId) return;
+        const db = require('../db/connection');
+        const { rows } = await db.query(
+            `SELECT sc.customer_e164
+             FROM sms_messages sm
+             JOIN sms_conversations sc
+               ON sc.id = sm.conversation_id
+              AND sc.company_id = sm.company_id
+             WHERE sm.company_id = $1
+               AND sm.id = $2
+               AND sm.direction = 'inbound'
+             LIMIT 1`,
+            [companyId, messageId]
+        );
+        const rawPhone = rows[0]?.customer_e164;
+        if (!rawPhone) return;
         const cancellationService = require('./outboundCallCancellationService');
         await cancellationService.cancel({
             companyId,

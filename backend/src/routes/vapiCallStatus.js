@@ -61,7 +61,21 @@ const router = express.Router();
 const db = require('../db/connection');
 const jobsService = require('../services/jobsService');
 const eventService = require('../services/eventService');
+const eventBus = require('../services/eventBus');
 const outboundCallSettingsService = require('../services/outboundCallSettingsService');
+
+function emitJobAiOutcome(companyId, eventType, jobId, attemptId) {
+    return eventBus.emit(companyId, eventType, {
+        job_id: jobId,
+        attempt_id: attemptId,
+        record_refs: [{ type: 'job', id: jobId }],
+    }, {
+        actorType: 'system',
+        aggregateType: 'job',
+        aggregateId: jobId,
+        idempotencyKey: `${eventType}:${attemptId}`,
+    });
+}
 // REUSE the worker's exported scheduling primitives — do NOT duplicate the
 // backoff math or re-implement business-hours resolution (arch §6 / task constraint).
 // retryBlockReason is the CANCEL-001 (CC-04) no-resurrection guard SHARED with the
@@ -306,6 +320,7 @@ router.post('/', webhookSecretAuth, async (req, res) => {
                 `UPDATE outbound_call_attempts SET status = 'booked', updated_at = now() WHERE id = $1`,
                 [attempt.id]
             );
+            await emitJobAiOutcome(companyId, 'ai_call.booked', jobId, attempt.id);
             return res.json({ ok: true });
         }
 
@@ -327,6 +342,7 @@ router.post('/', webhookSecretAuth, async (req, res) => {
                 eventService.logEvent(companyId, 'job', jobId, 'outbound_call_declined',
                     { attemptNo: attempt.attempt_no }, 'system');
             } catch (_e) { /* non-fatal */ }
+            await emitJobAiOutcome(companyId, 'ai_call.declined', jobId, attempt.id);
             return res.json({ ok: true });
         }
 
@@ -362,6 +378,7 @@ router.post('/', webhookSecretAuth, async (req, res) => {
                 eventService.logEvent(companyId, 'job', jobId, 'outbound_call_retry_skipped',
                     { attemptNo: attempt.attempt_no, outcome: klass, blockedBy: retryBlockedBy }, 'system');
             } catch (_e) { /* non-fatal */ }
+            await emitJobAiOutcome(companyId, 'ai_call.failed', jobId, attempt.id);
             return res.json({ ok: true });
         }
 
@@ -404,6 +421,7 @@ router.post('/', webhookSecretAuth, async (req, res) => {
                 eventService.logEvent(companyId, 'job', jobId, 'outbound_call_retry',
                     { attemptNo: attempt.attempt_no, nextScheduledAt: nextScheduledAt.toISOString(), outcome: klass }, 'system');
             } catch (_e) { /* non-fatal */ }
+            await emitJobAiOutcome(companyId, 'ai_call.failed', jobId, attempt.id);
         } else {
             // Exhausted: no more attempts. Task stays open with the dispatcher, job
             // stays 'Part arrived' (no status flip here). Mark a terminal
@@ -426,6 +444,7 @@ router.post('/', webhookSecretAuth, async (req, res) => {
                 eventService.logEvent(companyId, 'job', jobId, 'outbound_call_exhausted',
                     { attempts: maxAttempts }, 'system');
             } catch (_e) { /* non-fatal */ }
+            await emitJobAiOutcome(companyId, 'ai_call.exhausted', jobId, attempt.id);
         }
 
         return res.json({ ok: true });

@@ -813,12 +813,10 @@ describe('PF007: FSM route authorization', () => {
       'user',
       'kc'
     );
-    expect(eventBusMock.emit).toHaveBeenCalledWith(
-      FSM_COMPANY,
-      'job.status_changed',
-      expect.objectContaining({ to: 'Canceled', reason: 'Customer requested cancellation' }),
-      expect.any(Object)
-    );
+    // The authoritative jobs service owns the typed domain event. The route
+    // must not emit a second event (or copy the free-text cancellation reason
+    // into a notification-bearing payload).
+    expect(eventBusMock.emit).not.toHaveBeenCalled();
   });
 
   it('GET /:machineKey/actions ignores client-supplied role hints', async () => {

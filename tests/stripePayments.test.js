@@ -13,6 +13,9 @@ jest.mock('../backend/src/services/paymentsService');
 jest.mock('../backend/src/services/invoicesService');
 jest.mock('../backend/src/db/invoicesQueries');
 jest.mock('../backend/src/db/estimatesQueries');
+jest.mock('../backend/src/services/eventBus', () => ({
+    emit: jest.fn().mockResolvedValue(null),
+}));
 jest.mock('../backend/src/services/contactPropagationService', () => ({
     propagateContactDetails: jest.fn(),
 }));
@@ -55,6 +58,7 @@ const paymentsService = require('../backend/src/services/paymentsService');
 const invoicesService = require('../backend/src/services/invoicesService');
 const invoicesQueries = require('../backend/src/db/invoicesQueries');
 const estimatesQueries = require('../backend/src/db/estimatesQueries');
+const eventBus = require('../backend/src/services/eventBus');
 const contactPropagationService = require('../backend/src/services/contactPropagationService');
 
 const svc = require('../backend/src/services/stripePaymentsService');
@@ -67,6 +71,13 @@ beforeEach(() => {
     jest.clearAllMocks();
     mockTransactionClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
     mockLogFinancialActivity.mockResolvedValue({ ok: true });
+    eventBus.emit.mockResolvedValue(null);
+    paymentsQueries.findByExternalSourceId.mockResolvedValue(null);
+    paymentsQueries.createTransaction.mockImplementation(async (companyId, data) => ({
+        id: 909,
+        company_id: companyId,
+        ...data,
+    }));
     estimatesQueries.getContactContext.mockImplementation(
         async (companyId, id) => (companyId === COMPANY ? { id, company_id: companyId } : null)
     );
@@ -157,6 +168,48 @@ describe('handleWebhook', () => {
         const res = await svc.handleWebhook(body, sig);
         expect(res).toEqual({ ok: true, deduped: true });
         expect(paymentsService.createTransaction).not.toHaveBeenCalled();
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+        expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+
+    it('projects an ad-hoc job payment failure to one tenant-owned payment event', async () => {
+        q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.getSessionByPaymentIntent.mockResolvedValue({
+            id: 10,
+            job_id: 77,
+            contact_id: 5,
+            amount: 25,
+            currency: 'usd',
+        });
+        q.updateSession.mockResolvedValue({});
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        const { body, sig } = signed({
+            id: 'evt_job_fail',
+            type: 'payment_intent.payment_failed',
+            account: ACCT,
+            data: { object: { id: 'pi_job_fail', amount: 2500, currency: 'usd' } },
+        });
+
+        await svc.handleWebhook(body, sig);
+
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                job_id: 77,
+                contact_id: 5,
+                amount: 25,
+                status: 'failed',
+            }),
+            mockTransactionClient
+        );
+        expect(eventBus.emit).toHaveBeenCalledTimes(1);
+        expect(eventBus.emit).toHaveBeenCalledWith(
+            COMPANY,
+            'payment.failed',
+            expect.objectContaining({ payment_id: 909 }),
+            expect.objectContaining({ aggregateType: 'payment', aggregateId: 909 })
+        );
     });
 
     it('TC-35 rejects an unknown connected account (no ledger mutation)', async () => {
@@ -261,7 +314,7 @@ describe('handleWebhook', () => {
         expect(paymentsService.createTransaction).not.toHaveBeenCalled();
     });
 
-    it('TC-34 payment_failed marks session failed, no completed ledger row', async () => {
+    it('TC-34 payment_failed marks session failed and records no completed ledger row', async () => {
         q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
         q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
         q.getSessionByPaymentIntent.mockResolvedValue({ id: 9, invoice_id: 42 });
@@ -280,6 +333,30 @@ describe('handleWebhook', () => {
             mockTransactionClient
         );
         expect(paymentsService.createTransaction).not.toHaveBeenCalled();
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                invoice_id: 42,
+                external_id: 'pi_2',
+                external_source: 'stripe',
+                status: 'failed',
+            }),
+            mockTransactionClient
+        );
+        expect(eventBus.emit).toHaveBeenCalledWith(
+            COMPANY,
+            'payment.failed',
+            {
+                payment_id: 909,
+                record_refs: [{ type: 'payment', id: 909 }],
+            },
+            expect.objectContaining({
+                aggregateType: 'payment',
+                aggregateId: 909,
+                idempotencyKey: 'payment.failed:stripe:pi_2',
+                client: mockTransactionClient,
+            })
+        );
         expect(mockLogFinancialActivity).toHaveBeenCalledWith(
             expect.objectContaining({
                 action: 'payment.failed',

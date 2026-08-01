@@ -298,17 +298,6 @@ router.post('/:machineKey/apply', requirePermission('jobs.edit', 'jobs.done_pend
         req.user?.sub
       );
 
-      require('../services/eventBus').emit(companyId, 'job.status_changed', {
-        id: entityId,
-        from: currentState,
-        to: result.targetState,
-        contact_id: currentJob?.contact_id,
-        customer_name: currentJob?.customer_name,
-        customer_phone: currentJob?.customer_phone,
-        service_name: currentJob?.service_name,
-        reason: cancelReason,
-      }, { actorType: 'user', actorId: req.user?.sub, aggregateType: 'job', aggregateId: entityId })
-        .catch(e => console.error('[eventBus] job.status_changed emit failed:', e.message));
     }
 
     res.json({ ok: true, data: { previousState: currentState, newState: result.targetState, targetState: result.targetState, entityId: Number(entityId), event: result.event } });

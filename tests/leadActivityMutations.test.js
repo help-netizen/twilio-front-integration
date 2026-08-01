@@ -23,10 +23,11 @@ jest.mock('../backend/src/services/fsmService', () => ({
     resolveTransition: (...args) => mockResolveTransition(...args),
 }));
 jest.mock('../backend/src/services/zenbookerClient', () => ({}));
-jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn(async () => {}) }));
+jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn(async () => ({ id: 1 })) }));
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
 
 const leadsService = require('../backend/src/services/leadsService');
+const eventBus = require('../backend/src/services/eventBus');
 
 const COMPANY_A = '00000000-0000-4000-8000-000000000001';
 const COMPANY_B = '00000000-0000-4000-8000-000000000002';
@@ -67,6 +68,11 @@ beforeEach(() => {
 
     mockTxQuery.mockImplementation(async (sql, params = []) => {
         const text = String(sql);
+        if (/FROM company_memberships m/i.test(text)) {
+            return params[0] === COMPANY_A && params[1] === 'Sara'
+                ? { rows: [{ id: ACTOR.id }] }
+                : { rows: [] };
+        }
         if (/SELECT api_name FROM lead_custom_fields/i.test(text)) return { rows: [] };
         if (/SELECT 1 FROM leads WHERE uuid/i.test(text)) return { rows: [] };
         if (/INSERT INTO leads/i.test(text)) {
@@ -201,6 +207,29 @@ test.each([
         expect.objectContaining({ client: expect.any(Object) })
     );
     expect(mockLogLeadContactActivity.mock.calls[0][0].entityId).not.toBe('undefined');
+});
+
+test('lead assignment targets a tenant-active crm_users.id, never the display name', async () => {
+    const result = await leadsService.assignUser('ABC123', 'Sara', COMPANY_A, ACTOR);
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+        COMPANY_A,
+        'lead.assigned',
+        {
+            lead_id: '42',
+            assignee_user_ids: [ACTOR.id],
+            record_refs: [{ type: 'lead', id: '42' }],
+        },
+        expect.objectContaining({
+            actorType: 'user',
+            actorId: ACTOR.id,
+            aggregateType: 'lead',
+            aggregateId: '42',
+        })
+    );
+    expect(JSON.stringify(eventBus.emit.mock.calls.at(-1))).not.toContain('Sara');
+    expect(result).not.toHaveProperty('assignee_user_id');
+    expect(result).not.toHaveProperty('assignment_changed');
 });
 
 test('foreign-company mutation is 404, leaves the Lead byte-unchanged, and emits nothing', async () => {

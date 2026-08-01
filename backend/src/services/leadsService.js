@@ -57,6 +57,38 @@ class LeadsServiceError extends Error {
     }
 }
 
+function domainActor(activityActor, fallbackType = 'system') {
+    return {
+        actorType: activityActor?.type || fallbackType,
+        actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+    };
+}
+
+async function resolveActiveAssigneeUserId(client, companyId, identity) {
+    const value = String(identity || '').trim();
+    if (!value) return null;
+    const { rows } = await client.query(
+        `SELECT u.id
+         FROM company_memberships m
+         JOIN crm_users u
+           ON u.id = m.user_id
+          AND u.status = 'active'
+          AND u.onboarding_status = 'active'
+          AND COALESCE(u.kind, 'user') = 'user'
+         WHERE m.company_id = $1
+           AND m.status = 'active'
+           AND (
+                u.id::text = $2
+                OR lower(u.full_name) = lower($2)
+                OR lower(u.email) = lower($2)
+           )
+         ORDER BY u.id
+         LIMIT 2`,
+        [companyId, value]
+    );
+    return rows.length === 1 ? String(rows[0].id) : null;
+}
+
 // =============================================================================
 // DB row → Workiz-compatible Lead object (snake_case → PascalCase)
 // =============================================================================
@@ -591,15 +623,15 @@ async function createLead(fields, companyId, {
         'lead.created',
         {
             id: insertedLeadId,
-            uuid: result.UUID,
-            first_name: columns.first_name || null,
-            last_name: columns.last_name || null,
-            phone: columns.phone || null,
-            job_type: columns.job_type || null,
-            job_source: columns.job_source || null,
+            lead_id: insertedLeadId,
             status: columns.status || 'Submitted',
+            record_refs: [{ type: 'lead', id: insertedLeadId }],
         },
-        { actorType: 'system', aggregateType: 'lead', aggregateId: insertedLeadId }
+        {
+            ...domainActor(activityActor),
+            aggregateType: 'lead',
+            aggregateId: insertedLeadId,
+        }
     ).catch(() => {});
     return result;
 }
@@ -711,6 +743,18 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
     // Only a status change can move a lead in/out of the "new" set → refresh badge.
     if (columns.status) emitLeadChange('lead.updated', companyId, columns.status, result.ClientId);
 
+    if (statusChanged && columns.status === 'Review') {
+        eventBus.emit(companyId, 'lead.review_required', {
+            lead_id: result.ClientId,
+            status: 'Review',
+            record_refs: [{ type: 'lead', id: result.ClientId }],
+        }, {
+            ...domainActor(activityActor),
+            aggregateType: 'lead',
+            aggregateId: result.ClientId,
+        }).catch(() => {});
+    }
+
     return result;
 }
 
@@ -793,7 +837,7 @@ async function assignUser(uuid, userName, companyId = null, activityActor = null
     if (!companyId) {
         throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
-    return mutateLeadWithActivity(
+    const result = await mutateLeadWithActivity(
         activityActor,
         async (client) => {
             const { rows: leadRows } = await client.query(
@@ -804,8 +848,12 @@ async function assignUser(uuid, userName, companyId = null, activityActor = null
                 throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
             }
 
-            await client.query(
-                'INSERT INTO lead_team_assignments (lead_id, user_name) VALUES ($1, $2) ON CONFLICT (lead_id, user_name) DO NOTHING',
+            const assigneeUserId = await resolveActiveAssigneeUserId(client, companyId, userName);
+            const assignment = await client.query(
+                `INSERT INTO lead_team_assignments (lead_id, user_name)
+                 VALUES ($1, $2)
+                 ON CONFLICT (lead_id, user_name) DO NOTHING
+                 RETURNING id`,
                 [leadRows[0].id, userName]
             );
 
@@ -813,6 +861,8 @@ async function assignUser(uuid, userName, companyId = null, activityActor = null
                 UUID: uuid,
                 LeadId: String(leadRows[0].id),
                 ClientId: String(leadRows[0].id),
+                assignee_user_id: assigneeUserId,
+                assignment_changed: assignment.rowCount > 0,
                 link: null,
             };
         },
@@ -822,6 +872,20 @@ async function assignUser(uuid, userName, companyId = null, activityActor = null
             entityId: updated.ClientId,
         }]
     );
+    if (result.assignment_changed && result.assignee_user_id) {
+        eventBus.emit(companyId, 'lead.assigned', {
+            lead_id: result.ClientId,
+            assignee_user_ids: [result.assignee_user_id],
+            record_refs: [{ type: 'lead', id: result.ClientId }],
+        }, {
+            ...domainActor(activityActor),
+            aggregateType: 'lead',
+            aggregateId: result.ClientId,
+        }).catch(() => {});
+    }
+    delete result.assignee_user_id;
+    delete result.assignment_changed;
+    return result;
 }
 
 // =============================================================================
@@ -831,7 +895,7 @@ async function unassignUser(uuid, userName, companyId = null, activityActor = nu
     if (!companyId) {
         throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     }
-    return mutateLeadWithActivity(
+    const result = await mutateLeadWithActivity(
         activityActor,
         async (client) => {
             const { rows: leadRows } = await client.query(
@@ -842,8 +906,11 @@ async function unassignUser(uuid, userName, companyId = null, activityActor = nu
                 throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
             }
 
-            await client.query(
-                'DELETE FROM lead_team_assignments WHERE lead_id = $1 AND user_name = $2',
+            const previousAssigneeUserId = await resolveActiveAssigneeUserId(client, companyId, userName);
+            const assignment = await client.query(
+                `DELETE FROM lead_team_assignments
+                 WHERE lead_id = $1 AND user_name = $2
+                 RETURNING id`,
                 [leadRows[0].id, userName]
             );
 
@@ -851,6 +918,8 @@ async function unassignUser(uuid, userName, companyId = null, activityActor = nu
                 UUID: uuid,
                 LeadId: String(leadRows[0].id),
                 ClientId: String(leadRows[0].id),
+                previous_assignee_user_id: previousAssigneeUserId,
+                assignment_changed: assignment.rowCount > 0,
                 link: null,
             };
         },
@@ -860,6 +929,21 @@ async function unassignUser(uuid, userName, companyId = null, activityActor = nu
             entityId: updated.ClientId,
         }]
     );
+    if (result.assignment_changed && result.previous_assignee_user_id) {
+        eventBus.emit(companyId, 'lead.unassigned', {
+            lead_id: result.ClientId,
+            previous_recipient_user_ids: [result.previous_assignee_user_id],
+            previous_assignee_user_ids: [result.previous_assignee_user_id],
+            record_refs: [{ type: 'lead', id: result.ClientId }],
+        }, {
+            ...domainActor(activityActor),
+            aggregateType: 'lead',
+            aggregateId: result.ClientId,
+        }).catch(() => {});
+    }
+    delete result.previous_assignee_user_id;
+    delete result.assignment_changed;
+    return result;
 }
 
 // =============================================================================
@@ -1386,11 +1470,33 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         eventBus.emit(
             companyId,
             'job.created',
-            { id: localJobId, jobId: localJobId, companyId },
-            { actorType: 'user', aggregateType: 'job', aggregateId: localJobId }
+            {
+                id: localJobId,
+                job_id: localJobId,
+                record_refs: [{ type: 'job', id: localJobId }],
+            },
+            {
+                ...domainActor(activityActor),
+                aggregateType: 'job',
+                aggregateId: localJobId,
+            }
         ).catch(() => {});
     }
     // [CHANGE END]
+
+    eventBus.emit(companyId, 'lead.converted', {
+        lead_id: leadRow.id,
+        job_id: localJobId,
+        status: 'Converted',
+        record_refs: [
+            { type: 'lead', id: leadRow.id },
+            { type: 'job', id: localJobId },
+        ],
+    }, {
+        ...domainActor(activityActor),
+        aggregateType: 'lead',
+        aggregateId: leadRow.id,
+    }).catch(() => {});
 
     return {
         UUID: lead.UUID,
