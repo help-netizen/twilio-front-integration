@@ -40,6 +40,14 @@ describe('MASK-REDACTION-001 viewer predicate', () => {
         expect(mockGetActiveSettings).toHaveBeenCalledWith(COMPANY_A);
     });
 
+    // MASK-REDACTION-002: call_masking.use only grants PLACING masked calls.
+    // A viewer who also holds contacts.view (admin/dispatcher/manager) reads
+    // raw customer data in Contacts anyway — their Pulse must stay unredacted.
+    test('admin with call_masking.use AND contacts.view is not a masked viewer', async () => {
+        await expect(resolveMaskViewer(viewer(['pulse.view', 'call_masking.use', 'contacts.view'])))
+            .resolves.toBe(false);
+    });
+
     test('admin/dispatcher without call_masking.use is unchanged and skips settings lookup', async () => {
         await expect(resolveMaskViewer(viewer(['pulse.view']))).resolves.toBe(false);
         expect(mockGetActiveSettings).not.toHaveBeenCalled();

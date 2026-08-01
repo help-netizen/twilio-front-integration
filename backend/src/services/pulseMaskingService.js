@@ -86,6 +86,14 @@ async function resolveMaskViewer(req) {
     const permissions = req.authz?.permissions;
     if (!Array.isArray(permissions)) return true;
     if (!permissions.includes(MASK_PERMISSION)) return false;
+    // MASK-REDACTION-002: holding `call_masking.use` only means the viewer
+    // PLACES calls through the mask — it does not make them a restricted
+    // viewer. Admins/dispatchers hold the same permission yet read raw
+    // customer data in the Contacts module anyway, so redacting their Pulse
+    // (summaries, recordings, numbers) is pure loss. Redaction applies to
+    // viewers who additionally LACK `contacts.view` — the field-tech audience
+    // masking actually protects against.
+    if (permissions.includes('contacts.view')) return false;
 
     const companyId = req.companyFilter?.company_id;
     if (!companyId) return true;
