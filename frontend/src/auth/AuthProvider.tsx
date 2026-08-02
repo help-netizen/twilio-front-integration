@@ -299,6 +299,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // (the pre-onboarding load, company=null) can never overwrite a newer
     // refreshAuthz() result (post-onboarding, company set) that resolved first.
     const authzGenRef = useRef(0);
+    // PAYMENTS-BLANK-002: ref mirror of authzReady so the until-success recovery
+    // loop (a one-shot closure) can stop without a stale-state re-render race.
+    const authzReadyRef = useRef<boolean>(!FEATURE_AUTH);
 
     // Listen for 401/403 events dispatched by API interceptors
     useEffect(() => {
@@ -358,6 +361,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setPermissions(data.permissions || []);
                 setScopes(data.scopes || {});
                 setAuthzReady(true);
+                authzReadyRef.current = true;
                 return true;
             } else {
                 console.warn('[Auth] Failed to load auth context', res.status);
@@ -475,8 +479,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     // trip the onboarding gate — retry once before releasing gates.
                     // PAYMENTS-BLANK-001: if BOTH attempts fail (backend restart, flaky
                     // mobile network on a direct deep link), keep retrying with backoff
-                    // in the background — every route guard waits on authzReady, and
-                    // healing used to depend on the 30s refresh tick alone.
+                    // in the background — every route guard waits on authzReady.
+                    // PAYMENTS-BLANK-002: the finite [2s,4s,8s,16s] ladder died against
+                    // a >31s backend-deploy window, and the 30s tick only refetches /me
+                    // when the token itself refreshes (300s life) — leaving up to ~5 min
+                    // of spinner AFTER the backend recovered. Retry until /me succeeds
+                    // (or another path loads authz): same ladder, then every 30s. The
+                    // loop can't leak: login/logout are full-page navigations, and a
+                    // dead session redirects via refreshTokenOrLogin's loginOrBreak.
                     if (kc.token) {
                         const ok = await fetchAuthzContext(kc.token);
                         if (!ok) {
@@ -484,8 +494,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                             const okRetry = await fetchAuthzContext(kc.token);
                             if (!okRetry) {
                                 void (async () => {
-                                    for (const delayMs of [2000, 4000, 8000, 16000]) {
-                                        await sleep(delayMs);
+                                    const delaysMs = [2000, 4000, 8000, 16000, 30000];
+                                    for (let i = 0; ; i++) {
+                                        await sleep(delaysMs[Math.min(i, delaysMs.length - 1)]);
+                                        if (authzReadyRef.current) return; // healed elsewhere
                                         if (kc.token && await fetchAuthzContext(kc.token)) return;
                                     }
                                 })();
